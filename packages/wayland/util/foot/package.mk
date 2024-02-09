@@ -3,7 +3,7 @@
 
 PKG_NAME="foot"
 PKG_VERSION="1.16.2"
-PKG_SHA256="8060ec28cbf6e2e3d408665330da4bc48fd094d4f1265d7c58dc75c767463c29"
+PKG_SHA256="0e02af376e5f4a96eeb90470b7ad2e79a1d660db2a7d1aa772be43c7db00e475"
 PKG_LICENSE="MIT"
 PKG_SITE="https://codeberg.org/dnkl/foot/"
 PKG_URL="https://codeberg.org/dnkl/foot/archive/${PKG_VERSION}.tar.gz"

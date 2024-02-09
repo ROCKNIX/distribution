@@ -2,13 +2,14 @@
 # Copyright (C) 2021-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="sway"
-PKG_VERSION="1.8.1"
-PKG_SHA256="e9f575761342fc8fe0cfeea80c90f32ddfa8c543572fec179f40922346f47dff"
+PKG_VERSION="1.9"
+PKG_SHA256="a63b2df8722ee595695a0ec6c84bf29a055a9767e63d8e4c07ff568cb6ee0b51"
 PKG_LICENSE="MIT"
 PKG_SITE="https://swaywm.org/"
-PKG_URL="https://github.com/swaywm/sway/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain wayland wayland-protocols libdrm libxkbcommon libinput cairo pango libjpeg-turbo dbus json-c wlroots gdk-pixbuf swaybg foot bemenu"
+PKG_URL="https://github.com/swaywm/sway/releases/download/${PKG_VERSION}/sway-${PKG_VERSION}.tar.gz"
+PKG_DEPENDS_TARGET="toolchain wayland wayland-protocols libdrm libxkbcommon libinput cairo pango libjpeg-turbo dbus json-c wlroots gdk-pixbuf swaybg foot bemenu xcb-util-wm"
 PKG_LONGDESC="i3-compatible Wayland compositor"
+PKG_TOOLCHAIN="meson"
 
 # to enable xwayland package: https://gitlab.freedesktop.org/xorg/lib/libxcb-wm/-/tree/master/icccm?ref_type=heads
 
@@ -33,6 +34,7 @@ post_makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/sway
     cp ${PKG_DIR}/scripts/sway.sh     ${INSTALL}/usr/bin
     cp ${PKG_DIR}/scripts/sway-config ${INSTALL}/usr/lib/sway
+    cp ${PKG_DIR}/scripts/sway_init.sh     ${INSTALL}/usr/bin
 
   # install config & wallpaper
   mkdir -p ${INSTALL}/usr/share/sway

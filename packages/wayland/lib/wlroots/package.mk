@@ -2,12 +2,14 @@
 # Copyright (C) 2021-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="wlroots"
-PKG_VERSION="0.16.2"
+PKG_VERSION="0.17.1"
+PKG_SHA256="b4b1b08daf0728cd2648fb57660493e5b3eafe4fcc081c138de864895181cdfe"
 PKG_LICENSE="MIT"
 PKG_SITE="https://gitlab.freedesktop.org/wlroots/wlroots/"
-PKG_URL="https://gitlab.freedesktop.org/wlroots/wlroots/-/archive/${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tar.bz2"
-PKG_DEPENDS_TARGET="toolchain libinput libxkbcommon pixman libdrm wayland wayland-protocols seatd xwayland hwdata libxcb"
+PKG_URL="${PKG_SITE}-/archive/${PKG_VERSION}/wlroots-${PKG_VERSION}.tar.gz"
+PKG_DEPENDS_TARGET="toolchain libinput libxkbcommon pixman libdrm wayland wayland-protocols seatd xwayland hwdata libxcb xcb-util-wm"
 PKG_LONGDESC="A modular Wayland compositor library"
+PKG_TOOLCHAIN="meson"
 
 configure_package() {
   # OpenGLES Support
@@ -19,7 +21,8 @@ configure_package() {
 PKG_MESON_OPTS_TARGET="-Dxcb-errors=disabled \
 					   -Dxwayland=disabled \
                        -Dexamples=false \
-                       -Drenderers=gles2"
+                       -Drenderers=gles2 \
+					   -Dbackends=drm,libinput"
 
 pre_configure_target() {
   # wlroots does not build without -Wno flags as all warnings being treated as errors

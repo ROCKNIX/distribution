@@ -45,7 +45,7 @@ else
   [ "${OPENGL_SUPPORT}" = "yes" ] && PKG_DEPENDS_TARGET+=" mesa-demos glmark2"
 
   # Weston kiosk shell dpms support.
-  [ "${DISPLAYSERVER}" = "wl" ] && PKG_DEPENDS_TARGET+=" weston-kiosk-shell-dpms"
+  [ "${WINDOWMANAGER}" = "weston" ] && PKG_DEPENDS_TARGET+=" weston-kiosk-shell-dpms"
 
   # Sound support
   [ "${PIPEWIRE_SUPPORT}" = "yes" ] && PKG_DEPENDS_TARGET+=" alsa pulseaudio pipewire wireplumber"
