@@ -1,0 +1,44 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+
+. /etc/profile
+
+ROOTPASS="$1"
+
+LPC=$(awk -F: '/^root/{print $3}' /storage/.cache/shadow)
+CURRENT=$(awk -F: '/^root/{print $2}' /storage/.cache/shadow)
+
+# Turn it into a usable hash
+NEW=$(cryptpw -m sha512 "${ROOTPASS}" 2>/dev/null)
+
+# Set the root password.
+sed -i "s#root:${CURRENT}:${LPC}::::::#root:${NEW}:${LPC}::::::#g" /storage/.cache/shadow 2>/dev/null
+
+# Create a root user and set the password.
+echo -ne "${ROOTPASS}\n${ROOTPASS}\n" | smbpasswd -sa root 2>/dev/null
+
+# Set the root user and password for SyncThing
+syncthing generate --gui-user "root" --gui-password "${ROOTPASS}" >/dev/null 2>&1
+
+# Save the password so we can display it in ES
+set_setting root.password "${ROOTPASS}"
+
+# Restart syncthing if it was enabled.
+SYNCSTATUS=$(get_setting syncthing.enabled)
+SYNCACTIVE=$(systemctl status syncthing | awk '/active/ {print $2}')
+if [ "${SYNCSTATUS}" = "1" ] &&
+   [ "${SYNCACTIVE}" = "active" ]
+then
+  systemctl restart syncthing >/dev/null 2>&1
+fi
+
+# Restart simple-http-server if it is enabled
+SIMPLESTATUS=$(get_setting simplehttp.enabled)
+SIMPLEACTIVE=$(systemctl status simple-http-server | awk '/active/ {print $2}')
+if [ "${SIMPLESTATUS}" = "1" ] &&
+   [ "${SIMPLEACTIVE}" = "active" ]
+then
+  systemctl restart simple-http-server >/dev/null 2>&1
+fi
+

@@ -1,0 +1,166 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+
+. /etc/profile
+
+
+ORGANIZATION="${GIT_ORGANIZATION}"
+BRANCH="$(get_setting updates.branch)"
+case ${BRANCH} in
+  dev)
+    PROJECT="${GIT_REPO}-dev"
+  ;;
+  *)
+    PROJECT="${GIT_REPO}"
+  ;;
+esac
+
+FORCE="$(get_setting updates.force)"
+
+GIT_REPO="https://github.com/${ORGANIZATION}/${PROJECT}"
+GIT_API="https://api.github.com/repos/${ORGANIZATION}/${PROJECT}"
+UPDATE_PATH="/storage/.update"
+EXTENSION="tar"
+
+function check_network() {
+  GW=$(ip route | awk '/eth0/ {a=$0} END{print $1}')
+  if [[ ${GW} =~ [0-9] ]]
+  then
+    echo true
+  else
+    echo false
+  fi
+}
+
+get_available() {
+  echo $(df | awk '/'$1'/ {printf $4; exit}')
+}
+
+get_size() {
+  echo $(df | awk '/'$1'/ {printf $2; exit}')
+}
+
+check_space() {
+  MYSIZE="$(get_$1 $2)"
+  VOLNAME="$3"
+  REQUIRED="$4"
+  if [ "${MYSIZE}" -lt "${REQUIRED}" ]
+  then
+    NEEDED=$(( (${REQUIRED} - ${MYSIZE} ) / 1024 ))
+    echo -e "There is not enough free space available ${VOLNAME} to install this update.  Free up an additional ${NEEDED}MB, or reflash the newer version."
+    echo "Exiting in 5 seconds..." && sleep 5
+    exit 1
+  fi
+}
+
+get_changelog() {
+  echo "Fetching change log."
+  echo -e "Change Log" >/storage/.cache/changelog
+  lynx --dump "${GIT_REPO}/releases/latest" 2>/dev/null | awk '/Contributors|Assets [0-9]/ {exit}; /Change Log/{p++;if(p==1){next}}p;' >>/storage/.cache/changelog
+  if [ ! "$?" = "0" ]
+  then
+    echo "Unable to fetch the change log, please ensure you have a network connection." >>/storage/.cache/changelog
+  fi
+}
+
+get_release_list() {
+  DATA=($(curl -H 'Cache-Control: no-cache' -Ls "${GIT_API}/releases" 2>/dev/null | python -c "import sys, json; data=json.load(sys.stdin); print(\"\\n\".join([str(data[i]['tag_name']) for i in range(10)]))"))
+  if [ ! -z "${DATA}" ]
+  then
+    printf "%s\n" "${DATA[@]}"
+  else
+    echo "Unable to fetch releases."
+  fi
+}
+
+function cleanup() {
+  if [ -e "/tmp/release.data" ]
+  then
+    rm -f /tmp/release.data
+  fi
+}
+
+###
+### Check for passed arguments.  If we receive changelog, fetch it.  If we receive a version, force install it.
+###
+
+case ${1} in
+  changelog)
+    get_changelog >/dev/null 2>&1
+    exit 0
+  ;;
+  releases)
+    get_release_list
+    exit 0
+  ;;
+  [0-9][0-9]*)
+    UPDATE_PACKAGE=${1}
+    FORCE=1
+  ;;
+esac
+
+ONLINE_STATUS=$(check_network)
+if [ ! "${ONLINE_STATUS}" == true ]
+then
+  echo "System not online, cannot continue..."
+  echo "Exiting in 5 seconds..."  && sleep 5
+  exit 0
+fi
+
+echo -e "=> ${OS_NAME} UPGRADE UTILITY"
+
+# Check storage
+check_space size flash boot 2048000 2>/dev/null
+
+if [ "$(mountpoint -q /storage/roms)" ]
+then
+  check_space available .update GAMES 4096000 2>/dev/null
+fi
+
+if [ -z "${UPDATE_PACKAGE}" ]
+then
+  curl -o /tmp/release.data -H 'Cache-Control: no-cache' -Ls "${GIT_API}/releases"
+  UPDATE_PACKAGE=$(awk 'BEGIN {FS="\""} /'${OS_NAME}-${HW_DEVICE}.${HW_ARCH}'.*tar/ {print $4; exit}' /tmp/release.data | sed -e "s~${OS_NAME}-${HW_DEVICE}.${HW_ARCH}-~~g;s~.tar$~~g")
+  if [ "${UPDATE_PACKAGE}" -le "${OS_VERSION}" ] \
+  && [ ! "${FORCE}" == "1" ]
+  then
+    cleanup
+    echo "No new updates are available..."
+    echo "Exiting in 5 seconds..." && sleep 5
+    exit 0
+  fi
+fi
+
+echo -e "\nFetching: ${OS_NAME}-${HW_DEVICE}.${HW_ARCH}-${UPDATE_PACKAGE}.${EXTENSION}"
+curl -Lo "${UPDATE_PATH}/${OS_NAME}-${HW_DEVICE}.${HW_ARCH}-${UPDATE_PACKAGE}.${EXTENSION}" "${GIT_REPO}/releases/download/${UPDATE_PACKAGE}/${OS_NAME}-${HW_DEVICE}.${HW_ARCH}-${UPDATE_PACKAGE}.tar"
+echo -e "Fetching: ${OS_NAME}-${HW_DEVICE}.${HW_ARCH}-${UPDATE_PACKAGE}.${EXTENSION}.sha256"
+curl -Lo "${UPDATE_PATH}/${OS_NAME}-${HW_DEVICE}.${HW_ARCH}-${UPDATE_PACKAGE}.${EXTENSION}.sha256" "${GIT_REPO}/releases/download/${UPDATE_PACKAGE}/${OS_NAME}-${HW_DEVICE}.${HW_ARCH}-${UPDATE_PACKAGE}.tar.sha256"
+
+echo -e "\nVerifying download, please wait..."
+# Verify
+MYSUM=$(sha256sum ${UPDATE_PATH}/${OS_NAME}-${HW_DEVICE}.${HW_ARCH}-${UPDATE_PACKAGE}.${EXTENSION} | awk '{print $1}')
+DLSUM=$(cat ${UPDATE_PATH}/${OS_NAME}-${HW_DEVICE}.${HW_ARCH}-${UPDATE_PACKAGE}.${EXTENSION}.sha256 | awk '{print $1}')
+
+if [ ! "${MYSUM}" == "${DLSUM}" ]
+then
+  echo "Verification failed, cleaning up and exiting..."
+  rm -f ${UPDATE_PATH}/*
+  sleep 5
+  clear
+  exit 1
+else
+  echo "Verification successful..."
+fi
+
+get_changelog
+
+if [ "${FORCE}" == "1" ]
+then
+  set_setting updates.force 0
+fi
+
+echo -e "\nRebooting to complete OS upgrade..."
+sync
+sleep 3
+reboot

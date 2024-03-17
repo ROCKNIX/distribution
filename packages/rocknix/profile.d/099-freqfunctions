@@ -1,0 +1,118 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+
+. /etc/os-release
+
+get_tdp_range() {
+  if [ -n "${DEVICE_TDP_RANGE}" ]
+  then
+    for TDP in default ${DEVICE_TDP_RANGE[*]}
+    do
+      echo ${TDP}
+    done
+  fi
+}
+
+get_threads() {
+  for THREAD in $(seq 1 1 $(find /sys/devices/system/cpu -name online | wc -l)) all default
+  do
+    echo ${THREAD}
+  done
+}
+
+set_online_threads() {
+  AVAILABLE_THREADS=$(($(find /sys/devices/system/cpu -name online | wc -l) - 1))
+  MODE=${2}
+  if [ -z "${MODE}" ]
+  then
+    MODE=0
+  fi
+  case ${1} in
+    default)
+      return
+    ;;
+    all)
+      THREADS=0
+      MODE="1"
+    ;;
+    0)
+      THREADS=1
+    ;;
+    *)
+      THREADS=${1}
+    ;;
+  esac
+
+  for thread in $(seq 0 1 ${THREADS})
+  do
+    echo 1  | tee /sys/devices/system/cpu/cpu${thread}/online >/dev/null 2>&1
+  done
+
+  for thread in $(seq ${THREADS} 1 ${AVAILABLE_THREADS})
+  do
+    echo ${MODE} | tee /sys/devices/system/cpu/cpu${thread}/online >/dev/null 2>&1
+  done
+}
+
+set_cpu_gov() {
+  for POLICY in $(ls /sys/devices/system/cpu/cpufreq 2>/dev/null | grep policy[0-9])
+  do
+    if [ -e "/sys/devices/system/cpu/cpufreq/${POLICY}/scaling_governor" ]
+    then
+      echo $1 >/sys/devices/system/cpu/cpufreq/${POLICY}/scaling_governor 2>/dev/null
+    fi
+  done
+}
+
+set_dmc_gov() {
+  if [ -e "${DMC_FREQ}/governor" ]
+  then
+    for governor in $1 dmc_$1 simple_$1
+    do
+      echo ${governor} >${DMC_FREQ}/governor 2>/dev/null
+      if [ "$?" = 0 ]
+      then
+        return
+      fi
+   done
+  fi
+}
+
+set_gpu_gov() {
+  if [ -e "${GPU_FREQ}/governor" ]
+  then
+    for governor in $1 dmc_$1 simple_$1
+    do
+      echo ${governor} >${GPU_FREQ}/governor 2>/dev/null
+      if [ "$?" = 0 ]
+      then
+        return
+      fi
+   done
+  fi
+}
+
+onlinethreads() {
+  set_online_threads ${1} ${2}
+}
+
+performance() {
+  set_cpu_gov performance
+  set_dmc_gov performance
+}
+
+ondemand() {
+  set_cpu_gov ondemand
+  set_dmc_gov ondemand
+}
+
+schedutil() {
+  set_cpu_gov schedutil
+  set_dmc_gov ondemand
+}
+
+powersave() {
+  set_cpu_gov powersave
+  set_dmc_gov powersave
+}

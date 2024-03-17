@@ -1,0 +1,96 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+
+. /etc/profile
+
+LOG="/var/log/boot.log"
+
+### This script contains items that we only want to execute after a JELOS upgrade,
+### or after a fresh installation.
+
+### Items in this block should always run after updates.
+################################################################################
+
+echo "Rebuild library cache..." >>${LOG}
+tocon "Rebuilding library cache..."
+### Rebuild the library cache
+rm -f /storage/.cache/ld.so.cache
+ldconfig -X
+
+echo "Sync configuration files..." >>${LOG}
+tocon "Re-sync configuration files..."
+### Sync configurations
+if [ -d "/storage/.config/system/configs" ]
+then
+  EXCLUDE="--exclude=configs"
+fi
+
+### Remove and link es configs so they are managed with OS updates.
+for es_cfg in es_features.cfg es_systems.cfg
+do
+  mv /storage/.config/emulationstation/${es_cfg} /storage/.config/emulationstation/last_${es_cfg} >/dev/null 2>&1
+  ln -s /usr/config/emulationstation/${es_cfg} /storage/.config/emulationstation/${es_cfg}  >/dev/null 2>&1
+done
+
+rsync -a --delete ${EXCLUDE} /usr/config/system/ /storage/.config/system/
+rsync -a --ignore-existing /usr/config/game /storage/.config/
+rsync -a /usr/config/modules /storage/.config/
+
+if [ -f "/storage/.config/emulationstation/resources/logo.png" ]
+then
+  rm -f /storage/.config/emulationstation/resources/logo.png
+fi
+
+echo "Sync modules..." >>${LOG}
+tocon "Update tool modules..."
+rsync -a /usr/config/modules/* /storage/.config/modules/
+cp -f /usr/config/retroarch/retroarch-core-options.cfg /storage/.config/retroarch/retroarch-core-options.cfg
+
+### Apply developer ssh keys if they exist
+echo "Apply dev keys if available..." >>${LOG}
+if [ -e /usr/config/ssh/authorized_keys ]
+then
+  tocon "Update developer keys..."
+  cp /usr/config/ssh/authorized_keys /storage/.ssh
+fi
+
+### Sync rsync configs
+echo "Update rsync configuration files..." >>${LOG}
+rsync --ignore-existing /usr/config/rsync-rules.conf /storage/.config/
+rsync --ignore-existing /usr/config/rsync.conf /storage/.config/
+
+### Sync locale data
+tocon "Re-sync locale data..."
+rsync -a --delete /usr/config/locale/* /storage/.config/locale/ >>/var/log/configure.log 2>&1
+rm -rf /storage/.config/emulationstation/locale >>/var/log/configure.log 2>&1 ||:
+ln -sf /usr/share/locale /storage/.config/emulationstation/locale >>/var/log/configure.log 2>&1 ||:
+
+### Fix Japanese language bug
+if [ ! -e "/storage/.config/ppsspp/assets/NotoSansJP-Regular.ttf" ]
+then
+  cd /storage/.config/ppsspp/assets
+  cp /usr/config/ppsspp/assets/NotoSansJP-Regular.ttf .
+  ln -s NotoSansJP-Regular.ttf Roboto-Condensed.ttf
+  cd -
+fi
+
+### Add items below this line that are safe to remove after a period of time.
+################################################################################
+
+## 20240312 clean config files on specific rk3326 devices
+model=$(cat /sys/firmware/devicetree/base/model)
+clean_list="ODROID-GO Advance Black Edition Powkiddy RGB10"
+if echo "${clean_list}" | grep "$model"; then
+  rm -rf /storage/.config/mupen64plus
+  rm -rf /storage/.config/drastic
+  rm -f /storage/.config/ppsspp/PSP/SYSTEM/controls.ini
+  rm -f /storage/.config/mednafen/mednafen.cfg
+fi
+if [ "${model}" = "Powkiddy RGB10" ]; then
+  rm -f /storage/joypads/odroidgo2_v11_joypad.cfg
+fi
+
+### 20240207 - Update Vita launchers and data.
+rsync -ah --update /usr/config/vita3k/* /storage/.config/vita3k 2>/dev/null
+rm -f "/storage/.config/vita3k/launcher/Start Vita3K.sh"

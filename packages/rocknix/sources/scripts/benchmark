@@ -1,0 +1,112 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+
+. /etc/profile
+
+if [ ! "${HW_ARCH}" = "x86_64" ]
+then
+  echo "This platform is not currently supported."
+  exit 1
+fi
+
+HOSTNAME=$(hostname)
+
+if [ -z "${1}" ]
+then
+  BENCHLOG="${1}"
+else
+  BENCHLOG="benchmark.log"
+fi
+
+LOG="${HOME}/${BENCHLOG}.log"
+
+SYSTEM_TDP=$(get_setting system.overclock)
+SYSTEM_GOV=$(get_setting system.cpugovernor)
+SYSTEM_EPP=$(get_setting system.power.epp)
+SYSTEM_GPU=$(get_setting system.gpuperf)
+SYSTEM_THREADS=$(get_setting system.threads)
+SYSTEM_POWERSAVE=$(get_setting system.powersave)
+SYSTEM_COOLING=$(get_setting cooling.profile)
+
+case ${1} in
+  performance)
+    onlinethreads all
+    performance
+    gpu_performance_level profile_peak
+    cpu_perftune performance
+    set_setting system.powersave 0
+    systemctl restart powerstate
+    set_setting cooling.profile auto
+    systemctl restart fancontrol
+  ;;
+  balanced_performance)
+    onlinethreads all
+    schedutil
+    gpu_performance_level auto
+    cpu_perftune balance_performance
+    set_setting system.powersave 0
+    systemctl restart powerstate
+    set_setting cooling.profile auto
+    systemctl restart fancontrol
+  ;;
+  balanced_powersave)
+    onlinethreads 4
+    powersave
+    gpu_performance_level low
+    cpu_perftune balance_power
+    set_setting system.powersave 1
+    systemctl restart powerstate
+    set_setting cooling.profile quiet
+    systemctl restart fancontrol
+  ;;
+  powersave)
+    onlinethreads 4
+    powersave
+    gpu_performance_level low
+    cpu_perftune power
+    set_setting system.powersave 1
+    systemctl restart powerstate
+    set_setting cooling.profile quiet
+    systemctl restart fancontrol
+  ;;
+  *)
+    # Default Settings
+    onlinethreads all
+    schedutil
+    gpu_performance_level auto
+    cpu_perftune balance_performance
+    set_setting system.powersave 0
+    systemctl restart powerstate
+    set_setting cooling.profile auto
+    systemctl restart fancontrol
+  ;;
+esac
+
+if [ -e "${LOG}" ]
+then
+  rm -f ${LOG}
+fi
+
+echo "${HOSTNAME} - ${1}"
+
+for TDP in 4.5w 6w 9w 15w 18w 24w 28w
+do
+  overclock ${TDP} >/dev/null 2>&1
+  echo "Testing @ ${TDP}" 2>&1 | tee -a ${LOG}
+  echo "----" 2>&1 | tee -a ${LOG}
+  glmark2-es2-wayland --fullscreen --annotate 2>&1 | awk '/glmark2 Score:/ {print "GLMark: "$3}' | tee -a ${LOG}
+  cd /usr/bin
+  ./7z b 2>&1 | awk '/^Tot:/ {print "7z: "$4}' | tee -a ${LOG}
+  echo "----" 2>&1 | tee -a ${LOG}
+done
+
+overclock ${SYSTEM_TDP}
+onlinethreads ${SYSTEM_THREADS}
+${SYSTEM_GOV}
+gpu_performance_level ${SYSTEM_GPU}
+cpu_perftune ${SYSTEM_EPP}
+set_setting system.powersave ${SYSTEM_POWERSAVE}
+systemctl restart powerstate
+set_setting cooling.profile ${SYSTEM_COOLING}
+systemctl restart fancontrol

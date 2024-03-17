@@ -1,0 +1,220 @@
+#!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2022 kkoshelev (https://github.com/kkoshelev)
+
+. /etc/profile
+
+###
+### Basic WIFI properties used across the tool.
+###
+### Usage:
+###     wifictl command [ssid] [psk]
+###
+
+CFG_ROOT="/storage/.cache"
+WIFI_CFG="${CFG_ROOT}/connman/wifi.config"
+HOSTAPD_CFG="${CFG_ROOT}/.hostapd.conf"
+WIFI_TYPE=$(get_setting network.adhoc.enabled)
+NETWORK_ADDRESS="192.168.80"
+ADHOC_CLIENT_ID=$(get_setting wifi.adhoc.id)
+WIFI_DEV="wlan0"
+DEFAULT_CHAN="6"
+
+### ES won't save the configuration in time
+### for it to be useable by the script, so
+### we have to accept the ssid and key on the
+### command line too.
+
+if [ ! -z "${2}" ]
+then
+  SSID="${2}"
+else
+  SSID="$(get_setting wifi.ssid)" 2>/dev/null
+fi
+
+if [ ! -z "${3}" ]
+then
+  PSK="${3}"
+else
+  PSK="$(get_setting wifi.key)" 2>/dev/null
+fi
+
+
+if [ "${WIFI_TYPE}" = "1" ]
+then
+  GENERATED=($(awk '! /^HW_|BUILD_DATE/ {print}' /etc/os-release | md5sum))
+  SSID="${GENERATED[0]:0:10}"
+  PSK="${GENERATED[0]: -10}"
+fi
+
+if [ ! -d "${CFG_ROOT}/connman" ]
+then
+  mkdir -p "${CFG_ROOT}/connman"
+fi
+
+ADHOC_CHAN=$(get_setting wifi.adhoc.channel)
+if [ -z "${ADHOC_CHAN}" ]
+then
+  ADHOC_CHAN="${DEFAULT_CHAN}"
+  set_setting wifi.adhoc.channel ${DEFAULT_CHAN}
+fi
+
+###
+### Functions...
+###
+
+# lists all wifi services in service=ssid format
+list_wifi() {
+  connmanctl services | cut -b 5- | awk '/\S+.+\s+wifi/ {a=$0; sub(/\s+wifi_.*$/,"", a); b=$0; sub(a, "", b); sub(/\s+/, "", b); print b "=" a}' | sort | uniq
+}
+
+# Looksup connman service name based on ssid
+# $1 - SSID to lookup
+get_wifi_service() {
+  list_wifi | awk -v ssid="${1}" '{ split($0, a, "="); if (a[2]==ssid) print a[1] }'
+}
+
+set_powersave() {
+  ENABLED=$(get_setting system.power.wifi)
+  if [ "${ENABLED}" = "1" ]
+  then
+    log $0 "Enabling WIFI power saving."
+    iw ${WIFI_DEV} set power_save on 2>/dev/null
+  else
+    log $0 "Disabling WIFI power saving."
+    iw ${WIFI_DEV} set power_save off 2>/dev/null
+  fi
+}
+
+wifi_service() {
+  for SERVICE in wpa_supplicant connman-vpn connman
+  do
+    systemctl ${1} ${SERVICE}
+  done
+}
+
+connect_wifi() {
+  systemctl restart connman 2>/dev/null
+  connmanctl enable wifi 2>/dev/null
+  connmanctl connect $(connmanctl services 2>&1 | awk '/\s'${SSID}'\s/ {gsub(/^\*[A-z][A-z]/,""); print $2}') 2>/dev/null
+  set_powersave 2>/dev/null
+}
+
+create_adhoc() {
+  wifi_service stop
+  rfkill unblock wifi
+
+  cat <<EOF >${HOSTAPD_CFG}
+interface=${WIFI_DEV}
+auth_algs=1
+channel=${ADHOC_CHAN}
+wpa=2
+wpa_key_mgmt=WPA-PSK
+wpa_pairwise=CCMP
+rsn_pairwise=CCMP
+wpa_passphrase=${PSK}
+ssid=${SSID}
+EOF
+
+  sysctl -w net.ipv4.ip_forward=1
+
+  ### Flush any existing IP
+  ip addr flush dev ${WIFI_DEV}
+
+  ### Set our IP
+  ip addr add ${NETWORK_ADDRESS}.${ADHOC_CLIENT_ID}/24 dev ${WIFI_DEV} >/dev/null 2>&1
+
+  systemctl start hostapd
+
+  exit 0
+}
+
+destroy_adhoc() {
+  ip addr flush dev ${WIFI_DEV}
+  ip link set ${WIFI_DEV} down
+  systemctl stop hostapd
+}
+
+set_profile() {
+  wifi_service stop
+  cat > "${WIFI_CFG}" <<EOF
+[Settings]
+AutoConnect = true
+
+[service_${OS_NAME}_default]
+Type = wifi
+Name = ${SSID}
+EOF
+
+  # Only add a PSK if one is provided, in order to connect to
+  # open networks.
+  if [ ! -z "${PSK}" ] ; then
+    cat >> "${WIFI_CFG}" <<EOF
+Passphrase = ${PSK}
+EOF
+  fi
+
+  if [ "${WIFI_TYPE}" = "1" ]
+  then
+    cat >> "${WIFI_CFG}" <<EOF
+Security = wpa
+IPv4 = ${NETWORK_ADDRESS}.${ADHOC_CLIENT_ID}/255.255.255.0/255.255.255.254
+IPv6 = off
+EOF
+  fi
+
+  rm -rf ${CFG_ROOT}/connman/wifi_*
+  wifi_service restart
+}
+
+case "${1}" in
+  enable)
+    set_profile >/dev/null 2>&1
+    if [ "${WIFI_TYPE}" = "1" ] && \
+       [ "${ADHOC_CLIENT_ID}" = "1" ]
+    then
+      create_adhoc >/dev/null 2>&1
+    else
+      destroy_adhoc >/dev/null 2>&1
+    fi
+    connect_wifi >/dev/null 2>&1
+    set_setting network.enabled 1
+  ;;
+  disable)
+    if [ "${WIFI_TYPE}" = "1" ]
+    then
+      destroy_adhoc >/dev/null 2>&1
+    fi
+    connmanctl disable wifi >/dev/null 2>&1
+    rfkill block wifi >/dev/null 2>&1
+    rm -f "${WIFI_CFG}" 2>/dev/null
+    set_setting network.enabled 0
+  ;;
+  reconnect)
+    /usr/bin/wifictl disable
+    /usr/bin/wifictl enable
+  ;;
+  list)
+    list_wifi | awk '{sub(/\S+=/,"",$0);print}'
+  ;;
+  channels)
+    iw list | awk '/[0-9] MHz \[/ && ! /disabled|radar|no IR/ { gsub(/^.*\[/,""); gsub(/\].*$/,""); print}'
+  ;;
+  scan)
+    connmanctl scan wifi 2>/dev/null
+  ;;
+  scanlist)
+    set_wifi scan 2>/dev/null
+    list_wifi | awk '{sub(/\S+=/,"",$0);print}'
+  ;;
+  service)
+     get_wifi_service "${SSID}"
+  ;;
+  setpowersave)
+    set_powersave
+  ;;
+  setprofile)
+    set_profile
+  ;;
+esac

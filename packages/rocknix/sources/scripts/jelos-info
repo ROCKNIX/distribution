@@ -1,0 +1,140 @@
+#!/bin/bash
+
+source /etc/profile
+
+### Apply device quirks
+if [ -e "/sys/firmware/devicetree/base/model" ]
+then
+  export QUIRK_DEVICE="$(tr -d '\0' </sys/firmware/devicetree/base/model 2>/dev/null)"
+else
+  export QUIRK_DEVICE="$(tr -d '\0' </sys/class/dmi/id/sys_vendor 2>/dev/null) $(tr -d '\0' </sys/class/dmi/id/product_name 2>/dev/null)"
+fi
+export QUIRK_DEVICE="$(echo ${QUIRK_DEVICE} | sed -e "s#[/]#-#g")"
+
+info_quirks() {
+  for QUIRK in /usr/lib/autostart/quirks/platforms/"${HW_DEVICE}"/info.d/${1}/* \
+               /usr/lib/autostart/quirks/devices/"${QUIRK_DEVICE}"/info.d/${1}/*
+  do
+    "${QUIRK}" 2>/dev/null
+  done
+}
+
+### short version (for osd)
+if test "$1" = "--short"
+then
+    BATT=$(awk 'BEGIN {FS="="} /POWER_SUPPLY_CAPACITY=/ {print $2; exit}' /sys/class/power_supply/{BAT,bat}*/uevent 2>/dev/null)
+    DT=$(date +%H:%M)
+    if test -n "${BATT}"
+    then
+	echo "Battery: ${BATT}% - ${DT}"
+    else
+	echo "${DT}"
+    fi
+    exit 0
+fi
+###
+
+V_CPUNB=$(grep -E $'^processor\t:' /proc/cpuinfo | wc -l)
+V_CPUMODEL1=$(grep -E $'^model name\t:' /proc/cpuinfo | head -1 | sed -e s+'^model name\t: '++)
+V_SYSTEM=$(uname -rs)
+V_ARCH=$(uname -m)
+
+[[ "$V_CPUMODEL1" ]] || V_CPUMODEL1="${HW_CPU}"
+
+# battery
+BATT=$(awk 'BEGIN {FS="="} /POWER_SUPPLY_CAPACITY=/ {print $2; exit}' /sys/class/power_supply/{BAT,bat}*/uevent 2>/dev/null)
+
+case ${HW_ARCH} in
+  aarch64)
+    declare -a CF MF
+
+    CNTR=0
+    for CPUFREQ in /sys/devices/system/cpu/cpufreq/*
+    do
+      if [[ "${CPUFREQ}" =~ boost ]]
+      then
+        continue
+      fi
+      if [ "${CNTR}" -eq 0 ]
+      then
+        CF+=("CURRENT FREQUENCY:")
+        MF+=("MAXIMUM FREQUENCY:")
+      fi
+      RELCPUS=$(cat ${CPUFREQ}/related_cpus 2>/dev/null)
+      if [ "${#RELCPUS}" -gt 1 ]
+      then
+        FIELD="$(cat ${CPUFREQ}/related_cpus 2>/dev/null | awk '{print $1"-"$NF}')"
+      else
+        FIELD="$(cat ${CPUFREQ}/related_cpus 2>/dev/null)"
+      fi
+      CF+=("THREADS ${FIELD}: $(( $(cat ${CPUFREQ}/scaling_cur_freq 2>/dev/null | sort | tail -n 1) / 1000))MHz")
+      MF+=("THREADS ${FIELD}: $(( $(cat ${CPUFREQ}/scaling_max_freq 2>/dev/null | sort | tail -n 1) / 1000))MHz")
+      CNTR=$(( CNTR + 1 ))
+    done
+  ;;
+esac
+
+echo "SYSTEM INFORMATION:"
+echo "DEVICE: ${QUIRK_DEVICE}"
+echo "OPERATING SYSTEM: ${OS_NAME}"
+echo "VERSION: ${OS_VERSION}"
+echo "BUILD ID: ${BUILD_ID:0:7} (${BUILD_BRANCH})"
+echo "KERNEL: ${V_SYSTEM} ($(uname -m))"
+echo "DISK SPACE:"
+echo "/storage: $(df -h /storage | awk '/dev/ {print $3"/"$2" ("$5")"}')"
+echo "/storage/games-internal: $(df -h /storage/games-internal | awk '/dev/ {print $3"/"$2" ("$5")"}')"
+echo "/storage/games-external: $(df -h /storage/games-external | awk '/dev/ {print $3"/"$2" ("$5")"}')"
+
+if test -n "${BATT}"
+then
+    echo "BATTERY INFORMATION:"
+    echo "BATTERY REMAINING: ${BATT}%"
+    BATPATH="/sys/class/power_supply/$(ls /sys/class/power_supply/ | grep -i bat | tail -n 1)"
+    if [ -e "${BATPATH}/health" ]
+    then
+      echo "BATTERY HEALTH: $(cat ${BATPATH}/health)"
+    fi
+    if [ -e "${BATPATH}/status" ]
+    then
+      echo "BATTERY STATE: $(cat ${BATPATH}/status)"
+    fi
+fi
+echo "CPU INFORMATION:"
+echo "CPU: ${V_CPUMODEL1} (${V_CPUNB} Cores)"
+
+# temperature
+# Unit: millidegree Celsius
+if [ -n "${DEVICE_TEMP_SENSOR}" ]
+then
+  TEMPE=$(printf "%.0f" $(awk '{ total += $1; count++ } END { print total/count }' ${DEVICE_TEMP_SENSOR} 2>/dev/null) 2>/dev/null | sed -e s+"[0-9][0-9][0-9]$"++)
+  if [ -n "${TEMPE}" ]
+  then
+    echo "CPU TEMPERATURE: ${TEMPE}°"
+  fi
+fi
+
+if [ "${DEVICE_HAS_FAN}" = "true" ]
+then
+  FANSPEED=$(cat ${DEVICE_FAN_INPUT} 2>/dev/null)
+  if [ "${FANSPEED}" = "0" ]
+  then
+    FANSPEED="OFF"
+  else
+    FANSPEED="${FANSPEED} RPM"
+  fi
+  echo "CPU FAN: ${FANSPEED}"
+fi
+case ${HW_ARCH} in
+  aarch64)
+    for C in "${CF[@]}"
+    do
+      echo ${C}
+    done
+    for M in "${MF[@]}"
+    do
+      echo ${M}
+    done
+  ;;
+esac
+
+info_quirks

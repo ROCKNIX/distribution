@@ -1,0 +1,55 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+
+. /etc/profile
+
+ORGANIZATION="${GIT_ORGANIZATION}"
+BRANCH="$(get_setting updates.branch)"
+case ${BRANCH} in
+  dev)
+    PROJECT="${GIT_REPO}-dev"
+  ;;
+  *)
+    PROJECT="${GIT_REPO}"
+  ;;
+esac
+
+GIT_REPO="https://github.com/${ORGANIZATION}/${PROJECT}"
+GIT_API="https://api.github.com/repos/${ORGANIZATION}/${PROJECT}"
+
+FORCE="$(get_setting updates.force)"
+
+function check_network() {
+  GW=$(ip route | awk '/eth0/ {a=$0} END{print $1}')
+  if [[ ${GW} =~ [0-9] ]]
+  then
+    echo true
+  else
+    echo false
+  fi
+}
+
+function cleanup() {
+  if [ -e "/tmp/release.data" ]
+  then
+    rm -f /tmp/release.data
+  fi
+}
+
+ONLINE_STATUS=$(check_network)
+if [ "${ONLINE_STATUS}" == true ]
+then
+  curl -o /tmp/release.data -H 'Cache-Control: no-cache' -Ls "${GIT_API}/releases"
+  UPDATE_PACKAGE=$(awk 'BEGIN {FS="\""} /'${OS_NAME}-${HW_DEVICE}.${HW_ARCH}'.*tar/ {print $4; exit}' /tmp/release.data | sed -e "s~${OS_NAME}-${HW_DEVICE}.${HW_ARCH}-~~g;s~.tar$~~g")
+  if [ "${UPDATE_PACKAGE}" -gt "${OS_VERSION}" ] \
+  || [ "${FORCE}" == "1" ]
+  then
+    echo "${UPDATE_PACKAGE}"
+    cleanup
+    exit 0
+  fi
+fi
+
+cleanup
+exit 12
