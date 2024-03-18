@@ -19,7 +19,7 @@ configure_package() {
 }
 # to enable xwayland package: https://gitlab.freedesktop.org/xorg/lib/libxcb-wm/-/tree/master/icccm?ref_type=heads
 PKG_MESON_OPTS_TARGET="-Dxcb-errors=disabled \
-					   -Dxwayland=disabled \
+					   -Dxwayland=enabled \
                        -Dexamples=false \
                        -Drenderers=gles2 \
 					   -Dbackends=drm,libinput"

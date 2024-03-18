@@ -7,7 +7,7 @@ PKG_SHA256="a63b2df8722ee595695a0ec6c84bf29a055a9767e63d8e4c07ff568cb6ee0b51"
 PKG_LICENSE="MIT"
 PKG_SITE="https://swaywm.org/"
 PKG_URL="https://github.com/swaywm/sway/releases/download/${PKG_VERSION}/sway-${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain wayland wayland-protocols libdrm libxkbcommon libinput cairo pango libjpeg-turbo dbus json-c wlroots gdk-pixbuf swaybg foot bemenu xcb-util-wm"
+PKG_DEPENDS_TARGET="toolchain wayland wayland-protocols libdrm libxkbcommon libinput cairo pango libjpeg-turbo dbus json-c wlroots gdk-pixbuf swaybg foot bemenu xcb-util-wm xwayland xkbcomp"
 PKG_LONGDESC="i3-compatible Wayland compositor"
 PKG_TOOLCHAIN="meson"
 
@@ -19,7 +19,7 @@ PKG_MESON_OPTS_TARGET="-Ddefault-wallpaper=false \
                        -Dfish-completions=false \
                        -Dswaybar=true \
                        -Dswaynag=true \
-                       -Dxwayland=disabled \
+                       -Dxwayland=enabled \
                        -Dtray=disabled \
                        -Dgdk-pixbuf=enabled \
                        -Dman-pages=disabled \
