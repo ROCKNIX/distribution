@@ -5,7 +5,7 @@
 
 . /etc/profile
 
-if [[ "${UI_SERVICE}" =~ weston.service ]]; then
+if [[ "${UI_SERVICE}" =~ "weston.service|*sway*" ]]; then
 case "${QUIRK_DEVICE}" in
   "Hardkernel ODROID-GO-Ultra"|"Powkiddy RGB10 MAX 3 Pro"|"Hardkernel ODROID-N2*")
     #Fixing ports on S922X, exclude FNA games
