@@ -5,7 +5,7 @@
 PKG_NAME="textviewer"
 PKG_VERSION="fcbda2d1708e9e2c650abc589ea8e7f1fe1d04d8"
 PKG_LICENSE="MIT"
-PKG_SITE="https://github.com/JustEnoughLinuxOS/TvTextViewer"
+PKG_SITE="https://github.com/ROCKNIX/TvTextViewer"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain SDL2"
 PKG_SHORTDESC="Full-screen text viewer tool with gamepad controls"

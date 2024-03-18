@@ -31,13 +31,6 @@ PKG_CONFIGURE_OPTS_TARGET="   --disable-qt \
 			      --enable-kms \
                               --enable-ffmpeg"
 
-case ${DEVICE} in
-  RK3566-BSP*)
-    PKG_DEPENDS_TARGET+=" libgo2"
-    PKG_CONFIGURE_OPTS_TARGET+=" --enable-odroidgo2"
-  ;;
-esac
-
 case ${PROJECT} in
   Rockchip)
     PKG_DEPENDS_TARGET+=" librga"

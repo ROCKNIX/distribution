@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
-PKG_NAME="jelos"
+PKG_NAME="rocknix"
 PKG_VERSION=""
 PKG_ARCH="any"
 PKG_LICENSE="GPLv2"

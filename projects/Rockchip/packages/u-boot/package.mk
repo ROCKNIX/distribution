@@ -5,22 +5,18 @@
 
 PKG_NAME="u-boot"
 PKG_ARCH="arm aarch64"
-PKG_SITE="https://github.com/JustEnoughLinuxOS"
+PKG_SITE="https://github.com/ROCKNIX"
 PKG_LICENSE="GPL"
 PKG_DEPENDS_TARGET="toolchain Python3 swig:host rkbin glibc pyelftools:host"
 PKG_LONGDESC="Rockchip U-Boot is a bootloader for embedded systems."
 PKG_PATCH_DIRS+="${DEVICE}"
 
 case ${DEVICE} in
- RK358*)
+  RK3588*)
     PKG_VERSION="d34ff0716"
-    PKG_URL="${PKG_SITE}/rk35xx-uboot/archive/${PKG_VERSION}.tar.gz"
+    PKG_URL="${PKG_SITE}/rk3588-uboot/archive/${PKG_VERSION}.tar.gz"
   ;;
-  RK3566-BSP*)
-    PKG_URL="${PKG_SITE}/rk356x-uboot.git"
-    PKG_VERSION="97c658238f7ccd436fbdede451bfd7488514a5c8"
-  ;;
-  RK356*)
+  RK3566*)
     PKG_URL="https://github.com/u-boot/u-boot.git"
     PKG_VERSION="e8f2404e093daf6cc3ac2b3233e3c6770d13e371"
     PKG_GIT_CLONE_BRANCH="master"
@@ -84,20 +80,11 @@ make_target() {
       export BL31="${PKG_BL31}"
       export ROCKCHIP_TPL="${PKG_DATAFILE}"
 
-      case ${DEVICE} in
-        RK3566-BSP*)
-          DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm64 make mrproper
-          DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm64 make ${UBOOT_CONFIG} BL31=${PKG_BL31} ${PKG_LOADER} u-boot.dtb u-boot.itb CONFIG_MKIMAGE_DTC_PATH="scripts/dtc/dtc"
-          DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm64 _python_sysroot="${TOOLCHAIN}" _python_prefix=/ _python_exec_prefix=/ make HOSTCC="${HOST_CC}" HOSTLDFLAGS="-L${TOOLCHAIN}/lib" HOSTSTRIP="true" CONFIG_MKIMAGE_DTC_PATH="scripts/dtc/dtc"
-        ;;
-        *)
-          DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm64 make mrproper
-          echo "begin make"
-          DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="--lssl -lcrypto" ARCH=arm64 make ${UBOOT_CONFIG} ${PKG_LOADER} u-boot.dtb u-boot.img tools HOSTCC="${HOST_CC}" HOSTLDFLAGS="-L${TOOLCHAIN}/lib" HOSTCFLAGS="-I${TOOLCHAIN}/include"
-          echo "end make"
-          DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm64 _python_sysroot="${TOOLCHAIN}" _python_prefix=/ _python_exec_prefix=/ make HOSTCC="${HOST_CC}" HOSTLDFLAGS="-L${TOOLCHAIN}/lib" HOSTCFLAGS="-I${TOOLCHAIN}/include" HOSTSTRIP="true" CONFIG_MKIMAGE_DTC_PATH="scripts/dtc/dtc"
-        ;;
-      esac
+      DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm64 make mrproper
+      echo "begin make"
+      DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="--lssl -lcrypto" ARCH=arm64 make ${UBOOT_CONFIG} ${PKG_LOADER} u-boot.dtb u-boot.img tools HOSTCC="${HOST_CC}" HOSTLDFLAGS="-L${TOOLCHAIN}/lib" HOSTCFLAGS="-I${TOOLCHAIN}/include"
+      echo "end make"
+      DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm64 _python_sysroot="${TOOLCHAIN}" _python_prefix=/ _python_exec_prefix=/ make HOSTCC="${HOST_CC}" HOSTLDFLAGS="-L${TOOLCHAIN}/lib" HOSTCFLAGS="-I${TOOLCHAIN}/include" HOSTSTRIP="true" CONFIG_MKIMAGE_DTC_PATH="scripts/dtc/dtc"
     elif [[ "${PKG_SOC}" =~ "rk3588" ]]
     then
       DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm64 make mrproper
