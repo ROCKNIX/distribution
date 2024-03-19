@@ -34,7 +34,7 @@ PKG_CMAKE_OPTS_HOST+="
 pre_configure_target() {
   PKG_CMAKE_OPTS_TARGET+="
 	-GNinja \
-        -DQT_HOST_PATH=${PKG_BUILD}/.x86_64-jelos-linux-gnu \
+        -DQT_HOST_PATH=${PKG_BUILD}/.x86_64-rocknix-linux-gnu \
         -DFEATURE_gui=ON \
 	-DFEATURE_concurrent=OFF \
 	-DFEATURE_xml=OFF \

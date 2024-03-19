@@ -1,1 +1,1 @@
-Moved to [https://jelos.org/play/netplay/](https://jelos.org/play/netplay/)
+Moved to [https://rocknix.org/play/netplay/](https://rocknix.org/play/netplay/)

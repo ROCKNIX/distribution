@@ -182,7 +182,7 @@ pre_configure_target() {
                          -Dglib-asserts=disabled \
                          -Dglib-checks=disabled \
                          -Dpackage-name=gst-plugins-bad \
-                         -Dpackage-origin=jelos.org \
+                         -Dpackage-origin=rocknix.org \
                          -Ddoc=disabled"
 }
 

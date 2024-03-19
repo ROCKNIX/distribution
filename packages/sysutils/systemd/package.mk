@@ -218,8 +218,8 @@ post_makeinstall_target() {
   cp ${PKG_DIR}/scripts/systemd-timesyncd-setup ${INSTALL}/usr/sbin
 
   # /etc/resolv.conf and /etc/hosts must be writable
-  ln -sf /run/jelos/resolv.conf ${INSTALL}/etc/resolv.conf
-  ln -sf /run/jelos/hosts ${INSTALL}/etc/hosts
+  ln -sf /run/rocknix/resolv.conf ${INSTALL}/etc/resolv.conf
+  ln -sf /run/rocknix/hosts ${INSTALL}/etc/hosts
 
   # provide 'halt', 'shutdown', 'reboot' & co.
   ln -sf /usr/bin/systemctl ${INSTALL}/usr/sbin/halt

@@ -4,7 +4,7 @@
 PKG_NAME="RTL8821CS-firmware"
 PKG_VERSION=""
 PKG_LICENSE="Apache-2.0"
-PKG_SITE="https://jelos.org"
+PKG_SITE="https://rocknix.org"
 PKG_LONGDESC="Realtek RTL8821CS Linux firmware"
 PKG_DEPENDS_TARGET="linux rtk_hciattach"
 PKG_TOOLCHAIN="manual"

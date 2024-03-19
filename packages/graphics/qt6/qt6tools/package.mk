@@ -23,7 +23,7 @@ pre_configure_host() {
 
 pre_configure_target() {
   PKG_CMAKE_OPTS_TARGET+="	-GNinja \
-				-DQT_HOST_PATH=${PKG_BUILD}/.x86_64-jelos-linux-gnu \
+				-DQT_HOST_PATH=${PKG_BUILD}/.x86_64-rocknix-linux-gnu \
 				-DQT_FEATURE_linguist=ON \
 				-DQT_FEATURE_qdbus=ON \
 				-DQT_DEBUG_FIND_PACKAGE=ON

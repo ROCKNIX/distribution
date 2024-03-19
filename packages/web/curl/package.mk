@@ -62,7 +62,7 @@ PKG_CONFIGURE_OPTS_TARGET="ac_cv_lib_rtmp_RTMP_Init=yes \
                            --with-ssl \
                            --without-mbedtls \
                            --without-nss \
-                           --with-ca-bundle=/run/jelos/cacert.pem \
+                           --with-ca-bundle=/run/rocknix/cacert.pem \
                            --without-ca-path \
                            --without-libpsl \
                            --without-libssh2 \

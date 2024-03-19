@@ -1,1 +1,1 @@
-Moved to [https://jelos.org/play/controls/](https://jelos.org/play/controls/)
+Moved to [https://rocknix.org/play/controls/](https://rocknix.org/play/controls/)

@@ -25,9 +25,9 @@ PKG_MESON_OPTS_TARGET+=" -Dxvfb=false \
                        -Dinput_thread=true \
                        -Dxkb_dir=${XORG_PATH_XKB} \
                        -Dxkb_output_dir="/var/cache/xkb" \
-                       -Dvendor_name="JELOS" \
-                       -Dvendor_name_short="JELOS" \
-                       -Dvendor_web="https://jelos.org" \
+                       -Dvendor_name="ROCKNIX" \
+                       -Dvendor_name_short="ROCKNIX" \
+                       -Dvendor_web="https://rocknix.org" \
                        -Dlisten_tcp=false \
                        -Dlisten_unix=true \
                        -Dlisten_local=false \

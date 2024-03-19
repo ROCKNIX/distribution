@@ -1,1 +1,1 @@
-Moved to [https://jelos.org/contribute/code-of-conduct/](https://jelos.org/contribute/code-of-conduct/)
+Moved to [https://rocknix.org/contribute/code-of-conduct/](https://rocknix.org/contribute/code-of-conduct/)

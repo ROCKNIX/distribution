@@ -90,16 +90,16 @@ post_makeinstall_target() {
   # give user the chance to include their own CA
   mkdir -p ${INSTALL}/usr/bin
     cp ${PKG_DIR}/scripts/openssl-config ${INSTALL}/usr/bin
-    ln -sf /run/jelos/cacert.pem ${INSTALL}/etc/ssl/cacert.pem
-    ln -sf /run/jelos/cacert.pem ${INSTALL}/etc/ssl/cert.pem
+    ln -sf /run/rocknix/cacert.pem ${INSTALL}/etc/ssl/cacert.pem
+    ln -sf /run/rocknix/cacert.pem ${INSTALL}/etc/ssl/cert.pem
 
   # backwards comatibility
   mkdir -p ${INSTALL}/etc/pki/tls
-    ln -sf /run/jelos/cacert.pem ${INSTALL}/etc/pki/tls/cacert.pem
+    ln -sf /run/rocknix/cacert.pem ${INSTALL}/etc/pki/tls/cacert.pem
   mkdir -p ${INSTALL}/etc/pki/tls/certs
-    ln -sf /run/jelos/cacert.pem ${INSTALL}/etc/pki/tls/certs/ca-bundle.crt
+    ln -sf /run/rocknix/cacert.pem ${INSTALL}/etc/pki/tls/certs/ca-bundle.crt
   mkdir -p ${INSTALL}/usr/lib/ssl
-    ln -sf /run/jelos/cacert.pem ${INSTALL}/usr/lib/ssl/cert.pem
+    ln -sf /run/rocknix/cacert.pem ${INSTALL}/usr/lib/ssl/cert.pem
 }
 
 post_install() {

@@ -5,7 +5,7 @@
 PKG_NAME="toolchain"
 PKG_VERSION=""
 PKG_LICENSE="GPL"
-PKG_SITE="https://jelos.org"
+PKG_SITE="https://rocknix.org"
 PKG_URL=""
 PKG_DEPENDS_HOST="autoconf:host autoconf-archive:host automake:host bison:host configtools:host cmake:host flex:host intltool:host libtool:host ninja:host make:host meson:host p7zip:host pigz:host sed:host xmlstarlet:host xz:host"
 PKG_DEPENDS_TARGET="toolchain:host gcc:host"

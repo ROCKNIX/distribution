@@ -3,7 +3,7 @@
 
 PKG_NAME="gamesupport"
 PKG_LICENSE="GPLv2"
-PKG_SITE="https://jelos.org"
+PKG_SITE="https://rocknix.org"
 PKG_SECTION="virtual"
 PKG_LONGDESC="Game support software metapackage."
 

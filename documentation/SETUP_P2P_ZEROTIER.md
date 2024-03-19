@@ -1,1 +1,1 @@
-Moved to [https://jelos.org/configure/vpn/#zerotier](https://jelos.org/configure/vpn/#zerotier)
+Moved to [https://rocknix.org/configure/vpn/#zerotier](https://rocknix.org/configure/vpn/#zerotier)

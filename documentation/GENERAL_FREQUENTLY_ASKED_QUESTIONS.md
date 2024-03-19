@@ -1,1 +1,1 @@
-Moved to [https://jelos.org/faqs/](https://jelos.org/faqs/)
+Moved to [https://rocknix.org/faqs/](https://rocknix.org/faqs/)

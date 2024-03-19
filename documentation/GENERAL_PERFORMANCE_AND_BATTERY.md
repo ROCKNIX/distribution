@@ -1,1 +1,1 @@
-Moved to [https://jelos.org/configure/optimizations/](https://jelos.org/configure/optimizations/)
+Moved to [https://rocknix.org/configure/optimizations/](https://rocknix.org/configure/optimizations/)

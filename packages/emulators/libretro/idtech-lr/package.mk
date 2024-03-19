@@ -3,7 +3,7 @@
 
 PKG_NAME="idtech-lr"
 PKG_LICENSE="Apache-2.0"
-PKG_SITE="https://jelos.org"
+PKG_SITE="https://rocknix.org"
 PKG_LONGDESC="Package for all iD Software game engines."
 PKG_TOOLCHAIN="manual"
 

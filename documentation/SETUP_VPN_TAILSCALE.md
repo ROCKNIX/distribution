@@ -1,1 +1,1 @@
-Moved to [https://jelos.org/configure/vpn/#tailscale](https://jelos.org/configure/vpn/#tailscale)
+Moved to [https://rocknix.org/configure/vpn/#tailscale](https://rocknix.org/configure/vpn/#tailscale)

@@ -1,1 +1,1 @@
-Moved to [https://jelos.org/configure/shaders/](https://jelos.org/configure/shaders/)
+Moved to [https://rocknix.org/configure/shaders/](https://rocknix.org/configure/shaders/)

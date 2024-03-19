@@ -1,1 +1,1 @@
-Moved to [https://jelos.org/contribute/packages/](https://jelos.org/contribute/packages/)
+Moved to [https://rocknix.org/contribute/packages/](https://rocknix.org/contribute/packages/)

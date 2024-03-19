@@ -8,8 +8,8 @@ PKG_LICENSE="GPLv2"
 PKG_SITE=""
 PKG_URL=""
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SHORTDESC="JELOS Meta Package"
-PKG_LONGDESC="JELOS Meta Package"
+PKG_SHORTDESC="ROCKNIX Meta Package"
+PKG_LONGDESC="ROCKNIX Meta Package"
 PKG_IS_ADDON="no"
 PKG_AUTORECONF="no"
 PKG_TOOLCHAIN="make"
@@ -48,7 +48,7 @@ EOF
 }
 
 post_install() {
-  ln -sf jelos.target ${INSTALL}/usr/lib/systemd/system/default.target
+  ln -sf rocknix.target ${INSTALL}/usr/lib/systemd/system/default.target
 
   if [ ! -d "${INSTALL}/usr/share" ]
   then
@@ -71,7 +71,7 @@ EOF
   chmod 0755 ${INSTALL}/usr/bin/* 2>/dev/null ||:
 
   ### Fix and migrate to autostart package
-  enable_service jelos-autostart.service
+  enable_service rocknix-autostart.service
 
   ### Take a backup of the system configuration on shutdown
   enable_service save-sysconfig.service

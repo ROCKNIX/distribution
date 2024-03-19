@@ -1,1 +1,1 @@
-Moved to [https://jelos.org/contribute/quirks/](https://jelos.org/contribute/quirks/)
+Moved to [https://rocknix.org/contribute/quirks/](https://rocknix.org/contribute/quirks/)

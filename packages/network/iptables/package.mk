@@ -24,8 +24,8 @@ post_makeinstall_target() {
   mkdir -p ${INSTALL}/etc/iptables/
     cp -PR ${PKG_DIR}/config/* ${INSTALL}/etc/iptables/
 
-  mkdir -p ${INSTALL}/usr/lib/jelos/
-    cp ${PKG_DIR}/scripts/iptables_helper ${INSTALL}/usr/lib/jelos/
+  mkdir -p ${INSTALL}/usr/lib/rocknix/
+    cp ${PKG_DIR}/scripts/iptables_helper ${INSTALL}/usr/lib/rocknix/
 }
 
 post_install() {

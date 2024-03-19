@@ -3,7 +3,7 @@
 
 PKG_NAME="emulators"
 PKG_LICENSE="GPLv2"
-PKG_SITE="https://jelos.org"
+PKG_SITE="https://rocknix.org"
 PKG_SECTION="emulation" # Do not change to virtual or makeinstall_target will not execute.
 PKG_LONGDESC="Emulation metapackage."
 PKG_TOOLCHAIN="manual"

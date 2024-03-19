@@ -24,8 +24,8 @@ RUN apt-get install -y \
 
 ### Cross compiling on ARM
 RUN if [ "$(uname -m)" = "aarch64" ]; then apt-get install -y --no-install-recommends qemu-user-binfmt libc6-dev-amd64-cross; fi
-RUN if [ ! -d /lib64 ]; then ln -sf /usr/x86_64-jelos-linux-gnu/lib64 /lib64; fi
-RUN if [ ! -d /lib/x86_64-jelos-linux-gnu ]; then ln -sf /usr/x86_64-jelos-linux-gnu/lib /lib/x86_64-jelos-linux-gnu; fi
+RUN if [ ! -d /lib64 ]; then ln -sf /usr/x86_64-rocknix-linux-gnu/lib64 /lib64; fi
+RUN if [ ! -d /lib/x86_64-rocknix-linux-gnu ]; then ln -sf /usr/x86_64-rocknix-linux-gnu/lib /lib/x86_64-rocknix-linux-gnu; fi
 
 RUN mkdir -p /work && chown docker /work
 

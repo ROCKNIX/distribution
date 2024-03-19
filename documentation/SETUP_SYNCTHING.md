@@ -1,1 +1,1 @@
-Moved to [https://jelos.org/configure/cloud-sync/](https://jelos.org/configure/cloud-sync/)
+Moved to [https://rocknix.org/configure/cloud-sync/](https://rocknix.org/configure/cloud-sync/)

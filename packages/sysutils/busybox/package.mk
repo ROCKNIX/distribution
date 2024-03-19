@@ -127,11 +127,11 @@ makeinstall_target() {
     cp ${PKG_DIR}/scripts/pastebinit ${INSTALL}/usr/bin/
     ln -sf pastebinit ${INSTALL}/usr/bin/paste
 
-  mkdir -p ${INSTALL}/usr/lib/jelos/
-    cp ${PKG_DIR}/scripts/functions ${INSTALL}/usr/lib/jelos/
-    cp ${PKG_DIR}/scripts/fs-resize ${INSTALL}/usr/lib/jelos/
+  mkdir -p ${INSTALL}/usr/lib/rocknix/
+    cp ${PKG_DIR}/scripts/functions ${INSTALL}/usr/lib/rocknix/
+    cp ${PKG_DIR}/scripts/fs-resize ${INSTALL}/usr/lib/rocknix/
     sed -e "s/@DISTRONAME@/${DISTRONAME}/g" \
-        -i ${INSTALL}/usr/lib/jelos/fs-resize
+        -i ${INSTALL}/usr/lib/rocknix/fs-resize
 
   mkdir -p ${INSTALL}/etc
     cp ${PKG_DIR}/config/profile ${INSTALL}/etc

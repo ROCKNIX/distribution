@@ -1,1 +1,1 @@
-Moved to [https://jelos.org/configure/vpn/#wireguard](https://jelos.org/configure/vpn/#wireguard)
+Moved to [https://rocknix.org/configure/vpn/#wireguard](https://rocknix.org/configure/vpn/#wireguard)

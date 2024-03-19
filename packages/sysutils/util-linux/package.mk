@@ -81,8 +81,8 @@ fi
 
 post_makeinstall_target() {
   if [ "${SWAP_SUPPORT}" = "yes" ]; then
-    mkdir -p ${INSTALL}/usr/lib/jelos
-      cp -PR ${PKG_DIR}/scripts/mount-swap ${INSTALL}/usr/lib/jelos
+    mkdir -p ${INSTALL}/usr/lib/rocknix
+      cp -PR ${PKG_DIR}/scripts/mount-swap ${INSTALL}/usr/lib/rocknix
 
     mkdir -p ${INSTALL}/etc
       cat ${PKG_DIR}/config/swap.conf | \
