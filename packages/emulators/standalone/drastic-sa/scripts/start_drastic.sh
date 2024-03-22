@@ -50,6 +50,7 @@ rm -rf /storage/.config/drastic/backup
 ln -sf /storage/roms/nds /storage/.config/drastic/backup
 
 cd /storage/.config/drastic/
+@HOTKEY@
 @LIBEGL@
 $GPTOKEYB "drastic" -c "drastic.gptk" &
 ./drastic "$1"

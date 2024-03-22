@@ -13,7 +13,7 @@ PKG_PATCH_DIRS+="${DEVICE}"
 
 case ${DEVICE} in
   RK3588*)
-    PKG_VERSION="d34ff0716"
+    PKG_VERSION="ad0cfba1ac51e8dd8b039f6c56b9c9f9a679df91"
     PKG_URL="${PKG_SITE}/rk3588-uboot/archive/${PKG_VERSION}.tar.gz"
   ;;
   RK3566*)
