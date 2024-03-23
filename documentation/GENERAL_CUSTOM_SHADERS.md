@@ -1,1 +1,0 @@
-Moved to [https://rocknix.org/configure/shaders/](https://rocknix.org/configure/shaders/)

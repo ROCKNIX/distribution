@@ -1,1 +1,0 @@
-Moved to [https://rocknix.org/configure/vpn/#wireguard](https://rocknix.org/configure/vpn/#wireguard)

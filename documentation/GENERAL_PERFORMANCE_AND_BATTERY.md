@@ -1,1 +1,0 @@
-Moved to [https://rocknix.org/configure/optimizations/](https://rocknix.org/configure/optimizations/)

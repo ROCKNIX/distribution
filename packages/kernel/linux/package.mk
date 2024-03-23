@@ -16,17 +16,17 @@ PKG_PATCH_DIRS="${LINUX} ${DEVICE} default"
 
 case ${DEVICE} in
   RK3588*)
-    PKG_VERSION="494c0a303537c55971421b5552d98eb55e652cf3"
-    PKG_URL="https://github.com/armbian/linux-rockchip/archive/${PKG_VERSION}.tar.gz"
-    PKG_GIT_CLONE_BRANCH="rk-5.10-rkr6"
+    PKG_VERSION="6a2f44f4d0ac3aa90ac5050138d08b46118da9cd"
+    PKG_URL="https://github.com/hbiyik/linux-rockchip/archive/${PKG_VERSION}.tar.gz"
+    PKG_GIT_CLONE_BRANCH="rk-6.1-rkr1-panthor-v6"
   ;;
-  RK3566*)
-    PKG_VERSION="6.8-rc6"
-    PKG_URL="https://git.kernel.org/torvalds/t/${PKG_NAME}-${PKG_VERSION}.tar.gz"
+  RK3326*)
+    PKG_VERSION="6.7.9"
+    PKG_URL="${PKG_SITE}/pub/linux/kernel/v6.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
   ;;
   *)
     PKG_VERSION="6.8.1"
-    PKG_URL="https://www.kernel.org/pub/linux/kernel/v6.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
+    PKG_URL="${PKG_SITE}/pub/linux/kernel/v6.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
   ;;
 esac
 

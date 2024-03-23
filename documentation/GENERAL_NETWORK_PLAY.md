@@ -1,1 +1,0 @@
-Moved to [https://rocknix.org/play/netplay/](https://rocknix.org/play/netplay/)

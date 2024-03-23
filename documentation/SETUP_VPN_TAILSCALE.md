@@ -1,1 +1,0 @@
-Moved to [https://rocknix.org/configure/vpn/#tailscale](https://rocknix.org/configure/vpn/#tailscale)

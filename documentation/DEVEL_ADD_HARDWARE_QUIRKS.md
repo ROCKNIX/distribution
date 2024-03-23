@@ -1,1 +1,0 @@
-Moved to [https://rocknix.org/contribute/quirks/](https://rocknix.org/contribute/quirks/)
