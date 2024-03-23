@@ -11,18 +11,9 @@ PKG_TOOLCHAIN="cmake"
 
 case ${TARGET_ARCH} in
   aarch64)
-    case ${DEVICE} in
-      RK356*)
-        PKG_VERSION="5ab5070d73f1acc51e064bd96be4ba6ce3c06f5c"
-        PKG_PATCH_DIRS+=" legacy"
-        PKG_CMAKE_OPTS_TARGET+=" -DUSE_DRMKMS=ON -DENABLE_EGL=ON -DUSE_MALI=OFF"
-      ;;
-      *)
-        PKG_VERSION="bfa792ddbff11c102521124f235ccb310cac6e6a"
-        PKG_PATCH_DIRS+=" wayland/${TARGET_ARCH}"
-      ;;
-    esac
-    ;;
+    PKG_VERSION="bfa792ddbff11c102521124f235ccb310cac6e6a"
+    PKG_PATCH_DIRS+=" wayland/${TARGET_ARCH}"
+  ;;
   x86_64)
       PKG_VERSION="a45b50c3e996af823d35a6a193458532c4f4316d"
       PKG_PATCH_DIRS+=" wayland/${TARGET_ARCH}"
