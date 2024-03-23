@@ -12,13 +12,20 @@ then
   mkdir $SWAY_HOME
 fi
 
-if [ ! -f "$SWAY_HOME/config" ]
-then
-    cp $SWAY_CONFIG $SWAY_HOME/config
-fi
+# Copy base config, we are overwriting any user config
+cp $SWAY_CONFIG $SWAY_HOME/config
+
+# get the card number, this may not be a safe way to derive it...
+card_no=$(ls /sys/class/drm/ | grep -E "HDMI|DSI" | head -n 1 | cut -b 5)
+
+env_file=/storage/.config/profile.d/095-sway
+
+# Write wlroots env vars
+rm -f ${env_file}
+echo "WLR_DRM_DEVICES=/dev/dri/card${card_no}" >> ${env_file}
+echo "WLR_BACKENDS=drm,libinput" >> ${env_file}
 
 # Scan connectors
-card_no=${WLR_DRM_DEVICES: -1}
 card=/sys/class/drm/card${card_no}
 for connector in ${card}/card${card_no}*/
 do
@@ -33,15 +40,16 @@ done
 if [[ $(grep -L "output" $SWAY_HOME/config) ]]
 then
 rot=$(cat /sys/class/graphics/fbcon/rotate)
-output_tmp="output ${con} transform "
+output="output ${con}"
     if [ $rot = 1 ]; then
-        output="${output_tmp} 90"
+        angle="90"
     elif [ $rot = 2 ]; then
-        output="${output_tmp} 180"
+        angle="180"
     elif [ $rot = 3 ]; then
-        output="${output_tmp} 270"
+        angle="270"
     else
-        output="${output_tmp} 0"
+        angle="0"
     fi
-    echo "${output}" >> $SWAY_HOME/config
+    echo "${output} transform ${angle}" >> $SWAY_HOME/config
+    echo "${output} max_render_time off" >> $SWAY_HOME/config
 fi
