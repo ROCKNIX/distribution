@@ -5,7 +5,7 @@
 PKG_NAME="jstest-sdl"
 PKG_VERSION="f4fdf6daae687d19b303d8ba8809ff5a68bc33a4"
 PKG_LICENSE="MIT"
-PKG_SITE="https://github.com/JustEnoughLinuxOS/jstest-sdl"
+PKG_SITE="https://github.com/ROCKNIX/jstest-sdl"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain SDL2 ncurses"
 PKG_SHORTDESC="Simple SDL joystick test application for the console"

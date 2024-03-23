@@ -11,10 +11,6 @@ PKG_DEPENDS_TARGET="toolchain ncurses SDL_sound wine"
 PKG_LONGDESC="Box86 lets you run x86 Linux programs (such as games) on non-x86 Linux systems, like ARM."
 PKG_TOOLCHAIN="cmake"
 
-if [ "${OPENGL}" = "no" ]; then
-  PKG_DEPENDS_TARGET+=" gl4es"
-fi
-
 PKG_CMAKE_OPTS_TARGET+=" 	-DCMAKE_BUILD_TYPE=Release \
 				-DARM_DYNAREC=On"
 
