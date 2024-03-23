@@ -1,1 +1,0 @@
-Moved to [https://rocknix.org/play/controls/](https://rocknix.org/play/controls/)

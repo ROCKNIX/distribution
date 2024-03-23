@@ -1,1 +1,0 @@
-Moved to [https://rocknix.org/configure/vpn/#zerotier](https://rocknix.org/configure/vpn/#zerotier)

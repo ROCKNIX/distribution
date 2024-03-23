@@ -1,1 +1,0 @@
-Moved to [https://rocknix.org/donations/](https://rocknix.org/donations/)

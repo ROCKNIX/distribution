@@ -1,1 +1,0 @@
-Moved to [https://rocknix.org/contribute/packages/](https://rocknix.org/contribute/packages/)

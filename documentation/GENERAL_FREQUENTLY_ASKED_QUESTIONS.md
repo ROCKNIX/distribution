@@ -1,1 +1,0 @@
-Moved to [https://rocknix.org/faqs/](https://rocknix.org/faqs/)

@@ -10,7 +10,7 @@ PKG_SHORTDESC="Moonlight is an open source implementation of NVIDIA's GameStream
 GET_HANDLER_SUPPORT="git"
 PKG_PATCH_DIRS+="${DEVICE}"
 
-if [ "${TARGET_ARCH}" = "x86_64" ] 
+if [ "${TARGET_ARCH}" = "x86_64" ]
 then
   PKG_SITE+="qt"
   PKG_URL="${PKG_SITE}.git"
@@ -44,7 +44,7 @@ fi
 
 if [ "${PROJECT}" = "Rockchip" ]
 then
-  PKG_DEPENDS_TARGET+=" librga rkmpp"
+  PKG_DEPENDS_TARGET+=" rkmpp"
 fi
 
 if [ ! "${OPENGL}" = "no" ]; then

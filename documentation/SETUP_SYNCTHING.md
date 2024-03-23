@@ -1,1 +1,0 @@
-Moved to [https://rocknix.org/configure/cloud-sync/](https://rocknix.org/configure/cloud-sync/)
