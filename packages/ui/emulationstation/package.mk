@@ -3,7 +3,7 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="emulationstation"
-PKG_VERSION="86666dc57d4fb25debd90d7830c6f1e75b0cc002"
+PKG_VERSION="0feded0e3275440b3c2eaddfd778c2cca515be83"
 PKG_GIT_CLONE_BRANCH="main"
 PKG_REV="1"
 PKG_ARCH="any"
