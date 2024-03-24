@@ -31,12 +31,6 @@ PKG_CONFIGURE_OPTS_TARGET="   --disable-qt \
 			      --enable-kms \
                               --enable-ffmpeg"
 
-case ${PROJECT} in
-  Rockchip)
-    PKG_DEPENDS_TARGET+=" librga"
-  ;;
-esac
-
 case ${ARCH} in
   arm)
     PKG_CONFIGURE_OPTS_TARGET+=" --enable-neon"
