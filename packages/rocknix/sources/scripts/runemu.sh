@@ -105,7 +105,7 @@ function bluetooth() {
                 ${VERBOSE} && log $0 "Disabling BT"
                 if [[ "${BLUETOOTH_STATE}" == "1" ]]
                 then
-                        NPID=$(pgrep -f batocera-bluetooth-agent)
+                        NPID=$(pgrep -f rocknix-bluetooth-agent)
                         if [[ ! -z "$NPID" ]]; then
                                 kill "$NPID"
                         fi
@@ -115,7 +115,7 @@ function bluetooth() {
                 ${VERBOSE} && log $0 "Enabling BT"
                 if [[ "${BLUETOOTH_STATE}" == "1" ]]
                 then
-                        systemd-run batocera-bluetooth-agent
+                        systemd-run rocknix-bluetooth-agent
                 fi
         fi
 }
