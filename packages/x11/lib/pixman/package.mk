@@ -3,38 +3,26 @@
 # Copyright (C) 2019-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="pixman"
-PKG_VERSION="0.42.2"
-PKG_SHA256="5747d2ec498ad0f1594878cc897ef5eb6c29e91c53b899f7f71b506785fc1376"
+PKG_VERSION="0.43.2"
+PKG_SHA256="b43dc9549c02c598fb11321d6fca47151f739a076c73fcd8971b5c023a06949e"
 PKG_LICENSE="OSS"
 PKG_SITE="https://www.x.org/"
 PKG_URL="https://xorg.freedesktop.org/archive/individual/lib/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_HOST="toolchain:host"
 PKG_DEPENDS_TARGET="toolchain util-macros"
 PKG_LONGDESC="Pixman is a generic library for manipulating pixel regions, contains low-level pixel manipulation routines."
-PKG_TOOLCHAIN="configure"
+PKG_TOOLCHAIN="meson"
 
 if [ "${TARGET_ARCH}" = arm ]; then
-  if target_has_feature neon; then
-    PIXMAN_NEON="--enable-arm-neon"
-  else
-    PIXMAN_NEON="--disable-arm-neon"
-  fi
-  PIXMAN_CONFIG="--disable-mmx --disable-sse2 --disable-vmx --enable-arm-simd ${PIXMAN_NEON} --disable-arm-iwmmxt"
+  PIXMAN_CONFIG="-Darm-simd=enabled -Dneon=enabled"
 elif [ "${TARGET_ARCH}" = aarch64 ]; then
-  PIXMAN_CONFIG="--disable-mmx --disable-sse2 --disable-vmx --disable-arm-simd --disable-arm-neon --disable-arm-iwmmxt"
+  PIXMAN_CONFIG="-Da64-neon=enabled"
 elif [ "${TARGET_ARCH}" = x86_64  ]; then
-  PIXMAN_CONFIG="--enable-mmx --enable-sse2 --disable-ssse3 --disable-vmx --disable-arm-simd --disable-arm-neon"
+  PIXMAN_CONFIG="-Dmmx=enabled -Dsse2=enabled -Dssse3=enabled"
 fi
 
-PKG_CONFIGURE_OPTS_TARGET="--disable-openmp \
-                           --disable-loongson-mmi \
-                           ${PIXMAN_CONFIG} \
-                           --disable-mips-dspr2 \
-                           --enable-gcc-inline-asm \
-                           --disable-timers \
-                           --disable-gtk \
-                           --disable-libpng \
-                           --with-gnu-ld"
+PKG_MESON_OPTS_TARGET="${PIXMAN_CONFIG} \
+                       -Dgnu-inline-asm=enabled"
 
 post_makeinstall_target() {
   cp ${SYSROOT_PREFIX}/usr/lib/pkgconfig/pixman-1.pc \

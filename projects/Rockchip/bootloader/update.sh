@@ -144,7 +144,7 @@ if [ -f $SYSTEM_ROOT/usr/share/bootloader/idbloader.img ]; then
   echo "done"
 fi
 
-for BOOT_IMAGE in u-boot.itb u-boot.img rk3399-uboot.bin
+for BOOT_IMAGE in u-boot.itb u-boot.img
 do
   if [ -f "$SYSTEM_ROOT/usr/share/bootloader/${BOOT_IMAGE}" ]; then
     echo "Updating ${BOOT_IMAGE}..."
@@ -152,6 +152,12 @@ do
     break
   fi
 done
+
+if [ -f $SYSTEM_ROOT/usr/share/bootloader/rk3399-uboot.bin ]; then
+  echo -n "Updating uboot.bin... "
+  dd if=$SYSTEM_ROOT/usr/share/bootloader/rk3399-uboot.bin of=$BOOT_DISK bs=512 seek=64 conv=fsync &>/dev/null
+  echo "done"
+fi
 
 if [ -f $SYSTEM_ROOT/usr/share/bootloader/trust.img ]; then
   echo -n "Updating trust.img... "
