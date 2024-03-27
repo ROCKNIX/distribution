@@ -372,10 +372,10 @@ then
   onlinethreads ${NUMTHREADS} 0
 fi
 
-### Set the performance mode for emulation
-PERFORMANCE_MODE=$(get_setting "cpugovernor" "${PLATFORM}" "${ROMNAME##*/}")
-${VERBOSE} && log $0 "Set emulation performance mode to (${PERFORMANCE_MODE})"
-${PERFORMANCE_MODE}
+### Set the governor mode for emulation
+CPU_GOVERNOR=$(get_setting "cpugovernor" "${PLATFORM}" "${ROMNAME##*/}")
+${VERBOSE} && log $0 "Set emulation performance mode to (${CPU_GOVERNOR})"
+${CPU_GOVERNOR}
 
 # If the rom is a shell script just execute it, useful for DOSBOX and ScummVM scan scripts
 if [[ "${ROMNAME}" == *".sh" ]]; then
