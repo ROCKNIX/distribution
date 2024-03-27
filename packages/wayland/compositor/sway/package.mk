@@ -32,9 +32,13 @@ pre_configure_target() {
 
 post_makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/sway
+  mkdir -p ${INSTALL}/usr/bin
     cp ${PKG_DIR}/scripts/sway.sh     ${INSTALL}/usr/bin
     cp ${PKG_DIR}/scripts/sway-config ${INSTALL}/usr/lib/sway
     cp ${PKG_DIR}/scripts/sway_init.sh     ${INSTALL}/usr/bin
+    cp ${PKG_DIR}/scripts/sway-touch.sh     ${INSTALL}/usr/bin
+
+  chmod +x ${INSTALL}/usr/bin/sway*
 
   # install config & wallpaper
   mkdir -p ${INSTALL}/usr/share/sway
@@ -45,3 +49,6 @@ post_makeinstall_target() {
   safe_remove ${INSTALL}/usr/share/wayland-sessions
 }
 
+post_install() {
+  enable_service sway-touch.service
+}
