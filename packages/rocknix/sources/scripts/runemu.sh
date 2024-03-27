@@ -363,6 +363,16 @@ then
   fi
 fi
 
+### Display mode for emulation
+DISPLAY_MODE=$(get_setting "display_mode" "${PLATFORM}" "${ROMNAME##*/}")
+if [ ! -z "${DISPLAY_MODE}" ]
+then
+DISPLAY_OUTPUT=$(/usr/bin/wlr-randr | awk 'NR==1{print $1;}')
+RESOLUTION=$(/usr/bin/wlr-randr --output ${DISPLAY_OUTPUT} | awk 'f{print $1;f=0}/Modes/{f=1}')
+/usr/bin/wlr-randr --output ${DISPLAY_OUTPUT} --mode ${RESOLUTION}@$(echo ${DISPLAY_MODE} | tr -cd '[[:digit:]].')
+fi
+
+
 ### Offline all but the number of threads we need for this game if configured.
 NUMTHREADS=$(get_setting "threads" "${PLATFORM}" "${ROMNAME##*/}")
 if [ -n "${NUMTHREADS}" ] &&
@@ -392,6 +402,14 @@ fi
 performance
 
 clear_screen
+
+### Display mode preferred
+DISPLAY_MODE=$(get_setting "display_mode" "${PLATFORM}" "${ROMNAME##*/}")
+if [ ! -z "${DISPLAY_MODE}" ]
+then
+DISPLAY_OUTPUT=$(/usr/bin/wlr-randr | awk 'NR==1{print $1;}')
+/usr/bin/wlr-randr --output ${DISPLAY_OUTPUT} --preferred
+fi
 
 ### Restore cooling profile.
 if [ "${DEVICE_HAS_FAN}" = "true" ]
