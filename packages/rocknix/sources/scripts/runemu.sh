@@ -372,6 +372,12 @@ RESOLUTION=$(/usr/bin/wlr-randr --output ${DISPLAY_OUTPUT} | awk 'f{print $1;f=0
 /usr/bin/wlr-randr --output ${DISPLAY_OUTPUT} --mode ${RESOLUTION}@$(echo ${DISPLAY_MODE} | tr -cd '[[:digit:]].')
 fi
 
+FORCEPACK=$(get_setting "forcepack" "${PLATFORM}" "${ROMNAME##*/}")
+if [ ! -z "${FORCEPACK}" ] && [ "${FORCEPACK}" = "On" ]
+then
+    ${VERBOSE} && log $0 "Enabling panfrost forcepack"
+    export PAN_MESA_DEBUG=forcepack
+fi
 
 ### Offline all but the number of threads we need for this game if configured.
 NUMTHREADS=$(get_setting "threads" "${PLATFORM}" "${ROMNAME##*/}")
