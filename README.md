@@ -1,4 +1,4 @@
-**ROCKNIX** is a fork [JELOS](https://jelos.org/), all licenses apply and credit to the JELOS team. 
+**ROCKNIX** is a fork of [JELOS](https://jelos.org/), all licenses apply and credit to the JELOS team. 
 
 You are free to:
 
@@ -13,7 +13,7 @@ Under the following terms:
 
 ### ROCKNIX Software
 
-Copyright 2024 ROCKNIX (https://github.com/ROCKNIX)
+Copyright 2024 [ROCKNIX](https://github.com/ROCKNIX)
 
 Original software and scripts developed by the ROCKNIX are licensed under the terms of the [GNU GPL Version 2](https://choosealicense.com/licenses/gpl-2.0/).  The full license can be found in this project's licenses folder.
 
