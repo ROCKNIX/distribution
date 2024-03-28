@@ -54,7 +54,7 @@ This document describes all available systems emulators and cores available for 
 |Microsoft|MSX 2 (msx2)|1988|`msx2`|.dsk .mx1 .mx2 .rom .zip .7z .m3u|**retroarch:** bluemsx (default)<br>**retroarch:** fmsx<br>|
 |NEC|PC Engine (pcengine)|1987|`pcengine`|.pce .bin .zip .7z|**retroarch:** beetle_pce_fast (default)<br>**retroarch:** beetle_pce<br>**retroarch:** beetle_supergrafx<br>|
 |NEC|PC Engine CD (pcenginecd)|1988|`pcenginecd`|.cue .ccd .chd .toc .m3u|**retroarch:** beetle_pce_fast (default)<br>**retroarch:** beetle_pce<br>**retroarch:** beetle_supergrafx<br>|
-|NEC|PC-8800 (pc-8800)|1981|`pc88`|.d88 .m3u|**retroarch:** quasi88 (default)<br>|
+|NEC|PC-8800 (pc-8800)|1981|`pc88`|.d88 .u88 .m3u|**retroarch:** quasi88 (default)<br>|
 |NEC|PC-9800 (pc-9800)|1983|`pc98`|.d98 .zip .fdi .fdd .2hd .tfd .d88 .hdm .xdf .dup .hdi .thd .nhd .hdd .hdn|**retroarch:** np2kai (default)<br>|
 |NEC|PC-FX (pcfx)|1994|`pcfx`|.chd .cue .ccd .toc|**retroarch:** beetle_pcfx (default)<br>|
 |NEC|SuperGrafx (supergrafx)|1989|`sgfx`|.pce .sgx .cue .ccd .chd .zip .7z|**retroarch:** beetle_supergrafx<br>**retroarch:** beetle_pce<br>|
