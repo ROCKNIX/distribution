@@ -1,0 +1,179 @@
+diff -rupN dolphin.orig/Source/Core/Core/HW/GCPadEmu.cpp dolphin/Source/Core/Core/HW/GCPadEmu.cpp
+--- dolphin.orig/Source/Core/Core/HW/GCPadEmu.cpp	2024-03-27 04:51:20.527212738 +0000
++++ dolphin/Source/Core/Core/HW/GCPadEmu.cpp	2024-03-27 06:07:26.630071515 +0000
+@@ -26,6 +26,7 @@ static const u16 button_bitmasks[] = {
+     PAD_BUTTON_Y,
+     PAD_TRIGGER_Z,
+     PAD_BUTTON_START,
++    PAD_BUTTON_HOTKEY,
+     0  // MIC HAX
+ };
+ 
+@@ -50,6 +51,9 @@ GCPad::GCPad(const unsigned int index) :
+   // i18n: The START/PAUSE button on GameCube controllers
+   m_buttons->AddInput(Translatability::Translate, START_BUTTON, _trans("START"));
+ 
++  // Hotkey Button
++  m_buttons->AddInput(Translatability::Translate, HOTKEY_BUTTON, _trans("HOTKEY"));
++
+   // sticks
+   groups.emplace_back(m_main_stick = new ControllerEmu::OctagonAnalogStick(
+                           MAIN_STICK_GROUP, _trans("Control Stick"), MAIN_STICK_GATE_RADIUS));
+diff -rupN dolphin.orig/Source/Core/Core/HW/GCPadEmu.h dolphin/Source/Core/Core/HW/GCPadEmu.h
+--- dolphin.orig/Source/Core/Core/HW/GCPadEmu.h	2024-03-27 04:51:20.527212738 +0000
++++ dolphin/Source/Core/Core/HW/GCPadEmu.h	2024-03-27 05:15:39.652307739 +0000
+@@ -68,6 +68,7 @@ public:
+   static constexpr const char* Y_BUTTON = "Y";
+   static constexpr const char* Z_BUTTON = "Z";
+   static constexpr const char* START_BUTTON = "Start";
++  static constexpr const char* HOTKEY_BUTTON = "Hotkey";
+ 
+   // i18n: The left trigger button (labeled L on real controllers)
+   static constexpr const char* L_DIGITAL = _trans("L");
+diff -rupN dolphin.orig/Source/Core/DolphinNoGUI/PlatformX11.cpp dolphin/Source/Core/DolphinNoGUI/PlatformX11.cpp
+--- dolphin.orig/Source/Core/DolphinNoGUI/PlatformX11.cpp	2024-03-27 04:51:20.535212986 +0000
++++ dolphin/Source/Core/DolphinNoGUI/PlatformX11.cpp	2024-03-27 12:56:29.701030775 +0000
+@@ -15,7 +15,14 @@ static constexpr auto X_None = None;
+ #include "Core/Config/MainSettings.h"
+ #include "Core/Core.h"
+ #include "Core/State.h"
++
+ #include "Core/System.h"
++#include "Core/HW/GCPad.h"
++#include "InputCommon/GCPadStatus.h"
++#include <fmt/format.h>
++#include "Core/Config/GraphicsSettings.h"
++#include "VideoCommon/VideoConfig.h"
++#include "VideoCommon/OnScreenDisplay.h"
+ 
+ #include <climits>
+ #include <cstdio>
+@@ -151,11 +158,117 @@ void PlatformX11::MainLoop()
+ {
+   while (IsRunning())
+   {
++    static int hotkey = 0;
++    static int slot = 0;
++    static int fps = 0;
++    static int aspect = 0;
++    static int fforward = 0;
++    static int ires = 0;
++
+     UpdateRunningFlag();
+     Core::HostDispatchJobs(Core::System::GetInstance());
+     ProcessEvents();
+     UpdateWindowPosition();
+ 
++    if(Pad::IsInitialized()) {
++      GCPadStatus x = Pad::GetStatus(0);
++
++      if( (x.button & PAD_BUTTON_HOTKEY) == PAD_BUTTON_HOTKEY) { // hotkey pressed
++       if(hotkey == 1) {
++         hotkey = 2;
++       }
++      } else {
++       hotkey = 1; // assure hotkey is released between actions
++      }
++
++      if(hotkey == 2) { // hotkey pressed
++       if( (x.button & PAD_BUTTON_START) == PAD_BUTTON_START) {
++         RequestShutdown();
++         hotkey = 0;
++       }
++
++       if( (x.button & PAD_TRIGGER_L) == PAD_TRIGGER_L) {
++         State::Load(Core::System::GetInstance(), slot);
++         hotkey = 0;
++       }
++       if( (x.button & PAD_TRIGGER_R) == PAD_TRIGGER_R) {
++         State::Save(Core::System::GetInstance(), slot);
++         hotkey = 0;
++       }
++       if( (x.button & PAD_BUTTON_DOWN) == PAD_BUTTON_DOWN) {
++         if(slot > 0) slot--;
++         Core::DisplayMessage(fmt::format("Slot {} selected", slot), 4000);
++         hotkey = 0;
++       }
++       if( (x.button & PAD_BUTTON_UP) == PAD_BUTTON_UP) {
++         if(slot < 10) slot++;
++         Core::DisplayMessage(fmt::format("Slot {} selected", slot), 4000);
++         hotkey = 0;
++       }
++       if( (x.button & PAD_BUTTON_A) == PAD_BUTTON_A) {
++         Core::SaveScreenShot();
++         hotkey = 0;
++       }
++       if( (x.button & PAD_BUTTON_Y) == PAD_BUTTON_Y) {
++         if(fps == 0) {
++           Config::SetCurrent(Config::GFX_SHOW_FPS, True);
++           fps = 1;
++         } else {
++           Config::SetCurrent(Config::GFX_SHOW_FPS, False);
++           fps = 0;
++         }
++         hotkey = 0;
++       }
++       if( (x.button & PAD_BUTTON_X) == PAD_BUTTON_X) {
++         if(aspect == 0) {
++           Config::SetCurrent(Config::GFX_ASPECT_RATIO, AspectMode::Stretch);
++           aspect = 1;
++         } else {
++           Config::SetCurrent(Config::GFX_ASPECT_RATIO, AspectMode::Auto);
++           aspect = 0;
++         }
++         hotkey = 0;
++       }
++       if( (x.button & PAD_BUTTON_B) == PAD_BUTTON_B) {
++         if(ires == 0) {
++           Config::SetCurrent(Config::GFX_EFB_SCALE, 2);
++           OSD::AddMessage("Internal Resolution: 480P");
++           ires = 2;
++         }
++         else if(ires == 2) {
++           Config::SetCurrent(Config::GFX_EFB_SCALE, 4);
++           OSD::AddMessage("Internal Resolution: 720P");
++           ires = 4;
++         }
++         else if(ires == 4) {
++           Config::SetCurrent(Config::GFX_EFB_SCALE, 6);
++           OSD::AddMessage("Internal Resolution: 1080P");
++           ires = 6;
++         } else {
++           Config::SetCurrent(Config::GFX_EFB_SCALE, 1);
++           OSD::AddMessage("Internal Resolution: 240P");
++           ires = 0;
++         }
++         hotkey = 0;
++       }
++       if( (x.button & PAD_TRIGGER_Z) == PAD_TRIGGER_Z) {
++        if(fforward == 0) {
++          auto speed = Config::Get(Config::MAIN_EMULATION_SPEED) + 1.0;
++          speed = (speed >= 0.95 && speed <= 1.05) ? 1.0 : speed;
++          Config::SetCurrent(Config::MAIN_EMULATION_SPEED, speed);
++          OSD::AddMessage("Fast Forward: ON");
++          fforward = 1;
++        } else {
++          auto speed = Config::Get(Config::MAIN_EMULATION_SPEED) - 1.0;
++          speed = (speed <= 0 || (speed >= 0.95 && speed <= 1.05)) ? 1.0 : speed;
++          Config::SetCurrent(Config::MAIN_EMULATION_SPEED, speed);
++          OSD::AddMessage("Fast Forward: OFF");
++          fforward = 0;
++        }
++        hotkey = 0;
++       }
++    }
++    }
+     // TODO: Is this sleep appropriate?
+     std::this_thread::sleep_for(std::chrono::milliseconds(1));
+   }
+diff -rupN dolphin.orig/Source/Core/InputCommon/GCPadStatus.h dolphin/Source/Core/InputCommon/GCPadStatus.h
+--- dolphin.orig/Source/Core/InputCommon/GCPadStatus.h	2024-03-27 04:51:20.543213235 +0000
++++ dolphin/Source/Core/InputCommon/GCPadStatus.h	2024-03-27 06:05:14.489860245 +0000
+@@ -26,6 +26,7 @@ enum PadButton
+   PAD_BUTTON_X = 0x0400,
+   PAD_BUTTON_Y = 0x0800,
+   PAD_BUTTON_START = 0x1000,
++  PAD_BUTTON_HOTKEY = 0x2000,
+ };
+ 
+ struct GCPadStatus

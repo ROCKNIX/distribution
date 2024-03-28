@@ -44,7 +44,7 @@ fi
 
 if [ "${PROJECT}" = "Rockchip" ]
 then
-  PKG_DEPENDS_TARGET+=" rkmpp"
+  PKG_DEPENDS_TARGET+=" librga rkmpp"
 fi
 
 if [ ! "${OPENGL}" = "no" ]; then

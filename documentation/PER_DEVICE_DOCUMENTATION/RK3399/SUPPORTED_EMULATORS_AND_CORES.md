@@ -83,6 +83,7 @@ This document describes all available systems emulators and cores available for 
 |Nintendo|Super Nintendo (snes)|1991|`snes`|.smc .fig .sfc .swc .zip .7z|**retroarch:** snes9x (default)<br>**retroarch:** snes9x2010<br>**retroarch:** snes9x2002<br>**retroarch:** snes9x2005_plus<br>**retroarch:** beetle_supafaust<br>**retroarch:** bsnes_mercury_performance<br>**retroarch:** bsnes<br>**retroarch:** bsnes_hd_beta<br>**mednafen:** snes_faust<br>**mednafen:** snes_faust<br>|
 |Nintendo|Virtual Boy (virtualboy)|1995|`virtualboy`|.vb .zip .7z|**retroarch:** beetle_vb (default)<br>**mednafen:** vb<br>|
 |Nintendo|Wii (wii)|2006|`wii`|.gcm .iso .gcz .ciso .wbfs .rvz .dol .wad|**dolphin:** dolphin-sa-wii (default)<br>**retroarch:** dolphin<br>|
+|Palm, Inc.|Palm OS (palm)|1996|`palm`|.prc .pqa .img .pdb .zip|**retroarch:** mu (default)<br>|
 |Panasonic|3DO (3do)|1993|`3do`|.iso .bin .chd .cue|**retroarch:** opera (default)<br>|
 |Philips|CD-i (cdi)|1991|`cdi`|.chd .cue .iso|**retroarch:** same_cdi (default)<br>|
 |Philips|VideoPac (videopac)|1978|`videopac`|.bin .zip .7z|**retroarch:** o2em (default)<br>|
@@ -102,10 +103,10 @@ This document describes all available systems emulators and cores available for 
 |Sega|Sega CD (segacd)|1991|`segacd`|.chd .cue .iso .m3u|**retroarch:** genesis_plus_gx (default)<br>**retroarch:** picodrive<br>|
 |Sega|SG-1000 (sg-1000)|1983|`sg-1000`|.bin .sg .zip .7z|**retroarch:** gearsystem (default)<br>**retroarch:** genesis_plus_gx<br>**retroarch:** picodrive<br>|
 |Sega|ST-V (st-v)|1995|`st-v`|.zip .ZIP||
-|Sharp|X1 (x1)|1982|`x1`|.dx1 .2d .2hd .tfd .d88 .hdm .xdf .dup .tap .cmd .zip .7z|**retroarch:** x1 (default)<br>|
+|Sharp|X1 (x1)|1982|`x1`|.dx1 .2d .2hd .tfd .d88 .88d .hdm .xdf .dup .tap .cmd .zip .7z|**retroarch:** x1 (default)<br>|
 |Sharp|x68000 (x68000)|1987|`x68000`|.dim .img .d88 .hdm .dup .2hd .xdf .hdf .cmd .m3u .zip .7z|**retroarch:** px68k (default)<br>|
 |Sinclair|ZX Spectrum (zxspectrum)|1982|`zxspectrum`|.tzx .tap .z80 .rzx .scl .trd .dsk .zip .7z|**retroarch:** fuse<br>|
-|Sinclair|ZX81 (zx81)|1981|`zx81`|.tzx .p .zip .7z|**retroarch:** 81 (default)<br>|
+|Sinclair|ZX81 (zx81)|1981|`zx81`|.tzx .p .t81 .zip .7z|**retroarch:** 81 (default)<br>|
 |Smith Engineering|Vectrex (vectrex)|1982|`vectrex`|.bin .gam .vec .zip .7z|**retroarch:** vecx (default)<br>|
 |SNK|Neo Geo (neogeo)|1990|`neogeo`|.7z .zip|**retroarch:** fbneo (default)<br>**retroarch:** mame2003_plus<br>**retroarch:** fbalpha2012<br>**retroarch:** fbalpha2019<br>**retroarch:** mame2010<br>**retroarch:** mame2015<br>**retroarch:** mame<br>|
 |SNK|Neo Geo CD (neocd)|1994|`neocd`|.cue .iso .chd|**retroarch:** neocd (default)<br>**retroarch:** fbneo<br>|
