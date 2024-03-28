@@ -24,7 +24,7 @@ src-pkg:
 docs:
 	./tools/foreach './scripts/clean emulators && ./scripts/build emulators'
 
-world: AMD64 RK3588 S922X RK3326 RK3399
+world: RK3588 RK3566 RK3326 RK3399
 
 AMD64:
 	unset DEVICE_ROOT
@@ -62,7 +62,7 @@ RK3399:
 	PROJECT=Rockchip DEVICE=RK3399 ARCH=aarch64 ./scripts/build_distro
 
 update:
-	PROJECT=PC DEVICE=AMD64 ARCH=x86_64 ./scripts/update_packages
+	PROJECT=Rockchip DEVICE=RK3588 ARCH=aarch64 ./scripts/update_packages
 
 package:
 	./scripts/build ${PACKAGE}

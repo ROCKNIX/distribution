@@ -14,18 +14,11 @@ case ${DEVICE} in
 #    PKG_URL="${PKG_SITE}.git"
 #    PKG_PATCH_DIRS+=" x11"
 #  ;;
-  RK3588|AMD64|S922X|RK3399)
+  *)
     PKG_SITE="https://github.com/dolphin-emu/dolphin"
     PKG_URL="${PKG_SITE}.git"
     PKG_VERSION="e6583f8bec814d8f3748f1d7738457600ce0de56"
     PKG_PATCH_DIRS+=" wayland"
-  ;;
-  *)
-    PKG_SITE="https://github.com/rtissera/dolphin"
-    PKG_URL="${PKG_SITE}.git"
-    PKG_VERSION="0b160db48796f727311cea16072174d96b784f80"
-    PKG_GIT_CLONE_BRANCH="egldrm"
-    PKG_PATCH_DIRS+=" legacy"
   ;;
 esac
 
@@ -90,10 +83,7 @@ makeinstall_target() {
 
 post_install() {
     case ${DEVICE} in
-      RK356*)
-        DOLPHIN_PLATFORM="drm"
-      ;;
-      RK3588*)
+      RK35*)
         DOLPHIN_PLATFORM="x11"
       ;;
       *)
