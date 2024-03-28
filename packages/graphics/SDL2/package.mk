@@ -61,6 +61,13 @@ else
                            -DSDL_X11=OFF"
 fi
 
+case ${PROJECT} in
+  Rockchip)
+    PKG_DEPENDS_TARGET+=" librga"
+    PKG_PATCH_DIRS_TARGET+="${DEVICE}"
+  ;;
+esac
+
 pre_configure_target(){
 
   if [ -n "${PKG_PATCH_DIRS_TARGET}" ]

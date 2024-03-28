@@ -40,6 +40,12 @@ case ${ARCH} in
   ;;
 esac
 
+case ${PROJECT} in
+  Rockchip)
+    PKG_DEPENDS_TARGET+=" librga"
+  ;;
+esac
+
 if [ "${DISPLAYSERVER}" = "wl" ]; then
   PKG_DEPENDS_TARGET+=" wayland ${WINDOWMANAGER}"
   PKG_CONFIGURE_OPTS_TARGET+=" --enable-wayland"
