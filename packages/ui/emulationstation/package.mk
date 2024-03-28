@@ -3,7 +3,7 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="emulationstation"
-PKG_VERSION="8d58779bbf0c49d364590f6b228b05f5367a7ba9"
+PKG_VERSION="4660e0336d30ead89dfe0e7898e25ab17e05f597"
 PKG_GIT_CLONE_BRANCH="main"
 PKG_REV="1"
 PKG_ARCH="any"
@@ -31,6 +31,14 @@ if [ ! "${ENABLE_UPDATES}" = "no" ]; then
   PKG_CMAKE_OPTS_TARGET+=" -DENABLE_UPDATES=1"
 else
   PKG_CMAKE_OPTS_TARGET+=" -DENABLE_UPDATES=0"
+fi
+
+if [ "${WINDOWMANAGER}" = "swaywm-env" ]; then
+  PKG_CMAKE_OPTS_TARGET+=" -DWLROOTS=1"
+fi
+
+if [ "${GRAPHIC_DRIVERS}" = "panfrost" ] && [ ! "${DEVICE}" = "RK3588" ]; then
+  PKG_CMAKE_OPTS_TARGET+=" -DPANFROST=1"
 fi
 
 PKG_CMAKE_OPTS_TARGET+=" -DENABLE_EMUELEC=1 \
