@@ -1,1 +1,0 @@
-Moved to [https://jelos.org/donations/](https://jelos.org/donations/)

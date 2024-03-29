@@ -16,29 +16,13 @@ PKG_PATCH_DIRS="${LINUX} ${DEVICE} default"
 
 case ${DEVICE} in
   RK3588*)
-    PKG_VERSION="8f20ea790638c80f3913b0e66d90800591a824c3"
+    PKG_VERSION="494c0a303537c55971421b5552d98eb55e652cf3"
     PKG_URL="https://github.com/armbian/linux-rockchip/archive/${PKG_VERSION}.tar.gz"
     PKG_GIT_CLONE_BRANCH="rk-5.10-rkr6"
   ;;
-  RK3566-BSP)
-    PKG_URL="https://github.com/JustEnoughLinuxOS/rk356x-kernel.git"
-    PKG_VERSION="c741d56477939654bb4056be240f93d1ad1ae91e"
-    GET_HANDLER_SUPPORT="git"
-    PKG_GIT_CLONE_BRANCH="main"
-  ;;
-  RK3566-BSP-X55)
-    PKG_URL="https://github.com/JustEnoughLinuxOS/rk3566-x55-kernel.git"
-    PKG_VERSION="9e8f3703fe49d5d12bbb951e233248f5f3eb9efd"
-    GET_HANDLER_SUPPORT="git"
-    PKG_GIT_CLONE_BRANCH="main"
-  ;;
-  RK356*)
-    PKG_VERSION="6.8-rc6"
-    PKG_URL="https://git.kernel.org/torvalds/t/${PKG_NAME}-${PKG_VERSION}.tar.gz"
-  ;;
   *)
-    PKG_VERSION="6.7.9"
-    PKG_URL="https://www.kernel.org/pub/linux/kernel/v6.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
+    PKG_VERSION="6.8.2"
+    PKG_URL="${PKG_SITE}/pub/linux/kernel/v6.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
   ;;
 esac
 

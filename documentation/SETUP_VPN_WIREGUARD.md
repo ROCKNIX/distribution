@@ -1,1 +1,0 @@
-Moved to [https://jelos.org/configure/vpn/#wireguard](https://jelos.org/configure/vpn/#wireguard)

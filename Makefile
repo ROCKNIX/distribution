@@ -1,5 +1,5 @@
 BUILD_DIRS=build.*
--include $(HOME)/.JELOS/options
+-include $(HOME)/.ROCKNIX/options
 
 all: world
 
@@ -24,7 +24,7 @@ src-pkg:
 docs:
 	./tools/foreach './scripts/clean emulators && ./scripts/build emulators'
 
-world: AMD64 RK3566-BSP RK3566-BSP-X55 RK3588 S922X RK3326 RK3399
+world: RK3588 RK3566 RK3326 RK3399
 
 AMD64:
 	unset DEVICE_ROOT
@@ -47,26 +47,9 @@ S922X:
 	PROJECT=Amlogic DEVICE=S922X ARCH=aarch64 ./scripts/build_distro
 
 RK3566:
-	DEVICE_ROOT=RK3566 PROJECT=Rockchip DEVICE=RK3566 ARCH=arm ./scripts/build_distro
-	DEVICE_ROOT=RK3566 PROJECT=Rockchip DEVICE=RK3566 ARCH=aarch64 ./scripts/build_distro
-
-RK3566-X55:
-	DEVICE_ROOT=RK3566 PROJECT=Rockchip DEVICE=RK3566-X55 ARCH=arm ./scripts/build_distro
-	DEVICE_ROOT=RK3566 PROJECT=Rockchip DEVICE=RK3566-X55 ARCH=aarch64 ./scripts/build_distro
-
-RK3566-BSP:
 	unset DEVICE_ROOT
-	DEVICE_ROOT=RK3566-BSP PROJECT=Rockchip DEVICE=RK3566-BSP ARCH=arm ./scripts/build_distro
-	DEVICE_ROOT=RK3566-BSP PROJECT=Rockchip DEVICE=RK3566-BSP ARCH=aarch64 ./scripts/build_distro
-
-RK3566-BSP-X55:
-	DEVICE_ROOT=RK3566-BSP PROJECT=Rockchip DEVICE=RK3566-BSP-X55 ARCH=arm ./scripts/build_distro
-	DEVICE_ROOT=RK3566-BSP PROJECT=Rockchip DEVICE=RK3566-BSP-X55 ARCH=aarch64 ./scripts/build_distro
-
-RK-ARMV8-A:
-	unset DEVICE_ROOT
-	PROJECT=Rockchip DEVICE=RK-ARMV8-A ARCH=arm ./scripts/build_distro
-	PROJECT=Rockchip DEVICE=RK-ARMV8-A ARCH=aarch64 ./scripts/build_distro
+	PROJECT=Rockchip DEVICE=RK3566 ARCH=arm ./scripts/build_distro
+	PROJECT=Rockchip DEVICE=RK3566 ARCH=aarch64 ./scripts/build_distro
 
 RK3326:
 	unset DEVICE_ROOT
@@ -78,15 +61,8 @@ RK3399:
 	PROJECT=Rockchip DEVICE=RK3399 ARCH=arm ./scripts/build_distro
 	PROJECT=Rockchip DEVICE=RK3399 ARCH=aarch64 ./scripts/build_distro
 
-RK33XX:
-	unset DEVICE_ROOT
-	unset BASE_DEVICE
-	$(MAKE) RK-ARMV8-A
-	BASE_DEVICE=RK-ARMV8-A $(MAKE) RK3326
-	BASE_DEVICE=RK-ARMV8-A $(MAKE) RK3399
-
 update:
-	PROJECT=PC DEVICE=AMD64 ARCH=x86_64 ./scripts/update_packages
+	PROJECT=Rockchip DEVICE=RK3588 ARCH=aarch64 ./scripts/update_packages
 
 package:
 	./scripts/build ${PACKAGE}
@@ -99,14 +75,14 @@ package-clean:
 # For example: make docker-AMD64 will use docker to call: make AMD64
 # All variables are scoped to docker-* commands to prevent weird collisions/behavior with non-docker commands
 
-docker-%: DOCKER_IMAGE := "justenoughlinuxos/jelos-build:latest"
+docker-%: DOCKER_IMAGE := "rocknix/rocknix-build:latest"
 
 # DOCKER_WORK_DIR is the directory in the Docker image - it is set to /work by default
 #   Anytime this directory changes, you must run `make clean` similarly to moving the distribution directory
 docker-%: DOCKER_WORK_DIR := $(shell if [ -n "${DOCKER_WORK_DIR}" ]; then echo ${DOCKER_WORK_DIR}; else echo "$$(pwd)" ; fi)
 
-# ${HOME}/.JELOS/options is a global options file containing developer and build settings.
-docker-%: GLOBAL_SETTINGS := $(shell if [ -f "${HOME}/.JELOS/options" ]; then echo "-v \"${HOME}/.JELOS/options:${HOME}/.JELOS/options\""; else echo ""; fi)
+# ${HOME}/.${DISTRONAME}/options is a global options file containing developer and build settings.
+docker-%: GLOBAL_SETTINGS := $(shell if [ -f "${HOME}/.${DISTRONAME}/options" ]; then echo "-v \"${HOME}/.${DISTRONAME}/options:${HOME}/.${DISTRONAME}/options\""; else echo ""; fi)
 
 # LOCAL_SSH_KEYS_FILE is a variable that contains the location of the authorized keys file for development build use.  It will be mounted into the container if it exists.
 docker-%: LOCAL_SSH_KEYS_FILE := $(shell if [ -n "${LOCAL_SSH_KEYS_FILE}" ]; then echo "-v \"${LOCAL_SSH_KEYS_FILE}:${LOCAL_SSH_KEYS_FILE}\""; else echo ""; fi)

@@ -3,7 +3,7 @@
 
 PKG_NAME="x86"
 PKG_LICENSE="GPLv2"
-PKG_SITE="https://jelos.org"
+PKG_SITE="https://rocknix.org"
 PKG_DEPENDS_TARGET="toolchain squashfs-tools:host dosfstools:host fakeroot:host kmod:host mtools:host populatefs:host libc gcc linux linux-drivers linux-firmware libusb unzip socat p7zip file SDL2 SDL2_gfx SDL2_image SDL2_mixer SDL2_net SDL2_ttf"
 PKG_SECTION="virtual"
 PKG_LONGDESC="Root package used to build and create 32-bit userland"

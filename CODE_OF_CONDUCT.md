@@ -1,1 +1,0 @@
-Moved to [https://jelos.org/contribute/code-of-conduct/](https://jelos.org/contribute/code-of-conduct/)

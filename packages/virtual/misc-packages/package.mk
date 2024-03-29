@@ -6,7 +6,7 @@
 PKG_NAME="misc-packages"
 PKG_VERSION=""
 PKG_LICENSE="GPL"
-PKG_SITE="https://jelos.org"
+PKG_SITE="https://rocknix.org"
 PKG_URL=""
 PKG_SECTION="virtual"
 PKG_LONGDESC="misc-packages: Metapackage for miscellaneous packages"

@@ -1,1 +1,0 @@
-Moved to [https://jelos.org/contribute/quirks/](https://jelos.org/contribute/quirks/)

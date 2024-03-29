@@ -6,7 +6,7 @@ PKG_VERSION="c70355f9ec6d015b91a5c3199aa08b433e2f7caf"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/LibreELEC/brcmfmac_sdio-firmware"
 PKG_URL="https://github.com/LibreELEC/brcmfmac_sdio-firmware/archive/${PKG_VERSION}.tar.gz"
-PKG_LONGDESC="Broadcom SDIO firmware used with JELOS"
+PKG_LONGDESC="Broadcom SDIO firmware used with ROCKNIX"
 PKG_TOOLCHAIN="manual"
 
 post_makeinstall_target() {

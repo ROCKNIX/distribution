@@ -1,0 +1,113 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+
+for mod in usb_f_ecm usb_f_fs; do
+	modprobe -q ${mod}
+done
+
+mkdir -p /storage/.cache/usbgadget
+
+if [ ! -f /storage/.cache/usbgadget/ip_address.conf ] ; then
+	echo "10.1.1.2" > /storage/.cache/usbgadget/ip_address.conf
+fi
+
+if [ ! -f /storage/.cache/usbgadget/udhcpd.conf ] ; then
+	echo -e "interface usb0\nstart 10.1.1.1\nend 10.1.1.1\nopt subnet 255.255.255.0\nopt lease 86400\nmax_leases 1\nlease_file /dev/null\nremaining no" >> /storage/.cache/usbgadget/udhcpd.conf
+fi
+
+VENDOR=JELOS
+MACHINE=$(cat /etc/hostname)
+UDC_NAME=$(ls -1 /sys/class/udc |head -n1)
+IP=$(cat /storage/.cache/usbgadget/ip_address.conf)
+
+usb_disable() {
+	echo "" > /sys/kernel/config/usb_gadget/gadget/UDC
+	echo "USB_MODE=disabled" > /storage/.cache/usbgadget/usbgadget.conf
+}
+
+usb_start() {
+	if [ -r /storage/.cache/usbgadget/usbgadget.conf ] ; then
+		. /storage/.cache/usbgadget/usbgadget.conf
+	fi
+	
+	if [ "$1" ] ; then
+		USB_MODE=$1
+	fi
+
+	cd /sys/kernel/config/usb_gadget
+	mkdir gadget \
+		gadget/strings/0x409 \
+		gadget/configs/c.1 \
+		gadget/configs/c.1/strings/0x409 \
+		gadget/functions/ffs.mtp \
+		gadget/functions/ecm.usb0
+        
+	echo $VENDOR > gadget/strings/0x409/manufacturer
+	echo $MACHINE > gadget/strings/0x409/product
+	
+	
+	if [ "${USB_MODE}" = mtp ] ; then
+		echo 0x1d6b > gadget/idVendor 
+		echo 0x0100 > gadget/idProduct
+		echo mtp > gadget/configs/c.1/strings/0x409/configuration
+		ln -s gadget/functions/ffs.mtp gadget/configs/c.1
+		mkdir /dev/ffs-umtp
+		mount mtp -t functionfs /dev/ffs-umtp
+		/usr/sbin/umtprd &
+		sleep 1
+		echo "${UDC_NAME}" > gadget/UDC
+
+	elif [ "${USB_MODE}" = cdc ] ; then
+		echo cdc > gadget/configs/c.1/strings/0x409/configuration
+		echo 0x1d6b > gadget/idVendor	
+		echo 0x104 > gadget/idProduct
+		ln -s gadget/functions/ecm.usb0 gadget/configs/c.1
+		echo "${UDC_NAME}" > gadget/UDC
+		ifconfig usb0 $IP up
+		/usr/sbin/udhcpd -S /storage/.cache/usbgadget/udhcpd.conf
+	else
+		exit 0
+	fi
+
+	echo "USB_MODE=$(cat gadget/configs/c.1/strings/0x409/configuration)" > /storage/.cache/usbgadget/usbgadget.conf
+}
+
+usb_stop() {
+	(
+		cd /sys/kernel/config/usb_gadget
+
+		usb_disable
+		umount /dev/ffs-umtp
+		rmdir /dev/ffs-umtp
+		
+		rm -f gadget/configs/c.1/ffs.mtp \
+			gadget/configs/c.1/ecm.usb0 \
+
+		rmdir gadget/configs/c.1/strings/0x409 \
+			gadget/configs/c.1 \
+			gadget/functions/ffs.mtp \
+			gadget/functions/ecm.usb0 \
+			gadget/strings/0x409 \
+			gadget
+
+		killall udhcpd
+		killall umtprd
+	) >/dev/null 2>&1
+}
+
+case "$1" in
+	start)
+		usb_start $2
+		;;
+	stop)
+		usb_stop
+		;;
+	restart)
+		usb_stop
+		usb_start $2
+		;;
+	*)
+		echo "Usage: usbgadget [start|stop|restart]"
+		;;
+esac

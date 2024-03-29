@@ -1,1 +1,0 @@
-Moved to [https://jelos.org/configure/vpn/#tailscale](https://jelos.org/configure/vpn/#tailscale)

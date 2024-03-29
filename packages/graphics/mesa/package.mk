@@ -16,15 +16,14 @@ case ${DEVICE} in
 	PKG_URL="${PKG_SITE}.git"
 	PKG_GIT_CLONE_BRANCH="csf"
   ;;
-  # keep RK3399 and RK-ARMV8-A on same version to maintain cross comaptibility
-  RK33*|RK-ARMV8-A|RK3566) #Using upstream dev for panfrost
-	PKG_VERSION="0b953bdbb81439c3d812631282429feeaf393db8"
+  RK3*) #Using upstream dev for panfrost
+	PKG_VERSION="db29984c254f60f5daeec0ea4e6048b6ee7902f8"
 	PKG_SITE="https://gitlab.freedesktop.org/mesa/mesa"
 	PKG_URL="${PKG_SITE}.git"
 	PKG_PATCH_DIRS+=" panfrost"
   ;;
   *)
-	PKG_VERSION="24.0.2"
+	PKG_VERSION="24.0.4"
 	PKG_SITE="http://www.mesa3d.org/"
 	PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
   ;;

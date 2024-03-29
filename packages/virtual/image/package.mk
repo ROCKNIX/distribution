@@ -13,7 +13,7 @@ PKG_DEPENDS_TARGET="toolchain squashfs-tools:host dosfstools:host fakeroot:host 
                     ${BOOTLOADER} busybox umtprd util-linux usb-modeswitch unzip poppler jq socat \
                     p7zip file initramfs grep wget util-linux zstd lz4 empty lzo libzip \
                     bash coreutils modules system-utils autostart quirks powerstate gnupg \
-                    gzip six lynx xmlstarlet vim pyudev dialog dbus-python network jelos" 
+                    gzip six lynx xmlstarlet vim pyudev dialog dbus-python network rocknix"
 
 PKG_UI="emulationstation es-themes textviewer"
 
@@ -45,7 +45,7 @@ else
   [ "${OPENGL_SUPPORT}" = "yes" ] && PKG_DEPENDS_TARGET+=" mesa-demos glmark2"
 
   # Weston kiosk shell dpms support.
-  [ "${DISPLAYSERVER}" = "wl" ] && PKG_DEPENDS_TARGET+=" weston-kiosk-shell-dpms"
+  [ "${WINDOWMANAGER}" = "weston" ] && PKG_DEPENDS_TARGET+=" weston-kiosk-shell-dpms"
 
   # Sound support
   [ "${PIPEWIRE_SUPPORT}" = "yes" ] && PKG_DEPENDS_TARGET+=" alsa pulseaudio pipewire wireplumber"

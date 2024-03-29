@@ -3,12 +3,12 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="emulationstation"
-PKG_VERSION="2532471157e7df15ca70e0881e2411b81a1d2daa"
+PKG_VERSION="05be12a48b637bb2c639a1cd917a45b92029633e"
 PKG_GIT_CLONE_BRANCH="main"
 PKG_REV="1"
 PKG_ARCH="any"
 PKG_LICENSE="GPL"
-PKG_SITE="https://github.com/JustEnoughLinuxOS/emulationstation"
+PKG_SITE="https://github.com/ROCKNIX/emulationstation"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="boost toolchain SDL2 freetype curl freeimage bash rapidjson SDL2_mixer fping p7zip alsa vlc drm_tool pugixml"
 PKG_NEED_UNPACK="busybox"
@@ -31,6 +31,14 @@ if [ ! "${ENABLE_UPDATES}" = "no" ]; then
   PKG_CMAKE_OPTS_TARGET+=" -DENABLE_UPDATES=1"
 else
   PKG_CMAKE_OPTS_TARGET+=" -DENABLE_UPDATES=0"
+fi
+
+if [ "${WINDOWMANAGER}" = "swaywm-env" ]; then
+  PKG_CMAKE_OPTS_TARGET+=" -DWLROOTS=1"
+fi
+
+if [ "${GRAPHIC_DRIVERS}" = "panfrost" ] && [ ! "${DEVICE}" = "RK3588" ]; then
+  PKG_CMAKE_OPTS_TARGET+=" -DPANFROST=1"
 fi
 
 PKG_CMAKE_OPTS_TARGET+=" -DENABLE_EMUELEC=1 \

@@ -9,7 +9,7 @@ import sys, os, codecs, json, argparse, re
 
 ROOT_PKG = "__root__"
 
-class JELOS_Package:
+class ROCKNIX_Package:
     def __init__(self, name, section):
         self.name = name
         self.section = section
@@ -130,9 +130,9 @@ def loadPackages():
 
     return map
 
-# Create a fully formed JELOS_Package object
+# Create a fully formed ROCKNIX_Package object
 def initPackage(package):
-    pkg = JELOS_Package(package["name"], package["section"])
+    pkg = ROCKNIX_Package(package["name"], package["section"])
 
     for target in ["bootstrap", "init", "host", "target"]:
         pkg.addDependencies(target, package[target])

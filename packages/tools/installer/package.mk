@@ -4,10 +4,10 @@
 PKG_NAME="installer"
 PKG_VERSION="1"
 PKG_LICENSE="GPL"
-PKG_SITE="https://jelos.org"
+PKG_SITE="https://rocknix.org"
 PKG_URL=""
 PKG_DEPENDS_TARGET="toolchain busybox newt parted e2fsprogs syslinux grub"
-PKG_LONGDESC="JELOS Install manager to install the system on any disk"
+PKG_LONGDESC="ROCKNIX Install manager to install the system on any disk"
 PKG_TOOLCHAIN="manual"
 
 post_install() {

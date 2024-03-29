@@ -1,0 +1,238 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+
+. /etc/profile
+. /etc/os-release
+
+### Vars
+UPDATE_ROOT="/storage/.update"
+MOUNT_GAMES=$(get_setting system.automount)
+GAMES_DEVICE=$(get_setting system.gamesdevice)
+MS_PATH="/storage/roms"
+
+function unmount() {
+  log $0 "Unmount ${1}."
+  umount -f "${1}" 2>/dev/null ||:
+}
+
+function add_readme() {
+  cat <<EOF >/storage/roms/README
+Use the \`Create Game Directories\` option in \`System Settings\` to create your game directories.
+EOF
+}
+
+function start_ms() {
+  ### Entrypoint will be either games card found (external), or not found (internal).
+  MOUNT_PATH="/storage/games-${1}"
+
+  MS_DEVICE=$(get_setting system.merged.device)
+  ### If the merge target isn't defined and we have an external microsd, we should use the external card by default.
+  if [ -z "${MS_DEVICE}" ] && \
+     [ "${1}" = "external" ]
+  then
+    set_setting system.merged.device external
+  fi
+
+  ### Determine if internal or external is the primary target by configuration.
+  case ${MS_DEVICE} in
+    internal)
+      LOWER="external"
+      UPPER="internal"
+    ;;
+    *)
+      LOWER="internal"
+      UPPER="external"
+    ;;
+  esac
+
+  for GAME_PATH in internal external
+  do
+    if [ ! -d "/storage/games-${GAME_PATH}/roms" ]
+    then
+      log $0 "Create /storage/games-${GAME_PATH}/roms."
+      mkdir -p "/storage/games-${GAME_PATH}/roms"
+    fi
+  done
+
+  MS_ENABLED=$(get_setting system.merged.storage)
+  if [ -e "/storage/.ms_unsupported" ] || \
+     [ ! "${MS_ENABLED}" = 1 ]
+  then
+    log $0 "Executing bind mount of ${MOUNT_PATH} to ${MS_PATH}"
+    mount --bind ${MOUNT_PATH}/roms ${MS_PATH}
+  else
+    log $0 "Enabling merged storage of /storage/games-${LOWER} and /storage/games-${UPPER} to ${MS_PATH}."
+
+    for DIR in /storage/games-${UPPER}/.tmp/games-workdir /storage/games-${LOWER}/roms /storage/games-${UPPER}/roms
+    do
+      if [ ! -d "${DIR}" ]
+      then
+        mkdir -p "${DIR}"
+      fi
+    done
+    mount overlay -t overlay -o lowerdir=/storage/games-${LOWER}/roms,upperdir=/storage/games-${UPPER}/roms,workdir=/storage/games-${UPPER}/.tmp/games-workdir ${MS_PATH}
+  fi
+}
+
+start_overlay() {
+  if [ -e "/storage/.overlay_unsupported" ]
+  then
+    # If we're not using the overlay, bind mount the external storage path
+    # so we don't need to change any configs.
+    grep ${MOUNT_PATH} /proc/mounts >/dev/null 2>&1
+    if [ ! $? = 0 ]
+    then
+      MOUNT_PATH="/storage/games-internal"
+    fi
+    log $0 "Executing bind mount of ${MOUNT_PATH} to ${OVERLAY_PATH}"
+    mount --bind ${MOUNT_PATH} ${OVERLAY_PATH}
+    exit 0
+  else
+    log $0 "Enabling overlay."
+    systemctl enable storage-roms.mount >/dev/null 2>&1
+    systemctl start storage-roms.mount >/dev/null 2>&1
+  fi
+}
+
+if [[ ! "${MOUNT_GAMES}" =~ [0-9] ]]
+then
+  set_setting system.automount 1
+elif [[ "${MOUNT_GAMES}" == "0" ]]
+then
+  start_ms internal
+  add_readme
+  exit 0
+fi
+
+function create_game_dirs() {
+  ### We don't want systemd to manage this or the directories could be created in the wrong location.
+  if [ -e "/usr/config/system-dirs.conf" ]
+  then
+    log $0 "Creating game directories."
+    systemd-tmpfiles --create /usr/config/system-dirs.conf >/dev/null 2>&1 ||:
+  fi
+}
+
+function load_modules() {
+  for MODULE in exfat vfat
+  do
+    lsmod | grep ${MODULE} >/dev/null 2>&1
+    if [ ! $? = 0 ]
+    then
+      log $0 "Loading ${MODULE}."
+      modprobe ${MODULE} >/dev/null 2>&1
+    fi
+  done
+}
+
+function mount_games() {
+      MOUNT_PATH="/storage/games-external"
+      FSTYPE=$(blkid -o export ${1} | awk 'BEGIN {FS="="} /TYPE/ {print $2}')
+      case ${FSTYPE} in
+        ext4)
+          log $0 "Found supported partition for overlayfs."
+          if [ -e "/storage/.ms_unsupported" ]
+          then
+            rm -f /storage/.ms_unsupported
+          fi
+	  touch /storage/.ms_supported
+        ;;
+        *)
+          log $0 "Partition does not support overlayfs, disabling."
+          if [ -e "/storage/.ms_supported" ]
+          then
+            rm -f /storage/.ms_supported
+          fi
+          touch /storage/.ms_unsupported
+        ;;
+      esac
+
+      if [ ! -d "${MOUNT_PATH}" ]
+      then
+        log $0 "Create directory ${MOUNT_PATH}"
+        /usr/bin/busybox mkdir -p ${MOUNT_PATH} >/dev/null 2>&1
+      fi
+
+      NULL=$(cat /proc/mounts | grep -v -e "/var/media" 2>/dev/null | grep ${1})
+      if [ ! "$?" = "0" ] && \
+         [ -e "${1}" ] && \
+         [ ! -e "/storage/.please_resize_me" ]
+      then
+
+        ### Udevil shouldn't mount it this early, but just in-case.
+        umount /var/media/* 2>/dev/null
+
+        log $0 "Checking filesystem ${1}."
+        fsck -Mly ${1} >/dev/null 2>&1
+
+        log $0 "Mounting ${1} on ${MOUNT_PATH}"
+        /usr/bin/busybox mount ${1} ${MOUNT_PATH} >/dev/null 2>&1
+      fi
+      start_ms external
+      create_game_dirs
+      add_readme
+      exit 0
+}
+
+function find_games() {
+  if /usr/bin/busybox mountpoint -q /storage
+  then
+    for DEV in $(for dev in mmcblk[0-9] sd[a-z] nvme[0-9]; do blkid | grep ${dev} | awk 'BEGIN {FS=":"}; /ext4/ || /fat/ {print $1}' | sort -r; done)
+    do
+      ROOTDEV=$(echo ${DEV} | sed -e "s#^/.*/##g" -e "s#p[0-9].*\$##g")
+      log $0 "Inspecting ${DEV}."
+      SIZE=$(awk '/'${ROOTDEV}'$/ {print $3}' /proc/partitions)
+      if (( ${SIZE} <= 8388608 ))
+      then
+        log $0 "Device ${ROOTDEV} is too small, ignoring."
+        # We don't want to mount partitions smaller than ~8GB.
+        continue
+      fi
+      if [ -L "/sys/class/block/${ROOTDEV}boot0" ]
+      then
+        log $0 "Device ${ROOTDEV} might be Android, ignoring."
+        # Assume this is an android boot device and ignore it.
+        continue
+      fi
+      ISMOUNTED="$(grep "${DEV}" /proc/mounts) >/dev/null 2>&1"
+      if [ ! "$?" = 0 ] && \
+         [ -e "${DEV}" ] && \
+         [ ! -e "/storage/.please_resize_me" ]
+      then
+        GAMES_DEVICE=${DEV}
+        log $0 "Found ${DEV} available to mount."
+        mount_games "${DEV}"
+      else
+        log $0 "${DEV} not available."
+      fi
+    done
+    log $0 "Could not find external card to mount, assume internal."
+
+    MS_DEVICE=$(get_setting system.merged.device)
+    ### If the merge target isn't defined and we do not have an external microsd, we should use the internal card by default.
+    if [ -z "${MS_DEVICE}" ]
+    then
+      set_setting system.merged.device internal
+    fi
+    start_ms internal
+    create_game_dirs
+    add_readme
+    exit 0
+  fi
+}
+
+## Main..
+
+load_modules
+
+### Unmount any existing storage before beginning operations.
+unmount /storage/games-external
+unmount /storage/roms
+
+if [ -e "${GAMES_DEVICE}" ]
+then
+  mount_games ${GAMES_DEVICE}
+else
+  find_games
+fi

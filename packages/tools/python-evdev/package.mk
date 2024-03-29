@@ -33,6 +33,6 @@ makeinstall_target() {
 post_makeinstall_target() {
   for so in _ecodes _input _uinput
   do
-    mv ${INSTALL}/usr/lib/${PKG_PYTHON_VERSION}/site-packages/evdev/${so}.cpython-311-x86_64-jelos-linux-gnu.so ${INSTALL}/usr/lib/${PKG_PYTHON_VERSION}/site-packages/evdev/${so}.cpython-311-aarch64-jelos-linux-gnu.so
+    mv ${INSTALL}/usr/lib/${PKG_PYTHON_VERSION}/site-packages/evdev/${so}.cpython-311-x86_64-rocknix-linux-gnu.so ${INSTALL}/usr/lib/${PKG_PYTHON_VERSION}/site-packages/evdev/${so}.cpython-311-aarch64-rocknix-linux-gnu.so
   done
 }

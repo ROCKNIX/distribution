@@ -1,1 +1,0 @@
-Moved to [https://jelos.org/configure/optimizations/](https://jelos.org/configure/optimizations/)

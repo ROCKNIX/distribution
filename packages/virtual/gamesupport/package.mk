@@ -3,11 +3,11 @@
 
 PKG_NAME="gamesupport"
 PKG_LICENSE="GPLv2"
-PKG_SITE="https://jelos.org"
+PKG_SITE="https://rocknix.org"
 PKG_SECTION="virtual"
 PKG_LONGDESC="Game support software metapackage."
 
-PKG_GAMESUPPORT="sixaxis gptokeyb jstest-sdl gamecontrollerdb sdljoytest control-gen"
+PKG_GAMESUPPORT="sixaxis rocknix-hotkey jstest-sdl gamecontrollerdb sdljoytest control-gen"
 
 PKG_DEPENDS_TARGET="${PKG_GAMESUPPORT}"
 

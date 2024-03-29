@@ -1,1 +1,0 @@
-Moved to [https://jelos.org/play/netplay/](https://jelos.org/play/netplay/)

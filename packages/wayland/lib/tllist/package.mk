@@ -3,7 +3,7 @@
 
 PKG_NAME="tllist"
 PKG_VERSION="1.1.0"
-PKG_SHA256="3f3fe2f7433719cec816c63937a7aa36e566bd317763ef46d11562073ab6361d"
+PKG_SHA256="0e7b7094a02550dd80b7243bcffc3671550b0f1d8ba625e4dff52517827d5d23"
 PKG_LICENSE="MIT"
 PKG_SITE="https://codeberg.org/dnkl/tllist"
 PKG_URL="https://codeberg.org/dnkl/tllist/archive/${PKG_VERSION}.tar.gz"

@@ -10,7 +10,7 @@ PKG_LONGDESC="FFmpeg is a complete, cross-platform solution to record, convert a
 
 PKG_VERSION="6.0"
 PKG_URL="http://ffmpeg.org/releases/ffmpeg-${PKG_VERSION}.tar.xz"
-PKG_PATCH_DIRS="jelos"
+PKG_PATCH_DIRS="rocknix"
 
 PKG_PATCH_DIRS+=" v4l2-request v4l2-drmprime"
 
