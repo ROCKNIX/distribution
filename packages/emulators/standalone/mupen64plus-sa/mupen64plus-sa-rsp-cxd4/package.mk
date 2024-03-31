@@ -15,7 +15,7 @@ PKG_TOOLCHAIN="manual"
 PKG_BUILD_FLAGS="-fpic"
 
 case ${DEVICE} in
-  AMD64|RK3588|S922X|RK3399)
+  AMD64|RK3588|S922X|RK3399|RK3566)
     PKG_DEPENDS_TARGET+=" mupen64plus-sa-simplecore"
   ;;
 esac
@@ -60,7 +60,7 @@ make_target() {
   cp ${PKG_BUILD}/projects/unix/mupen64plus-rsp-cxd4${SUFFIX}.so ${PKG_BUILD}/projects/unix/mupen64plus-rsp-cxd4-base.so
 
   case ${DEVICE} in
-    AMD64|RK3588|S922X|RK3399)
+    AMD64|RK3588|S922X|RK3399|RK3566)
       PKG_MAKE_OPTS_TARGET+=" cxd4VIDEO=1"
       export APIDIR=$(get_build_dir mupen64plus-sa-simplecore)/src/api
       make -C projects/unix all ${PKG_MAKE_OPTS_TARGET}
