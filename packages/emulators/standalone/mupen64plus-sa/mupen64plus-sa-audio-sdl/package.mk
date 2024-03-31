@@ -14,13 +14,13 @@ PKG_LONGDESC="Mupen64Plus Standalone Audio SDL"
 PKG_TOOLCHAIN="manual"
 
 case ${DEVICE} in
-  AMD64|RK3588|S922X|RK3399)
+  AMD64|RK3588|S922X|RK3399|RK3566)
     PKG_DEPENDS_TARGET+=" mupen64plus-sa-simplecore"
   ;;
 esac
 
 case ${DEVICE} in
-  AMD64|RK33*|RK3588)
+  AMD64|RK33*|RK3588|RK3566)
     PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
     export USE_GLES=0
   ;;
@@ -53,7 +53,7 @@ make_target() {
   cp ${PKG_BUILD}/projects/unix/mupen64plus-audio-sdl.so ${PKG_BUILD}/projects/unix/mupen64plus-audio-sdl-base.so
 
   case ${DEVICE} in
-    AMD64|RK3588|S922X|RK3399)
+    AMD64|RK3588|S922X|RK3399|RK3566)
       export APIDIR=$(get_build_dir mupen64plus-sa-simplecore)/src/api
       make -C projects/unix all ${PKG_MAKE_OPTS_TARGET}
       cp ${PKG_BUILD}/projects/unix/mupen64plus-audio-sdl.so ${PKG_BUILD}/projects/unix/mupen64plus-audio-sdl-simple.so
