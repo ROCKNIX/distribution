@@ -11,5 +11,5 @@ PKG_LONGDESC="swaywm-env: Sway window manager environment"
 
 if [ ! "${BASE_ONLY}" = "true" ]
 then
-  PKG_DEPENDS_TARGET+=" sway wlr-randr"
+  PKG_DEPENDS_TARGET+=" sway wlr-randr swayimg"
 fi
