@@ -60,7 +60,7 @@ case "${DEVICE}" in
   ;;
   S922X*)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 pcsx_rearmed-lr"
-    PKG_EMUS+=" amiberry aethersx2-sa dolphin-sa drastic-sa mupen64plus-sa yabasanshiro-sa     \
+    PKG_EMUS+=" amiberry aethersx2-sa dolphin-sa drastic-sa lime-sa mupen64plus-sa yabasanshiro-sa     \
                 box64 portmaster"
     LIBRETRO_CORES+=" uae4arm beetle-psx-lr bsnes-lr bsnes-hd-lr dolphin-lr flycast-lr"
     PKG_RETROARCH+=" retropie-shaders"
@@ -123,6 +123,14 @@ makeinstall_target() {
   ### Panasonic 3DO
   add_emu_core 3do retroarch opera true
   add_es_system 3do
+
+  ### Nintendo 3DS
+  case ${DEVICE} in
+    S922X*)
+      add_emu_core 3ds lime lime-sa true
+      add_es_system 3ds
+    ;;
+  esac
 
   ### Commodore Amiga
   case ${DEVICE} in
