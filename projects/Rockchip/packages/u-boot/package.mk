@@ -11,6 +11,8 @@ PKG_DEPENDS_TARGET="toolchain Python3 swig:host rkbin glibc pyelftools:host"
 PKG_LONGDESC="Rockchip U-Boot is a bootloader for embedded systems."
 PKG_PATCH_DIRS+="${DEVICE}"
 
+PKG_NEED_UNPACK="$PROJECT_DIR/$PROJECT/bootloader"
+
 case ${DEVICE} in
   RK3588*)
     PKG_VERSION="ad0cfba1ac51e8dd8b039f6c56b9c9f9a679df91"
