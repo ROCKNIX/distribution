@@ -14,12 +14,6 @@ make_target() {
   :
 }
 
-
-#unpack() {
-#  mkdir -p ${PKG_BUILD}
-#  tar --strip-components=1 -xf ${SOURCES}/${PKG_NAME}/${PKG_NAME}-${PKG_VERSION}.tar.xz -C ${PKG_BUILD}
-#}
-
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin
   mkdir -p ${INSTALL}/usr/lib
