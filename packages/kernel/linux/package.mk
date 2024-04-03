@@ -21,7 +21,7 @@ case ${DEVICE} in
     PKG_GIT_CLONE_BRANCH="rk-5.10-rkr6"
   ;;
   *)
-    PKG_VERSION="6.8.2"
+    PKG_VERSION="6.8.3"
     PKG_URL="${PKG_SITE}/pub/linux/kernel/v6.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
   ;;
 esac
