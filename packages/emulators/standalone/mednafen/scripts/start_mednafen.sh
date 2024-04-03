@@ -46,6 +46,11 @@ sed -i "s/filesys.path_state.*/filesys.path_state \/storage\/roms\/savestates\/$
 
 # Get command line switches
 FEATURES_CMDLINE=""
+CORRECT_ASPECT=$(get_setting correct_aspect ${PLATFORM} "${GAME}")
+if [ ! -z "${CORRECT_ASPECT}" ] 
+then
+    FEATURES_CMDLINE+=" -${CORE}.correct_aspect ${CORRECT_ASPECT}"
+fi
 if [[ "${CORE}" =~ pce[_fast] ]]
 then
     if [ "$(get_setting nospritelimit ${PLATFORM} "${GAME}")" = "1" ]
@@ -129,7 +134,7 @@ then
     else
         FEATURES_CMDLINE+=" -${CORE}.superfx.clock_rate 100"
     fi
-    if [ $(get_setting superfx.icache "${PLATFORM}" "${GAME}") = "1" ]
+    if [[ "$(get_setting superfx.icache ${PLATFORM} "${GAME}")" == "1" ]]
     then
         FEATURES_CMDLINE+=" -${CORE}.superfx.icache 1"
     else
