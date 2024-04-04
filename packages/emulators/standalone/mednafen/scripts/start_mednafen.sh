@@ -3,7 +3,7 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 . /etc/profile
-
+set -x
 set_kill set "-9 mednafen"
 
 export MEDNAFEN_HOME=/storage/.config/mednafen
@@ -47,9 +47,10 @@ sed -i "s/filesys.path_state.*/filesys.path_state \/storage\/roms\/savestates\/$
 # Get command line switches
 FEATURES_CMDLINE=""
 CORRECT_ASPECT=$(get_setting correct_aspect ${PLATFORM} "${GAME}")
+CR=""
 if [ ! -z "${CORRECT_ASPECT}" ] 
 then
-    FEATURES_CMDLINE+=" -${CORE}.correct_aspect ${CORRECT_ASPECT}"
+    CR=" -${CORE}.correct_aspect ${CORRECT_ASPECT}"
 fi
 if [[ "${CORE}" =~ pce[_fast] ]]
 then
@@ -67,6 +68,7 @@ then
     fi
     if [ "${CORE}" = pce_fast ]
     then
+        FEATURES_CMDLINE+=$CR
         OCM=$(get_setting ocmultiplier ${PLATFORM} "${GAME}")
         if [ ${OCM} > 1 ]
         then
@@ -101,6 +103,7 @@ then
     fi
 elif [ "${CORE}" = "nes" ]
 then
+    FEATURES_CMDLINE+=$CR
     if [ $(get_setting clipsides "${PLATFORM}" "${GAME}") = "1" ]
     then
         FEATURES_CMDLINE+=" -${CORE}.clipsides 1"
@@ -115,6 +118,7 @@ then
     fi
 elif [ "${CORE}" = "snes_faust" ]
 then
+    FEATURES_CMDLINE+=$CR
     if [ $(get_setting spex "${PLATFORM}" "${GAME}") = "1" ]
     then
         FEATURES_CMDLINE+=" -${CORE}.spex 1"
@@ -179,6 +183,7 @@ then
     fi
 elif [ "${CORE}" = "ss" ]
 then
+    FEATURES_CMDLINE+=$CR
     IP1=$(get_setting input.port1 "${PLATFORM}" "${GAME}")
     if [[ "${IP1}" =~ gamepad|3dpad|gun  ]]
     then
@@ -207,6 +212,9 @@ then
     else
         FEATURES_CMDLINE+=" -${CORE}.cart.auto_default none"
     fi
+elif [ "${CORE}" = "md" ]
+then
+    FEATURES_CMDLINE+=$CR
 fi
 
 #Run mednafen
