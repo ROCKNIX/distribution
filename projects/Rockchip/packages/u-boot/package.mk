@@ -25,7 +25,7 @@ case ${DEVICE} in
   ;;
   RK3399)
     PKG_DEPENDS_TARGET+=" atf openssl:host"
-    PKG_VERSION="2024.01"
+    PKG_VERSION="2024.04"
     PKG_URL="https://ftp.denx.de/pub/u-boot/${PKG_NAME}-${PKG_VERSION}.tar.bz2"
   ;;
   RK3326)
