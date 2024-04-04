@@ -29,13 +29,17 @@ makeinstall_target() {
 
   if find_file_path bootloader/boot.ini; then
     cp -av ${FOUND_PATH} $INSTALL/usr/share/bootloader
-    sed -e "s/@EXTRA_CMDLINE@/${EXTRA_CMDLINE}/" \
+    sed -e "s/@DISTRO_BOOTLABEL@/${DISTRO_BOOTLABEL}/" \
+        -e "s/@DISTRO_DISKLABEL@/${DISTRO_DISKLABEL}/" \
+        -e "s/@EXTRA_CMDLINE@/${EXTRA_CMDLINE}/" \
         -i "${INSTALL}/usr/share/bootloader/boot.ini"
   fi
 
   if find_dir_path bootloader/extlinux; then
     cp -av ${FOUND_PATH} $INSTALL/usr/share/bootloader
-    sed -e "s/@EXTRA_CMDLINE@/${EXTRA_CMDLINE}/" \
+    sed -e "s/@DISTRO_BOOTLABEL@/${DISTRO_BOOTLABEL}/" \
+        -e "s/@DISTRO_DISKLABEL@/${DISTRO_DISKLABEL}/" \
+        -e "s/@EXTRA_CMDLINE@/${EXTRA_CMDLINE}/" \
         -i "${INSTALL}/usr/share/bootloader/extlinux/extlinux.conf"
   fi
 
