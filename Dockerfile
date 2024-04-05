@@ -3,7 +3,7 @@ FROM ubuntu:jammy
 ARG DEBIAN_FRONTEND=noninteractive
 SHELL ["/usr/bin/bash", "-c"]
 
-RUN apt-get update \
+RUN apt-get update --fix-missing\
  && apt-get dist-upgrade -y \
  && apt-get install -y locales sudo
 
@@ -20,7 +20,7 @@ RUN adduser --disabled-password --gecos '' docker \
 RUN apt-get install -y \
     bc default-jre file gawk gcc git golang-go gperf libjson-perl libncurses5-dev \
     libparse-yapp-perl libxml-parser-perl lzop make patchutils python-is-python3  \
-    python3 parted unzip wget curl xfonts-utils xsltproc zip zstd
+    python3 parted unzip wget curl xfonts-utils xsltproc zip zstd rdfind
 
 ### Cross compiling on ARM
 RUN if [ "$(uname -m)" = "aarch64" ]; then apt-get install -y --no-install-recommends qemu-user-binfmt libc6-dev-amd64-cross; fi
