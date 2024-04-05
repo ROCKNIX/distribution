@@ -101,6 +101,7 @@ This document describes all available systems emulators and cores available for 
 |Sega|Saturn (saturn)|1994|`saturn`|.cue .chd .iso|**yabasanshiro:** yabasanshiro-sa (default)<br>**retroarch:** yabasanshiro<br>**retroarch:** beetle_saturn<br>|
 |Sega|Sega 32X (sega32x)|1994|`sega32x`|.32x .smd .bin .md .zip .7z|**retroarch:** picodrive (default)<br>|
 |Sega|Sega CD (segacd)|1991|`segacd`|.chd .cue .iso .m3u|**retroarch:** genesis_plus_gx (default)<br>**retroarch:** picodrive<br>|
+|Sega|Sega Model 3 (segamodel3)|1996|`segamodel3`|.zip|**supermodel:** supermodel-sa (default)<br>|
 |Sega|SG-1000 (sg-1000)|1983|`sg-1000`|.bin .sg .zip .7z|**retroarch:** gearsystem (default)<br>**retroarch:** genesis_plus_gx<br>**retroarch:** picodrive<br>|
 |Sega|ST-V (st-v)|1995|`st-v`|.zip .ZIP|**retroarch:** beetle_saturn (default)<br>**mednafen:** ss<br>|
 |Sharp|X1 (x1)|1982|`x1`|.dx1 .2d .2hd .tfd .d88 .88d .hdm .xdf .dup .tap .cmd .zip .7z|**retroarch:** x1 (default)<br>|
