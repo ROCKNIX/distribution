@@ -2,7 +2,7 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="lime3ds-sa"
-PKG_VERSION="6bd64d83b770ca5ee7d0faaba400693950367822"
+PKG_VERSION="ff46656809278d797ff8d79514e0a1c6e57bf9be"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/Lime3DS/Lime3DS"
 PKG_URL="${PKG_SITE}.git"
