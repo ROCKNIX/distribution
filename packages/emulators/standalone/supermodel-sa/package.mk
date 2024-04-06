@@ -41,5 +41,5 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/config/supermodel
   mkdir -p ${INSTALL}/usr/config/supermodel/Config
   cp ${PKG_BUILD}/Config/Games.xml ${INSTALL}/usr/config/supermodel/Config
-  cp ${PKG_BUILD}/Config/Supermodel.ini ${INSTALL}/usr/config/supermodel/Config
+  cp -r ${PKG_DIR}/config/${DEVICE}/* ${INSTALL}/usr/config/supermodel/Config
 }
