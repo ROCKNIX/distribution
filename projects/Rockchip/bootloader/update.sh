@@ -3,17 +3,22 @@
 # Copyright (C) 2017-2021 Team LibreELEC (https://libreelec.tv)
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
-[ -z "$SYSTEM_ROOT" ] && SYSTEM_ROOT=""
-[ -z "$BOOT_ROOT" ] && BOOT_ROOT="/flash"
-[ -z "$BOOT_PART" ] && BOOT_PART=$(df "$BOOT_ROOT" | tail -1 | awk {' print $1 '})
+if [ -z "${1}" ]; then
+  [ -z "$SYSTEM_ROOT" ] && SYSTEM_ROOT=""
+  [ -z "$BOOT_ROOT" ] && BOOT_ROOT="/flash"
+  [ -z "$BOOT_PART" ] && BOOT_PART=$(df "$BOOT_ROOT" | tail -1 | awk {' print $1 '})
 
-# identify the boot device
-if [ -z "$BOOT_DISK" ]; then
-  case $BOOT_PART in
-    /dev/mmcblk*)
-      BOOT_DISK=$(echo $BOOT_PART | sed -e "s,p[0-9]*,,g")
-      ;;
-  esac
+  # identify the boot device
+  if [ -z "$BOOT_DISK" ]; then
+    case $BOOT_PART in
+      /dev/mmcblk*)
+        BOOT_DISK=$(echo $BOOT_PART | sed -e "s,p[0-9]*,,g")
+        ;;
+    esac
+  fi
+else
+  BOOT_DISK="${1}"
+  BOOT_ROOT="${2}"
 fi
 
 # mount $BOOT_ROOT rw
@@ -32,27 +37,27 @@ if [ -f $BOOT_ROOT/extlinux/extlinux.conf ]; then
     echo "Updating extlinux.conf..."
     cp -p $SYSTEM_ROOT/usr/share/bootloader/extlinux/extlinux.conf $BOOT_ROOT/extlinux
   fi
-fi
 
-# Set correct FDT boot dtb for RK3588
-DT_ID=$($SYSTEM_ROOT/usr/bin/dtname)
-if [ -n "${DT_ID}" ]; then
-  case ${DT_ID} in
-    *gameforce,ace)
-      echo "Setting boot FDT to GameForce Ace..."
-      sed -i '/FDT/c\  FDT /rk3588s-gameforce-ace.dtb' $BOOT_ROOT/extlinux/extlinux.conf
+  # Set correct FDT boot dtb for RK3588
+  DT_ID=$($SYSTEM_ROOT/usr/bin/dtname)
+  if [ -n "${DT_ID}" ]; then
+    case ${DT_ID} in
+      *gameforce,ace)
+        echo "Setting boot FDT to GameForce Ace..."
+        sed -i '/FDT/c\  FDT /rk3588s-gameforce-ace.dtb' $BOOT_ROOT/extlinux/extlinux.conf
       ;;
-    *orangepi-5)
-      echo "Setting boot FDT to Orange Pi 5..."
-      sed -i '/FDT/c\  FDT /rk3588s-orangepi-5.dtb' $BOOT_ROOT/extlinux/extlinux.conf
-      sed -i 's/ fbcon=rotate:1//' $BOOT_ROOT/extlinux/extlinux.conf
+      *orangepi-5)
+        echo "Setting boot FDT to Orange Pi 5..."
+        sed -i '/FDT/c\  FDT /rk3588s-orangepi-5.dtb' $BOOT_ROOT/extlinux/extlinux.conf
+        sed -i 's/ fbcon=rotate:1//' $BOOT_ROOT/extlinux/extlinux.conf
       ;;
-    *rock-5)
-      echo "Setting boot FDT to Rock 5B..."
-      sed -i '/FDT/c\  FDT /rk3588-rock-5b.dtb' $BOOT_ROOT/extlinux/extlinux.conf
-      sed -i 's/ fbcon=rotate:1//' $BOOT_ROOT/extlinux/extlinux.conf
-      ;;
-  esac
+      *rock-5)
+        echo "Setting boot FDT to Rock 5B..."
+        sed -i '/FDT/c\  FDT /rk3588-rock-5b.dtb' $BOOT_ROOT/extlinux/extlinux.conf
+        sed -i 's/ fbcon=rotate:1//' $BOOT_ROOT/extlinux/extlinux.conf
+       ;;
+     esac
+  fi
 fi
 
 if [ -f $BOOT_ROOT/boot.ini ]; then
@@ -91,7 +96,7 @@ fi
 
 for BOOT_IMAGE in u-boot.itb u-boot.img; do
   if [ -f "$SYSTEM_ROOT/usr/share/bootloader/${BOOT_IMAGE}" ]; then
-    echo "Updating $BOOT_IMAGE on $BOOT_DISK..."
+    echo -n "Updating $BOOT_IMAGE on $BOOT_DISK..."
     dd if=$SYSTEM_ROOT/usr/share/bootloader/$BOOT_IMAGE of=$BOOT_DISK bs=512 seek=16384 conv=fsync &>/dev/null
     break
   fi

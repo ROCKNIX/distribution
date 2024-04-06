@@ -17,6 +17,8 @@ post_install() {
         -e "s/@EXTRA_CMDLINE@/${EXTRA_CMDLINE}/g" \
         -i  ${INSTALL}/usr/bin/installer
 
+  chmod +x ${INSTALL}/usr/bin/installer
+
   mkdir -p ${INSTALL}/etc
     cp ${PKG_DIR}/config/* ${INSTALL}/etc
     sed -e "s/@SYSTEM_SIZE@/${SYSTEM_SIZE}/g" \
