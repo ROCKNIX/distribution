@@ -41,6 +41,43 @@ else
   unset EMUPERF
 fi
 
+#Emulation Station Features
+GAME=$(echo "${1}"| sed "s#^/.*/##")
+VSYNC=$(get_setting vsync segamodel3 "${GAME}")
+RESOLUTION=$(get_setting resolution segamodel3 "${GAME}")
+ENGINE=$(get_setting rendering_engine segamodel3 "${GAME}")
+
+OPTIONS=
+
+#VSYNC
+if [ "$VSYNC" = "true" ]
+then
+  OPTIONS+=" -vsync"
+elif [ "$VSYNC" = "false" ]
+then
+  OPTIONS+=" -no-vsync"
+fi
+
+#ENGINE
+if [ "$ENGINE" = "1" ]
+then
+  OPTIONS+=" -new3d"
+elif [ "$ENGINE" = "0" ]
+then
+  OPTIONS+=" -legacy3d"
+fi
+
+#RESOLUTION
+if [ "$RESOLUTION" = "1" ]
+then
+  OPTIONS+=" -res=496,384"
+elif [ "$RESOLUTION" = "2" ]
+then
+  OPTIONS+=" -res=992,768"
+else
+  OPTIONS+=" -fullscreen"
+fi
+
 cd ${CONFIG_DIR}
-echo "Command: supermodel "${1}" -fullscreen" >/var/log/exec.log 2>&1
-${EMUPERF} supermodel "${1}" -fullscreen >>/var/log/exec.log 2>&1 ||:
+echo "Command: supermodel "${1}" ${OPTIONS}" >/var/log/exec.log 2>&1
+${EMUPERF} supermodel "${1}" ${OPTIONS} >>/var/log/exec.log 2>&1 ||:
