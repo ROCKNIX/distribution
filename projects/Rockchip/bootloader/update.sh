@@ -56,9 +56,9 @@ if [ -n "${DT_ID}" ]; then
 fi
 
 if [ -f $BOOT_ROOT/boot.ini ]; then
-  if [ -f /usr/share/bootloader/boot.ini ]; then
+  if [ -f $SYSTEM_ROOT/usr/share/bootloader/boot.ini ]; then
     echo "Updating boot.ini"
-    cp -p /usr/share/bootloader/boot.ini $BOOT_ROOT/boot.ini
+    cp -p $SYSTEM_ROOT/usr/share/bootloader/boot.ini $BOOT_ROOT/boot.ini
 
     if [ -f $BOOT_ROOT/device.name ]; then
       # Set correct R3xS dtb in boot.ini
