@@ -24,26 +24,13 @@ esac
 
 PKG_MAKE_OPTS="NET_BOARD=1"
 
-pre_configure_target() {
+pre_patch() {
   cp ${PKG_BUILD}/Makefiles/Makefile.UNIX ${PKG_BUILD}/Makefile
+}
 
+post_patch() {
   # Add proper include directory
-  sed -e "s+-DGLEW_STATIC+-I${SYSROOT_PREFIX}/usr/include -DGLEW_STATIC+g" -i ${PKG_BUILD}/Makefiles/Rules.inc
-
-  # Fix to allow cross-compiling
-  sed 's+ARCH = -march=native+ARCH = -DSDL_DISABLE_IMMINTRIN_H+g' -i ${PKG_BUILD}/Makefiles/Rules.inc
-
-  # This file needs to be compiled for the Host system to run. Hard coding gcc for now.
-  sed 's+$(SILENT)$(CC) $< $(CFLAGS)+$(SILENT)gcc $< $(CFLAGS) -march=native+g' -i ${PKG_BUILD}/Makefiles/Rules.inc
-  sed 's+$(SILENT)$(LD) $(MUSASHI_LDFLAGS)+$(SILENT)gcc $(MUSASHI_LDFLAGS)+g' -i ${PKG_BUILD}/Makefiles/Rules.inc
-
-  # More fixes for cross compilation.
-  sed 's+CC = gcc+ +g' -i ${PKG_BUILD}/Makefile
-  sed 's/CXX = g++/ /g' -i ${PKG_BUILD}/Makefile
-  sed 's+LD = gcc+ +g' -i ${PKG_BUILD}/Makefile
-
-  # Use the compiler to link vs ld as the original Makefile intended and cross compiler fixes above changed.
-  sed 's+$(SILENT)$(LD) $(OBJ_FILES) $(LDFLAGS)+$(SILENT)$(CC) $(OBJ_FILES) $(LDFLAGS)+g' -i ${PKG_BUILD}/Makefiles/Rules.inc
+  sed -e "s+MUSASHI_CFLAGS =+MUSASHI_CFLAGS = -I${SYSROOT_PREFIX}/usr/include+g" -i ${PKG_BUILD}/Makefiles/Rules.inc
 }
 
 makeinstall_target() {
@@ -54,5 +41,5 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/config/supermodel
   mkdir -p ${INSTALL}/usr/config/supermodel/Config
   cp ${PKG_BUILD}/Config/Games.xml ${INSTALL}/usr/config/supermodel/Config
-  cp ${PKG_BUILD}/Config/Supermodel.ini ${INSTALL}/usr/config/supermodel/Config
+  cp -r ${PKG_DIR}/config/${DEVICE}/* ${INSTALL}/usr/config/supermodel/Config
 }
