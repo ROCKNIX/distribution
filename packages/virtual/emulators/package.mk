@@ -206,8 +206,12 @@ makeinstall_target() {
 
   ## Sammy Atomiswave
   case ${DEVICE} in
-    RK35*)
-      add_emu_core atomiswave retroarch flycast2021 false
+    RK3588*)
+      add_emu_core atomiswave retroarch flycast2021 true
+      add_emu_core atomiswave flycast flycast-sa false
+    ;;
+    RK3566*)
+      add_emu_core atomiswave retroarch flycast2021 true
       add_emu_core atomiswave retroarch flycast false
       add_emu_core atomiswave flycast flycast-sa false
     ;;
@@ -305,8 +309,12 @@ makeinstall_target() {
 
   ### Sega Dreamcast
   case ${DEVICE} in
-    RK35*)
-      add_emu_core dreamcast retroarch flycast2021 false
+    RK3588*)
+      add_emu_core dreamcast retroarch flycast2021 true
+      add_emu_core dreamcast flycast flycast-sa false
+    ;;
+    RK3566*)
+      add_emu_core dreamcast retroarch flycast2021 true
       add_emu_core dreamcast retroarch flycast false
       add_emu_core dreamcast flycast flycast-sa false
     ;;
@@ -616,8 +624,12 @@ makeinstall_target() {
 
   ### Sega Naomi
   case ${DEVICE} in
-    RK35*)
-      add_emu_core naomi retroarch flycast2021 false
+    RK3588*)
+      add_emu_core naomi retroarch flycast2021 true
+      add_emu_core naomi flycast flycast-sa false
+    ;;
+    RK3566*)
+      add_emu_core naomi retroarch flycast2021 true
       add_emu_core naomi retroarch flycast false
       add_emu_core naomi flycast flycast-sa false
     ;;
