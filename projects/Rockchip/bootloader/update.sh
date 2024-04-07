@@ -115,6 +115,9 @@ elif [ -f $SYSTEM_ROOT/usr/share/bootloader/resource.img ]; then
   dd if=$SYSTEM_ROOT/usr/share/bootloader/resource.img of=$BOOT_DISK bs=512 seek=24576 conv=fsync &>/dev/null
 fi
 
+# Update system partition label to ROCKNIX
+[ ! -z "$(blkid | grep JELOS)" ] && dosfslabel $BOOT_PART ROCKNIX
+
 # mount $BOOT_ROOT ro
 sync
 mount -o remount,ro $BOOT_ROOT
