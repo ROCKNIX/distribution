@@ -71,7 +71,8 @@ if [ -f $BOOT_ROOT/boot.ini ]; then
       case ${DTB_NAME} in
         R33S)
           echo "Setting R33S dtb in boot.ini..."
-          sed -i '/rk3326-gameconsole-r3/c\  load mmc 1:1 ${dtb_loadaddr} rk3326-gameconsole-r33s.dtb' $BOOT_ROOT/boot.ini
+# Updaste system partition label to ROCKNIX
+[ ! -z "$(blkid | grep JELOS)" ] && dosfslabel $BOOT_DISK ROCKNIX          sed -i '/rk3326-gameconsole-r3/c\  load mmc 1:1 ${dtb_loadaddr} rk3326-gameconsole-r33s.dtb' $BOOT_ROOT/boot.ini
           ;;
         R36S)
           echo "Setting R36S/R35S dtb in boot.ini..."
@@ -114,6 +115,9 @@ elif [ -f $SYSTEM_ROOT/usr/share/bootloader/resource.img ]; then
   echo -n "Updating resource.img on $BOOT_DISK... "
   dd if=$SYSTEM_ROOT/usr/share/bootloader/resource.img of=$BOOT_DISK bs=512 seek=24576 conv=fsync &>/dev/null
 fi
+
+# Update system partition label to ROCKNIX
+[ ! -z "$(blkid | grep JELOS)" ] && dosfslabel $BOOT_PART ROCKNIX
 
 # mount $BOOT_ROOT ro
 sync
