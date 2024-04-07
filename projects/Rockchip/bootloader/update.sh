@@ -71,8 +71,7 @@ if [ -f $BOOT_ROOT/boot.ini ]; then
       case ${DTB_NAME} in
         R33S)
           echo "Setting R33S dtb in boot.ini..."
-# Updaste system partition label to ROCKNIX
-[ ! -z "$(blkid | grep JELOS)" ] && dosfslabel $BOOT_DISK ROCKNIX          sed -i '/rk3326-gameconsole-r3/c\  load mmc 1:1 ${dtb_loadaddr} rk3326-gameconsole-r33s.dtb' $BOOT_ROOT/boot.ini
+          sed -i '/rk3326-gameconsole-r3/c\  load mmc 1:1 ${dtb_loadaddr} rk3326-gameconsole-r33s.dtb' $BOOT_ROOT/boot.ini
           ;;
         R36S)
           echo "Setting R36S/R35S dtb in boot.ini..."
