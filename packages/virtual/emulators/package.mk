@@ -54,8 +54,9 @@ case "${DEVICE}" in
   ;;
   S922X*)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 pcsx_rearmed-lr wine"
-    PKG_EMUS+=" aethersx2-sa box64 dolphin-sa drastic-sa lime3ds-sa portmaster yabasanshiro-sa"
+    PKG_EMUS+=" aethersx2-sa box64 dolphin-sa drastic-sa portmaster yabasanshiro-sa"
     LIBRETRO_CORES+=" beetle-psx-lr bsnes-lr bsnes-hd-lr dolphin-lr flycast-lr uae4arm"
+    [ "${USE_MALI}" != "no" ] && PKG_EMUS+=" lime3ds-sa"
     PKG_RETROARCH+=" retropie-shaders"
   ;;
   RK3326*)

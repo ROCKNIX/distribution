@@ -94,4 +94,8 @@ post_install() {
         -i  ${INSTALL}/usr/bin/start_dolphin_gc.sh
     sed -e "s/@DOLPHIN_PLATFORM@/${DOLPHIN_PLATFORM}/g" \
         -i  ${INSTALL}/usr/bin/start_dolphin_wii.sh
+
+    if [ "${DEVICE}" = "S922X" -a "${USE_MALI}" = "no" ]; then
+      sed -e "s/GFXBackend = Vulkan/GFXBackend =/g" -i ${INSTALL}/usr/config/dolphin-emu/Dolphin.ini
+    fi
 }
