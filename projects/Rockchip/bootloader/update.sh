@@ -111,7 +111,7 @@ elif [ -f $SYSTEM_ROOT/usr/share/bootloader/resource.img ]; then
 fi
 
 # Update system partition label to ROCKNIX
-[ ! -z "$(blkid | grep JELOS)" ] && dosfslabel $BOOT_PART ROCKNIX
+[ ! -z "$(blkid | grep JELOS)" ] && ${SYSTEM_ROOT}/usr/sbin/dosfslabel $BOOT_PART ROCKNIX
 
 # mount $BOOT_ROOT ro
 sync
