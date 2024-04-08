@@ -76,6 +76,9 @@ if [ -d $BOOT_ROOT/res ]; then
   fi
 fi
 
+# Update system partition label to ROCKNIX
+[ ! -z "$(blkid | grep JELOS)" ] && ${SYSTEM_ROOT}/usr/sbin/dosfslabel $BOOT_PART ROCKNIX
+
 # mount $BOOT_ROOT ro
 sync
 mount -o remount,ro $BOOT_ROOT
