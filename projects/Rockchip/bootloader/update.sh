@@ -3,22 +3,17 @@
 # Copyright (C) 2017-2021 Team LibreELEC (https://libreelec.tv)
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
-if [ -z "${1}" ]; then
-  [ -z "$SYSTEM_ROOT" ] && SYSTEM_ROOT=""
-  [ -z "$BOOT_ROOT" ] && BOOT_ROOT="/flash"
-  [ -z "$BOOT_PART" ] && BOOT_PART=$(df "$BOOT_ROOT" | tail -1 | awk {' print $1 '})
+[ -z "$SYSTEM_ROOT" ] && SYSTEM_ROOT=""
+[ -z "$BOOT_ROOT" ] && BOOT_ROOT="/flash"
+[ -z "$BOOT_PART" ] && BOOT_PART=$(df "$BOOT_ROOT" | tail -1 | awk {' print $1 '})
 
-  # identify the boot device
-  if [ -z "$BOOT_DISK" ]; then
-    case $BOOT_PART in
-      /dev/mmcblk*)
-        BOOT_DISK=$(echo $BOOT_PART | sed -e "s,p[0-9]*,,g")
-        ;;
-    esac
-  fi
-else
-  BOOT_DISK="${1}"
-  BOOT_ROOT="${2}"
+# identify the boot device
+if [ -z "$BOOT_DISK" ]; then
+  case $BOOT_PART in
+    /dev/mmcblk*)
+      BOOT_DISK=$(echo $BOOT_PART | sed -e "s,p[0-9]*,,g")
+      ;;
+  esac
 fi
 
 # mount $BOOT_ROOT rw
