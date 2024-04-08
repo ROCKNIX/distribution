@@ -20,7 +20,7 @@ case ${DEVICE} in
   ;;
   RK3566*)
     PKG_URL="https://github.com/u-boot/u-boot.git"
-    PKG_VERSION="e8f2404e093daf6cc3ac2b3233e3c6770d13e371"
+    PKG_VERSION="9cba29b19f43f9450117e8bc89e7dda691ed5ab5"
     PKG_GIT_CLONE_BRANCH="master"
   ;;
   RK3399)
