@@ -68,14 +68,15 @@ then
 fi
 
 #RESOLUTION
-if [ "$RESOLUTION" = "1" ]
+if [ "$RESOLUTION" = "0" ]
+then
+  OPTIONS+=" -res=1920,1080 -fullscreen"
+elif [ "$RESOLUTION" = "1" ]
 then
   OPTIONS+=" -res=496,384"
 elif [ "$RESOLUTION" = "2" ]
 then
   OPTIONS+=" -res=992,768"
-else
-  OPTIONS+=" -fullscreen"
 fi
 
 cd ${CONFIG_DIR}
