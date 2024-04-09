@@ -11,10 +11,9 @@ PKG_PATCH_DIRS+=" ${DEVICE}"
 
 case ${DEVICE} in
   RK3588*)
-	PKG_VERSION="120202c675749c5ef81ae4c8cdc30019b4de08f4"
-	PKG_SITE="https://gitlab.com/panfork/mesa"
+	PKG_VERSION="832c3c7117e4366e415ded92a6f07ec203fd9233"
+	PKG_SITE="https://github.com/ROCKNIX/mesa-panfork"
 	PKG_URL="${PKG_SITE}.git"
-	PKG_GIT_CLONE_BRANCH="csf"
   ;;
   RK3*|S922X)
     if [ "${DEVICE}" = "S922X" -a "${USE_MALI}" != "no" ]; then
