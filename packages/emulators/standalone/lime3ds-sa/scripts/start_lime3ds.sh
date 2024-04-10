@@ -32,6 +32,9 @@ RENDERER=$(get_setting graphics_backend 3ds "${GAME}")
 RES=$(get_setting resolution_scale 3ds "${GAME}")
 ROTATE=$(get_setting rotate_screen 3ds "${GAME}")
 SLAYOUT=$(get_setting screen_layout 3ds "${GAME}")
+CSHADERS=$(get_setting cache_shaders 3ds "${GAME}")
+HSHADERS=$(get_setting hardware_shaders 3ds "${GAME}")
+
 
 # CPU Underclock
 case "${CPU}" in
@@ -54,6 +57,18 @@ esac
 case "${ROTATE}" in
   0) sed -i '/upright_screen =/c\upright_screen = 0' /storage/.config/lime3ds/sdl2-config.ini;;
   1) sed -i '/upright_screen =/c\upright_screen = 1' /storage/.config/lime3ds/sdl2-config.ini;;
+esac
+
+# Cache Shaders
+case "${CSHADERS}" in
+  0) sed -i '/use_disk_shader_cache =/c\use_disk_shader_cache = 0' /storage/.config/lime3ds/sdl2-config.ini;;
+  1) sed -i '/use_disk_shader_cache =/c\use_disk_shader_cache = 1' /storage/.config/lime3ds/sdl2-config.ini;;
+esac
+
+# Hardware Shaders
+case "${HSHADERS}" in
+  0) sed -i '/use_hw_shader =/c\use_hw_shader = 0' /storage/.config/lime3ds/sdl2-config.ini;;
+  1) sed -i '/use_hw_shader =/c\use_hw_shader = 1' /storage/.config/lime3ds/sdl2-config.ini;;
 esac
 
 # Screen Layout
