@@ -41,6 +41,11 @@ if [ -f $BOOT_ROOT/extlinux/extlinux.conf ]; then
         echo "Setting boot FDT to GameForce Ace..."
         sed -i '/FDT/c\  FDT /rk3588s-gameforce-ace.dtb' $BOOT_ROOT/extlinux/extlinux.conf
         ;;
+      *orangepi-5-plus)
+        echo "Setting boot FDT to Orange Pi 5 Plus..."
+        sed -i '/FDT/c\  FDT /rk3588s-orangepi-5-plus.dtb' $BOOT_ROOT/extlinux/extlinux.conf
+        sed -i 's/ fbcon=rotate:1//' $BOOT_ROOT/extlinux/extlinux.conf
+        ;;
       *orangepi-5)
         echo "Setting boot FDT to Orange Pi 5..."
         sed -i '/FDT/c\  FDT /rk3588s-orangepi-5.dtb' $BOOT_ROOT/extlinux/extlinux.conf
