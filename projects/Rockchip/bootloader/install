@@ -6,42 +6,19 @@ PKG_RKBIN="$(get_build_dir rkbin)"
 PKG_UBOOT="$(get_build_dir u-boot)"
 source ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/options
 
-RKSPI_LOADER=${INSTALL}/usr/share/bootloader/rkspi_loader.img
-
-generate_rkspi_loader() {
-        echo "spi: create rkspi_loader.img..."
-        dd if=/dev/zero of=$RKSPI_LOADER bs=1M count=0 seek=16
-        # When running as a non-root user, /sbin & /usr/sbin are excluded from $PATH
-        PATH=/sbin:/usr/sbin:$PATH PARTED_CMD="$(which parted)"
-        ${PARTED_CMD} -s $RKSPI_LOADER mklabel gpt
-        ${PARTED_CMD} -s $RKSPI_LOADER unit s mkpart idbloader 64 7167
-        ${PARTED_CMD} -s $RKSPI_LOADER unit s mkpart vnvm 7168 7679
-        ${PARTED_CMD} -s $RKSPI_LOADER unit s mkpart reserved_space 7680 8063
-        ${PARTED_CMD} -s $RKSPI_LOADER unit s mkpart reserved1 8064 8127
-        ${PARTED_CMD} -s $RKSPI_LOADER unit s mkpart uboot_env 8128 8191
-        ${PARTED_CMD} -s $RKSPI_LOADER unit s mkpart reserved2 8192 16383
-        ${PARTED_CMD} -s $RKSPI_LOADER unit s mkpart uboot 16384 32734
-        echo "spi: write idbloader.img to rkspi_loader.img..."
-        dd if=${PKG_BUILD}/idbloader.img of=$RKSPI_LOADER seek=64 conv=notrunc
-        echo "spi: write uboot.itb to rkspi_loader.img..."
-        dd if=${PKG_BUILD}/u-boot.itb of=$RKSPI_LOADER seek=16384 conv=notrunc
-}
-
-
-
 if [ -n "${PKG_DATAFILE}" -a -n "${PKG_LOADER}" ]; then
   echo "loader: Make idbloader.img from ${PKG_DATAFILE}:${PKG_LOADER}..."
   case "${PKG_SOC}" in
     rk35*)
       tools/mkimage -n ${PKG_SOC} -T rksd -d ${PKG_DATAFILE}:${PKG_LOADER} -C bzip2 idbloader.img
-    ;;
+      ;;
     rk3399)
       ${PKG_RKBIN}/tools/mkimage -n "${PKG_SOC}" -T rksd -d ${PKG_DATAFILE}:${PKG_LOADER} idbloader.img.rk || exit 1
-    ;;
+      ;;
     *)
       tools/mkimage -n ${PKG_SOC} -T rksd -d "${PKG_DATAFILE}" -C bzip2 idbloader.img
       cat "${PKG_LOADER}" >> idbloader.img
-    ;;
+      ;;
   esac
 fi
 
@@ -49,7 +26,7 @@ case "${PKG_SOC}" in
   rk35*|px30)
     echo "uboot: copy idbloader.img image to ${INSTALL}/usr/share/bootloader..."
     cp -av idbloader.img ${INSTALL}/usr/share/bootloader
-  ;;
+    ;;
 esac
 
 if [ ! -n "${PKG_LOAD_ADDR}" ]; then
@@ -58,15 +35,14 @@ fi
 
 case "${PKG_SOC}" in
   rk35*)
-    for BOOT_IMAGE in u-boot.itb u-boot.img u-boot.img
-    do
+    for BOOT_IMAGE in u-boot.itb u-boot.img u-boot.img; do
       if [ -f "${BOOT_IMAGE}" ]; then
         echo "uboot: copy ${BOOT_IMAGE} image to ${INSTALL}/usr/share/bootloader..."
         cp -av ${BOOT_IMAGE} ${INSTALL}/usr/share/bootloader/${BOOT_IMAGE}
         break
       fi
     done
-  ;;
+    ;;
   rk3399)
     PKG_ATF_INI="${PKG_RKBIN}"/RKTRUST/"${DEVICE}"TRUST.ini
     echo "uboot: building ${UBOOT_FIT_IMAGE}..."
@@ -78,19 +54,19 @@ case "${PKG_SOC}" in
   
     echo "uboot: copy ${UBOOT_FIT_IMAGE} to ${INSTALL}/usr/share/bootloader..."
     cp -av ${UBOOT_FIT_IMAGE} ${INSTALL}/usr/share/bootloader
-  ;;
+    ;;
   *)
     echo "uboot: build loader image u-boot.img at ${PKG_LOAD_ADDR}..."
     ${PKG_UBOOT}/tools/loaderimage --pack --uboot u-boot-dtb.bin u-boot.img ${PKG_LOAD_ADDR} ||:
     cp -av u-boot.img ${INSTALL}/usr/share/bootloader
-  ;;
+    ;;
 esac
 
 case "${DEVICE}" in
   RK3326)
-if [ -n "${PKG_BL31}" ]; then
-  echo "trust: create trust.ini..."
-  cat >trust.ini <<EOF
+    if [ -n "${PKG_BL31}" ]; then
+      echo "trust: create trust.ini..."
+      cat >trust.ini <<EOF
 [BL30_OPTION]
 SEC=0
 [BL31_OPTION]
@@ -104,43 +80,41 @@ SEC=0
 [OUTPUT]
 PATH=trust.img
 EOF
-  TROPTS="--verbose"
-  ${PKG_UBOOT}/tools/trust_merger ${TROPTS} trust.ini
-  cp -av trust.img ${INSTALL}/usr/share/bootloader
-fi
-  ;;
+      TROPTS="--verbose"
+      ${PKG_UBOOT}/tools/trust_merger ${TROPTS} trust.ini
+      cp -av trust.img ${INSTALL}/usr/share/bootloader
+    fi
+    ;;
 esac
 
-if [ "${BOOT_INI}" == true ]
-then
+if [ "${BOOT_INI}" == true ]; then
   echo "boot: create boot.ini..."
-  if [ -e "${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/boot/boot.ini" ]
-  then
+  if [ -e "${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/boot/boot.ini" ]; then
     cp -f ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/boot/boot.ini ${INSTALL}/usr/share/bootloader/boot.ini
-    sed -i "s~@EXTRA_CMDLINE@~${EXTRA_CMDLINE}~g" ${INSTALL}/usr/share/bootloader/boot.ini
+    sed -e "s/@DISTRO_BOOTLABEL@/${DISTRO_BOOTLABEL}/" \
+        -e "s/@DISTRO_DISKLABEL@/${DISTRO_DISKLABEL}/" \
+        -e "s/@EXTRA_CMDLINE@/${EXTRA_CMDLINE}/" \
+        -i "${INSTALL}/usr/share/bootloader/boot.ini"
   else
     echo "ERROR: No boot.ini found in ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/boot/."
     exit 1
   fi
 fi
 
-if [ "${EXT_LINUX_CONF}" == true ]
-then
-echo "boot: create extlinux.conf..."
-mkdir -p "${INSTALL}/usr/share/bootloader/extlinux"
+if [ "${EXT_LINUX_CONF}" == true ]; then
+  echo "boot: create extlinux.conf..."
+  mkdir -p "${INSTALL}/usr/share/bootloader/extlinux"
 
-if [[ "${PKG_SOC}" != "rk3588" ]] && \
-   [[ "${TRUST_LABEL}" = "resource"  || "${#DEVICE_DTB[@]}" -gt 1 ]]
-then
-  FDTMODE="FDTDIR /"
-else
-  FDTMODE="FDT /${DEVICE_DTB[0]}.dtb"
-fi
+  if [[ "${PKG_SOC}" != "rk3588" ]] && [[ "${TRUST_LABEL}" = "resource" || "${#DEVICE_DTB[@]}" -gt 1 ]]; then
+    FDTMODE="FDTDIR /"
+  else
+    FDTMODE="FDT /${DEVICE_DTB[0]}.dtb"
+  fi
 
-cat << EOF > "${INSTALL}/usr/share/bootloader/extlinux/extlinux.conf"
+  cat << EOF > "${INSTALL}/usr/share/bootloader/extlinux/extlinux.conf"
 LABEL ${DISTRO}
   LINUX /${KERNEL_NAME}
   ${FDTMODE}
-  APPEND boot=UUID=@UUID_SYSTEM@ disk=UUID=@UUID_STORAGE@ ${EXTRA_CMDLINE}
+  APPEND boot=LABEL=${DISTRO_BOOTLABEL} disk=LABEL=${DISTRO_DISKLABEL} ${EXTRA_CMDLINE}
 EOF
 fi

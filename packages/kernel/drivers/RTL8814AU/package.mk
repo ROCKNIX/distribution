@@ -4,7 +4,7 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="RTL8814AU"
-PKG_VERSION="d7945c1e0244c83cbbad4da331648246f12eaee9"
+PKG_VERSION="b5a6f96cd20a1c6a35ccb000f2f4924dd19704a3"
 PKG_ARCH="aarch64 x86_64"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/morrownr/8814au"

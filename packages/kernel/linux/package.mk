@@ -5,14 +5,18 @@
 PKG_NAME="linux"
 PKG_LICENSE="GPL"
 PKG_SITE="http://www.kernel.org"
-PKG_DEPENDS_HOST="ccache:host rdfind:host rsync:host openssl:host"
-PKG_DEPENDS_TARGET="toolchain rdfind:host linux:host kmod:host cpio:host xz:host keyutils ncurses openssl:host wireless-regdb ${KERNEL_EXTRA_DEPENDS_TARGET}"
+PKG_DEPENDS_HOST="ccache:host rsync:host openssl:host"
+PKG_DEPENDS_TARGET="toolchain linux:host kmod:host cpio:host xz:host keyutils ncurses openssl:host ${KERNEL_EXTRA_DEPENDS_TARGET}"
 PKG_NEED_UNPACK="${LINUX_DEPENDS} $(get_pkg_directory initramfs) $(get_pkg_variable initramfs PKG_NEED_UNPACK)"
 PKG_LONGDESC="This package contains a precompiled kernel image and the modules."
 PKG_IS_KERNEL_PKG="yes"
 PKG_STAMP="${KERNEL_TARGET} ${KERNEL_MAKE_EXTRACMD}"
 
 PKG_PATCH_DIRS="${LINUX} ${DEVICE} default"
+
+if [ "${DEVICE}" = "S922X" -a "${USE_MALI}" = "no" ]; then
+  PKG_PATCH_DIRS+=" S922X-PANFROST"
+fi
 
 case ${DEVICE} in
   RK3588*)
@@ -21,7 +25,7 @@ case ${DEVICE} in
     PKG_GIT_CLONE_BRANCH="rk-5.10-rkr6"
   ;;
   *)
-    PKG_VERSION="6.8.2"
+    PKG_VERSION="6.8.5"
     PKG_URL="${PKG_SITE}/pub/linux/kernel/v6.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
   ;;
 esac
@@ -72,24 +76,7 @@ make_init() {
 }
 
 makeinstall_init() {
-  if [ -n "${INITRAMFS_MODULES}" ]; then
-    mkdir -p ${INSTALL}/etc
-    mkdir -p ${INSTALL}/usr/lib/modules
-
-    for i in ${INITRAMFS_MODULES}; do
-      module=`find .install_pkg/$(get_full_module_dir)/kernel -name ${i}.ko`
-      if [ -n "${module}" ]; then
-        echo ${i} >> ${INSTALL}/etc/modules
-        cp ${module} ${INSTALL}/usr/lib/modules/`basename ${module}`
-      fi
-    done
-  fi
-
-  if [ "${UVESAFB_SUPPORT}" = yes ]; then
-    mkdir -p ${INSTALL}/usr/lib/modules
-      uvesafb=`find .install_pkg/$(get_full_module_dir)/kernel -name uvesafb.ko`
-      cp ${uvesafb} ${INSTALL}/usr/lib/modules/`basename ${uvesafb}`
-  fi
+  :
 }
 
 make_host() {
@@ -152,6 +139,9 @@ pre_make_target() {
     ${PKG_BUILD}/scripts/config --disable CONFIG_ISCSI_IBFT_FIND
     ${PKG_BUILD}/scripts/config --disable CONFIG_ISCSI_IBFT
   fi
+
+  # enable panfrost for S922X if Mali is not being used
+  [ "${DEVICE}" = "S922X" -a "${USE_MALI}" = "no" ] && ${PKG_BUILD}/scripts/config --enable CONFIG_DRM_PANFROST
 
   # disable lima/panfrost if libmali is configured
   if [ "${OPENGLES}" = "libmali" ]; then
@@ -312,16 +302,4 @@ makeinstall_target() {
     fi
   fi
   makeinstall_host
-}
-
-post_install() {
-  if [ ! -d ${INSTALL}/$(get_full_firmware_dir) ]
-  then
-    mkdir -p ${INSTALL}/$(get_full_firmware_dir)/
-  fi
-
-  # regdb and signature is now loaded as firmware by 4.15+
-    if grep -q ^CONFIG_CFG80211_REQUIRE_SIGNED_REGDB= ${PKG_BUILD}/.config; then
-      cp $(get_build_dir wireless-regdb)/regulatory.db{,.p7s} ${INSTALL}/$(get_full_firmware_dir)
-    fi
 }

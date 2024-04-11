@@ -2,7 +2,7 @@
 # Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="portmaster"
-PKG_VERSION="8.5.23_0623"
+PKG_VERSION="2024.04.07-0359"
 PKG_SITE="https://github.com/PortsMaster/PortMaster-GUI"
 PKG_URL="${PKG_SITE}/releases/download/${PKG_VERSION}/PortMaster.zip"
 COMPAT_URL="https://github.com/brooksytech/JelosAddOns/raw/main/compat.zip"
@@ -12,7 +12,7 @@ PKG_DEPENDS_TARGET="toolchain rocknix-hotkey gamecontrollerdb wget oga_controls 
 PKG_TOOLCHAIN="manual"
 PKG_LONGDESC="Portmaster - a simple tool that allows you to download various game ports"
 
-if [ "${DEVICE}" = "S922X" ]; then
+if [ "${DEVICE}" = "S922X" -a "${USE_MALI}" != "no" ]; then
   PKG_DEPENDS_TARGET+=" libegl"
 fi
 
@@ -34,14 +34,12 @@ makeinstall_target() {
 }
 
 post_install() {
-    case ${DEVICE} in
-      S922X)
-        LIBEGL="export SDL_VIDEO_GL_DRIVER=\/usr\/lib\/egl\/libGL.so.1 SDL_VIDEO_EGL_DRIVER=\/usr\/lib\/egl\/libEGL.so.1"
-      ;;
-      *)
-        LIBEGL=""
-      ;;
-    esac
-    sed -e "s/@LIBEGL@/${LIBEGL}/g" \
-        -i ${INSTALL}/usr/bin/start_portmaster.sh
+  if [ "${DEVICE}" = "S922X" -a "${USE_MALI}" != "no" ]; then
+    LIBEGL="export SDL_VIDEO_GL_DRIVER=\/usr\/lib\/egl\/libGL.so.1 SDL_VIDEO_EGL_DRIVER=\/usr\/lib\/egl\/libEGL.so.1"
+  else
+    LIBEGL=""
+  fi
+
+  sed -e "s/@LIBEGL@/${LIBEGL}/g" \
+      -i ${INSTALL}/usr/bin/start_portmaster.sh
 }

@@ -7,7 +7,7 @@ PKG_VERSION=""
 PKG_LICENSE="various"
 PKG_SITE="https://libreelec.tv"
 PKG_URL=""
-PKG_DEPENDS_TARGET="toolchain connman rfkill hostapd netbase ethtool openssh iw rsync tailscale avahi miniupnpc nss-mdns bluetool speedtest-cli"
+PKG_DEPENDS_TARGET="toolchain connman rfkill hostapd netbase ethtool openssh iw wireless-regdb rsync tailscale avahi miniupnpc nss-mdns bluetool speedtest-cli"
 PKG_SECTION="virtual"
 PKG_LONGDESC="Metapackage for various packages to install network support"
 

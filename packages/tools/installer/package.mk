@@ -17,11 +17,15 @@ post_install() {
         -e "s/@EXTRA_CMDLINE@/${EXTRA_CMDLINE}/g" \
         -i  ${INSTALL}/usr/bin/installer
 
+  chmod +x ${INSTALL}/usr/bin/installer
+
   mkdir -p ${INSTALL}/etc
     cp ${PKG_DIR}/config/* ${INSTALL}/etc
     sed -e "s/@SYSTEM_SIZE@/${SYSTEM_SIZE}/g" \
         -e "s/@SYSTEM_PART_START@/${SYSTEM_PART_START}/g" \
         -e "s/@SYSLINUX_PARAMETERS@/${SYSLINUX_PARAMETERS}/g" \
+        -e "s/@DISTRO_BOOTLABEL@/${DISTRO_BOOTLABEL}/g" \
+        -e "s/@DISTRO_DISKLABEL@/${DISTRO_DISKLABEL}/g" \
         -i ${INSTALL}/etc/installer.conf
 
   enable_service installer.service

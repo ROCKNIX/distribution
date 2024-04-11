@@ -7,4 +7,4 @@ source /etc/profile
 
 set_kill set "installer"
 
-weston-terminal -f --command "/usr/bin/installer"
+/usr/bin/run "/usr/bin/installer"

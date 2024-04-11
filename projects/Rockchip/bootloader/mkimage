@@ -7,10 +7,10 @@ source ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/options
 case "${PKG_SOC}" in
   rk35*|rk3399)
     IDBSEEK="bs=512 seek=64"
-  ;;
+    ;;
   *)
     IDBSEEK="bs=32k seek=1"
-  ;;
+    ;;
 esac
 
 if [ -f "${RELEASE_DIR}/3rdparty/bootloader/idbloader.img" ]; then
@@ -18,12 +18,9 @@ if [ -f "${RELEASE_DIR}/3rdparty/bootloader/idbloader.img" ]; then
   dd if="${RELEASE_DIR}/3rdparty/bootloader/idbloader.img" of="$DISK" ${IDBSEEK} conv=sync,noerror,notrunc >"${SAVE_ERROR}" 2>&1 || show_error
 fi
 
-
-
 case "${PKG_SOC}" in
   rk35*)
-    for BOOT_IMAGE in u-boot.itb u-boot.img
-    do
+    for BOOT_IMAGE in u-boot.itb u-boot.img; do
       if [ -f "${RELEASE_DIR}/3rdparty/bootloader/${BOOT_IMAGE}" ]; then
         echo "image: burn ${BOOT_IMAGE} to image..."
         dd if="${RELEASE_DIR}/3rdparty/bootloader/${BOOT_IMAGE}" of="${DISK}" bs=512 seek=16384 conv=sync,noerror,notrunc >"${SAVE_ERROR}" 2>&1 || show_error
@@ -37,16 +34,15 @@ case "${PKG_SOC}" in
       echo "image: burn resource.img to image..."
       dd if="${RELEASE_DIR}/3rdparty/bootloader/resource.img" of="${DISK}" bs=512 seek=24576 conv=sync,noerror,notrunc >"${SAVE_ERROR}" 2>&1 || show_error
     fi
-  ;;
+    ;;
   rk3399)
     if [ -f "${RELEASE_DIR}/3rdparty/bootloader/rk3399-uboot.bin" ]; then
       echo "image: burn u-boot.bin to image..."
       dd if="${RELEASE_DIR}/3rdparty/bootloader/rk3399-uboot.bin" of="${DISK}" bs=512 seek=64 conv=sync,noerror,notrunc >"${SAVE_ERROR}" 2>&1 || show_error
     fi
-  ;;
+    ;;
   *)
-    for BOOT_IMAGE in u-boot.itb u-boot.img
-    do
+    for BOOT_IMAGE in u-boot.itb u-boot.img; do
       if [ -f "${RELEASE_DIR}/3rdparty/bootloader/${BOOT_IMAGE}" ]; then
         echo "image: burn ${BOOT_IMAGE} to image..."
         dd if="${RELEASE_DIR}/3rdparty/bootloader/${BOOT_IMAGE}" of="${DISK}" bs=512 seek=16384 conv=sync,noerror,notrunc >"${SAVE_ERROR}" 2>&1 || show_error
@@ -57,19 +53,19 @@ case "${PKG_SOC}" in
       echo "image: burn trust.img to image..."
       dd if="${RELEASE_DIR}/3rdparty/bootloader/trust.img" of="$DISK" bs=512 seek=24576 conv=sync,noerror,notrunc >"${SAVE_ERROR}" 2>&1 || show_error
     fi
-  ;;
+    ;;
 esac
 
 #Create boot.ini
-if [ "${BOOT_INI}" == true ]
-then
+if [ "${BOOT_INI}" == true ]; then
   echo "boot: create boot.ini..."
-  if [ -e "${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/boot/boot.ini" ]
-  then
+  if [ -e "${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/boot/boot.ini" ]; then
     cp -f ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/boot/boot.ini ${LE_TMP}/boot.ini
-    sed -i "s~@UUID_SYSTEM@~${UUID_SYSTEM}~g" ${LE_TMP}/boot.ini
-    sed -i "s~@UUID_STORAGE@~${UUID_STORAGE}~g" ${LE_TMP}/boot.ini
-    sed -i "s~@EXTRA_CMDLINE@~${EXTRA_CMDLINE}~g" ${LE_TMP}/boot.ini
+    sed -e "s/@DISTRO_BOOTLABEL@/${DISTRO_BOOTLABEL}/" \
+        -e "s/@DISTRO_DISKLABEL@/${DISTRO_DISKLABEL}/" \
+        -e "s/@EXTRA_CMDLINE@/${EXTRA_CMDLINE}/" \
+        -i "${LE_TMP}/boot.ini"
+
     mcopy -so "${LE_TMP}/boot.ini" ::
   else
     echo "ERROR: No boot.ini found in ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/boot/."
@@ -80,36 +76,31 @@ fi
 mkdir -p "${LE_TMP}/extlinux"
 
 # copy device trees to part1
-for DTB in ${DEVICE_DTB[@]}
-do
-  if [ -e "${DTB}.dtb" ]
-  then
+for DTB in ${DEVICE_DTB[@]}; do
+  if [ -e "${DTB}.dtb" ]; then
     echo "image: copy device trees to image..."
     mcopy -o "${DTB}.dtb" ::
   fi
 done
 
-if [ "${EXT_LINUX_CONF}" == true ]
-then
-mkdir -p "${LE_TMP}/extlinux"
+if [ "${EXT_LINUX_CONF}" == true ]; then
+  mkdir -p "${LE_TMP}/extlinux"
 
-if [[ "${PKG_SOC}" != "rk3588" ]] && \
-   [[ "${TRUST_LABEL}" = "resource"  || "${#DEVICE_DTB[@]}" -gt 1 ]]
-then
-  echo "image: Set FDTDIR to /..."
-  FDTMODE="FDTDIR /"
-else
-  echo "image: Set FDT to ${DEVICE_DTB}..."
-  FDTMODE="FDT /${DEVICE_DTB}.dtb"
-fi
+  if [[ "${PKG_SOC}" != "rk3588" ]] && [[ "${TRUST_LABEL}" = "resource" || "${#DEVICE_DTB[@]}" -gt 1 ]]; then
+    echo "image: Set FDTDIR to /..."
+    FDTMODE="FDTDIR /"
+  else
+    echo "image: Set FDT to ${DEVICE_DTB}..."
+    FDTMODE="FDT /${DEVICE_DTB}.dtb"
+  fi
 
-echo "image: Set extlinux.conf..."
-cat << EOF > "${LE_TMP}/extlinux/extlinux.conf"
+  echo "image: Set extlinux.conf..."
+  cat << EOF > "${LE_TMP}/extlinux/extlinux.conf"
 LABEL ${DISTRO}
   LINUX /${KERNEL_NAME}
   ${FDTMODE}
-  APPEND boot=UUID=${UUID_SYSTEM} disk=UUID=${UUID_STORAGE} ${EXTRA_CMDLINE}
+  APPEND boot=LABEL=${DISTRO_BOOTLABEL} disk=LABEL=${DISTRO_DISKLABEL} ${EXTRA_CMDLINE}
 EOF
 
-mcopy -so "${LE_TMP}/extlinux" ::
+  mcopy -so "${LE_TMP}/extlinux" ::
 fi

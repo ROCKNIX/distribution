@@ -3,7 +3,7 @@
 # Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="flycast-sa"
-PKG_VERSION="40cdef6c1c9bd73bf3a55d412e30c25bbcf2b59c"
+PKG_VERSION="ed78eb4d501cf892b3177b9964883d2e3bd688b6"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/flyinghead/flycast"
 PKG_URL="${PKG_SITE}.git"
@@ -12,7 +12,7 @@ PKG_LONGDESC="Flycast is a multiplatform Sega Dreamcast, Naomi and Atomiswave em
 PKG_TOOLCHAIN="cmake"
 PKG_PATCH_DIRS+="${DEVICE}"
 
-if [[ "${OPENGL_SUPPORT}" = "yes" ]] && [[ ! "${DEVICE}" = "S922X" ]]; then
+if [[ "${OPENGL_SUPPORT}" = "yes" && ( ! "${DEVICE}" = "S922X" || ( "${DEVICE}" = "S922X" && "${USE_MALI}" = "no" ) ) ]]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
   PKG_CMAKE_OPTS_TARGET+="  -USE_OPENGL=ON -DUSE_GLES=OFF"
 
@@ -21,8 +21,7 @@ elif [ "${OPENGLES_SUPPORT}" = yes ]; then
   PKG_CMAKE_OPTS_TARGET+=" -DUSE_GLES=ON"
 fi
 
-if [ "${VULKAN_SUPPORT}" = "yes" ]
-then
+if [ "${VULKAN_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" vulkan-loader vulkan-headers"
   PKG_CMAKE_OPTS_TARGET+=" -DUSE_VULKAN=ON"
 else

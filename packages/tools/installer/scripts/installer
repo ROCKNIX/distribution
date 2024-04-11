@@ -225,23 +225,6 @@ do_install_quick() {
           printf "fix " | parted  ---pretend-input-tty ${INSTALL_DEVICE} print >> $LOGFILE 2>&1
           PART1=7
           INSTALL_UBOOT=false
-        else
-          PART1=1
-          msg_progress_install "8"  "Creating uboot partition on ${INSTALL_DEVICE}${PARTID}${PART1}"
-          parted -s "${INSTALL_DEVICE}" unit s mkpart uboot 16384 24575 >> $LOGFILE 2>&1
-          if [ -e "/usr/share/bootloader/trust.img" ]
-          then
-            TRUST_LABEL="trust"
-          elif [ -e "/usr/share/bootloader/resource.img" ]
-          then
-            TRUST_LABEL="resource"
-          fi
-          if [ -n "${TRUST_LABEL}" ]
-          then
-            PART1=$(( ${PART1} + 1 ))
-            msg_progress_install "8"  "Creating ${TRUST_LABEL} partition on ${INSTALL_DEVICE}${PARTID}${PART1}"
-            parted -s "${INSTALL_DEVICE}" unit s mkpart ${TRUST_LABEL} 24576 32767 >> $LOGFILE 2>&1
-          fi
         fi
       ;;
       *)
@@ -262,7 +245,7 @@ do_install_quick() {
 
     PART1=$(( ${PART1} + 1 ))
     BOOT_PART=${PART1}
-    
+
     msg_progress_install "10" "Creating flash partition on ${INSTALL_DEVICE}${PARTID}${PART1}"
     if [ "$GPT" = "1" ]; then
       parted -s ${INSTALL_DEVICE} unit s mkpart $DISKLABEL_SYSTEM fat32 -- $partsize_system_start $partsize_system_end >> $LOGFILE 2>&1
@@ -275,7 +258,7 @@ do_install_quick() {
     if [ "$GPT" = "1" ]; then
       parted -s ${INSTALL_DEVICE} unit s mkpart $DISKLABEL_STORAGE ext4 -- $partsize_storage_start $partsize_storage_end >> $LOGFILE 2>&1
     else
-      parted - ${INSTALL_DEVICE} unit s mkpart storage ext4 -- $partsize_storage_start $partsize_storage_end >> $LOGFILE 2>&1
+      parted -s ${INSTALL_DEVICE} unit s mkpart primary ext4 -- $partsize_storage_start $partsize_storage_end >> $LOGFILE 2>&1
     fi
 
     msg_progress_install "16" "Setup bootflag on partition ${BOOT_PART} of ${INSTALL_DEVICE}"
@@ -324,7 +307,7 @@ do_install_quick() {
         if [ ! "${INSTALL_UBOOT}" = false ]
         then
           msg_progress_install "50" "Installing bootloader to $TMPDIR/part1"
-          /usr/share/bootloader/update.sh "${INSTALL_DEVICE}" "${TMPDIR}/part1" "$UUID_SYSTEM" "$UUID_STORAGE" "$SYSLINUX_PARAMETERS"
+          BOOT_DISK="${INSTALL_DEVICE}" BOOT_ROOT="/flash" /usr/share/bootloader/update.sh
           mount -o remount,rw $TMPDIR/part1
         fi
       ;;
@@ -342,7 +325,7 @@ PROMPT 0
 
 LABEL linux
  KERNEL /KERNEL
- APPEND boot=UUID=$UUID_SYSTEM disk=UUID=$UUID_STORAGE $SYSLINUX_PARAMETERS rootwait quiet systemd.debug_shell=ttyFIQ0 earlycon=uart8250,mmio32,0xfeb50000 console=ttyFIQ0 console=tty0 coherent_pool=2M fbcon=rotate:1
+ APPEND boot=LABEL=${DISKLABEL_SYSTEM} disk=LABEL=${DISKLABEL_STORAGE} ${EXTRA_CMDLINE}
 EOF
 
         cat << EOF > $TMPDIR/part1/EFI/BOOT/grub.cfg
@@ -351,7 +334,7 @@ set default="${DISTRO}"
 
 menuentry "${DISTRO}" {
        search --set -f /KERNEL
-       linux /KERNEL boot=UUID=$UUID_SYSTEM disk=UUID=$UUID_STORAGE rootwait quiet systemd.debug_shell=ttyFIQ0 earlycon=uart8250,mmio32,0xfeb50000 console=ttyFIQ0 console=tty0 coherent_pool=2M fbcon=rotate:1
+       linux /KERNEL boot=LABEL=${DISKLABEL_SYSTEM} disk=LABEL=${DISKLABEL_STORAGE} ${EXTRA_CMDLINE}
 }
 EOF
 
@@ -363,11 +346,8 @@ EOF
     esac
 
     # install system files
-    msg_progress_install "60" "Installing Kernel"
-    cp "/flash/$IMAGE_KERNEL" $TMPDIR/part1/KERNEL >> $LOGFILE 2>&1
-
-    msg_progress_install "65" "Installing System"
-    cp "/flash/$IMAGE_SYSTEM" $TMPDIR/part1/SYSTEM >> $LOGFILE 2>&1
+    msg_progress_install "60" "Installing boot files"
+    cp -r /flash/* $TMPDIR/part1/ >> $LOGFILE 2>&1
     sync
 
     sync
@@ -429,7 +409,7 @@ msg_progress_install() {
 prompt_gpt() {
   case ${HW_ARCH} in
     arm|aarch64)
-      BOOT_DEVICE=$(blkid | awk 'BEGIN {FS=":"} /'$(cat /proc/cmdline | sed -e 's~^.*disk=UUID=~~g; s~\ .*$~~g')'/ {print $1}' | sed 's~p[0-9].*$~~g')
+      BOOT_DEVICE=$(blkid | awk 'BEGIN {FS=":"} /'$(cat /proc/cmdline | sed -e 's~^.*disk=LABEL=~~g; s~\ .*$~~g')'/ {print $1}' | sed 's~p[0-9].*$~~g')
       BOOT_LABEL="$(blkid ${BOOT_DEVICE} | grep -Eo 'PTTYPE=".*"' | sed 's~PTTYPE=~~g; s~"~~g')"
       case ${BOOT_LABEL} in
         gpt)
