@@ -34,6 +34,7 @@ post_makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/sway
   mkdir -p ${INSTALL}/usr/bin
     cp ${PKG_DIR}/scripts/sway.sh     ${INSTALL}/usr/bin
+    cp ${PKG_DIR}/scripts/sway-mouse.sh     ${INSTALL}/usr/bin
     cp ${PKG_DIR}/scripts/sway-config ${INSTALL}/usr/lib/sway
   mkdir -p ${INSTALL}/usr/lib/autostart/common
     cp ${PKG_DIR}/autostart/111-sway-init     ${INSTALL}/usr/lib/autostart/common
