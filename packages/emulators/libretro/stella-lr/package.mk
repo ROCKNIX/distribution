@@ -21,15 +21,11 @@
 
 PKG_NAME="stella-lr"
 PKG_VERSION="8e8549c1c441e62c2bac0ae5a6489ba3e15412c6"
-PKG_REV="1"
 PKG_LICENSE="GPL2"
 PKG_SITE="https://github.com/stella-emu/stella"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_PRIORITY="optional"
-PKG_SECTION="libretro"
-PKG_SHORTDESC="Port of Stella to libretro."
-PKG_LONGDESC="Stella is a multi-platform Atari 2600 VCS emulator released under the GNU General Public License (GPL)."
+PKG_LONGDESC="Port of Stella to libretro."
 PKG_TOOLCHAIN="make"
 
 pre_configure_target() {

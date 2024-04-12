@@ -21,14 +21,11 @@
 
 PKG_NAME="fbalpha2012-lr"
 PKG_VERSION="b7ac554c53561d41640372f23dab15cd6fc4f0c4"
-PKG_ARCH="any"
 PKG_LICENSE="Non-commercial"
 PKG_SITE="https://github.com/libretro/fbalpha2012"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_PRIORITY="optional"
-PKG_SECTION="libretro"
-PKG_SHORTDESC="Port of Final Burn Alpha 2012 to Libretro"
+PKG_LONGDESC="Port of Final Burn Alpha 2012 to Libretro"
 PKG_TOOLCHAIN="make"
 
 make_target() {

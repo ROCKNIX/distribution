@@ -21,20 +21,13 @@
 
 PKG_NAME="scummvm-lr"
 PKG_VERSION="8ed85326fa6215a267beb953271c4c4a30fa6d57"
-PKG_REV="1"
-PKG_ARCH="any"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/scummvm"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_PRIORITY="optional"
-PKG_SECTION="libretro"
-PKG_SHORTDESC="ScummVM with libretro backend."
-PKG_LONGDESC="ScummVM is a program which allows you to run certain classic graphical point-and-click adventure games, provided you already have their data files."
+PKG_LONGDESC="ScummVM with libretro backend."
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 PKG_BUILD_FLAGS="-lto"
 
 pre_make_target() {

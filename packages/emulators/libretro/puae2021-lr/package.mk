@@ -22,16 +22,11 @@
 
 PKG_NAME="puae2021-lr"
 PKG_VERSION="218b539d28ca3370df340f1b98fe12eab7b8fc09"
-PKG_REV="1"
-PKG_ARCH="any"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/libretro/libretro-uae"
 PKG_URL="${PKG_SITE}.git"
 PKG_GIT_CLONE_BRANCH="2.6.1"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_PRIORITY="optional"
-PKG_SECTION="libretro"
-PKG_SHORTDESC="PUAE 2021 libretro port of UAE"
 PKG_LONGDESC="PUAE 2021 libretro port of UAE"
 PKG_TOOLCHAIN="make"
 

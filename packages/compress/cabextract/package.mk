@@ -7,7 +7,7 @@ PKG_LICENSE="GPLv3"
 PKG_SITE="https://www.cabextract.org.uk"
 PKG_URL="https://github.com/ROCKNIX/packages/raw/main/cabextract.tar.xz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SHORTDESC="cabextract is Free Software for extracting Microsoft cabinet file"
+PKG_LONGDESC="cabextract is Free Software for extracting Microsoft cabinet file"
 PKG_TOOLCHAIN="make"
 
 make_target() {

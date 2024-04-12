@@ -3,7 +3,6 @@
 
 PKG_NAME="rocknix-hotkey"
 PKG_VERSION="14255daccc61dd8f366b3c88292d54cfef1c087a"
-PKG_ARCH="any"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/ROCKNIX/rocknix-hotkey"
 PKG_URL="${PKG_SITE}.git"

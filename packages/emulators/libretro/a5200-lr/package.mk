@@ -21,15 +21,11 @@
 
 PKG_NAME="a5200-lr"
 PKG_VERSION="0942c88d64cad6853b539f51b39060a9de0cbcab"
-PKG_REV="1"
-PKG_ARCH="any"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/libretro/a5200"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_PRIORITY="optional"
-PKG_SECTION="libretro"
-PKG_SHORTDESC="Atari 5200 libretro core"
+PKG_LONGDESC="Atari 5200 libretro core"
 PKG_TOOLCHAIN="auto"
 GET_HANDLER_SUPPORT="git"
 

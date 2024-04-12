@@ -3,7 +3,6 @@
 
 PKG_NAME="timidity"
 PKG_VERSION="2.15.0"
-PKG_ARCH="any"
 PKG_LICENSE="GPL2"
 PKG_SITE="https://sourceforge.net/projects/timidity/"
 PKG_URL="${SOURCEFORGE_SRC}/timidity/TiMidity++-${PKG_VERSION}.tar.xz"

@@ -3,8 +3,6 @@
 
 PKG_NAME="hypseus"
 PKG_VERSION="3f7c4cbad8e36c3babf230321de9e67dee100767"
-PKG_REV="1"
-PKG_ARCH="any"
 PKG_LICENSE="GPL3"
 PKG_SITE="https://github.com/btolab/hypseus"
 PKG_URL="${PKG_SITE}.git"

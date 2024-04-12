@@ -4,13 +4,11 @@
 
 PKG_NAME="syncthing"
 PKG_VERSION="1.27.1"
-PKG_ARCH="any"
 PKG_LICENSE="MPLv2"
 PKG_SITE="https://syncthing.net/"
 PKG_URL="https://github.com/syncthing/syncthing/releases/download/v${PKG_VERSION}/syncthing-source-v${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain go:host"
-PKG_SHORTDESC="Syncthing: open source continuous file synchronization"
-PKG_LONGDESC="Syncthing (${PKG_VERSION}) replaces proprietary sync and cloud services with something open, trustworthy and decentralized. Your data is your data alone and you deserve to choose where it is stored, if it is shared with some third party and how it's transmitted over the Internet."
+PKG_LONGDESC="Syncthing: open source continuous file synchronization"
 PKG_TOOLCHAIN="manual"
 
 configure_target() {

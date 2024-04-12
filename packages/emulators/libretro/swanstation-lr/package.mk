@@ -4,13 +4,11 @@
 
 PKG_NAME="swanstation-lr"
 PKG_VERSION="77aeeea58a45cccae7a8be37645f8f5a27ff101b"
-PKG_ARCH=""
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/libretro/swanstation"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain nasm:host"
-PKG_SECTION="libretro"
-PKG_SHORTDESC="SwanStation - PlayStation 1, aka. PSX Emulator"
+PKG_LONGDESC="SwanStation - PlayStation 1, aka. PSX Emulator"
 PKG_TOOLCHAIN="cmake"
 PKG_BUILD_FLAGS="-lto"
 

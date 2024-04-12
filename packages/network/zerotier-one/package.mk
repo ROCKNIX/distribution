@@ -8,7 +8,7 @@ PKG_VERSION="1.12.2"
 PKG_SITE="https://www.zerotier.com"
 PKG_URL="https://github.com/zerotier/ZeroTierOne/archive/refs/tags/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain nlohmann-json"
-PKG_SHORTDESC="A Smart Ethernet Switch for Earth"
+PKG_LONGDESC="A Smart Ethernet Switch for Earth"
 PKG_TOOLCHAIN="manual"
 
 

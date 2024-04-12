@@ -5,15 +5,12 @@
 
 PKG_NAME="gobject-introspection"
 PKG_VERSION="1.78.1"
-PKG_ARCH="any"
 PKG_LICENSE="LGPL"
 PKG_SITE="http://www.gtk.org/"
 PKG_URL="https://github.com/GNOME/${PKG_NAME}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain libffi glib Python3 qemu:host gobject-introspection:host"
 PKG_DEPENDS_HOST="libffi:host glib:host"
-PKG_SECTION="devel"
-PKG_SHORTDESC="glib: C support library"
-PKG_LONGDESC="GLib is a library which includes support routines for C such as lists, trees, hashes, memory allocation, and many other things."
+PKG_LONGDESC="glib: C support library"
 PKG_TOOLCHAIN="meson"
 
 pre_configure_host() {

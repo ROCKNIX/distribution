@@ -6,8 +6,7 @@ PKG_VERSION=""
 PKG_ARCH="aarch64 x86_64"
 PKG_LICENSE="GPLv2"
 PKG_DEPENDS_TARGET="toolchain retroarch SDL2 libsndfile libmodplug"
-PKG_SHORTDESC="ARM 32bit bundle for aarch64"
-PKG_PRIORITY="optional"
+PKG_LONGDESC="ARM 32bit bundle for aarch64"
 PKG_TOOLCHAIN="manual"
 
 makeinstall_target() {

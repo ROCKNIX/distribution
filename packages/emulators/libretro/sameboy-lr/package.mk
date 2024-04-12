@@ -21,20 +21,13 @@
 
 PKG_NAME="sameboy-lr"
 PKG_VERSION="2d29ece3b8e7ec44347c9daad0fabb84912ed44f"
-PKG_REV="1"
-PKG_ARCH="any"
 PKG_LICENSE="MIT"
 PKG_SITE="https://git.libretro.com/libretro/sameboy-upstream"
 PKG_URL="${PKG_SITE}/-/archive/${PKG_VERSION}/sameboy-upstream-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain util-linux:host"
-PKG_PRIORITY="optional"
-PKG_SECTION="libretro"
-PKG_SHORTDESC="Gameboy and Gameboy Color emulator written in C"
 PKG_LONGDESC="Gameboy and Gameboy Color emulator written in C"
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 
 make_target() {
   make -C libretro BOOTROMS_DIR=${PKG_BUILD}/BootROMs/prebuilt

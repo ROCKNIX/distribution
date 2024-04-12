@@ -7,7 +7,7 @@ PKG_LICENSE="BSD"
 PKG_SITE="http://glew.sourceforge.net/"
 PKG_URL="${SOURCEFORGE_SRC}/glew/glew/${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tgz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SHORTDESC="GLEW - The OpenGL Extension Wrangler Library"
+PKG_LONGDESC="GLEW - The OpenGL Extension Wrangler Library"
 PKG_TOOLCHAIN="cmake"
 
 if [ "${DISPLAYSERVER}" = "wl" ]; then

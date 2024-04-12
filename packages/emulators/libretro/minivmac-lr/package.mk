@@ -3,13 +3,11 @@
 
 PKG_NAME="minivmac-lr"
 PKG_VERSION="45edc82baae906b90b67cce66761557923a6ba75"
-PKG_ARCH="any"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/libretro-minivmac"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SECTION="libretro"
-PKG_SHORTDESC="Virtual Macintosh"
+PKG_LONGDESC="Virtual Macintosh"
 PKG_TOOLCHAIN="make"
 
 

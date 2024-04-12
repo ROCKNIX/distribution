@@ -20,15 +20,10 @@
 
 PKG_NAME="opera-lr"
 PKG_VERSION="35e16483be900ea8aa20e87d2710b677437f73ce"
-PKG_REV="1"
-PKG_ARCH="any"
 PKG_LICENSE="LGPL with additional notes"
 PKG_SITE="https://github.com/libretro/opera-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_PRIORITY="optional"
-PKG_SECTION="libretro"
-PKG_SHORTDESC="Port of 4DO/libfreedo to libretro."
 PKG_LONGDESC="Port of 4DO/libfreedo to libretro."
 PKG_TOOLCHAIN="make"
 

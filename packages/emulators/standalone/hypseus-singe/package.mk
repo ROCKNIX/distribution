@@ -4,8 +4,6 @@
 
 PKG_NAME="hypseus-singe"
 PKG_VERSION="e2ad79d9d3a6102efe9e5fad2cc45294c9a0303c"
-PKG_REV="1"
-PKG_ARCH="any"
 PKG_LICENSE="GPL3"
 PKG_SITE="https://github.com/DirtBagXon/hypseus-singe"
 PKG_URL="${PKG_SITE}.git"

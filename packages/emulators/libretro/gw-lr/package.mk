@@ -21,20 +21,13 @@
 
 PKG_NAME="gw-lr"
 PKG_VERSION="0ecff52b11c327af52b22ea94b268c90472b6732"
-PKG_REV="1"
-PKG_ARCH="any"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/libretro/gw-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_PRIORITY="optional"
-PKG_SECTION="libretro"
-PKG_SHORTDESC="A libretro core for Game & Watch simulators "
 PKG_LONGDESC="A libretro core for Game & Watch simulators "
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 
 make_target() {
   make -f Makefile.libretro

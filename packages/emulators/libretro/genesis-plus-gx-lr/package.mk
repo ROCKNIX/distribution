@@ -22,20 +22,13 @@
 
 PKG_NAME="genesis-plus-gx-lr"
 PKG_VERSION="667158b034ce860e345b13e1ed927fea9d155b96"
-PKG_REV="1"
-PKG_ARCH="any"
 PKG_LICENSE="Non-commercial"
 PKG_SITE="https://github.com/libretro/Genesis-Plus-GX"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_PRIORITY="optional"
-PKG_SECTION="libretro"
-PKG_SHORTDESC="An enhanced port of Genesis Plus for Gamecube/Wii"
-PKG_LONGDESC="Genesis Plus GX is an open-source & portable Sega Mega Drive / Genesis emulator, now also emulating SG-1000, Master System, Game Gear and Sega/Mega CD hardware."
+PKG_LONGDESC="An enhanced port of Genesis Plus for Gamecube/Wii"
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 
 make_target() {
   if [ "${ARCH}" == "arm" ]; then

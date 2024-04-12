@@ -3,15 +3,12 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="ppsspp-sa"
-PKG_REV="1"
-PKG_ARCH="any"
 PKG_SITE="https://github.com/hrydgard/ppsspp"
 PKG_URL="${PKG_SITE}.git"
 PKG_VERSION="d479b74ed9c3e321bc3735da29bc125a2ac3b9b2" # 1.17.1
 PKG_LICENSE="GPLv2"
 PKG_DEPENDS_TARGET="toolchain ffmpeg libzip SDL2 zlib zip"
-PKG_SHORTDESC="PPSSPPDL"
-PKG_LONGDESC="PPSSPP Standalone"
+PKG_LONGDESC="PPSSPPDL"
 GET_HANDLER_SUPPORT="git"
 
 ### Note:

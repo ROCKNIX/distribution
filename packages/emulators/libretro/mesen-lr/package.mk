@@ -3,14 +3,11 @@
 
 PKG_NAME="mesen-lr"
 PKG_VERSION="d6f2f1797694f87e698c737b068f621889e96fa9"
-PKG_ARCH="any"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/libretro/Mesen"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_PRIORITY="optional"
-PKG_SECTION="libretro"
-PKG_SHORTDESC="Mesen is a cross-platform NES/Famicom emulator for Windows & Linux built in C++ and C#."
+PKG_LONGDESC="Mesen is a cross-platform NES/Famicom emulator for Windows & Linux built in C++ and C#."
 PKG_TOOLCHAIN="make"
 
 make_target() {

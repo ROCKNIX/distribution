@@ -7,11 +7,8 @@ PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/bsnes-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SECTION="libretro"
-PKG_SHORTDESC="BSNES Super Nintendo Libretro Core"
-PKG_IS_ADDON="no"
+PKG_LONGDESC="BSNES Super Nintendo Libretro Core"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 
 if [ ! "${OPENGL}" = "no" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"

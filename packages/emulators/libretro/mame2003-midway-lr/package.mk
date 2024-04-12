@@ -22,20 +22,13 @@
 PKG_NAME="mame2003-midway-lr"
 PKG_VERSION="2204233a66a78ebbb0ef1e86bb9d36e4405a2a92"
 PKG_SHA256="8ed1addf56c9ed1999bac813e132c630f67096c9eaf4ab16495030c3e9045d43"
-PKG_REV="1"
-PKG_ARCH="any"
 PKG_LICENSE="MAME"
 PKG_SITE="https://github.com/libretro/mame2003_midway"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_PRIORITY="optional"
-PKG_SECTION="libretro"
-PKG_SHORTDESC="MAME - Multiple Arcade Machine Emulator"
 PKG_LONGDESC="MAME - Multiple Arcade Machine Emulator"
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 PKG_BUILD_FLAGS="-lto"
 
 make_target() {

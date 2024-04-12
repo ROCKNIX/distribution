@@ -5,8 +5,7 @@
 PKG_NAME="rclone"
 PKG_VERSION="1.65.0"
 PKG_DEPENDS_TARGET="toolchain fuse rsync"
-PKG_SECTION="tools"
-PKG_SHORTDESC="rsync for cloud storage"
+PKG_LONGDESC="rsync for cloud storage"
 PKG_TOOLCHAIN="manual"
 
 case ${ARCH} in

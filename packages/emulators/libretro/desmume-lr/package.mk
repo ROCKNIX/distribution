@@ -7,7 +7,7 @@ PKG_LICENSE="GPLv2"
 PKG_SITE="https://git.libretro.com/libretro/desmume"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain libpcap"
-PKG_SHORTDESC="DeSmuME - Nintendo DS libretro"
+PKG_LONGDESC="DeSmuME - Nintendo DS libretro"
 PKG_TOOLCHAIN="make"
 
 if [ "${OPENGL_SUPPORT}" = "yes" ]; then

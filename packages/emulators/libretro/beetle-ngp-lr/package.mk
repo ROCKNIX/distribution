@@ -21,20 +21,13 @@
 
 PKG_NAME="beetle-ngp-lr"
 PKG_VERSION="673c3d924ff33d71c6a342b170eff5359244df1f"
-PKG_REV="1"
-PKG_ARCH="any"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/beetle-ngp-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_PRIORITY="optional"
-PKG_SECTION="libretro"
-PKG_SHORTDESC="libretro implementation of Mednafen Neo Geo Pocket."
 PKG_LONGDESC="libretro implementation of Mednafen Neo Geo Pocket."
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
