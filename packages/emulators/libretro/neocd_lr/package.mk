@@ -3,7 +3,6 @@
 
 PKG_NAME="neocd_lr"
 PKG_VERSION="71ebe5044639b825e5bd1bd590fef3e918133b80"
-PKG_ARCH="any"
 PKG_LICENSE="LGPLv3.0"
 PKG_SITE="https://github.com/libretro/neocd_libretro"
 PKG_URL="${PKG_SITE}.git"

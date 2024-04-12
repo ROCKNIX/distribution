@@ -21,7 +21,6 @@
 
 PKG_NAME="sameduck-lr"
 PKG_VERSION="5619abdb01cee6bedb47599cdb5532c318443b52"
-PKG_ARCH="any"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/LIJI32/SameBoy"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

@@ -3,7 +3,6 @@
 
 PKG_NAME="fping"
 PKG_VERSION="5.1"
-PKG_ARCH="any"
 PKG_LICENSE="GPL"
 PKG_SITE="http://fping.org/"
 PKG_URL="http://fping.org/dist/fping-${PKG_VERSION}.tar.gz"

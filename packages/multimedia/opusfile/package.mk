@@ -20,7 +20,6 @@
 
 PKG_NAME="opusfile"
 PKG_VERSION="a55c164"
-PKG_ARCH="any"
 PKG_SITE="https://github.com/xiph/opusfile"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain opus openssl"

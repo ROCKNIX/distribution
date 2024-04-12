@@ -20,7 +20,6 @@
 
 PKG_NAME="libspeexdsp"
 PKG_VERSION="738e17905e1ca2a1fa932ddd9c2a85d089f4e845"
-PKG_ARCH="any"
 PKG_SITE="https://github.com/xiph/speexdsp"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"

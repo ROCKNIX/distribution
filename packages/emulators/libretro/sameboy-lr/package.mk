@@ -21,7 +21,6 @@
 
 PKG_NAME="sameboy-lr"
 PKG_VERSION="2d29ece3b8e7ec44347c9daad0fabb84912ed44f"
-PKG_ARCH="any"
 PKG_LICENSE="MIT"
 PKG_SITE="https://git.libretro.com/libretro/sameboy-upstream"
 PKG_URL="${PKG_SITE}/-/archive/${PKG_VERSION}/sameboy-upstream-${PKG_VERSION}.tar.gz"

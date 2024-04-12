@@ -3,7 +3,6 @@
 
 PKG_NAME="modules"
 PKG_VERSION=""
-PKG_ARCH="any"
 PKG_LICENSE="custom"
 PKG_SITE=""
 PKG_URL=""

@@ -3,7 +3,6 @@
 
 PKG_NAME="xa"
 PKG_VERSION="2.4.1"
-PKG_ARCH="any"
 PKG_LICENSE="GPL"
 PKG_SITE="https://www.floodgap.com/retrotech/xa/"
 PKG_URL="${PKG_SITE}/dists/xa-${PKG_VERSION}.tar.gz"

@@ -21,7 +21,6 @@
 
 PKG_NAME="atari800-lr"
 PKG_VERSION="410d7bf0c215f3444793a9cec51c129e7b67c400"
-PKG_ARCH="any"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/libretro/libretro-atari800"
 PKG_URL="${PKG_SITE}.git"

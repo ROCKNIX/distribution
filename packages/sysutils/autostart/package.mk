@@ -3,7 +3,6 @@
 
 PKG_NAME="autostart"
 PKG_VERSION=""
-PKG_ARCH="any"
 PKG_LICENSE="GPLv2"
 PKG_SITE=""
 PKG_URL=""

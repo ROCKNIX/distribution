@@ -3,7 +3,6 @@
 
 PKG_NAME="luajit"
 PKG_VERSION="29b0b282f59ac533313199f4f7be79490b7eee51"
-PKG_ARCH="any"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/LuaJIT/LuaJIT"
 PKG_URL="${PKG_SITE}.git"

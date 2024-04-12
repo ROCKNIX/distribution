@@ -4,7 +4,6 @@
 
 PKG_NAME="freej2me-lr"
 PKG_VERSION="8b9bc8a19baf26e3d92f88934a64a32f1cbc2795"
-PKG_ARCH="any"
 PKG_SITE="https://github.com/hex007/freej2me"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain apache-ant:host"

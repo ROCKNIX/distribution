@@ -5,7 +5,6 @@
 
 PKG_NAME="fbneo-lr"
 PKG_VERSION="a5c3e943d432b467110d06bf9c4cfc4143e7274e"
-PKG_ARCH="any"
 PKG_LICENSE="Non-commercial"
 PKG_SITE="https://github.com/libretro/FBNeo"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

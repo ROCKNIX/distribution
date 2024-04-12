@@ -4,7 +4,6 @@
 
 PKG_NAME="git"
 PKG_VERSION="2.42.1"
-PKG_ARCH="any"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://git-scm.com/"
 PKG_URL="https://mirrors.edge.kernel.org/pub/software/scm/git/git-${PKG_VERSION}.tar.gz"

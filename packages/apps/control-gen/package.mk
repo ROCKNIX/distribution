@@ -3,7 +3,6 @@
 
 PKG_NAME="control-gen"
 PKG_VERSION="ea44ab254d09d2d86eeb70289673418df2beee75"
-PKG_ARCH="any"
 PKG_LICENSE="GPLv2"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_SHORTDESC="Generates control.txt for gptokeyb"

@@ -3,7 +3,6 @@
 
 PKG_NAME="minivmacsa"
 PKG_VERSION="37.03"
-PKG_ARCH="any"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://www.gryphel.com/c/minivmac/"
 PKG_URL="https://www.gryphel.com/d/minivmac/minivmac-${PKG_VERSION}/minivmac-${PKG_VERSION}.src.tgz"

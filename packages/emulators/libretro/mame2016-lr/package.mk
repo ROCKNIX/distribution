@@ -4,7 +4,6 @@
 PKG_NAME="mame2016-lr"
 PKG_VERSION="d53c379892b0bd91b4a52fc2de491e1199f03e32"
 PKG_SHA256="bafcac133ff37fb3adeafd9960427e3314e682caf22d455395855d64553d46fe"
-PKG_ARCH="any"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/mame2016-libretro"
 PKG_URL="https://github.com/libretro/mame2016-libretro/archive/${PKG_VERSION}.tar.gz"

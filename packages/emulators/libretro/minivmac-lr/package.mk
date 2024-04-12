@@ -3,7 +3,6 @@
 
 PKG_NAME="minivmac-lr"
 PKG_VERSION="45edc82baae906b90b67cce66761557923a6ba75"
-PKG_ARCH="any"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/libretro-minivmac"
 PKG_URL="${PKG_SITE}.git"

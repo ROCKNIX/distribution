@@ -3,7 +3,6 @@
 
 PKG_NAME="lrps2-lr"
 PKG_VERSION="f3c8743d6a42fe429f703b476fecfdb5655a98a9"
-PKG_ARCH="any"
 PKG_LICENSE="GPLv2"
 PKG_DEPENDS_TARGET="toolchain alsa-lib freetype zlib libpng libaio libsamplerate libfmt libpcap soundtouch yamlcpp wxwidgets"
 PKG_SITE="https://github.com/libretro/LRPS2"

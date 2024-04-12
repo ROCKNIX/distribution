@@ -3,7 +3,6 @@
 
 PKG_NAME="mu-lr"
 PKG_VERSION="865acf3a2889dfe02863bbfb9c5b3cfee8620c22"
-PKG_ARCH="any"
 PKG_LICENSE="CC BY-NC 3.0 US"
 PKG_SITE="https://git.libretro.com/libretro/Mu"
 PKG_URL="${PKG_SITE}/-/archive/${PKG_VERSION}/Mu-${PKG_VERSION}.tar.gz"

@@ -4,7 +4,6 @@
 PKG_NAME="pgi"
 PKG_VERSION="0.0.11.2"
 PKG_SHA256="7a1ca8ac4e8bee6b663e6d556ecda8032584de753acd76ab3fc21c4f874fa738"
-PKG_ARCH="any"
 PKG_LICENSE="LGPL"
 PKG_SITE="https://github.com/pygobject/pgi"
 PKG_URL="https://github.com/pygobject/pgi/archive/${PKG_VERSION}.tar.gz"

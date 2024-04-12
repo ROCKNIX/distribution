@@ -20,7 +20,6 @@
 
 PKG_NAME="wildmidi"
 PKG_VERSION="405ca73"
-PKG_ARCH="any"
 PKG_SITE="https://github.com/Mindwerks/wildmidi"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"

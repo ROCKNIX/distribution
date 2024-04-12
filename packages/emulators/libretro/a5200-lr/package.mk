@@ -21,7 +21,6 @@
 
 PKG_NAME="a5200-lr"
 PKG_VERSION="0942c88d64cad6853b539f51b39060a9de0cbcab"
-PKG_ARCH="any"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/libretro/a5200"
 PKG_URL="${PKG_SITE}.git"

@@ -5,7 +5,6 @@
 
 PKG_NAME="pygobject"
 PKG_VERSION="3.46.0"
-PKG_ARCH="any"
 PKG_LICENSE="LGPL"
 PKG_SITE="http://www.pygtk.org/"
 PKG_URL="http://ftp.gnome.org/pub/GNOME/sources/pygobject/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"

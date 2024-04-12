@@ -18,7 +18,6 @@
 
 PKG_NAME="SDL"
 PKG_VERSION="52c7140"
-PKG_ARCH="any"
 PKG_LICENSE="GPL"
 PKG_SITE="https://www.libsdl.org/"
 PKG_URL="https://github.com/libsdl-org/SDL-1.2/archive/${PKG_VERSION}.tar.gz"

@@ -4,7 +4,6 @@
 
 PKG_NAME="empty"
 PKG_VERSION="0.6.23c"
-PKG_ARCH="any"
 PKG_LICENSE="GPL"
 PKG_SITE="http://empty.sourceforge.net/"
 PKG_DEPENDS_TARGET="toolchain linux"

@@ -21,7 +21,6 @@
 
 PKG_NAME="dosbox-lr"
 PKG_VERSION="b7b24262c282c0caef2368c87323ff8c381b3102"
-PKG_ARCH="any"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/dosbox-libretro"
 PKG_URL="${PKG_SITE}.git"

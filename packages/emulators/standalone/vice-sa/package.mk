@@ -3,7 +3,6 @@
 
 PKG_NAME="vice-sa"
 PKG_VERSION="3.8"
-PKG_ARCH="any"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://sourceforge.net/projects/vice-emu"
 PKG_URL="${PKG_SITE}/files/releases/vice-${PKG_VERSION}.tar.gz"

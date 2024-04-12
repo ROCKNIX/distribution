@@ -5,7 +5,6 @@
 
 PKG_NAME="gobject-introspection"
 PKG_VERSION="1.78.1"
-PKG_ARCH="any"
 PKG_LICENSE="LGPL"
 PKG_SITE="http://www.gtk.org/"
 PKG_URL="https://github.com/GNOME/${PKG_NAME}/archive/${PKG_VERSION}.tar.gz"

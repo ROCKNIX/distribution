@@ -3,7 +3,6 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="ppsspp-sa"
-PKG_ARCH="any"
 PKG_SITE="https://github.com/hrydgard/ppsspp"
 PKG_URL="${PKG_SITE}.git"
 PKG_VERSION="d479b74ed9c3e321bc3735da29bc125a2ac3b9b2" # 1.17.1

@@ -4,7 +4,6 @@
 
 PKG_NAME="syncthing"
 PKG_VERSION="1.27.1"
-PKG_ARCH="any"
 PKG_LICENSE="MPLv2"
 PKG_SITE="https://syncthing.net/"
 PKG_URL="https://github.com/syncthing/syncthing/releases/download/v${PKG_VERSION}/syncthing-source-v${PKG_VERSION}.tar.gz"
