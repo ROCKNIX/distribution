@@ -9,7 +9,6 @@ PKG_SITE="http://empty.sourceforge.net/"
 PKG_DEPENDS_TARGET="toolchain linux"
 PKG_URL="http://downloads.sourceforge.net/sourceforge/${PKG_NAME}/${PKG_NAME}-${PKG_VERSION}.tgz"
 PKG_LONGDESC="Run applications under pseudo-terminal sessions"
-LINUX="Run applications under pseudo-terminal sessions"
 
 
 make_target() {

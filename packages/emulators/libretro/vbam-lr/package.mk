@@ -26,7 +26,6 @@ PKG_SITE="https://github.com/libretro/vbam-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="A fork of VBA-M with libretro integration"
-LINUX="VBA-M is a [Super] Game Boy [Color / Advance] emulator for Windows, Linux & Mac."
 
 PKG_TOOLCHAIN="make"
 PKG_USE_CMAKE="no"

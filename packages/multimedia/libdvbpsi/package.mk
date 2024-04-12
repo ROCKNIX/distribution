@@ -8,6 +8,5 @@ PKG_SITE="http://www.videolan.org/developers/libdvbpsi.html"
 PKG_URL="http://download.videolan.org/pub/libdvbpsi/${PKG_VERSION}/libdvbpsi-${PKG_VERSION}.tar.bz2"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="library for MPEG TS and DVB PSI tables decoding and generating"
-LINUX="libdvbpsi is a simple library designed for MPEG TS and DVB PSI tables decoding and generating."
 
 PKG_CONFIGURE_OPTS_TARGET="--enable-static --disable-shared"

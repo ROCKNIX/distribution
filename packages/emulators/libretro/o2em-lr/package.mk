@@ -25,7 +25,6 @@ PKG_SITE="https://github.com/libretro/libretro-o2em"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Port of O2EM to the libretro API, an Odyssey 2 / VideoPac emulator."
-LINUX="Port of O2EM to the libretro API, an Odyssey 2 / VideoPac emulator."
 
 PKG_TOOLCHAIN="make"
 

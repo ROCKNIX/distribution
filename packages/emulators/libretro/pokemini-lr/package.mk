@@ -25,7 +25,6 @@ PKG_SITE="https://github.com/libretro/pokemini"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Obscure nintendo AMD64 emulator (functional,no color files or savestates currently)"
-LINUX="Obscure nintendo AMD64 emulator (functional,no color files or savestates currently)"
 
 PKG_TOOLCHAIN="make"
 PKG_PATCH_DIRS+="${DEVICE}"

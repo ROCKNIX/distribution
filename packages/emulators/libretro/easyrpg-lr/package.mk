@@ -27,7 +27,6 @@ PKG_URL="${PKG_SITE}.git"
 PKG_GIT_CLONE_BRANCH="0-8-0-stable"
 PKG_DEPENDS_TARGET="toolchain zlib libfmt liblcf icu pixman libspeexdsp mpg123 libsndfile libvorbis opusfile wildmidi libxmp-lite fluidsynth harfbuzz libpng retroarch"
 PKG_LONGDESC="An unofficial libretro port of the EasyRPG/Player."
-LINUX="An unofficial libretro port of the EasyRPG/Player."
 GET_HANDLER_SUPPORT="git"
 PKG_BUILD_FLAGS="+pic"
 

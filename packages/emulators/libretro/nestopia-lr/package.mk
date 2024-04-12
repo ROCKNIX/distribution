@@ -25,7 +25,6 @@ PKG_SITE="https://github.com/libretro/nestopia"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Libretro implementation of NEStopia. (Nintendo Entertainment System)"
-LINUX="This project is a fork of the original Nestopia source code, plus the Linux port. The purpose of the project is to enhance the original, and ensure it continues to work on modern operating systems."
 
 PKG_TOOLCHAIN="make"
 PKG_USE_CMAKE="no"

@@ -26,7 +26,6 @@ PKG_SITE="https://github.com/stella-emu/stella"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Port of Stella to libretro."
-LINUX="Stella is a multi-platform Atari 2600 VCS emulator released under the GNU General Public License (GPL)."
 PKG_TOOLCHAIN="make"
 
 pre_configure_target() {

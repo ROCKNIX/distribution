@@ -28,7 +28,6 @@ PKG_SITE="https://github.com/libretro/glsl-shaders"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Common GSLS shaders for RetroArch"
-LINUX="Common GSLS shaders for RetroArch"
 
 PKG_TOOLCHAIN="make"
 

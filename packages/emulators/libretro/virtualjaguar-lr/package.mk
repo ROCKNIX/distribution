@@ -25,7 +25,6 @@ PKG_SITE="https://github.com/libretro/virtualjaguar-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Port of Virtual Jaguar to Libretro"
-LINUX="Port of Virtual Jaguar to Libretro"
 
 PKG_TOOLCHAIN="make"
 

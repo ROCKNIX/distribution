@@ -26,7 +26,6 @@ PKG_SITE="https://github.com/libretro/scummvm"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="ScummVM with libretro backend."
-LINUX="ScummVM is a program which allows you to run certain classic graphical point-and-click adventure games, provided you already have their data files."
 
 PKG_TOOLCHAIN="make"
 PKG_BUILD_FLAGS="-lto"

@@ -27,7 +27,6 @@ PKG_SITE="https://github.com/libretro/vice-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Versatile Commodore 8-bit Emulator version 3.0"
-LINUX="Versatile Commodore 8-bit Emulator version 3.0"
 PKG_TOOLCHAIN="make"
 
 make_target() {

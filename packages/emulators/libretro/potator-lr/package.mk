@@ -5,7 +5,6 @@ PKG_SITE="https://github.com/libretro/potator"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="A Watara Supervision Emulator based on Normmatt version."
-LINUX="A Watara Supervision Emulator based on Normmatt version."
 PKG_TOOLCHAIN="make"
 
 

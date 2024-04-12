@@ -9,7 +9,6 @@ PKG_VERSION="d479b74ed9c3e321bc3735da29bc125a2ac3b9b2" # 1.17.1
 PKG_LICENSE="GPLv2"
 PKG_DEPENDS_TARGET="toolchain ffmpeg libzip SDL2 zlib zip"
 PKG_LONGDESC="PPSSPPDL"
-LINUX="PPSSPP Standalone"
 GET_HANDLER_SUPPORT="git"
 
 ### Note:

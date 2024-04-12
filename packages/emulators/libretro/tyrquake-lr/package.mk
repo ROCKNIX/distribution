@@ -25,7 +25,6 @@ PKG_SITE="https://github.com/libretro/tyrquake"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Libretro port of Tyrquake (Quake 1 engine)"
-LINUX="Libretro port of Tyrquake (Quake 1 engine)"
 PKG_PATCH_DIRS+="${DEVICE}"
 
 PKG_TOOLCHAIN="make"

@@ -28,7 +28,6 @@ PKG_SITE="https://github.com/libretro/common-shaders"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Libretro common shaders"
-LINUX="Libretro common shaders"
 
 make_target() {
   :

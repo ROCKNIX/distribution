@@ -25,7 +25,6 @@ PKG_SITE="https://github.com/libretro/mgba"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="mGBA Game Boy Advance Emulator"
-LINUX="mGBA is a new emulator for running Game Boy Advance games. It aims to be faster and more accurate than many existing Game Boy Advance emulators, as well as adding features that other emulators lack."
 PKG_PATCH_DIRS+="${DEVICE}"
 
 PKG_TOOLCHAIN="make"

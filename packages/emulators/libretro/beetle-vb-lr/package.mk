@@ -26,7 +26,6 @@ PKG_SITE="https://github.com/libretro/beetle-vb-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="libretro implementation of Mednafen VB. (VirtualBoy)"
-LINUX="libretro implementation of Mednafen VB. (VirtualBoy)"
 
 PKG_TOOLCHAIN="make"
 

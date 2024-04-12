@@ -26,7 +26,6 @@ PKG_SITE="https://github.com/libretro/snes9x"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Snes9x - Portable Super Nintendo Entertainment System (TM) emulator"
-LINUX="Snes9x - Portable Super Nintendo Entertainment System (TM) emulator"
 
 PKG_TOOLCHAIN="make"
 

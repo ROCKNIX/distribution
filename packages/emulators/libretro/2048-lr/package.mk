@@ -26,7 +26,6 @@ PKG_SITE="https://github.com/libretro/libretro-2048"
 PKG_URL="https://github.com/libretro/libretro-2048/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Port of 2048 puzzle game to the libretro API."
-LINUX="Port of 2048 puzzle game to the libretro API."
 PKG_TOOLCHAIN="make"
 
 

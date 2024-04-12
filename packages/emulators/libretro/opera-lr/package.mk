@@ -25,7 +25,6 @@ PKG_SITE="https://github.com/libretro/opera-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Port of 4DO/libfreedo to libretro."
-LINUX="Port of 4DO/libfreedo to libretro."
 PKG_TOOLCHAIN="make"
 
 

@@ -26,7 +26,6 @@ PKG_SITE="https://github.com/libretro/tgbdual-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="libretro port of TGB Dual"
-LINUX="TGB Dual is an open source (GPLv2) GB/GBC emulator with game link cable support."
 
 PKG_TOOLCHAIN="make"
 

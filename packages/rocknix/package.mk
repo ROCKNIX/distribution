@@ -8,7 +8,6 @@ PKG_SITE=""
 PKG_URL=""
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="ROCKNIX Meta Package"
-LINUX="ROCKNIX Meta Package"
 PKG_TOOLCHAIN="make"
 
 make_target() {

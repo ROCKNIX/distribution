@@ -26,7 +26,6 @@ PKG_SITE="https://github.com/libretro/yabause"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Port of YabaSanshiro to libretro."
-LINUX="Port of YabaSanshiro to libretro."
 PKG_TOOLCHAIN="make"
 GET_HANDLER_SUPPORT="git"
 

@@ -26,7 +26,6 @@ PKG_SITE="https://github.com/libretro/gw-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="A libretro core for Game & Watch simulators "
-LINUX="A libretro core for Game & Watch simulators "
 
 PKG_TOOLCHAIN="make"
 

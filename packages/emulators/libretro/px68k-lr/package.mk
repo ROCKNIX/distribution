@@ -25,7 +25,6 @@ PKG_SITE="https://github.com/libretro/px68k-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Portable SHARP X68000 Emulator for PSP, Android and other platforms"
-LINUX="Portable SHARP X68000 Emulator for PSP, Android and other platforms"
 PKG_PATCH_DIRS+="${DEVICE}"
 
 PKG_TOOLCHAIN="make"

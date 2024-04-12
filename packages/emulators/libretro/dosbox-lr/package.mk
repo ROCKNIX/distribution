@@ -26,7 +26,6 @@ PKG_SITE="https://github.com/libretro/dosbox-libretro"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="libretro wrapper for the DOSBox emulator"
-LINUX="An open source DOS emulator for BeOS, Linux, Mac OS X, OS/2, and Windows. Primarily focuses on running DOS Games."
 PKG_BUILD_FLAGS="-lto"
 GET_HANDLER_SUPPORT="git"
 

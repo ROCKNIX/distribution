@@ -8,7 +8,6 @@ PKG_SITE="https://github.com/hex007/freej2me"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain apache-ant:host"
 PKG_LONGDESC="A free J2ME emulator with libretro, awt and sdl2 frontends."
-LINUX="A free J2ME emulator with libretro, awt and sdl2 frontends."
 PKG_TOOLCHAIN="make"
 
 pre_configure_target() {

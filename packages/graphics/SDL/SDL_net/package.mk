@@ -24,6 +24,5 @@ PKG_URL="https://github.com/libsdl-org/${PKG_NAME}/archive/refs/tags/release-${P
 PKG_DEPENDS_TARGET="toolchain yasm:host alsa-lib systemd dbus SDL SDL_net:host"
 PKG_DEPENDS_HOST="SDL:host"
 PKG_LONGDESC="This is a small sample cross-platform networking library, with a sample chat client and server application."
-LINUX="This is a small sample cross-platform networking library, with a sample chat client and server application."
 
 PKG_USE_CMAKE="no"

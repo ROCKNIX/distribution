@@ -26,7 +26,6 @@ PKG_SITE="https://github.com/libretro/libretro-atari800"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="atari800 3.1.0 for libretro/libco WIP"
-LINUX="atari800 3.1.0 for libretro/libco WIP"
 PKG_TOOLCHAIN="auto"
 GET_HANDLER_SUPPORT="git"
 

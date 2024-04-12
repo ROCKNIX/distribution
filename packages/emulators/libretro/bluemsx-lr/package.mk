@@ -26,7 +26,6 @@ PKG_SITE="https://github.com/libretro/blueMSX-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Port of blueMSX to the libretro API."
-LINUX="Port of blueMSX to the libretro API."
 
 PKG_TOOLCHAIN="make"
 

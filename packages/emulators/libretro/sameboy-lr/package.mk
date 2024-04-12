@@ -26,7 +26,6 @@ PKG_SITE="https://git.libretro.com/libretro/sameboy-upstream"
 PKG_URL="${PKG_SITE}/-/archive/${PKG_VERSION}/sameboy-upstream-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain util-linux:host"
 PKG_LONGDESC="Gameboy and Gameboy Color emulator written in C"
-LINUX="Gameboy and Gameboy Color emulator written in C"
 
 PKG_TOOLCHAIN="make"
 
