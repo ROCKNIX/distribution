@@ -20,14 +20,11 @@
 
 PKG_NAME="vecx-lr"
 PKG_VERSION="3a5655ff67e161ef33f66b0f6c26aaf2e59ceda8"
-PKG_REV="1"
 PKG_ARCH="any"
 PKG_LICENSE="GPLv2|LGPLv2.1"
 PKG_SITE="https://github.com/libretro/libretro-vecx"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_PRIORITY="optional"
-PKG_SECTION="libretro"
 PKG_SHORTDESC="libretro adaptation of vecx"
 PKG_LONGDESC="libretro adaptation of vecx"
 

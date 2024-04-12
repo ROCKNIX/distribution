@@ -20,14 +20,11 @@
 
 PKG_NAME="o2em-lr"
 PKG_VERSION="44fe5f306033242f7d74144105e19a7d4939477e"
-PKG_REV="1"
 PKG_ARCH="any"
 PKG_LICENSE="Artistic License"
 PKG_SITE="https://github.com/libretro/libretro-o2em"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_PRIORITY="optional"
-PKG_SECTION="libretro"
 PKG_SHORTDESC="Port of O2EM to the libretro API, an Odyssey 2 / VideoPac emulator."
 PKG_LONGDESC="Port of O2EM to the libretro API, an Odyssey 2 / VideoPac emulator."
 

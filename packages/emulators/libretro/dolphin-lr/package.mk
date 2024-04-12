@@ -9,7 +9,6 @@ PKG_DEPENDS_TARGET="toolchain libevdev libdrm ffmpeg zlib libpng lzo libusb"
 PKG_SITE="https://github.com/libretro/dolphin"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SECTION="libretro"
 PKG_SHORTDESC="Dolphin Libretro, a Gamecube & Wii emulator core for Retroarch"
 PKG_TOOLCHAIN="cmake"
 

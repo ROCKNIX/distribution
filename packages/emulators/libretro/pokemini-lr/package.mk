@@ -20,14 +20,11 @@
 
 PKG_NAME="pokemini-lr"
 PKG_VERSION="9bf450887026d9b92d4f9432b5d2a5ed749a35e2"
-PKG_REV="1"
 PKG_ARCH="any"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/libretro/pokemini"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_PRIORITY="optional"
-PKG_SECTION="libretro"
 PKG_SHORTDESC="Obscure nintendo AMD64 emulator (functional,no color files or savestates currently)"
 PKG_LONGDESC="Obscure nintendo AMD64 emulator (functional,no color files or savestates currently)"
 

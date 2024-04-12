@@ -21,14 +21,11 @@
 
 PKG_NAME="beetle-lynx-lr"
 PKG_VERSION="48909ddd1aba4de034d9c1da70c460b1724daa3b"
-PKG_REV="1"
 PKG_ARCH="any"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/beetle-lynx-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_PRIORITY="optional"
-PKG_SECTION="libretro"
 PKG_SHORTDESC="libretro implementation of Mednafen Lynx"
 PKG_LONGDESC="libretro implementation of Mednafen Lynx"
 

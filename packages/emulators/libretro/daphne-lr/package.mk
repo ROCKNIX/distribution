@@ -3,7 +3,6 @@
 
 PKG_NAME="daphne-lr"
 PKG_VERSION="b5481bab34a51369b6749cd95f5f889e43aaa23f"
-PKG_REV="1"
 PKG_ARCH="any"
 PKG_LICENSE="GPLv2+"
 PKG_SITE="https://github.com/libretro/daphne"

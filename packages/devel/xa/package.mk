@@ -9,8 +9,6 @@ PKG_SITE="https://www.floodgap.com/retrotech/xa/"
 PKG_URL="${PKG_SITE}/dists/xa-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_DEPENDS_HOST="toolchain"
-PKG_PRIORITY="optional"
-PKG_SECTION="tools"
 PKG_SHORTDESC="xa is a high-speed, two-pass portable cross-assembler."
 
 makeinstall_host() {

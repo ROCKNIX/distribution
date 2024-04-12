@@ -9,7 +9,6 @@ PKG_DEPENDS_TARGET="toolchain alsa-lib freetype zlib libpng libaio libsamplerate
 PKG_SITE="https://github.com/libretro/LRPS2"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SECTION="libretro"
 PKG_SHORTDESC="Hard fork / port of PCSX2. Will target only Libretro specifically."
 
 if [ ! "${OPENGL}" = "no" ]; then

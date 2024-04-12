@@ -21,14 +21,11 @@
 
 PKG_NAME="slang-shaders"
 PKG_VERSION="93c954798592323c8f7bd05a19c273be22e856cc"
-PKG_REV="1"
 PKG_ARCH="any"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/libretro/slang-shaders"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_PRIORITY="optional"
-PKG_SECTION="libretro"
 PKG_SHORTDESC="Common SLANG shaders for RetroArch"
 PKG_LONGDESC="Common SLANG shaders for RetroArch"
 

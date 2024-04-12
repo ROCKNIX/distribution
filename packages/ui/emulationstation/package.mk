@@ -5,7 +5,6 @@
 PKG_NAME="emulationstation"
 PKG_VERSION="be669d916e9a3f393cf63c57929daf796ddec80d"
 PKG_GIT_CLONE_BRANCH="main"
-PKG_REV="1"
 PKG_ARCH="any"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/ROCKNIX/emulationstation"

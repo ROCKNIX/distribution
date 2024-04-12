@@ -21,14 +21,11 @@
 
 PKG_NAME="crocods-lr"
 PKG_VERSION="f1b4b91291ba1e8e7c0be02269cd0d75c7fa71b9"
-PKG_REV="1"
 PKG_ARCH="any"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/libretro/libretro-crocods"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_PRIORITY="optional"
-PKG_SECTION="libretro"
 PKG_SHORTDESC="Amstrad CPC emulator"
 PKG_LONGDESC="Amstrad CPC emulator"
 
