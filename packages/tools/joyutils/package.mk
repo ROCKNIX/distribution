@@ -12,8 +12,6 @@ PKG_DEPENDS_TARGET="toolchain"
 PKG_SHORTDESC="jscal, jstest, and jsattach utilities for the Linux joystick driver"
 PKG_LONGDESC="jscal, jstest, and jsattach utilities for the Linux joystick driver"
 
-PKG_IS_ADDON="no"
-PKG_AUTORECONF="no"
 
 # post_unpack() {
 #  mv $BUILD/joystick-${PKG_VERSION} $BUILD/${PKG_NAME}-${PKG_VERSION}

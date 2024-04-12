@@ -29,9 +29,7 @@ PKG_DEPENDS_TARGET="toolchain"
 PKG_SHORTDESC="ScummVM with libretro backend."
 PKG_LONGDESC="ScummVM is a program which allows you to run certain classic graphical point-and-click adventure games, provided you already have their data files."
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 PKG_BUILD_FLAGS="-lto"
 
 pre_make_target() {

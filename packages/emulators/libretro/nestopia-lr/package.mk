@@ -28,9 +28,7 @@ PKG_DEPENDS_TARGET="toolchain"
 PKG_SHORTDESC="Libretro implementation of NEStopia. (Nintendo Entertainment System)"
 PKG_LONGDESC="This project is a fork of the original Nestopia source code, plus the Linux port. The purpose of the project is to enhance the original, and ensure it continues to work on modern operating systems."
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 PKG_USE_CMAKE="no"
 
 make_target() {

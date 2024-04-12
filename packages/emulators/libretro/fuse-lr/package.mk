@@ -29,9 +29,7 @@ PKG_DEPENDS_TARGET="toolchain"
 PKG_SHORTDESC="A port of the Fuse Unix Spectrum Emulator to libretro "
 PKG_LONGDESC="A port of the Fuse Unix Spectrum Emulator to libretro "
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 
 make_target() {
   make -f Makefile.libretro

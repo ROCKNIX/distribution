@@ -30,8 +30,6 @@ PKG_DEPENDS_TARGET="toolchain SDL SDL_net retroarch"
 PKG_SHORTDESC="Upstream port of DOSBox to libretro"
 PKG_LONGDESC="Upstream port of DOSBox to libretro"
 GET_HANDLER_SUPPORT="git"
-PKG_IS_ADDON="no"
-PKG_AUTORECONF="no"
 PKG_BUILD_FLAGS="-lto"
 PKG_TOOLCHAIN="make"
 

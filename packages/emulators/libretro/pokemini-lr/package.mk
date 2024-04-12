@@ -28,9 +28,7 @@ PKG_DEPENDS_TARGET="toolchain"
 PKG_SHORTDESC="Obscure nintendo AMD64 emulator (functional,no color files or savestates currently)"
 PKG_LONGDESC="Obscure nintendo AMD64 emulator (functional,no color files or savestates currently)"
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 PKG_PATCH_DIRS+="${DEVICE}"
 
 makeinstall_target() {

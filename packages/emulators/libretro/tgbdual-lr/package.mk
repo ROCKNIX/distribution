@@ -29,9 +29,7 @@ PKG_DEPENDS_TARGET="toolchain"
 PKG_SHORTDESC="libretro port of TGB Dual"
 PKG_LONGDESC="TGB Dual is an open source (GPLv2) GB/GBC emulator with game link cable support."
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro

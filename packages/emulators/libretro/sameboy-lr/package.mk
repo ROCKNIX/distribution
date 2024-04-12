@@ -29,9 +29,7 @@ PKG_DEPENDS_TARGET="toolchain util-linux:host"
 PKG_SHORTDESC="Gameboy and Gameboy Color emulator written in C"
 PKG_LONGDESC="Gameboy and Gameboy Color emulator written in C"
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 
 make_target() {
   make -C libretro BOOTROMS_DIR=${PKG_BUILD}/BootROMs/prebuilt

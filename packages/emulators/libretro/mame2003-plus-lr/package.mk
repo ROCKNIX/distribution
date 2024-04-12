@@ -30,9 +30,7 @@ PKG_DEPENDS_TARGET="toolchain"
 PKG_SHORTDESC="MAME - Multiple Arcade Machine Emulator"
 PKG_LONGDESC="MAME - Multiple Arcade Machine Emulator"
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 
 make_target() {
   make ARCH="" CC="${CC}" NATIVE_CC="${CC}" LD="${CC}"

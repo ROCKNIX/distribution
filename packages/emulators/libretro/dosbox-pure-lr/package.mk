@@ -28,8 +28,6 @@ PKG_DEPENDS_TARGET="toolchain"
 PKG_SHORTDESC="A port of DOSBox to libretro"
 PKG_LONGDESC="A port of DOSBox to libretro"
 GET_HANDLER_SUPPORT="git"
-PKG_IS_ADDON="no"
-PKG_AUTORECONF="no"
 PKG_TOOLCHAIN="make"
 PKG_PATCH_DIRS+="${DEVICE}"
 

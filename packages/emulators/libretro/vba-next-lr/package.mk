@@ -29,9 +29,7 @@ PKG_DEPENDS_TARGET="toolchain"
 PKG_SHORTDESC="Optimized port of VBA-M to Libretro."
 PKG_LONGDESC="Optimized port of VBA-M to Libretro. "
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 
 make_target() {
   make -f Makefile.libretro

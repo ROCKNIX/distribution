@@ -29,9 +29,7 @@ PKG_DEPENDS_TARGET="toolchain"
 PKG_SHORTDESC="Repository containing cheatcode files, content data files, etc."
 PKG_LONGDESC="Repository containing cheatcode files, content data files, etc."
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 
 configure_target() {
   cd ${PKG_BUILD}

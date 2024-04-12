@@ -31,8 +31,6 @@ PKG_SHORTDESC="Super Nintendo (Super Famicom) emulator"
 GET_HANDLER_SUPPORT="git"
 PKG_TOOLCHAIN="make"
 
-PKG_IS_ADDON="no"
-PKG_AUTORECONF="no"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro

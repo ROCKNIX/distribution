@@ -29,9 +29,7 @@ PKG_DEPENDS_TARGET="toolchain"
 PKG_SHORTDESC="libretro implementation of Mednafen PC-FX."
 PKG_LONGDESC="libretro implementation of Mednafen PC-FX."
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 
 make_target() {
   if [ "${ARCH}" == "i386" -o "${ARCH}" == "x86_64" ]; then

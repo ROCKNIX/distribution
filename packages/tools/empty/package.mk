@@ -12,8 +12,6 @@ PKG_URL="http://downloads.sourceforge.net/sourceforge/${PKG_NAME}/${PKG_NAME}-${
 PKG_SHORTDESC="Run applications under pseudo-terminal sessions"
 PKG_LONGDESC="Run applications under pseudo-terminal sessions"
 
-PKG_IS_ADDON="no"
-PKG_AUTORECONF="no"
 
 make_target() {
   make CC=${CC}

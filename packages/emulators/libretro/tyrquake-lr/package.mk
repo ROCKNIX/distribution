@@ -29,9 +29,7 @@ PKG_SHORTDESC="Libretro port of Tyrquake (Quake 1 engine)"
 PKG_LONGDESC="Libretro port of Tyrquake (Quake 1 engine)"
 PKG_PATCH_DIRS+="${DEVICE}"
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 
 pre_configure_target() {
   if [ "${ARCH}" == "arm" ]; then

@@ -26,8 +26,6 @@ PKG_URL="${PKG_SITE}/files/libxmp/${PKG_VERSION}/libxmp-lite-${PKG_VERSION}.tar.
 PKG_DEPENDS_TARGET="toolchain"
 PKG_SHORTDESC="Libxmp is a library that renders module files to PCM data."
 
-PKG_IS_ADDON="no"
-PKG_AUTORECONF="no"
 
 PKG_TOOLCHAIN="configure"
 

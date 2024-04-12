@@ -8,8 +8,6 @@ PKG_LICENSE="GPL"
 PKG_SITE="http://fping.org/"
 PKG_URL="http://fping.org/dist/fping-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_IS_ADDON="no"
-PKG_AUTORECONF="no"
 PKG_TOOLCHAIN="auto"
 
 PKG_CONFIGURE_OPTS_TARGET="--sbindir=/usr/bin"

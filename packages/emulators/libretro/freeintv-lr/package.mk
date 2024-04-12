@@ -29,9 +29,7 @@ PKG_DEPENDS_TARGET="toolchain"
 PKG_SHORTDESC="FreeIntv is a libretro emulation core for the Mattel Intellivision."
 PKG_LONGDESC="FreeIntv is a libretro emulation core for the Mattel Intellivision."
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro

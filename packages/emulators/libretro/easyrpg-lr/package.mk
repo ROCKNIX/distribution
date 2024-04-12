@@ -32,8 +32,6 @@ PKG_LONGDESC="An unofficial libretro port of the EasyRPG/Player."
 GET_HANDLER_SUPPORT="git"
 PKG_BUILD_FLAGS="+pic"
 
-PKG_IS_ADDON="no"
-PKG_AUTORECONF="no"
 
 PKG_CMAKE_OPTS_TARGET="-DPLAYER_TARGET_PLATFORM=libretro \
                        -DBUILD_SHARED_LIBS=ON \

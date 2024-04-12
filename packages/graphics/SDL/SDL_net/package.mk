@@ -27,6 +27,4 @@ PKG_DEPENDS_HOST="SDL:host"
 PKG_SHORTDESC="This is a small sample cross-platform networking library, with a sample chat client and server application."
 PKG_LONGDESC="This is a small sample cross-platform networking library, with a sample chat client and server application."
 
-PKG_IS_ADDON="no"
 PKG_USE_CMAKE="no"
-PKG_AUTORECONF="no"

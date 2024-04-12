@@ -28,9 +28,7 @@ PKG_DEPENDS_TARGET="toolchain"
 PKG_SHORTDESC="Port of Virtual Jaguar to Libretro"
 PKG_LONGDESC="Port of Virtual Jaguar to Libretro"
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro

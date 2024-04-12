@@ -30,9 +30,7 @@ PKG_DEPENDS_TARGET="toolchain"
 PKG_SHORTDESC="Common GSLS shaders for RetroArch"
 PKG_LONGDESC="Common GSLS shaders for RetroArch"
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 
 configure_target() {
   cd ${PKG_BUILD}

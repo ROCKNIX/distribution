@@ -29,9 +29,7 @@ PKG_SHORTDESC="Portable SHARP X68000 Emulator for PSP, Android and other platfor
 PKG_LONGDESC="Portable SHARP X68000 Emulator for PSP, Android and other platforms"
 PKG_PATCH_DIRS+="${DEVICE}"
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro

@@ -28,9 +28,7 @@ PKG_DEPENDS_TARGET="toolchain"
 PKG_SHORTDESC="A port of the EightyOne ZX81 Emulator to libretro"
 PKG_LONGDESC="A port of the EightyOne ZX81 Emulator to libretro"
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 
 make_target() {
   make -f Makefile.libretro

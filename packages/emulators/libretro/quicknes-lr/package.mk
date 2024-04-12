@@ -29,9 +29,7 @@ PKG_SHORTDESC="The QuickNES core library, originally by Shay Green, heavily modi
 PKG_LONGDESC="The QuickNES core library, originally by Shay Green, heavily modified"
 PKG_BUILD_FLAGS="-gold"
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 
 make_target() {
   VERSION='GIT_VERSION ?= '

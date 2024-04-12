@@ -10,8 +10,6 @@ PKG_URL=""
 PKG_DEPENDS_TARGET="toolchain"
 PKG_SHORTDESC="ROCKNIX Meta Package"
 PKG_LONGDESC="ROCKNIX Meta Package"
-PKG_IS_ADDON="no"
-PKG_AUTORECONF="no"
 PKG_TOOLCHAIN="make"
 
 make_target() {

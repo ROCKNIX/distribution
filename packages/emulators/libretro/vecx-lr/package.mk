@@ -28,9 +28,7 @@ PKG_DEPENDS_TARGET="toolchain"
 PKG_SHORTDESC="libretro adaptation of vecx"
 PKG_LONGDESC="libretro adaptation of vecx"
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 
 make_target() {
   make -f Makefile.libretro HAS_GPU=1 HAS_GLES=1

@@ -29,9 +29,7 @@ PKG_DEPENDS_TARGET="toolchain"
 PKG_SHORTDESC="Port of fMSX 4.9 to the libretro API."
 PKG_LONGDESC="Port of fMSX 4.9 to the libretro API."
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 
 make_target() {
   make

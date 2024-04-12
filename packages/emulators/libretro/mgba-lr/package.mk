@@ -29,9 +29,7 @@ PKG_SHORTDESC="mGBA Game Boy Advance Emulator"
 PKG_LONGDESC="mGBA is a new emulator for running Game Boy Advance games. It aims to be faster and more accurate than many existing Game Boy Advance emulators, as well as adding features that other emulators lack."
 PKG_PATCH_DIRS+="${DEVICE}"
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 PKG_USE_CMAKE="no"
 
 make_target() {

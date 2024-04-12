@@ -11,8 +11,6 @@ PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="sixaxis helper service "
 PKG_TOOLCHAIN="make"
-PKG_IS_ADDON="no"
-PKG_AUTORECONF="no"
 
 
 makeinstall_target() {

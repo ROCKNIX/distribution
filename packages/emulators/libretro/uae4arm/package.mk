@@ -29,7 +29,6 @@ PKG_SHORTDESC="Port of uae4arm for libretro (rpi/android)"
 PKG_LONGDESC="Port of uae4arm for libretro (rpi/android) "
 
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 
 make_target() {
   make -f Makefile.libretro platform=unix_aarch64 "CPU_FLAGS=-mcpu=${TARGET_CPU}"

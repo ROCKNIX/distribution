@@ -10,8 +10,6 @@ PKG_URL=""
 PKG_DEPENDS_TARGET="toolchain rclone"
 PKG_SHORTDESC="OS Modules Package"
 PKG_LONGDESC="OS Modules Package"
-PKG_IS_ADDON="no"
-PKG_AUTORECONF="no"
 PKG_TOOLCHAIN="manual"
 
 ###

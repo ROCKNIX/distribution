@@ -30,9 +30,7 @@ PKG_DEPENDS_TARGET="toolchain"
 PKG_SHORTDESC="Mega Duck/Cougar Boy emulator written in C"
 PKG_LONGDESC="Mega Duck/Cougar Boy emulator written in C"
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 
 make_target() {
   make -C libretro
