@@ -25,7 +25,7 @@ PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/libretro/a5200"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SHORTDESC="Atari 5200 libretro core"
+PKG_LONGDESC="Atari 5200 libretro core"
 PKG_TOOLCHAIN="auto"
 GET_HANDLER_SUPPORT="git"
 

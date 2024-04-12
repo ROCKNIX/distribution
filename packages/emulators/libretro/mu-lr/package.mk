@@ -8,8 +8,8 @@ PKG_SITE="https://git.libretro.com/libretro/Mu"
 PKG_URL="${PKG_SITE}/-/archive/${PKG_VERSION}/Mu-${PKG_VERSION}.tar.gz"
 PKG_GIT_CLONE_BRANCH="buildbot"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SHORTDESC="An emulator for the Palm m515 OS ported to libretro."
-PKG_LONGDESC="An emulator for the Palm m515 OS ported to libretro. It is intended to avoid hacks like those used by the POSE emulator, where API calls are intercepted and replaced with those that don't use the actual hardware."
+PKG_LONGDESC="An emulator for the Palm m515 OS ported to libretro."
+LINUX="An emulator for the Palm m515 OS ported to libretro. It is intended to avoid hacks like those used by the POSE emulator, where API calls are intercepted and replaced with those that don't use the actual hardware."
 
 PKG_TOOLCHAIN="make"
 

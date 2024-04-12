@@ -25,8 +25,8 @@ PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/beetle-gba-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SHORTDESC="libretro implementation of Mednafen VBA/GBA. (Game Boy Advance)"
 PKG_LONGDESC="libretro implementation of Mednafen VBA/GBA. (Game Boy Advance)"
+LINUX="libretro implementation of Mednafen VBA/GBA. (Game Boy Advance)"
 
 PKG_TOOLCHAIN="make"
 

@@ -25,8 +25,8 @@ PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/fmsx-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SHORTDESC="Port of fMSX 4.9 to the libretro API."
 PKG_LONGDESC="Port of fMSX 4.9 to the libretro API."
+LINUX="Port of fMSX 4.9 to the libretro API."
 
 PKG_TOOLCHAIN="make"
 

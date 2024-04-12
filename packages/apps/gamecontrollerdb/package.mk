@@ -7,7 +7,7 @@ PKG_LICENSE="GPL"
 PKG_DEPENDS_TARGET="toolchain SDL2"
 PKG_SITE="https://github.com/gabomdq/SDL_GameControllerDB"
 PKG_URL="${PKG_SITE}.git"
-PKG_SHORTDESC="SDL Game Controller DB"
+PKG_LONGDESC="SDL Game Controller DB"
 PKG_TOOLCHAIN="manual"
 
 make_target() {

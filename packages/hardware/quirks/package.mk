@@ -7,7 +7,7 @@ PKG_LICENSE="GPLv2"
 PKG_SITE=""
 PKG_URL=""
 PKG_DEPENDS_TARGET="toolchain autostart ioport ectool"
-PKG_SHORTDESC="Quirks is a simple package that provides device quirks."
+PKG_LONGDESC="Quirks is a simple package that provides device quirks."
 PKG_TOOLCHAIN="manual"
 
 makeinstall_target() {

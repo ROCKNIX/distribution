@@ -25,8 +25,8 @@ PKG_LICENSE="Non-commercial"
 PKG_SITE="https://github.com/libretro/smsplus-gx"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SHORTDESC="SMS Plus GX is an enhanced version"
-PKG_LONGDESC="SMS Plus is an open-source Sega Master System and Game Gear emulator written by Charles MacDonald."
+PKG_LONGDESC="SMS Plus GX is an enhanced version"
+LINUX="SMS Plus is an open-source Sega Master System and Game Gear emulator written by Charles MacDonald."
 
 PKG_TOOLCHAIN="make"
 

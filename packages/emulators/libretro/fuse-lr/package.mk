@@ -25,8 +25,8 @@ PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/libretro/fuse-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SHORTDESC="A port of the Fuse Unix Spectrum Emulator to libretro "
 PKG_LONGDESC="A port of the Fuse Unix Spectrum Emulator to libretro "
+LINUX="A port of the Fuse Unix Spectrum Emulator to libretro "
 
 PKG_TOOLCHAIN="make"
 

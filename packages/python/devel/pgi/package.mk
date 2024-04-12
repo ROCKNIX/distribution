@@ -8,8 +8,6 @@ PKG_LICENSE="LGPL"
 PKG_SITE="https://github.com/pygobject/pgi"
 PKG_URL="https://github.com/pygobject/pgi/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain Python3"
-PKG_SECTION="python/devel"
-PKG_SHORTDESC="PGI - Pure Python GObject Introspection Bindings"
 PKG_LONGDESC="GObject Introspection bindings written in pure Python using ctypes and cffi (optional). API compatible with PyGObject."
 PKG_TOOLCHAIN="manual"
 

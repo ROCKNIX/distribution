@@ -25,8 +25,8 @@ PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/libretro/vba-next"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SHORTDESC="Optimized port of VBA-M to Libretro."
-PKG_LONGDESC="Optimized port of VBA-M to Libretro. "
+PKG_LONGDESC="Optimized port of VBA-M to Libretro."
+LINUX="Optimized port of VBA-M to Libretro. "
 
 PKG_TOOLCHAIN="make"
 

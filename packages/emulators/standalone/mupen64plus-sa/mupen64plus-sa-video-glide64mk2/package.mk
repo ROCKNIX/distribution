@@ -9,7 +9,7 @@ PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/mupen64plus/mupen64plus-video-glide64mk2"
 PKG_URL="https://github.com/mupen64plus/mupen64plus-video-glide64mk2/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain boost libpng SDL2 SDL2_net zlib freetype nasm:host mupen64plus-sa-core"
-PKG_SHORTDESC="mupen64plus-video-glide64mk2"
+PKG_LONGDESC="mupen64plus-video-glide64mk2"
 PKG_LONGDESC="Mupen64Plus Standalone Glide64 Video Driver"
 PKG_TOOLCHAIN="manual"
 

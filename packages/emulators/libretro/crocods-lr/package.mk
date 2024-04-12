@@ -25,8 +25,8 @@ PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/libretro/libretro-crocods"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SHORTDESC="Amstrad CPC emulator"
 PKG_LONGDESC="Amstrad CPC emulator"
+LINUX="Amstrad CPC emulator"
 
 PKG_TOOLCHAIN="make"
 

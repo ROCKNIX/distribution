@@ -24,8 +24,8 @@ PKG_LICENSE="GPLv2|LGPLv2.1"
 PKG_SITE="https://github.com/libretro/libretro-vecx"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SHORTDESC="libretro adaptation of vecx"
 PKG_LONGDESC="libretro adaptation of vecx"
+LINUX="libretro adaptation of vecx"
 
 PKG_TOOLCHAIN="make"
 

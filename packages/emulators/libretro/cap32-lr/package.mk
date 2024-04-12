@@ -25,8 +25,8 @@ PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/libretro-cap32"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SHORTDESC="caprice32 4.2.0 libretro"
 PKG_LONGDESC="caprice32 4.2.0 libretro"
+LINUX="caprice32 4.2.0 libretro"
 
 PKG_TOOLCHAIN="make"
 

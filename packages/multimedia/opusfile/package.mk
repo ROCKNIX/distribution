@@ -23,7 +23,7 @@ PKG_VERSION="a55c164"
 PKG_SITE="https://github.com/xiph/opusfile"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain opus openssl"
-PKG_SHORTDESC="Stand-alone decoder library for .opus streams"
+PKG_LONGDESC="Stand-alone decoder library for .opus streams"
 GET_HANDLER_SUPPORT="git"
 PKG_TOOLCHAIN="configure"
 

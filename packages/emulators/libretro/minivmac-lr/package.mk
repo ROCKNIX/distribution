@@ -7,7 +7,7 @@ PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/libretro-minivmac"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SHORTDESC="Virtual Macintosh"
+PKG_LONGDESC="Virtual Macintosh"
 PKG_TOOLCHAIN="make"
 
 

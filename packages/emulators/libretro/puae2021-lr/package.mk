@@ -27,8 +27,8 @@ PKG_SITE="https://github.com/libretro/libretro-uae"
 PKG_URL="${PKG_SITE}.git"
 PKG_GIT_CLONE_BRANCH="2.6.1"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SHORTDESC="PUAE 2021 libretro port of UAE"
 PKG_LONGDESC="PUAE 2021 libretro port of UAE"
+LINUX="PUAE 2021 libretro port of UAE"
 PKG_TOOLCHAIN="make"
 
 pre_configure_target() {

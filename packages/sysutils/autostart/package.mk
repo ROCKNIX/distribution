@@ -7,7 +7,7 @@ PKG_LICENSE="GPLv2"
 PKG_SITE=""
 PKG_URL=""
 PKG_DEPENDS_TARGET="toolchain systemd"
-PKG_SHORTDESC="Autostart is a systemd helper that starts/configures device specific services and parameters."
+PKG_LONGDESC="Autostart is a systemd helper that starts/configures device specific services and parameters."
 PKG_TOOLCHAIN="manual"
 
 makeinstall_target() {

@@ -7,7 +7,7 @@ PKG_LICENSE="GPLv2"
 PKG_SITE="https://git.libretro.com/libretro/beetle-psx-libretro"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SHORTDESC="Fork of Mednafen PSX"
+PKG_LONGDESC="Fork of Mednafen PSX"
 PKG_TOOLCHAIN="make"
 
 if [ ! "${OPENGL}" = "no" ]; then

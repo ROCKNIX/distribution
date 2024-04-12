@@ -25,8 +25,8 @@ PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/libretro/libretro-database"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SHORTDESC="Repository containing cheatcode files, content data files, etc."
 PKG_LONGDESC="Repository containing cheatcode files, content data files, etc."
+LINUX="Repository containing cheatcode files, content data files, etc."
 
 PKG_TOOLCHAIN="make"
 

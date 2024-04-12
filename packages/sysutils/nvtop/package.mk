@@ -8,7 +8,7 @@ PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/Syllo/nvtop"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET=" libdrm mesa"
-PKG_SHORTDESC="NVTOP stands for Neat Videocard TOP, a (h)top like task monitor for AMD, Intel and NVIDIA GPUs."
+PKG_LONGDESC="NVTOP stands for Neat Videocard TOP, a (h)top like task monitor for AMD, Intel and NVIDIA GPUs."
 PKG_TOOLCHAIN="cmake"
 
 case ${TARGET_ARCH} in

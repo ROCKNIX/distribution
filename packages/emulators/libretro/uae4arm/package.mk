@@ -25,8 +25,8 @@ PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/Chips-fr/uae4arm-rpi"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain flac mpg123"
-PKG_SHORTDESC="Port of uae4arm for libretro (rpi/android)"
-PKG_LONGDESC="Port of uae4arm for libretro (rpi/android) "
+PKG_LONGDESC="Port of uae4arm for libretro (rpi/android)"
+LINUX="Port of uae4arm for libretro (rpi/android) "
 
 PKG_TOOLCHAIN="make"
 

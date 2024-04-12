@@ -7,7 +7,7 @@ PKG_LICENSE="GPLv2"
 PKG_SITE="https://www.gryphel.com/c/minivmac/"
 PKG_URL="https://www.gryphel.com/d/minivmac/minivmac-${PKG_VERSION}/minivmac-${PKG_VERSION}.src.tgz"
 PKG_DEPENDS_TARGET="toolchain libX11"
-PKG_SHORTDESC="Virtual Macintosh Plus"
+PKG_LONGDESC="Virtual Macintosh Plus"
 PKG_TOOLCHAIN="make"
 
 pre_make_target() {

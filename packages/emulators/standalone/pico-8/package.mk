@@ -7,7 +7,7 @@ PKG_LICENSE="GPLv2"
 PKG_SITE=""
 PKG_URL=""
 PKG_DEPENDS_TARGET="toolchain SDL2"
-PKG_SHORTDESC="PICO-8 Fantasy Console"
+PKG_LONGDESC="PICO-8 Fantasy Console"
 PKG_TOOLCHAIN="manual"
 
 if [ ! "${OPENGL}" = "no" ]; then

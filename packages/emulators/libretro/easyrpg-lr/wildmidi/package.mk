@@ -23,7 +23,7 @@ PKG_VERSION="405ca73"
 PKG_SITE="https://github.com/Mindwerks/wildmidi"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SHORTDESC="WildMIDI is a simple software midi player which has a core softsynth library that can be used with other applications."
+PKG_LONGDESC="WildMIDI is a simple software midi player which has a core softsynth library that can be used with other applications."
 
 PKG_TOOLCHAIN="cmake"
 

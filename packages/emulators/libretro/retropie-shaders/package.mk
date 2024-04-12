@@ -27,8 +27,8 @@ PKG_SITE="https://github.com/RetroPie/common-shaders"
 PKG_URL="${PKG_SITE}.git"
 PKG_GIT_CLONE_BRANCH="rpi"
 PKG_DEPENDS_TARGET="toolchain glsl-shaders"
-PKG_SHORTDESC="Libretro common shaders from retropie"
 PKG_LONGDESC="Libretro common shaders from retropie"
+LINUX="Libretro common shaders from retropie"
 PKG_TOOLCHAIN="manual"
 
 make_target() {

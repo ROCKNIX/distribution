@@ -7,8 +7,8 @@ PKG_LICENSE="custom"
 PKG_SITE=""
 PKG_URL=""
 PKG_DEPENDS_TARGET="toolchain rclone"
-PKG_SHORTDESC="OS Modules Package"
 PKG_LONGDESC="OS Modules Package"
+LINUX="OS Modules Package"
 PKG_TOOLCHAIN="manual"
 
 ###

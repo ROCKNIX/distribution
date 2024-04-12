@@ -24,7 +24,7 @@ PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/AZO234/NP2kai"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SHORTDESC="Neko Project II kai"
+PKG_LONGDESC="Neko Project II kai"
 PKG_TOOLCHAIN="make"
 
 make_target() {

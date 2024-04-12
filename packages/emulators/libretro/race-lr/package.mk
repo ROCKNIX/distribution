@@ -25,8 +25,8 @@ PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/RACE"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SHORTDESC="This is the RACE NGPC emulator modified by theelf to run on the PSP."
 PKG_LONGDESC="This is the RACE NGPC emulator modified by theelf to run on the PSP."
+LINUX="This is the RACE NGPC emulator modified by theelf to run on the PSP."
 PKG_TOOLCHAIN="make"
 
 makeinstall_target() {

@@ -26,8 +26,8 @@ PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/libretro/libretro-uae"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SHORTDESC="WIP libretro port of UAE (P-UAE and libco) Expect bugs"
 PKG_LONGDESC="WIP libretro port of UAE (P-UAE and libco) Expect bugs"
+LINUX="WIP libretro port of UAE (P-UAE and libco) Expect bugs"
 PKG_TOOLCHAIN="make"
 
 pre_configure_target() {

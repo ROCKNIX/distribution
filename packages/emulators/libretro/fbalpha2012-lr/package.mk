@@ -25,7 +25,7 @@ PKG_LICENSE="Non-commercial"
 PKG_SITE="https://github.com/libretro/fbalpha2012"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SHORTDESC="Port of Final Burn Alpha 2012 to Libretro"
+PKG_LONGDESC="Port of Final Burn Alpha 2012 to Libretro"
 PKG_TOOLCHAIN="make"
 
 make_target() {

@@ -24,8 +24,8 @@ PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/prosystem-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SHORTDESC="Port of ProSystem to libretro."
 PKG_LONGDESC="Port of ProSystem to libretro."
+LINUX="Port of ProSystem to libretro."
 
 PKG_TOOLCHAIN="make"
 
