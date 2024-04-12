@@ -4,7 +4,7 @@
 PKG_NAME="moonlight"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/moonlight-stream/moonlight-"
-PKG_DEPENDS_TARGET="toolchain opus SDL2 libevdev alsa curl enet avahi libvdpau libcec ffmpeg"
+PKG_DEPENDS_TARGET="toolchain opus SDL2 libevdev alsa curl enet avahi libvdpau ffmpeg"
 PKG_LONGDESC="Moonlight is an open source implementation of NVIDIA's GameStream, as used by the NVIDIA Shield, but built for Linux."
 GET_HANDLER_SUPPORT="git"
 PKG_PATCH_DIRS+="${DEVICE}"
@@ -33,11 +33,14 @@ else
   PKG_URL="${PKG_SITE}.git"
   PKG_VERSION="3b72f5195b6843be772a2eb6846ac10ceed39bf4"
   PKG_TOOLCHAIN="cmake"
+
+  PKG_CMAKE_OPTS_TARGET+=" -DENABLE_CEC=OFF"
+
   post_makeinstall_target() {
     mkdir -p ${INSTALL}/usr/config/moonlight
     cp -R ${PKG_BUILD}/moonlight.conf ${INSTALL}/usr/config/moonlight
-    rm ${INSTALL}/usr/etc/moonlight.conf 
-    rm ${INSTALL}/usr/share/moonlight/gamecontrollerdb.txt 
+    rm ${INSTALL}/usr/etc/moonlight.conf
+    rm ${INSTALL}/usr/share/moonlight/gamecontrollerdb.txt
   }
 fi
 
