@@ -8,7 +8,7 @@ PKG_URL="${PKG_SITE}/releases/download/${PKG_VERSION}/PortMaster.zip"
 COMPAT_URL="https://github.com/ROCKNIX/packages/raw/main/compat.zip"
 PKG_LICENSE="MIT"
 PKG_ARCH="arm aarch64"
-PKG_DEPENDS_TARGET="toolchain rocknix-hotkey gamecontrollerdb wget oga_controls control-gen"
+PKG_DEPENDS_TARGET="toolchain rocknix-hotkey gamecontrollerdb wget oga_controls control-gen xmlstarlet"
 PKG_TOOLCHAIN="manual"
 PKG_LONGDESC="Portmaster - a simple tool that allows you to download various game ports"
 
