@@ -5,7 +5,8 @@
 . /etc/profile
 
 export SWAY_HOME=/storage/.config/sway/
-export SWAY_CONFIG=/usr/share/sway/config.kiosk
+export SWAY_CONFIG_KIOSK=/usr/share/sway/config.kiosk
+export SWAY_CONFIG_DESKTOP=/usr/share/sway/config.desktop
 
 if [ ! -d "$SWAY_HOME" ]
 then
@@ -13,8 +14,16 @@ then
 fi
 
 # Copy base config, we are overwriting any user config
-cp $SWAY_CONFIG $SWAY_HOME/config
-
+UIMODE=$(get_setting desktop.enabled)
+if [ "${UIMODE}" = "1" ]; then
+    cp $SWAY_CONFIG_DESKTOP $SWAY_HOME/config
+    # Shouldn't need to mask, but disable wouldn't do it.
+    systemctl mask essway.service
+    set_setting desktop.enabled "0"
+else
+    cp $SWAY_CONFIG_KIOSK $SWAY_HOME/config
+    systemctl unmask essway.service
+fi
 # get the card number, this may not be a safe way to derive it...
 card_no=$(ls /sys/class/drm/ | grep -E "HDMI|DSI" | head -n 1 | cut -b 5)
 
@@ -31,26 +40,37 @@ for connector in ${card}/card${card_no}*/
 do
     status=$(cat ${connector}/status)
     if [ "$status" = "connected" ]; then
+        # If device has a connected DSI port, store that device.
+        if [[ $connector  == *"DSI"* ]]; then
+            dsi=$(basename $connector)
+            dsi=${dsi: +6}
+        fi
+    # Simply prioritize later connectors, meaning HDMI priority
 	con=$(basename $connector)
 	con=${con: +6}
     fi
 done
 
-# Generate output line for sway config
-if [[ $(grep -L "output" $SWAY_HOME/config) ]]
-then
-rot=$(cat /sys/class/graphics/fbcon/rotate)
-output="output ${con}"
-    if [ $rot = 1 ]; then
-        angle="90"
-    elif [ $rot = 2 ]; then
-        angle="180"
-    elif [ $rot = 3 ]; then
-        angle="270"
-    else
-        angle="0"
+# If dsi check rotation
+if [[ $con  == "DSI"* ]]; then
+    rot=$(cat /sys/class/graphics/fbcon/rotate)
+    case $rot in
+        1) angle="90";;
+        2) angle="180";;
+        3) angle="270";;
+        *) angle="0";;
+    esac
+else
+    # Main output not DSI and DSI is connected, then disable it
+    if [ ! -z $dsi ]; then
+	echo $dsi
+        echo "output ${dsi} disable" >> $SWAY_HOME/config
     fi
-    echo "${output} bg #000000 solid_color" >> $SWAY_HOME/config
-    echo "${output} transform ${angle}" >> $SWAY_HOME/config
-    echo "${output} max_render_time off" >> $SWAY_HOME/config
+    angle="0"
 fi
+# Main output string base
+output="output ${con}"
+echo "${output} transform ${angle}" >> $SWAY_HOME/config
+echo "${output} bg #000000 solid_color" >> $SWAY_HOME/config
+echo "${output} max_render_time off" >> $SWAY_HOME/config
+
