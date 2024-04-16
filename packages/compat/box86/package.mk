@@ -7,7 +7,7 @@ PKG_ARCH="arm aarch64"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/ptitSeb/box86"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain ncurses SDL_sound"
+PKG_DEPENDS_TARGET="toolchain ncurses SDL_sound libXdmcp libXft"
 PKG_LONGDESC="Box86 lets you run x86 Linux programs (such as games) on non-x86 Linux systems, like ARM."
 PKG_TOOLCHAIN="cmake"
 
