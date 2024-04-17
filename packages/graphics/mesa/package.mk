@@ -17,19 +17,19 @@ case ${DEVICE} in
   ;;
   RK3*|S922X)
     if [ "${DEVICE}" = "S922X" -a "${USE_MALI}" != "no" ]; then
-      PKG_VERSION="24.0.4"
+      PKG_VERSION="24.0.5"
 	    PKG_SITE="http://www.mesa3d.org/"
 	    PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
     else
       #Using upstream dev for panfrost
-	    PKG_VERSION="db29984c254f60f5daeec0ea4e6048b6ee7902f8"
+	    PKG_VERSION="5363f7cce5c967bd84210b0a316cd502e197609f"
 	    PKG_SITE="https://gitlab.freedesktop.org/mesa/mesa"
 	    PKG_URL="${PKG_SITE}.git"
 	    PKG_PATCH_DIRS+=" panfrost"
     fi
   ;;
   *)
-	PKG_VERSION="24.0.4"
+	PKG_VERSION="24.0.5"
 	PKG_SITE="http://www.mesa3d.org/"
 	PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
   ;;
