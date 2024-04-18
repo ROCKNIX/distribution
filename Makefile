@@ -119,7 +119,7 @@ docker-%: INTERACTIVE=$(shell [ -t 0 ] && echo "-it")
 docker-%: COMMAND=make $*
 
 # Get .env file ready
-docker-%: $(shell for var in $(compgen -e); do echo "$var=${!var}"; done > .env)
+docker-%: $(shell ./scripts/get_env > .env)
 
 # If the user issues a `make docker-shell` just start up bash as the shell to run commands
 docker-shell: COMMAND=bash
