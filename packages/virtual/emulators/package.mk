@@ -36,26 +36,26 @@ case "${DEVICE}" in
   RK3588*)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 desmume-lr gpsp-lr pcsx_rearmed-lr wine"
     PKG_EMUS+=" aethersx2-sa box64 dolphin-sa drastic-sa mednafen melonds-sa portmaster scummvmsa supermodel-sa yabasanshiro-sa"
-    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr pcsx_rearmed-lr uae4arm"
+    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr geolith-lr pcsx_rearmed-lr uae4arm"
     PKG_RETROARCH+=" retropie-shaders"
   ;;
   RK3399)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 desmume-lr gpsp-lr pcsx_rearmed-lr"
     PKG_EMUS+=" aethersx2-sa box64 dolphin-sa drastic-sa mednafen melonds-sa nanoboyadvance-sa portmaster scummvmsa yabasanshiro-sa"
-    LIBRETRO_CORES+=" beetle-psx-lr bsnes-lr bsnes-hd-lr dolphin-lr flycast-lr pcsx_rearmed-lr uae4arm"
+    LIBRETRO_CORES+=" beetle-psx-lr bsnes-lr bsnes-hd-lr dolphin-lr geolith-lr flycast-lr pcsx_rearmed-lr uae4arm"
     PKG_RETROARCH+=" retropie-shaders"
   ;;
   RK356*)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 desmume-lr gpsp-lr pcsx_rearmed-lr wine"
     PKG_DEPENDS_TARGET+=" common-shaders glsl-shaders"
     PKG_EMUS+=" box64 drastic-sa mednafen portmaster scummvmsa yabasanshiro-sa"
-    LIBRETRO_CORES+=" flycast-lr uae4arm"
+    LIBRETRO_CORES+=" flycast-lr geolith-lr uae4arm"
     PKG_RETROARCH+=" retropie-shaders"
   ;;
   S922X*)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 pcsx_rearmed-lr wine"
     PKG_EMUS+=" aethersx2-sa box64 dolphin-sa drastic-sa portmaster yabasanshiro-sa"
-    LIBRETRO_CORES+=" beetle-psx-lr bsnes-lr bsnes-hd-lr dolphin-lr flycast-lr uae4arm"
+    LIBRETRO_CORES+=" beetle-psx-lr bsnes-lr bsnes-hd-lr dolphin-lr geolith-lr flycast-lr uae4arm"
     [ "${USE_MALI}" != "no" ] && PKG_EMUS+=" lime3ds-sa"
     PKG_RETROARCH+=" retropie-shaders"
   ;;
@@ -63,7 +63,7 @@ case "${DEVICE}" in
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 desmume-lr gpsp-lr pcsx_rearmed-lr"
     PKG_DEPENDS_TARGET+=" common-shaders glsl-shaders"
     PKG_EMUS+=" box64 drastic-sa mednafen portmaster scummvmsa yabasanshiro-sa"
-    LIBRETRO_CORES+=" flycast-lr flycast2021-lr uae4arm"
+    LIBRETRO_CORES+=" flycast-lr flycast2021-lr geolith-lr uae4arm"
     PKG_RETROARCH+=" retropie-shaders"
   ;;
 esac
@@ -660,6 +660,11 @@ makeinstall_target() {
   add_emu_core neogeo retroarch mame2010 false
   add_emu_core neogeo retroarch mame2015 false
   add_emu_core neogeo retroarch mame false
+  case ${TARGET_ARCH} in
+    aarch64)
+      add_emu_core neogeo retroarch geolith false
+    ;;
+  esac
   add_es_system neogeo
 
   ### SNK NeoCD
