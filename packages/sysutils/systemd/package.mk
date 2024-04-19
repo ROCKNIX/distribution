@@ -7,7 +7,7 @@ PKG_VERSION="253.16"
 PKG_LICENSE="LGPL2.1+"
 PKG_SITE="http://www.freedesktop.org/wiki/Software/systemd"
 PKG_URL="https://github.com/systemd/systemd-stable/archive/v${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain libcap kmod util-linux libidn2 Python3:host jinja2:host pcre2"
+PKG_DEPENDS_TARGET="toolchain libcap kmod util-linux libidn2 Python3:host jinja2:host pcre2 zstd"
 PKG_LONGDESC="A system and session manager for Linux, compatible with SysV and LSB init scripts."
 
 PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
