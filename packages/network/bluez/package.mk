@@ -74,6 +74,7 @@ post_makeinstall_target() {
   cat <<EOF >${INSTALL}/etc/bluetooth/input.conf
 [General]
 ClassicBondedOnly=false
+UserspaceHID=false
 EOF
 
   mkdir -p ${INSTALL}/usr/share/services
