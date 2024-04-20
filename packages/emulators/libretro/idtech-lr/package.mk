@@ -8,18 +8,13 @@ PKG_LONGDESC="Package for all iD Software game engines."
 PKG_TOOLCHAIN="manual"
 PKG_DOOM_SHAREWARE="https://github.com/ROCKNIX/packages/raw/main/doom.tar.gz"
 
-if [[ "${OPENGL_SUPPORT}" = "yes" ]] && [[ ! "${DEVICE}" = "S922X" ]]; then
-  PKG_DEPENDS_TARGET+=" ${OPENGL}"
-  PKG_DEPENDS_TARGET+=" vitaquake3-lr"
-fi
-
 if [ "${OPENGLES_SUPPORT}" = yes ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGLES}"
   PKG_DEPENDS_TARGET+=" ecwolf-lr prboom-lr tyrquake-lr vitaquake2-lr"
 fi
 
 if [ "${TARGET_ARCH}" = "x86_64" ]; then
-  PKG_DEPENDS_TARGET+=" boom3-lr"
+  PKG_DEPENDS_TARGET+=" vitaquake3-lr boom3-lr"
 fi
 
 makeinstall_target() {
@@ -31,4 +26,13 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/share/idtech
   cp -rf ${PKG_DIR}/sources/* ${INSTALL}/usr/share/idtech/
   curl -Lo ${INSTALL}/usr/share/idtech/doom.tar.gz ${PKG_DOOM_SHAREWARE}
+}
+
+post_install() {
+  case ${TARGET_ARCH} in
+    aarch64)
+      sed -i '/doom3/d' ${INSTALL}/usr/share/idtech/idtech_dirs
+      sed -i '/quake3/d' ${INSTALL}/usr/share/idtech/idtech_dirs
+    ;;
+  esac
 }

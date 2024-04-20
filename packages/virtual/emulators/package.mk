@@ -378,6 +378,7 @@ makeinstall_target() {
   ### iD Software game engines
   add_emu_core idtech retroarch idtech
   add_es_system idtech
+  install_script "Generate id Tech Launchers.sh"
 
   ### Apple Macintosh Plus
   add_emu_core macintosh retroarch minivmac true
