@@ -35,6 +35,15 @@ ${RA_BIN} -L ${RA_DIR}/prboom_libretro.so ${GAME_DIR}/doom/doom/doom.wad
 EOF
 fi
 
+### The Ultimate Doom
+if [[ -f "${GAME_DIR}/doom/doomu/doomu.wad" ]] && [[ ! -f ${SCRIPT_DIR}/The\ Ultimate\ Doom.sh ]]; then
+cat <<EOF >${SCRIPT_DIR}/The\ Ultimate\ Doom.sh
+#!/bin/bash
+
+${RA_BIN} -L ${RA_DIR}/prboom_libretro.so ${GAME_DIR}/doom/doomu/doomu.wad
+EOF
+fi
+
 ### Doom 2
 if [[ -f "${GAME_DIR}/doom/doom2/doom2.wad" ]] && [[ ! -f ${SCRIPT_DIR}/Doom\ II.sh ]]; then
 cat <<EOF >${SCRIPT_DIR}/Doom\ II.sh
@@ -85,16 +94,7 @@ if [[ -f "${GAME_DIR}/quake/id1/pak0.pak" ]] && [[ ! -f ${SCRIPT_DIR}/Quake.sh ]
 cat <<EOF >${SCRIPT_DIR}/Quake.sh
 #!/bin/bash
 
-${RA_BIN} -L ${RA_DIR}/tyrquake_libretro.so ${GAME_DIR}/quake/id1/pak1.pak
-EOF
-fi
-
-### Quake - Dimension of the Past
-if [[ -f "${GAME_DIR}/quake/dopa/pak0.pak" ]] && [[ ! -f ${SCRIPT_DIR}/Quake\ -\ Dimension\ of\ the\ Past.sh ]]; then
-cat <<EOF >${SCRIPT_DIR}/Quake\ -\ Dimension\ of\ the\ Past.sh
-#!/bin/bash
-
-${RA_BIN} -L ${RA_DIR}/tyrquake_libretro.so ${GAME_DIR}/quake/dopa/pak0.pak
+${RA_BIN} -L ${RA_DIR}/tyrquake_libretro.so ${GAME_DIR}/quake/id1/pak0.pak
 EOF
 fi
 
@@ -117,11 +117,11 @@ EOF
 fi
 
 ### Quake 2
-if [[ -f "${GAME_DIR}/quake2/quake2/pak0.pak" ]] && [[ ! -f ${SCRIPT_DIR}/Quake\ II.sh ]]; then
+if [[ -f "${GAME_DIR}/quake2/baseq2/pak0.pak" ]] && [[ ! -f ${SCRIPT_DIR}/Quake\ II.sh ]]; then
 cat <<EOF >${SCRIPT_DIR}/Quake\ II.sh
 #!/bin/bash
 
-${RA_BIN} -L ${RA_DIR}/vitaquake2_libretro.so ${GAME_DIR}/quake2/quake2/*
+${RA_BIN} -L ${RA_DIR}/vitaquake2_libretro.so ${GAME_DIR}/quake2/baseq2/*
 EOF
 fi
 
@@ -130,7 +130,7 @@ if [[ -f "${GAME_DIR}/quake2/xatrix/pak0.pak" ]] && [[ ! -f ${SCRIPT_DIR}/Quake\
 cat <<EOF >${SCRIPT_DIR}/Quake\ II\ -\ The\ Reckoning.sh
 #!/bin/bash
 
-${RA_BIN} -L ${RA_DIR}/vitaquake2_libretro.so ${GAME_DIR}/quake2/xatrix/*
+${RA_BIN} -L ${RA_DIR}/vitaquake2-xatrix_libretro.so ${GAME_DIR}/quake2/xatrix/*
 EOF
 fi
 
@@ -139,7 +139,16 @@ if [[ -f "${GAME_DIR}/quake2/rogue/pak0.pak" ]] && [[ ! -f ${SCRIPT_DIR}/Quake\ 
 cat <<EOF >${SCRIPT_DIR}/Quake\ II\ -\ Ground\ Zero.sh
 #!/bin/bash
 
-${RA_BIN} -L ${RA_DIR}/vitaquake2_libretro.so ${GAME_DIR}/quake2/rogue/*
+${RA_BIN} -L ${RA_DIR}/vitaquake2-rogue_libretro.so ${GAME_DIR}/quake2/rogue/*
+EOF
+fi
+
+### Quake 2 - Zaero
+if [[ -f "${GAME_DIR}/quake2/zaero/pak0.pak" ]] && [[ ! -f ${SCRIPT_DIR}/Quake\ II\ -\ Zaero.sh ]]; then
+cat <<EOF >${SCRIPT_DIR}/Quake\ II\ -\ Zaero.sh
+#!/bin/bash
+
+${RA_BIN} -L ${RA_DIR}/vitaquake2-zaero_libretro.so ${GAME_DIR}/quake2/zaero/*
 EOF
 fi
 
