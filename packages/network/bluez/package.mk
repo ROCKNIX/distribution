@@ -34,14 +34,6 @@ PKG_CONFIGURE_OPTS_TARGET="--disable-dependency-tracking \
                            --disable-manpages \
                            --disable-experimental \
                            --enable-sixaxis \
-                           --enable-a2dp \
-                           --enable-avrcp \
-                           --enable-btpclient \
-                           --enable-midi \
-                           --enable-mesh \
-                           --enable-hid2hci \
-                           --enable-experimental \
-                           --enable-hid \
                            --with-gnu-ld \
                            ${BLUEZ_CONFIG} \
                            storagedir=/storage/.cache/bluetooth"
@@ -92,6 +84,6 @@ EOF
 
 post_install() {
   enable_service bluetooth-defaults.service
-  #enable_service bluetooth.service
-  #enable_service obex.service
+  enable_service bluetooth.service
+  enable_service obex.service
 }
