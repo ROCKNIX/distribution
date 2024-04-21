@@ -19,14 +19,14 @@ case ${DEVICE} in
   ;;
 esac
 
-case ${DEVICE} in
-  AMD64|RK33*|RK3588|RK3566)
-    PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
-    export USE_GLES=0
-  ;;
-  *)
+case ${OPENGL} in
+  no)
     PKG_DEPENDS_TARGET+=" ${OPENGLES}"
     export USE_GLES=1
+  ;;
+  *)
+    PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
+    export USE_GLES=0
   ;;
 esac
 

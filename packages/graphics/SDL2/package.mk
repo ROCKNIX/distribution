@@ -131,7 +131,7 @@ pre_configure_target(){
                          -DDIRECTX=OFF \
                          -DSDL_DLOPEN=ON \
                          -DCLOCK_GETTIME=OFF \
-                         -DRPATH=OFF \
+                         -DSDL_RPATH=OFF \
                          -DRENDER_D3D=OFF \
                          -DPIPEWIRE=ON \
                          -DPULSEAUDIO=ON"

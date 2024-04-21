@@ -54,7 +54,6 @@ if [ ! "${OPENGL}" = "no" ]; then
                            -Dglamor=true"
 else
   PKG_MESON_OPTS_TARGET+=" -Dglx=false \
-                           -Ddri1=false \
                            -Dglamor=false"
 fi
 

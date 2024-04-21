@@ -6,7 +6,7 @@ PKG_VERSION="3.7.0"
 PKG_LICENSE="BSD"
 PKG_SITE="https://www.webmproject.org"
 PKG_URL="https://storage.googleapis.com/aom-releases/libaom-${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain llvm"
+PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="AV1 Codec Library"
 PKG_BUILD_FLAGS="+pic"
 
