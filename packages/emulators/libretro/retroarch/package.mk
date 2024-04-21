@@ -7,13 +7,22 @@ PKG_VERSION="06fa532" # v1.18.0
 PKG_SITE="https://github.com/libretro/RetroArch"
 PKG_URL="${PKG_SITE}.git"
 PKG_LICENSE="GPLv3"
-PKG_DEPENDS_TARGET="toolchain SDL2 alsa-lib libass openssl freetype zlib retroarch-assets core-info ffmpeg libass joyutils empty nss-mdns openal-soft libogg libvorbisidec libvorbis libvpx libpng libdrm pulseaudio miniupnpc flac"
+PKG_DEPENDS_TARGET="toolchain SDL2 alsa-lib libass openssl freetype zlib retroarch-assets core-info ffmpeg libass joyutils nss-mdns openal-soft libogg libvorbisidec libvorbis libvpx libpng libdrm pulseaudio miniupnpc flac"
 PKG_LONGDESC="Reference frontend for the libretro API."
 GET_HANDLER_SUPPORT="git"
 
 if [ "${PIPEWIRE_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" pipewire"
 fi
+
+case ${ARCH} in
+  arm|i686)
+    true
+    ;;
+  *)
+    PKG_DEPENDS_TARGET+=" empty"
+    ;;
+esac
 
 PKG_PATCH_DIRS+=" ${DEVICE}"
 
@@ -28,7 +37,7 @@ PKG_CONFIGURE_OPTS_TARGET="   --disable-qt \
                               --disable-vg \
                               --disable-sdl \
                               --enable-sdl2 \
-			      --enable-kms \
+                              --enable-kms \
                               --enable-ffmpeg"
 
 case ${ARCH} in
@@ -47,8 +56,16 @@ case ${PROJECT} in
 esac
 
 if [ "${DISPLAYSERVER}" = "wl" ]; then
-  PKG_DEPENDS_TARGET+=" wayland ${WINDOWMANAGER}"
+  PKG_DEPENDS_TARGET+=" wayland"
   PKG_CONFIGURE_OPTS_TARGET+=" --enable-wayland"
+  case ${ARCH} in
+    arm|i686)
+      true
+      ;;
+    *)
+      PKG_DEPENDS_TARGET+=" ${WINDOWMANAGER}"
+      ;;
+  esac
 else
   PKG_CONFIGURE_OPTS_TARGET+=" --disable-wayland"
 fi

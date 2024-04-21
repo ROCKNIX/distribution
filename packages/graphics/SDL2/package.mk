@@ -46,7 +46,15 @@ fi
 
 if [ "${DISPLAYSERVER}" = "wl" ]
 then
-  PKG_DEPENDS_TARGET+=" wayland ${WINDOWMANAGER}"
+  PKG_DEPENDS_TARGET+=" wayland "
+  case ${ARCH} in
+    arm|i686)
+      true
+      ;;
+    *)
+      PKG_DEPENDS_TARGET+=" ${WINDOWMANAGER}"
+      ;;
+  esac
   PKG_CMAKE_OPTS_TARGET+=" -DSDL_WAYLAND=ON \
                            -DVIDEO_WAYLAND=ON \
                            -DVIDEO_WAYLAND_QT_TOUCH=ON \
