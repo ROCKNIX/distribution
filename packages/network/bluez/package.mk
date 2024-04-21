@@ -34,7 +34,6 @@ PKG_CONFIGURE_OPTS_TARGET="--disable-dependency-tracking \
                            --disable-manpages \
                            --disable-experimental \
                            --enable-sixaxis \
-                           --enable-sap \
                            --enable-a2dp \
                            --enable-avrcp \
                            --enable-btpclient \
