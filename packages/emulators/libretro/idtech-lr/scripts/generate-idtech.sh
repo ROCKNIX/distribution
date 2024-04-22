@@ -6,13 +6,17 @@
 # This scripts scans the /storage/roms/idtech folder for idtech game files
 # and creates the necessary idtech launcher scripts
 
-
 RA_BIN="/usr/bin/retroarch"
 RA_DIR="/usr/lib/libretro"
 SCRIPT_DIR="/storage/.config/idtech"
 GAME_DIR="/storage/roms/idtech"
 
-### Create directories
+### create .config/idtech if does not exist
+if [ ! -d ${SCRIPT_DIR} ]; then
+  mkdir -p ${SCRIPT_DIR}
+fi
+
+### Create game directories
 while read IDTECH_DIR; do
   if [ ! -d "${GAME_DIR}/${IDTECH_DIR}" ]; then
     mkdir -p ${GAME_DIR}/${IDTECH_DIR}
@@ -161,7 +165,7 @@ ${RA_BIN} -L ${RA_DIR}/vitaquake3_libretro.so ${GAME_DIR}/quake3/*
 EOF
 fi
 
-### Wolf3D
+### Wolfenstein 3D
 if [[ -f "${GAME_DIR}/wolf3d/wolf3d/VSWAP.WL6" ]] && [[ ! -f ${SCRIPT_DIR}/Wolfenstein\ 3D.sh ]]; then
 cat <<EOF >${SCRIPT_DIR}/Wolfenstein\ 3D.sh
 #!/bin/bash
@@ -170,7 +174,7 @@ ${RA_BIN} -L ${RA_DIR}/ecwolf_libretro.so ${GAME_DIR}/wolf3d/wolf3d/*
 EOF
 fi
 
-### Wolf3D - Spear of Destiny
+### Wolfenstein 3D - Spear of Destiny
 if [[ -f "${GAME_DIR}/wolf3d/sod/VSWAP.SOD" ]] && [[ ! -f ${SCRIPT_DIR}/Wolfenstein\ 3D\ -\ Spear\ of\ Destiny.sh ]]; then
 cat <<EOF >${SCRIPT_DIR}/Wolfenstein\ 3D\ -\ Spear\ of\ Destiny.sh
 #!/bin/bash
