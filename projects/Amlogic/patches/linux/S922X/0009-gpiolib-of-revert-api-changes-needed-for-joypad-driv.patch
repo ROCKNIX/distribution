@@ -5,16 +5,39 @@ Subject: [PATCH 09/44] gpiolib: of: revert api changes needed for joypad
  driver
 
 ---
- drivers/gpio/gpiolib-of.c      |  14 ++
+ drivers/gpio/gpiolib-of.c      |  29 ++--
+ include/linux/of_gpio.h        |  37 +++-
  include/linux/of_gpio_legacy.h | 304 +++++++++++++++++++++++++++++++++
- 2 files changed, 318 insertions(+)
+ 3 files changed, 354 insertions(+), 16 deletions(-)
  create mode 100644 include/linux/of_gpio_legacy.h
 
 diff --git a/drivers/gpio/gpiolib-of.c b/drivers/gpio/gpiolib-of.c
 index e7770eedd146..4459226f21d1 100644
 --- a/drivers/gpio/gpiolib-of.c
 +++ b/drivers/gpio/gpiolib-of.c
-@@ -408,6 +408,20 @@ static struct gpio_desc *of_get_named_gpiod_flags(const struct device_node *np,
+@@ -25,21 +25,6 @@
+ #include "gpiolib.h"
+ #include "gpiolib-of.h"
+ 
+-/*
+- * This is Linux-specific flags. By default controllers' and Linux' mapping
+- * match, but GPIO controllers are free to translate their own flags to
+- * Linux-specific in their .xlate callback. Though, 1:1 mapping is recommended.
+- */
+-enum of_gpio_flags {
+-	OF_GPIO_ACTIVE_LOW = 0x1,
+-	OF_GPIO_SINGLE_ENDED = 0x2,
+-	OF_GPIO_OPEN_DRAIN = 0x4,
+-	OF_GPIO_TRANSITORY = 0x8,
+-	OF_GPIO_PULL_UP = 0x10,
+-	OF_GPIO_PULL_DOWN = 0x20,
+-	OF_GPIO_PULL_DISABLE = 0x40,
+-};
+-
+ /**
+  * of_gpio_named_count() - Count GPIOs for a device
+  * @np:		device node to count GPIOs for
+@@ -409,6 +394,20 @@ static struct gpio_desc *of_get_named_gpiod_flags(const struct device_node *np,
  	return desc;
  }
  
@@ -35,6 +58,69 @@ index e7770eedd146..4459226f21d1 100644
  /**
   * of_get_named_gpio() - Get a GPIO number to use with GPIO API
   * @np:		device node to get GPIO from
+diff --git a/include/linux/of_gpio.h b/include/linux/of_gpio.h
+index d0f66a5e1b2a..5c4c7e1a307b 100644
+--- a/include/linux/of_gpio.h
++++ b/include/linux/of_gpio.h
+@@ -17,8 +17,26 @@
+ 
+ struct device_node;
+ 
++/*
++ * This is Linux-specific flags. By default controllers' and Linux' mapping
++ * match, but GPIO controllers are free to translate their own flags to
++ * Linux-specific in their .xlate callback. Though, 1:1 mapping is recommended.
++ */
++enum of_gpio_flags {
++        OF_GPIO_ACTIVE_LOW = 0x1,
++        OF_GPIO_SINGLE_ENDED = 0x2,
++        OF_GPIO_OPEN_DRAIN = 0x4,
++        OF_GPIO_TRANSITORY = 0x8,
++        OF_GPIO_PULL_UP = 0x10,
++        OF_GPIO_PULL_DOWN = 0x20,
++        OF_GPIO_PULL_DISABLE = 0x40,
++};
++
+ #ifdef CONFIG_OF_GPIO
+ 
++extern int of_get_named_gpio_flags(const struct device_node *np,
++                const char *list_name, int index, enum of_gpio_flags *flags);
++
+ extern int of_get_named_gpio(const struct device_node *np,
+ 			     const char *list_name, int index);
+ 
+@@ -26,13 +44,30 @@ extern int of_get_named_gpio(const struct device_node *np,
+ 
+ #include <linux/errno.h>
+ 
+-/* Drivers may not strictly depend on the GPIO support, so let them link. */
+ static inline int of_get_named_gpio(const struct device_node *np,
+                                    const char *propname, int index)
+ {
++        return -ENOSYS;
++}
++
++/* Drivers may not strictly depend on the GPIO support, so let them link. */
++static inline int of_get_named_gpio_flags(const struct device_node *np,
++		const char *list_name, int index, enum of_gpio_flags *flags)
++{
++	if (flags)
++		*flags = 0;
++
+ 	return -ENOSYS;
+ }
+ 
+ #endif /* CONFIG_OF_GPIO */
+ 
++static inline int of_get_gpio_flags(const struct device_node *np, int index,
++		      enum of_gpio_flags *flags)
++{
++	return of_get_named_gpio_flags(np, "gpios", index, flags);
++}
++
++//#endif /* CONFIG_OF_GPIO */
++
+ #endif /* __LINUX_OF_GPIO_H */
 diff --git a/include/linux/of_gpio_legacy.h b/include/linux/of_gpio_legacy.h
 new file mode 100644
 index 000000000000..ce58afecb4f9
