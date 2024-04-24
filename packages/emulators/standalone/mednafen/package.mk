@@ -30,9 +30,12 @@ case ${DEVICE} in
 			 --disable-ss \
 			 --disable-psx"
   ;;
-  S922X|RK3588*)
+  S922X)
     DISABLED_MODULES+="  --disable-ss \
 			 --disable-snes"
+  ;;
+  RK3588*)
+    DISABLED_MODULES+=" --disable-snes"
   ;;
 esac
 

@@ -994,6 +994,7 @@ makeinstall_target() {
   ;;
     RK358*)
       add_emu_core saturn retroarch beetle_saturn false
+      add_emu_core saturn mednafen ss false
   ;;
   esac
   add_es_system saturn
