@@ -98,4 +98,5 @@ makeinstall_target() {
   chmod 0755 ${INSTALL}/usr/bin/start_yabasanshiro.sh
   mkdir -p ${INSTALL}/usr/config/yabasanshiro
   cp ${PKG_DIR}/config/config ${INSTALL}/usr/config/yabasanshiro/.config
+  cp -r ${PKG_DIR}/config/devices ${INSTALL}/usr/config/yabasanshiro/
 }
