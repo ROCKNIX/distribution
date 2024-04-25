@@ -51,8 +51,18 @@ if [ -f $BOOT_ROOT/extlinux/extlinux.conf ]; then
         sed -i '/FDT/c\  FDT /rk3588s-orangepi-5.dtb' $BOOT_ROOT/extlinux/extlinux.conf
         sed -i 's/ fbcon=rotate:1//' $BOOT_ROOT/extlinux/extlinux.conf
         ;;
-      *rock-5)
+      *rock-5b-plus)
+        echo "Setting boot FDT to Rock 5B+..."
+        sed -i '/FDT/c\  FDT /rk3588-rock-5b-plus.dtb' $BOOT_ROOT/extlinux/extlinux.conf
+        sed -i 's/ fbcon=rotate:1//' $BOOT_ROOT/extlinux/extlinux.conf
+        ;;
+      *rock-5b)
         echo "Setting boot FDT to Rock 5B..."
+        sed -i '/FDT/c\  FDT /rk3588-rock-5b.dtb' $BOOT_ROOT/extlinux/extlinux.conf
+        sed -i 's/ fbcon=rotate:1//' $BOOT_ROOT/extlinux/extlinux.conf
+        ;;
+      *rock-5a)
+        echo "Setting boot FDT to Rock 5A..."
         sed -i '/FDT/c\  FDT /rk3588-rock-5b.dtb' $BOOT_ROOT/extlinux/extlinux.conf
         sed -i 's/ fbcon=rotate:1//' $BOOT_ROOT/extlinux/extlinux.conf
         ;;
