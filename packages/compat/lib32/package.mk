@@ -34,7 +34,6 @@ makeinstall_target() {
 
   mkdir -p "${INSTALL}/etc/ld.so.conf.d"
   echo "/usr/lib32" > "${INSTALL}/etc/ld.so.conf.d/${LIBARCH}-lib32.conf"
-  echo "/usr/lib32/pulseaudio" >"${INSTALL}/etc/ld.so.conf.d/${LIBARCH}-lib32-pulseaudio.conf"
 
   mkdir -p ${INSTALL}/usr/bin
   cp ${LIBROOT}/usr/bin/ldd ${INSTALL}/usr/bin/ldd32
