@@ -9,6 +9,7 @@ PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain SDL2 SDL2_gfx gamecontrollerdb"
 PKG_LONGDESC="A simple SDL GUI Gamepad tester"
 PKG_TOOLCHAIN="cmake"
+PKG_PATCH_DIRS+="${DEVICE}"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin
