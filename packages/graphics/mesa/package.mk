@@ -37,29 +37,6 @@ esac
 
 get_graphicdrivers
 
-# For lib32 build Mesa needs some tweaks
-#   * scripts/build sets --libdir=/usr/lib
-#   * lib32 package moves /usr/lib into /usr/lib32
-#   * in running system /usr/lib is 64-bit
-#   * mesa loader looks for drivers in ${libdir}/{dri,gbm} etc.
-#   * 32-bit mesa fails to load 64-bit drivers
-#
-# This may be worked around by setting LIBGL_DRIVERS_PATH=/usr/lib32/dri
-#   but that needs careful editing of run scripts
-#
-# Just setting --libdir=/usr/lib32 in scripts/build fails because libtool wants exactly /usr/lib
-#
-# So, for 32-bit build we set a bunch of options normally derived from libdir
-# This hopefully will be not needed if libtool accepts lib32 (libtool-multilib?)
-case ${ARCH} in
-  arm|i686)
-    MESA_LIBS_PATH_OPTS=" -Ddri-drivers-path=/usr/lib32/dri -Dgbm-backends-path=/usr/lib32/gbm -Dd3d-drivers-path=/usr/lib32/d3d "
-    ;;
-  *)
-    MESA_LIBS_PATH_OPTS=""
-    ;;
-esac
-
 PKG_MESON_OPTS_TARGET=" ${MESA_LIBS_PATH_OPTS} \
                        -Dgallium-drivers=${GALLIUM_DRIVERS// /,} \
                        -Dgallium-extra-hud=false \
@@ -136,9 +113,6 @@ else
 fi
 
 post_makeinstall_target() {
-  if [ -d "${INSTALL}/usr/lib32/dri" ]; then
-    mv "${INSTALL}/usr/lib32"/* "${INSTALL}/usr/lib/"
-  fi
   if [ "${DEVICE}" = "S922X" -a "${USE_MALI}" != "no" ]; then
     rm -f ${INSTALL}/usr/lib/libvulkan_panfrost.so ${INSTALL}/usr/share/vulkan/icd.d/panfrost_icd.aarch64.json
   fi

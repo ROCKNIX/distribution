@@ -27,6 +27,7 @@ makeinstall_target() {
   LIBROOT="${ROOT}/build.${DISTRO}-${DEVICE}.${LIBARCH}/image/system/"
   mkdir -p ${INSTALL}/usr/lib32
   rsync -al ${LIBROOT}/usr/lib/* ${INSTALL}/usr/lib32 >/dev/null 2>&1
+  rsync -al ${LIBROOT}/usr/lib32/* ${INSTALL}/usr/lib32 >/dev/null 2>&1
   chmod -f 0755 ${INSTALL}/usr/lib32/* || :
   mkdir -p ${INSTALL}/usr/lib
   ln -s /usr/lib32/${LDSO} ${INSTALL}/usr/lib/${LDSO}
@@ -35,8 +36,6 @@ makeinstall_target() {
   echo "/usr/lib32" > "${INSTALL}/etc/ld.so.conf.d/${LIBARCH}-lib32.conf"
   echo "/usr/lib32/pulseaudio" >"${INSTALL}/etc/ld.so.conf.d/${LIBARCH}-lib32-pulseaudio.conf"
 
-  if [ -d "${LIBROOT}/usr/lib/dri" ]
-  then
-    echo "/usr/lib32/dri" >"${INSTALL}/etc/ld.so.conf.d/${LIBARCH}-lib32-dri.conf"
-  fi
+  mkdir -p ${INSTALL}/usr/bin
+  cp ${LIBROOT}/usr/bin/ldd ${INSTALL}/usr/bin/ldd32
 }
