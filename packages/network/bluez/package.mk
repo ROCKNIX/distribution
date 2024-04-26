@@ -34,6 +34,15 @@ PKG_CONFIGURE_OPTS_TARGET="--disable-dependency-tracking \
                            --disable-manpages \
                            --disable-experimental \
                            --enable-sixaxis \
+                           --enable-sap \
+                           --enable-a2dp \
+                           --enable-avrcp \
+                           --enable-btpclient \
+                           --enable-midi \
+                           --enable-mesh \
+                           --enable-hid2hci \
+                           --enable-experimental \
+                           --enable-hid \
                            --with-gnu-ld \
                            ${BLUEZ_CONFIG} \
                            storagedir=/storage/.cache/bluetooth"
@@ -65,8 +74,6 @@ post_makeinstall_target() {
   cat <<EOF >${INSTALL}/etc/bluetooth/input.conf
 [General]
 ClassicBondedOnly=false
-UserspaceHID=false
-FastConnectable=true
 EOF
 
   mkdir -p ${INSTALL}/usr/share/services
