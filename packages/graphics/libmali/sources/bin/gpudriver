@@ -1,0 +1,68 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
+
+
+get_current_driver() {
+  CONFDRIVER="panfrost"
+  grep -q mali ${LDCONFFILE} 2>/dev/null && CONFDRIVER="libmali"
+}
+
+load_driver() {
+  case ${CONFDRIVER} in
+    "libmali")
+      modprobe -r panfrost
+      modprobe mali_kbase
+      ;;
+    "panfrost")
+      modprobe -r mali_kbase
+      modprobe panfrost
+      ;;
+    *)
+      exit 3
+      ;;
+  esac
+}
+
+check_ld_cache() {
+  LDDRIVER="panfrost"
+  ldconfig -p | grep libEGL.so.1 | grep -q mali && LDDRIVER="libmali"
+  if [ ${CONFDRIVER} != ${LDDRIVER} ]; then
+    ldconfig
+  fi
+}
+
+
+# Determine configured driver
+LDCONFFILE=$(cat /etc/ld.so.conf.d/*.conf | grep mali | sed -n 's|include ||p' | head -1)
+
+case "$1" in
+  "--options")
+    echo "panfrost libmali"
+    ;;
+  "--start")
+    get_current_driver
+    check_ld_cache
+    load_driver
+    ;;
+  "libmali")
+    echo "/usr/lib/mali" > ${LDCONFFILE}
+    echo "/usr/lib32/mali" >> ${LDCONFFILE}
+    ;;
+  "panfrost")
+    rm ${LDCONFFILE}
+    ;;
+  "")
+    get_current_driver
+    echo ${CONFDRIVER}
+    ;;
+  *)
+    echo "Unexpected parameter $1" >&2
+    echo "Usage:" >&2
+    echo "  List available drivers:                $0 --options" >&2
+    echo "  Load configured driver and set libs:   $0 --start" >&2
+    echo "  Get current driver:                    $0" >&2
+    echo "  Configure driver to load on next boot: $0 <panfrost|libmali>" >&2
+    exit 1
+    ;;
+esac
