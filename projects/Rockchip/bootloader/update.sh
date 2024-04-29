@@ -37,6 +37,14 @@ if [ -f $BOOT_ROOT/extlinux/extlinux.conf ]; then
   DT_ID=$($SYSTEM_ROOT/usr/bin/dtname)
   if [ -n "${DT_ID}" ]; then
     case ${DT_ID} in
+      *powkiddy,rgb20sx)
+        echo "Setting boot FDT to Powkiddy RGB20SX..."
+        sed -i '/FDT/c\  FDT /rk3566-powkiddy-rgb20sx.dtb' $BOOT_ROOT/extlinux/extlinux.conf
+        ;;
+      *powkiddy,rgb30r2)
+        echo "Setting boot FDT to Powkiddy RGB30 rev.2..."
+        sed -i '/FDT/c\  FDT /rk3566-powkiddy-rgb30r2.dtb' $BOOT_ROOT/extlinux/extlinux.conf
+        ;;
       *gameforce,ace)
         echo "Setting boot FDT to GameForce Ace..."
         sed -i '/FDT/c\  FDT /rk3588s-gameforce-ace.dtb' $BOOT_ROOT/extlinux/extlinux.conf
