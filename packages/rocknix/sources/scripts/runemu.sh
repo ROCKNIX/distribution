@@ -186,11 +186,6 @@ case ${EMULATOR} in
         then
           ### Configure for 32bit Retroarch
           ${VERBOSE} && log $0 "Configuring for 32bit cores."
-          export LIBRARY_PATH="/usr/lib32"
-          export LD_LIBRARY_PATH="${LIBRARY_PATH}"
-          export SPA_PLUGIN_DIR="${LIBRARY_PATH}/spa-0.2"
-          export PIPEWIRE_MODULE_DIR="${LIBRARY_PATH}/pipewire-0.3/"
-          export LIBGL_DRIVERS_PATH="${LIBRARY_PATH}/dri"
           export RABIN="retroarch32"
         fi
       ;;
