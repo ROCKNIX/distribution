@@ -2,7 +2,7 @@
 # Copyright (C) 2022-present AmberELEC (https://github.com/AmberELEC)
 
 PKG_NAME="jaxe-lr"
-PKG_VERSION="bf5a788993c9bf048622bab5d3c876b15af3fcf6"
+PKG_VERSION="22115d58de5f80cfafbbeece19d723f4892ed75c"
 PKG_ARCH="aarch64"
 PKG_SITE="https://github.com/kurtjd/jaxe"
 PKG_URL="${PKG_SITE}.git"
