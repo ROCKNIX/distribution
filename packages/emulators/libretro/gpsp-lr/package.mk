@@ -21,7 +21,7 @@
 ################################################################################
 
 PKG_NAME="gpsp-lr"
-PKG_VERSION="895fb075c3a04a0eff8c92a150e01e42df10a062"
+PKG_VERSION="4caf7a167d159866479ea94d6b2d13c26ceb3e72"
 PKG_ARCH="arm aarch64"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/gpsp"

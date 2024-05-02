@@ -100,11 +100,11 @@ This document describes all available systems emulators and cores available for 
 |Sega|Mega Drive (megadrive)|1990|`megadrive`|.bin .gen .md .sg .smd .zip .7z|**retroarch:** genesis_plus_gx (default)<br>**retroarch:** genesis_plus_gx_wide<br>**retroarch:** picodrive<br>**mednafen:** md<br>|
 |Sega|Mega Drive (megadrive-japan)|1988|`megadrive-japan`|.bin .gen .md .sg .smd .zip .7z|**retroarch:** genesis_plus_gx (default)<br>**retroarch:** genesis_plus_gx_wide<br>**retroarch:** picodrive<br>**mednafen:** md<br>|
 |Sega|Naomi (naomi)|1998|`naomi`|.lst .bin .dat .zip .7z|**retroarch:** flycast2021<br>**retroarch:** flycast (default)<br>**flycast:** flycast-sa<br>|
-|Sega|Saturn (saturn)|1994|`saturn`|.cue .chd .iso|**kronos:** kronos-sa<br>**retroarch:** yabasanshiro (default)<br>**retroarch:** kronos<br>**retroarch:** beetle_saturn<br>**mednafen:** ss<br>**kronos:** kronos-sa (default)<br>|
+|Sega|Saturn (saturn)|1994|`saturn`|.cue .chd .iso .zip|**kronos:** kronos-sa<br>**retroarch:** yabasanshiro (default)<br>**retroarch:** kronos<br>**retroarch:** beetle_saturn<br>**mednafen:** ss<br>**kronos:** kronos-sa (default)<br>|
 |Sega|Sega 32X (sega32x)|1994|`sega32x`|.32x .smd .bin .md .zip .7z|**retroarch:** picodrive (default)<br>|
 |Sega|Sega CD (segacd)|1991|`segacd`|.chd .cue .iso .m3u|**retroarch:** genesis_plus_gx (default)<br>**retroarch:** picodrive<br>|
 |Sega|SG-1000 (sg-1000)|1983|`sg-1000`|.bin .sg .zip .7z|**retroarch:** gearsystem (default)<br>**retroarch:** genesis_plus_gx<br>**retroarch:** picodrive<br>|
-|Sega|ST-V (st-v)|1995|`st-v`|.zip .ZIP|**retroarch:** beetle_saturn<br>**retroarch:** kronos<br>**mednafen:** ss<br>|
+|Sega|ST-V (st-v)|1995|`st-v`|.zip .ZIP|**retroarch:** kronos<br>**mednafen:** ss<br>|
 |Sharp|X1 (x1)|1982|`x1`|.dx1 .2d .2hd .tfd .d88 .88d .hdm .xdf .dup .tap .cmd .zip .7z|**retroarch:** x1 (default)<br>|
 |Sharp|x68000 (x68000)|1987|`x68000`|.dim .img .d88 .hdm .dup .2hd .xdf .hdf .cmd .m3u .zip .7z|**retroarch:** px68k (default)<br>|
 |Sinclair|ZX Spectrum (zxspectrum)|1982|`zxspectrum`|.tzx .tap .z80 .rzx .scl .trd .dsk .zip .7z|**retroarch:** fuse<br>|
