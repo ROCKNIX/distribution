@@ -3,7 +3,7 @@
 # Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="flycast-sa"
-PKG_VERSION="ed78eb4d501cf892b3177b9964883d2e3bd688b6"
+PKG_VERSION="8e96590065fd23cd37a0d426d30f4aef6587d860"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/flyinghead/flycast"
 PKG_URL="${PKG_SITE}.git"
