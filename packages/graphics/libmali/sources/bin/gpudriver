@@ -2,38 +2,50 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
 
+. /etc/profile.d/001-functions
+
+GPU_DRIVER_SETTING_KEY="gpu.driver"
 
 get_current_driver() {
-  CONFDRIVER="panfrost"
-  grep -q mali ${LDCONFFILE} 2>/dev/null && CONFDRIVER="libmali"
+  CONFDRIVER=$(get_setting ${GPU_DRIVER_SETTING_KEY})
+  if [ -z ${CONFDRIVER} ]; then
+    CONFDRIVER="libmali"              # DEFAULT
+    set_setting ${GPU_DRIVER_SETTING_KEY} ${CONFDRIVER}
+  fi
 }
 
+check_ld_cache() {
+  DRIVER_CONFIGURE_FOR=$1
+  LDDRIVER="panfrost"
+  ldconfig -p | grep libEGL.so.1 | grep -q mali && LDDRIVER="libmali"
+  if [ ${DRIVER_CONFIGURE_FOR} != ${LDDRIVER} ]; then
+    ldconfig
+  fi
+}
+
+# When loading a driver, do two things:
+#   * ensure needed driver is loaded and other is not
+#   * ensure ldconfig is configured for a proper driver
 load_driver() {
-  case ${CONFDRIVER} in
+  DRIVER_TO_LOAD=$1
+  case ${DRIVER_TO_LOAD} in
     "libmali")
       modprobe -r panfrost
       modprobe mali_kbase
-      set_setting "gpu.driver" "libmali"
+      echo -e "/usr/lib/mali\n/usr/lib32/mali" > ${LDCONFFILE}
+      check_ld_cache ${DRIVER_TO_LOAD}
       ;;
     "panfrost")
       modprobe -r mali_kbase
       modprobe panfrost
-      set_setting "gpu.driver" "panfrost"
+      rm -f ${LDCONFFILE}
+      check_ld_cache ${DRIVER_TO_LOAD}
       ;;
     *)
       exit 3
       ;;
   esac
 }
-
-check_ld_cache() {
-  LDDRIVER="panfrost"
-  ldconfig -p | grep libEGL.so.1 | grep -q mali && LDDRIVER="libmali"
-  if [ ${CONFDRIVER} != ${LDDRIVER} ]; then
-    ldconfig
-  fi
-}
-
 
 # Determine configured driver
 LDCONFFILE=$(cat /etc/ld.so.conf.d/*.conf | grep mali | sed -n 's|include ||p' | head -1)
@@ -44,15 +56,10 @@ case "$1" in
     ;;
   "--start")
     get_current_driver
-    check_ld_cache
-    load_driver
+    load_driver ${CONFDRIVER}
     ;;
-  "libmali")
-    echo "/usr/lib/mali" > ${LDCONFFILE}
-    echo "/usr/lib32/mali" >> ${LDCONFFILE}
-    ;;
-  "panfrost")
-    rm ${LDCONFFILE}
+  "libmali" | "panfrost")
+    set_setting ${GPU_DRIVER_SETTING_KEY} $1
     ;;
   "")
     get_current_driver
