@@ -24,13 +24,10 @@ case ${DEVICE} in
     PKG_URL="https://github.com/armbian/linux-rockchip/archive/${PKG_VERSION}.tar.gz"
     PKG_GIT_CLONE_BRANCH="rk-5.10-rkr6"
   ;;
-  RK3566*|S922X)
+  *)
     PKG_VERSION="6.9-rc3"
     PKG_URL="https://git.kernel.org/torvalds/t/linux-${PKG_VERSION}.tar.gz"
-  ;;
-  *)
-    PKG_VERSION="6.8.9"
-    PKG_URL="${PKG_SITE}/pub/linux/kernel/v6.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
+    PKG_PATCH_DIRS+=" mainline"
   ;;
 esac
 
