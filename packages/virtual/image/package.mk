@@ -29,7 +29,7 @@ PKG_SOUND="espeak libao"
 
 PKG_SYNC="synctools"
 
-PKG_TOOLS="patchelf git ectool make i2c-tools evtest powertop"
+PKG_TOOLS="patchelf git ectool make i2c-tools evtest"
 
 PKG_DEBUG="debug"
 
