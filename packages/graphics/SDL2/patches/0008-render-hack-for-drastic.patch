@@ -1,0 +1,523 @@
+From 43b1c6e33ae46c9d70d2cb545e852992886acc5a Mon Sep 17 00:00:00 2001
+From: kk <405437445@qq.com>
+Date: Sat, 4 May 2024 11:58:06 +0800
+Subject: [PATCH] render: hack for drastic
+
+This is the hack code for linux drastic to support more screen
+layouts.
+
+The idea is from https://github.com/steward-fu/nds
+Special thanks again to steward-fu.
+
+Signed-off-by: kk <405437445@qq.com>
+---
+ CMakeLists.txt          |   2 +-
+ Makefile.in             |   2 +-
+ src/render/SDL_render.c | 422 ++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 424 insertions(+), 2 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index b38a8bb..5ec1212 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -666,7 +666,7 @@ if(USE_GCC OR USE_CLANG OR USE_INTELCC OR USE_QCC)
+     check_c_compiler_flag("" HAVE_NO_UNDEFINED)
+     set(CMAKE_REQUIRED_FLAGS ${ORIG_CMAKE_REQUIRED_FLAGS})
+     if(HAVE_NO_UNDEFINED AND NOT (USE_CLANG AND WINDOWS))
+-      list(APPEND EXTRA_LDFLAGS_BUILD "-Wl,--no-undefined")
++      list(APPEND EXTRA_LDFLAGS_BUILD "-Wl,--no-undefined -lfreeimage")
+     endif()
+   endif()
+ 
+diff --git a/Makefile.in b/Makefile.in
+index eb4c4bc..f0b573e 100644
+--- a/Makefile.in
++++ b/Makefile.in
+@@ -23,7 +23,7 @@ CXX     = @CXX@
+ INCLUDE = @INCLUDE@
+ CFLAGS  = @BUILD_CFLAGS@
+ EXTRA_CFLAGS = @EXTRA_CFLAGS@
+-LDFLAGS = @BUILD_LDFLAGS@
++LDFLAGS = @BUILD_LDFLAGS@ -lfreeimage
+ EXTRA_LDFLAGS = @EXTRA_LDFLAGS@
+ LIBTOOL = @LIBTOOL@
+ INSTALL = @INSTALL@
+diff --git a/src/render/SDL_render.c b/src/render/SDL_render.c
+index b650c6a..e5149d1 100644
+--- a/src/render/SDL_render.c
++++ b/src/render/SDL_render.c
+@@ -29,6 +29,11 @@
+ #include "software/SDL_render_sw_c.h"
+ #include "../video/SDL_pixels_c.h"
+ 
++#include <unistd.h>
++#include <limits.h>
++#include <stdbool.h>
++#include <FreeImage.h>
++
+ #if defined(__ANDROID__)
+ #include "../core/android/SDL_android.h"
+ #endif
+@@ -130,9 +135,327 @@ static const SDL_RenderDriver *render_drivers[] = {
+ };
+ #endif /* !SDL_RENDER_DISABLED */
+ 
++#define NDS_DRASTIC_H 256
++#define NDS_DRASTIC_V 192
++
++#define NDS_DRASTIC_SCR_MAX 2
++
++#define likely(x)       __builtin_expect(!!(x), 1)
++#define unlikely(x)     __builtin_expect(!!(x), 0)
++
++enum nds_drastic_disp_mode {
++	DISP_MODE_H,		/* horizon display mode. */
++	DISP_MODE_V,		/* vertical display mode. */
++	DISP_MODE_H_SINGLE,	/* single horizon display mode. */
++	DISP_MODE_MENU,		/* menu display mode. */
++	DISP_MODE_MAX,
++};
++
++enum nds_target_disp_mode {
++	DISP_TGT_MODE_2DS,				/* 2ds style, middle pixel res. */
++	DISP_TGT_MODE_V_ORI,			/* vertical orignal, specially for DQ series. */
++	DISP_TGT_MODE_TOP_FULL, 		/* top screen full. */
++	DISP_TGT_MODE_TOP_CONN_BOTTOM,	/* two screens connected together. */
++	DISP_TGT_MODE_H_SINGLE,			/* single horizon display mode. */
++	DISP_TGT_MODE_MENU,				/* menu display mode. */
++	DISP_TGT_MODE_MAX,
++};
++
++enum nds_target_disp_res {
++	DISP_RES_720_720,	/* 720x720. Used by RGB30/20SX. */
++//	DISP_RES_640_480,	/* 640x480. */
++	DISP_RES_720P,		/* 1280x720. */
++	DISP_RES_1080P,		/* 1920x1080. */
++	/* Not intrested for now. */
++//	DISP_RES_2K,		/* 2560x1440. */
++//	DISP_RES_4K,		/* 3840x2160. */
++	DISP_RES_MAX,
++};
++
++#define NDS_BEZELS "/roms/bezels/nds/"
++
++static char *nds_bg_png[DISP_TGT_MODE_MAX] = {
++	[DISP_TGT_MODE_TOP_FULL] = "bg_vertical_full.png",
++	[DISP_TGT_MODE_2DS] = "bg_vertical_2ds.png",
++	[DISP_TGT_MODE_V_ORI] = "bg_vertical.png",
++	[DISP_TGT_MODE_TOP_CONN_BOTTOM] = "bg_vertical_ext.png",
++	[DISP_TGT_MODE_H_SINGLE] = "bg_horizon_single.png",
++	[DISP_TGT_MODE_MENU] = "bg_menu.png",
++};
++
++struct nds_disp_resize {
++	SDL_Texture *bg_tex;
++	float pointer_scale[NDS_DRASTIC_SCR_MAX];
++	union {
++		SDL_Rect tgt_rect[NDS_DRASTIC_SCR_MAX];
++		struct {
++			SDL_Rect menu_src_rect;
++			SDL_Rect menu_dst_rect;
++		};
++	};
++};
++
++static struct nds_disp_resize disp_rgb30[DISP_TGT_MODE_MAX] = {
++	[DISP_TGT_MODE_2DS] = {
++		.tgt_rect = {
++			{104, 16, 512, 384},
++			{170, 416, 384, 288},
++		},
++	},
++	[DISP_TGT_MODE_V_ORI] = {
++		.tgt_rect = {
++			{120, 0, 480, 360},
++			{120, 360, 480, 360},
++		},
++	},
++	[DISP_TGT_MODE_TOP_FULL] = {
++		.tgt_rect = {
++			{0, 0, 720, 540},
++			{240, 540, 240, 180},
++		},
++	},
++	[DISP_TGT_MODE_TOP_CONN_BOTTOM] = {
++		.tgt_rect = {
++			{40, 0, 640, 480},
++			{200, 480, 320, 240},
++		},
++	},
++	[DISP_TGT_MODE_H_SINGLE] = {
++		.tgt_rect = {
++			{0, 90, 720, 540},
++			{0, 0, 0, 0},
++		},
++	},
++	[DISP_TGT_MODE_MENU] = {
++		.tgt_rect = {
++			{0, 0, 800, 480},
++			{0, 0, 720, 720},
++		},
++	},
++};
++
++static struct nds_disp_resize disp_720p[DISP_TGT_MODE_MAX] = {
++	[DISP_TGT_MODE_2DS] = {
++		.tgt_rect = {
++			{32, 72, 768, 576},
++			{832, 202, 416, 312},
++		},
++	},
++	[DISP_TGT_MODE_V_ORI] = {
++		.tgt_rect = {
++			{400, 0, 480, 360},
++			{400, 360, 480, 360},
++		},
++	},
++	[DISP_TGT_MODE_TOP_FULL] = {
++		.tgt_rect = {
++			{0, 0, 960, 720},
++			{960, 240, 320, 240},
++		},
++	},
++	[DISP_TGT_MODE_TOP_CONN_BOTTOM] = {
++		.tgt_rect = {
++			{0, 72, 768, 576},
++			{768, 68, 512, 384},
++		},
++	},
++	[DISP_TGT_MODE_H_SINGLE] = {
++		.tgt_rect = {
++			{160, 0, 960, 720},
++			{0, 0, 0, 0},
++		},
++	},
++	[DISP_TGT_MODE_MENU] = {
++		.tgt_rect = {
++			{0, 0, 800, 480},
++			{0, 0, 1280, 720},
++		},
++	},
++};
++
++static struct nds_disp_resize disp_1080p[DISP_TGT_MODE_MAX] = {
++	[DISP_TGT_MODE_2DS] = {
++		.tgt_rect = {
++			{64, 60, 1280, 960},
++			{1408, 372, 448, 336},
++		},
++	},
++	[DISP_TGT_MODE_V_ORI] = {
++		.tgt_rect = {
++			{600, 0, 720, 540},
++			{600, 540, 720, 540},
++		},
++	},
++	[DISP_TGT_MODE_TOP_FULL] = {
++		.tgt_rect = {
++			{0, 0, 1440, 1080},
++			{1440, 360, 480, 360},
++		},
++	},
++	[DISP_TGT_MODE_TOP_CONN_BOTTOM] = {
++		.tgt_rect = {
++			{0, 60, 1280, 960},
++			{1280, 300, 640, 480},
++		},
++	},
++	[DISP_TGT_MODE_H_SINGLE] = {
++		.tgt_rect = {
++			{240, 0, 1440, 1080},
++			{0, 0, 0, 0},
++		},
++	},
++	[DISP_TGT_MODE_MENU] = {
++		.tgt_rect = {
++			{0, 0, 800, 480},
++			{0, 0, 1920, 1080},
++		},
++	},
++};
++
++static struct nds_disp_resize nds_disp_resize_used[DISP_MODE_MAX];
++struct nds_disp_resize *res_sel = NULL;
++
++static uint16_t disp_mode = DISP_MODE_MAX;
++static SDL_Rect disp_rect;
++
+ static char renderer_magic;
+ static char texture_magic;
+ 
++SDL_Texture* loadBackground(char *image, SDL_Renderer *mRenderer)
++{
++	SDL_Texture *mBackground;
++	unsigned char* buffer;
++	int w, h, scan_width;
++	FREE_IMAGE_FORMAT format;
++	FIBITMAP* imagen;
++
++	if (access(image, F_OK) < 0)
++		return NULL;
++
++	format = FreeImage_GetFileType(image, 0);
++	imagen = FreeImage_Load(format, image, 0);
++
++	w = FreeImage_GetWidth(imagen);
++	h = FreeImage_GetHeight(imagen);
++	scan_width = FreeImage_GetPitch(imagen);
++
++	buffer = malloc(w * h * 4);
++	FreeImage_ConvertToRawBits(buffer, imagen, scan_width, 32, 0, 0, 0, 1);
++	FreeImage_Unload(imagen);
++
++	mBackground = SDL_CreateTexture(mRenderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, w, h);
++	SDL_SetTextureBlendMode(mBackground, SDL_BLENDMODE_BLEND);
++	SDL_UpdateTexture(mBackground, NULL, buffer, w * sizeof(char) * 4);
++	free(buffer);
++
++	return mBackground;
++}
++
++static void nds_drastic_deinit()
++{
++	int i;
++
++	for (i = 0; i < DISP_TGT_MODE_MAX - 1; i++) {
++		if (res_sel[i].bg_tex)
++			SDL_DestroyTexture(res_sel[i].bg_tex);
++		res_sel[i].bg_tex = NULL;
++	}
++}
++
++static void nds_drastic_init(SDL_Renderer *mRenderer, SDL_Window *window)
++{
++	int displayIndex;
++	int ret;
++	SDL_Rect rect;
++	char texpath[PATH_MAX];
++	int i;
++
++	displayIndex = SDL_GetWindowDisplayIndex(window);
++	if (displayIndex < 0) {
++		printf("SDL_GetWindowDisplayIndex failed.\n");
++		return;
++	}
++
++	ret = SDL_GetDisplayUsableBounds(displayIndex, &rect);
++	if (ret < 0) {
++		printf("SDL_GetDisplayUsableBounds failed.\n");
++	}
++
++	if (rect.w == 720 && rect.h == 720)
++		res_sel = disp_rgb30;
++	else if (rect.w == 1280 && rect.h == 720)
++		res_sel = disp_720p;
++	else if (rect.w == 1920 && rect.h == 1080)
++		res_sel = disp_1080p;
++
++	if (!res_sel) {
++		printf("Unsupported output resolution.");
++		return;
++	}
++	disp_rect = rect;
++
++	/* Load background png if valid. Execpt menu. */
++	for (i = 0; i < DISP_TGT_MODE_MAX - 1; i++) {
++		sprintf(texpath, "%s%s", NDS_BEZELS, nds_bg_png[i]);
++		res_sel[i].bg_tex = loadBackground(texpath, mRenderer);
++	}
++
++	/* First initialize the layouts with first 2 layouts. */
++	nds_disp_resize_used[DISP_MODE_H] = res_sel[DISP_TGT_MODE_2DS];
++	nds_disp_resize_used[DISP_MODE_V] = res_sel[DISP_TGT_MODE_V_ORI];
++	nds_disp_resize_used[DISP_MODE_H_SINGLE] = res_sel[DISP_TGT_MODE_H_SINGLE];
++	nds_disp_resize_used[DISP_MODE_H_SINGLE] = res_sel[DISP_TGT_MODE_H_SINGLE];
++	nds_disp_resize_used[DISP_MODE_MENU] = res_sel[DISP_TGT_MODE_MENU];
++
++	/* Select the screen layout with bg texture if has. */
++	for (i = 2; i < DISP_TGT_MODE_MAX - 2; i++) {
++		/* The bg textures are ready for now. */
++		if (nds_disp_resize_used[DISP_MODE_H].bg_tex &&
++			nds_disp_resize_used[DISP_MODE_V].bg_tex)
++			break;
++
++		/* If the candicate layout does not have bg_tex, skip that layout as low priority. */
++		if (!res_sel[i].bg_tex)
++			continue;
++
++		/* Replace no bg_tex pre-layout if candicate layouts have bg_tex. */
++		if (!nds_disp_resize_used[DISP_MODE_H].bg_tex &&
++			!nds_disp_resize_used[DISP_MODE_V].bg_tex)
++			nds_disp_resize_used[DISP_MODE_H] = res_sel[i];
++		else if (nds_disp_resize_used[DISP_MODE_H].bg_tex &&
++			!nds_disp_resize_used[DISP_MODE_V].bg_tex)
++			nds_disp_resize_used[DISP_MODE_V] = res_sel[i];
++		else if (!nds_disp_resize_used[DISP_MODE_H].bg_tex &&
++			nds_disp_resize_used[DISP_MODE_V].bg_tex)
++			nds_disp_resize_used[DISP_MODE_H] = res_sel[i];
++	}
++
++	/* Start generate the pointer scale value. */
++	for (i = 0; i < DISP_MODE_MAX - 1; i++) {
++		nds_disp_resize_used[i].pointer_scale[0] = (float)nds_disp_resize_used[i].tgt_rect[0].w / NDS_DRASTIC_H;
++		nds_disp_resize_used[i].pointer_scale[1] = (float)nds_disp_resize_used[i].tgt_rect[1].w / NDS_DRASTIC_H;
++	}
++}
++
++static void nds_drastic_update_disp_mode(SDL_Renderer *renderer, int w, int h)
++{
++	if (h == 192 && w == 512)
++		disp_mode = DISP_MODE_H;
++	else if (h == 480 && w == 800)
++		disp_mode = DISP_MODE_MENU;
++	else if (h == 384 && w == 256)
++		disp_mode = DISP_MODE_V;
++	else if (h == 192 && w == 256)
++		disp_mode = DISP_MODE_H_SINGLE;
++
++	if (disp_mode != DISP_MODE_MAX &&
++		disp_rect.w &&
++		disp_rect.h) {
++		renderer->logical_w = disp_rect.w;
++		renderer->logical_h = disp_rect.h;
++	}
++}
++
+ static SDL_INLINE void DebugLogRenderCommands(const SDL_RenderCommand *cmd)
+ {
+ #if 0
+@@ -1091,6 +1414,9 @@ SDL_Renderer *SDL_CreateRenderer(SDL_Window *window, int index, Uint32 flags)
+ #if defined(__ANDROID__)
+     Android_ActivityMutex_Unlock();
+ #endif
++
++	nds_drastic_init(renderer, window);
++
+     return renderer;
+ 
+ error:
+@@ -2399,6 +2725,8 @@ int SDL_RenderSetLogicalSize(SDL_Renderer *renderer, int w, int h)
+     renderer->logical_w = w;
+     renderer->logical_h = h;
+ 
++	nds_drastic_update_disp_mode(renderer, w, h);
++
+     return UpdateLogicalSize(renderer, SDL_TRUE);
+ }
+ 
+@@ -3363,11 +3691,103 @@ int SDL_RenderFillRectsF(SDL_Renderer *renderer,
+     return retval < 0 ? retval : FlushRenderCommandsIfNotBatching(renderer);
+ }
+ 
++static inline int SDL_RenderCopy_nds(SDL_Renderer *renderer, SDL_Texture *texture,
++                   const SDL_Rect *str, const SDL_Rect *dtr)
++{
++    SDL_FRect dstfrect;
++    SDL_FRect *pdstfrect = NULL;
++
++    dstfrect.x = (float)dtr->x;
++    dstfrect.y = (float)dtr->y;
++    dstfrect.w = (float)dtr->w;
++    dstfrect.h = (float)dtr->h;
++    pdstfrect = &dstfrect;
++
++    return SDL_RenderCopyF(renderer, texture, str, pdstfrect);
++}
++
++static inline bool nds_tex_is_pointer(const SDL_Texture *texture)
++{
++	return (texture->w == 32 && texture->h == 32);
++}
++
++static inline bool nds_pointer_in_first_screen(const SDL_Rect *dstrect)
++{
++	return (dstrect->x < 256 && dstrect->y < 192);
++}
++
++static inline bool nds_rect_is_first_screen(const SDL_Rect *dstrect)
++{
++	return (dstrect->x == 0 && dstrect->y == 0);
++}
++
++static int nds_render_copy(SDL_Renderer *renderer, SDL_Texture *texture,
++                   const SDL_Rect *srcrect, const SDL_Rect *dstrect)
++{
++	float scale;
++	SDL_FRect dstfrect;
++	struct nds_disp_resize *cur_res = &nds_disp_resize_used[disp_mode];
++	int rect_idx;
++	int ret;
++	int offset_x = 0, offset_y = 0;
++
++	if (disp_mode == DISP_MODE_MENU) {
++		return SDL_RenderCopy_nds(renderer, texture,
++			&cur_res->menu_src_rect, &cur_res->menu_dst_rect);
++	} else if (disp_mode == DISP_MODE_H_SINGLE) {
++		if (nds_tex_is_pointer(texture)) {
++			scale = cur_res->pointer_scale[0];
++			dstfrect.x = (float) dstrect->x * scale + cur_res->tgt_rect[0].x;
++			dstfrect.y = (float) (dstrect->y) * scale + cur_res->tgt_rect[0].y;
++			dstfrect.w = (float) dstrect->w * scale;
++			dstfrect.h = (float) dstrect->h * scale;
++			return SDL_RenderCopyF(renderer, texture, srcrect, &dstfrect);
++		}
++
++		ret = SDL_RenderCopy_nds(renderer, texture, srcrect, &cur_res->tgt_rect[0]);
++		if (unlikely(ret))
++			return ret;
++		if (cur_res->bg_tex)
++			ret = SDL_RenderCopyF(renderer, cur_res->bg_tex, NULL, NULL);
++		return ret;
++	}
++
++	if (nds_tex_is_pointer(texture)) {
++		rect_idx = nds_pointer_in_first_screen(dstrect) ? 0 : 1;
++		scale = cur_res->pointer_scale[rect_idx];
++		if (dstrect->x >= NDS_DRASTIC_H)
++			offset_x = NDS_DRASTIC_H;
++		if (dstrect->y >= NDS_DRASTIC_V)
++			offset_y = NDS_DRASTIC_V;
++		dstfrect.x = (float) (dstrect->x - offset_x) * scale +
++				cur_res->tgt_rect[rect_idx].x;
++		dstfrect.y = (float) (dstrect->y - offset_y) * scale +
++				cur_res->tgt_rect[rect_idx].y;
++		dstfrect.w = (float) dstrect->w * scale;
++		dstfrect.h = (float) dstrect->h * scale;
++		return SDL_RenderCopyF(renderer, texture, srcrect,  &dstfrect);
++	}
++
++	rect_idx = nds_pointer_in_first_screen(dstrect) ? 0 : 1;
++	ret = SDL_RenderCopy_nds(renderer, texture,  srcrect, &cur_res->tgt_rect[rect_idx]);
++	if (unlikely(ret))
++		return ret;
++	if (rect_idx && cur_res->bg_tex)
++		ret = SDL_RenderCopyF(renderer, cur_res->bg_tex, NULL, NULL);
++
++	return ret;
++}
++
+ int SDL_RenderCopy(SDL_Renderer *renderer, SDL_Texture *texture,
+                    const SDL_Rect *srcrect, const SDL_Rect *dstrect)
+ {
+     SDL_FRect dstfrect;
+     SDL_FRect *pdstfrect = NULL;
++
++	if (disp_mode != DISP_MODE_MAX)
++		return nds_render_copy(renderer, texture,
++			srcrect, dstrect);
++
+     if (dstrect) {
+         dstfrect.x = (float)dstrect->x;
+         dstfrect.y = (float)dstrect->y;
+@@ -4298,6 +4718,8 @@ void SDL_DestroyRenderer(SDL_Renderer *renderer)
+ 
+     CHECK_RENDERER_MAGIC(renderer, );
+ 
++	nds_drastic_deinit();
++
+     SDL_DelEventWatch(SDL_RendererEventWatch, renderer);
+ 
+     if (renderer->render_commands_tail != NULL) {
+-- 
+2.34.1
+

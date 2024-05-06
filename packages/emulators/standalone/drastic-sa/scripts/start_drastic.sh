@@ -56,6 +56,7 @@ fi
 cd /storage/.config/drastic/
 @HOTKEY@
 @LIBEGL@
+@SDL@
 $GPTOKEYB "drastic" -c "drastic.gptk" &
 ./drastic "$1"
 kill -9 $(pidof gptokeyb)
