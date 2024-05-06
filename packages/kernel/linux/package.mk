@@ -44,7 +44,7 @@ fi
 
 if [ "${PKG_BUILD_PERF}" != "no" ] && grep -q ^CONFIG_PERF_EVENTS= ${PKG_KERNEL_CFG_FILE}; then
   PKG_BUILD_PERF="yes"
-  PKG_DEPENDS_TARGET+=" binutils elfutils libunwind zlib openssl libtraceevent libtracefs"
+  PKG_DEPENDS_TARGET+=" binutils elfutils libunwind zlib openssl"
 fi
 
 if [[ "${TARGET_ARCH}" =~ i*86|x86_64 ]]; then
