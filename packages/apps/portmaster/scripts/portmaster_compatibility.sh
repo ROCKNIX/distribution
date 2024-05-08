@@ -7,7 +7,7 @@
 
 if [[ "${UI_SERVICE}" =~ "weston.service"|"*sway*" ]]; then
   if [[ $(glxinfo | grep -i "opengl renderer") =~ "Panfrost" ]]; then
-    if [[ "${HW_DEVICE}" =~ "RK3399"|"RK3588" ]]; then
+    if [[ "${HW_DEVICE}" =~ "RK3399"|"RK3588"|"S922X" ]]; then
       #Remove gl4es libs on devices that support OpenGL and sed any port that references it
       rm -rf /storage/roms/ports/*/lib*/libEGL*
       rm -rf /storage/roms/ports/*/lib*/libGL*
