@@ -24,6 +24,10 @@ case ${DEVICE} in
     PKG_URL="https://github.com/armbian/linux-rockchip/archive/${PKG_VERSION}.tar.gz"
     PKG_GIT_CLONE_BRANCH="rk-5.10-rkr6"
   ;;
+  H700)
+    PKG_VERSION="4e92998c4f95a56578b4aa2c55b02e97381c8773"
+    PKG_URL="https://git.sr.ht/~tokyovigilante/linux/archive/${PKG_VERSION}.tar.gz"
+  ;;
   *)
     PKG_VERSION="6.9-rc3"
     PKG_URL="https://git.kernel.org/torvalds/t/linux-${PKG_VERSION}.tar.gz"
