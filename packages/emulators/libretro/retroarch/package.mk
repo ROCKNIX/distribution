@@ -88,7 +88,7 @@ else
     PKG_CONFIGURE_OPTS_TARGET+=" --disable-opengles --disable-opengles3 --disable-opengles3_1 --disable-opengles3_2"
 fi
 
-if [[ "${OPENGL_SUPPORT}" = "yes" ]] && [[ ! "${DEVICE}" = "S922X" ]]; then
+if [[ "${OPENGL_SUPPORT}" = "yes" ]]; then
     PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
     PKG_CONFIGURE_OPTS_TARGET+=" --enable-opengl"
 else
