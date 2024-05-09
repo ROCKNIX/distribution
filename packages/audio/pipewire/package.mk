@@ -89,6 +89,12 @@ post_install() {
   mkdir -p ${INSTALL}/etc/alsa/conf.d
   ln -sf /usr/share/alsa/alsa.conf.d/50-pipewire.conf ${INSTALL}/etc/alsa/conf.d/50-pipewire.conf
   ln -sf /usr/share/alsa/alsa.conf.d/99-pipewire-default.conf ${INSTALL}/etc/alsa/conf.d/99-pipewire-default.conf
+
+  mkdir -p ${INSTALL}/etc/pipewire/pipewire.conf.d/
+  cp ${PKG_DIR}/sources/audio-v-devs.conf ${INSTALL}/etc/pipewire/pipewire.conf.d/
+  cp ${PKG_DIR}/sources/audio_vdriver.sh ${INSTALL}/usr/bin/
+  chmod 0755 ${INSTALL}/usr/bin/audio_vdriver.sh
+
   enable_service pipewire.socket
   enable_service pipewire.service
   enable_service pipewire-pulse.socket
