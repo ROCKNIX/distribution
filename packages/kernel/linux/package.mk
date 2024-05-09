@@ -261,6 +261,14 @@ makeinstall_target() {
       fi
     done
 
+	# copy overlays if they exist	
+	if [ -d arch/${TARGET_KERNEL_ARCH}/boot/dts/*/overlays ]; then
+	  mkdir -p ${INSTALL}/usr/share/bootloader/overlays
+	  for dtb in arch/${TARGET_KERNEL_ARCH}/boot/dts/*/overlays/*.dtb; do
+		cp -v ${dtb} ${INSTALL}/usr/share/bootloader/overlays
+	  done
+	fi
+
     if [ "${PROJECT}" = "Rockchip" ]; then
       . ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/options
       if [ "${TRUST_LABEL}" = "resource" ]; then
