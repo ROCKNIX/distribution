@@ -57,6 +57,20 @@ for pkg in $(get_pkg_variable initramfs PKG_DEPENDS_TARGET); do
   ! listcontains "${PKG_DEPENDS_TARGET}" "${pkg}" && PKG_DEPENDS_TARGET+=" ${pkg}" || true
 done
 
+if [ "${ROCKNIX_JOYPAD}" = "yes" ]; then
+  PKG_DEPENDS_UNPACK+=" rocknix-joypad"
+fi
+
+post_unpack() {
+  if [ "${ROCKNIX_JOYPAD}" = "yes" ]; then
+    cp $(get_build_dir rocknix-joypad)/rocknix-joypad.c \
+       $(get_build_dir rocknix-joypad)/rocknix-joypad.h \
+       $(get_build_dir rocknix-joypad)/rocknix-singleadc-joypad.c \
+       ${PKG_BUILD}/drivers/input/joystick
+    echo "obj-m += rocknix-joypad.o rocknix-singleadc-joypad.o" >> ${PKG_BUILD}/drivers/input/joystick/Makefile
+  fi
+}
+
 post_patch() {
   # linux was already built and its build dir autoremoved - prepare it again for kernel packages
   if [ -d ${PKG_INSTALL}/.image ]; then
