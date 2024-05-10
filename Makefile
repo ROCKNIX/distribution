@@ -70,6 +70,11 @@ RK3399:
 	PROJECT=Rockchip DEVICE=RK3399 ARCH=arm ./scripts/build_distro
 	PROJECT=Rockchip DEVICE=RK3399 ARCH=aarch64 ./scripts/build_distro
 
+H700:
+	unset DEVICE_ROOT
+	PROJECT=Allwinner DEVICE=H700 ARCH=arm ./scripts/build_distro
+	PROJECT=Allwinner DEVICE=H700 ARCH=aarch64 ./scripts/build_distro
+
 update:
 	PROJECT=Rockchip DEVICE=RK3588 ARCH=aarch64 ./scripts/update_packages
 
