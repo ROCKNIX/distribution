@@ -67,7 +67,7 @@ post_unpack() {
        $(get_build_dir rocknix-joypad)/rocknix-joypad.h \
        $(get_build_dir rocknix-joypad)/rocknix-singleadc-joypad.c \
        ${PKG_BUILD}/drivers/input/joystick
-    echo "obj-m += rocknix-joypad.o rocknix-singleadc-joypad.o" >> ${PKG_BUILD}/drivers/input/joystick/Makefile
+    echo "obj-y += rocknix-joypad.o rocknix-singleadc-joypad.o" >> ${PKG_BUILD}/drivers/input/joystick/Makefile
   fi
 }
 
