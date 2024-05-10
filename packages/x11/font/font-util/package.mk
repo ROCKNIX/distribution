@@ -9,7 +9,7 @@ PKG_LICENSE="OSS"
 PKG_SITE="https://www.X.org"
 PKG_URL="https://xorg.freedesktop.org/archive/individual/font/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_TARGET="toolchain util-macros"
-PKG_DEPENDS_HOST="util-macros"
+PKG_DEPENDS_HOST="ccache:host util-macros:host"
 PKG_LONGDESC="X.org font utilities."
 
 PKG_CONFIGURE_OPTS_TARGET="--with-fontrootdir=/usr/share/fonts \
