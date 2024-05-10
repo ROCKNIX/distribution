@@ -73,7 +73,7 @@ RK3399:
 H700:
 	unset DEVICE_ROOT
 	PROJECT=Allwinner DEVICE=H700 ARCH=arm ./scripts/build_distro
-	PROJECT=Allwinner DEVICE=H700 ARCH=aarch64 ./scripts/build_dist
+	PROJECT=Allwinner DEVICE=H700 ARCH=aarch64 ./scripts/build_distro
 
 update:
 	PROJECT=Rockchip DEVICE=RK3588 ARCH=aarch64 ./scripts/update_packages
