@@ -40,7 +40,6 @@ PKG_STAMP="${UBOOT_CONFIG}"
 
 [ -n "${ATF_PLATFORM}" ] && PKG_DEPENDS_TARGET+=" atf"
 
-PKG_NEED_UNPACK="${PROJECT}_DIR/${PROJECT}/bootloader"
 [ -n "${DEVICE}" ] && PKG_NEED_UNPACK+=" ${PROJECT}_DIR/${PROJECT}/devices/${DEVICE}/bootloader"
 
 post_patch() {
