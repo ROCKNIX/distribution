@@ -1140,19 +1140,6 @@ index 3d9f51bd48b6..02b60ea1433a 100644
  	ret = true;
  
  	dma_resv_unlock(shmem->base.resv);
-diff --git a/drivers/gpu/drm/panfrost/panfrost_mmu.c b/drivers/gpu/drm/panfrost/panfrost_mmu.c
-index f38385fe76bb..1ab081bd81a8 100644
---- a/drivers/gpu/drm/panfrost/panfrost_mmu.c
-+++ b/drivers/gpu/drm/panfrost/panfrost_mmu.c
-@@ -538,7 +538,7 @@ static int panfrost_mmu_map_fault_addr(struct panfrost_device *pfdev, int as,
- err_map:
- 	sg_free_table(sgt);
- err_pages:
--	drm_gem_shmem_put_pages(&bo->base);
-+	drm_gem_shmem_put_pages_locked(&bo->base);
- err_unlock:
- 	dma_resv_unlock(obj->resv);
- err_bo:
 diff --git a/include/drm/drm_gem_shmem_helper.h b/include/drm/drm_gem_shmem_helper.h
 index bf0c31aa8fbe..9e83212becbb 100644
 --- a/include/drm/drm_gem_shmem_helper.h
@@ -2276,85 +2263,6 @@ index 2a97aa85416b..9c3e34a7fbed 100644
  	drm_gem_shmem_free(&bo->base);
  }
  
--- 
-2.43.0
-
-
-^ permalink raw reply related	[flat|nested] 31+ messages in thread
-* [PATCH v19 17/30] drm/panfrost: Fix the error path in panfrost_mmu_map_fault_addr()
-  2024-01-05 18:45 [PATCH v19 00/30] Add generic memory shrinker to VirtIO-GPU and Panfrost DRM drivers Dmitry Osipenko
-                   ` (15 preceding siblings ...)
-  2024-01-05 18:46 ` [PATCH v19 16/30] drm/lima: Explicitly get and put drm-shmem pages Dmitry Osipenko
-@ 2024-01-05 18:46 ` Dmitry Osipenko
-  2024-01-05 18:46 ` [PATCH v19 18/30] drm/panfrost: Explicitly get and put drm-shmem pages Dmitry Osipenko
-                   ` (12 subsequent siblings)
-  29 siblings, 0 replies; 31+ messages in thread
-From: Dmitry Osipenko @ 2024-01-05 18:46 UTC (permalink / raw)
-  To: David Airlie, Gerd Hoffmann, Gurchetan Singh, Chia-I Wu,
-	Daniel Vetter, Maarten Lankhorst, Maxime Ripard,
-	Thomas Zimmermann, Christian König, Qiang Yu, Steven Price,
-	Boris Brezillon, Emma Anholt, Melissa Wen
-  Cc: dri-devel, linux-kernel, kernel, virtualization
-
-From: Boris Brezillon <boris.brezillon@collabora.com>
-
-If some the pages or sgt allocation failed, we shouldn't release the
-pages ref we got earlier, otherwise we will end up with unbalanced
-get/put_pages() calls. We should instead leave everything in place
-and let the BO release function deal with extra cleanup when the object
-is destroyed, or let the fault handler try again next time it's called.
-
-Fixes: 187d2929206e ("drm/panfrost: Add support for GPU heap allocations")
-Cc: <stable@vger.kernel.org>
-Signed-off-by: Boris Brezillon <boris.brezillon@collabora.com>
-Co-developed-by: Dmitry Osipenko <dmitry.osipenko@collabora.com>
-Signed-off-by: Dmitry Osipenko <dmitry.osipenko@collabora.com>
----
- drivers/gpu/drm/panfrost/panfrost_mmu.c | 13 +++++++++----
- 1 file changed, 9 insertions(+), 4 deletions(-)
-
-diff --git a/drivers/gpu/drm/panfrost/panfrost_mmu.c b/drivers/gpu/drm/panfrost/panfrost_mmu.c
-index bd5a0073009d..4a0b4bf03f1a 100644
---- a/drivers/gpu/drm/panfrost/panfrost_mmu.c
-+++ b/drivers/gpu/drm/panfrost/panfrost_mmu.c
-@@ -502,11 +502,18 @@ static int panfrost_mmu_map_fault_addr(struct panfrost_device *pfdev, int as,
- 	mapping_set_unevictable(mapping);
- 
- 	for (i = page_offset; i < page_offset + NUM_FAULT_PAGES; i++) {
-+		/* Can happen if the last fault only partially filled this
-+		 * section of the pages array before failing. In that case
-+		 * we skip already filled pages.
-+		 */
-+		if (pages[i])
-+			continue;
-+
- 		pages[i] = shmem_read_mapping_page(mapping, i);
- 		if (IS_ERR(pages[i])) {
- 			ret = PTR_ERR(pages[i]);
- 			pages[i] = NULL;
--			goto err_pages;
-+			goto err_unlock;
- 		}
- 	}
- 
-@@ -514,7 +521,7 @@ static int panfrost_mmu_map_fault_addr(struct panfrost_device *pfdev, int as,
- 	ret = sg_alloc_table_from_pages(sgt, pages + page_offset,
- 					NUM_FAULT_PAGES, 0, SZ_2M, GFP_KERNEL);
- 	if (ret)
--		goto err_pages;
-+		goto err_unlock;
- 
- 	ret = dma_map_sgtable(pfdev->dev, sgt, DMA_BIDIRECTIONAL, 0);
- 	if (ret)
-@@ -537,8 +544,6 @@ static int panfrost_mmu_map_fault_addr(struct panfrost_device *pfdev, int as,
- 
- err_map:
- 	sg_free_table(sgt);
--err_pages:
--	drm_gem_shmem_put_pages_locked(&bo->base);
- err_unlock:
- 	dma_resv_unlock(obj->resv);
- err_bo:
 -- 
 2.43.0
 
