@@ -34,8 +34,8 @@ case ${DEVICE} in
     PKG_URL="https://git.sr.ht/~tokyovigilante/linux/archive/${PKG_VERSION}.tar.gz"
     ;;
   *)
-    PKG_VERSION="6.9-rc7"
-    PKG_URL="https://git.kernel.org/torvalds/t/linux-${PKG_VERSION}.tar.gz"
+    PKG_VERSION="6.9"
+    PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     PKG_PATCH_DIRS+=" mainline"
     ;;
 esac
