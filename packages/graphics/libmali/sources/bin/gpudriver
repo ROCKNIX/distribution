@@ -14,32 +14,29 @@ get_current_driver() {
   fi
 }
 
-check_ld_cache() {
-  DRIVER_CONFIGURE_FOR=$1
-  LDDRIVER="panfrost"
-  ldconfig -p | grep libEGL.so.1 | grep -q mali && LDDRIVER="libmali"
-  if [ ${DRIVER_CONFIGURE_FOR} != ${LDDRIVER} ]; then
-    ldconfig
-  fi
-}
 
 # When loading a driver, do two things:
 #   * ensure needed driver is loaded and other is not
-#   * ensure ldconfig is configured for a proper driver
+#   * ensure graphics related libs are overridden (or not)
 load_driver() {
   DRIVER_TO_LOAD=$1
   case ${DRIVER_TO_LOAD} in
     "libmali")
       modprobe -r panfrost
       modprobe mali_kbase
-      echo -e "/usr/lib/mali\n/usr/lib32/mali" > ${LDCONFFILE}
-      check_ld_cache ${DRIVER_TO_LOAD}
+      grep -q /usr/lib/libEGL.so /proc/mounts || find /usr/{lib,lib32}/mali -type f -exec bash -c 'lib={}; mount --bind $lib ${lib/\/mali\//\/}' ';'
+      # Portmaster is not ready for SDL in glesonly subdir, so override libs the dirty way
+      if [ -d /usr/lib/glesonly ]; then
+        grep -q /usr/lib/libSDL2-2.0.so /proc/mounts || find /usr/{lib,lib32}/glesonly -type f -exec bash -c 'lib={}; mount --bind $lib ${lib/\/glesonly\//\/}' ';'
+      fi
       ;;
     "panfrost")
       modprobe -r mali_kbase
       modprobe panfrost
-      rm -f ${LDCONFFILE}
-      check_ld_cache ${DRIVER_TO_LOAD}
+      grep -q /usr/lib/libEGL.so /proc/mounts && find /usr/{lib,lib32}/mali -type f -exec bash -c 'lib={}; umount ${lib/\/mali\//\/}' ';'
+      if [ -d /usr/lib/glesonly ]; then
+        grep -q /usr/lib/libSDL2-2.0.so /proc/mounts && find /usr/{lib,lib32}/glesonly -type f -exec bash -c 'lib={}; umount ${lib/\/glesonly\//\/}' ';'
+      fi
       ;;
     *)
       exit 3
@@ -47,8 +44,6 @@ load_driver() {
   esac
 }
 
-# Determine configured driver
-LDCONFFILE=$(cat /etc/ld.so.conf.d/*.conf | grep mali | sed -n 's|include ||p' | head -1)
 
 case "$1" in
   "--options")

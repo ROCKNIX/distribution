@@ -16,6 +16,9 @@ if [ ! "${OPENGL_SUPPORT}" = "no" ]; then
   PKG_CMAKE_OPTS_TARGET+=" -DSDL_OPENGL=ON \
                            -DVIDEO_OPENGL=ON \
                            -DVIDEO_KMSDRM=OFF"
+  if [ "${PREFER_GLES}" = "yes" ] && [ "${OPENGLES_SUPPORT}" = "yes" ]; then
+    PKG_DEPENDS_TARGET+=" SDL2_glesonly "
+  fi
 else
   PKG_CMAKE_OPTS_TARGET+=" -DSDL_OPENGL=OFF \
                            -DVIDEO_OPENGL=OFF \

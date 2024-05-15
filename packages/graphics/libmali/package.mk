@@ -51,9 +51,7 @@ pre_make_target() {
 
 post_makeinstall_target() {
   rm -rf "${SYSROOT_PREFIX}/usr/include"   # all needed headers are installed by glvnd, mesa and wayland
-  rm -rf "${INSTALL}/etc/ld.so.conf.d" "${SYSROOT_PREFIX}/etc/ld.so.conf.d"
-  mkdir "${INSTALL}/etc/ld.so.conf.d"
-  echo "include /storage/.cache/ld.so.libmali.conf" > "${INSTALL}/etc/ld.so.conf.d/__priority__libmali.conf"
+  rm -rf "${INSTALL}/etc/ld.so.conf.d" "${SYSROOT_PREFIX}/etc/ld.so.conf.d"  # upstream installs ld.so config and we don't need it
 
   for lib in "${INSTALL}/usr/lib*/mali/*.so"; do
     echo ${lib}
