@@ -11,6 +11,7 @@ PKG_DEPENDS_TARGET="toolchain linux"
 PKG_NEED_UNPACK="${LINUX_DEPENDS}"
 PKG_TOOLCHAIN="manual"
 PKG_IS_KERNEL_PKG="yes"
+PKG_PATCH_DIRS="${DEVICE}"
 
 pre_make_target() {
   unset LDFLAGS
