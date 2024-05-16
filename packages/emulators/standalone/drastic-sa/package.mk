@@ -38,14 +38,9 @@ post_install() {
         else
           LIBEGL=""
         fi
+        
         HOTKEY=""
       ;;
-      RK3566|RK3326)
-        LIBEGL=""
-        HOTKEY=""
-        patchelf --replace-needed libSDL2-2.0.so.0 /usr/config/drastic/config/libSDL2-2.0.so.0 \
-			${INSTALL}/usr/config/drastic/drastic
-	  ;;
       RK3588)
         LIBEGL=""
         HOTKEY="export HOTKEY="guide""
