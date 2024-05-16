@@ -3,7 +3,6 @@
 
 PKG_NAME="box86"
 PKG_VERSION="f5f1e1413d167eb0c4e2aa9a65ab251ce1e142c4"
-PKG_ARCH="arm"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/ptitSeb/box86"
 PKG_URL="${PKG_SITE}.git"
@@ -16,6 +15,13 @@ PKG_CMAKE_OPTS_TARGET+=" 	-DCMAKE_BUILD_TYPE=Release \
 
 case ${TARGET_ARCH} in
   aarch64)
+    PKG_DEPENDS_TARGET=""
+    unpack() {
+      true
+    }
+    configure_target() {
+      true
+    }
     make_target() {
       true
     }
@@ -66,3 +72,9 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/etc/binfmt.d
   cp -f ${PKG_DIR}/config/box86.conf ${INSTALL}/etc/binfmt.d/box86.conf
 }
+
+if [ ! "${ENABLE_32BIT}" == "true" ]; then
+  makeinstall_target() {
+    true
+  }
+fi
