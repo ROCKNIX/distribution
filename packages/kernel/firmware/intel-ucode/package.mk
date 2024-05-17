@@ -3,7 +3,6 @@
 
 PKG_NAME="intel-ucode"
 PKG_VERSION="20230808"
-PKG_ARCH="x86_64"
 PKG_LICENSE="other"
 PKG_SITE="https://downloadcenter.intel.com/search?keyword=linux+microcode"
 PKG_URL="https://github.com/intel/Intel-Linux-Processor-Microcode-Data-Files/archive/microcode-${PKG_VERSION}.tar.gz"

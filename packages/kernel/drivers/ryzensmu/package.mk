@@ -6,11 +6,9 @@ PKG_VERSION="e61177d0ddaebfaeca52094b20a2289287a0838b"
 PKG_LICENSE="GPL"
 PKG_SITE="https://gitlab.com/leogx9r/ryzen_smu"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain linux kernel-firmware"
-PKG_NEED_UNPACK="${LINUX_DEPENDS}"
 PKG_LONGDESC="A Linux kernel driver that exposes access to the SMU on certain AMD Ryzen processors."
-PKG_IS_KERNEL_PKG="yes"
 PKG_TOOLCHAIN="make"
+PKG_IS_KERNEL_PKG="yes"
 
 pre_make_target() {
   unset LDFLAGS
