@@ -3,13 +3,11 @@
 
 PKG_NAME="gamecontrollerdb"
 PKG_VERSION="b7933e43ca2f8d26d8b668ea8ea52b736221af1e"
-PKG_ARCH="any"
 PKG_LICENSE="GPL"
 PKG_DEPENDS_TARGET="toolchain SDL2"
 PKG_SITE="https://github.com/gabomdq/SDL_GameControllerDB"
 PKG_URL="${PKG_SITE}.git"
-PKG_SECTION="tools"
-PKG_SHORTDESC="SDL Game Controller DB"
+PKG_LONGDESC="SDL Game Controller DB"
 PKG_TOOLCHAIN="manual"
 
 make_target() {

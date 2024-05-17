@@ -3,15 +3,11 @@
 
 PKG_NAME="rocknix"
 PKG_VERSION=""
-PKG_ARCH="any"
 PKG_LICENSE="GPLv2"
 PKG_SITE=""
 PKG_URL=""
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SHORTDESC="ROCKNIX Meta Package"
 PKG_LONGDESC="ROCKNIX Meta Package"
-PKG_IS_ADDON="no"
-PKG_AUTORECONF="no"
 PKG_TOOLCHAIN="make"
 
 make_target() {

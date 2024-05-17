@@ -160,12 +160,20 @@ TARGET_CMAKE_OPTS="-DCMAKE_TOOLCHAIN_FILE=${CMAKE_CONF} \
                    -DCMAKE_INSTALL_PREFIX=/usr \
                    -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
 
+case ${ARCH} in
+  arm|i686)
+    BUILD_OPTS_TARGET_LIBDIR=/usr/lib32
+    ;;
+  *)
+    BUILD_OPTS_TARGET_LIBDIR=/usr/lib
+    ;;
+esac
 TARGET_MESON_OPTS="--prefix=/usr \
                    --bindir=/usr/bin \
                    --sbindir=/usr/sbin \
                    --sysconfdir=/etc \
-                   --libdir=/usr/lib \
-                   --libexecdir=/usr/lib \
+                   --libdir=${BUILD_OPTS_TARGET_LIBDIR} \
+                   --libexecdir=${BUILD_OPTS_TARGET_LIBDIR} \
                    --localstatedir=/var \
                    --buildtype=${MESON_BUILD_TYPE}"
 if [ ${BUILD_WITH_DEBUG} != yes ] && flag_enabled "strip" "yes"; then
@@ -412,6 +420,10 @@ rm -rf "${SYSROOT_PREFIX}"
 for d in /usr/lib /usr/include /usr/bin /usr/lib/pkgconfig; do
   mkdir -p "${SYSROOT_PREFIX}${d}"
 done
+# symlink lib32 -> lib to make 32-bit apps agnostic of dependencies' libdir
+if [ ! -d "${SYSROOT_PREFIX}${BUILD_OPTS_TARGET_LIBDIR}" ]; then
+  ln -s lib "${SYSROOT_PREFIX}${BUILD_OPTS_TARGET_LIBDIR}"
+fi
 
 # make install
 pkg_call_exists pre_makeinstall_${TARGET} && pkg_call pre_makeinstall_${TARGET}
@@ -510,7 +522,7 @@ if [ "${TARGET}" = "target" -o "${TARGET}" = "init" ]; then
 
     python_fix_abi "${INSTALL}"
 
-    if [ ! "${BUILD_WITH_DEBUG}" = "yes" ]; then
+    if [ "${BUILD_WITH_DEBUG}" != "yes" ] && flag_enabled "strip" "yes"; then
       ${STRIP} $(find ${INSTALL} \
         -type f -name "*.so*" \
         ! -name "ld-*.so" \

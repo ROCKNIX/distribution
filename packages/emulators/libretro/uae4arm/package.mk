@@ -20,19 +20,14 @@
 
 PKG_NAME="uae4arm"
 PKG_VERSION="177c2f0e892adf2603ada9b150e31beffe0f76c3"
-PKG_REV="1"
 PKG_ARCH="arm aarch64"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/Chips-fr/uae4arm-rpi"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain flac mpg123"
-PKG_PRIORITY="optional"
-PKG_SECTION="libretro"
-PKG_SHORTDESC="Port of uae4arm for libretro (rpi/android)"
-PKG_LONGDESC="Port of uae4arm for libretro (rpi/android) "
+PKG_LONGDESC="Port of uae4arm for libretro (rpi/android)"
 
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 
 make_target() {
   make -f Makefile.libretro platform=unix_aarch64 "CPU_FLAGS=-mcpu=${TARGET_CPU}"

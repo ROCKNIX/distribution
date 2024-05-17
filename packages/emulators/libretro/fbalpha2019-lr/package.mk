@@ -21,18 +21,12 @@
 
 PKG_NAME="fbalpha2019-lr"
 PKG_VERSION="0581797db6fdffd826086b053ced4b6b29bb6678"
-PKG_ARCH="any"
 PKG_LICENSE="Non-commercial"
 PKG_SITE="https://github.com/libretro/fbalpha"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_PRIORITY="optional"
-PKG_SECTION="libretro"
-PKG_SHORTDESC="Port of Final Burn Alpha to Libretro (v0.2.97.44)."
-PKG_LONGDESC="Currently, FB Alpha supports games on Capcom CPS-1 and CPS-2 hardware, SNK Neo-Geo hardware, Toaplan hardware, Cave hardware, and various games on miscellaneous hardware."
-PKG_IS_ADDON="no"
+PKG_LONGDESC="Port of Final Burn Alpha to Libretro (v0.2.97.44)."
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 
 make_target() {
   make -f makefile.libretro

@@ -3,14 +3,12 @@
 
 PKG_NAME="lrps2-lr"
 PKG_VERSION="f3c8743d6a42fe429f703b476fecfdb5655a98a9"
-PKG_ARCH="any"
 PKG_LICENSE="GPLv2"
 PKG_DEPENDS_TARGET="toolchain alsa-lib freetype zlib libpng libaio libsamplerate libfmt libpcap soundtouch yamlcpp wxwidgets"
 PKG_SITE="https://github.com/libretro/LRPS2"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SECTION="libretro"
-PKG_SHORTDESC="Hard fork / port of PCSX2. Will target only Libretro specifically."
+PKG_LONGDESC="Hard fork / port of PCSX2. Will target only Libretro specifically."
 
 if [ ! "${OPENGL}" = "no" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"

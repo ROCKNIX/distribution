@@ -7,7 +7,7 @@ PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/libretro/arduous"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SHORTDESC="A Libretro emulator core for the Arduboy"
+PKG_LONGDESC="A Libretro emulator core for the Arduboy"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro

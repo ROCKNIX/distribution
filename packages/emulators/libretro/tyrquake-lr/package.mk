@@ -20,21 +20,14 @@
 
 PKG_NAME="tyrquake-lr"
 PKG_VERSION="77217664a09afe893a06be8e3e8f9611184636f8"
-PKG_REV="1"
-PKG_ARCH="any"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/tyrquake"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_PRIORITY="optional"
-PKG_SECTION="libretro"
-PKG_SHORTDESC="Libretro port of Tyrquake (Quake 1 engine)"
 PKG_LONGDESC="Libretro port of Tyrquake (Quake 1 engine)"
 PKG_PATCH_DIRS+="${DEVICE}"
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 
 pre_configure_target() {
   if [ "${ARCH}" == "arm" ]; then
@@ -45,8 +38,4 @@ pre_configure_target() {
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
   cp tyrquake_libretro.so ${INSTALL}/usr/lib/libretro/
-
-  mkdir -p ${INSTALL}/usr/config/idtech
-  cp -rf ${PKG_DIR}/scripts/* ${INSTALL}/usr/config/idtech/
-  chmod 0755 ${INSTALL}/usr/config/idtech/*
 }

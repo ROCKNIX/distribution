@@ -3,13 +3,11 @@
 
 PKG_NAME="parallel-n64-lr"
 PKG_VERSION="1b57f9199b1f8a4510f7f89f14afa9cabf9b3bdd"
-PKG_ARCH="any"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/parallel-n64"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain core-info"
-PKG_SECTION="libretro"
-PKG_SHORTDESC="Optimized/rewritten Nintendo 64 emulator made specifically for Libretro. Originally based on Mupen64 Plus."
+PKG_LONGDESC="Optimized/rewritten Nintendo 64 emulator made specifically for Libretro. Originally based on Mupen64 Plus."
 PKG_TOOLCHAIN="make"
 PKG_BUILD_FLAGS="-lto"
 

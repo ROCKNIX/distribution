@@ -6,7 +6,7 @@ PKG_VERSION="1.226"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://packages.debian.org/unstable/${PKG_NAME}"
 PKG_URL="https://deb.debian.org/debian/pool/main/c/console-setup/${PKG_NAME}_${PKG_VERSION}_all.deb"
-PKG_DEPENDS_HOST="toolchain"
+PKG_DEPENDS_HOST=""
 PKG_LONGDESC="Utility to convert BDF font files to PSF format"
 PKG_TOOLCHAIN="manual"
 

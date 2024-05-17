@@ -3,15 +3,12 @@
 
 PKG_NAME="xa"
 PKG_VERSION="2.4.1"
-PKG_ARCH="any"
 PKG_LICENSE="GPL"
 PKG_SITE="https://www.floodgap.com/retrotech/xa/"
 PKG_URL="${PKG_SITE}/dists/xa-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_DEPENDS_HOST="toolchain"
-PKG_PRIORITY="optional"
-PKG_SECTION="tools"
-PKG_SHORTDESC="xa is a high-speed, two-pass portable cross-assembler."
+PKG_DEPENDS_HOST="ccache:host"
+PKG_LONGDESC="xa is a high-speed, two-pass portable cross-assembler."
 
 makeinstall_host() {
   mkdir -p ${TOOLCHAIN}/bin

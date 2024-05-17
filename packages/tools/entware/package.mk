@@ -7,7 +7,6 @@ PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/Entware/Entware"
 PKG_URL=""
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SECTION="tools"
 PKG_LONGDESC="entware: A software repository that offers various software programs that can be installed on your device"
 PKG_TOOLCHAIN="manual"
 

@@ -2,12 +2,12 @@
 # Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="desmume-lr"
-PKG_VERSION="4ee1bb1d6a6c9695baea49d0c2dff34c10187502"
+PKG_VERSION="b518fec54b79f2f71a7536715efcdcd7f60638a8"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://git.libretro.com/libretro/desmume"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain libpcap"
-PKG_SHORTDESC="DeSmuME - Nintendo DS libretro"
+PKG_LONGDESC="DeSmuME - Nintendo DS libretro"
 PKG_TOOLCHAIN="make"
 
 if [ "${OPENGL_SUPPORT}" = "yes" ]; then

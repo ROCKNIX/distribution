@@ -3,20 +3,22 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="SDL2"
-PKG_VERSION="2.28.5"
+PKG_VERSION="2.30.3"
 PKG_LICENSE="GPL"
 PKG_SITE="https://www.libsdl.org/"
 PKG_URL="https://www.libsdl.org/release/SDL2-${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_HOST="toolchain"
 PKG_DEPENDS_TARGET="toolchain alsa-lib systemd dbus pulseaudio libdrm SDL2:host"
 PKG_LONGDESC="Simple DirectMedia Layer is a cross-platform development library designed to provide low level access to audio, keyboard, mouse, joystick, and graphics hardware."
 PKG_DEPENDS_HOST="toolchain:host distutilscross:host"
 
-if [ ! "${OPENGL}" = "no" ]; then
+if [ ! "${OPENGL_SUPPORT}" = "no" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL} glu"
   PKG_CMAKE_OPTS_TARGET+=" -DSDL_OPENGL=ON \
                            -DVIDEO_OPENGL=ON \
                            -DVIDEO_KMSDRM=OFF"
+  if [ "${PREFER_GLES}" = "yes" ] && [ "${OPENGLES_SUPPORT}" = "yes" ]; then
+    PKG_DEPENDS_TARGET+=" SDL2_glesonly "
+  fi
 else
   PKG_CMAKE_OPTS_TARGET+=" -DSDL_OPENGL=OFF \
                            -DVIDEO_OPENGL=OFF \
@@ -46,7 +48,15 @@ fi
 
 if [ "${DISPLAYSERVER}" = "wl" ]
 then
-  PKG_DEPENDS_TARGET+=" wayland ${WINDOWMANAGER}"
+  PKG_DEPENDS_TARGET+=" wayland "
+  case ${ARCH} in
+    arm|i686)
+      true
+      ;;
+    *)
+      PKG_DEPENDS_TARGET+=" ${WINDOWMANAGER}"
+      ;;
+  esac
   PKG_CMAKE_OPTS_TARGET+=" -DSDL_WAYLAND=ON \
                            -DVIDEO_WAYLAND=ON \
                            -DVIDEO_WAYLAND_QT_TOUCH=ON \
@@ -131,7 +141,7 @@ pre_configure_target(){
                          -DDIRECTX=OFF \
                          -DSDL_DLOPEN=ON \
                          -DCLOCK_GETTIME=OFF \
-                         -DRPATH=OFF \
+                         -DSDL_RPATH=OFF \
                          -DRENDER_D3D=OFF \
                          -DPIPEWIRE=ON \
                          -DPULSEAUDIO=ON"

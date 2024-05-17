@@ -136,12 +136,8 @@ pre_configure_target() {
                              -skip qtwinextras
                              -skip qtx11extras"
 
-  # Build with OpenGL or OpenGLES support
-  if [ "${OPENGL_SUPPORT}" = "yes" ]; then
-    PKG_CONFIGURE_OPTS_TARGET+=" -opengl -no-eglfs"
-  elif [ "${OPENGLES_SUPPORT}" = "yes" ]; then
-    PKG_CONFIGURE_OPTS_TARGET+=" -opengl es2"
-  fi
+  # Build with OpenGL always
+  PKG_CONFIGURE_OPTS_TARGET+=" -opengl -no-eglfs"
 
   # Wayland support
   if [ ! "${DISPLAYSERVER}" = "wl" ]; then

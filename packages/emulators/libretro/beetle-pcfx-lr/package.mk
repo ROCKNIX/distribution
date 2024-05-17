@@ -21,20 +21,13 @@
 
 PKG_NAME="beetle-pcfx-lr"
 PKG_VERSION="47c355b6a515aef6dc57f57df1535570108a0e21"
-PKG_REV="1"
-PKG_ARCH="any"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/beetle-pcfx-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_PRIORITY="optional"
-PKG_SECTION="libretro"
-PKG_SHORTDESC="libretro implementation of Mednafen PC-FX."
 PKG_LONGDESC="libretro implementation of Mednafen PC-FX."
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 
 make_target() {
   if [ "${ARCH}" == "i386" -o "${ARCH}" == "x86_64" ]; then

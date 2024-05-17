@@ -3,13 +3,11 @@
 
 PKG_NAME="duckstation-lr"
 PKG_VERSION="24c373245ebdab946f11627520edea76e1f23b8e"
-PKG_ARCH="any"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/stenzek/duckstation"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain SDL2 nasm:host pulseaudio openssl libidn2 nghttp2 zlib curl libevdev"
-PKG_SECTION="libretro"
-PKG_SHORTDESC="DuckStation - PlayStation 1, aka. PSX Emulator"
+PKG_LONGDESC="DuckStation - PlayStation 1, aka. PSX Emulator"
 PKG_TOOLCHAIN="cmake"
 PKG_BUILD_FLAGS="-lto"
 

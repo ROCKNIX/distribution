@@ -22,16 +22,11 @@
 
 PKG_NAME="retropie-shaders"
 PKG_VERSION="015fe2aaad5f4a219c8fd85b9a4fd71bc4f1f731"
-PKG_REV="1"
-PKG_ARCH="any"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/RetroPie/common-shaders"
 PKG_URL="${PKG_SITE}.git"
 PKG_GIT_CLONE_BRANCH="rpi"
 PKG_DEPENDS_TARGET="toolchain glsl-shaders"
-PKG_PRIORITY="optional"
-PKG_SECTION="libretro"
-PKG_SHORTDESC="Libretro common shaders from retropie"
 PKG_LONGDESC="Libretro common shaders from retropie"
 PKG_TOOLCHAIN="manual"
 

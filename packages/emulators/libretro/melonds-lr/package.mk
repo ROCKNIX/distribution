@@ -3,14 +3,11 @@
 
 PKG_NAME="melonds-lr"
 PKG_VERSION="c6488c88cb4c7583dbcd61609e0eef441572fae8"
-PKG_REV="1"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://git.libretro.com/libretro/melonDS"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_PRIORITY="optional"
-PKG_SECTION="libretro"
-PKG_SHORTDESC="MelonDS - Nintendo DS emulator for libretro"
+PKG_LONGDESC="MelonDS - Nintendo DS emulator for libretro"
 PKG_TOOLCHAIN="make"
 
 if [ ! "${OPENGL}" = "no" ]; then

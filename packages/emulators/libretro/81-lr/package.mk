@@ -20,20 +20,13 @@
 
 PKG_NAME="81-lr"
 PKG_VERSION="525d5c18f1ff3fc54c37e083a475225d9179d59d"
-PKG_REV="1"
-PKG_ARCH="any"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/libretro/81-libretro"
 PKG_URL="https://github.com/libretro/81-libretro/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_PRIORITY="optional"
-PKG_SECTION="libretro"
-PKG_SHORTDESC="A port of the EightyOne ZX81 Emulator to libretro"
 PKG_LONGDESC="A port of the EightyOne ZX81 Emulator to libretro"
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 
 make_target() {
   make -f Makefile.libretro

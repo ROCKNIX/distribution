@@ -22,15 +22,11 @@
 
 PKG_NAME="common-shaders"
 PKG_VERSION="86cfa146a8dfddf6377ddb5dbcff552feae2e5bf"
-PKG_REV="1"
 PKG_ARCH="aarch64"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/libretro/common-shaders"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_PRIORITY="optional"
-PKG_SECTION="libretro"
-PKG_SHORTDESC="Libretro common shaders"
 PKG_LONGDESC="Libretro common shaders"
 
 make_target() {

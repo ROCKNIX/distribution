@@ -3,21 +3,18 @@
 
 PKG_NAME="modules"
 PKG_VERSION=""
-PKG_ARCH="any"
 PKG_LICENSE="custom"
 PKG_SITE=""
 PKG_URL=""
 PKG_DEPENDS_TARGET="toolchain rclone"
-PKG_SHORTDESC="OS Modules Package"
 PKG_LONGDESC="OS Modules Package"
-PKG_IS_ADDON="no"
-PKG_AUTORECONF="no"
 PKG_TOOLCHAIN="manual"
 
-###
-### Note: Start scripts for emulators have been moved to
-### packages/virtual/emulators.
-###
+case ${DEVICE} in
+  RK3588|RK3399)
+    PKG_DEPENDS_TARGET+=" gamepadtester"
+  ;;
+esac
 
 make_target() {
   :

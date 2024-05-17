@@ -3,15 +3,10 @@
 
 PKG_NAME="vice-sa"
 PKG_VERSION="3.8"
-PKG_REV="1"
-PKG_ARCH="any"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://sourceforge.net/projects/vice-emu"
 PKG_URL="${PKG_SITE}/files/releases/vice-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain xa:host SDL2 SDL2_image ncurses readline dos2unix:host"
-PKG_PRIORITY="optional"
-PKG_SECTION="emulators"
-PKG_SHORTDESC="Commodore 8-bit Emulator"
 PKG_LONGDESC="Commodore 8-bit Emulator"
 PKG_CONFIGURE_OPTS_TARGET+=" --disable-pdf-docs --enable-gtk3ui=no --without-alsa --with-pulse --enable-sdl2ui"
 

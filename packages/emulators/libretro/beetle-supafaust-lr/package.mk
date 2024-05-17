@@ -21,19 +21,15 @@
 
 PKG_NAME="beetle-supafaust-lr"
 PKG_VERSION="6b639c98372d1c9bac885c55d772c812d2a9d525"
-PKG_REV="1"
-PKG_ARCH="any"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/supafaust"
 PKG_URL="${PKG_SITE}.git"
 #PKG_GIT_CLONE_BRANCH="hd"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SHORTDESC="Super Nintendo (Super Famicom) emulator"
+PKG_LONGDESC="Super Nintendo (Super Famicom) emulator"
 GET_HANDLER_SUPPORT="git"
 PKG_TOOLCHAIN="make"
 
-PKG_IS_ADDON="no"
-PKG_AUTORECONF="no"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro

@@ -26,7 +26,3 @@ if [ "${DISPLAYSERVER}" = "wl" ]; then
   PKG_DEPENDS_TARGET+=" wayland ${WINDOWMANAGER}"
 fi
 
-### Compatability
-#PKG_DEPENDS_TARGET+=" lutris-wine"
-
-

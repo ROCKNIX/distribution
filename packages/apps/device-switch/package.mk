@@ -3,7 +3,6 @@
 
 PKG_NAME="device-switch"
 PKG_VERSION=""
-PKG_ARCH="any"
 PKG_LICENSE="mix"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_SITE=""

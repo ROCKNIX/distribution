@@ -4,7 +4,7 @@
 
 PKG_NAME="mesa"
 PKG_LICENSE="OSS"
-PKG_DEPENDS_TARGET="toolchain expat libdrm Mako:host"
+PKG_DEPENDS_TARGET="toolchain expat libdrm zstd Mako:host"
 PKG_LONGDESC="Mesa is a 3-D graphics library with an API."
 PKG_TOOLCHAIN="meson"
 PKG_PATCH_DIRS+=" ${DEVICE}"
@@ -17,19 +17,19 @@ case ${DEVICE} in
   ;;
   RK3*|S922X)
     if [ "${DEVICE}" = "S922X" -a "${USE_MALI}" != "no" ]; then
-      PKG_VERSION="24.0.4"
+      PKG_VERSION="24.0.7"
 	    PKG_SITE="http://www.mesa3d.org/"
 	    PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
     else
       #Using upstream dev for panfrost
-	    PKG_VERSION="db29984c254f60f5daeec0ea4e6048b6ee7902f8"
+	    PKG_VERSION="aa9244c8f6bfa3fb33cf233104b00fc44fc9459f"
 	    PKG_SITE="https://gitlab.freedesktop.org/mesa/mesa"
 	    PKG_URL="${PKG_SITE}.git"
 	    PKG_PATCH_DIRS+=" panfrost"
     fi
   ;;
   *)
-	PKG_VERSION="24.0.4"
+	PKG_VERSION="24.0.7"
 	PKG_SITE="http://www.mesa3d.org/"
 	PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
   ;;
@@ -37,7 +37,8 @@ esac
 
 get_graphicdrivers
 
-PKG_MESON_OPTS_TARGET="-Dgallium-drivers=${GALLIUM_DRIVERS// /,} \
+PKG_MESON_OPTS_TARGET=" ${MESA_LIBS_PATH_OPTS} \
+                       -Dgallium-drivers=${GALLIUM_DRIVERS// /,} \
                        -Dgallium-extra-hud=false \
                        -Dgallium-omx=disabled \
                        -Dgallium-nine=true \

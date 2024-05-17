@@ -34,7 +34,7 @@ includedir=\${prefix}/include
 Name: ${PKG_NAME}
 Description: Open Source aptX codec library
 Version: ${PKG_VERSION}
-Libs: -Wl,-rpath=\${libdir} -L\${libdir} -l${PKG_NAME##*lib}
+Libs: -L\${libdir} -l${PKG_NAME##*lib}
 Cflags: -I\${includedir}
 EOF
 }

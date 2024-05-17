@@ -3,7 +3,6 @@
 
 PKG_NAME="sleep"
 PKG_VERSION=""
-PKG_ARCH="any"
 PKG_LICENSE="OSS"
 PKG_DEPENDS_TARGET="systemd"
 PKG_SITE=""

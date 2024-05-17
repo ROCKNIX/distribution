@@ -6,9 +6,9 @@ PKG_VERSION=""
 PKG_ARCH="aarch64 x86_64"
 PKG_LICENSE="GPLv2"
 PKG_DEPENDS_TARGET="toolchain retroarch SDL2 libsndfile libmodplug"
-PKG_SHORTDESC="ARM 32bit bundle for aarch64"
-PKG_PRIORITY="optional"
+PKG_LONGDESC="ARM 32bit bundle for aarch64"
 PKG_TOOLCHAIN="manual"
+PKG_BUILD_FLAGS="-strip"
 
 makeinstall_target() {
 
@@ -27,16 +27,14 @@ makeinstall_target() {
   LIBROOT="${ROOT}/build.${DISTRO}-${DEVICE}.${LIBARCH}/image/system/"
   mkdir -p ${INSTALL}/usr/lib32
   rsync -al ${LIBROOT}/usr/lib/* ${INSTALL}/usr/lib32 >/dev/null 2>&1
+  rsync -al ${LIBROOT}/usr/lib32/* ${INSTALL}/usr/lib32 >/dev/null 2>&1
   chmod -f 0755 ${INSTALL}/usr/lib32/* || :
   mkdir -p ${INSTALL}/usr/lib
   ln -s /usr/lib32/${LDSO} ${INSTALL}/usr/lib/${LDSO}
 
   mkdir -p "${INSTALL}/etc/ld.so.conf.d"
   echo "/usr/lib32" > "${INSTALL}/etc/ld.so.conf.d/${LIBARCH}-lib32.conf"
-  echo "/usr/lib32/pulseaudio" >"${INSTALL}/etc/ld.so.conf.d/${LIBARCH}-lib32-pulseaudio.conf"
 
-  if [ -d "${LIBROOT}/usr/lib/dri" ]
-  then
-    echo "/usr/lib32/dri" >"${INSTALL}/etc/ld.so.conf.d/${LIBARCH}-lib32-dri.conf"
-  fi
+  mkdir -p ${INSTALL}/usr/bin
+  cp ${LIBROOT}/usr/bin/ldd ${INSTALL}/usr/bin/ldd32
 }

@@ -21,20 +21,13 @@
 
 PKG_NAME="gambatte-lr"
 PKG_VERSION="cbda5ea9fd81d1be0220dfc690d05240655602e4"
-PKG_REV="1"
-PKG_ARCH="any"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/gambatte-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_PRIORITY="optional"
-PKG_SECTION="libretro"
-PKG_SHORTDESC="libretro implementation of libgambatte"
-PKG_LONGDESC="Gambatte is an open-source Game Boy Color emulator written for fun and made available in the hope that it will be useful."
+PKG_LONGDESC="libretro implementation of libgambatte"
 
-PKG_IS_ADDON="no"
 PKG_TOOLCHAIN="make"
-PKG_AUTORECONF="no"
 PKG_PATCH_DIRS+="${DEVICE}"
 
 make_target() {
