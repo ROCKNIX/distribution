@@ -15,9 +15,3 @@ if [ ! "${BASE_ONLY}" = "true" ]
 then
   PKG_DEPENDS_TARGET+=" ${ADDITIONAL_PACKAGES}"
 fi
-
-# Entware support
-if [ "$ENTWARE_SUPPORT" = "yes" ]; then
-  ln -sf /storage/.opt ${INSTALL}/opt
-  PKG_DEPENDS_TARGET+=" entware"
-fi

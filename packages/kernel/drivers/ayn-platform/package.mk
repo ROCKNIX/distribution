@@ -6,12 +6,9 @@ PKG_VERSION="02befd684c15743f9c8fd8e018c50b86feb0ae7b"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/ShadowBlip/ayn-platform"
 PKG_URL="${PKG_SITE}.git"
-PKG_ARCH="x86_64 i686"
-PKG_DEPENDS_TARGET="toolchain linux kernel-firmware"
-PKG_NEED_UNPACK="${LINUX_DEPENDS}"
 PKG_LONGDESC="A hwmon interface for PWM control, as well as RGB control and access to temperature sensors provided by the system EC."
-PKG_IS_KERNEL_PKG="yes"
 PKG_TOOLCHAIN="make"
+PKG_IS_KERNEL_PKG="yes"
 
 pre_make_target() {
   unset LDFLAGS

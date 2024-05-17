@@ -5,14 +5,11 @@
 PKG_NAME="RTL8723DS"
 PKG_VERSION="52e593e8c889b68ba58bd51cbdbcad7fe71362e4"
 PKG_LICENSE="GPL"
-PKG_ARCH="aarch64 x86_64"
 PKG_SITE="https://github.com/lwfinger/rtl8723ds"
 PKG_URL="https://github.com/lwfinger/rtl8723ds/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain linux linux kernel-firmware"
-PKG_NEED_UNPACK="${LINUX_DEPENDS}"
 PKG_LONGDESC="Realtek RTL81xxEU Linux 3.x driver"
-PKG_IS_KERNEL_PKG="yes"
 PKG_TOOLCHAIN="make"
+PKG_IS_KERNEL_PKG="yes"
 
 pre_make_target() {
   unset LDFLAGS

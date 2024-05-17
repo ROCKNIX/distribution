@@ -7,8 +7,6 @@ PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/ROCKNIX/rocknix-joypad"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_LONGDESC="rocknix-joypad: ROCKNIX joypad driver"
-PKG_DEPENDS_TARGET="toolchain linux"
-PKG_NEED_UNPACK="${LINUX_DEPENDS}"
 PKG_TOOLCHAIN="manual"
 PKG_IS_KERNEL_PKG="yes"
 
