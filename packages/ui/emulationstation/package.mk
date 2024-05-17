@@ -53,7 +53,7 @@ PKG_CMAKE_OPTS_TARGET+=" -DENABLE_EMUELEC=1 \
 # One time setup:
 # ---------------
 # cd ~
-# git clone https://github.com/JustEnoughLinuxOS/emulationstation.git
+# git clone https://github.com/ROCKNIX/emulationstation.git
 # cd emulationstation
 # git submodule update --init
 #
@@ -67,7 +67,7 @@ PKG_CMAKE_OPTS_TARGET+=" -DENABLE_EMUELEC=1 \
 #
 # Run from the device:
 # --------------------
-# Copy ./emulationstation binary found in build.JELOS-<device>.aarch64/emulationstation-*/.install_pkg/usr/bin/
+# Copy ./emulationstation binary found in build.ROCKNIX-<device>.aarch64/emulationstation-*/.install_pkg/usr/bin/
 # Via ssh, run emulationstation with
 # systemctl stop emustation
 # chmod +x ./emulationstation
@@ -139,8 +139,8 @@ makeinstall_target() {
         <system>
                 <name>tools</name>
                 <fullname>Tools</fullname>
-                <manufacturer>JELOS</manufacturer>
-                <release>2021</release>
+                <manufacturer>ROCKNIX</manufacturer>
+                <release>2024</release>
                 <hardware>system</hardware>
                 <path>/storage/.config/modules</path>
                 <extension>.sh</extension>
