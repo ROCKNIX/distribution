@@ -17,3 +17,8 @@ fi
 if [ "${ROCKNIX_JOYPAD}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" rocknix-joypad"
 fi
+
+if [ "${ROCKNIX_DEVICE_TREES}" = "yes" ]; then
+  PKG_DEPENDS_TARGET+=" device-trees"
+fi
+
