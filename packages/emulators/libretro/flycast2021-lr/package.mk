@@ -48,7 +48,7 @@ pre_configure_target() {
 pre_make_target() {
   export BUILD_SYSROOT=${SYSROOT_PREFIX}
   case ${DEVICE} in
-    RK3*|S922X*)
+    RK3*|S922X)
       PKG_MAKE_OPTS_TARGET+=" platform=${DEVICE}"
     ;;
   esac

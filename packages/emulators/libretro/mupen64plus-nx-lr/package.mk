@@ -29,7 +29,7 @@ pre_configure_target() {
   sed -e "s|^GIT_VERSION ?.*$|GIT_VERSION := \" ${PKG_VERSION:0:7}\"|" -i Makefile
   sed -i 's/\-O[23]/-Ofast/' ${PKG_BUILD}/Makefile
   case ${DEVICE} in
-    RK3*|S922X*)
+    RK3*|S922X)
       PKG_MAKE_OPTS_TARGET=" platform=${DEVICE}"
     ;;
   esac
