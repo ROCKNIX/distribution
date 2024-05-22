@@ -38,5 +38,7 @@ makeinstall_target() {
   if [ -d ${PKG_BUILD}/overlays ]; then
     mkdir -p ${INSTALL}/usr/share/bootloader/overlays
     cp ${PKG_BUILD}/overlays/*.dtb ${INSTALL}/usr/share/bootloader/overlays
+    mkdir -p ${INSTALL}/usr/bin
+    cp ${PKG_BUILD}/dtb_overlay ${INSTALL}/usr/bin
   fi
 }
