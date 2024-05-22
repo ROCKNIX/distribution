@@ -47,6 +47,6 @@ pre_makeinstall_target() {
 
 post_makeinstall_target() {
   (
-  mv ${INSTALL}/usr/share/vim/vimrc_example.vim ${INSTALL}/usr/share/vim/vimrc
+  cp ${PKG_DIR}/vimrc ${INSTALL}/usr/share/vim/vimrc
   )
 }
