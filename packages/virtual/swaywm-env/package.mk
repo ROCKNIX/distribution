@@ -4,7 +4,7 @@
 PKG_NAME="swaywm-env"
 PKG_VERSION=""
 PKG_LICENSE="GPL"
-PKG_SITE="https://jelos.org"
+PKG_SITE="https://rocknix.org"
 PKG_URL=""
 PKG_SECTION="virtual"
 PKG_LONGDESC="swaywm-env: Sway window manager environment"

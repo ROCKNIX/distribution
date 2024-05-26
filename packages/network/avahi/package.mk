@@ -8,9 +8,19 @@ PKG_SHA256="c15e750ef7c6df595fb5f2ce10cac0fee2353649600e6919ad08ae8871e4945f"
 PKG_LICENSE="GPL"
 PKG_SITE="http://avahi.org/"
 PKG_URL="https://github.com/lathiat/avahi/archive/v${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain expat libdaemon dbus connman gettext"
+PKG_DEPENDS_TARGET="toolchain expat libdaemon dbus gettext"
 PKG_LONGDESC="Service Discovery for Linux using mDNS/DNS-SD, compatible with Bonjour."
 PKG_TOOLCHAIN="configure"
+
+case ${ARCH} in
+  arm|i686)
+    # avahi does not have direct dependency on connman, ok to skip it on secondary arch
+    true
+    ;;
+  *)
+    PKG_DEPENDS_TARGET+=" connman"
+    ;;
+esac
 
 PKG_CONFIGURE_OPTS_TARGET="py_cv_mod_gtk_=yes \
                            py_cv_mod_dbus_=yes \

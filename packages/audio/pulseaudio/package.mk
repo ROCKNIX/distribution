@@ -78,8 +78,10 @@ post_makeinstall_target() {
 
   cp ${PKG_DIR}/config/system.pa ${INSTALL}/etc/pulse/
 
-  mkdir -p ${INSTALL}/etc/ld.so.conf.d
-  echo "/usr/lib/pulseaudio" >${INSTALL}/etc/ld.so.conf.d/${ARCH}-lib-pulseaudio.conf
+  # Sometimes apps cannot load `libpulsecommon`. It is located in ${libdir}/pulseaudio and is not intended to be loaded directly.
+  # Application loads `libpulse.so.0`, `libpulse` has `libpulsecommon` as a dep and RPATH set to ${libdir}/pulseaudio
+  # So, if there is error loading `libpulsecommon`, check RPATH of `libpulse` and `libpulse-simple`
+  # Adding pulseaudio subdir to `/etc/ld.so.conf.d/*.conf` may be a working hack for that, but please check/fix RPATH first
 }
 
 # Deprecated by pipewire

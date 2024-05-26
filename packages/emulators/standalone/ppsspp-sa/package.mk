@@ -34,7 +34,7 @@ PKG_CMAKE_OPTS_TARGET=" -DUSE_SYSTEM_FFMPEG=OFF \
                         -DHEADLESS=OFF \
                         -DUSE_DISCORD=OFF"
 
-if [[ "${OPENGL_SUPPORT}" = "yes" ]] && [[ ! "${DEVICE}" = "S922X" ]]; then
+if [ "${OPENGL_SUPPORT}" = "yes" ] && [ ! "${PREFER_GLES}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd glew"
   PKG_CMAKE_OPTS_TARGET+=" -DUSING_FBDEV=OFF \
 			   -DUSING_GLES2=OFF"
@@ -82,7 +82,7 @@ pre_make_target() {
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin
-  cp ${PKG_DIR}/scripts/start_ppsspp.sh ${INSTALL}/usr/bin
+  cp ${PKG_DIR}/scripts/* ${INSTALL}/usr/bin
   cp PPSSPPSDL ${INSTALL}/usr/bin/ppsspp
   chmod 0755 ${INSTALL}/usr/bin/*
   ln -sf /storage/.config/ppsspp/assets ${INSTALL}/usr/bin/assets

@@ -2,12 +2,11 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="box86"
-PKG_VERSION="266392e315bb5e7827928512c930e04448f137d1"
-PKG_ARCH="arm aarch64"
+PKG_VERSION="f5f1e1413d167eb0c4e2aa9a65ab251ce1e142c4"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/ptitSeb/box86"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain ncurses SDL_sound"
+PKG_DEPENDS_TARGET="toolchain ncurses SDL_sound libXdmcp libXft libXcomposite cups libogg-system"
 PKG_LONGDESC="Box86 lets you run x86 Linux programs (such as games) on non-x86 Linux systems, like ARM."
 PKG_TOOLCHAIN="cmake"
 
@@ -16,6 +15,13 @@ PKG_CMAKE_OPTS_TARGET+=" 	-DCMAKE_BUILD_TYPE=Release \
 
 case ${TARGET_ARCH} in
   aarch64)
+    PKG_DEPENDS_TARGET=""
+    unpack() {
+      true
+    }
+    configure_target() {
+      true
+    }
     make_target() {
       true
     }
@@ -66,3 +72,9 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/etc/binfmt.d
   cp -f ${PKG_DIR}/config/box86.conf ${INSTALL}/etc/binfmt.d/box86.conf
 }
+
+if [ ! "${ENABLE_32BIT}" == "true" ]; then
+  makeinstall_target() {
+    true
+  }
+fi

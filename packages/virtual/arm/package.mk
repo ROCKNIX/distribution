@@ -4,7 +4,7 @@
 PKG_NAME="arm"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://rocknix.org"
-PKG_DEPENDS_TARGET="toolchain squashfs-tools:host dosfstools:host fakeroot:host kmod:host mtools:host populatefs:host libc gcc linux linux-drivers linux-firmware libusb unzip socat p7zip file SDL2 SDL2_gfx SDL2_image SDL2_mixer SDL2_net SDL2_ttf"
+PKG_DEPENDS_TARGET="toolchain libc gcc libusb  SDL2 SDL2_gfx SDL2_image SDL2_mixer SDL2_net SDL2_ttf"
 PKG_SECTION="virtual"
 PKG_LONGDESC="Root package used to build and create 32-bit userland"
 
@@ -23,7 +23,15 @@ then
 fi
 
 if [ "${DISPLAYSERVER}" = "wl" ]; then
-  PKG_DEPENDS_TARGET+=" wayland ${WINDOWMANAGER} libXtst libXfixes libXi gdk-pixbuf libvdpau"
+  PKG_DEPENDS_TARGET+=" wayland libXtst libXfixes libXi gdk-pixbuf libvdpau"
+  case ${ARCH} in
+    arm|i686)
+      true
+      ;;
+    *)
+      PKG_DEPENDS_TARGET+=" ${WINDOWMANAGER}"
+      ;;
+  esac
 fi
 
 ### Audio
@@ -32,4 +40,9 @@ if [ "${PIPEWIRE_SUPPORT}" = "yes" ]; then
 fi
 
 ### Emulators and Cores
-PKG_DEPENDS_TARGET+=" retroarch pcsx_rearmed-lr gpsp-lr box86 desmume-lr"
+if [ "${EMULATION_DEVICE}" = "yes" ]; then
+  EMUS_32BIT=$(ENABLE_32BIT=true bash -c ". ${ROOT}/packages/virtual/emulators/package.mk; echo \$EMUS_32BIT")
+  PKG_DEPENDS_TARGET+=" retroarch ${EMUS_32BIT}"
+fi
+
+PKG_DEPENDS_TARGET+=" ${ADDITIONAL_PACKAGES}"

@@ -4,7 +4,6 @@ PKG_LICENSE="Apache"
 PKG_SITE="https://github.com/armbian/firmware"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_NEED_UNPACK="${LINUX_DEPENDS}"
 PKG_LONGDESC="esp8089 Linux firmware"
 PKG_TOOLCHAIN="manual"
 

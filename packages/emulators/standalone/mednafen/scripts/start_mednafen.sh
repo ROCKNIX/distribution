@@ -3,6 +3,8 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 . /etc/profile
+. /etc/os-release
+
 set -x
 set_kill set "-9 mednafen"
 
@@ -28,12 +30,17 @@ SHADER=$(get_setting shader "${PLATFORM}" "${GAME}")
 
 #Set the cores to use
 CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
+FEATURES_CMDLINE=""
 if [ "${CORES}" = "little" ]
 then
   EMUPERF="${SLOW_CORES}"
 elif [ "${CORES}" = "big" ]
 then
   EMUPERF="${FAST_CORES}"
+  if [ "${HW_DEVICE}" = "RK3588" ]; then
+    FEATURES_CMDLINE+=" -affinity.emu 0x30 "
+    FEATURES_CMDLINE+=" -ss.affinity.vdp2 0xc0 "
+  fi
 else
   ### All..
   unset EMUPERF
@@ -45,7 +52,6 @@ sed -i "s/filesys.path_savbackup.*/filesys.path_savbackup \/storage\/roms\/${PLA
 sed -i "s/filesys.path_state.*/filesys.path_state \/storage\/roms\/savestates\/${PLATFORM}/g" $MEDNAFEN_HOME/mednafen.cfg
 
 # Get command line switches
-FEATURES_CMDLINE=""
 CORRECT_ASPECT=$(get_setting correct_aspect ${PLATFORM} "${GAME}")
 CR=""
 if [ ! -z "${CORRECT_ASPECT}" ] 

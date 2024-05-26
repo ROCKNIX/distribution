@@ -34,6 +34,11 @@ then
   GAMEPAD="'$(grep -b4 js0 /proc/bus/input/devices | awk 'BEGIN {FS="\""}; /Name/ {printf $2}')'"
   GAMEPADCONFIG=$(xmlstarlet sel -t -c "//inputList/inputConfig[@deviceName=${GAMEPAD}]" -n /storage/.emulationstation/es_input.cfg)
 
+  MAPPING_FILE="/usr/config/yabasanshiro/devices/keymapv2_$(eval echo $GAMEPAD).json"
+  if [ -e "${MAPPING_FILE}" ]; then
+    cp ${MAPPING_FILE} ${CONFIG_DIR}/keymapv2.json
+  fi
+
   if [ ! -z "${GAMEPADCONFIG}" ]
   then
     cat <<EOF >${CONFIG_DIR}/input.cfg

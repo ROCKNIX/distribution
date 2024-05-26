@@ -1,14 +1,14 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="portmaster"
-PKG_VERSION="2024.04.07-0359"
+PKG_VERSION="2024.04.12-1452"
 PKG_SITE="https://github.com/PortsMaster/PortMaster-GUI"
 PKG_URL="${PKG_SITE}/releases/download/${PKG_VERSION}/PortMaster.zip"
-COMPAT_URL="https://github.com/brooksytech/JelosAddOns/raw/main/compat.zip"
+COMPAT_URL="https://github.com/ROCKNIX/packages/raw/main/compat.zip"
 PKG_LICENSE="MIT"
 PKG_ARCH="arm aarch64"
-PKG_DEPENDS_TARGET="toolchain rocknix-hotkey gamecontrollerdb wget oga_controls control-gen"
+PKG_DEPENDS_TARGET="toolchain rocknix-hotkey gamecontrollerdb wget oga_controls control-gen xmlstarlet list-guid"
 PKG_TOOLCHAIN="manual"
 PKG_LONGDESC="Portmaster - a simple tool that allows you to download various game ports"
 

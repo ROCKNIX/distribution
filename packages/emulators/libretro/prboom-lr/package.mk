@@ -29,8 +29,4 @@ PKG_LONGDESC="libretro implementation of Doom"
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
   cp prboom_libretro.so ${INSTALL}/usr/lib/libretro/prboom_libretro.so
-
-  mkdir -p ${INSTALL}/usr/config/idtech
-  cp -rf ${PKG_DIR}/scripts/* ${INSTALL}/usr/config/idtech/
-  chmod 0755 ${INSTALL}/usr/config/idtech/*
 }
