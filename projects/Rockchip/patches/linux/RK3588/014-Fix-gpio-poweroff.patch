@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: John Doe <john.doe@somewhere.on.planet>
+Date: Thu, 18 Apr 2024 20:55:44 +0100
+Subject: Fix gpio-poweroff
+
+Signed-off-by: John Doe <john.doe@somewhere.on.planet>
+---
+ drivers/power/reset/gpio-poweroff.c | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/power/reset/gpio-poweroff.c b/drivers/power/reset/gpio-poweroff.c
+index 1c5af2fef142..3f37897fbeeb 100644
+--- a/drivers/power/reset/gpio-poweroff.c
++++ b/drivers/power/reset/gpio-poweroff.c
+@@ -22,10 +22,11 @@
+  */
+ static struct gpio_desc *reset_gpio;
+ static u32 timeout = DEFAULT_TIMEOUT_MS;
+ static u32 active_delay = 100;
+ static u32 inactive_delay = 100;
++static void (*old_power_off)(void);
+ 
+ static void gpio_poweroff_do_poweroff(void)
+ {
+ 	BUG_ON(!reset_gpio);
+ 
+@@ -41,20 +42,23 @@ static void gpio_poweroff_do_poweroff(void)
+ 	gpiod_set_value_cansleep(reset_gpio, 1);
+ 
+ 	/* give it some time */
+ 	mdelay(timeout);
+ 
++	if (old_power_off)
++		old_power_off();
++
+ 	WARN_ON(1);
+ }
+ 
+ static int gpio_poweroff_probe(struct platform_device *pdev)
+ {
+ 	bool input = false;
+ 	enum gpiod_flags flags;
+ 
+ 	/* If a pm_power_off function has already been added, leave it alone */
+-	if (pm_power_off != NULL) {
++	if (pm_power_off == &gpio_poweroff_do_poweroff) {
+ 		dev_err(&pdev->dev,
+ 			"%s: pm_power_off function already registered\n",
+ 		       __func__);
+ 		return -EBUSY;
+ 	}
+@@ -72,18 +76,19 @@ static int gpio_poweroff_probe(struct platform_device *pdev)
+ 
+ 	reset_gpio = devm_gpiod_get(&pdev->dev, NULL, flags);
+ 	if (IS_ERR(reset_gpio))
+ 		return PTR_ERR(reset_gpio);
+ 
++	old_power_off = pm_power_off;
+ 	pm_power_off = &gpio_poweroff_do_poweroff;
+ 	return 0;
+ }
+ 
+ static int gpio_poweroff_remove(struct platform_device *pdev)
+ {
+ 	if (pm_power_off == &gpio_poweroff_do_poweroff)
+-		pm_power_off = NULL;
++		pm_power_off = old_power_off;
+ 
+ 	return 0;
+ }
+ 
+ static const struct of_device_id of_gpio_poweroff_match[] = {
+-- 
+Created with Armbian build tools https://github.com/armbian/build
+
