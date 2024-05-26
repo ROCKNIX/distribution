@@ -1,0 +1,139 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: John Doe <john.doe@somewhere.on.planet>
+Date: Mon, 15 Apr 2024 16:39:45 +0100
+Subject: Add MAX17055 EZ Config
+
+Signed-off-by: John Doe <john.doe@somewhere.on.planet>
+---
+ drivers/power/supply/max17042_battery.c | 75 +++++++++-
+ 1 file changed, 74 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/power/supply/max17042_battery.c b/drivers/power/supply/max17042_battery.c
+index 76b0f45a20b4..3afb634706c3 100644
+--- a/drivers/power/supply/max17042_battery.c
++++ b/drivers/power/supply/max17042_battery.c
+@@ -885,18 +885,80 @@ static irqreturn_t max17042_thread_handler(int id, void *dev)
+ 
+ static void max17042_init_worker(struct work_struct *work)
+ {
+ 	struct max17042_chip *chip = container_of(work,
+ 				struct max17042_chip, work);
++	struct regmap *map = chip->regmap;
++	u32 data;
+ 	int ret;
+ 
+ 	/* Initialize registers according to values from the platform data */
+ 	if (chip->pdata->enable_por_init && chip->pdata->config_data) {
+ 		ret = max17042_init_chip(chip);
+ 		if (ret)
+ 			return;
+ 	}
++	else {
++		uint16_t design_cap = 5000 * 2; // 5000mAh
++		uint16_t d_qacc = design_cap / 32;
++		uint16_t d_pacc = ((int)d_qacc) * 44138 / design_cap;
++		uint16_t ichgterm = 256 * 160 / 25; // 256mA
++		uint16_t vempty = ((3100 / 10) << 7) | (3880 / 40); // 3.1V
++		u32 hibcfg;
++
++		dev_info(&chip->client->dev,
++			"New config: %d / %d / %d / %d / %d\n",
++			(int)design_cap, (int)d_qacc, (int)d_pacc,
++			(int)ichgterm, (int)vempty);
++
++		// Do not continue until FSTAT.DNR == 0
++		regmap_read(map, MAX17042_FSTAT, &data);
++		while (data & 1) {
++			msleep(10);
++			regmap_read(map, MAX17042_FSTAT, &data);
++		}
++
++		// Store original HibCFG value
++		regmap_read(map, MAX17055_HibCfg, &hibcfg);
++
++		// Exit Hibernate Mode
++		regmap_write(map, MAX17042_VFSOC0Enable, 0x90); // Step 1
++		regmap_write(map, MAX17055_HibCfg, 0x0); // Step 2
++		regmap_write(map, MAX17042_VFSOC0Enable, 0x0); // Step 3
++
++		// EZ Config
++		regmap_write(map, MAX17042_DesignCap, design_cap);
++		regmap_write(map, MAX17042_dQacc, d_qacc);
++		regmap_write(map, MAX17042_ICHGTerm, ichgterm);
++		regmap_write(map, MAX17055_V_empty, vempty);
++		regmap_write(map, MAX17042_dPacc, d_pacc);
++
++		// Write ModelCFG
++		regmap_write(map, MAX17055_ModelCfg, 0x8000);
++
++		// Do not continue until ModelCFG.Refresh == 0
++		regmap_read(map, MAX17055_ModelCfg, &data);
++		while (data & 0x8000) {
++			msleep(10);
++			regmap_read(map, MAX17055_ModelCfg, &data);
++		}
++
++		// Restore Original HibCFG value
++		regmap_write(map, MAX17055_HibCfg, hibcfg);
++
++		// Write and Verify Status with POR bit cleared
++		regmap_read(map, MAX17042_STATUS, &data);
++		regmap_write(map, MAX17042_STATUS, data & (~STATUS_POR_BIT));
++	}
++
++	regmap_read(map, MAX17042_VCELL, &data);
++	dev_info(&chip->client->dev,
++		"Voltage: %d mV\n", (data >> 7) * 10);
++
++	regmap_read(map, MAX17055_V_empty, &data);
++	dev_info(&chip->client->dev,
++		"Vempty: %d mV\n", (data >> 7) * 10);
+ 
+ 	chip->init_complete = 1;
+ }
+ 
+ #ifdef CONFIG_OF
+@@ -1042,10 +1104,11 @@ static int max17042_probe(struct i2c_client *client,
+ 	struct device *dev = &client->dev;
+ 	struct max17042_chip *chip;
+ 	int ret;
+ 	int i;
+ 	u32 val;
++	u32 design_cap;
+ 
+ 	if (!i2c_check_functionality(adapter, I2C_FUNC_SMBUS_WORD_DATA))
+ 		return -EIO;
+ 
+ 	chip = devm_kzalloc(&client->dev, sizeof(*chip), GFP_KERNEL);
+@@ -1134,17 +1197,27 @@ static int max17042_probe(struct i2c_client *client,
+ 	/* Not able to update the charge threshold when exceeded? -> disable */
+ 	if (!client->irq)
+ 		regmap_write(chip->regmap, MAX17042_SALRT_Th, 0xff00);
+ 
+ 	regmap_read(chip->regmap, MAX17042_STATUS, &val);
+-	if (val & STATUS_POR_BIT) {
++	regmap_read(chip->regmap, MAX17042_DesignCap, &design_cap);
++	design_cap /= 2;
++	if ((val & STATUS_POR_BIT) || design_cap != 5000) {
+ 		INIT_WORK(&chip->work, max17042_init_worker);
+ 		ret = devm_add_action(&client->dev, max17042_stop_work, chip);
+ 		if (ret)
+ 			return ret;
+ 		schedule_work(&chip->work);
+ 	} else {
++		regmap_read(chip->regmap, MAX17042_VCELL, &val);
++		dev_info(&chip->client->dev,
++			"Voltage: %d mV\n", (val >> 7) * 10);
++
++		regmap_read(chip->regmap, MAX17055_V_empty, &val);
++		dev_info(&chip->client->dev,
++			"Vempty: %d mV\n", (val >> 7) * 10);
++
+ 		chip->init_complete = 1;
+ 	}
+ 
+ 	return 0;
+ }
+-- 
+Created with Armbian build tools https://github.com/armbian/build
+
