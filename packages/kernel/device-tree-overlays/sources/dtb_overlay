@@ -1,0 +1,154 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
+. /etc/profile.d/001-functions
+UV_CPU_ID="undervolt-cpu"
+UV_GPU_ID="undervolt-gpu"
+CUSTOM_TWEAKS="${UV_CPU_ID} ${UV_GPU_ID}"
+
+get_current_custom_overlay() {
+    fdtoverlaysline=$(grep FDTOVERLAYS /flash/extlinux/extlinux.conf)
+    overlays=${fdtoverlaysline##  FDTOVERLAYS}
+    for ol in $overlays; do
+        match=0
+        for tweak in $CUSTOM_TWEAKS; do
+            if [[ $ol == *"$tweak"* ]]; then
+               match=1
+               break
+            fi
+        done
+        if [ $match = 0 ]; then
+            custom=$ol
+            break
+        fi
+    done
+    if [ $custom ]; then
+        echo $custom | cut -d '/' -f 3
+    else
+        echo "None"
+    fi
+}
+
+get_current_specialized_overlay() {
+    fdtoverlaysline=$(grep FDTOVERLAYS /flash/extlinux/extlinux.conf)
+    overlays=${fdtoverlaysline##  FDTOVERLAYS}
+    for ol in $overlays; do
+        if [[ $ol == *"$1"* ]]; then
+            specialized="${ol} "
+            break
+        fi
+    done
+    if [ $specialized ]; then
+        echo $specialized | cut -d '/' -f 3
+    else
+        echo "None"
+    fi
+
+}
+
+list_custom_overlays() {
+    for ol in /flash/overlays/*.dtb; do
+        for tweak in $CUSTOM_TWEAKS; do
+            if [[ $ol == *"$tweak"* ]]; then
+                ol=""
+        break
+            fi
+        done
+        if [ $ol ]; then
+            echo -n $ol | cut -d '/' -f 4 | tr -d '\n'
+            echo -n " "
+        fi
+    done
+    echo
+}
+
+list_specialized_overlays() {
+    for ol in /flash/overlays/*.dtb; do
+        if [[ $ol == *"$1"* ]]; then
+            echo -n $ol | cut -d '/' -f 4 | tr -d '\n'
+            echo -n " "
+        fi
+    done
+    echo
+}
+
+write_dtb() {
+    PRE=/overlays/
+    CPU=$(get_setting system.${UV_CPU_ID})
+    GPU=$(get_setting system.${UV_GPU_ID})
+    CUSTOM=$(get_setting system.custom_dtb)
+    for dtb in $CPU $GPU $CUSTOM; do
+        if [ ! $dtb = "None" ]; then
+            dtbs+="${PRE}${dtb} "
+        fi
+    done
+    if [ $dtbs ];then
+        mount -o remount,rw /flash
+        if grep --quiet FDTOVERLAYS /flash/extlinux/extlinux.conf; then
+            sed -i "/FDTOVERLAYS/c \ \ FDTOVERLAYS ${dtbs}" /flash/extlinux/extlinux.conf
+        else
+            sed -i "/FDTDIR \//a \ \ FDTOVERLAYS ${dtbs}" /flash/extlinux/extlinux.conf
+        fi
+    fi
+    mount -o remount,ro /flash
+}
+
+case "$1" in
+    "ls")
+        case "$2" in
+            "custom")
+                list_custom_overlays
+                exit 0
+            ;;
+            $UV_CPU_ID|$UV_GPU_ID)
+                list_specialized_overlays $2
+                exit 0
+            ;;
+            *)
+                echo "Unknown arguments: ${1} ${2}"
+                exit 1
+            ;;
+        esac
+    ;;
+    "get")
+        case "$2" in
+            "custom")
+                get_current_custom_overlay
+                exit 0
+            ;;
+            $UV_CPU_ID|$UV_GPU_ID)
+                get_current_specialized_overlay $2
+                exit 0
+            ;;
+            *)
+                echo "Unknown arguments: ${1} ${2}"
+                exit 1
+            ;;
+        esac
+    ;;
+
+   "set")
+        case "$2" in
+            "custom")
+                set_setting system.custom_dtb $3
+                exit 0
+            ;;
+            $UV_CPU_ID|$UV_GPU_ID)
+                set_setting system.$2 $3
+                exit 0
+            ;;
+            *)
+                echo "Unknown arguments: ${1} ${2}"
+                exit 1
+            ;;
+        esac
+    ;;
+    "write")
+        write_dtb
+        exit 0
+    ;;
+    *)
+        echo "Unknown arguments $@"
+        exit 0
+    ;;
+esac
