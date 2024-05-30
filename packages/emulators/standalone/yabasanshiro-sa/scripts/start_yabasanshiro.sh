@@ -52,10 +52,11 @@ fi
 
 BIOS=""
 GAME=$(echo "${1}"| sed "s#^/.*/##")
-USE_BIOS=$(get_setting use_hlebios saturn "${GAME}")
+PLATFORM=$(echo "${2}"| sed "s#^/.*/##")
+USE_BIOS=$(get_setting use_hlebios "${PLATFORM}" "${GAME}")
 if [ ! "${USE_BIOS}" = 1 ]
 then
-  USE_BIOS=$(get_setting use_hlebios saturn)
+  USE_BIOS=$(get_setting use_hlebios "${PLATFORM}")
 fi
 
 if [ "$USE_BIOS" = 1 ]
@@ -77,7 +78,7 @@ then
 fi
 
 #Set the cores to use
-CORES=$(get_setting "cores" "${PLATFORM}" "${ROMNAME##*/}")
+CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
 if [ "${CORES}" = "little" ]
 then
   EMUPERF="${SLOW_CORES}"

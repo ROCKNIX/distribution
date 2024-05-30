@@ -37,8 +37,22 @@ ln -sf /storage/roms/savestates/wii /storage/.config/dolphin-emu/StateSaves
 cp -r /usr/config/dolphin-emu/GFX.ini /storage/.config/dolphin-emu.GFX.ini
 cp -r /usr/config/dolphin-emu/Dolphin.ini /storage/.config/dolphin-emu.Dolphin.ini
 
+#Emulation Station options
+GAME=$(echo "${1}"| sed "s#^/.*/##")
+PLATFORM=$(echo "${2}"| sed "s#^/.*/##")
+AA=$(get_setting anti_aliasing "${PLATFORM}" "${GAME}")
+ASPECT=$(get_setting aspect_ratio "${PLATFORM}" "${GAME}")
+CLOCK=$(get_setting clock_speed "${PLATFORM}" "${GAME}")
+RENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
+IRES=$(get_setting internal_resolution "${PLATFORM}" "${GAME}")
+FPS=$(get_setting show_fps "${PLATFORM}" "${GAME}")
+CON=$(get_setting wii_controller_profile "${PLATFORM}" "${GAME}")
+SHADERM=$(get_setting shader_mode "${PLATFORM}" "${GAME}")
+SHADERP=$(get_setting shader_precompile "${PLATFORM}" "${GAME}")
+VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
+
 #Set the cores to use
-CORES=$(get_setting "cores" "${PLATFORM}" "${ROMNAME##*/}")
+CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
 if [ "${CORES}" = "little" ]
 then
   EMUPERF="${SLOW_CORES}"
@@ -49,19 +63,6 @@ else
   ### All..
   unset EMUPERF
 fi
-
-  #Emulation Station options
-  GAME=$(echo "${1}"| sed "s#^/.*/##")
-  AA=$(get_setting anti_aliasing wii "${GAME}")
-  ASPECT=$(get_setting aspect_ratio wii "${GAME}")
-  CLOCK=$(get_setting clock_speed wii "${GAME}")
-  RENDERER=$(get_setting graphics_backend wii "${GAME}")
-  IRES=$(get_setting internal_resolution wii "${GAME}")
-  FPS=$(get_setting show_fps wii "${GAME}")
-  CON=$(get_setting wii_controller_profile wii "${GAME}")
-  SHADERM=$(get_setting shader_mode wii "${GAME}")
-  SHADERP=$(get_setting shader_precompile wii "${GAME}")
-  VSYNC=$(get_setting vsync wii "${GAME}")
 
   #Anti-Aliasing
 	if [ "$AA" = "0" ]

@@ -28,8 +28,15 @@ if [ ! -d "${CONFIG_DIR}/LocalConfig" ]; then
     mkdir -p "${CONFIG_DIR}/LocalConfig"
 fi
 
+#Emulation Station Features
+GAME=$(echo "${1}"| sed "s#^/.*/##")
+PLATFORM=$(echo "${2}"| sed "s#^/.*/##")
+VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
+RESOLUTION=$(get_setting resolution "${PLATFORM}" "${GAME}")
+ENGINE=$(get_setting rendering_engine "${PLATFORM}" "${GAME}")
+
 #Set the cores to use
-CORES=$(get_setting "cores" "${PLATFORM}" "${ROMNAME##*/}")
+CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
 if [ "${CORES}" = "little" ]
 then
   EMUPERF="${SLOW_CORES}"
@@ -40,12 +47,6 @@ else
   ### All..
   unset EMUPERF
 fi
-
-#Emulation Station Features
-GAME=$(echo "${1}"| sed "s#^/.*/##")
-VSYNC=$(get_setting vsync segamodel3 "${GAME}")
-RESOLUTION=$(get_setting resolution segamodel3 "${GAME}")
-ENGINE=$(get_setting rendering_engine segamodel3 "${GAME}")
 
 OPTIONS=
 

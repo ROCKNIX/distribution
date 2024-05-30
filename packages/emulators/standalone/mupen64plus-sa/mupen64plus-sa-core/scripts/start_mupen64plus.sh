@@ -10,17 +10,18 @@ set_kill set "-9 mupen64plus"
 
 # Emulation Station features
 GAME=$(echo "${1}"| sed "s#^/.*/##")
+PLATFORM=$(echo "${2}"| sed "s#^/.*/##")
 SCREENWIDTH=$(fbwidth)
 SCREENHEIGHT=$(fbheight)
-ASPECT=$(get_setting game_aspect_ratio n64 "${GAME}")
-IRES=$(get_setting internal_resolution n64 "${GAME}")
-RSP=$(get_setting rsp_plugin n64 "${GAME}")
-SIMPLECORE=$(get_setting core_plugin n64 "${GAME}")
-FPS=$(get_setting show_fps n64 "${GAME}")
-PAK=$(get_setting controller_pak n64 "${GAME}")
-CON=$(get_setting input_configuration n64 "${GAME}")
-VPLUGIN=$(get_setting video_plugin n64 "${GAME}")
-CORES=$(get_setting "cores" "${PLATFORM}" "${ROMNAME##*/}")
+ASPECT=$(get_setting game_aspect_ratio "${PLATFORM}" "${GAME}")
+IRES=$(get_setting internal_resolution "${PLATFORM}" "${GAME}")
+RSP=$(get_setting rsp_plugin "${PLATFORM}" "${GAME}")
+SIMPLECORE=$(get_setting core_plugin "${PLATFORM}" "${GAME}")
+FPS=$(get_setting show_fps "${PLATFORM}" "${GAME}")
+PAK=$(get_setting controller_pak "${PLATFORM}" "${GAME}")
+CON=$(get_setting input_configuration "${PLATFORM}" "${GAME}")
+VPLUGIN=$(get_setting video_plugin "${PLATFORM}" "${GAME}")
+CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
 
 # File locations
 SHARE="/usr/local/share/mupen64plus"
