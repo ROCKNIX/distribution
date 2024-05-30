@@ -270,20 +270,20 @@ case ${EMULATOR} in
         RUNTHIS='${RUN_SHELL} "${ROMNAME}"'
       ;;
       "gamecube")
-        RUNTHIS='${RUN_SHELL} /usr/bin/start_dolphin_gc.sh "${ROMNAME}"'
+        RUNTHIS='${RUN_SHELL} /usr/bin/start_dolphin_gc.sh "${ROMNAME}" "${PLATFORM}"'
       ;;
       "wii")
-        RUNTHIS='${RUN_SHELL} /usr/bin/start_dolphin_wii.sh "${ROMNAME}"'
+        RUNTHIS='${RUN_SHELL} /usr/bin/start_dolphin_wii.sh "${ROMNAME}" "${PLATFORM}"'
       ;;
       "ports")
-        RUNTHIS='${RUN_SHELL} "${ROMNAME}"'
+        RUNTHIS='${EMUPERF} ${RUN_SHELL} "${ROMNAME}"'
 	sed -i "/^ACTIVE_GAME=/c\ACTIVE_GAME=\"${ROMNAME}\"" /storage/.config/PortMaster/mapper.txt
       ;;
       "shell")
         RUNTHIS='${RUN_SHELL} "${ROMNAME}"'
       ;;
       *)
-        RUNTHIS='${RUN_SHELL} "start_${CORE%-*}.sh" "${ROMNAME}"'
+        RUNTHIS='${RUN_SHELL} "start_${CORE%-*}.sh" "${ROMNAME}" "${PLATFORM}"'
       ;;
     esac
   ;;
@@ -389,7 +389,7 @@ ${VERBOSE} && log $0 "Set emulation performance mode to (${CPU_GOVERNOR})"
 ${CPU_GOVERNOR}
 
 # If the rom is a shell script just execute it, useful for DOSBOX and ScummVM scan scripts
-if [[ "${ROMNAME}" == *".sh" ]]; then
+if [[ "${ROMNAME}" == *".sh" ]] && [ ! "${PLATFORM}" = "ports" ]; then
         ${VERBOSE} && log $0 "Executing shell script ${ROMNAME}"
         "${ROMNAME}" &>>${OUTPUT_LOG}
         ret_error=$?

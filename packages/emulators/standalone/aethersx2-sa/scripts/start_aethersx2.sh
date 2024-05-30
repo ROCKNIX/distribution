@@ -21,8 +21,20 @@ if [ ! -d "/storage/roms/savestates/ps2" ]; then
     mkdir -p "/storage/roms/savestates/ps2"
 fi
 
+#Emulation Station Features
+GAME=$(echo "${1}"| sed "s#^/.*/##")
+PLATFORM=$(echo "${2}"| sed "s#^/.*/##")
+ASPECT=$(get_setting aspect_ratio "${PLATFORM}" "${GAME}")
+FILTER=$(get_setting bilinear_filtering "${PLATFORM}" "${GAME}")
+FPS=$(get_setting show_fps "${PLATFORM}" "${GAME}")
+RATE=$(get_setting ee_cycle_rate "${PLATFORM}" "${GAME}")
+SKIP=$(get_setting ee_cycle_skip "${PLATFORM}" "${GAME}")
+GRENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
+IRES=$(get_setting internal_resolution "${PLATFORM}" "${GAME}")
+VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
+
 #Set the cores to use
-CORES=$(get_setting "cores" "${PLATFORM}" "${ROMNAME##*/}")
+CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
 if [ "${CORES}" = "little" ]
 then
   EMUPERF="${SLOW_CORES}"
@@ -33,18 +45,6 @@ else
   #All..
   unset EMUPERF
 fi
-
-  #Emulation Station Features
-  GAME=$(echo "${1}"| sed "s#^/.*/##")
-  ASPECT=$(get_setting aspect_ratio ps2 "${GAME}")
-  FILTER=$(get_setting bilinear_filtering ps2 "${GAME}")
-  FPS=$(get_setting show_fps ps2 "${GAME}")
-  RATE=$(get_setting ee_cycle_rate ps2 "${GAME}")
-  SKIP=$(get_setting ee_cycle_skip ps2 "${GAME}")
-  GRENDERER=$(get_setting graphics_backend ps2 "${GAME}")
-  IRES=$(get_setting internal_resolution ps2 "${GAME}")
-  VSYNC=$(get_setting vsync ps2 "${GAME}")
-
 
   #Aspect Ratio
 	if [ "$ASPECT" = "0" ]
