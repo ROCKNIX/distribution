@@ -95,7 +95,9 @@ pre_configure_target() {
   do
     if [ -z "${!key}" ]
     then
-      echo "WARNING: ${!key} not declared, will not build support."
+      echo "WARNING: ${key} not declared, will not build support."
+    else
+      echo "USING: ${key} = ${!key}"
     fi
   done
 
