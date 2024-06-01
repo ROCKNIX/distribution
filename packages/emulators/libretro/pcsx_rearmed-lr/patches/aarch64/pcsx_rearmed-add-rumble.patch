@@ -1,0 +1,62 @@
+diff -rupN pcsx_rearmed-87a0a6318564fc171d0b576da8ea7e629aa229e7.orig/frontend/libretro.c pcsx_rearmed-87a0a6318564fc171d0b576da8ea7e629aa229e7/frontend/libretro.c
+--- pcsx_rearmed-87a0a6318564fc171d0b576da8ea7e629aa229e7.orig/frontend/libretro.c	2024-06-01 22:50:24.814992900 +0000
++++ pcsx_rearmed-87a0a6318564fc171d0b576da8ea7e629aa229e7/frontend/libretro.c	2024-06-01 23:22:15.879885952 +0000
+@@ -10,8 +10,9 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <strings.h>
+-#ifdef __MACH__
+ #include <unistd.h>
++#include <errno.h>
++#ifdef __MACH__
+ #include <sys/syscall.h>
+ #endif
+ 
+@@ -596,6 +597,27 @@ void plat_trigger_vibrate(int pad, int l
+ 
+    if (in_enable_vibration)
+    {
++      FILE *file;
++      int total_strength;
++
++      if (high > 0) {
++         if ((file = fopen("/sys/class/pwm/pwmchip1/pwm0/duty_cycle", "r+"))) {
++            total_strength = 1000000 - (((double)high * 1000000) / 255.0);
++            fprintf(file, "%u", total_strength);
++            fclose(file);
++         }
++      } else if (low > 0){
++         if ((file = fopen("/sys/class/pwm/pwmchip1/pwm0/duty_cycle", "r+"))) {
++            fputs("600000", file);
++            fclose(file);
++         }
++      } else {
++         if ((file = fopen("/sys/class/pwm/pwmchip1/pwm0/duty_cycle", "r+"))) {
++            fputs("1000000", file);
++            fclose(file);
++         }
++      }
++
+       rumble_cb(pad, RETRO_RUMBLE_STRONG, high << 8);
+       rumble_cb(pad, RETRO_RUMBLE_WEAK, low ? 0xffff : 0x0);
+    }
+@@ -2363,8 +2385,18 @@ static void update_variables(bool in_fli
+    {
+       if (strcmp(var.value, "disabled") == 0)
+          in_enable_vibration = 0;
+-      else if (strcmp(var.value, "enabled") == 0)
++      else if (strcmp(var.value, "enabled") == 0) {
+          in_enable_vibration = 1;
++         // Check write access for duty cycle for rk3566
++         char* filepath = "/sys/class/pwm/pwmchip1/pwm0/duty_cycle";
++         int returnval;
++         returnval = access(filepath, F_OK);
++         if (returnval == 0){
++            returnval = access(filepath, W_OK);
++            if (errno == EACCES)
++               system("sudo chmod 777 /sys/class/pwm/pwmchip1/pwm0/duty_cycle &");
++         }
++      }
+    }
+ 
+    var.value = NULL;
