@@ -48,7 +48,7 @@ case "${DEVICE}" in
   RK356*)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 desmume-lr gpsp-lr pcsx_rearmed-lr wine"
     PKG_DEPENDS_TARGET+=" common-shaders glsl-shaders"
-    PKG_EMUS+=" box64 drastic-sa mednafen portmaster scummvmsa yabasanshiro-sa"
+    PKG_EMUS+=" box64 drastic-sa mednafen melonds-sa portmaster scummvmsa yabasanshiro-sa"
     LIBRETRO_CORES+=" flycast-lr geolith-lr uae4arm"
     PKG_RETROARCH+=" retropie-shaders"
   ;;
@@ -707,7 +707,7 @@ makeinstall_target() {
       add_emu_core nds retroarch desmume false
       add_emu_core nds melonds melonds-sa false
     ;;
-    RK3399)
+    RK3399|RK3566)
       add_emu_core nds drastic drastic-sa true
       add_emu_core nds retroarch melonds false
       add_emu_core nds melonds melonds-sa false
@@ -719,7 +719,7 @@ makeinstall_target() {
       add_emu_core nds melonds melonds-sa false
       add_emu_core nds retroarch desmume false
     ;;
-    RK3*)
+    RK3326*)
       add_emu_core nds drastic drastic-sa true
       add_emu_core nds retroarch melonds false
       add_emu_core nds retroarch desmume false
