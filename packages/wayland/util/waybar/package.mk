@@ -24,6 +24,6 @@ post_makeinstall_target() {
 
   # install config
   mkdir -p ${INSTALL}/usr/share/waybar
-    cp ${PKG_DIR}/config/config ${INSTALL}/usr/share/waybar
+    cp ${PKG_DIR}/config/config.jsonc ${INSTALL}/usr/share/waybar
     cp ${PKG_DIR}/config/style.css ${INSTALL}/usr/share/waybar
 }
