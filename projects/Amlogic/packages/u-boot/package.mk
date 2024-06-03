@@ -31,12 +31,7 @@ makeinstall_target() {
 
   for PKG_SUBDEVICE in $SUBDEVICES; do
     unset PKG_UBOOTBIN
-    if [ "${PKG_SUBDEVICE}" = "Odroid_GOU" ]; then
-      PKG_UBOOTBIN=$(get_build_dir u-boot-${PKG_SUBDEVICE})/sd_fuse/u-boot.bin
-      cp -av $(get_build_dir u-boot-${PKG_SUBDEVICE})/tools/odroid_resource/* ${INSTALL}/usr/share/bootloader
-    else
-      PKG_UBOOTBIN=$(get_build_dir u-boot-${PKG_SUBDEVICE})/u-boot.bin
-    fi
+    PKG_UBOOTBIN=$(get_build_dir u-boot-${PKG_SUBDEVICE})/u-boot.bin
     if [ ${PKG_UBOOTBIN} ]; then
       cp -av ${PKG_UBOOTBIN} $INSTALL/usr/share/bootloader/${PKG_SUBDEVICE}_u-boot
     fi
