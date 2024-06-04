@@ -28,3 +28,5 @@ post_makeinstall_target() {
     cp ${PKG_DIR}/config/style.css ${INSTALL}/usr/share/waybar
      cp ${PKG_DIR}/config/globals.png ${INSTALL}/usr/share/waybar
 }
+
+#NRWIP: where would I init??
