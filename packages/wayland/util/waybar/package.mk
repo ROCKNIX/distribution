@@ -16,6 +16,7 @@ PKG_MESON_OPTS_TARGET="-Dexamples=disabled \
 
 pre_configure_target() {
   export TARGET_CFLAGS=$(echo "${TARGET_CFLAGS} -Wno-error=switch")
+  ./getHotkeys.sh > hotkeys.txt
 }
 
 post_makeinstall_target() {
@@ -26,7 +27,7 @@ post_makeinstall_target() {
   mkdir -p ${INSTALL}/usr/share/waybar
     cp ${PKG_DIR}/config/config.jsonc ${INSTALL}/usr/share/waybar
     cp ${PKG_DIR}/config/style.css ${INSTALL}/usr/share/waybar
-     cp ${PKG_DIR}/config/globals.png ${INSTALL}/usr/share/waybar
+    cp ${PKG_DIR}/config/hotkeys.txt ${INSTALL}/usr/share/waybar
 }
 
 #NRWIP: where would I init??
