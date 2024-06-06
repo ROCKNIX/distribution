@@ -45,11 +45,6 @@ if [ -f $BOOT_ROOT/extlinux/extlinux.conf ]; then
     echo "Updating extlinux.conf..."
     cp -p $SYSTEM_ROOT/usr/share/bootloader/extlinux/extlinux.conf $BOOT_ROOT/extlinux
   fi
-  # Restore FDTOVERLAYS
-  if [ "$FDTOVERLAYS" ]; then
-    echo "Restore FDTOVERLAYS..."
-    sed -i "/FDTDIR \//a\ \ ${FDTOVERLAYS}" $BOOT_ROOT/extlinux/extlinux.conf
-  fi
   # Set correct FDT boot dtb for RK3588
   DT_ID=$($SYSTEM_ROOT/usr/bin/dtname)
   if [ -n "${DT_ID}" ]; then
@@ -92,6 +87,11 @@ if [ -f $BOOT_ROOT/extlinux/extlinux.conf ]; then
         sed -i 's/ fbcon=rotate:1//' $BOOT_ROOT/extlinux/extlinux.conf
         ;;
     esac
+  fi
+  # Restore FDTOVERLAYS after FDT, to avoid matching on FDTOVERLAY
+  if [ "$FDTOVERLAYS" ]; then
+    echo "Restore FDTOVERLAYS..."
+    sed -i "/FDT/a\ \ ${FDTOVERLAYS}" $BOOT_ROOT/extlinux/extlinux.conf
   fi
 fi
 
