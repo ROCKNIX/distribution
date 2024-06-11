@@ -25,10 +25,12 @@ post_makeinstall_target() {
 
   # install config
   mkdir -p ${INSTALL}/usr/share/waybar
-  cp ${PKG_DIR}/config/config.jsonc ${INSTALL}/usr/share/waybar
-  cp ${PKG_DIR}/config/style.css ${INSTALL}/usr/share/waybar
+  cp ${PKG_DIR}/config/config.jsonc /storage/.config/waybar
+  cp ${PKG_DIR}/config/style.css /storage/.config/waybar
   cp ${PKG_DIR}/config/*.txt ${INSTALL}/usr/share/waybar
   cp ${PKG_DIR}/scripts/loadHotkeys.sh ${INSTALL}/usr/share/waybar
 }
 
-#NRWIP: where would I init??
+post_install() {
+  enable_service waybar.service
+}
