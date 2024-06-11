@@ -19,11 +19,14 @@ fi
 # mount $BOOT_ROOT rw
 mount -o remount,rw $BOOT_ROOT
 
-for all_dtb in $BOOT_ROOT/*.dtb; do
-  dtb=$(basename $all_dtb)
-  if [ -f $SYSTEM_ROOT/usr/share/bootloader/$dtb ]; then
-    echo "Updating $dtb..."
-    cp -p $SYSTEM_ROOT/usr/share/bootloader/$dtb $BOOT_ROOT
+for dtb in $SYSTEM_ROOT/usr/share/bootloader/*.dtb; do
+  dtb_base=$(basename $dtb)
+  if [ -f $BOOT_ROOT/$dtb_base ]; then
+    echo "Updating $dtb_base..."
+    cp -p $dtb $BOOT_ROOT
+  else
+    echo "Installing $dtb_base..."
+    cp -p $dtb $BOOT_ROOT
   fi
 done
 
