@@ -157,11 +157,11 @@ EOF
 fi
 
 ### Quake 3
-if [[ -f "${GAME_DIR}/quake3/pak0.pak" ]] && [[ ! -f ${SCRIPT_DIR}/Quake\ III.sh ]]; then
+if [[ -f "${GAME_DIR}/quake3/baseq3/pak0.pak" ]] && [[ ! -f ${SCRIPT_DIR}/Quake\ III.sh ]]; then
 cat <<EOF >${SCRIPT_DIR}/Quake\ III.sh
 #!/bin/bash
 
-${RA_BIN} -L ${RA_DIR}/vitaquake3_libretro.so ${GAME_DIR}/quake3/*
+${RA_BIN} -L ${RA_DIR}/vitaquake3_libretro.so ${GAME_DIR}/quake3/baseq3/*
 EOF
 fi
 
