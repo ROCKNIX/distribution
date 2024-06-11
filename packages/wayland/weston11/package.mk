@@ -50,6 +50,7 @@ pre_configure_target() {
 post_makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/weston
     cp ${PKG_DIR}/scripts/weston-config ${INSTALL}/usr/lib/weston
+    cp ${PKG_DIR}/scripts/toggle_waybar.sh ${INSTALL}/usr/lib/weston
 
   mkdir -p ${INSTALL}/usr/share/weston
     cp ${PKG_DIR}/config/*ini ${INSTALL}/usr/share/weston
