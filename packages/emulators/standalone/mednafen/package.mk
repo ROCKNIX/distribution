@@ -9,7 +9,7 @@ PKG_URL="${PKG_SITE}/releases/files/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_TARGET="toolchain SDL2 flac"
 PKG_TOOLCHAIN="configure"
 
-if [ "${DEVICE}" = "S922X*" ]; then
+if [ "${DEVICE}" = "S922X" ]; then
   PKG_DEPENDS_TARGET+=" libegl"
 fi
 
@@ -25,7 +25,7 @@ DISABLED_MODULES+=" --disable-apple2 \
                     --disable-ssfplay"
 
 case ${DEVICE} in
-  RK3326|RK3566|RK3399)
+  RK3326|RK3566*|RK3399)
     DISABLED_MODULES+="   --disable-snes \
 			 --disable-ss \
 			 --disable-psx"

@@ -24,8 +24,17 @@ ln -sfv "/storage/roms/savestates/psx" "/storage/.config/duckstation/savestates"
 #Copy gamecontroller db file from the device.
 cp -rf /storage/.config/SDL-GameControllerDB/gamecontrollerdb.txt /storage/.config/duckstation/@RESOURCE_FOLDER@/gamecontrollerdb.txt
 
+#Emulation Station Features
+GAME=$(echo "${1}"| sed "s#^/.*/##")
+PLATFORM=$(echo "${2}"| sed "s#^/.*/##")
+ASPECT=$(get_setting aspect_ratio "${PLATFORM}" "${GAME}")
+FPS=$(get_setting show_fps "${PLATFORM}" "${GAME}")
+IRES=$(get_setting internal_resolution "${PLATFORM}" "${GAME}")
+RENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
+VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
+
 #Set the cores to use
-CORES=$(get_setting "cores" "${PLATFORM}" "${ROMNAME##*/}")
+CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
 if [ "${CORES}" = "little" ]
 then
   EMUPERF="${SLOW_CORES}"
@@ -36,14 +45,6 @@ else
   ### All..
   unset EMUPERF
 fi
-
-  #Emulation Station Features
-  GAME=$(echo "${1}"| sed "s#^/.*/##")
-  ASPECT=$(get_setting aspect_ratio psx "${GAME}")
-  FPS=$(get_setting show_fps psx "${GAME}")
-  IRES=$(get_setting internal_resolution psx "${GAME}")
-  RENDERER=$(get_setting graphics_backend psx "${GAME}")
-  VSYNC=$(get_setting vsync psx "${GAME}")
 
   #Aspect Ratio
 	if [ "$ASPECT" = "0" ]

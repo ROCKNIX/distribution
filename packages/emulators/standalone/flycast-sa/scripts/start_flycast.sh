@@ -25,8 +25,16 @@ fi
 #Link  .config/flycast to .local
 ln -sf "/storage/roms/bios/dc" "/storage/roms/dreamcast/data"
 
+#Emulation Station Features
+GAME=$(echo "${1}"| sed "s#^/.*/##")
+PLATFORM=$(echo "${2}"| sed "s#^/.*/##")
+ASPECT=$(get_setting aspect_ratio "${PLATFORM}" "${GAME}")
+ASKIP=$(get_setting auto_frame_skip "${PLATFORM}" "${GAME}")
+FPS=$(get_setting show_fps "${PLATFORM}" "${GAME}")
+VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
+
 #Set the cores to use
-CORES=$(get_setting "cores" "${PLATFORM}" "${ROMNAME##*/}")
+CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
 if [ "${CORES}" = "little" ]
 then
   EMUPERF="${SLOW_CORES}"
@@ -37,13 +45,6 @@ else
   ### All..
   unset EMUPERF
 fi
-
-  #Emulation Station Features
-  GAME=$(echo "${1}"| sed "s#^/.*/##")
-  ASPECT=$(get_setting aspect_ratio dreamcast "${GAME}")
-  ASKIP=$(get_setting auto_frame_skip dreamcast "${GAME}")
-  FPS=$(get_setting show_fps dreamcast "${GAME}")
-  VSYNC=$(get_setting vsync dreamcast "${GAME}")
 
   #AspectRatio
         if [ "$ASPECT" = "4/3" ]

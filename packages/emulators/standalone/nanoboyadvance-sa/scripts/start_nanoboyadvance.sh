@@ -23,7 +23,9 @@ if [ ! -f "/storage/roms/bios/gba/gba_bios.bin" ]; then
 fi
 
 #Set the cores to use
-CORES=$(get_setting "cores" "${PLATFORM}" "${ROMNAME##*/}")
+GAME=$(echo "${1}"| sed "s#^/.*/##")
+PLATFORM=$(echo "${2}"| sed "s#^/.*/##")
+CORES=$(get_setting "cores" ${PLATFORM}" "${GAME}")
 if [ "${CORES}" = "little" ]
 then
   EMUPERF="${SLOW_CORES}"

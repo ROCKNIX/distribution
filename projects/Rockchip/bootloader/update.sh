@@ -19,20 +19,35 @@ fi
 # mount $BOOT_ROOT rw
 mount -o remount,rw $BOOT_ROOT
 
-for all_dtb in $BOOT_ROOT/*.dtb; do
-  dtb=$(basename $all_dtb)
-  if [ -f $SYSTEM_ROOT/usr/share/bootloader/$dtb ]; then
-    echo "Updating $dtb..."
-    cp -p $SYSTEM_ROOT/usr/share/bootloader/$dtb $BOOT_ROOT
+for dtb in $SYSTEM_ROOT/usr/share/bootloader/*.dtb; do
+  dtb_base=$(basename $dtb)
+  if [ -f $BOOT_ROOT/$dtb_base ]; then
+    echo "Updating $dtb_base..."
+    cp -p $dtb $BOOT_ROOT
+  else
+    echo "Installing $dtb_base..."
+    cp -p $dtb $BOOT_ROOT
   fi
 done
 
+if [ -d $SYSTEM_ROOT/usr/share/bootloader/overlays ]; then
+  mkdir -p $BOOT_ROOT/overlays
+  for dtb in $SYSTEM_ROOT/usr/share/bootloader/overlays/*.dtb; do
+    echo "Copying $(basename $dtb)..."
+    cp -p $dtb $BOOT_ROOT/overlays
+  done
+fi
+
 if [ -f $BOOT_ROOT/extlinux/extlinux.conf ]; then
+  # Store away FDTOVERLAYS if existing
+  if grep -q FDTOVERLAYS $BOOT_ROOT/extlinux/extlinux.conf; then
+    echo "Backup FDTOVERLAYS..."
+    FDTOVERLAYS=$(grep FDTOVERLAYS $BOOT_ROOT/extlinux/extlinux.conf | awk '{$1=$1};1')
+  fi
   if [ -f $SYSTEM_ROOT/usr/share/bootloader/extlinux/extlinux.conf ]; then
     echo "Updating extlinux.conf..."
     cp -p $SYSTEM_ROOT/usr/share/bootloader/extlinux/extlinux.conf $BOOT_ROOT/extlinux
   fi
-
   # Set correct FDT boot dtb for RK3588
   DT_ID=$($SYSTEM_ROOT/usr/bin/dtname)
   if [ -n "${DT_ID}" ]; then
@@ -75,6 +90,11 @@ if [ -f $BOOT_ROOT/extlinux/extlinux.conf ]; then
         sed -i 's/ fbcon=rotate:1//' $BOOT_ROOT/extlinux/extlinux.conf
         ;;
     esac
+  fi
+  # Restore FDTOVERLAYS after FDT, to avoid matching on FDTOVERLAY
+  if [ "$FDTOVERLAYS" ]; then
+    echo "Restore FDTOVERLAYS..."
+    sed -i "/FDT/a\ \ ${FDTOVERLAYS}" $BOOT_ROOT/extlinux/extlinux.conf
   fi
 fi
 

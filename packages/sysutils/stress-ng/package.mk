@@ -3,7 +3,7 @@
 # Copyright (C) 2024 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="stress-ng"
-PKG_VERSION="2f22ad595f067aa940cfe4f64107e10872c2f7b5"   # V0.17.04
+PKG_VERSION="b7c7a5877501679a3b0a67d877e6274a801d1e4e"   # V0.17.08
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/ColinIanKing/stress-ng"
 PKG_URL="${PKG_SITE}.git"

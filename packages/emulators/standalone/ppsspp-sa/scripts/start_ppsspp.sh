@@ -13,8 +13,18 @@ then
   cp -rf ${SOURCE_DIR} ${CONF_DIR}
 fi
 
+#Emulation Station Features
+GAME=$(echo "${1}"| sed "s#^/.*/##")
+PLATFORM=$(echo "${2}"| sed "s#^/.*/##")
+FSKIP=$(get_setting frame_skip "${PLATFORM}" "${GAME}")
+FPS=$(get_setting show_fps "${PLATFORM}" "${GAME}")
+IRES=$(get_setting internal_resolution "${PLATFORM}" "${GAME}")
+GRENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
+SKIPB=$(get_setting skip_buffer_effects "${PLATFORM}" "${GAME}")
+VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
+
 #Set the cores to use
-CORES=$(get_setting "cores" "${PLATFORM}" "${ROMNAME##*/}")
+CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
 if [ "${CORES}" = "little" ]
 then
   EMUPERF="${SLOW_CORES}"
@@ -25,15 +35,6 @@ else
   ### All..
   unset EMUPERF
 fi
-
-  #Emulation Station Features
-  GAME=$(echo "${1}"| sed "s#^/.*/##")
-  FSKIP=$(get_setting frame_skip psp "${GAME}")
-  FPS=$(get_setting show_fps psp "${GAME}")
-  IRES=$(get_setting internal_resolution psp "${GAME}")
-  GRENDERER=$(get_setting graphics_backend psp "${GAME}")
-  SKIPB=$(get_setting skip_buffer_effects psp "${GAME}")
-  VSYNC=$(get_setting vsync psp "${GAME}")
 
   #Frame Skip
         if [ "${FSKIP}" = "0" ]

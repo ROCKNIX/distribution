@@ -12,10 +12,15 @@ case ${DEVICE} in
   S922X)
     PKG_VERSION="1.21.0"
     PKG_SHA256="6dc64d7fc16837a693a51cfdb2e568db538bfdc9f457d4656285bb9594ef11ac"
+    PKG_PATCH_DIRS+=" legacy"
   ;;
-  *)
+  RK3588)
     PKG_VERSION="1.22.0"
     PKG_SHA256="1540af1ea698a471c2d8e9d288332c7e0fd360c8f1d12936ebb7e7cbc2425842"
+  ;;
+  *)
+    PKG_VERSION="1.23.0"
+    PKG_SHA256="05b3e1574d3e67626b5974f862f36b5b427c7ceeb965cb36a4e6c2d342e45ab2"
   ;;
 esac
 

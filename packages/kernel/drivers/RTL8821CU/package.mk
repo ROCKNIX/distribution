@@ -5,15 +5,12 @@
 
 PKG_NAME="RTL8821CU"
 PKG_VERSION="3eacc28b721950b51b0249508cc31e6e54988a0c"
-PKG_ARCH="aarch64 x86_64"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/morrownr/8821cu-20210916"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain linux kernel-firmware"
-PKG_NEED_UNPACK="${LINUX_DEPENDS}"
 PKG_LONGDESC="Realtek 8821CU driver for 4.4-5.x"
-PKG_IS_KERNEL_PKG="yes"
 PKG_TOOLCHAIN="make"
+PKG_IS_KERNEL_PKG="yes"
 
 pre_make_target() {
   unset LDFLAGS

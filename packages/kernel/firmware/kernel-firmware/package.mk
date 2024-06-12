@@ -8,7 +8,6 @@ PKG_SITE="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmwar
 PKG_URL="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/snapshot/linux-firmware-${PKG_VERSION}.tar.gz"
 PKG_NEED_UNPACK="${PROJECT_DIR}/${PROJECT}/packages/${PKG_NAME} ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/packages/${PKG_NAME}"
 PKG_LONGDESC="kernel-firmware: kernel related firmware"
-PKG_DEPENDS_HOST=""
 PKG_TOOLCHAIN="manual"
 
 configure_package() {

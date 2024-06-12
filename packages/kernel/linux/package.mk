@@ -34,7 +34,7 @@ case ${DEVICE} in
     PKG_URL="https://git.sr.ht/~tokyovigilante/linux/archive/${PKG_VERSION}.tar.gz"
     ;;
   *)
-    PKG_VERSION="6.9"
+    PKG_VERSION="6.9.3"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     PKG_PATCH_DIRS+=" mainline"
     ;;
@@ -65,6 +65,15 @@ fi
 for pkg in $(get_pkg_variable initramfs PKG_DEPENDS_TARGET); do
   ! listcontains "${PKG_DEPENDS_TARGET}" "${pkg}" && PKG_DEPENDS_TARGET+=" ${pkg}" || true
 done
+
+if [ "${DEVICE}" = "RK3326" ]; then
+  PKG_DEPENDS_UNPACK+=" generic-dsi"
+
+  post_unpack() {
+    cp -v $(get_pkg_directory generic-dsi)/sources/panel-generic-dsi.c ${PKG_BUILD}/drivers/gpu/drm/panel/
+    echo "obj-y" += panel-generic-dsi.o >> ${PKG_BUILD}/drivers/gpu/drm/panel/Makefile
+  }
+fi
 
 post_patch() {
   # linux was already built and its build dir autoremoved - prepare it again for kernel packages
