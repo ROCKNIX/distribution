@@ -19,7 +19,7 @@
 ################################################################################
 
 PKG_NAME="px68k-lr"
-PKG_VERSION="4c7542e34df71e3ebab77b5867901747d58dbb38"
+PKG_VERSION="8bdae0a389fb471f02154dce74afaed726d5ae79"
 PKG_LICENSE="Unknown"
 PKG_SITE="https://github.com/libretro/px68k-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
