@@ -34,5 +34,5 @@ for url in "${urls[@]}"; do
     content=$(echo "$html" | xmlstarlet fo --html --recover --nocdata 2>/dev/null | xmlstarlet sel -t -m '//tr' -v 'normalize-space(td[1])' -o ' ' -v 'normalize-space(td[2])' -n)
 
     # Create a txt file with the extracted content
-    echo "$content" > "${url//\//_}.txt"
+    echo "$content" >"${url//\//_}.txt"
 done
