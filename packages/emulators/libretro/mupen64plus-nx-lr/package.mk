@@ -22,6 +22,12 @@ if [ "${OPENGLES_SUPPORT}" = yes ]; then
 fi
 
 pre_configure_target() {
+  export CFLAGS="${CFLAGS} -DHAVE_UNISTD_H -Wno-error=incompatible-pointer-types"
+  if [ "${ARCH}" = "aarch64" ]; then
+    # This is only needed for armv8.2-a targets where we don't use this flag
+    # as it prohibits the use of LSE-instructions, this is a package bug most likely
+    export CXXFLAGS="${CXXFLAGS} -mno-outline-atomics"
+  fi
   for SOURCE in ${PKG_BUILD}/mupen64plus-rsp-paraLLEl/rsp_disasm.cpp ${PKG_BUILD}/mupen64plus-rsp-paraLLEl/rsp_disasm.hpp
   do
     sed -i '/include <string>/a #include <cstdint>' ${SOURCE}
@@ -31,6 +37,9 @@ pre_configure_target() {
   case ${DEVICE} in
     RK3*|S922X)
       PKG_MAKE_OPTS_TARGET=" platform=${DEVICE}"
+    ;;
+    H700)
+      PKG_MAKE_OPTS_TARGET=" platform=RK3326"
     ;;
   esac
 }

@@ -91,10 +91,10 @@ get_devices
         get_devices
         ;;
         (${L2_RELEASED_EVENT})
-	swaymsg fullscreen disable
+        swaymsg floating enable
         ;;
         (${R2_RELEASED_EVENT})
-        swaymsg fullscreen disable
+        swaymsg floating enable
         ;;
     esac
 done

@@ -40,10 +40,20 @@ if [ "${OPENGLES_SUPPORT}" = yes ]; then
 fi
 
 pre_configure_target() {
+  export CFLAGS="${CFLAGS} -Wno-implicit-function-declaration"
+  if [ "${ARCH}" = "aarch64" ]; then
+    # This is only needed for armv8.2-a targets where we don't use this flag
+    # as it prohibits the use of LSE-instructions, this is a package bug most likely
+    export CFLAGS="${CFLAGS} -mno-outline-atomics"
+    export CXXFLAGS="${CXXFLAGS} -mno-outline-atomics"
+  fi
   sed -i 's/\-O[23]/-Ofast -ffast-math/' ${PKG_BUILD}/yabause/src/libretro/Makefile
   case ${DEVICE} in
     RK3*|S922X)
       PKG_MAKE_OPTS_TARGET+=" -C yabause/src/libretro platform=rockpro64 HAVE_NEON=0 FORCE_GLES=1"
+    ;;
+    H700)
+      PKG_MAKE_OPTS_TARGET+=" -C yabause/src/libretro platform=arm64_cortex_a53_gles3 HAVE_NEON=0 FORCE_GLES=1"
     ;;
     AMD64)
       PKG_MAKE_OPTS_TARGET+=" -C yabause/src/libretro FORCE_GLES=0 USE_X86_DRC=1 FASTMATH=1"

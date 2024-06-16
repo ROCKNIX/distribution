@@ -19,13 +19,12 @@ case ${DEVICE} in
     PKG_URL="${PKG_SITE}/rk3588-uboot/archive/${PKG_VERSION}.tar.gz"
     ;;
   RK3566*)
-    PKG_URL="https://github.com/u-boot/u-boot.git"
-    PKG_VERSION="9cba29b19f43f9450117e8bc89e7dda691ed5ab5"
-    PKG_GIT_CLONE_BRANCH="master"
+    PKG_VERSION="v2024.07"
+    PKG_URL="https://github.com/u-boot/u-boot/archive/${PKG_VERSION}.tar.gz"
     ;;
   RK3399)
     PKG_DEPENDS_TARGET+=" atf openssl:host"
-    PKG_VERSION="2024.04"
+    PKG_VERSION="2024.07"
     PKG_URL="https://ftp.denx.de/pub/u-boot/${PKG_NAME}-${PKG_VERSION}.tar.bz2"
     ;;
   RK3326)

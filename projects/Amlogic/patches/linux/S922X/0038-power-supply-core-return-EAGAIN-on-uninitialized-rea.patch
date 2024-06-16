@@ -1,0 +1,53 @@
+From a00da4418b4bd71b809c0ebdd7d1b53f54f11421 Mon Sep 17 00:00:00 2001
+From: Neil Armstrong <neil.armstrong@linaro.org>
+Date: Thu, 4 Jul 2024 10:52:08 +0200
+Subject: [PATCH 38/38] power: supply: core: return -EAGAIN on uninitialized
+ read temp
+
+If the thermal core tries to update the temperature from an
+uninitialized power supply, it will swawn the following warning:
+thermal thermal_zoneXX: failed to read out thermal zone (-19)
+
+But reading from an uninitialized power supply should not be
+considered as a fatal error, but the thermal core expects
+the -EAGAIN error to be returned in this particular case.
+
+So convert -ENODEV as -EAGAIN to express the fact that reading
+temperature from an uninitialized power supply shouldn't be
+a fatal error, but should indicate to the thermal zone it should
+retry later.
+
+It notably removes such messages on Qualcomm platforms using the
+qcom_battmgr driver spawning warnings until the aDSP firmware
+gets up and the battery manager reports valid data.
+
+Link: https://lore.kernel.org/all/2ed4c630-204a-4f80-a37f-f2ca838eb455@linaro.org/
+Fixes: 5bc28b93a36e ("power_supply: power_supply_read_temp only if use_cnt > 0")
+Fixes: 3be330bf8860 ("power_supply: Register battery as a thermal zone")
+Signed-off-by: Neil Armstrong <neil.armstrong@linaro.org>
+---
+ drivers/power/supply/power_supply_core.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/power/supply/power_supply_core.c b/drivers/power/supply/power_supply_core.c
+index fefe938c9342..88f0b20183ac 100644
+--- a/drivers/power/supply/power_supply_core.c
++++ b/drivers/power/supply/power_supply_core.c
+@@ -1287,8 +1287,13 @@ static int power_supply_read_temp(struct thermal_zone_device *tzd,
+ 	WARN_ON(tzd == NULL);
+ 	psy = thermal_zone_device_priv(tzd);
+ 	ret = power_supply_get_property(psy, POWER_SUPPLY_PROP_TEMP, &val);
++	/*
++	 * The thermal core expects -EAGAIN as non-fatal error,
++	 * convert -ENODEV as -EAGAIN since -ENODEV is returned
++	 * when a power supply device isn't initialized
++	 */
+ 	if (ret)
+-		return ret;
++		return ret == -ENODEV ? -EAGAIN : ret;
+ 
+ 	/* Convert tenths of degree Celsius to milli degree Celsius. */
+ 	*temp = val.intval * 100;
+-- 
+2.34.1
+

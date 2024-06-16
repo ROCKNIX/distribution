@@ -2,7 +2,7 @@
 # Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="ecwolf-lr"
-PKG_VERSION="18eca17c2d634b154824e0782c6cbbe0a2c9ea76"
+PKG_VERSION="71ec64cf98ba0a2a94e2fede560f1b435761b36d"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/ecwolf"
 PKG_URL="${PKG_SITE}.git"
@@ -17,6 +17,10 @@ elif [ "${OPENGLES_SUPPORT}" = "yes" ]; then
 fi
 
 PKG_MAKE_OPTS_TARGET="-C src/libretro"
+
+pre_configure_target() {
+	CXXFLAGS="${CXXFLAGS} -Wno-error=int-conversion"
+}
 
 pre_make_target() {
   cd ${PKG_BUILD}

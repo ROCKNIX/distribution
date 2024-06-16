@@ -12,7 +12,7 @@ PKG_LONGDESC="NanoBoyAdvance is a cycle-accurate Game Boy Advance emulator."
 PKG_TOOLCHAIN="cmake"
 PKG_PATCH_DIRS+="${DEVICE}"
 
-if [ "${OPENGL_SUPPORT}" = "yes" ]; then
+if [ "${OPENGL_SUPPORT}" = "yes" ] && [ ! "${PREFER_GLES}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
 elif [ "${OPENGLES_SUPPORT}" = yes ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGLES}"

@@ -32,4 +32,5 @@ makeinstall_target() {
   chmod 0777 ${INSTALL}/usr/bin/*
   mkdir -p ${INSTALL}/usr/config/openbor  
   cp ${PKG_DIR}/config/master.cfg ${INSTALL}/usr/config/openbor/master.cfg
+  cp ${PKG_DIR}/config/openbor.gptk ${INSTALL}/usr/config/openbor/openbor.gptk
 } 

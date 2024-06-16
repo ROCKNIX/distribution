@@ -22,14 +22,14 @@ case ${DEVICE} in
 	    PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
     else
       #Using upstream dev for panfrost
-	    PKG_VERSION="e2f13e7d41812eaf4a14bc46eeb978878eb478f4"
+	    PKG_VERSION="332252966bac19edcb1fe76642673ff71074b8a6"
 	    PKG_SITE="https://gitlab.freedesktop.org/mesa/mesa"
 	    PKG_URL="${PKG_SITE}.git"
 	    PKG_PATCH_DIRS+=" panfrost"
     fi
   ;;
   *)
-	PKG_VERSION="24.0.7"
+	PKG_VERSION="24.1.3"
 	PKG_SITE="http://www.mesa3d.org/"
 	PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
   ;;
@@ -41,7 +41,6 @@ PKG_MESON_OPTS_TARGET=" ${MESA_LIBS_PATH_OPTS} \
                        -Dgallium-drivers=${GALLIUM_DRIVERS// /,} \
                        -Dgallium-extra-hud=false \
                        -Dgallium-omx=disabled \
-                       -Dgallium-nine=true \
                        -Dgallium-opencl=disabled \
                        -Dgallium-xa=disabled \
                        -Dshader-cache=enabled \
@@ -60,12 +59,14 @@ if [ "${DISPLAYSERVER}" = "x11" ]; then
   export X11_INCLUDES=
   PKG_MESON_OPTS_TARGET+="	-Dplatforms=x11 \
 				-Ddri3=enabled \
+				-Dgallium-nine=true \
 				-Dglx=dri \
 				-Dglvnd=true"
 elif [ "${DISPLAYSERVER}" = "wl" ]; then
   PKG_DEPENDS_TARGET+=" wayland wayland-protocols libglvnd glfw"
   PKG_MESON_OPTS_TARGET+=" 	-Dplatforms=wayland,x11 \
 				-Ddri3=enabled \
+				-Dgallium-nine=true \
 				-Dglx=dri \
 				-Dglvnd=true"
   PKG_DEPENDS_TARGET+=" xorgproto libXext libXdamage libXfixes libXxf86vm libxcb libX11 libxshmfence libXrandr libglvnd"
@@ -73,6 +74,7 @@ elif [ "${DISPLAYSERVER}" = "wl" ]; then
 else
   PKG_MESON_OPTS_TARGET+="	-Dplatforms="" \
 				-Ddri3=disabled \
+				-Dgallium-nine=false \
 				-Dglx=disabled \
 				-Dglvnd=false"
 fi

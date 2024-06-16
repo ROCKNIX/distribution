@@ -99,12 +99,15 @@ fi
   export QT_QPA_PLATFORM=wayland
   @PANFROST@
   @HOTKEY@
+  @LIBMALI@
 
 #Run MelonDS emulator
 	if [ "$SUI" = "1" ]
 	then
+                $GPTOKEYB "melonDS" -c "/storage/.config/melonDS/melonDS.gptk" &
 		/usr/bin/melonDS
 	else
 		$GPTOKEYB "melonDS" -c "/storage/.config/melonDS/melonDS.gptk" &
 		/usr/bin/melonDS -f "${1}"
 	fi
+                kill -9 "$(pidof gptokeyb)"

@@ -48,7 +48,7 @@ else
   unset EMUPERF
 fi
 
-OPTIONS=
+OPTIONS=" -fullscreen"
 
 #VSYNC
 if [ "$VSYNC" = "true" ]
@@ -71,7 +71,7 @@ fi
 #RESOLUTION
 if [ "$RESOLUTION" = "0" ]
 then
-  OPTIONS+=" -res=1920,1080 -fullscreen"
+  OPTIONS+=" -res=1920,1080"
 elif [ "$RESOLUTION" = "1" ]
 then
   OPTIONS+=" -res=496,384"
@@ -81,5 +81,5 @@ then
 fi
 
 cd ${CONFIG_DIR}
-echo "Command: supermodel "${1}" ${OPTIONS}" >/var/log/exec.log 2>&1
-${EMUPERF} supermodel "${1}" ${OPTIONS} >>/var/log/exec.log 2>&1 ||:
+echo "Command: supermodel ${1} ${OPTIONS}" >/var/log/exec.log 2>&1
+${EMUPERF} supermodel "${1}" "${OPTIONS}" >>/var/log/exec.log 2>&1 ||:
