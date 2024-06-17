@@ -16,7 +16,7 @@ PKG_MESON_OPTS_TARGET="-Dexamples=disabled \
 
 pre_configure_target() {
   export TARGET_CFLAGS=$(echo "${TARGET_CFLAGS} -Wno-error=switch")
-  ./getHotkeys.sh > hotkeys.txt
+  ./getHotkeys.sh
 }
 
 post_makeinstall_target() {
