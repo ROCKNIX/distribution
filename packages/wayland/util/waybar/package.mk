@@ -3,20 +3,19 @@
 
 PKG_NAME="waybar"
 PKG_VERSION="0.9.9"
-PKG_SHA256="3b6f72d0c09a4a05a36b3e9b8a29f5a5d6c1d7ba50d80b9c654a0b71515e4c8f"
+PKG_SHA256="23a94538538f43a6db4c1c5f7e09e75ab743ded1ccfc737e1f3e0971fe4cdd87"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/Alexays/Waybar"
 PKG_URL="https://github.com/Alexays/Waybar/archive/refs/tags/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain jsoncpp gtk3 libsigcpp libinput libxkbcommon pixman pango cairo glib"
+PKG_DEPENDS_TARGET="toolchain jsoncpp gtk3 libsigcpp libinput libxkbcommon pixman pango cairo glib libfmt spdlog gtkmm"
 PKG_LONGDESC="Waybar is a highly customizable Wayland bar for Sway and other Wlroots-based compositors."
 
-PKG_MESON_OPTS_TARGET="-Dexamples=disabled \
-                       -Dman-pages=disabled \
+PKG_MESON_OPTS_TARGET="-Dman-pages=disabled \
                        -Dtests=disabled"
 
 pre_configure_target() {
   export TARGET_CFLAGS=$(echo "${TARGET_CFLAGS} -Wno-error=switch")
-  ./getHotkeys.sh
+  ${PKG_DIR}/scripts/getHotkeys.sh
 }
 
 post_makeinstall_target() {
