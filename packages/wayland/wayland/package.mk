@@ -5,7 +5,7 @@ PKG_NAME="wayland"
 PKG_LICENSE="OSS"
 PKG_SITE="https://wayland.freedesktop.org/"
 PKG_DEPENDS_HOST="libffi:host expat:host libxml2:host"
-PKG_DEPENDS_TARGET="toolchain wayland:host libffi expat libxml2 waybar"
+PKG_DEPENDS_TARGET="toolchain wayland:host libffi expat libxml2"
 PKG_LONGDESC="a display server protocol"
 
 case ${DEVICE} in
