@@ -3,7 +3,7 @@
 
 PKG_NAME="libsigcpp"
 PKG_VERSION="3.4.0"
-PKG_SHA256="1f5874358ed17e2c5d8aa7a2b19d61172caba2e4e8e383eccb8f0d7d87550a09"
+PKG_SHA256="445d889079041b41b368ee3b923b7c71ae10a54da03bc746f2d0723e28ba2291"
 PKG_LICENSE="LGPL"
 PKG_SITE="https://libsigcplusplus.github.io/libsigcplusplus/"
 PKG_URL="https://github.com/libsigcplusplus/libsigcplusplus/archive/refs/tags/${PKG_VERSION}.tar.gz"
