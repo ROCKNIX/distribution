@@ -10,4 +10,4 @@ PKG_URL="https://www.cairographics.org/releases/cairomm-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="cairomm is the official C++ interface for Cairo."
 
-PKG_MESON_OPTS_TARGET="-Dbuild-tests=false"
+PKG_MESON_OPTS_TARGET="-Dbuild-tests=false -Dbuild-examples=false -Dbuild-documentation=false -Dmaintainer-mode=false -Dmsvc14x-parallel-installable=false"

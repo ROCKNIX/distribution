@@ -10,3 +10,5 @@ PKG_SITE="https://www.gtkmm.org/"
 PKG_URL="https://download.gnome.org/sources/glibmm/${PKG_VERSION%.*}/glibmm-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="glibmm is the official C++ interface for glib."
+
+PKG_MESON_OPTS_TARGET="-Dbuild-examples=false -Dbuild-documentation=false -Dmaintainer-mode=false -Dmsvc14x-parallel-installable=false"
