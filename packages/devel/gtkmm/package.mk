@@ -7,7 +7,7 @@ PKG_SHA256="30d5bfe404571ce566a8e938c8bac17576420eb508f1e257837da63f14ad44ce"
 PKG_LICENSE="LGPL-2.1-or-later"
 PKG_SITE="https://www.gtkmm.org/"
 PKG_URL="https://download.gnome.org/sources/gtkmm/${PKG_VERSION%.*}/gtkmm-${PKG_VERSION}.tar.xz"
-PKG_DEPENDS_TARGET="toolchain cairomm-1.0 glibmm-2.4"
+PKG_DEPENDS_TARGET="toolchain cairomm glibmm gtk3 pangomm atkmm"
 PKG_LONGDESC="gtkmm is the official C++ interface for the popular GUI library GTK."
 
 PKG_MESON_OPTS_TARGET="-Dbuild-tests=false -Dbuild-demos=false -Dbuild-x11-api=false -Dmaintainer-mode=false -Dmsvc14x-parallel-installable=false"
