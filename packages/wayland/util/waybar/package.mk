@@ -7,7 +7,7 @@ PKG_SHA256="50a9ae85d3dcfef04e4bc4e0f3470f187964e4466c156e5558850cea84a3df5c"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/Alexays/Waybar"
 PKG_URL="https://github.com/Alexays/Waybar/archive/refs/tags/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain jsoncpp gtk3 libsigcpp libinput libxkbcommon pixman pango cairo glib libfmt spdlog gtkmm libnl pipewire pulseaudio wireplumber"
+PKG_DEPENDS_TARGET="toolchain jsoncpp gtk3 libsigcpp libinput libxkbcommon pixman pango cairo glib libfmt spdlog gtkmm libnl pipewire pulseaudio wireplumber gtk-layer-shell"
 PKG_LONGDESC="Waybar is a highly customizable Wayland bar for Sway and other Wlroots-based compositors."
 
 PKG_MESON_OPTS_TARGET="-Dman-pages=disabled \
