@@ -5,8 +5,8 @@
 #Check if waybar exists in .config
 if [ ! -d "/storage/.config/waybar" ]; then
     mkdir -p "/storage/.config/waybar"
-    cp /usr/share/waybar/config.jsonc /storage/.config/waybar/config.jsonc
-    cp /usr/share/waybar/style.css /storage/.config/waybar/style.css
+    cp /etc/xdg/waybar/config.jsonc /storage/.config/waybar/config.jsonc
+    cp /etc/xdg/waybar/style.css /storage/.config/waybar/style.css
 fi
 
 ### setup is the same

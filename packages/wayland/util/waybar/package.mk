@@ -18,9 +18,9 @@ pre_configure_target() {
 }
 
 post_makeinstall_target() {
-  mkdir -p ${INSTALL}/usr/share/waybar
-  cp ${PKG_DIR}/config/config.jsonc ${INSTALL}/usr/share/waybar # copy to /storage/.config/waybar on first run
-  cp ${PKG_DIR}/config/style.css ${INSTALL}/usr/share/waybar # copy to /storage/.config/waybar on first run
+  mkdir -p ${INSTALL}/etc/xdg/waybar
+  cp ${PKG_DIR}/config/config.jsonc ${INSTALL}/etc/xdg/waybar
+  cp ${PKG_DIR}/config/style.css ${INSTALL}/etc/xdg/waybar
 }
 
 post_install() {
