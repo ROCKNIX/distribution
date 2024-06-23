@@ -4,11 +4,11 @@
 # Copyright (C) 2023-present JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="xwayland"
-PKG_VERSION="7439e9c6c59219335fe35629a90f4fdd49912bcf"
+PKG_VERSION="1126d55f80fb681747d27180f480bb207f50e751"
 PKG_LICENSE="OSS"
 PKG_SITE="https://gitlab.freedesktop.org/xorg/xserver"
 PKG_URL="${PKG_SITE}.git"
-PKG_GIT_CLONE_BRANCH="xwayland-23.2"
+PKG_GIT_CLONE_BRANCH="xwayland-24.1"
 PKG_DEPENDS_TARGET="toolchain util-macros font-util xorgproto libpciaccess libX11 libXfont2 libXinerama libxcvt libxshmfence libxkbfile libdrm openssl freetype pixman systemd xorg-launch-helper wayland libglvnd"
 PKG_NEED_UNPACK="$(get_pkg_directory xf86-video-nvidia) $(get_pkg_directory xf86-video-nvidia-legacy)"
 PKG_LONGDESC="X.Org Server is the free and open-source implementation of the X Window System display server."
@@ -35,7 +35,7 @@ PKG_MESON_OPTS_TARGET+=" -Dxvfb=false \
                        -Dxf86bigfont=false \
                        -Dscreensaver=false \
                        -Dxres=true \
-                       -Dxace=false \
+                       -Dxace=true \
                        -Dxselinux=false \
                        -Dxinerama=true \
                        -Dxcsecurity=false \
