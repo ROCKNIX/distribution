@@ -20,5 +20,6 @@ makeinstall_target() {
   then
     cat ${PKG_DIR}/config/gamecontrollerdb.txt >${INSTALL}/usr/config/SDL-GameControllerDB/gamecontrollerdb.txt
   fi
+  sed -i '/RetroGame Joypad/d' ${PKG_BUILD}/gamecontrollerdb.txt
   cat ${PKG_BUILD}/gamecontrollerdb.txt >>${INSTALL}/usr/config/SDL-GameControllerDB/gamecontrollerdb.txt
 }
