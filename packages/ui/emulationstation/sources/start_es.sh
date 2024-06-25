@@ -2,13 +2,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
 
-#Check if waybar exists in .config
-if [ ! -d "/storage/.config/waybar" ]; then
-    mkdir -p "/storage/.config/waybar"
-    cp /etc/xdg/waybar/config.jsonc /storage/.config/waybar/config.jsonc
-    cp /etc/xdg/waybar/style.css /storage/.config/waybar/style.css
-fi
-
 ### setup is the same
 . $(dirname $0)/es_settings
 
