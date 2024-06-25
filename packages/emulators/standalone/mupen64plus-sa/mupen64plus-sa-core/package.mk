@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+VULKAN=0# SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2019-present Shanti Gilbert (https://github.com/shantigilbert)
 # Copyright (C) 2023 Nicholas Ricciuti (rishooty@gmail.com)
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
@@ -13,6 +13,13 @@ PKG_DEPENDS_TARGET="toolchain boost libpng SDL2 SDL2_net zlib freetype nasm:host
 PKG_LONGDESC="mupen64plus"
 PKG_LONGDESC="Mupen64Plus Standalone"
 PKG_TOOLCHAIN="manual"
+
+if [ "${VULKAN_SUPPORT}" = "yes" ]; then
+  PKG_DEPENDS_TARGET+=" vulkan-loader vulkan-headers"
+  export VULKAN=1
+else
+  export VULKAN=0
+fi
 
 case ${DEVICE} in
   AMD64)
