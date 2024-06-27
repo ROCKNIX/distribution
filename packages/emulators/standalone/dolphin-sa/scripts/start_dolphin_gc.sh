@@ -6,20 +6,20 @@
 . /etc/profile
 set_kill set "-9 dolphin-emu-nogui"
 
+# Load gptokeyb support files
+control-gen_init.sh
+source /storage/.config/gptokeyb/control.ini
+get_controls
+
 #Check if dolphin-emu exists in .config
 if [ ! -d "/storage/.config/dolphin-emu" ]; then
     mkdir -p "/storage/.config/dolphin-emu"
         cp -r "/usr/config/dolphin-emu" "/storage/.config/"
 fi
 
-#Check if GC controller profile exists in .config/dolphin-emu
-if [ ! -f "/storage/.config/dolphin-emu/GCPadNew.ini" ]; then
-	cp -r /usr/config/dolphin-emu/GCPadNew.ini.south /storage/.config/dolphin-emu/GCPadNew.ini
-fi
-
 #Check if GC custom controller profile exists in .config/dolphin-emu
-if [ ! -f "/storage/.config/dolphin-emu/Custom_GCPadNew.ini" ]; then
-        cp -r "/usr/config/dolphin-emu/GCPadNew.ini.south" "/storage/.config/dolphin-emu/Custom_GCPadNew.ini"
+if [ ! -f "/storage/.config/dolphin-emu/GCPadNew.ini.custom" ]; then
+        cp -r "/usr/config/dolphin-emu/GCPadNew.ini.south" "/storage/.config/dolphin-emu/GCPadNew.ini.custom"
 fi
 
 #Link Save States to /roms/savestates
@@ -44,6 +44,7 @@ RENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
 IRES=$(get_setting internal_resolution "${PLATFORM}" "${GAME}")
 FPS=$(get_setting show_fps "${PLATFORM}" "${GAME}")
 CON=$(get_setting gamecube_controller_profile "${PLATFORM}" "${GAME}")
+HKEY=$(get_setting hotkey_enable_button "${PLATFORM}" "${GAME}")
 SHADERM=$(get_setting shader_mode "${PLATFORM}" "${GAME}")
 SHADERP=$(get_setting shader_precompile "${PLATFORM}" "${GAME}")
 VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
@@ -219,14 +220,22 @@ fi
         if [ "$CON" = "south" ]
         then
                 cp -r /usr/config/dolphin-emu/GCPadNew.ini.south /storage/.config/dolphin-emu/GCPadNew.ini
-        fi
-        if [ "$CON" = "west" ]
+        elif [ "$CON" = "west" ]
         then
                 cp -r /usr/config/dolphin-emu/GCPadNew.ini.west /storage/.config/dolphin-emu/GCPadNew.ini
-        fi
-        if [ "$CON" = "custom" ]
+        elif [ "$CON" = "custom" ]
         then
-                cp -r /storage/.config/dolphin-emu/Custom_GCPadNew.ini /storage/.config/dolphin-emu/GCPadNew.ini
+                cp -r /storage/.config/dolphin-emu/GCPadNew.ini.custom /storage/.config/dolphin-emu/GCPadNew.ini
+        else
+		cp -r /usr/config/dolphin-emu/GCPadNew.ini.south /storage/.config/dolphin-emu/GCPadNew.ini
+        fi
+
+  #GC Controller Hotkey Enable
+        if [ "$HKEY" = "mode" ]
+        then
+                sed -i '/^Buttons\/Hotkey =/c\Buttons\/Hotkey = Button 8' /storage/.config/dolphin-emu/GCPadNew.ini
+        else
+                sed -i '/^Buttons\/Hotkey =/c\Buttons\/Hotkey = Button 6' /storage/.config/dolphin-emu/GCPadNew.ini
         fi
 
   #VSYNC
@@ -246,4 +255,6 @@ ln -sf /storage/.config/dolphin-emu /storage/.local/share/dolphin-emu
 @LIBMALI@
 
 #Run Dolphin emulator
-${EMUPERF} /usr/bin/dolphin-emu-nogui -p @DOLPHIN_PLATFORM@ -a HLE -e "${1}"
+  ${GPTOKEYB} dolphin-emu-nogui xbox360 &
+  ${EMUPERF} /usr/bin/dolphin-emu-nogui -p @DOLPHIN_PLATFORM@ -a HLE -e "${1}"
+  kill -9 "$(pidof gptokeyb)"

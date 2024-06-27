@@ -45,11 +45,11 @@ case "${DEVICE}" in
     LIBRETRO_CORES+=" beetle-psx-lr bsnes-lr bsnes-hd-lr dolphin-lr geolith-lr flycast-lr pcsx_rearmed-lr uae4arm"
     PKG_RETROARCH+=" retropie-shaders"
   ;;
-  RK356*)
+  RK3566*)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 desmume-lr gpsp-lr pcsx_rearmed-lr wine"
     PKG_DEPENDS_TARGET+=" common-shaders glsl-shaders"
-    PKG_EMUS+=" box64 drastic-sa mednafen melonds-sa portmaster scummvmsa yabasanshiro-sa"
-    LIBRETRO_CORES+=" flycast-lr geolith-lr uae4arm"
+    PKG_EMUS+=" box64 dolphin-sa drastic-sa mednafen melonds-sa portmaster scummvmsa yabasanshiro-sa"
+    LIBRETRO_CORES+=" dolphin-lr flycast-lr geolith-lr uae4arm"
     PKG_RETROARCH+=" retropie-shaders"
   ;;
   S922X)
@@ -490,7 +490,7 @@ makeinstall_target() {
       add_emu_core gamecube retroarch dolphin false
       add_es_system gamecube
     ;;
-    S922X|RK3399|RK3588*)
+    S922X|RK3399|RK35*)
       add_emu_core gamecube dolphin dolphin-sa-gc true
       add_emu_core gamecube retroarch dolphin false
       add_es_system gamecube
@@ -504,7 +504,7 @@ makeinstall_target() {
       add_emu_core wii retroarch dolphin false
       add_es_system wii
     ;;
-    S922X|RK3399|RK3588*)
+    S922X|RK3399|RK35*)
       add_emu_core wii dolphin dolphin-sa-wii true
       add_emu_core wii retroarch dolphin false
       add_es_system wii
