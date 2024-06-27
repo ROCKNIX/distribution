@@ -243,5 +243,7 @@ fi
 rm -rf /storage/.local/share/dolphin-emu
 ln -sf /storage/.config/dolphin-emu /storage/.local/share/dolphin-emu
 
+@LIBMALI@
+
 #Run Dolphin emulator
 ${EMUPERF} /usr/bin/dolphin-emu-nogui -p @DOLPHIN_PLATFORM@ -a HLE -e "${1}"
