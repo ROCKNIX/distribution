@@ -10,6 +10,10 @@ PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="This is a Daphne core"
 PKG_TOOLCHAIN="make"
 
+pre_configure_target() {
+	export CFLAGS="${CFLAGS} -Wno-use-after-free -Wno-unused-function -Wno-maybe-uninitialized -Wno-unused-variable -Wno-implicit-function-declaration -Wno-builtin-declaration-mismatch -Wno-unknown-pragmas -Wno-pointer-to-int-cast -Wno-pedantic -Wno-error=incompatible-pointer-types"
+}
+
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
   cp daphne_libretro.so ${INSTALL}/usr/lib/libretro/

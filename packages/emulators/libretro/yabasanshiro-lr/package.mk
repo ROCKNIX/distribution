@@ -40,6 +40,7 @@ if [ "${OPENGLES_SUPPORT}" = yes ]; then
 fi
 
 pre_configure_target() {
+export CFLAGS="${CFLAGS} -Wno-implicit-function-declaration"
   sed -i 's/\-O[23]/-Ofast -ffast-math/' ${PKG_BUILD}/yabause/src/libretro/Makefile
   case ${DEVICE} in
     RK3*|S922X)

@@ -54,7 +54,8 @@ pre_make_target() {
 }
 
 pre_configure_target() {
-
+  export CFLAGS="-O3 -Wno-implicit-function-declaration -Wno-implicit-int -Wno-declaration-after-statement"
+  export CXXFLAGS="-O3"
   PKG_CMAKE_OPTS_TARGET="${PKG_BUILD}/yabause "
 
   if [ ! "${OPENGL}" = "no" ]; then
@@ -86,6 +87,8 @@ pre_configure_target() {
   PKG_CMAKE_OPTS_TARGET+=" -DOPENGL_INCLUDE_DIR=${SYSROOT_PREFIX}/usr/include \
                            -DOPENGL_opengl_LIBRARY=${SYSROOT_PREFIX}/usr/lib \
                            -DOPENGL_glx_LIBRARY=${SYSROOT_PREFIX}/usr/lib \
+				           -DCMAKE_CXX_FLAGS="${CXXFLAGS}" \
+				           -DCMAKE_C_FLAGS="${CFLAGS}" \
                            -DLIBPNG_LIB_DIR=${SYSROOT_PREFIX}/usr/lib \
                            -Dpng_STATIC_LIBRARIES=${SYSROOT_PREFIX}/usr/lib/libpng16.so \
                            -DCMAKE_BUILD_TYPE=Release"
