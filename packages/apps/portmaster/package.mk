@@ -20,6 +20,7 @@ makeinstall_target() {
   export STRIP=true
   mkdir -p ${INSTALL}/usr/config/PortMaster
   cp ${PKG_DIR}/sources/* ${INSTALL}/usr/config/PortMaster/
+  chmod +x ${INSTALL}/usr/config/PortMaster/*
 
   mkdir -p ${INSTALL}/usr/bin
   cp -rf ${PKG_DIR}/scripts/* ${INSTALL}/usr/bin
