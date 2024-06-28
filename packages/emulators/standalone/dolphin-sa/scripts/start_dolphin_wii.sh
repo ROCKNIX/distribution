@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 . /etc/profile
 set_kill set "-9 dolphin-emu-nogui"
@@ -17,13 +17,23 @@ if [ ! -d "/storage/.config/dolphin-emu" ]; then
         cp -r "/usr/config/dolphin-emu" "/storage/.config/"
 fi
 
+#Check if GC controller dir exists in .config/dolphin-emu/GamecubeControllerProfiles
+if [ ! -d "/storage/.config/dolphin-emu/GamecubeControllerProfiles" ]; then
+        cp -r "/usr/config/dolphin-emu/GamecubeControllerProfiles" "/storage/.config/dolphin-emu/"
+fi
+
+#Check if Wii controller dir exists in .config/dolphin-emu/WiiControllerProfiles
+if [ ! -d "/storage/.config/dolphin-emu/WiiControllerProfiles" ]; then
+        cp -r "/usr/config/dolphin-emu/WiiControllerProfiles" "/storage/.config/dolphin-emu/"
+fi
+
 #Check if Wii custom controller profile exists in .config/dolphin-emu
-if [ ! -f "/storage/.config/dolphin-emu/WiimoteNew.ini.custom" ]; then
-        cp -r "/usr/config/dolphin-emu/WiiControllerProfiles/vremote.ini" "/storage/.config/dolphin-emu/WiimoteNew.ini.custom"
+if [ ! -f "/storage/.config/dolphin-emu/WiiControllerProfiles/custom.ini" ]; then
+        cp -r "/storage/.config/dolphin-emu/WiiControllerProfiles/vremote.ini" "/storage/.config/dolphin-emu/WiiControllerProfiles/custom.ini"
 fi
 
 #Gamecube controller profile needed for hotkeys to work
-cp -r "/usr/config/dolphin-emu/GCPadNew.ini.south" "/storage/.config/dolphin-emu/GCPadNew.ini"
+cp -r "/storage/.config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.south" "/storage/.config/dolphin-emu/GCPadNew.ini"
 
 #Link Save States to /roms/savestates/wii
 if [ ! -d "/storage/roms/savestates/wii/" ]; then
@@ -222,21 +232,21 @@ fi
   #Wii Controller Profile
         if [ "$CON" = "vremote" ]
         then
-		cp -r /usr/config/dolphin-emu/WiiControllerProfiles/vremote.ini /storage/.config/dolphin-emu/WiimoteNew.ini
+		cp -r /storage/.config/dolphin-emu/WiiControllerProfiles/vremote.ini /storage/.config/dolphin-emu/WiimoteNew.ini
         elif [ "$CON" = "hremote" ]
         then
-                cp -r /usr/config/dolphin-emu/WiiControllerProfiles/hremote.ini /storage/.config/dolphin-emu/WiimoteNew.ini
+                cp -r /storage/.config/dolphin-emu/WiiControllerProfiles/hremote.ini /storage/.config/dolphin-emu/WiimoteNew.ini
         elif [ "$CON" = "nunchuck" ]
         then
-                cp -r /usr/config/dolphin-emu/WiiControllerProfiles/nunchuck.ini /storage/.config/dolphin-emu/WiimoteNew.ini
+                cp -r /storage/.config/dolphin-emu/WiiControllerProfiles/nunchuck.ini /storage/.config/dolphin-emu/WiimoteNew.ini
         elif [ "$CON" = "classic" ]
         then
-                cp -r /usr/config/dolphin-emu/WiiControllerProfiles/classic.ini /storage/.config/dolphin-emu/WiimoteNew.ini
+                cp -r /storage/.config/dolphin-emu/WiiControllerProfiles/classic.ini /storage/.config/dolphin-emu/WiimoteNew.ini
         elif [ "$CON" = "custom" ]
         then
-                cp -r /storage/.config/dolphin-emu/WiimoteNew.ini.custom /storage/.config/dolphin-emu/WiimoteNew.ini
+                cp -r /storage/.config/dolphin-emu/WiiControllerProfiles/custom.ini /storage/.config/dolphin-emu/WiimoteNew.ini
         else
-                cp -r /usr/config/dolphin-emu/WiiControllerProfiles/classic.ini /storage/.config/dolphin-emu/WiimoteNew.ini
+                cp -r /storage/.config/dolphin-emu/WiiControllerProfiles/classic.ini /storage/.config/dolphin-emu/WiimoteNew.ini
         fi
 
   #Wii Controller Hotkey Enable

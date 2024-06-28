@@ -83,9 +83,9 @@ makeinstall_target() {
 
 post_install() {
     case ${DEVICE} in
-      RK35*)
+      RK3588)
         DOLPHIN_PLATFORM="\${PLATFORM}"
-        LIBMALI="if [ ! -z 'lsmod | grep panfrost' ]; then LD_LIBRARY_PATH='\/usr\/lib\/libmali-valhall-g610-g13p0-x11-gbm.so' PLATFORM='wayland'; else PLATFORM=x11; fi"
+        LIBMALI="if [ ! -z 'lsmod | grep panfrost' ]; then LD_LIBRARY_PATH='\/usr\/lib\/libmali-valhall-g610-g13p0-x11-gbm.so' PLATFORM='wayland'; else PLATFORM='x11'; fi"
       ;;
       *)
         DOLPHIN_PLATFORM="wayland"

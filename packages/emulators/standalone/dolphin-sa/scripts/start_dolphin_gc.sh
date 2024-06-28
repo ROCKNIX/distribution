@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 . /etc/profile
 set_kill set "-9 dolphin-emu-nogui"
@@ -17,9 +17,14 @@ if [ ! -d "/storage/.config/dolphin-emu" ]; then
         cp -r "/usr/config/dolphin-emu" "/storage/.config/"
 fi
 
-#Check if GC custom controller profile exists in .config/dolphin-emu
-if [ ! -f "/storage/.config/dolphin-emu/GCPadNew.ini.custom" ]; then
-        cp -r "/usr/config/dolphin-emu/GCPadNew.ini.south" "/storage/.config/dolphin-emu/GCPadNew.ini.custom"
+#Check if GC controller dir exists in .config/dolphin-emu/GamecubeControllerProfiles
+if [ ! -d "/storage/.config/dolphin-emu/GamecubeControllerProfiles" ]; then
+        cp -r "/usr/config/dolphin-emu/GamecubeControllerProfiles" "/storage/.config/dolphin-emu/"
+fi
+
+#Check if GC custom controller profile exists in .config/dolphin-emu/GamecubeControllerProfiles
+if [ ! -f "/storage/.config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.custom" ]; then
+        cp -r "/usr/config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.south" "/storage/.config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.custom"
 fi
 
 #Link Save States to /roms/savestates
@@ -219,15 +224,15 @@ fi
   #GC Controller Profile
         if [ "$CON" = "south" ]
         then
-                cp -r /usr/config/dolphin-emu/GCPadNew.ini.south /storage/.config/dolphin-emu/GCPadNew.ini
+                cp -r /storage/.config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.south /storage/.config/dolphin-emu/GCPadNew.ini
         elif [ "$CON" = "west" ]
         then
-                cp -r /usr/config/dolphin-emu/GCPadNew.ini.west /storage/.config/dolphin-emu/GCPadNew.ini
+                cp -r /storage/.config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.west /storage/.config/dolphin-emu/GCPadNew.ini
         elif [ "$CON" = "custom" ]
         then
-                cp -r /storage/.config/dolphin-emu/GCPadNew.ini.custom /storage/.config/dolphin-emu/GCPadNew.ini
+                cp -r /storage/.config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.custom /storage/.config/dolphin-emu/GCPadNew.ini
         else
-		cp -r /usr/config/dolphin-emu/GCPadNew.ini.south /storage/.config/dolphin-emu/GCPadNew.ini
+		cp -r /storage/.config/dolphin-emu/GamecubeControllerProfiles/dolphin-emu/GCPadNew.ini.south /storage/.config/dolphin-emu/GCPadNew.ini
         fi
 
   #GC Controller Hotkey Enable

@@ -36,7 +36,7 @@ case "${DEVICE}" in
   RK3588*)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 desmume-lr gpsp-lr pcsx_rearmed-lr wine"
     PKG_EMUS+=" aethersx2-sa box64 dolphin-sa drastic-sa mednafen melonds-sa portmaster scummvmsa supermodel-sa yabasanshiro-sa"
-    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr geolith-lr pcsx_rearmed-lr uae4arm"
+    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr flycast-lr geolith-lr pcsx_rearmed-lr uae4arm"
     PKG_RETROARCH+=" retropie-shaders"
   ;;
   RK3399)
@@ -207,11 +207,7 @@ makeinstall_target() {
 
   ## Sammy Atomiswave
   case ${DEVICE} in
-    RK3588*)
-      add_emu_core atomiswave retroarch flycast2021 true
-      add_emu_core atomiswave flycast flycast-sa false
-    ;;
-    RK3566*)
+    RK35*)
       add_emu_core atomiswave retroarch flycast2021 true
       add_emu_core atomiswave retroarch flycast false
       add_emu_core atomiswave flycast flycast-sa false
@@ -310,11 +306,7 @@ makeinstall_target() {
 
   ### Sega Dreamcast
   case ${DEVICE} in
-    RK3588*)
-      add_emu_core dreamcast retroarch flycast2021 true
-      add_emu_core dreamcast flycast flycast-sa false
-    ;;
-    RK3566*)
+    RK35*)
       add_emu_core dreamcast retroarch flycast2021 true
       add_emu_core dreamcast retroarch flycast false
       add_emu_core dreamcast flycast flycast-sa false
@@ -626,11 +618,7 @@ makeinstall_target() {
 
   ### Sega Naomi
   case ${DEVICE} in
-    RK3588*)
-      add_emu_core naomi retroarch flycast2021 true
-      add_emu_core naomi flycast flycast-sa false
-    ;;
-    RK3566*)
+    RK35*)
       add_emu_core naomi retroarch flycast2021 true
       add_emu_core naomi retroarch flycast false
       add_emu_core naomi flycast flycast-sa false
