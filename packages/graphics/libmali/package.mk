@@ -8,10 +8,11 @@ PKG_VERSION="v1.9-1-b9619b9"
 PKG_LICENSE="nonfree"
 PKG_SITE="https://github.com/tsukumijima/libmali-rockchip"
 # zip format makes extract very fast (<1s). tgz takes 20 seconds to scan the whole file
-PKG_URL="https://github.com/tsukumijima/libmali-rockchip/archive/refs/tags/${PKG_VERSION}.zip"
+PKG_URL="${PKG_SITE}/archive/refs/tags/${PKG_VERSION}.zip"
 PKG_DEPENDS_TARGET="toolchain libdrm patchelf:host"
 PKG_LONGDESC="OpenGL ES user-space binary for the ARM Mali GPU family"
 PKG_TOOLCHAIN="meson"
+PKG_PATCH_DIRS+=" ${DEVICE}"
 
 # patchelf is incompatible with strip, but is needed to ensure apps call wrapped functions
 PKG_BUILD_FLAGS="-strip"
@@ -60,4 +61,9 @@ post_makeinstall_target() {
 
   mkdir -p "${INSTALL}/usr/bin/"
   cp -v "${PKG_BUILD}/bin/gpudriver" "${INSTALL}/usr/bin/"
+
+  #x11 lib needed for some applications on the RK3588
+  if [ ${DEVICE} = "RK3588" ] && [ ${TARGET_ARCH} = "arch64" ]; then
+      curl -Lo ${INSTALL}/usr/lib/libmali-valhall-g610-g13p0-x11-gbm.so ${PKG_SITE}/raw/master/lib/aarch64-linux-gnu/libmali-valhall-g610-g13p0-x11-gbm.so
+  fi
 }

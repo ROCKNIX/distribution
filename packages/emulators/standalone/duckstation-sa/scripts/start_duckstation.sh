@@ -9,7 +9,17 @@ set_kill set "-9 duckstation-nogui"
 #Copy config folder to .config/duckstation
 if [ ! -d "/storage/.config/duckstation" ]; then
     mkdir -p "/storage/.config/duckstation"
-        cp -r "/usr/config/duckstation" "/storage/.config/"
+    cp -r "/usr/config/duckstation" "/storage/.config/"
+fi
+
+if [ ! -d "/storage/.config/duckstation/resources" ]; then
+    cp -r /usr/config/duckstation/resources /storage/.config/duckstation/
+    rm /storage/.config/duckstation/resources/gamecontrollerdb.txt
+    ln -s /usr/config/SDL-GameControllerDB/gamecontrollerdb.txt /storage/.config/duckstation/resources/gamecontrollerdb.txt
+fi
+
+if [ ! -f "/storage/.config/duckstation/settings.ini" ]; then
+   cp /usr/config/duckstation/settings.ini /storage/.config/duckstation/settings.ini
 fi
 
 #Link savestates to roms/savestates
@@ -21,8 +31,6 @@ if [ -d "/storage/.config/duckstation/savestates" ]; then
 fi
 ln -sfv "/storage/roms/savestates/psx" "/storage/.config/duckstation/savestates"
 
-#Copy gamecontroller db file from the device.
-cp -rf /storage/.config/SDL-GameControllerDB/gamecontrollerdb.txt /storage/.config/duckstation/@RESOURCE_FOLDER@/gamecontrollerdb.txt
 
 #Emulation Station Features
 GAME=$(echo "${1}"| sed "s#^/.*/##")
