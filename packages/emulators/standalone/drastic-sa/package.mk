@@ -40,18 +40,28 @@ post_install() {
         fi
         
         HOTKEY=""
+        SDL=""
       ;;
       RK3588)
         LIBEGL=""
         HOTKEY="export HOTKEY="guide""
+        SDL=""
+      ;;
+      RK3566)
+        LIBEGL=""
+        HOTKEY=""
+        SDL="export LD_LIBRARY_PATH=\/usr\/config\/drastic\/libSDL2-2.0.so.0"
       ;;
       *)
         LIBEGL=""
         HOTKEY=""
+        SDL=""
       ;;
     esac
     sed -e "s/@LIBEGL@/${LIBEGL}/g" \
         -i ${INSTALL}/usr/bin/start_drastic.sh
     sed -e "s/@HOTKEY@/${HOTKEY}/g" \
+        -i ${INSTALL}/usr/bin/start_drastic.sh
+    sed -e "s/@SDL@/${SDL}/g" \
         -i ${INSTALL}/usr/bin/start_drastic.sh
 }
