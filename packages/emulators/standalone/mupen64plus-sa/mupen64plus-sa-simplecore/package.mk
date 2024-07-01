@@ -4,7 +4,7 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="mupen64plus-sa-simplecore"
-PKG_VERSION="6867e510d03ce91e67baf54116c1447033d12066"
+PKG_VERSION="5340dafcc0f5e8284057ab931dd5c66222d3d49e"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/simple64/mupen64plus-core"
 PKG_URL="https://github.com/simple64/mupen64plus-core/archive/${PKG_VERSION}.tar.gz"
@@ -14,20 +14,21 @@ PKG_LONGDESC="Simple64's core"
 PKG_TOOLCHAIN="manual"
 PKG_GIT_CLONE_BRANCH="simple64"
 
-if [ "${OPENGLES_SUPPORT}" = yes ]; then
-  PKG_DEPENDS_TARGET+=" ${OPENGLES}"
-fi
-
-if [ ! "${OPENGL}" = "no" ]; then
-  PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
-  export GLES="USE_GLES=0"
-fi
+case ${DEVICE} in
+  AMD64)
+    PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
+    export USE_GLES=0
+  ;;
+  *)
+    PKG_DEPENDS_TARGET+=" ${OPENGLES}"
+    export USE_GLES=1
+  ;;
+esac
 
 make_target() {
   case ${ARCH} in
     arm|aarch64)
       export HOST_CPU=aarch64
-      sed -i 's/x86-64-v3/armv8-a/g' ${PKG_BUILD}/CMakeLists.txt
       ARM="-DARM=1"
     ;;
     x86_64)
@@ -41,17 +42,15 @@ make_target() {
   export SDL_CFLAGS="-I${SYSROOT_PREFIX}/usr/include/SDL2 -pthread -D_REENTRANT"
   export SDL_LDLIBS="-lSDL2_net -lSDL2"
   export CROSS_COMPILE="${TARGET_PREFIX}"
-  cd ${PKG_BUILD}
-  sed -i 's~<SDL_net.h>~<SDL2/SDL_net.h>~g' src/main/netplay.c
-  rm -rf build
-  mkdir build
-  cd build
-  cmake -G Ninja ${ARM} -DCMAKE_FIND_ROOT_PATH="${SYSROOT_PREFIX}" -DCMAKE_BUILD_TYPE="Release" ..
-  VERBOSE=1 cmake --build .
+
+  sed -i 's/\-O[23]/-Ofast/' ${PKG_BUILD}/projects/unix/Makefile
+
+  make -C projects/unix clean
+  make -C projects/unix all ${PKG_MAKE_OPTS_TARGET}
 }
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/local/lib
-  cp ${PKG_BUILD}/build/libmupen64plus.so ${INSTALL}/usr/local/lib/libsimple64.so.2
+  cp ${PKG_BUILD}/projects/unix/libsimple64.so.2.0.0 ${INSTALL}/usr/local/lib/libsimple64.so.2
   chmod 644 ${INSTALL}/usr/local/lib/libsimple64.so.2
 }
