@@ -65,6 +65,7 @@ if [ -z "${BTN_HOTKEY_C_MODIFIER}" ]; then
   BTN_HOTKEY_C_MODIFIER="BTN_START"
 fi
 
+FN_A_PRESS_TIME=0
 HOTKEY_A_PRESSED=false
 HOTKEY_B_PRESSED=false
 HOTKEY_C_PRESSED=false
@@ -113,8 +114,6 @@ FN_B_ACTION_DOWN="$(get_setting key.function.b.down)"
 FN_AB_ACTION_UP="$(get_setting key.function.ab.up)"
 FN_AB_ACTION_DOWN="$(get_setting key.function.ab.down)"
 
-FN_A_VOLUME_DOWN_ACTION="$(get_setting key.function.volume.down)"
-
 ### Set sane defaults to manage volume, brightness, wireless on/off, and led on/off.
 if [ -z "${FN_A_ACTION_UP}" ]; then
   FN_A_ACTION_UP="brightness up"
@@ -138,14 +137,6 @@ fi
 
 if [ -z "${FN_AB_ACTION_DOWN}" ]; then
   FN_AB_ACTION_DOWN="wifictl disable"
-fi
-
-if [ -z "${FN_A_VOLUME_DOWN_ACTION}" ]; then
-  if [ "${WINDOWMANAGER}" = "sway" ]; then
-    FN_A_VOLUME_DOWN_ACTION="exec pkill -SIGUSR1 '^waybar$'"
-  else
-    FN_A_VOLUME_DOWN_ACTION="/usr/lib/weston/toggle_waybar.sh"
-  fi
 fi
 
 ### Simple functions to execute button actions, including global kill.
@@ -268,9 +259,29 @@ mkcontroller 2>/dev/null || :
     if [[ "${line}" =~ ${PRESS} ]]; then
       ${DEBUG} && log $0 "${FUNCTION_MODIFIER_A_EVENT}: Pressed"
       FN_A_PRESSED=true
+      FN_A_PRESS_TIME=$(date +%s)
     elif [[ "${line}" =~ ${RELEASE} ]]; then
       ${DEBUG} && log $0 "${FUNCTION_MODIFIER_A_EVENT}: Released"
+      CURRENT_TIME=$(date +%s)
+      PRESS_DURATION=$((CURRENT_TIME - FN_A_PRESS_TIME))
+
+      if [ ${PRESS_DURATION} -ge 3 ]; then
+        ${DEBUG} && log $0 "Function A held for 3 seconds or more"
+        if [ "${WINDOWMANAGER}" = "sway" ]; then
+          exec pkill -SIGUSR1 '^waybar$'
+        else
+          /usr/lib/weston/toggle_waybar.sh
+        fi
+      else
+        ${DEBUG} && log $0 "Function A pressed for less than 3 seconds"
+        # Perform default Function A action here
+        if [ -n "${FN_A_ACTION_UP}" ]; then
+          ${FN_A_ACTION_UP}
+        fi
+      fi
+
       FN_A_PRESSED=false
+      FN_A_PRESS_TIME=0
     fi
     ;;
   ${FUNCTION_MODIFIER_B_EVENT})
@@ -286,12 +297,7 @@ mkcontroller 2>/dev/null || :
     execute_action up
     ;;
   ${FUNCTION_VOLUME_DOWN_EVENT})
-    if [ "${FN_A_PRESSED}" = true ]; then
-      ${DEBUG} && log $0 "FN_A + Volume Down"
-      ${FN_A_VOLUME_DOWN_ACTION}
-    else
-      execute_action down
-    fi
+    execute_action down
     ;;
   esac
 
