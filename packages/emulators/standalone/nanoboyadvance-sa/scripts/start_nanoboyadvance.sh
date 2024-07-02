@@ -25,7 +25,7 @@ fi
 #Set the cores to use
 GAME=$(echo "${1}"| sed "s#^/.*/##")
 PLATFORM=$(echo "${2}"| sed "s#^/.*/##")
-CORES=$(get_setting "cores" ${PLATFORM}" "${GAME}")
+CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
 if [ "${CORES}" = "little" ]
 then
   EMUPERF="${SLOW_CORES}"

@@ -35,7 +35,7 @@ pre_configure_target() {
                            -DCMAKE_BUILD_TYPE=Release \
                            -DZMUSIC_LIBRARIES=${SYSROOT_PREFIX}/usr/lib/libzmusic.so -DZMUSIC_INCLUDE_DIR=${SYSROOT_PREFIX}/usr/include"
   ### Enable GLES on devices that don't support OpenGL.
-  if [ ! "${OPENGL_SUPPORT}" = "yes" ]
+  if [ ! "${OPENGL_SUPPORT}" = "yes" ] || [ ${PREFER_GLES} = "yes" ]
   then
     PKG_CMAKE_OPTS_TARGET+=" -DHAVE_GLES2=ON"
   fi

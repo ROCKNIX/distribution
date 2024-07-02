@@ -22,7 +22,7 @@ case ${DEVICE} in
 	    PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
     else
       #Using upstream dev for panfrost
-	    PKG_VERSION="a79a2486c78a1186f390884d2e705b488de1a5c7"
+	    PKG_VERSION="332252966bac19edcb1fe76642673ff71074b8a6"
 	    PKG_SITE="https://gitlab.freedesktop.org/mesa/mesa"
 	    PKG_URL="${PKG_SITE}.git"
 	    PKG_PATCH_DIRS+=" panfrost"

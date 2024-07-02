@@ -4,7 +4,7 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="mupen64plus-sa-rsp-hle"
-PKG_VERSION="f22dc143771f1a0784c7d62977722a68fa0bdf85"
+PKG_VERSION="9d13986f764b14bb4fb8eaa5846ff8be5a9fa4f6"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/mupen64plus/mupen64plus-rsp-hle"
 PKG_URL="https://github.com/mupen64plus/mupen64plus-rsp-hle/archive/${PKG_VERSION}.tar.gz"
