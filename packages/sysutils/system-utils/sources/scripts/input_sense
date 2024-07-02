@@ -65,7 +65,6 @@ if [ -z "${BTN_HOTKEY_C_MODIFIER}" ]; then
   BTN_HOTKEY_C_MODIFIER="BTN_START"
 fi
 
-FN_A_PRESS_TIME=0
 HOTKEY_A_PRESSED=false
 HOTKEY_B_PRESSED=false
 HOTKEY_C_PRESSED=false
@@ -103,6 +102,8 @@ RELEASE='value 0'
 ### Function buttons should be defined as not pressed for later matching.
 FN_A_PRESSED=false
 FN_B_PRESSED=false
+FN_A_PRESS_TIME=0
+FN_A_LONG_PRESS_TRIGGERED=false
 
 ### Allow actions to be overriden in system.cfg
 FN_A_ACTION_UP="$(get_setting key.function.a.up)"
@@ -260,19 +261,28 @@ mkcontroller 2>/dev/null || :
       ${DEBUG} && log $0 "${FUNCTION_MODIFIER_A_EVENT}: Pressed"
       FN_A_PRESSED=true
       FN_A_PRESS_TIME=$(date +%s)
+      FN_A_LONG_PRESS_TRIGGERED=false
+
+      # Start a background process to check for long press
+      (
+        sleep 3
+        if [ "${FN_A_PRESSED}" = true ] && [ "${FN_A_LONG_PRESS_TRIGGERED}" = false ]; then
+          ${DEBUG} && log $0 "Function A held for 3 seconds"
+          FN_A_LONG_PRESS_TRIGGERED=true
+          if [ "${WINDOWMANAGER}" = "sway" ]; then
+            exec pkill -SIGUSR1 '^waybar$'
+          else
+            /usr/lib/weston/toggle_waybar.sh
+          fi
+        fi
+      ) &
+
     elif [[ "${line}" =~ ${RELEASE} ]]; then
       ${DEBUG} && log $0 "${FUNCTION_MODIFIER_A_EVENT}: Released"
       CURRENT_TIME=$(date +%s)
       PRESS_DURATION=$((CURRENT_TIME - FN_A_PRESS_TIME))
 
-      if [ ${PRESS_DURATION} -ge 3 ]; then
-        ${DEBUG} && log $0 "Function A held for 3 seconds or more"
-        if [ "${WINDOWMANAGER}" = "sway" ]; then
-          exec pkill -SIGUSR1 '^waybar$'
-        else
-          /usr/lib/weston/toggle_waybar.sh
-        fi
-      else
+      if [ ${PRESS_DURATION} -lt 3 ] && [ "${FN_A_LONG_PRESS_TRIGGERED}" = false ]; then
         ${DEBUG} && log $0 "Function A pressed for less than 3 seconds"
         # Perform default Function A action here
         if [ -n "${FN_A_ACTION_UP}" ]; then
