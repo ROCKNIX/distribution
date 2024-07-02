@@ -3,11 +3,10 @@
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="avahi"
-PKG_VERSION="0.8"
-PKG_SHA256="c15e750ef7c6df595fb5f2ce10cac0fee2353649600e6919ad08ae8871e4945f"
+PKG_VERSION="fddc410877660d9d8c93e0b75a9bad45ff868a72"
 PKG_LICENSE="GPL"
 PKG_SITE="http://avahi.org/"
-PKG_URL="https://github.com/lathiat/avahi/archive/v${PKG_VERSION}.tar.gz"
+PKG_URL="https://github.com/avahi/avahi/archive/${PKG_VERSION}.zip"
 PKG_DEPENDS_TARGET="toolchain expat libdaemon dbus gettext"
 PKG_LONGDESC="Service Discovery for Linux using mDNS/DNS-SD, compatible with Bonjour."
 PKG_TOOLCHAIN="configure"
