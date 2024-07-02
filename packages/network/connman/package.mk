@@ -71,7 +71,7 @@ post_makeinstall_target() {
     sed -i ${INSTALL}/etc/connman/main.conf \
         -e "s|^# BackgroundScanning.*|BackgroundScanning = true|g" \
         -e "s|^# UseGatewaysAsTimeservers.*|UseGatewaysAsTimeservers = false|g" \
-        -e "s|^# FallbackNameservers.*|FallbackNameservers = 8.8.8.8,8.8.4.4|g" \
+        -e "s|^# FallbackNameservers.*|FallbackNameservers = 9.9.9.9,149.112.112.112|g" \
         -e "s|^# FallbackTimeservers.*|FallbackTimeservers = 0.pool.ntp.org,1.pool.ntp.org,2.pool.ntp.org,3.pool.ntp.org|g" \
         -e "s|^# PreferredTechnologies.*|PreferredTechnologies = ethernet,wifi,cellular|g" \
         -e "s|^# TetheringTechnologies.*|TetheringTechnologies = wifi|g" \
