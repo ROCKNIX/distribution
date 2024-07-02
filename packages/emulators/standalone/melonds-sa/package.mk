@@ -2,23 +2,13 @@
 # Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="melonds-sa"
+PKG_VERSION="a72b79a55ad2d61811af11b1b911f6af863f66c2"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/melonDS-emu/melonDS"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="SDL2 qt5 libslirp libepoxy libarchive ecm libpcap control-gen"
 PKG_LONGDESC="DS emulator, sorta. The goal is to do things right and fast"
 PKG_TOOLCHAIN="cmake"
-
-case ${DEVICE} in
-  AMD64)
-    PKG_VERSION="f454eba3c3243b095f0e6b9ddde3e68b095c5d8d"
-    PKG_URL="${PKG_SITE}.git"
-  ;;
-  *)
-    PKG_VERSION="ca7fb4f55e8fdad53993ba279b073f97f453c13c"
-    PKG_URL="${PKG_SITE}.git"
-  ;;
-esac
 
 if [ "${OPENGL_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
@@ -68,11 +58,19 @@ post_install() {
   case ${DEVICE} in
     RK3588)
       HOTKEY="export HOTKEY="guide""
-      ;;
+      LIBMALI="if [ ! -z 'lsmod | grep panfrost' ]; then sed -i '\/ScreenUseGL=\/c\\\ScreenUseGL=0' \/storage\/.config\/melonDS\/melonDS.ini; fi"
+    ;;
+    RK3566*)
+      HOTKEY=""
+      LIBMALI="if [ ! -z 'lsmod | grep panfrost' ]; then sed -i '\/ScreenUseGL=\/c\\\ScreenUseGL=0' \/storage\/.config\/melonDS\/melonDS.ini; fi"
+    ;;
     *)
       HOTKEY=""
+      LIBMALI=""
     ;;
   esac
   sed -e "s/@HOTKEY@/${HOTKEY}/g" \
+        -i ${INSTALL}/usr/bin/start_melonds.sh
+  sed -e "s/@LIBMALI@/${LIBMALI}/g" \
         -i ${INSTALL}/usr/bin/start_melonds.sh
 }

@@ -6,6 +6,9 @@
 # This scripts scans the /storage/roms/idtech folder for idtech game files
 # and creates the necessary idtech launcher scripts
 
+# Source predefined variables
+. /etc/os-release
+
 RA_BIN="/usr/bin/retroarch"
 RA_DIR="/usr/lib/libretro"
 SCRIPT_DIR="/storage/.config/idtech"
@@ -93,6 +96,15 @@ ${RA_BIN} -L ${RA_DIR}/prboom_libretro.so ${GAME_DIR}/doom/sigil2/sigil2.wad
 EOF
 fi
 
+### Doom 3
+if [[ ${HW_ARCH} = "x86_64" ]] && [[ -f "${GAME_DIR}/doom3/base/pak000.pk4" ]] && [[ ! -f ${SCRIPT_DIR}/Doom\ 3.sh ]]; then
+cat <<EOF >${SCRIPT_DIR}/Doom\ 3.sh
+#!/bin/bash
+
+${RA_BIN} -L ${RA_DIR}/boom3_libretro.so ${GAME_DIR}/doom3/base/*
+EOF
+fi
+
 ### Quake
 if [[ -f "${GAME_DIR}/quake/id1/pak0.pak" ]] && [[ ! -f ${SCRIPT_DIR}/Quake.sh ]]; then
 cat <<EOF >${SCRIPT_DIR}/Quake.sh
@@ -157,7 +169,7 @@ EOF
 fi
 
 ### Quake 3
-if [[ -f "${GAME_DIR}/quake3/baseq3/pak0.pak" ]] && [[ ! -f ${SCRIPT_DIR}/Quake\ III.sh ]]; then
+if [[ ${HW_ARCH} = "x86_64" ]] && [[ -f "${GAME_DIR}/quake3/baseq3/pak0.pk3" ]] && [[ ! -f ${SCRIPT_DIR}/Quake\ III.sh ]]; then
 cat <<EOF >${SCRIPT_DIR}/Quake\ III.sh
 #!/bin/bash
 
