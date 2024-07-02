@@ -2,9 +2,9 @@
 # Copyright (C) 2019-present asakous (https://github.com/asakous)
 
 PKG_NAME="xmil-lr"
-PKG_VERSION="b07506c0cae31d260db28cb079148857d6ca2e93"
+PKG_VERSION="04b3c90af710b66b31df3c9621fa8da13b24e123"
 PKG_LICENSE="Unknown"
-PKG_SITE="https://github.com/r-type/xmil-libretro"
+PKG_SITE="https://github.com/libretro/xmil-libretro"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Libretro port of X Millennium Sharp X1 emulator"

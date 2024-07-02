@@ -16,6 +16,7 @@ PKG_LONGDESC="jscal, jstest, and jsattach utilities for the Linux joystick drive
 # }
 
 make_target() {
+  export CFLAGS="${CFLAGS} -Wno-implicit-function-declaration -Wno-builtin-declaration-mismatch"
   ${CC} -lm -o jscal jscal.c ${CFLAGS}
   ${CC} -lm -o jstest jstest.c ${CFLAGS}
   ${CC} -lm -o jsattach jsattach.c ${CFLAGS}

@@ -19,13 +19,17 @@
 ################################################################################
 
 PKG_NAME="np2kai-lr"
-PKG_VERSION="c2ca4046860264cb307e768f529f180caee5e224"
+PKG_VERSION="61a119b310763eb06da3a0a3ee6c40fe2ba7fd69"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/AZO234/NP2kai"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Neko Project II kai"
 PKG_TOOLCHAIN="make"
+
+pre_configure_target() {
+export CFLAGS="${CFLAGS} -Wno-error=incompatible-pointer-types -Wno-int-conversion"
+}
 
 make_target() {
   VERSION="${PKG_VERSION:0:7}"

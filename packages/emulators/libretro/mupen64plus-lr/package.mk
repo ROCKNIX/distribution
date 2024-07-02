@@ -43,6 +43,8 @@ pre_make_target() {
 }
 
 pre_configure_target() {
+export CFLAGS="${CFLAGS} -Wno-error=incompatible-pointer-types"
+
   case ${DEVICE} in
     RK3*)
       PKG_MAKE_OPTS_TARGET=" platform=${DEVICE}"

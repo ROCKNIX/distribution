@@ -28,6 +28,10 @@ PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Port of Final Burn Alpha 2012 to Libretro"
 PKG_TOOLCHAIN="make"
 
+pre_configure_target() {
+export CFLAGS="${CFLAGS} -Wno-maybe-uninitialized -Wno-unused-function -Wno-error=incompatible-pointer-types"
+}
+
 make_target() {
   cd svn-current/trunk
   make -f makefile.libretro

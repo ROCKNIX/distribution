@@ -2,11 +2,11 @@
 # Copyright (C) 2017-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="rapidjson"
-PKG_VERSION="1.1.0"
-PKG_SHA256="bf7ced29704a1e696fbccf2a2b4ea068e7774fa37f6d7dd4039d0787f8bed98e"
+PKG_VERSION="ab1842a2dae061284c0a62dca1cc6d5e7e37e346"
+PKG_SHA256="208f551cd08586a0a642cbd8d2c59783419c8a7e4f7552e13a19bc4e806403a9"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/miloyip/rapidjson"
-PKG_URL="https://github.com/miloyip/rapidjson/archive/v${PKG_VERSION}.tar.gz"
+PKG_URL="https://github.com/Tencent/rapidjson/archive/${PKG_VERSION}.zip"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="A fast JSON parser/generator for C++ with both SAX/DOM style API"
 

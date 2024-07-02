@@ -11,6 +11,8 @@ PKG_DEPENDS_TARGET="toolchain libdvbpsi gnutls ffmpeg libmpeg2 zlib flac libvorb
 PKG_LONGDESC="VideoLAN multimedia player and streamer"
 
 pre_configure_target() {
+  export CFLAGS="${CFLAGS} -Wno-error=incompatible-pointer-types"
+  export CXXLFAGS="${CXXFLAGS} -Wno-error=incompatible-pointer-types"
 
   ENABLED_FEATURES="--enable-silent-rules \
             --enable-run-as-root \

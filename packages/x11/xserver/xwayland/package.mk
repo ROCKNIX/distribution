@@ -15,6 +15,10 @@ PKG_LONGDESC="X.Org Server is the free and open-source implementation of the X W
 
 get_graphicdrivers
 
+pre_configure_target() {
+export TARGET_CFLAGS="${TARGET_CFLAGS} -Wno-error=incompatible-pointer-types"
+}
+
 PKG_MESON_OPTS_TARGET+=" -Dxvfb=false \
                        -Dbuilder_addr=${BUILDER_NAME} \
                        -Ddefault_font_path="/usr/share/fonts/misc,built-ins" \
