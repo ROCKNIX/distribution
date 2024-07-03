@@ -12,6 +12,15 @@ set -o pipefail
 #   This script listens to input events and takes actions.
 ###
 WAYBAR_STATE_FILE="/tmp/.waybar_toggle_state"
+LOCK_FILE="/tmp/input_sense.lock"
+
+# Exit if another instance is already running
+if [ -e "$LOCK_FILE" ]; then
+    echo "Another instance of input_sense is already running."
+    exit 1
+fi
+touch "$LOCK_FILE"
+trap 'rm -f "$LOCK_FILE"; exit' EXIT HUP INT TERM
 
 cleanup() {
   ${DEBUG} && log $0 "Cleaning up"
@@ -291,45 +300,30 @@ mkcontroller 2>/dev/null || :
     get_devices
     ;;
   ${FUNCTION_MODIFIER_A_EVENT})
-    if [[ "${line}" =~ ${PRESS} ]]; then
-      ${DEBUG} && log $0 "${FUNCTION_MODIFIER_A_EVENT}: Pressed"
-      FN_A_PRESS_TIME=$(date +%s)
-      
-      # Start a background process to check for long press
-      (
-        sleep 3
-        CURRENT_TIME=$(date +%s)
-        PRESS_DURATION=$((CURRENT_TIME - FN_A_PRESS_TIME))
-        if [ ${PRESS_DURATION} -ge 3 ]; then
-          ${DEBUG} && log $0 "Function A held for 3 seconds"
-          toggle_waybar
-        fi
-      ) &
-      FN_A_TIMER_PID=$!
-      
-    elif [[ "${line}" =~ ${RELEASE} ]]; then
-      ${DEBUG} && log $0 "${FUNCTION_MODIFIER_A_EVENT}: Released"
-      
-      # Kill the timer process if it's still running
-      if [ -n "${FN_A_TIMER_PID}" ]; then
-        kill ${FN_A_TIMER_PID} 2>/dev/null
+      if [[ "${line}" =~ ${PRESS} ]]; then
+          ${DEBUG} && log $0 "${FUNCTION_MODIFIER_A_EVENT}: Pressed"
+          FN_A_PRESSED=true
+          FN_A_PRESS_TIME=$(date +%s)
+      elif [[ "${line}" =~ ${RELEASE} ]]; then
+          ${DEBUG} && log $0 "${FUNCTION_MODIFIER_A_EVENT}: Released"
+          CURRENT_TIME=$(date +%s)
+          PRESS_DURATION=$((CURRENT_TIME - FN_A_PRESS_TIME))
+          
+          if [ ${PRESS_DURATION} -ge 3 ]; then
+              ${DEBUG} && log $0 "Function A held for 3 seconds or more"
+              toggle_waybar
+          else
+              ${DEBUG} && log $0 "Function A pressed for less than 3 seconds"
+              # Perform default Function A action here
+              if [ -n "${FN_A_ACTION_UP}" ]; then
+                  ${FN_A_ACTION_UP}
+              fi
+          fi
+          
+          FN_A_PRESSED=false
+          FN_A_PRESS_TIME=0
       fi
-      
-      CURRENT_TIME=$(date +%s)
-      PRESS_DURATION=$((CURRENT_TIME - FN_A_PRESS_TIME))
-      
-      if [ ${PRESS_DURATION} -lt 3 ]; then
-        ${DEBUG} && log $0 "Function A pressed for less than 3 seconds"
-        # Perform default Function A action here
-        if [ -n "${FN_A_ACTION_UP}" ]; then
-          ${FN_A_ACTION_UP}
-        fi
-      fi
-      
-      FN_A_PRESS_TIME=0
-      FN_A_TIMER_PID=""
-    fi
-    ;;
+      ;;
   ${FUNCTION_MODIFIER_B_EVENT})
     if [[ "${line}" =~ ${PRESS} ]]; then
       ${DEBUG} && log $0 "${FUNCTION_MODIFIER_B_EVENT}: Pressed"
