@@ -11,3 +11,6 @@ PKG_LONGDESC="Libao is a cross-platform audio library that allows programs to ou
 audio using a simple API on a wide variety of platforms."
 PKG_BUILD_FLAGS="+pic"
 
+pre_configure_target() {
+export CFLAGS="${CFLAGS} -Wno-implicit-function-declaration"
+}
