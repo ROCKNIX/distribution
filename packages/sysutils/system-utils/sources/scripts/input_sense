@@ -11,6 +11,14 @@ set -o pipefail
 ### Summary
 #   This script listens to input events and takes actions.
 ###
+WAYBAR_STATE_FILE="/tmp/.waybar_toggle_state"
+
+cleanup() {
+  ${DEBUG} && log $0 "Cleaning up"
+  rm -f "$WAYBAR_STATE_FILE"
+}
+
+trap cleanup EXIT
 
 ### Enable logging
 case $(get_setting system.loglevel) in
@@ -197,8 +205,28 @@ execute_action() {
 }
 
 toggle_waybar() {
-  ${DEBUG} && log $0 "Toggling waybar"
-  pkill -SIGUSR1 '^waybar$' || ${DEBUG} && log $0 "Failed to toggle waybar"
+  ${DEBUG} && log $0 "Attempting to toggle waybar"
+  
+  if [ ! -f "$WAYBAR_STATE_FILE" ]; then
+    echo "visible" > "$WAYBAR_STATE_FILE"
+  fi
+  
+  current_state=$(cat "$WAYBAR_STATE_FILE")
+  
+  if [ "$current_state" = "visible" ]; then
+    new_state="hidden"
+  else
+    new_state="visible"
+  fi
+  
+  ${DEBUG} && log $0 "Current state: $current_state, New state: $new_state"
+  
+  if pkill -SIGUSR1 '^waybar$'; then
+    echo "$new_state" > "$WAYBAR_STATE_FILE"
+    ${DEBUG} && log $0 "Successfully toggled waybar to $new_state"
+  else
+    ${DEBUG} && log $0 "Failed to toggle waybar, exit code: $?"
+  fi
 }
 
 ### Search the system for useful devices to monitor for inputs.
@@ -265,13 +293,14 @@ mkcontroller 2>/dev/null || :
   ${FUNCTION_MODIFIER_A_EVENT})
     if [[ "${line}" =~ ${PRESS} ]]; then
       ${DEBUG} && log $0 "${FUNCTION_MODIFIER_A_EVENT}: Pressed"
-      FN_A_PRESSED=true
       FN_A_PRESS_TIME=$(date +%s)
       
       # Start a background process to check for long press
       (
         sleep 3
-        if [ "${FN_A_PRESSED}" = true ]; then
+        CURRENT_TIME=$(date +%s)
+        PRESS_DURATION=$((CURRENT_TIME - FN_A_PRESS_TIME))
+        if [ ${PRESS_DURATION} -ge 3 ]; then
           ${DEBUG} && log $0 "Function A held for 3 seconds"
           toggle_waybar
         fi
@@ -297,7 +326,6 @@ mkcontroller 2>/dev/null || :
         fi
       fi
       
-      FN_A_PRESSED=false
       FN_A_PRESS_TIME=0
       FN_A_TIMER_PID=""
     fi
@@ -385,3 +413,4 @@ mkcontroller 2>/dev/null || :
     ;;
   esac
 done
+
