@@ -49,10 +49,6 @@ ln -sf /storage/roms/savestates/nds /storage/.config/drastic/savestates
 rm -rf /storage/.config/drastic/backup
 ln -sf /storage/roms/nds /storage/.config/drastic/backup
 
-if echo "${UI_SERVICE}" | grep "sway"; then
-    /usr/bin/drastic_sense.sh &
-fi
-
 cd /storage/.config/drastic/
 @HOTKEY@
 @LIBEGL@
@@ -60,6 +56,3 @@ $GPTOKEYB "drastic" -c "drastic.gptk" &
 ./drastic "$1"
 kill -9 $(pidof gptokeyb)
 
-if echo "${UI_SERVICE}" | grep "sway"; then
-    kill -9 $(pidof drastic_sense.sh)
-fi
