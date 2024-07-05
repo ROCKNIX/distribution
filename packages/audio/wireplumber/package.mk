@@ -2,7 +2,7 @@
 # Copyright (C) 2022-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="wireplumber"
-PKG_VERSION="0.4.17"
+PKG_VERSION="0.5.5"
 PKG_LICENSE="MIT"
 PKG_SITE="https://gitlab.freedesktop.org/pipewire/wireplumber"
 PKG_URL="https://gitlab.freedesktop.org/pipewire/wireplumber/-/archive/${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tar.gz"
@@ -33,11 +33,15 @@ v4l2_monitor.enabled = false
 EOF
 
   cat > ${INSTALL}/usr/share/wireplumber/bluetooth.lua.d/89-disable-session-dbus-dependent-features.lua << EOF
-bluez_monitor.properties["with-logind"] = false
+monitor.bluez.rules["with-logind"] = false
 EOF
 
   cat > ${INSTALL}/usr/share/wireplumber/bluetooth.lua.d/89-disable-bluez-hfphsp-backend.lua << EOF
-bluez_monitor.properties["bluez5.hfphsp-backend"] = "none"
+monitor.bluez.rules["bluez5.hfphsp-backend"] = "none"
+EOF
+
+  cat > ${INSTALL}/usr/share/wireplumber/bluetooth.lua.d/50-bluez-config.lua << EOF
+monitor.bluez.rules["bluez5.auto-connect"] = [ hfp_hf hsp_hs a2dp_sink ]
 EOF
 }
 
