@@ -25,6 +25,10 @@ post_makeinstall_target() {
   cp ${PKG_DIR}/config/style.css ${INSTALL}/etc/xdg/waybar
 }
 
-# post_install() {
-#   enable_service waybar.service
-# }
+post_install() {
+  case "${WINDOWMANAGER}" in
+    weston*) 
+      enable_service waybar.service
+      ;;
+  esac
+}
