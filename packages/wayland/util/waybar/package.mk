@@ -23,6 +23,8 @@ post_makeinstall_target() {
   mkdir -p ${INSTALL}/etc/xdg/waybar
   cp ${PKG_DIR}/config/config.jsonc ${INSTALL}/etc/xdg/waybar
   cp ${PKG_DIR}/config/style.css ${INSTALL}/etc/xdg/waybar
+  cp ${PKG_DIR}/scripts/key_guide.sh ${INSTALL}/etc/xdg/waybar
+  chmod +x ${INSTALL}/etc/xdg/waybar/key_guide.sh
 }
 
 post_install() {
