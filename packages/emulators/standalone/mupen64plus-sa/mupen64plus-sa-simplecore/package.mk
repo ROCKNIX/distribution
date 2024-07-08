@@ -39,6 +39,9 @@ make_target() {
     ;;
   esac
 
+  # Always diable Vulkan
+  export VULKAN=0
+
   export BINUTILS="$(get_build_dir binutils)/.${TARGET_NAME}"
   export NEW_DYNAREC=1
   export SDL_CFLAGS="-I${SYSROOT_PREFIX}/usr/include/SDL2 -pthread -D_REENTRANT"

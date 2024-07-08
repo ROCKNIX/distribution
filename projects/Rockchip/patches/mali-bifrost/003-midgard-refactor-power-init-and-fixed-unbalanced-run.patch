@@ -1,0 +1,199 @@
+From 5b1c50b3e181a57f5ce0a7d8c50f0f0823ac1609 Mon Sep 17 00:00:00 2001
+From: Paul Reioux <reioux@gmail.com>
+Date: Wed, 12 Jun 2024 07:36:52 -0700
+Subject: [PATCH] midgard: refactor power init and fixed unbalanced runtime PM
+ calls
+
+Signed-off-by: Paul Reioux <reioux@gmail.com>
+---
+ .../gpu/arm/midgard/mali_kbase_core_linux.c   | 124 ++++++++++++------
+ .../platform/meson/mali_kbase_runtime_pm.c    |  11 +-
+ 2 files changed, 88 insertions(+), 47 deletions(-)
+
+diff --git a/product/kernel/drivers/gpu/arm/midgard/mali_kbase_core_linux.c b/product/kernel/drivers/gpu/arm/midgard/mali_kbase_core_linux.c
+index 0ad8a70..8db0c13 100644
+--- a/product/kernel/drivers/gpu/arm/midgard/mali_kbase_core_linux.c
++++ b/product/kernel/drivers/gpu/arm/midgard/mali_kbase_core_linux.c
+@@ -4507,31 +4507,44 @@ int power_control_init(struct kbase_device *kbdev)
+ 
+ 	pdev = to_platform_device(kbdev->dev);
+ 
+-#if defined(CONFIG_REGULATOR)
+-	/* Since the error code EPROBE_DEFER causes the entire probing
+-	 * procedure to be restarted from scratch at a later time,
+-	 * all regulators will be released before returning.
+-	 *
+-	 * Any other error is ignored and the driver will continue
+-	 * operating with a partial initialization of regulators.
+-	 */
+-	for (i = 0; i < BASE_MAX_NR_CLOCKS_REGULATORS; i++) {
+-		kbdev->regulators[i] = regulator_get_optional(kbdev->dev, regulator_names[i]);
+-		if (IS_ERR(kbdev->regulators[i])) {
+-			err = PTR_ERR(kbdev->regulators[i]);
+-			kbdev->regulators[i] = NULL;
+-			break;
+-		}
+-	}
+-	if (err == -EPROBE_DEFER) {
+-		while (i > 0)
+-			regulator_put(kbdev->regulators[--i]);
+-		return err;
++// #if defined(CONFIG_REGULATOR)
++// 	/* Since the error code EPROBE_DEFER causes the entire probing
++// 	 * procedure to be restarted from scratch at a later time,
++// 	 * all regulators will be released before returning.
++// 	 *
++// 	 * Any other error is ignored and the driver will continue
++// 	 * operating with a partial initialization of regulators.
++// 	 */
++// 	for (i = 0; i < BASE_MAX_NR_CLOCKS_REGULATORS; i++) {
++// 		kbdev->regulators[i] = regulator_get_optional(kbdev->dev, regulator_names[i]);
++// 		if (IS_ERR(kbdev->regulators[i])) {
++// 			err = PTR_ERR(kbdev->regulators[i]);
++// 			kbdev->regulators[i] = NULL;
++// 			break;
++// 		}
++// 	}
++// 	if (err == -EPROBE_DEFER) {
++// 		while (i > 0)
++// 			regulator_put(kbdev->regulators[--i]);
++// 		return err;
++// 	}
++	kbdev->regulators[0] = devm_regulator_get_optional(kbdev->dev, regulator_names[0]);
++
++	if (IS_ERR(kbdev->regulators[0])) {
++		err = PTR_ERR(kbdev->regulators[0]);
++		kbdev->regulators[0] = NULL;
++		kbdev->nr_regulators = 0;
++	} else {
++		kbdev->nr_regulators = 1;
++
++		err = regulator_enable(kbdev->regulators[0]);
++		if (err)
++			dev_dbg(&pdev->dev, "regulator_enable failed\n");
+ 	}
+ 
+-	kbdev->nr_regulators = i;
+ 	dev_dbg(&pdev->dev, "Regulators probed: %u\n", kbdev->nr_regulators);
+-#endif
++
++// #endif
+ 
+ 	/* Having more clocks than regulators is acceptable, while the
+ 	 * opposite shall not happen.
+@@ -4543,30 +4556,55 @@ int power_control_init(struct kbase_device *kbdev)
+ 	 * Any other error is ignored and the driver will continue
+ 	 * operating with a partial initialization of clocks.
+ 	 */
+-	for (i = 0; i < BASE_MAX_NR_CLOCKS_REGULATORS; i++) {
+-		kbdev->clocks[i] = of_clk_get_by_name(kbdev->dev->of_node, "bus");
+-		if (IS_ERR(kbdev->clocks[i])) {
+-			err = PTR_ERR(kbdev->clocks[i]);
+-			kbdev->clocks[i] = NULL;
+-			break;
+-		}
+ 
+-		err = clk_prepare_enable(kbdev->clocks[i]);
+-		if (err) {
+-			dev_err(kbdev->dev, "Failed to prepare and enable clock (%d)\n", err);
+-			clk_put(kbdev->clocks[i]);
+-			break;
+-		}
+-	}
+-	if (err == -EPROBE_DEFER) {
+-		while (i > 0) {
+-			clk_disable_unprepare(kbdev->clocks[--i]);
+-			clk_put(kbdev->clocks[i]);
+-		}
+-		goto clocks_probe_defer;
++	kbdev->clocks[0] = devm_clk_get_optional(kbdev->dev, NULL);
++	if (!IS_ERR(kbdev->clocks[0]))
++		dev_dbg(kbdev->dev, "clk_get: %s\n", __clk_get_name(kbdev->clocks[0]));
++	else
++		dev_err(kbdev->dev, "clk_get: is NULL");
++
++	/* if platform device is enabled, disable it now */
++	//if (__clk_is_enabled(kbdev->clocks[0])) {
++	//	clk_disable(kbdev->clocks[0]);
++	//}
++	/* delete from clk tree */
++	//clk_unprepare(kbdev->clocks[0]);
++	//clk_put(kbdev->clocks[0]);
++
++	/* now grab the gpu clock node from device tree definition */
++	//kbdev->clocks[0] = of_clk_get_by_name(kbdev->dev->of_node, "gpu");
++
++	/* we are kinda commited here.. if this fails, the system will lock up */
++	err = clk_prepare_enable(kbdev->clocks[0]);
++	if (err) {
++		dev_err(kbdev->dev, "Failed to prepare and enable clock (%d)\n", err);
++		clk_put(kbdev->clocks[0]);
+ 	}
+ 
+-	kbdev->nr_clocks = i;
++	// for (i = 0; i < BASE_MAX_NR_CLOCKS_REGULATORS; i++) {
++	// 	kbdev->clocks[i] = of_clk_get(kbdev->dev->of_node, (int)i);
++	// 	if (IS_ERR(kbdev->clocks[i])) {
++	// 		err = PTR_ERR(kbdev->clocks[i]);
++	// 		kbdev->clocks[i] = NULL;
++	// 		break;
++	// 	}
++
++	// 	err = clk_prepare_enable(kbdev->clocks[i]);
++	// 	if (err) {
++	// 		dev_err(kbdev->dev, "Failed to prepare and enable clock (%d)\n", err);
++	// 		clk_put(kbdev->clocks[i]);
++	// 		break;
++	// 	}
++	// }
++	// if (err == -EPROBE_DEFER) {
++	// 	while (i > 0) {
++	// 		clk_disable_unprepare(kbdev->clocks[--i]);
++	// 		clk_put(kbdev->clocks[i]);
++	// 	}
++	// 	goto clocks_probe_defer;
++	// }
++
++	kbdev->nr_clocks = 1;
+ 	dev_dbg(&pdev->dev, "Clocks probed: %u\n", kbdev->nr_clocks);
+ 
+ 	/* Any error in parsing the OPP table from the device file
+diff --git a/product/kernel/drivers/gpu/arm/midgard/platform/meson/mali_kbase_runtime_pm.c b/product/kernel/drivers/gpu/arm/midgard/platform/meson/mali_kbase_runtime_pm.c
+index bd3b4b5..33a24bb 100644
+--- a/product/kernel/drivers/gpu/arm/midgard/platform/meson/mali_kbase_runtime_pm.c
++++ b/product/kernel/drivers/gpu/arm/midgard/platform/meson/mali_kbase_runtime_pm.c
+@@ -113,7 +113,8 @@ static void enable_gpu_power_control(struct kbase_device *kbdev)
+ 		if (WARN_ON(kbdev->clocks[i] == NULL))
+ 			;
+ 		else if (!__clk_is_enabled(kbdev->clocks[i]))
+-			WARN_ON(clk_prepare_enable(kbdev->clocks[i]));
++			//WARN_ON(clk_prepare_enable(kbdev->clocks[i]));
++			;
+ 	}
+ }
+ 
+@@ -125,8 +126,9 @@ static void disable_gpu_power_control(struct kbase_device *kbdev)
+ 		if (WARN_ON(kbdev->clocks[i] == NULL))
+ 			;
+ 		else if (__clk_is_enabled(kbdev->clocks[i])) {
+-			clk_disable_unprepare(kbdev->clocks[i]);
+-			WARN_ON(__clk_is_enabled(kbdev->clocks[i]));
++			//clk_disable_unprepare(kbdev->clocks[i]);
++			//WARN_ON(__clk_is_enabled(kbdev->clocks[i]));
++			;
+ 		}
+ 	}
+ 
+@@ -135,7 +137,8 @@ static void disable_gpu_power_control(struct kbase_device *kbdev)
+ 		if (WARN_ON(kbdev->regulators[i] == NULL))
+ 			;
+ 		else if (regulator_is_enabled(kbdev->regulators[i]))
+-			WARN_ON(regulator_disable(kbdev->regulators[i]));
++			//WARN_ON(regulator_disable(kbdev->regulators[i]));
++			;
+ 	}
+ #endif
+ }
+-- 
+2.34.1
+
