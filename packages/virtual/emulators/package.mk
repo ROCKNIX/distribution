@@ -119,7 +119,7 @@ makeinstall_target() {
 
   ### Nintendo 3DS
   case ${DEVICE} in
-    S922X)
+    AMD64|S922X)
       add_emu_core 3ds lime3ds lime3ds-sa true
       add_es_system 3ds
     ;;
@@ -857,11 +857,6 @@ makeinstall_target() {
 
   ### Sony Playstation Portable
   add_emu_core psp ppsspp ppsspp-sa true
-  case ${DEVICE} in
-    AMD64)
-      add_emu_core psp retroarch ppsspp false
-    ;;
-  esac
   add_es_system psp
   install_script "Start PPSSPP.sh"
 
@@ -969,9 +964,7 @@ makeinstall_target() {
       add_emu_core saturn retroarch yabasanshiro false
     ;;
     x86_64)
-      add_emu_core saturn kronos kronos-sa false
       add_emu_core saturn retroarch yabasanshiro true
-      add_emu_core saturn retroarch kronos false
     ;;
   esac
   case ${DEVICE} in
@@ -988,13 +981,8 @@ makeinstall_target() {
 
   ### Sega ST-V
   case ${DEVICE} in
-    RK358*)
-      add_emu_core st-v mednafen ss false
-    ;;
-    AMD64)
-      add_emu_core saturn kronos kronos-sa true
-      add_emu_core st-v retroarch kronos false
-      add_emu_core st-v mednafen ss false
+    RK3588*|AMD64)
+      add_emu_core st-v mednafen ss true
     ;;
   esac
   add_es_system st-v

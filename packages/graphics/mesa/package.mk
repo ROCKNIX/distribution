@@ -29,7 +29,7 @@ case ${DEVICE} in
     fi
   ;;
   *)
-	PKG_VERSION="24.0.7"
+	PKG_VERSION="24.1.3"
 	PKG_SITE="http://www.mesa3d.org/"
 	PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
   ;;
