@@ -52,6 +52,9 @@ pre_make_target() {
     RK3*|S922X)
       PKG_MAKE_OPTS_TARGET+=" platform=${DEVICE}"
     ;;
+    H700)
+      PKG_MAKE_OPTS_TARGET+=" platform=RK3326"
+    ;;
   esac
 }
 
