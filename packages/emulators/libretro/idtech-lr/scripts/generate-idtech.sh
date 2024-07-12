@@ -105,6 +105,15 @@ ${RA_BIN} -L ${RA_DIR}/boom3_libretro.so ${GAME_DIR}/doom3/base/*
 EOF
 fi
 
+### Doom 3 - Resurrection of Evil
+if [[ ${HW_ARCH} = "x86_64" ]] && [[ -f "${GAME_DIR}/doom3/d3xp/pak000.pk4" ]] && [[ ! -f ${SCRIPT_DIR}/Doom\ 3\ -\ Resurrection\ of\ Evil.sh ]]; then
+cat <<EOF >${SCRIPT_DIR}/Doom\ 3\ -\ Resurrection\ of\ Evil.sh
+#!/bin/bash
+
+${RA_BIN} -L ${RA_DIR}/boom3_xp_libretro.so ${GAME_DIR}/doom3/d3xp/*
+EOF
+fi
+
 ### Quake
 if [[ -f "${GAME_DIR}/quake/id1/pak0.pak" ]] && [[ ! -f ${SCRIPT_DIR}/Quake.sh ]]; then
 cat <<EOF >${SCRIPT_DIR}/Quake.sh

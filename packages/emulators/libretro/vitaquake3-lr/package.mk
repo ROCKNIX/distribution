@@ -16,6 +16,10 @@ elif [ "${OPENGLES_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGLES}"
 fi
 
+pre_configure_target() {
+  export CFLAGS="${CFLAGS} -Wno-implicit-function-declaration -Wno-incompatible-pointer-types -Wno-implicit-int"
+}
+
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
   cp vitaquake3_libretro.so $INSTALL/usr/lib/libretro/
