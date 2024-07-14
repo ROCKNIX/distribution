@@ -1,5 +1,5 @@
 #!/bin/bash
-source /storage/.config/profile.d/092-hotkeys
+source /storage/.config/waybar/hotkeys/current-hotkeys
 
 KEY_GUIDE_NONE=$(echo $KEY_GUIDE_NONE)
 KEY_GUIDE_1=$(echo $KEY_GUIDE_1)
