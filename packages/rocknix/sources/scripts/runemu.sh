@@ -142,6 +142,7 @@ set_kill stop
 
 ### Determine which emulator we're launching and make appropriate adjustments before launching.
 ${VERBOSE} && log $0 "Configuring for ${EMULATOR}"
+cp -f /storage/.config/waybar/hotkeys/${EMULATOR} /storage/.config/waybar/hotkeys/current-hotkeys
 case ${EMULATOR} in
   mednafen)
     set_kill set "-9 mednafen"
