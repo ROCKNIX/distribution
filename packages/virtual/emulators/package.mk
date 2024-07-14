@@ -28,10 +28,9 @@ LIBRETRO_CORES="81-lr a5200-lr arduous-lr atari800-lr beetle-gba-lr beetle-lynx-
 case "${DEVICE}" in
   AMD64)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="wine"
-    PKG_EMUS+=" cemu-sa dolphin-sa lime3ds-sa mednafen melonds-sa minivmacsa mupen64plus-sa kronos-sa nanoboyadvance-sa pcsx2-sa     \
+    PKG_EMUS+=" cemu-sa dolphin-sa lime3ds-sa mednafen melonds-sa minivmacsa mupen64plus-sa nanoboyadvance-sa pcsx2-sa     \
                rpcs3-sa scummvmsa vita3k-sa xemu-sa"
-    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr desmume-lr dolphin-lr flycast-lr lrps2-lr ppsspp-lr        \
-                     kronos-lr"
+    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr desmume-lr dolphin-lr flycast-lr lrps2-lr"
   ;;
   RK3588*)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 desmume-lr gpsp-lr pcsx_rearmed-lr wine"
@@ -120,7 +119,7 @@ makeinstall_target() {
 
   ### Nintendo 3DS
   case ${DEVICE} in
-    S922X)
+    AMD64|S922X)
       add_emu_core 3ds lime3ds lime3ds-sa true
       add_es_system 3ds
     ;;
@@ -858,11 +857,6 @@ makeinstall_target() {
 
   ### Sony Playstation Portable
   add_emu_core psp ppsspp ppsspp-sa true
-  case ${DEVICE} in
-    AMD64)
-      add_emu_core psp retroarch ppsspp false
-    ;;
-  esac
   add_es_system psp
   install_script "Start PPSSPP.sh"
 
@@ -970,9 +964,7 @@ makeinstall_target() {
       add_emu_core saturn retroarch yabasanshiro false
     ;;
     x86_64)
-      add_emu_core saturn kronos kronos-sa false
       add_emu_core saturn retroarch yabasanshiro true
-      add_emu_core saturn retroarch kronos false
     ;;
   esac
   case ${DEVICE} in
@@ -989,13 +981,8 @@ makeinstall_target() {
 
   ### Sega ST-V
   case ${DEVICE} in
-    RK358*)
-      add_emu_core st-v mednafen ss false
-    ;;
-    AMD64)
-      add_emu_core saturn kronos kronos-sa true
-      add_emu_core st-v retroarch kronos false
-      add_emu_core st-v mednafen ss false
+    RK3588*|AMD64)
+      add_emu_core st-v mednafen ss true
     ;;
   esac
   add_es_system st-v
