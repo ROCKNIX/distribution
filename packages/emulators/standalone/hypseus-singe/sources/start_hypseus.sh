@@ -81,7 +81,7 @@ fi
 cd "${config}"
 
 if [[ -f "${dir}/${name}.singe" ]]; then
-    hypseus singe vldp -framefile "${dir}/${name}.txt" -script "${dir}/${name}.singe" -fullscreen -useoverlaysb 2 $params
+    hypseus singe vldp -framefile "${dir}/${name}.txt" -script "${dir}/${name}.singe" -useoverlaysb 2 $params
 else
-    hypseus "${name}" vldp -framefile "${dir}/${name}.txt" -fullscreen -useoverlaysb 2 $params
+    hypseus "${name}" vldp -framefile "${dir}/${name}.txt" -useoverlaysb 2 $params
 fi
