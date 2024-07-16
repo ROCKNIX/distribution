@@ -223,6 +223,43 @@ then
     FEATURES_CMDLINE+=$CR
 fi
 
+#Adjust Scale Based on Display
+FBWIDTH="$(fbwidth)"
+SCALE="1"
+
+calculate_scale() {
+    local divisor=$1
+    local result=$(echo "scale=2; $FBWIDTH / $divisor" | bc)
+    echo "${result%.*}"
+}
+
+case $PLATFORM in
+  atarilynx|gb|gbh|gbc|gbch|gamegear|gamegearh|ngp|ngpc)
+    SCALE=$(calculate_scale 160)
+  ;;
+  wonderswan|wonderswancolor)
+    SCALE=$(calculate_scale 224)
+  ;;
+  gba|gbah)
+    SCALE=$(calculate_scale 240)
+  ;;
+  genesis|genh|megacd|megadrive|megadrive-japan|saturn)
+    SCALE=$(calculate_scale 320)
+  ;;
+  virtualboy)
+    SCALE=$(calculate_scale 384)
+  ;;
+  pcfx)
+    SCALE=$(calculate_scale 640)
+  ;;
+  *)
+    SCALE=$(calculate_scale 256)
+  ;;
+esac
+
+FEATURES_CMDLINE+=" -${CORE}.xscale ${SCALE}.000000"
+FEATURES_CMDLINE+=" -${CORE}.yscale ${SCALE}.000000"
+
 #Run mednafen
 @LIBEGL@
 ${EMUPERF} /usr/bin/mednafen -force_module ${CORE} -${CORE}.stretch ${STRETCH:="aspect"} -${CORE}.shader ${SHADER:="ipsharper"} ${FEATURES_CMDLINE} "${1}"
