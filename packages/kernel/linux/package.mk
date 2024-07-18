@@ -33,7 +33,7 @@ case ${DEVICE} in
     PKG_VERSION="6c522e1c85a07e2e0db113a979c0a404eb692de1"
     PKG_URL="https://git.sr.ht/~tokyovigilante/linux/archive/${PKG_VERSION}.tar.gz"
     ;;
-  RK3566)
+  RK3566|S922X)
     PKG_VERSION="6.10"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     PKG_PATCH_DIRS+=" mainline"
