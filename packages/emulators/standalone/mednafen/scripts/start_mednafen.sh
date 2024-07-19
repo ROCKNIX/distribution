@@ -8,6 +8,11 @@
 set -x
 set_kill set "-9 mednafen"
 
+#load gptokeyb support files
+control-gen_init.sh
+source /storage/.config/gptokeyb/control.ini
+get_controls
+
 export MEDNAFEN_HOME=/storage/.config/mednafen
 export MEDNAFEN_CONFIG=/usr/config/mednafen/mednafen.template
 
@@ -270,5 +275,5 @@ cd /storage/.config/mednafen/
 @HOTKEY@
 @LIBEGL@
 $GPTOKEYB "mednafen" -c "mednafen.gptk" &
-exec ${EMUPERF} /usr/bin/mednafen -force_module ${CORE} -${CORE}.stretch ${STRETCH:="aspect"} -${CORE}.shader ${SHADER:="ipsharper"} ${FEATURES_CMDLINE} "${1}"
+${EMUPERF} /usr/bin/mednafen -force_module ${CORE} -${CORE}.stretch ${STRETCH:="aspect"} -${CORE}.shader ${SHADER:="ipsharper"} ${FEATURES_CMDLINE} "${1}"
 kill -9 $(pidof gptokeyb)
