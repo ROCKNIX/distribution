@@ -21,6 +21,11 @@ then
     /usr/bin/bash /usr/bin/mednafen_gen_config.sh
 fi
 
+if [ ! -f "$MEDNAFEN_HOME/mednafen.gptk" ]
+then
+    cp /usr/config/mednafen/mednafen.gptk /storage/.config/mednafen/mednafen.gptk
+fi
+
 #Emulation Station Features
 GAME=$(echo "${1}"| sed "s#^/.*/##")
 CORE=$(echo "${2}"| sed "s#^/.*/##")
@@ -261,5 +266,9 @@ FEATURES_CMDLINE+=" -${CORE}.xscale ${SCALE}.000000"
 FEATURES_CMDLINE+=" -${CORE}.yscale ${SCALE}.000000"
 
 #Run mednafen
+cd /storage/.config/mednafen/
+@HOTKEY@
 @LIBEGL@
-${EMUPERF} /usr/bin/mednafen -force_module ${CORE} -${CORE}.stretch ${STRETCH:="aspect"} -${CORE}.shader ${SHADER:="ipsharper"} ${FEATURES_CMDLINE} "${1}"
+$GPTOKEYB "mednafen" -c "mednafen.gptk" &
+exec ${EMUPERF} /usr/bin/mednafen -force_module ${CORE} -${CORE}.stretch ${STRETCH:="aspect"} -${CORE}.shader ${SHADER:="ipsharper"} ${FEATURES_CMDLINE} "${1}"
+kill -9 $(pidof gptokeyb)
