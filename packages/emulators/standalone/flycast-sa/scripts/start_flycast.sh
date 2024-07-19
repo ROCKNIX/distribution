@@ -6,10 +6,21 @@
 . /etc/profile
 set_kill set "-9 flycast"
 
+#load gptokeyb support files
+control-gen_init.sh
+source /storage/.config/gptokeyb/control.ini
+get_controls
+
 #Check if flycast exists in .config
 if [ ! -d "/storage/.config/flycast" ]; then
     mkdir -p "/storage/.config/flycast"
         cp -r "/usr/config/flycast" "/storage/.config/"
+fi
+
+#Check if flycast.gptk exists in .config
+if [ ! -f "/storage/.config/flycast/flycast.gptk" ]
+then
+    cp /usr/config/flycast/flycast.gptk /storage/.config/flycast/flycast.gptk
 fi
 
 #Move save file storage/roms
@@ -98,4 +109,8 @@ fi
         fi
 
 #Run flycast emulator
+cd /storage/.config/flycast/
+@HOTKEY@
+$GPTOKEYB "flycast" -c "flycast.gptk" &
 ${EMUPERF} /usr/bin/flycast "${1}"
+kill -9 $(pidof gptokeyb)
