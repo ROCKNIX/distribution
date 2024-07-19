@@ -30,9 +30,9 @@ post_makeinstall_target() {
 }
 
 post_install() {
-  case "${WINDOWMANAGER}" in
-    weston*) 
-      enable_service waybar.service
-      ;;
-  esac
+  # case "${WINDOWMANAGER}" in
+  #   weston*) 
+  #     enable_service waybar.service
+  #     ;;
+  # esac
 }
