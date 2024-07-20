@@ -2,8 +2,8 @@
 # Copyright (C) 2021-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="wlroots"
-PKG_VERSION="0.17.3-rk"
-PKG_SHA256="bda9d39c989f27994e6a412228ef6ac3c86d121b38fba04fe4a91eb3b1a7c118"
+PKG_VERSION="0.18.0-rk"
+PKG_SHA256="15855f05acfe32d4c51a4ad4bed988258fbce5c8f140573229d6889ca8503ed1"
 PKG_LICENSE="MIT"
 PKG_SITE="https://gitlab.freedesktop.org/wlroots/wlroots/"
 PKG_URL="https://github.com/stolen/rockchip-wlroots/archive/refs/tags/${PKG_VERSION}.tar.gz"

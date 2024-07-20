@@ -4,7 +4,7 @@
 # Copyright (C) 2023-present JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="xwayland"
-PKG_VERSION="1126d55f80fb681747d27180f480bb207f50e751"
+PKG_VERSION="cec99a3811bc45bcf74309c5c053d0c8a740db54"
 PKG_LICENSE="OSS"
 PKG_SITE="https://gitlab.freedesktop.org/xorg/xserver"
 PKG_URL="${PKG_SITE}.git"
@@ -14,6 +14,10 @@ PKG_NEED_UNPACK="$(get_pkg_directory xf86-video-nvidia) $(get_pkg_directory xf86
 PKG_LONGDESC="X.Org Server is the free and open-source implementation of the X Window System display server."
 
 get_graphicdrivers
+
+pre_configure_target() {
+export TARGET_CFLAGS="${TARGET_CFLAGS} -Wno-error=incompatible-pointer-types"
+}
 
 PKG_MESON_OPTS_TARGET+=" -Dxvfb=false \
                        -Dbuilder_addr=${BUILDER_NAME} \

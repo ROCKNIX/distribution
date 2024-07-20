@@ -8,12 +8,12 @@ PKG_LONGDESC="Dolphin is a GameCube / Wii emulator, allowing you to play games f
 PKG_TOOLCHAIN="cmake"
 
 case ${DEVICE} in
-  RK3588)
-    PKG_VERSION="0c2b8fd58787b1aa9e5ee250f885c2691aef492a"
-    PKG_SITE="https://github.com/dolphin-emu/dolphin"
-    PKG_URL="${PKG_SITE}.git"
-    PKG_PATCH_DIRS+=" x11"
-  ;;
+#  RK3588)
+#    PKG_VERSION="0c2b8fd58787b1aa9e5ee250f885c2691aef492a"
+#    PKG_SITE="https://github.com/dolphin-emu/dolphin"
+#    PKG_URL="${PKG_SITE}.git"
+#    PKG_PATCH_DIRS+=" x11"
+#  ;;
   *)
     PKG_SITE="https://github.com/dolphin-emu/dolphin"
     PKG_URL="${PKG_SITE}.git"
@@ -83,16 +83,23 @@ makeinstall_target() {
 
 post_install() {
     case ${DEVICE} in
-      RK35*)
-        DOLPHIN_PLATFORM="x11"
+      RK3588)
+        DOLPHIN_PLATFORM="\${PLATFORM}"
+        LIBMALI="if [ ! -z 'lsmod | grep panfrost' ]; then LD_LIBRARY_PATH='\/usr\/lib\/libmali-valhall-g610-g13p0-x11-gbm.so' PLATFORM='wayland'; else PLATFORM='x11'; fi"
       ;;
       *)
         DOLPHIN_PLATFORM="wayland"
+        LIBMALI=""
       ;;
     esac
     sed -e "s/@DOLPHIN_PLATFORM@/${DOLPHIN_PLATFORM}/g" \
         -i  ${INSTALL}/usr/bin/start_dolphin_gc.sh
     sed -e "s/@DOLPHIN_PLATFORM@/${DOLPHIN_PLATFORM}/g" \
+        -i  ${INSTALL}/usr/bin/start_dolphin_wii.sh
+
+    sed -e "s/@LIBMALI@/${LIBMALI}/g" \
+        -i  ${INSTALL}/usr/bin/start_dolphin_gc.sh
+    sed -e "s/@LIBMALI@/${LIBMALI}/g" \
         -i  ${INSTALL}/usr/bin/start_dolphin_wii.sh
 
     if [ "${DEVICE}" = "S922X" -a "${USE_MALI}" = "no" ]; then

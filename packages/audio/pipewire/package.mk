@@ -2,7 +2,7 @@
 # Copyright (C) 2021-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="pipewire"
-PKG_VERSION="1.1.81"
+PKG_VERSION="1.1.83"
 PKG_LICENSE="LGPL"
 PKG_SITE="https://pipewire.org"
 PKG_URL="https://github.com/PipeWire/pipewire/archive/${PKG_VERSION}.tar.gz"
@@ -80,6 +80,7 @@ PKG_MESON_OPTS_TARGET="-Ddocs=disabled \
                        -Dlegacy-rtkit=false"
 
 pre_configure_target() {
+  export TARGET_CFLAGS="${TARGET_CFLAGS} -Wno-error=float-conversion"
   export TARGET_LDFLAGS="${TARGET_LDFLAGS} -lncursesw -ltinfow"
 }
 
@@ -89,15 +90,6 @@ post_install() {
   mkdir -p ${INSTALL}/etc/alsa/conf.d
   ln -sf /usr/share/alsa/alsa.conf.d/50-pipewire.conf ${INSTALL}/etc/alsa/conf.d/50-pipewire.conf
   ln -sf /usr/share/alsa/alsa.conf.d/99-pipewire-default.conf ${INSTALL}/etc/alsa/conf.d/99-pipewire-default.conf
-
-# virtual stereo/mono drivers break sounds somehow, and is not needed on rk3399
-if [ ! "${DEVICE}" = "RK3399" ]; then
-  mkdir -p ${INSTALL}/etc/pipewire/pipewire.conf.d/
-  cp ${PKG_DIR}/sources/audio-v-devs.conf ${INSTALL}/etc/pipewire/pipewire.conf.d/
-  cp ${PKG_DIR}/sources/audio_vdriver.sh ${INSTALL}/usr/bin/
-  chmod 0755 ${INSTALL}/usr/bin/audio_vdriver.sh
-fi
-
   enable_service pipewire.socket
   enable_service pipewire.service
   enable_service pipewire-pulse.socket
