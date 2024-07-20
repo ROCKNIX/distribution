@@ -29,10 +29,10 @@ post_makeinstall_target() {
   chmod +x ${INSTALL}/etc/xdg/waybar/key_guide.sh
 }
 
-post_install() {
-  # case "${WINDOWMANAGER}" in
-  #   weston*) 
-  #     enable_service waybar.service
-  #     ;;
-  # esac
-}
+# post_install() {
+#   case "${WINDOWMANAGER}" in
+#     weston*) 
+#       enable_service waybar.service
+#       ;;
+#   esac
+# }
