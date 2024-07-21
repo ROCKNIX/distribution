@@ -29,7 +29,9 @@ trap 'rm -f "$LOCK_FILE"; exit' EXIT HUP INT TERM
 
 cleanup() {
   ${DEBUG} && log $0 "Cleaning up"
+  reset_stuck_state
   rm -f "$WAYBAR_STATE_FILE"
+  rm -rf "$LOCK_FILE"
 }
 
 trap cleanup EXIT
@@ -218,6 +220,22 @@ execute_action() {
   fi
 }
 
+reset_stuck_state() {
+  local current_time=$(date +%s)
+  local fn_a_time=$(stat -c %Y "$FN_A_PRESSED_FILE" 2>/dev/null || echo 0)
+  local fn_b_time=$(stat -c %Y "$FN_B_PRESSED_FILE" 2>/dev/null || echo 0)
+
+  if [ $((current_time - fn_a_time)) -gt 10 ]; then  # 10 seconds timeout
+    echo "false" > "$FN_A_PRESSED_FILE"
+    FN_A_PRESSED=false
+  fi
+
+  if [ $((current_time - fn_b_time)) -gt 10 ]; then  # 10 seconds timeout
+    echo "false" > "$FN_B_PRESSED_FILE"
+    FN_B_PRESSED=false
+  fi
+}
+
 toggle_waybar() {
   ${DEBUG} && log $0 "Attempting to toggle waybar"
   
@@ -235,11 +253,16 @@ toggle_waybar() {
   
   ${DEBUG} && log $0 "Current state: $current_state, New state: $new_state"
   
+  # Try to toggle Waybar
   if pkill -SIGUSR1 '^waybar$'; then
     echo "$new_state" > "$WAYBAR_STATE_FILE"
     ${DEBUG} && log $0 "Successfully toggled waybar to $new_state"
   else
-    ${DEBUG} && log $0 "Failed to toggle waybar, exit code: $?"
+    ${DEBUG} && log $0 "Failed to toggle waybar, attempting to restart"
+    killall waybar
+    sleep 1
+    waybar &
+    echo "visible" > "$WAYBAR_STATE_FILE"
   fi
 }
 
@@ -295,6 +318,8 @@ mkcontroller 2>/dev/null || :
   done
   wait
 ) | while read line; do
+  reset_stuck_state
+
   case ${line} in
   ${CONTROLLER_DISCONNECTED})
     ${DEBUG} && log $0 "Reloading due to ${CONTROLLER_DEVICE} reattach..."

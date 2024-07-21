@@ -29,7 +29,7 @@ shopt -u nocasematch
 INTEGER_SCALE=$(get_setting pico-8.integerscale)
 if [ "${INTEGER_SCALE}" = "1" ]
 then
-  OPTIONS="${OPTIONS} -pixel_perfect 1 -windowed 1 -frameless 1 -fullscreen_method 0"
+  OPTIONS="${OPTIONS} -pixel_perfect 1 -windowed 1 -frameless 1 -fullscreen_method 0 -read_controllers_in_background 0"
 fi
 
 if [ -d "${GAME_DIR}/${HW_ARCH}" ]
