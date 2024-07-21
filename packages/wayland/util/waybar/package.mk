@@ -2,8 +2,8 @@
 # Copyright (C) 2024-present Nicholas Ricciuti (https://github.com/rishooty)
 
 PKG_NAME="waybar"
-PKG_VERSION="0.10.3"
-PKG_SHA256="50a9ae85d3dcfef04e4bc4e0f3470f187964e4466c156e5558850cea84a3df5c"
+PKG_VERSION="0.10.4"
+PKG_SHA256="ad1ead64aec35bc589207ea1edce90e848620d578985967d44a850a66b5ef829"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/Alexays/Waybar"
 PKG_URL="https://github.com/Alexays/Waybar/archive/refs/tags/${PKG_VERSION}.tar.gz"

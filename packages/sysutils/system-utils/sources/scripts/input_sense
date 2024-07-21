@@ -11,7 +11,6 @@ set -o pipefail
 ### Summary
 #   This script listens to input events and takes actions.
 ###
-WAYBAR_STATE_FILE="/tmp/.waybar_toggle_state"
 LOCK_FILE="/tmp/input_sense.lock"
 FN_A_PRESSED_FILE="/tmp/FN_A_PRESSED.state"
 FN_B_PRESSED_FILE="/tmp/FN_B_PRESSED.state"
@@ -30,7 +29,6 @@ trap 'rm -f "$LOCK_FILE"; exit' EXIT HUP INT TERM
 cleanup() {
   ${DEBUG} && log $0 "Cleaning up"
   reset_stuck_state
-  rm -f "$WAYBAR_STATE_FILE"
   rm -rf "$LOCK_FILE"
 }
 
@@ -239,31 +237,26 @@ reset_stuck_state() {
 toggle_waybar() {
   ${DEBUG} && log $0 "Attempting to toggle waybar"
   
-  if [ ! -f "$WAYBAR_STATE_FILE" ]; then
-    echo "visible" > "$WAYBAR_STATE_FILE"
+  # Get the current state of the bar
+  bar_config=$(swaymsg -t get_bar_config bar-0)
+  ${DEBUG} && log $0 "Bar config: $bar_config"
+  if [ $? -ne 0 ]; then
+    ${DEBUG} && log $0 "Failed to get bar config"
+    return 1
   fi
+
+  current_state=$(echo "$bar_config" | jq -r '.mode // "dock"')
+  ${DEBUG} && log $0 "Current state: $current_state"
   
-  current_state=$(cat "$WAYBAR_STATE_FILE")
-  
-  if [ "$current_state" = "visible" ]; then
-    new_state="hidden"
+  if [ "$current_state" = "dock" ] || [ "$current_state" = "hide" ]; then
+    new_state="invisible"
+    swaymsg bar mode invisible
   else
-    new_state="visible"
+    new_state="overlay"
+    swaymsg bar mode overlay
   fi
   
-  ${DEBUG} && log $0 "Current state: $current_state, New state: $new_state"
-  
-  # Try to toggle Waybar
-  if pkill -SIGUSR1 '^waybar$'; then
-    echo "$new_state" > "$WAYBAR_STATE_FILE"
-    ${DEBUG} && log $0 "Successfully toggled waybar to $new_state"
-  else
-    ${DEBUG} && log $0 "Failed to toggle waybar, attempting to restart"
-    killall waybar
-    sleep 1
-    waybar &
-    echo "visible" > "$WAYBAR_STATE_FILE"
-  fi
+  ${DEBUG} && log $0 "Toggled waybar to $new_state"
 }
 
 ### Search the system for useful devices to monitor for inputs.
