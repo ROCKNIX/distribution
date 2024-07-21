@@ -28,3 +28,4 @@ export WLR_LIBINPUT_NO_DEVICES=1
 
 logger -t Sway "### Starting Sway with -V ${SWAY_GPU_ARGS} ${SWAY_DAEMON_ARGS}"
 /usr/bin/sway -V ${SWAY_GPU_ARGS} ${SWAY_DAEMON_ARGS} > ${SWAY_LOG_FILE} 2>&1
+exec swaymsg bar mode overlay
