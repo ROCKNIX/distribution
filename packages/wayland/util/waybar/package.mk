@@ -28,11 +28,3 @@ post_makeinstall_target() {
   cp ${PKG_DIR}/scripts/key_guide.sh ${INSTALL}/etc/xdg/waybar
   chmod +x ${INSTALL}/etc/xdg/waybar/key_guide.sh
 }
-
-# post_install() {
-#   case "${WINDOWMANAGER}" in
-#     weston*) 
-#       enable_service waybar.service
-#       ;;
-#   esac
-# }

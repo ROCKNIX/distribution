@@ -15,7 +15,7 @@ read_state() {
   local mtime=$(stat -c %Y "$file" 2>/dev/null || echo 0)
   local current_time=$(date +%s)
 
-  if [ $((current_time - mtime)) -gt 10 ]; then  # 10 seconds timeout
+  if [ $((current_time - mtime)) -gt 10 ]; then # 10 seconds timeout
     echo "false"
   else
     echo "$state"
@@ -26,11 +26,11 @@ FN_A_PRESSED=$(read_state "$FN_A_PRESSED_FILE")
 FN_B_PRESSED=$(read_state "$FN_B_PRESSED_FILE")
 
 if [ "$FN_A_PRESSED" = "true" ] && [ "$FN_B_PRESSED" = "false" ]; then
-    echo "{\"text\": \"$KEY_GUIDE_1\", \"class\": \"key-guide-1\"}"
+  echo "{\"text\": \"$KEY_GUIDE_1\", \"class\": \"key-guide-1\"}"
 elif [ "$FN_A_PRESSED" = "false" ] && [ "$FN_B_PRESSED" = "true" ]; then
-    echo "{\"text\": \"$KEY_GUIDE_2\", \"class\": \"key-guide-2\"}"
+  echo "{\"text\": \"$KEY_GUIDE_2\", \"class\": \"key-guide-2\"}"
 elif [ "$FN_A_PRESSED" = "true" ] && [ "$FN_B_PRESSED" = "true" ]; then
-    echo "{\"text\": \"$KEY_GUIDE_3\", \"class\": \"key-guide-3\"}"
+  echo "{\"text\": \"$KEY_GUIDE_3\", \"class\": \"key-guide-3\"}"
 else
-    echo "{\"text\": \"$KEY_GUIDE_NONE\", \"class\": \"key-guide-none\"}"
+  echo "{\"text\": \"$KEY_GUIDE_NONE\", \"class\": \"key-guide-none\"}"
 fi
