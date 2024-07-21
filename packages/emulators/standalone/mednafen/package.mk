@@ -8,16 +8,17 @@ PKG_SITE="https://mednafen.github.io/"
 PKG_URL="${PKG_SITE}/releases/files/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_TARGET="toolchain SDL2 flac"
 PKG_TOOLCHAIN="configure"
+PKG_BUILD_FLAGS="+speed"
 
 if [ "${DEVICE}" = "S922X" ]; then
   PKG_DEPENDS_TARGET+=" libegl"
 fi
 
 pre_configure_target() {
-
-export CFLAGS="${CFLAGS} -flto -fipa-pta"
-export CXXFLAGS="${CXXFLAGS} -flto -fipa-pta"
-export LDFLAGS="${LDFLAGS} -flto -fipa-pta"
+EXTRA_FLAGS="-flto -fipa-pta -fivopts -ftree-vectorize --param max-gcse-memory=300000"
+export CFLAGS="${CFLAGS} ${EXTRA_FLAGS}"
+export CXXFLAGS="${CXXFLAGS} ${EXTRA_FLAGS}"
+export LDFLAGS="${LDFLAGS} ${EXTRA_FLAGS}"
 
 # unsupported modules
 DISABLED_MODULES+=" --disable-apple2 \

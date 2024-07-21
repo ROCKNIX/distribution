@@ -103,7 +103,7 @@ This document describes all available systems emulators and cores available for 
 |Sega|Sega CD (segacd)|1991|`segacd`|.chd .cue .iso .m3u|**retroarch:** genesis_plus_gx (default)<br>**retroarch:** picodrive<br>|
 |Sega|Sega Model 3 (segamodel3)|1996|`segamodel3`|.zip|**supermodel:** supermodel-sa (default)<br>|
 |Sega|SG-1000 (sg-1000)|1983|`sg-1000`|.bin .sg .zip .7z|**retroarch:** gearsystem (default)<br>**retroarch:** genesis_plus_gx<br>**retroarch:** picodrive<br>|
-|Sega|ST-V (st-v)|1995|`st-v`|.zip .ZIP|**mednafen:** ss<br>|
+|Sega|ST-V (st-v)|1995|`st-v`|.zip .ZIP|**mednafen:** ss (default)<br>|
 |Sharp|X1 (x1)|1982|`x1`|.dx1 .2d .2hd .tfd .d88 .88d .hdm .xdf .dup .tap .cmd .zip .7z|**retroarch:** x1 (default)<br>|
 |Sharp|x68000 (x68000)|1987|`x68000`|.dim .img .d88 .hdm .dup .2hd .xdf .hdf .cmd .m3u .zip .7z|**retroarch:** px68k (default)<br>|
 |Sinclair|ZX Spectrum (zxspectrum)|1982|`zxspectrum`|.tzx .tap .z80 .rzx .scl .trd .dsk .zip .7z|**retroarch:** fuse<br>|
