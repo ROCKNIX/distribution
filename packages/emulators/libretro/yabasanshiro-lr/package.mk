@@ -52,6 +52,9 @@ pre_configure_target() {
     RK3*|S922X)
       PKG_MAKE_OPTS_TARGET+=" -C yabause/src/libretro platform=rockpro64 HAVE_NEON=0 FORCE_GLES=1"
     ;;
+    H700)
+      PKG_MAKE_OPTS_TARGET+=" -C yabause/src/libretro platform=arm64_cortex_a53_gles3 HAVE_NEON=0 FORCE_GLES=1"
+    ;;
     AMD64)
       PKG_MAKE_OPTS_TARGET+=" -C yabause/src/libretro FORCE_GLES=0 USE_X86_DRC=1 FASTMATH=1"
     ;;

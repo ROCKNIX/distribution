@@ -2,7 +2,7 @@
 # Copyright (C) 2023-present JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="bdf2psf"
-PKG_VERSION="1.228"
+PKG_VERSION="1.230"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://packages.debian.org/unstable/${PKG_NAME}"
 PKG_URL="https://deb.debian.org/debian/pool/main/c/console-setup/${PKG_NAME}_${PKG_VERSION}_all.deb"

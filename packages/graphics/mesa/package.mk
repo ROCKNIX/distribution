@@ -41,7 +41,6 @@ PKG_MESON_OPTS_TARGET=" ${MESA_LIBS_PATH_OPTS} \
                        -Dgallium-drivers=${GALLIUM_DRIVERS// /,} \
                        -Dgallium-extra-hud=false \
                        -Dgallium-omx=disabled \
-                       -Dgallium-nine=true \
                        -Dgallium-opencl=disabled \
                        -Dgallium-xa=disabled \
                        -Dshader-cache=enabled \
@@ -60,12 +59,14 @@ if [ "${DISPLAYSERVER}" = "x11" ]; then
   export X11_INCLUDES=
   PKG_MESON_OPTS_TARGET+="	-Dplatforms=x11 \
 				-Ddri3=enabled \
+				-Dgallium-nine=true \
 				-Dglx=dri \
 				-Dglvnd=true"
 elif [ "${DISPLAYSERVER}" = "wl" ]; then
   PKG_DEPENDS_TARGET+=" wayland wayland-protocols libglvnd glfw"
   PKG_MESON_OPTS_TARGET+=" 	-Dplatforms=wayland,x11 \
 				-Ddri3=enabled \
+				-Dgallium-nine=true \
 				-Dglx=dri \
 				-Dglvnd=true"
   PKG_DEPENDS_TARGET+=" xorgproto libXext libXdamage libXfixes libXxf86vm libxcb libX11 libxshmfence libXrandr libglvnd"
@@ -73,6 +74,7 @@ elif [ "${DISPLAYSERVER}" = "wl" ]; then
 else
   PKG_MESON_OPTS_TARGET+="	-Dplatforms="" \
 				-Ddri3=disabled \
+				-Dgallium-nine=false \
 				-Dglx=disabled \
 				-Dglvnd=false"
 fi
