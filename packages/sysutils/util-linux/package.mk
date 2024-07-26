@@ -18,7 +18,6 @@ UTILLINUX_CONFIG_DEFAULT="--disable-gtk-doc \
                           --disable-nls \
                           --disable-rpath \
                           --enable-tls \
-                          --disable-all-programs \
                           --enable-chsh-only-listed \
                           --disable-bash-completion \
                           --disable-colors-default \
