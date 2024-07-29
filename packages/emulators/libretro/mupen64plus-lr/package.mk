@@ -51,6 +51,11 @@ export CFLAGS="${CFLAGS} -Wno-error=incompatible-pointer-types"
       CFLAGS="${CFLAGS} -DLINUX -DEGL_API_FB"
       CPPFLAGS="${CPPFLAGS} -DLINUX -DEGL_API_FB"
     ;;
+    H700)
+      PKG_MAKE_OPTS_TARGET=" platform=RKH700"
+      CFLAGS="${CFLAGS} -DLINUX -DEGL_API_FB"
+      CPPFLAGS="${CPPFLAGS} -DLINUX -DEGL_API_FB"
+    ;;
     *)
       PKG_MAKE_OPTS_TARGET="GLES=0 GLES3=0"
     ;;

@@ -15,8 +15,8 @@ PKG_NEED_UNPACK="$PROJECT_DIR/$PROJECT/bootloader"
 
 case ${DEVICE} in
   H700*)
-    PKG_VERSION="24aafd7efc6827dc44cae0bfc28c08d989b34869"
-    PKG_URL="https://git.sr.ht/~tokyovigilante/u-boot/archive/24aafd7efc6827dc44cae0bfc28c08d989b34869.tar.gz"
+    PKG_VERSION="7198a049f4b4d990b95f94114a974a2238b20cd8"
+    PKG_URL="https://git.sr.ht/~tokyovigilante/u-boot/archive/7198a049f4b4d990b95f94114a974a2238b20cd8.tar.gz"
   ;;
 esac
 
