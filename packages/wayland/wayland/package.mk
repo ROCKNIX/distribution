@@ -10,9 +10,14 @@ PKG_LONGDESC="a display server protocol"
 
 case ${DEVICE} in
   S922X)
-    PKG_VERSION="1.21.0"
-    PKG_SHA256="6dc64d7fc16837a693a51cfdb2e568db538bfdc9f457d4656285bb9594ef11ac"
-    PKG_PATCH_DIRS+=" legacy"
+    if [ "${DEVICE}" = "S922X" -a "${USE_MALI}" != "no" ]; then
+      PKG_VERSION="1.21.0"
+      PKG_SHA256="6dc64d7fc16837a693a51cfdb2e568db538bfdc9f457d4656285bb9594ef11ac"
+      PKG_PATCH_DIRS+=" legacy"
+    else
+      PKG_VERSION="1.23.0"
+      PKG_SHA256="05b3e1574d3e67626b5974f862f36b5b427c7ceeb965cb36a4e6c2d342e45ab2"
+    fi
   ;;
   RK3588)
     PKG_VERSION="1.22.0"
