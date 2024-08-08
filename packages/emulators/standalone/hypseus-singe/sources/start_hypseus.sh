@@ -18,46 +18,46 @@ JOYNAME=$(echo "${GAMEPADINFO}" | grep "Joystick 0 name " | sed "s|Joystick 0 na
 #
 
 for file in /usr/share/libretro/autoconfig/*.cfg; do
-	GAMEPAD=$(cat "$file" | grep input_device|  cut -d'"' -f 2)
+    GAMEPAD=$(cat "$file" | grep input_device | cut -d'"' -f 2)
     if [ "${JOYNAME}" == "${GAMEPAD}" ]; then
         GPFILE="${file}"
         # Other keys to consider KEY_SCREENSHOT KEY_QUIT KEY_PAUSE
-        for key in KEY_UP KEY_DOWN KEY_LEFT KEY_RIGHT KEY_BUTTON1 KEY_BUTTON2 KEY_BUTTON3 KEY_START1 KEY_COIN1; do 
+        for key in KEY_UP KEY_DOWN KEY_LEFT KEY_RIGHT KEY_BUTTON1 KEY_BUTTON2 KEY_BUTTON3 KEY_START1 KEY_COIN1; do
             case ${key} in
-                "KEY_UP")
+            "KEY_UP")
                 button=$(cat "${GPFILE}" | grep -E 'input_up_btn' | cut -d '"' -f2)
                 keyboard="1073741906 0"
                 ;;
-                "KEY_DOWN")
+            "KEY_DOWN")
                 button=$(cat "${GPFILE}" | grep -E 'input_down_btn' | cut -d '"' -f2)
                 keyboard="1073741905 0"
                 ;;
-                "KEY_LEFT")
+            "KEY_LEFT")
                 button=$(cat "${GPFILE}" | grep -E 'input_left_btn' | cut -d '"' -f2)
                 keyboard="1073741904 0"
                 ;;
-                "KEY_RIGHT")
+            "KEY_RIGHT")
                 button=$(cat "${GPFILE}" | grep -E 'input_right_btn' | cut -d '"' -f2)
                 keyboard="1073741903 0"
                 ;;
-                "KEY_BUTTON1")
+            "KEY_BUTTON1")
                 button=$(cat "${GPFILE}" | grep -E 'input_a_btn' | cut -d '"' -f2)
                 keyboard="1073742048 0"
                 ;;
-                "KEY_BUTTON2")
-                button=$(cat "${GPFILE}" | grep -E 'input_b_btn' | cut -d '"' -f2) 
+            "KEY_BUTTON2")
+                button=$(cat "${GPFILE}" | grep -E 'input_b_btn' | cut -d '"' -f2)
                 keyboard="1073742050 0"
                 ;;
-                "KEY_BUTTON3")
-                button=$(cat "${GPFILE}" | grep -E 'input_x_btn' | cut -d '"' -f2) 
+            "KEY_BUTTON3")
+                button=$(cat "${GPFILE}" | grep -E 'input_x_btn' | cut -d '"' -f2)
                 keyboard="32 0"
                 ;;
-                "KEY_START1")
-                button=$(cat "${GPFILE}" | grep -E 'input_start_btn' | cut -d '"' -f2) 
+            "KEY_START1")
+                button=$(cat "${GPFILE}" | grep -E 'input_start_btn' | cut -d '"' -f2)
                 keyboard="49 0"
                 ;;
-                "KEY_COIN1")
-                button=$(cat "${GPFILE}" | grep -E 'input_select_btn' | cut -d '"' -f2) 
+            "KEY_COIN1")
+                button=$(cat "${GPFILE}" | grep -E 'input_select_btn' | cut -d '"' -f2)
                 keyboard="53 54"
                 ;;
             esac
@@ -70,8 +70,8 @@ for file in /usr/share/libretro/autoconfig/*.cfg; do
             fi
 
             sed -i "s|${key}.*|${key} = ${keyboard} ${button} |" ${configfile}
-        done 
-    fi 
+        done
+    fi
 done # finish auto gamepad
 
 if [[ -f "${dir}/${name}.commands" ]]; then

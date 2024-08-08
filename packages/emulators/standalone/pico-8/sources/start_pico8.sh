@@ -8,11 +8,11 @@
 GAME_DIR="/storage/roms/pico-8/"
 
 case ${HW_ARCH} in
-  aarch64)
-    STATIC_BIN="pico8_64"
+aarch64)
+  STATIC_BIN="pico8_64"
   ;;
-  *)
-    STATIC_BIN="pico8_dyn"
+*)
+  STATIC_BIN="pico8_dyn"
   ;;
 esac
 
@@ -27,13 +27,11 @@ fi
 shopt -u nocasematch
 
 INTEGER_SCALE=$(get_setting pico-8.integerscale)
-if [ "${INTEGER_SCALE}" = "1" ]
-then
-  OPTIONS="${OPTIONS} -pixel_perfect 1"
+if [ "${INTEGER_SCALE}" = "1" ]; then
+  OPTIONS="${OPTIONS} -pixel_perfect 1 -windowed 1 -frameless 1 -fullscreen_method 0 -read_controllers_in_background 0"
 fi
 
-if [ -d "${GAME_DIR}/${HW_ARCH}" ]
-then
+if [ -d "${GAME_DIR}/${HW_ARCH}" ]; then
   LAUNCH_DIR="${GAME_DIR}/${HW_ARCH}"
 else
   LAUNCH_DIR="${GAME_DIR}"
