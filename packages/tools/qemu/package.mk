@@ -11,6 +11,9 @@ PKG_LONGDESC="QEMU is a generic and open source machine emulator and virtualizer
 PKG_TOOLCHAIN="configure"
 
 pre_configure_host() {
+
+  sed -i '/HAVE_BTRFS/d' ../meson.build
+
   HOST_CONFIGURE_OPTS="\
     --bindir=${TOOLCHAIN}/bin \
     --extra-cflags=-I${TOOLCHAIN}/include \
