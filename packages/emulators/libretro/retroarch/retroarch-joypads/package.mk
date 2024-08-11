@@ -2,7 +2,7 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="retroarch-joypads"
-PKG_VERSION="ae224d2ea4aa74b797c575a33be82882d455d638"
+PKG_VERSION="945c145f65fe30b25337e7b008bfcee1a6df8d99"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/libretro/retroarch-joypad-autoconfig"
 PKG_URL="${PKG_SITE}.git"
