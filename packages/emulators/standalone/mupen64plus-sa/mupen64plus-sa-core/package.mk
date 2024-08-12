@@ -13,6 +13,13 @@ PKG_LONGDESC="mupen64plus"
 PKG_LONGDESC="Mupen64Plus Standalone"
 PKG_TOOLCHAIN="manual"
 
+if [ "${VULKAN_SUPPORT}" = "yes" ]; then
+  PKG_DEPENDS_TARGET+=" vulkan-loader vulkan-headers"
+  export VULKAN=1
+else
+  export VULKAN=0
+fi
+
 case ${DEVICE} in
   AMD64)
     PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
