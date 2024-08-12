@@ -1,31 +1,47 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2024 JELOS (https://github.com/RO)
+# Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
 
+# check if rclone has been configured
 if [ ! -e "/storage/.config/rclone/rclone.conf" ]
 then
   echo "You must configure rclone before using this tool.  Run \`rclone config\` to get started."
-  sleep 4
-  exit 1
+  sleep 3
+  exit
 fi
 
+# check that the internet is reachable
+ONLINESTATUS=`ping -q -c1 google.com &>/dev/null && echo online || echo offline`
+if [ "${ONLINESTATUS}" == "offline" ]
+then
+  echo -e "You're not currently connected to the internet.\nPlease verify your settings and then try again."
+  sleep 3
+  exit
+fi
+
+# Loads cloud sync config variables from cloud_sync.conf
+source /storage/.config/cloud_sync.conf
+
+# restore from rclone remote
 if [ -e "/storage/.config/rclone/rclone.conf" ]
 then
   # define locations for source and remote
   REMOTENAME=`rclone listremotes | head -1`
-  SYNCPATH="${SYNCPATH:=GAMES}"
-  RESTOREPATH="${RESTOREPATH:=/storage/roms}"
 
+  # Run restore
   echo -e "=> ${OS_NAME} CLOUD RESTORE UTILITY\n"
   echo "Restoring data from ${REMOTENAME}${SYNCPATH} to ${RESTOREPATH}" 2>&1  
-  rclone sync \
-    --progress \
-    --log-file /var/log/cloud_sync.log \
-    --filter-from /storage/.config/cloud_sync-rules.txt \
-    --verbose \
+rclone ${RESTOREMETHOD} \
+    ${RCLONEOPTS} \
     ${REMOTENAME}${SYNCPATH}/ ${RESTOREPATH}/
 fi
 
-echo "Restore complete!"
-sleep 2
+# Create empty missing system directories if removed during restore
+if [ "${RESTOREMETHOD}" == "sync" ]
+then
+  systemd-tmpfiles --create /usr/config/system-dirs.conf
+fi
+
+echo "Restore from ${REMOTENAME}${SYNCPATH} complete!"
+sleep 1.5
 clear

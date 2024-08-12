@@ -25,8 +25,4 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
   cp -v ${PKG_BUILD}/neo/boom3_libretro.so ${INSTALL}/usr/lib/libretro/
   cp -v ${PKG_BUILD}/neo/boom3_xp_libretro.so ${INSTALL}/usr/lib/libretro/
-
-  mkdir -p ${INSTALL}/usr/config/idtech
-  cp -rf ${PKG_DIR}/scripts/* ${INSTALL}/usr/config/idtech/
-  chmod 0755 ${INSTALL}/usr/config/idtech/*
 }

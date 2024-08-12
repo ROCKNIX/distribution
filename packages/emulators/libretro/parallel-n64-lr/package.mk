@@ -2,7 +2,7 @@
 # Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="parallel-n64-lr"
-PKG_VERSION="330fa5efd306ad116c44faf6833a8108ed4144b0"
+PKG_VERSION="334998e6129debe50f7ef9c5cd1e995460ae2da8"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/parallel-n64"
 PKG_URL="${PKG_SITE}.git"
@@ -24,12 +24,21 @@ if [ "${VULKAN_SUPPORT}" = "yes" ]; then
 fi
 
 case ${DEVICE} in
-  RK3*|S922X)
+  RK3*|S922X|H700)
     PKG_MAKE_OPTS_TARGET+=" platform=${DEVICE}"
   ;;
   AMD64)
     PKG_MAKE_OPTS_TARGET+=" HAVE_PARALLEL_RSP=1"
 esac
+
+pre_configure_target() {
+  if [ "${ARCH}" = "aarch64" ]; then
+    # This is only needed for armv8.2-a targets where we don't use this flag
+    # as it prohibits the use of LSE-instructions, this is a package bug most likely
+    export CFLAGS="${CFLAGS} -mno-outline-atomics"
+    export CXXFLAGS="${CXXFLAGS} -mno-outline-atomics"
+  fi
+}
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro

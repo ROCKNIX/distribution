@@ -2,11 +2,12 @@
 # Copyright (C) 2021-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="sway"
-PKG_VERSION="1.9"
-PKG_SHA256="a63b2df8722ee595695a0ec6c84bf29a055a9767e63d8e4c07ff568cb6ee0b51"
+PKG_VERSION="1c992d847d66161a28f12bfc7028966433fb249c"
+PKG_SHA256="387d37ede5d56f8474ce5706f78b1ad3311f6e58dcdfa4c495396d2ff0f1544d"
 PKG_LICENSE="MIT"
 PKG_SITE="https://swaywm.org/"
-PKG_URL="https://github.com/swaywm/sway/releases/download/${PKG_VERSION}/sway-${PKG_VERSION}.tar.gz"
+#PKG_URL="https://github.com/swaywm/sway/releases/download/${PKG_VERSION}/sway-${PKG_VERSION}.tar.gz"
+PKG_URL="https://github.com/swaywm/sway/archive/${PKG_VERSION}.zip" # temporary until 1.10 is released
 PKG_DEPENDS_TARGET="toolchain wayland wayland-protocols libdrm libxkbcommon libinput cairo pango libjpeg-turbo dbus json-c wlroots gdk-pixbuf swaybg foot bemenu xcb-util-wm xwayland xkbcomp"
 PKG_LONGDESC="i3-compatible Wayland compositor"
 PKG_TOOLCHAIN="meson"
@@ -19,7 +20,6 @@ PKG_MESON_OPTS_TARGET="-Ddefault-wallpaper=false \
                        -Dfish-completions=false \
                        -Dswaybar=true \
                        -Dswaynag=true \
-                       -Dxwayland=enabled \
                        -Dtray=disabled \
                        -Dgdk-pixbuf=enabled \
                        -Dman-pages=disabled \

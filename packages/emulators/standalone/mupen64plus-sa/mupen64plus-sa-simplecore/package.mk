@@ -26,6 +26,8 @@ case ${DEVICE} in
 esac
 
 make_target() {
+#  export TARGET_CLFAGS="${TARGET_CFLAGS} -Wno-implicit-function-declaration -Wno-error=incompatible-pointer-types"
+#  export TARGET_CXXLFAGS="${TARGET_CXXFLAGS} -Wno-implicit-function-declaration -Wno-error=incompatible-pointer-types"
   case ${ARCH} in
     arm|aarch64)
       export HOST_CPU=aarch64
@@ -36,6 +38,9 @@ make_target() {
       unset ARM
     ;;
   esac
+
+  # Always diable Vulkan
+  export VULKAN=0
 
   export BINUTILS="$(get_build_dir binutils)/.${TARGET_NAME}"
   export NEW_DYNAREC=1

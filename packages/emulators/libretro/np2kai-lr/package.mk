@@ -27,6 +27,10 @@ PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Neko Project II kai"
 PKG_TOOLCHAIN="make"
 
+pre_configure_target() {
+export CFLAGS="${CFLAGS} -Wno-error=incompatible-pointer-types -Wno-int-conversion"
+}
+
 make_target() {
   VERSION="${PKG_VERSION:0:7}"
   cd ${PKG_BUILD}/sdl

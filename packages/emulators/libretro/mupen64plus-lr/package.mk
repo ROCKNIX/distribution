@@ -43,9 +43,16 @@ pre_make_target() {
 }
 
 pre_configure_target() {
+export CFLAGS="${CFLAGS} -Wno-error=incompatible-pointer-types"
+
   case ${DEVICE} in
     RK3*)
       PKG_MAKE_OPTS_TARGET=" platform=${DEVICE}"
+      CFLAGS="${CFLAGS} -DLINUX -DEGL_API_FB"
+      CPPFLAGS="${CPPFLAGS} -DLINUX -DEGL_API_FB"
+    ;;
+    H700)
+      PKG_MAKE_OPTS_TARGET=" platform=RKH700"
       CFLAGS="${CFLAGS} -DLINUX -DEGL_API_FB"
       CPPFLAGS="${CPPFLAGS} -DLINUX -DEGL_API_FB"
     ;;

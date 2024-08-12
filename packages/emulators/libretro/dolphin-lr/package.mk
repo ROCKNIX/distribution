@@ -35,7 +35,15 @@ then
   PKG_CONFIGURE_OPTS_TARGET+=" -DENABLE_VULKAN=ON"
 fi
 
-pre_configure_target() {
+pre_configure_target() 
+
+  if [ "${ARCH}" = "aarch64" ]; then
+    # This is only needed for armv8.2-a targets where we don't use this flag
+    # as it prohibits the use of LSE-instructions, this is a package bug most likely
+    export CFLAGS="${CFLAGS} -mno-outline-atomics"
+    export CXXFLAGS="${CXXFLAGS} -mno-outline-atomics"
+  fi
+{
         PKG_CMAKE_OPTS_TARGET+="        -DENABLE_EGL=ON \
                                         -DUSE_SHARED_ENET=OFF \
                                         -DUSE_UPNP=ON \

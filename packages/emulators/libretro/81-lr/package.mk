@@ -19,7 +19,7 @@
 ################################################################################
 
 PKG_NAME="81-lr"
-PKG_VERSION="525d5c18f1ff3fc54c37e083a475225d9179d59d"
+PKG_VERSION="c0d56c5bc5cd48715b4e83cbb3d241a6bed94c2a"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/libretro/81-libretro"
 PKG_URL="https://github.com/libretro/81-libretro/archive/${PKG_VERSION}.tar.gz"

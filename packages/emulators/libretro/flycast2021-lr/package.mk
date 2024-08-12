@@ -40,6 +40,7 @@ if [ "${OPENGLES_SUPPORT}" = yes ]; then
 fi
 
 pre_configure_target() {
+  export CXXFLAGS="${CXXFLAGS} -Wno-implicit-function-declaration"
   sed -i 's/define CORE_OPTION_NAME "reicast"/define CORE_OPTION_NAME "flycast2021"/g' core/libretro/libretro_core_option_defines.h
   sed -i 's/\-O[23]/-Ofast/' ${PKG_BUILD}/Makefile
   PKG_MAKE_OPTS_TARGET="${PKG_MAKE_OPTS_TARGET} ARCH=${TARGET_ARCH} HAVE_OPENMP=1 GIT_VERSION=${PKG_VERSION:0:7}  HAVE_LTCG=0"
@@ -50,6 +51,9 @@ pre_make_target() {
   case ${DEVICE} in
     RK3*|S922X)
       PKG_MAKE_OPTS_TARGET+=" platform=${DEVICE}"
+    ;;
+    H700)
+      PKG_MAKE_OPTS_TARGET+=" platform=RK3326"
     ;;
   esac
 }

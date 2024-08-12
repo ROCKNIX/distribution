@@ -2,7 +2,7 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="vitaquake2-xatrix-lr"
-PKG_VERSION="6bb3ee592169694b055e7efd5fa2a4e57875bddd"
+PKG_VERSION="69e56a470638ca8ed15b53212923220360a69f97"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/vitaquake2"
 PKG_URL="$PKG_SITE/archive/$PKG_VERSION.tar.gz"
@@ -18,7 +18,7 @@ fi
 pre_make_target() {
   export BUILD_SYSROOT=${SYSROOT_PREFIX}
 
-  PKG_MAKE_OPTS_TARGET+=" basegame=xatrix platform=${DEVICE}"
+  PKG_MAKE_OPTS_TARGET+=" basegame=xatrix platform=${DEVICE}_rocknix"
 }
 
 makeinstall_target() {

@@ -3,10 +3,10 @@
 
 PKG_NAME="unzip"
 PKG_VERSION="60"
-PKG_SHA256="036d96991646d0449ed0aa952e4fbe21b476ce994abc276e49d30e686708bd37"
+PKG_SHA256="002da7dccff8314cc6077794343990353935efbd3623a3c457ed0d8a0c1fbea1"
 PKG_LICENSE="OSS"
 PKG_SITE="http://www.info-zip.org/pub/infozip/"
-PKG_URL="https://sourceforge.net/projects/infozip/files/UnZip%206.x%20(latest)/UnZip%206.0/unzip60.tar.gz"
+PKG_URL="https://github.com/madler/unzip/archive/0b82c20ac7375b522215b567174f370be89a4b12.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="UnZip is an extraction utility for archives compressed in .zip format."
 PKG_TOOLCHAIN="manual"
