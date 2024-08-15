@@ -11,27 +11,44 @@ set -o pipefail
 ### Summary
 #   This script listens to input events and takes actions.
 ###
+LOCK_FILE="/tmp/input_sense.lock"
+KEY_GUIDE_FILE="/tmp/key_guide_output.json"
+touch "$KEY_GUIDE_FILE"
+swaymsg bar mode overlay
+
+# Exit if another instance is already running
+if [ -e "$LOCK_FILE" ]; then
+  echo "Another instance of input_sense is already running."
+  exit 1
+fi
+touch "$LOCK_FILE"
+trap 'rm -f "$LOCK_FILE"; exit' EXIT HUP INT TERM
+
+cleanup() {
+  ${DEBUG} && log $0 "Cleaning up"
+  rm -rf "$LOCK_FILE"
+}
+
+trap cleanup EXIT
 
 ### Enable logging
 case $(get_setting system.loglevel) in
-  verbose)
-    DEBUG=true
+verbose)
+  DEBUG=true
   ;;
-  *)
-    DEBUG=false
+*)
+  DEBUG=false
   ;;
 esac
 
 ### Define matching values from evtest, but allow them to be overridden in system.cfg.
 KEY_VOLUME_UP=$(get_setting key.volume.up)
-if [ -z "${KEY_VOLUME_UP}" ]
-then
+if [ -z "${KEY_VOLUME_UP}" ]; then
   KEY_VOLUME_UP='KEY_VOLUME*UP'
 fi
 
 KEY_VOLUME_DOWN=$(get_setting key.volume.down)
-if [ -z "${KEY_VOLUME_DOWN}" ]
-then
+if [ -z "${KEY_VOLUME_DOWN}" ]; then
   KEY_VOLUME_DOWN='KEY_VOLUME*DOWN'
 fi
 
@@ -40,14 +57,12 @@ FUNCTION_VOLUME_DOWN_EVENT='*('${KEY_VOLUME_DOWN}'), value 1'
 
 ### Define matching function hotkeys from controller values, but allow them to be overridden in system.cfg.
 KEYA_MODIFIER=$(get_setting key.function.a)
-if [ -z "${KEYA_MODIFIER}" ]
-then
+if [ -z "${KEYA_MODIFIER}" ]; then
   KEYA_MODIFIER="${DEVICE_FUNC_KEYA_MODIFIER}"
 fi
 
 KEYB_MODIFIER=$(get_setting key.function.b)
-if [ -z "${KEYB_MODIFIER}" ]
-then
+if [ -z "${KEYB_MODIFIER}" ]; then
   KEYB_MODIFIER="${DEVICE_FUNC_KEYB_MODIFIER}"
 fi
 
@@ -55,20 +70,17 @@ FUNCTION_MODIFIER_A_EVENT='*('${KEYA_MODIFIER}'), value *'
 FUNCTION_MODIFIER_B_EVENT='*('${KEYB_MODIFIER}'), value *'
 
 BTN_HOTKEY_A_MODIFIER=$(get_setting key.hotkey.a)
-if [ -z "${BTN_HOTKEY_A_MODIFIER}" ]
-then
+if [ -z "${BTN_HOTKEY_A_MODIFIER}" ]; then
   BTN_HOTKEY_A_MODIFIER="BTN_TL"
 fi
 
 BTN_HOTKEY_B_MODIFIER=$(get_setting key.hotkey.b)
-if [ -z "${BTN_HOTKEY_B_MODIFIER}" ]
-then
+if [ -z "${BTN_HOTKEY_B_MODIFIER}" ]; then
   BTN_HOTKEY_B_MODIFIER="BTN_SELECT"
 fi
 
 BTN_HOTKEY_C_MODIFIER=$(get_setting key.hotkey.c)
-if [ -z "${BTN_HOTKEY_C_MODIFIER}" ]
-then
+if [ -z "${BTN_HOTKEY_C_MODIFIER}" ]; then
   BTN_HOTKEY_C_MODIFIER="BTN_START"
 fi
 
@@ -92,9 +104,8 @@ FUNCTION_HOTKEY_HAT_RIGHT_EVENT="*(ABS_HAT0X), value 1*"
 FUNCTION_HOTKEY_HAT_LEFT_EVENT="*(ABS_HAT0X), value -1*"
 
 DPAD_EVENTS=$(get_setting key.dpad.events)
-if [ -z "${DPAD_EVENTS}" ] || \
-   [ "${DPAD_EVENTS}" = "0" ]
-then
+if [ -z "${DPAD_EVENTS}" ] ||
+  [ "${DPAD_EVENTS}" = "0" ]; then
   DPAD_EVENTS=false
 else
   DPAD_EVENTS=true
@@ -110,6 +121,7 @@ RELEASE='value 0'
 ### Function buttons should be defined as not pressed for later matching.
 FN_A_PRESSED=false
 FN_B_PRESSED=false
+FN_A_PRESS_TIME=0
 
 ### Allow actions to be overriden in system.cfg
 FN_A_ACTION_UP="$(get_setting key.function.a.up)"
@@ -122,40 +134,33 @@ FN_AB_ACTION_UP="$(get_setting key.function.ab.up)"
 FN_AB_ACTION_DOWN="$(get_setting key.function.ab.down)"
 
 ### Set sane defaults to manage volume, brightness, wireless on/off, and led on/off.
-if [ -z "${FN_A_ACTION_UP}" ]
-then
+if [ -z "${FN_A_ACTION_UP}" ]; then
   FN_A_ACTION_UP="brightness up"
 fi
 
-if [ -z "${FN_A_ACTION_DOWN}" ]
-then
+if [ -z "${FN_A_ACTION_DOWN}" ]; then
   FN_A_ACTION_DOWN="brightness down"
 fi
 
-if [ -z "${FN_B_ACTION_UP}" ]
-then
+if [ -z "${FN_B_ACTION_UP}" ]; then
   FN_B_ACTION_UP="ledcontrol"
 fi
 
-if [ -z "${FN_B_ACTION_DOWN}" ]
-then
+if [ -z "${FN_B_ACTION_DOWN}" ]; then
   FN_B_ACTION_DOWN="ledcontrol poweroff"
 fi
 
-if [ -z "${FN_AB_ACTION_UP}" ]
-then
+if [ -z "${FN_AB_ACTION_UP}" ]; then
   FN_AB_ACTION_UP="wifictl enable"
 fi
 
-if [ -z "${FN_AB_ACTION_DOWN}" ]
-then
+if [ -z "${FN_AB_ACTION_DOWN}" ]; then
   FN_AB_ACTION_DOWN="wifictl disable"
 fi
 
 ### Simple functions to execute button actions, including global kill.
 execute_kill() {
-  if [ -e "/tmp/.process-kill-data" ]
-  then
+  if [ -e "/tmp/.process-kill-data" ]; then
     TO_KILL="$(cat /tmp/.process-kill-data)"
     ${DEBUG} && log $0 "Execute: killall ${TO_KILL}"
     killall ${TO_KILL} 2>/dev/null
@@ -163,53 +168,103 @@ execute_kill() {
 }
 
 execute_action() {
-    ${DEBUG} && log $0 "${1}|${FN_A_PRESSED}|${FN_B_PRESSED}|${DPAD_UP_PRESSED}|${DPAD_DOWN_PRESSED}|${DPAD_RIGHT_PRESSED}|${DPAD_LEFT_PRESSED}"
-    if [ "${FN_A_PRESSED}" = true ] && \
-       [ "${FN_B_PRESSED}" = true ]
-    then
-        ${DEBUG} && log $0 "Executing FN_AB action"
-        case ${1} in
-            up)
-                ${DEBUG} && log $0 "FN_AB (${FN_AB_ACTION_UP})"
-                ${FN_AB_ACTION_UP}
-            ;;
-            down)
-                ${DEBUG} && log $0 "FN_AB (${FN_AB_ACTION_DOWN})"
-                ${FN_AB_ACTION_DOWN}
-            ;;
-        esac
-    elif [ "${FN_A_PRESSED}" = true ] && \
-         [ "${FN_B_PRESSED}" = false ]
-    then
-        ${DEBUG} && log $0 "Executing FN_A action"
-        case ${1} in
-            up)
-                ${DEBUG} && log $0 "FN_A (${FN_A_ACTION_UP})"
-                ${FN_A_ACTION_UP}
-            ;;
-            down)
-                ${DEBUG} && log $0 "FN_A (${FN_A_ACTION_DOWN})"
-                ${FN_A_ACTION_DOWN}
-            ;;
-        esac
-    elif [ "${FN_A_PRESSED}" = false ] && \
-         [ "${FN_B_PRESSED}" = true ]
-    then
-        ${DEBUG} && log $0 "Executing FN_B action"
-        case ${1} in
-            up)
-                ${DEBUG} && log $0 "FN_B (${FN_B_ACTION_UP})"
-                ${FN_B_ACTION_UP}
-            ;;
-            down)
-                ${DEBUG} && log $0 "FN_B (${FN_B_ACTION_DOWN})"
-                ${FN_B_ACTION_DOWN}
-            ;;
-        esac
-    else
-        volume ${1}
-    fi
+  ${DEBUG} && log $0 "${1}|${FN_A_PRESSED}|${FN_B_PRESSED}|${DPAD_UP_PRESSED}|${DPAD_DOWN_PRESSED}|${DPAD_RIGHT_PRESSED}|${DPAD_LEFT_PRESSED}"
+  if [ "${FN_A_PRESSED}" = true ] &&
+    [ "${FN_B_PRESSED}" = true ]; then
+    ${DEBUG} && log $0 "Executing FN_AB action"
+    case ${1} in
+    up)
+      ${DEBUG} && log $0 "FN_AB (${FN_AB_ACTION_UP})"
+      ${FN_AB_ACTION_UP}
+      ;;
+    down)
+      ${DEBUG} && log $0 "FN_AB (${FN_AB_ACTION_DOWN})"
+      ${FN_AB_ACTION_DOWN}
+      ;;
+    esac
+  elif [ "${FN_A_PRESSED}" = true ] &&
+    [ "${FN_B_PRESSED}" = false ]; then
+    ${DEBUG} && log $0 "Executing FN_A action"
+    case ${1} in
+    up)
+      ${DEBUG} && log $0 "FN_A (${FN_A_ACTION_UP})"
+      ${FN_A_ACTION_UP}
+      ;;
+    down)
+      ${DEBUG} && log $0 "FN_A (${FN_A_ACTION_DOWN})"
+      ${FN_A_ACTION_DOWN}
+      ;;
+    esac
+  elif [ "${FN_A_PRESSED}" = false ] &&
+    [ "${FN_B_PRESSED}" = true ]; then
+    ${DEBUG} && log $0 "Executing FN_B action"
+    case ${1} in
+    up)
+      ${DEBUG} && log $0 "FN_B (${FN_B_ACTION_UP})"
+      ${FN_B_ACTION_UP}
+      ;;
+    down)
+      ${DEBUG} && log $0 "FN_B (${FN_B_ACTION_DOWN})"
+      ${FN_B_ACTION_DOWN}
+      ;;
+    esac
+  else
+    volume ${1}
+  fi
 }
+
+toggle_waybar() {
+  ${DEBUG} && log $0 "Attempting to toggle waybar"
+
+  # Get the current state of the bar
+  bar_config=$(swaymsg -t get_bar_config bar-0)
+  ${DEBUG} && log $0 "Bar config: $bar_config"
+  if [ $? -ne 0 ]; then
+    ${DEBUG} && log $0 "Failed to get bar config"
+    return 1
+  fi
+
+  current_state=$(echo "$bar_config" | jq -r '.mode // "overlay"')
+  ${DEBUG} && log $0 "Current state: $current_state"
+
+  if [ "$current_state" = "overlay" ]; then
+    new_state="invisible"
+  else
+    new_state="overlay"
+  fi
+
+  swaymsg bar mode $new_state
+  ${DEBUG} && log $0 "Toggled waybar to $new_state"
+}
+
+update_key_guide() {
+  source /storage/.config/waybar/hotkeys/current-hotkeys
+
+  KEY_GUIDE_NONE=$(echo $KEY_GUIDE_NONE)
+  KEY_GUIDE_1=$(echo $KEY_GUIDE_1)
+  KEY_GUIDE_2=$(echo $KEY_GUIDE_2)
+  KEY_GUIDE_3=$(echo $KEY_GUIDE_3)
+
+  local tmp_file="${KEY_GUIDE_FILE}.tmp"
+
+  if [ "$FN_A_PRESSED" = true ] && [ "$FN_B_PRESSED" = false ]; then
+    echo "{\"text\": \"$KEY_GUIDE_1\", \"class\": \"key-guide-1\"}" >"$tmp_file"
+  elif [ "$FN_A_PRESSED" = false ] && [ "$FN_B_PRESSED" = true ]; then
+    echo "{\"text\": \"$KEY_GUIDE_2\", \"class\": \"key-guide-2\"}" >"$tmp_file"
+  elif [ "$FN_A_PRESSED" = true ] && [ "$FN_B_PRESSED" = true ]; then
+    echo "{\"text\": \"$KEY_GUIDE_3\", \"class\": \"key-guide-3\"}" >"$tmp_file"
+  else
+    echo "{\"text\": \"$KEY_GUIDE_NONE\", \"class\": \"key-guide-none\"}" >"$tmp_file"
+  fi
+
+  if ! mv "$tmp_file" "${KEY_GUIDE_FILE}"; then
+    echo "Failed to update key guide file" >&2
+    rm -f "$tmp_file"
+    exit 1
+  fi
+}
+
+update_key_guide
 
 ### Search the system for useful devices to monitor for inputs.
 get_devices() {
@@ -217,41 +272,34 @@ get_devices() {
   FOUNDKEYS=false
   FOUNDJOY=false
   RETRY=5
-  while [ ${KJDEVS} = false ]
-  do
+  while [ ${KJDEVS} = false ]; do
     # Detect input devices automatically
-    for DEV in /dev/input/ev*
-    do
+    for DEV in /dev/input/ev*; do
       unset SUPPORTS
       SUPPORTS=$(udevadm info ${DEV} | awk '/ID_INPUT_KEY=|ID_INPUT_JOYSTICK=/ {print $2}')
-      if [ -n "${SUPPORTS}" ]
-      then
+      if [ -n "${SUPPORTS}" ]; then
         DEVICE=$(udevadm info ${DEV} | awk 'BEGIN {FS="="} /DEVNAME=/ {print $2}')
         INPUT_DEVICES+=("${DEVICE}")
-        if [[ "${SUPPORTS}" =~ ID_INPUT_KEY ]]
-        then
+        if [[ "${SUPPORTS}" =~ ID_INPUT_KEY ]]; then
           ${DEBUG} && log $0 "Found Keyboard: ${DEVICE}"
           FOUNDKEYS=true
-        elif [[ "${SUPPORTS}" =~ ID_INPUT_JOYSTICK ]]
-        then
+        elif [[ "${SUPPORTS}" =~ ID_INPUT_JOYSTICK ]]; then
           ${DEBUG} && log $0 "Found Joystick: ${DEVICE}"
           FOUNDJOY=true
         fi
       fi
     done
     if [ "${FOUNDKEYS}" = "true" ] &&
-       [ "${FOUNDJOY}" = "true" ]
-    then
+      [ "${FOUNDJOY}" = "true" ]; then
       ${DEBUG} && log $0 "Found all of the needed devices."
       KJDEVS=true
       break
     fi
-    if [ "${RETRY}" -ge 5 ]
-    then
+    if [ "${RETRY}" -ge 5 ]; then
       ${DEBUG} && log $0 "Did not find all of the needed devices, but that may be OK.  Breaking."
       break
     else
-      RETRY=$(( ${RETRY} + 1 ))
+      RETRY=$((${RETRY} + 1))
     fi
     sleep 1
   done
@@ -261,131 +309,127 @@ get_devices
 
 # If the input devices change, it may be a new controller
 # so handle it here.
-mkcontroller 2>/dev/null ||:
-
+mkcontroller 2>/dev/null || :
 
 ### Go into a cpu friendly loop that idles until a key is pressed.  Take action when a known pattern of keys are pressed together.
 (
-   for INPUT_DEVICE in ${INPUT_DEVICES[@]}
-   do
-     evtest "${INPUT_DEVICE}" 2>&1 &
-   done
-   wait
+  for INPUT_DEVICE in ${INPUT_DEVICES[@]}; do
+    evtest "${INPUT_DEVICE}" 2>&1 &
+  done
+  wait
 ) | while read line; do
-    case ${line} in
-        (${CONTROLLER_DISCONNECTED})
-        ${DEBUG} && log $0 "Reloading due to ${CONTROLLER_DEVICE} reattach..."
-        get_devices
-        ;;
-        (${DEVICE_DISCONNECTED})
-        ${DEBUG} && log $0 "Reloading due to ${DEVICE} reattach..."
-        get_devices
-        ;;
-        (${FUNCTION_MODIFIER_A_EVENT})
-           if [[ "${line}" =~ ${PRESS} ]]
-           then
-              ${DEBUG} && log $0 "${FUNCTION_MODIFIER_A_EVENT}: Pressed"
-              FN_A_PRESSED=true
-           elif [[ "${line}" =~ ${RELEASE} ]]
-           then
-              ${DEBUG} && log $0 "${FUNCTION_MODIFIER_A_EVENT}: Released"
-              FN_A_PRESSED=false
-           fi
-        ;;
-        (${FUNCTION_MODIFIER_B_EVENT})
-           if [[ "${line}" =~ ${PRESS} ]]
-           then
-              ${DEBUG} && log $0 "${FUNCTION_MODIFIER_B_EVENT}: Pressed"
-              FN_B_PRESSED=true
-           elif [[ "${line}" =~ ${RELEASE} ]]
-           then
-              ${DEBUG} && log $0 "${FUNCTION_MODIFIER_B_EVENT}: Released"
-              FN_B_PRESSED=false
-           fi
-        ;;
-        (${FUNCTION_VOLUME_UP_EVENT})
-            execute_action up
-        ;;
-        (${FUNCTION_VOLUME_DOWN_EVENT})
-            execute_action down
-        ;;
-    esac
+  case ${line} in
+  ${CONTROLLER_DISCONNECTED})
+    ${DEBUG} && log $0 "Reloading due to ${CONTROLLER_DEVICE} reattach..."
+    get_devices
+    ;;
+  ${DEVICE_DISCONNECTED})
+    ${DEBUG} && log $0 "Reloading due to ${DEVICE} reattach..."
+    get_devices
+    ;;
+  ${FUNCTION_MODIFIER_A_EVENT})
+    if [[ "${line}" =~ ${PRESS} ]]; then
+      ${DEBUG} && log $0 "${FUNCTION_MODIFIER_A_EVENT}: Pressed"
+      FN_A_PRESSED=true
+      FN_A_PRESS_TIME=$(date +%s)
+    elif [[ "${line}" =~ ${RELEASE} ]]; then
+      ${DEBUG} && log $0 "${FUNCTION_MODIFIER_A_EVENT}: Released"
+      CURRENT_TIME=$(date +%s)
+      PRESS_DURATION=$((CURRENT_TIME - FN_A_PRESS_TIME))
 
-    case ${line} in
-        (${FUNCTION_HOTKEY_A_EVENT})
-           if [[ "${line}" =~ ${PRESS} ]]
-           then
-              ${DEBUG} && log $0 "${FUNCTION_HOTKEY_A_EVENT}: Pressed"
-              HOTKEY_A_PRESSED=true
-           elif [[ "${line}" =~ ${RELEASE} ]]
-           then
-              ${DEBUG} && log $0 "${FUNCTION_HOTKEY_A_EVENT}: Released"
-              HOTKEY_A_PRESSED=false
-           fi
-        ;;
-        (${FUNCTION_HOTKEY_B_EVENT})
-           if [[ "${line}" =~ ${PRESS} ]]
-           then
-              ${DEBUG} && log $0 "${FUNCTION_HOTKEY_B_EVENT}: Pressed"
-              HOTKEY_B_PRESSED=true
-              if [ "${HOTKEY_A_PRESSED}" = true ] && \
-                 [ "${HOTKEY_C_PRESSED}" = true ]
-              then
-                execute_kill
-              fi
-           elif [[ "${line}" =~ ${RELEASE} ]]
-           then
-              ${DEBUG} && log $0 "${FUNCTION_HOTKEY_B_EVENT}: Released"
-              HOTKEY_B_PRESSED=false
-           fi
-        ;;
-        (${FUNCTION_HOTKEY_C_EVENT})
-           if [[ "${line}" =~ ${PRESS} ]]
-           then
-              ${DEBUG} && log $0 "${FUNCTION_HOTKEY_C_EVENT}: Pressed"
-              HOTKEY_C_PRESSED=true
-              if [ "${HOTKEY_A_PRESSED}" = true ] && \
-                 [ "${HOTKEY_B_PRESSED}" = true ]
-              then
-                execute_kill
-              fi
-           elif [[ "${line}" =~ ${RELEASE} ]]
-           then
-              ${DEBUG} && log $0 "${FUNCTION_HOTKEY_C_EVENT}: Released"
-              HOTKEY_C_PRESSED=false
-           fi
-        ;;
-        (${FUNCTION_HOTKEY_DPAD_UP_EVENT}|${FUNCTION_HOTKEY_HAT_UP_EVENT})
-            if [ "${FN_A_PRESSED}" = true ] && \
-               [ "${DPAD_EVENTS}" = true ]
-            then
-              ${DEBUG} && log $0 "${FUNCTION_DPAD_UP_EVENT}${FUNCTION_HOTKEY_HAT_UP_EVENT}: Volume Up"
-              volume up
-            fi
-        ;;
-        (${FUNCTION_HOTKEY_DPAD_DOWN_EVENT}|${FUNCTION_HOTKEY_HAT_DOWN_EVENT})
-            if [ "${FN_A_PRESSED}" = true ] && \
-               [ "${DPAD_EVENTS}" = true ]
-            then
-              ${DEBUG} && log $0 "${FUNCTION_DPAD_DOWN_EVENT}${FUNCTION_HOTKEY_HAT_DOWN_EVENT}: Volume Down"
-              volume down
-            fi
-        ;;
-        (${FUNCTION_HOTKEY_DPAD_RIGHT_EVENT}|${FUNCTION_HOTKEY_HAT_RIGHT_EVENT})
-            if [ "${FN_A_PRESSED}" = true ] && \
-               [ "${DPAD_EVENTS}" = true ]
-            then
-              ${DEBUG} && log $0 "${FUNCTION_DPAD_RIGHT_EVENT}${FUNCTION_HOTKEY_HAT_RIGHT_EVENT}: Brightness Up"
-              brightness up
-            fi
-        ;;
-        (${FUNCTION_HOTKEY_DPAD_LEFT_EVENT}|${FUNCTION_HOTKEY_HAT_LEFT_EVENT})
-            if [ "${FN_A_PRESSED}" = true ] && \
-               [ "${DPAD_EVENTS}" = true ]
-            then
-              ${DEBUG} && log $0 "${FUNCTION_DPAD_LEFT_EVENT}${FUNCTION_HOTKEY_HAT_LEFT_EVENT}: Brightness Down"
-              brightness down
-            fi
-        ;;
-    esac
+      if [ ${PRESS_DURATION} -ge 4 ]; then
+        ${DEBUG} && log $0 "Function A held for 4 seconds or more"
+        toggle_waybar
+      else
+        ${DEBUG} && log $0 "Function A pressed for less than 4 seconds"
+      fi
+
+      FN_A_PRESSED=false
+      FN_A_PRESS_TIME=0
+    fi
+    update_key_guide
+    ;;
+  ${FUNCTION_MODIFIER_B_EVENT})
+    if [[ "${line}" =~ ${PRESS} ]]; then
+      ${DEBUG} && log $0 "${FUNCTION_MODIFIER_B_EVENT}: Pressed"
+      FN_B_PRESSED=true
+    elif [[ "${line}" =~ ${RELEASE} ]]; then
+      ${DEBUG} && log $0 "${FUNCTION_MODIFIER_B_EVENT}: Released"
+      FN_B_PRESSED=false
+    fi
+    update_key_guide
+    ;;
+  ${FUNCTION_VOLUME_UP_EVENT})
+    execute_action up
+    ;;
+  ${FUNCTION_VOLUME_DOWN_EVENT})
+    execute_action down
+    ;;
+  esac
+
+  case ${line} in
+  ${FUNCTION_HOTKEY_A_EVENT})
+    if [[ "${line}" =~ ${PRESS} ]]; then
+      ${DEBUG} && log $0 "${FUNCTION_HOTKEY_A_EVENT}: Pressed"
+      HOTKEY_A_PRESSED=true
+    elif [[ "${line}" =~ ${RELEASE} ]]; then
+      ${DEBUG} && log $0 "${FUNCTION_HOTKEY_A_EVENT}: Released"
+      HOTKEY_A_PRESSED=false
+    fi
+    ;;
+  ${FUNCTION_HOTKEY_B_EVENT})
+    if [[ "${line}" =~ ${PRESS} ]]; then
+      ${DEBUG} && log $0 "${FUNCTION_HOTKEY_B_EVENT}: Pressed"
+      HOTKEY_B_PRESSED=true
+      if [ "${HOTKEY_A_PRESSED}" = true ] &&
+        [ "${HOTKEY_C_PRESSED}" = true ]; then
+        execute_kill
+      fi
+    elif [[ "${line}" =~ ${RELEASE} ]]; then
+      ${DEBUG} && log $0 "${FUNCTION_HOTKEY_B_EVENT}: Released"
+      HOTKEY_B_PRESSED=false
+    fi
+    ;;
+  ${FUNCTION_HOTKEY_C_EVENT})
+    if [[ "${line}" =~ ${PRESS} ]]; then
+      ${DEBUG} && log $0 "${FUNCTION_HOTKEY_C_EVENT}: Pressed"
+      HOTKEY_C_PRESSED=true
+      if [ "${HOTKEY_A_PRESSED}" = true ] &&
+        [ "${HOTKEY_B_PRESSED}" = true ]; then
+        execute_kill
+      fi
+    elif [[ "${line}" =~ ${RELEASE} ]]; then
+      ${DEBUG} && log $0 "${FUNCTION_HOTKEY_C_EVENT}: Released"
+      HOTKEY_C_PRESSED=false
+    fi
+    ;;
+  ${FUNCTION_HOTKEY_DPAD_UP_EVENT} | ${FUNCTION_HOTKEY_HAT_UP_EVENT})
+    if [ "${FN_A_PRESSED}" = true ] &&
+      [ "${DPAD_EVENTS}" = true ]; then
+      ${DEBUG} && log $0 "${FUNCTION_DPAD_UP_EVENT}${FUNCTION_HOTKEY_HAT_UP_EVENT}: Volume Up"
+      volume up
+    fi
+    ;;
+  ${FUNCTION_HOTKEY_DPAD_DOWN_EVENT} | ${FUNCTION_HOTKEY_HAT_DOWN_EVENT})
+    if [ "${FN_A_PRESSED}" = true ] &&
+      [ "${DPAD_EVENTS}" = true ]; then
+      ${DEBUG} && log $0 "${FUNCTION_DPAD_DOWN_EVENT}${FUNCTION_HOTKEY_HAT_DOWN_EVENT}: Volume Down"
+      volume down
+    fi
+    ;;
+  ${FUNCTION_HOTKEY_DPAD_RIGHT_EVENT} | ${FUNCTION_HOTKEY_HAT_RIGHT_EVENT})
+    if [ "${FN_A_PRESSED}" = true ] &&
+      [ "${DPAD_EVENTS}" = true ]; then
+      ${DEBUG} && log $0 "${FUNCTION_DPAD_RIGHT_EVENT}${FUNCTION_HOTKEY_HAT_RIGHT_EVENT}: Brightness Up"
+      brightness up
+    fi
+    ;;
+  ${FUNCTION_HOTKEY_DPAD_LEFT_EVENT} | ${FUNCTION_HOTKEY_HAT_LEFT_EVENT})
+    if [ "${FN_A_PRESSED}" = true ] &&
+      [ "${DPAD_EVENTS}" = true ]; then
+      ${DEBUG} && log $0 "${FUNCTION_DPAD_LEFT_EVENT}${FUNCTION_HOTKEY_HAT_LEFT_EVENT}: Brightness Down"
+      brightness down
+    fi
+    ;;
+  esac
 done

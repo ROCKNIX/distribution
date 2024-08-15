@@ -40,6 +40,7 @@ makeinstall_target() {
   cp ${PKG_BUILD}/.${TARGET_NAME}/flycast ${INSTALL}/usr/bin/flycast
   cp ${PKG_DIR}/scripts/* ${INSTALL}/usr/bin
   cp -r ${PKG_DIR}/config/${DEVICE}/* ${INSTALL}/usr/config/flycast
+  cp ${PKG_DIR}/config/flycast.gptk ${INSTALL}/usr/config/flycast/flycast.gptk
 
   chmod +x ${INSTALL}/usr/bin/start_flycast.sh
 }
