@@ -18,6 +18,10 @@ if [ ! -f "/storage/.config/gzdoom/gzdoom.ini" ]; then
   cp -rf /usr/config/gzdoom/gzdoom.ini /storage/.config/gzdoom/
 fi
 
+if [ /usr/config/gzdoom/gzdoom.pk3 -nt /storage/.config/gzdoom/gzdoom.pk3 ]; then
+  cp /usr/config/gzdoom/*.pk3 /storage/.config/gzdoom/
+fi
+
 # set resolution
 sed -i '/vid_defheight=/c\vid_defheight='$(fbheight) /storage/.config/gzdoom/gzdoom.ini
 sed -i '/vid_defwidth=/c\vid_defwidth='$(fbwidth) /storage/.config/gzdoom/gzdoom.ini
