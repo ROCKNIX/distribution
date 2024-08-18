@@ -3,11 +3,10 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="u-boot"
-PKG_ARCH="arm aarch64"
 PKG_SITE="https://github.com/ROCKNIX"
 PKG_LICENSE="GPL"
-PKG_DEPENDS_TARGET="toolchain Python3 swig:host rkbin glibc pyelftools:host"
-PKG_LONGDESC="Rockchip U-Boot is a bootloader for embedded systems."
+PKG_DEPENDS_TARGET="toolchain Python3 swig:host rkbin pyelftools:host"
+PKG_LONGDESC="Das U-Boot is a cross-platform bootloader for embedded systems."
 PKG_PATCH_DIRS+="${DEVICE}"
 
 PKG_NEED_UNPACK="$PROJECT_DIR/$PROJECT/bootloader"
@@ -17,12 +16,7 @@ case ${DEVICE} in
     PKG_VERSION="ad0cfba1ac51e8dd8b039f6c56b9c9f9a679df91"
     PKG_URL="${PKG_SITE}/rk3588-uboot/archive/${PKG_VERSION}.tar.gz"
     ;;
-  RK3566*)
-    PKG_VERSION="v2024.07"
-    PKG_URL="https://github.com/u-boot/u-boot/archive/${PKG_VERSION}.tar.gz"
-    ;;
   RK3399)
-    PKG_DEPENDS_TARGET+=" atf openssl:host"
     PKG_VERSION="2024.07"
     PKG_URL="https://ftp.denx.de/pub/u-boot/${PKG_NAME}-${PKG_VERSION}.tar.bz2"
     ;;
@@ -33,21 +27,7 @@ case ${DEVICE} in
     ;;
 esac
 
-PKG_IS_KERNEL_PKG="yes"
-PKG_STAMP="${UBOOT_CONFIG}"
-
 [ -n "${ATF_PLATFORM}" ] && PKG_DEPENDS_TARGET+=" atf"
-
-[ -n "${DEVICE}" ] && PKG_NEED_UNPACK+=" ${PROJECT}_DIR/${PROJECT}/devices/${DEVICE}/bootloader"
-
-post_patch() {
-  if [ -n "${UBOOT_CONFIG}" ] && find_file_path bootloader/config; then
-    PKG_CONFIG_FILE="${UBOOT_CONFIG}"
-    if [ -f "${PKG_CONFIG_FILE}" ]; then
-      cat ${FOUND_PATH} >> "${PKG_CONFIG_FILE}"
-    fi
-  fi
-}
 
 make_target() {
   export PKG_RKBIN="$(get_build_dir rkbin)"
@@ -56,9 +36,6 @@ make_target() {
   if [ -z "${UBOOT_CONFIG}" ]; then
     echo "UBOOT_CONFIG must be set to build an image"
   else
-    if [ -e "${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/u-boot/${UBOOT_CONFIG}" ]; then
-      cp ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/u-boot/${UBOOT_CONFIG} configs
-    fi
     [ "${BUILD_WITH_DEBUG}" = "yes" ] && PKG_DEBUG=1 || PKG_DEBUG=0
     if [[ "${PKG_BL31}" =~ ^/bin ]]; then
       PKG_BL31="$(get_build_dir rkbin)/${PKG_BL31}"
@@ -67,19 +44,7 @@ make_target() {
       PKG_LOADER="$(get_build_dir rkbin)/${PKG_LOADER}"
     fi
 
-    if [[ "${PKG_SOC}" =~ "rk3568" ]] || [[ "${PKG_SOC}" =~ "rk356x" ]]; then
-      # rk3566 device
-      echo "Building for GPT (${UBOOT_DTB})..."
-      echo "toolchain (${TOOLCHAIN})"
-      export BL31="${PKG_BL31}"
-      export ROCKCHIP_TPL="${PKG_DATAFILE}"
-
-      DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm64 make mrproper
-      echo "begin make"
-      DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="--lssl -lcrypto" ARCH=arm64 make ${UBOOT_CONFIG} ${PKG_LOADER} u-boot.dtb u-boot.img tools HOSTCC="${HOST_CC}" HOSTLDFLAGS="-L${TOOLCHAIN}/lib" HOSTCFLAGS="-I${TOOLCHAIN}/include"
-      echo "end make"
-      DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm64 _python_sysroot="${TOOLCHAIN}" _python_prefix=/ _python_exec_prefix=/ make HOSTCC="${HOST_CC}" HOSTLDFLAGS="-L${TOOLCHAIN}/lib" HOSTCFLAGS="-I${TOOLCHAIN}/include" HOSTSTRIP="true" CONFIG_MKIMAGE_DTC_PATH="scripts/dtc/dtc"
-    elif [[ "${PKG_SOC}" =~ "rk3588" ]]; then
+    if [[ "${PKG_SOC}" =~ "rk3588" ]]; then
       # rk3588 devices
       DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm64 make mrproper
       DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm64 make ${UBOOT_CONFIG} BL31=${PKG_BL31} ${PKG_LOADER} u-boot.dtb u-boot.itb CONFIG_MKIMAGE_DTC_PATH="scripts/dtc/dtc"
