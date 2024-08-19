@@ -13,33 +13,40 @@ CONFIGDIR="/storage/openbor"
 PAKS="${CONFIGDIR}/Paks"
 SAVES="${CONFIGDIR}/Saves"
 
+#load gptokeyb support files
+control-gen_init.sh
+source /storage/.config/gptokeyb/control.ini
+get_controls
+
 # Make sure the folders exists
-  mkdir -p "${CONFIGDIR}"
-  mkdir -p "${PAKS}"
-  mkdir -p "${SAVES}"
+mkdir -p "${CONFIGDIR}"
+mkdir -p "${PAKS}"
+mkdir -p "${SAVES}"
 
 # Check if master.cfg exists
-  if [ ! -f "${CONFIGDIR}/master.cfg" ]; then
-    cp -f "/usr/config/openbor/master.cfg" "${CONFIGDIR}/"
-  fi
+if [ ! -f "${CONFIGDIR}/master.cfg" ]; then
+  cp -f "/usr/config/openbor/master.cfg" "${CONFIGDIR}/"
+fi
+
+# Check if openbor.gptk exists
+if [ ! -f "${CONFIGDIR}/openbor.gptk" ]; then
+  cp -f "/usr/config/openbor/openbor.gptk" "${CONFIGDIR}/"
+fi
 
 # Clear PAKS folder to avoid getting the launcher on next run
-  rm -rf ${PAKS}/*
+rm -rf ${PAKS}/*
 
 # make a symlink to the pak
-  ln -sf "$1" "${PAKS}"
+ln -sf "$1" "${PAKS}"
 
 # only create symlink to master.cfg if its the first time running the pak
-  if [ ! -f "${SAVES}/${pakname}.cfg" ]; then
-    ln -sf "${CONFIGDIR}/master.cfg" "${SAVES}/${pakname}.cfg"
-  fi
-
-# We start the fake keyboard
-  gptokeyb openbor &
+if [ ! -f "${SAVES}/${pakname}.cfg" ]; then
+  ln -sf "${CONFIGDIR}/master.cfg" "${SAVES}/${pakname}.cfg"
+fi
 
 # Run OpenBOR in the config folder
-  cd "${CONFIGDIR}"
-  OpenBOR
-
-# We stop the fake keyboard
-  killall gptokeyb &
+cd "${CONFIGDIR}"
+@HOTKEY@
+$GPTOKEYB "openbor" -c "openbor.gptk" &
+OpenBOR
+kill -9 $(pidof gptokeyb)

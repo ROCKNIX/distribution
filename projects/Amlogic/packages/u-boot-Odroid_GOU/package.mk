@@ -1,5 +1,6 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2022-24 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="u-boot-Odroid_GOU"
 PKG_VERSION="9235942906216dc529c1e96f67dd2364a94d0738"

@@ -4,7 +4,7 @@
 
 PKG_NAME="mesa"
 PKG_LICENSE="OSS"
-PKG_DEPENDS_TARGET="toolchain expat libdrm zstd Mako:host"
+PKG_DEPENDS_TARGET="toolchain expat libdrm zstd Mako:host pyyaml:host"
 PKG_LONGDESC="Mesa is a 3-D graphics library with an API."
 PKG_TOOLCHAIN="meson"
 PKG_PATCH_DIRS+=" ${DEVICE}"
@@ -15,7 +15,7 @@ case ${DEVICE} in
 	PKG_SITE="https://github.com/ROCKNIX/mesa-panfork"
 	PKG_URL="${PKG_SITE}.git"
   ;;
-  RK3*|S922X)
+  S922X)
     if [ "${DEVICE}" = "S922X" -a "${USE_MALI}" != "no" ]; then
       PKG_VERSION="24.0.7"
 	    PKG_SITE="http://www.mesa3d.org/"
@@ -29,7 +29,8 @@ case ${DEVICE} in
     fi
   ;;
   *)
-	PKG_VERSION="24.1.3"
+	PKG_VERSION="24.2.0"
+	PKG_BUILD_VERSION="${PKG_VERSION}"
 	PKG_SITE="http://www.mesa3d.org/"
 	PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
   ;;
@@ -37,11 +38,22 @@ esac
 
 get_graphicdrivers
 
+# Fix for juggling multiple versions of mesa
+case ${PKG_VERSION} in
+  ${PKG_BUILD_VERSION})
+    GALLIUM_DRIVERS=${GALLIUM_DRIVERS//"kmsro "/}
+    if [ "${llVM_SUPPORT}" = "yes" ]; then
+      GALLIUM_DRIVERS=${GALLIUM_DRIVERS//"swrast"/"softpipe llvmpipe"}
+    else
+      GALLIUM_DRIVERS=${GALLIUM_DRIVERS//"swrast"/"softpipe"}
+    fi
+  ;;
+esac
+
 PKG_MESON_OPTS_TARGET=" ${MESA_LIBS_PATH_OPTS} \
                        -Dgallium-drivers=${GALLIUM_DRIVERS// /,} \
                        -Dgallium-extra-hud=false \
                        -Dgallium-omx=disabled \
-                       -Dgallium-nine=true \
                        -Dgallium-opencl=disabled \
                        -Dgallium-xa=disabled \
                        -Dshader-cache=enabled \
@@ -60,12 +72,14 @@ if [ "${DISPLAYSERVER}" = "x11" ]; then
   export X11_INCLUDES=
   PKG_MESON_OPTS_TARGET+="	-Dplatforms=x11 \
 				-Ddri3=enabled \
+				-Dgallium-nine=true \
 				-Dglx=dri \
 				-Dglvnd=true"
 elif [ "${DISPLAYSERVER}" = "wl" ]; then
   PKG_DEPENDS_TARGET+=" wayland wayland-protocols libglvnd glfw"
   PKG_MESON_OPTS_TARGET+=" 	-Dplatforms=wayland,x11 \
 				-Ddri3=enabled \
+				-Dgallium-nine=true \
 				-Dglx=dri \
 				-Dglvnd=true"
   PKG_DEPENDS_TARGET+=" xorgproto libXext libXdamage libXfixes libXxf86vm libxcb libX11 libxshmfence libXrandr libglvnd"
@@ -73,6 +87,7 @@ elif [ "${DISPLAYSERVER}" = "wl" ]; then
 else
   PKG_MESON_OPTS_TARGET+="	-Dplatforms="" \
 				-Ddri3=disabled \
+				-Dgallium-nine=false \
 				-Dglx=disabled \
 				-Dglvnd=false"
 fi

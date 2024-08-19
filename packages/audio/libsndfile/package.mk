@@ -12,11 +12,11 @@ PKG_DEPENDS_TARGET="toolchain alsa-lib flac libogg libvorbis opus"
 PKG_LONGDESC="A C library for reading and writing sound files containing sampled audio data."
 PKG_BUILD_FLAGS="+pic"
 
-PKG_CMAKE_OPTS_TARGET="-DBUILD_PROGRAMS=ON \
+PKG_CMAKE_OPTS_TARGET="-DBUILD_PROGRAMS=OFF \
                        -DBUILD_EXAMPLES=OFF \
                        -DBUILD_REGTEST=OFF \
                        -DBUILD_TESTING=OFF \
-                       -DENABLE_EXTERNAL_LIBS=OFF \
+                       -DENABLE_EXTERNAL_LIBS=ON \
 		       -DBUILD_SHARED_LIBS=ON
                        -DINSTALL_MANPAGES=OFF \
                        -DINSTALL_PKGCONFIG_MODULE=ON"

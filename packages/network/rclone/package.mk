@@ -37,7 +37,8 @@ makeinstall_target() {
   chmod 0755 ${INSTALL}/usr/bin/*
   cp rsync-rules.conf ${INSTALL}/usr/config/
   cp rsync.conf ${INSTALL}/usr/config/
-  cp cloud_sync-rules.txt ${INSTALL}/usr/config/  
+  cp cloud_sync-rules.txt ${INSTALL}/usr/config/
+  cp cloud_sync.conf ${INSTALL}/usr/config/
   chmod 755 ${INSTALL}/usr/bin/rclone
   mkdir -p ${INSTALL}/usr/config/modules
   ln -sf /usr/bin/cloud_backup ${INSTALL}/usr/config/modules/cloud_backup.sh

@@ -31,6 +31,7 @@ fi
 if [ "${DISPLAYSERVER}" = "wl" ]; then
   PKG_DEPENDS_TARGET+=" wayland ${WINDOWMANAGER} xwayland xrandr libXi"
   PKG_CMAKE_OPTS_TARGET+=" -DUSE_WAYLAND=ON"
+else PKG_CMAKE_OPTS_TARGET+=" -DUSE_WAYLAND=OFF -DUSE_DRMKMS=ON"
 fi
 
 if [ "${VULKAN_SUPPORT}" = "yes" ]; then

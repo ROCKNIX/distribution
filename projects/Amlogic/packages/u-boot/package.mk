@@ -1,5 +1,6 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2022-24 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="u-boot"
 PKG_VERSION="1.0"
@@ -26,22 +27,6 @@ makeinstall_target() {
 
   # Always install the update script
   find_file_path bootloader/update.sh && cp -av ${FOUND_PATH} $INSTALL/usr/share/bootloader
-
-  if find_file_path bootloader/boot.ini; then
-    cp -av ${FOUND_PATH} $INSTALL/usr/share/bootloader
-    sed -e "s/@DISTRO_BOOTLABEL@/${DISTRO_BOOTLABEL}/" \
-        -e "s/@DISTRO_DISKLABEL@/${DISTRO_DISKLABEL}/" \
-        -e "s/@EXTRA_CMDLINE@/${EXTRA_CMDLINE}/" \
-        -i "${INSTALL}/usr/share/bootloader/boot.ini"
-  fi
-
-  if find_dir_path bootloader/extlinux; then
-    cp -av ${FOUND_PATH} $INSTALL/usr/share/bootloader
-    sed -e "s/@DISTRO_BOOTLABEL@/${DISTRO_BOOTLABEL}/" \
-        -e "s/@DISTRO_DISKLABEL@/${DISTRO_DISKLABEL}/" \
-        -e "s/@EXTRA_CMDLINE@/${EXTRA_CMDLINE}/" \
-        -i "${INSTALL}/usr/share/bootloader/extlinux/extlinux.conf"
-  fi
 
   for PKG_SUBDEVICE in $SUBDEVICES; do
     unset PKG_UBOOTBIN

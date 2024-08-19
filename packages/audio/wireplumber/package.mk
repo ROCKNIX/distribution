@@ -39,6 +39,10 @@ EOF
   cat > ${INSTALL}/usr/share/wireplumber/bluetooth.lua.d/89-disable-bluez-hfphsp-backend.lua << EOF
 bluez_monitor.properties["bluez5.hfphsp-backend"] = "none"
 EOF
+
+  cat > ${INSTALL}/usr/share/wireplumber/main.lua.d/50-libcamera-config.lua << EOF
+libcamera_monitor.enabled = false
+EOF
 }
 
 post_install() {

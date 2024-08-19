@@ -1,5 +1,6 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2022-24 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="amlogic-boot-fip"
 PKG_VERSION="e96b6a694380ff07d5a9e4be644ffe254bd18512"
