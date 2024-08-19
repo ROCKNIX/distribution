@@ -26,13 +26,6 @@ for all_dtb in $BOOT_ROOT/*.dtb; do
   fi
 done
 
-if [ -f $BOOT_ROOT/extlinux/extlinux.conf ]; then
-  if [ -f $SYSTEM_ROOT/usr/share/bootloader/extlinux/extlinux.conf ]; then
-    echo "Updating extlinux.conf..."
-    cp -p $SYSTEM_ROOT/usr/share/bootloader/extlinux/extlinux.conf $BOOT_ROOT/extlinux
-  fi
-fi
-
 # update bootloader
 if [ -f $SYSTEM_ROOT/usr/share/bootloader/idbloader.img ]; then
   echo -n "Updating u-boot.bin on $BOOT_DISK... "
