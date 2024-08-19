@@ -1,7 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2017-2021 Team LibreELEC (https://libreelec.tv)
-# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2022-24 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 [ -z "$SYSTEM_ROOT" ] && SYSTEM_ROOT=""
 [ -z "$BOOT_ROOT" ] && BOOT_ROOT="/flash"
@@ -43,20 +43,6 @@ for all_dtb in $BOOT_ROOT/*.dtb; do
   fi
 done
 
-if [ -f $BOOT_ROOT/extlinux/extlinux.conf ]; then
-  if [ -f $SYSTEM_ROOT/usr/share/bootloader/extlinux/extlinux.conf ]; then
-    echo "Updating extlinux.conf..."
-    cp -p $SYSTEM_ROOT/usr/share/bootloader/extlinux/extlinux.conf $BOOT_ROOT/extlinux
-  fi
-fi
-
-if [ -f $BOOT_ROOT/boot.ini ]; then
-  if [ -f /usr/share/bootloader/boot.ini ]; then
-    echo "Updating boot.ini"
-    cp -p /usr/share/bootloader/boot.ini $BOOT_ROOT/boot.ini
-  fi
-fi
-
 if [ -f $SYSTEM_ROOT/usr/share/bootloader/${SUBDEVICE}_u-boot ]; then
   echo "Updating u-boot on: $BOOT_DISK..."
   dd if=$SYSTEM_ROOT/usr/share/bootloader/${SUBDEVICE}_u-boot of=$BOOT_DISK conv=fsync,notrunc bs=512 seek=1 &>/dev/null
@@ -75,9 +61,6 @@ if [ -d $BOOT_ROOT/res ]; then
     cp -rp $SYSTEM_ROOT/usr/share/bootloader/res $BOOT_ROOT
   fi
 fi
-
-# Update system partition label to ROCKNIX
-[ ! -z "$(blkid | grep JELOS)" ] && ${SYSTEM_ROOT}/usr/sbin/dosfslabel $BOOT_PART ROCKNIX
 
 # mount $BOOT_ROOT ro
 sync
