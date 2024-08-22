@@ -27,9 +27,6 @@ if [ ! -z "$(lsmod | grep 'nvidia')" ]; then
   SWAY_GPU_ARGS="--unsupported-gpu"
 fi
 
-# set waybar state at start
-/usr/bin/show_waybar.sh
-
 # start sway, even if no input devices are connected
 export WLR_LIBINPUT_NO_DEVICES=1
 
