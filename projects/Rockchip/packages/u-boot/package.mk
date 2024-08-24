@@ -12,10 +12,6 @@ PKG_PATCH_DIRS+="${DEVICE}"
 PKG_NEED_UNPACK="$PROJECT_DIR/$PROJECT/bootloader"
 
 case ${DEVICE} in
-  RK3588*)
-    PKG_VERSION="ad0cfba1ac51e8dd8b039f6c56b9c9f9a679df91"
-    PKG_URL="${PKG_SITE}/rk3588-uboot/archive/${PKG_VERSION}.tar.gz"
-    ;;
   RK3399)
     PKG_VERSION="2024.07"
     PKG_URL="https://ftp.denx.de/pub/u-boot/${PKG_NAME}-${PKG_VERSION}.tar.bz2"
@@ -44,12 +40,7 @@ make_target() {
       PKG_LOADER="$(get_build_dir rkbin)/${PKG_LOADER}"
     fi
 
-    if [[ "${PKG_SOC}" =~ "rk3588" ]]; then
-      # rk3588 devices
-      DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm64 make mrproper
-      DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm64 make ${UBOOT_CONFIG} BL31=${PKG_BL31} ${PKG_LOADER} u-boot.dtb u-boot.itb CONFIG_MKIMAGE_DTC_PATH="scripts/dtc/dtc"
-      DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm64 _python_sysroot="${TOOLCHAIN}" _python_prefix=/ _python_exec_prefix=/ make HOSTCC="${HOST_CC}" HOSTLDFLAGS="-L${TOOLCHAIN}/lib" HOSTSTRIP="true" CONFIG_MKIMAGE_DTC_PATH="scripts/dtc/dtc"
-    else
+    if [[ "${PKG_SOC}" =~ "px30" ]] || [[ "${PKG_SOC}" =~ "rk3399" ]]; then
       # rk3326 and rk3399 devices
       echo "Building for MBR (${UBOOT_DTB})..."
       if [[ "${ATF_PLATFORM}" =~ "rk3399" ]]; then
