@@ -10,7 +10,7 @@ PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Das U-Boot is a cross-platform bootloader for embedded systems."
 PKG_TOOLCHAIN="manual"
 
-PKG_NEED_UNPACK="${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/bootloader"
+PKG_NEED_UNPACK="${PROJECT_DIR}/${PROJECT}/bootloader ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/bootloader"
 
 for PKG_SUBDEVICE in ${SUBDEVICES}; do
   PKG_DEPENDS_TARGET+=" u-boot-${PKG_SUBDEVICE}"
