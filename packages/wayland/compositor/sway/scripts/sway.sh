@@ -8,9 +8,13 @@ export LANG=en_US.UTF-8
 #Check if waybar exists in .config
 if [ ! -d "/storage/.config/waybar" ]; then
   mkdir -p "/storage/.config/waybar"
-  mkdir -p "/storage/.config/waybar/hotkeys"
   cp /etc/xdg/waybar/config.jsonc /storage/.config/waybar/config.jsonc
   cp /etc/xdg/waybar/style.css /storage/.config/waybar/style.css
+fi
+
+#Check if waybar hotkeys exist in .config/waybar
+if [ ! -d "/storage/.config/waybar/hotkeys" ]; then
+  mkdir -p "/storage/.config/waybar/hotkeys"
   cp -rf /etc/xdg/waybar/hotkeys/* /storage/.config/waybar/hotkeys
   cp -f /storage/.config/waybar/hotkeys/default-hotkeys /storage/.config/waybar/hotkeys/current-hotkeys
 fi

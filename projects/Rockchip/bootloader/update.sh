@@ -10,30 +10,30 @@
 # identify the boot device
 if [ -z "$BOOT_DISK" ]; then
   case $BOOT_PART in
-    /dev/mmcblk*)
-      BOOT_DISK=$(echo $BOOT_PART | sed -e "s,p[0-9]*,,g")
-      ;;
+    /dev/mmcblk*) BOOT_DISK=$(echo $BOOT_PART | sed -e "s,p[0-9]*,,g");;
   esac
 fi
 
 # mount $BOOT_ROOT rw
 mount -o remount,rw $BOOT_ROOT
 
+DT_ID=$($SYSTEM_ROOT/usr/bin/dtname)
+if [ -n "$DT_ID" ]; then
+  case $DT_ID in
+    powkiddy,x55) SUBDEVICE="Powkiddy_x55";;
+    *) SUBDEVICE="Generic";;
+  esac
+fi
+
+echo "Updating device trees..."
 for dtb in $SYSTEM_ROOT/usr/share/bootloader/*.dtb; do
-  dtb_base=$(basename $dtb)
-  if [ -f $BOOT_ROOT/$dtb_base ]; then
-    echo "Updating $dtb_base..."
-    cp -p $dtb $BOOT_ROOT
-  else
-    echo "Installing $dtb_base..."
-    cp -p $dtb $BOOT_ROOT
-  fi
+  cp -p $dtb $BOOT_ROOT
 done
 
 if [ -d $SYSTEM_ROOT/usr/share/bootloader/overlays ]; then
+  echo "Updating device tree overlays..."
   mkdir -p $BOOT_ROOT/overlays
   for dtb in $SYSTEM_ROOT/usr/share/bootloader/overlays/*.dtb; do
-    echo "Copying $(basename $dtb)..."
     cp -p $dtb $BOOT_ROOT/overlays
   done
 fi
@@ -45,29 +45,32 @@ case ${DT_SOC} in
   *) IDBSEEK="bs=32k seek=1";;
 esac
 
-if [ -f $SYSTEM_ROOT/usr/share/bootloader/idbloader.img ]; then
-  echo -n "Updating idbloader.img on $BOOT_DISK... "
-  dd if=$SYSTEM_ROOT/usr/share/bootloader/idbloader.img of=$BOOT_DISK $IDBSEEK conv=fsync &>/dev/null
-fi
+for IDBLOADER in ${SUBDEVICE}_idbloader.img idbloader.img; do
+  if [ -f "$SYSTEM_ROOT/usr/share/bootloader/$IDBLOADER" ]; then
+    echo "Updating $IDBLOADER on $BOOT_DISK..."
+    dd if=$SYSTEM_ROOT/usr/share/bootloader/$IDBLOADER of=$BOOT_DISK $IDBSEEK conv=fsync &>/dev/null
+    break
+  fi
+done
 
-for BOOT_IMAGE in u-boot.itb u-boot.img; do
-  if [ -f "$SYSTEM_ROOT/usr/share/bootloader/${BOOT_IMAGE}" ]; then
-    echo -n "Updating $BOOT_IMAGE on $BOOT_DISK..."
+for BOOT_IMAGE in ${SUBDEVICE}_u-boot.itb u-boot.itb u-boot.img; do
+  if [ -f "$SYSTEM_ROOT/usr/share/bootloader/$BOOT_IMAGE" ]; then
+    echo "Updating $BOOT_IMAGE on $BOOT_DISK..."
     dd if=$SYSTEM_ROOT/usr/share/bootloader/$BOOT_IMAGE of=$BOOT_DISK bs=512 seek=16384 conv=fsync &>/dev/null
     break
   fi
 done
 
 if [ -f $SYSTEM_ROOT/usr/share/bootloader/rk3399-uboot.bin ]; then
-  echo -n "Updating rk3399-uboot.bin on $BOOT_DISK... "
+  echo "Updating rk3399-uboot.bin on $BOOT_DISK..."
   dd if=$SYSTEM_ROOT/usr/share/bootloader/rk3399-uboot.bin of=$BOOT_DISK bs=512 seek=64 conv=fsync &>/dev/null
 fi
 
 if [ -f $SYSTEM_ROOT/usr/share/bootloader/trust.img ]; then
-  echo -n "Updating trust.img on $BOOT_DISK... "
+  echo "Updating trust.img on $BOOT_DISK..."
   dd if=$SYSTEM_ROOT/usr/share/bootloader/trust.img of=$BOOT_DISK bs=512 seek=24576 conv=fsync &>/dev/null
 elif [ -f $SYSTEM_ROOT/usr/share/bootloader/resource.img ]; then
-  echo -n "Updating resource.img on $BOOT_DISK... "
+  echo "Updating resource.img on $BOOT_DISK..."
   dd if=$SYSTEM_ROOT/usr/share/bootloader/resource.img of=$BOOT_DISK bs=512 seek=24576 conv=fsync &>/dev/null
 fi
 
