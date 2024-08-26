@@ -16,11 +16,6 @@ case ${DEVICE} in
     PKG_VERSION="2024.07"
     PKG_URL="https://ftp.denx.de/pub/u-boot/${PKG_NAME}-${PKG_VERSION}.tar.bz2"
     ;;
-  RK3326)
-    PKG_VERSION="0e26e35cb18a80005b7de45c95858c86a2f7f41e"
-    PKG_URL="${PKG_SITE}/hardkernel-uboot/archive/${PKG_VERSION}.tar.gz"
-    PKG_GIT_CLONE_BRANCH="RK3326"
-    ;;
 esac
 
 [ -n "${ATF_PLATFORM}" ] && PKG_DEPENDS_TARGET+=" atf"
@@ -40,19 +35,14 @@ make_target() {
       PKG_LOADER="$(get_build_dir rkbin)/${PKG_LOADER}"
     fi
 
-    if [[ "${PKG_SOC}" =~ "px30" ]] || [[ "${PKG_SOC}" =~ "rk3399" ]]; then
-      # rk3326 and rk3399 devices
+    if [[ "${PKG_SOC}" =~ "rk3399" ]]; then
       echo "Building for MBR (${UBOOT_DTB})..."
       if [[ "${ATF_PLATFORM}" =~ "rk3399" ]]; then
         export BL31="$(get_build_dir atf)/.install_pkg/usr/share/bootloader/bl31.elf"
       fi
       DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm make mrproper
       DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm make ${UBOOT_CONFIG}
-      if [[ "${PKG_SOC}" =~ "rk3399" ]]; then
-        DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm _python_sysroot="${TOOLCHAIN}" _python_prefix=/ _python_exec_prefix=/ make HOSTCC="${HOST_CC}" HOSTCFLAGS="-I${TOOLCHAIN}/include" HOSTLDFLAGS="${HOST_LDFLAGS}" CONFIG_MKIMAGE_DTC_PATH="scripts/dtc/dtc"
-      else
-        DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm _python_sysroot="${TOOLCHAIN}" _python_prefix=/ _python_exec_prefix=/ make HOSTCC="$HOST_CC" HOSTLDFLAGS="-L${TOOLCHAIN}/lib" HOSTSTRIP="true" CONFIG_MKIMAGE_DTC_PATH="scripts/dtc/dtc"
-      fi
+      DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm _python_sysroot="${TOOLCHAIN}" _python_prefix=/ _python_exec_prefix=/ make HOSTCC="${HOST_CC}" HOSTCFLAGS="-I${TOOLCHAIN}/include" HOSTLDFLAGS="${HOST_LDFLAGS}" CONFIG_MKIMAGE_DTC_PATH="scripts/dtc/dtc"
     fi
   fi
 }
