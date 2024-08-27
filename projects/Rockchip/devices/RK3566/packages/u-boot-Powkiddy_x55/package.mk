@@ -10,6 +10,11 @@ PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Das U-Boot is a cross-platform bootloader for embedded systems."
 PKG_TOOLCHAIN="manual"
 
+if [ -n "${UBOOT_FIRMWARE}" ]; then
+  PKG_DEPENDS_TARGET+=" ${UBOOT_FIRMWARE}"
+  PKG_DEPENDS_UNPACK+=" ${UBOOT_FIRMWARE}"
+fi
+
 configure_package() {
   PKG_UBOOT_CONFIG="powkiddy-x55-rk3566_defconfig"
   PKG_RKBIN="$(get_build_dir rkbin)"

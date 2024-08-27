@@ -38,9 +38,6 @@ make_target() {
          V=1 \
          VC=0 \
          OSD=0
-
-  # Always diable Vulkan
-  export VULKAN=0
   
   export BINUTILS="$(get_build_dir binutils)/.${TARGET_NAME}"
   export NEW_DYNAREC=1
