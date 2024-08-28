@@ -56,6 +56,7 @@ EOF
   dd if=${PKG_BUILD}/idbloader.img of=${PKG_BUILD}/rk3326-uboot.bin bs=512 seek=0 conv=fsync,notrunc
   dd if=${PKG_BUILD}/u-boot.img of=${PKG_BUILD}/rk3326-uboot.bin bs=512 seek=16320 conv=fsync,notrunc
   dd if=${PKG_BUILD}/trust.img of=${PKG_BUILD}/rk3326-uboot.bin bs=512 seek=24512 conv=fsync,notrunc
+  gzip ${PKG_BUILD}/rk3326-uboot.bin
 }
 
 makeinstall_target() {
@@ -72,7 +73,7 @@ makeinstall_target() {
         -i "${INSTALL}/usr/share/bootloader/boot.ini"
   fi
 
-  PKG_UBOOTIMG=${PKG_BUILD}/rk3326-uboot.bin
+  PKG_UBOOTIMG=${PKG_BUILD}/rk3326-uboot.bin.gz
 
   if [ ${PKG_UBOOTIMG} ]; then
     cp -av ${PKG_UBOOTIMG} $INSTALL/usr/share/bootloader
