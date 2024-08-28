@@ -63,7 +63,7 @@ done
 
 if [ -f $SYSTEM_ROOT/usr/share/bootloader/rk3326-uboot.bin ]; then
   echo "Updating rk3326-uboot.bin on $BOOT_DISK..."
-  dd if=$SYSTEM_ROOT/usr/share/bootloader/rk3326-uboot.bin of=$BOOT_DISK bs=512 seek=1 conv=fsync &>/dev/null
+  dd if=$SYSTEM_ROOT/usr/share/bootloader/rk3326-uboot.bin of=$BOOT_DISK bs=512 seek=64 conv=fsync &>/dev/null
 fi
 
 if [ -f $SYSTEM_ROOT/usr/share/bootloader/rk3399-uboot.bin ]; then

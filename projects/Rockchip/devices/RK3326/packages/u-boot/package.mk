@@ -53,9 +53,9 @@ PATH=trust.img
 EOF
   ${PKG_BUILD}/tools/trust_merger --verbose ${PKG_BUILD}/trust.ini
 
-  dd if=${PKG_BUILD}/idbloader.img of=${PKG_BUILD}/rk3326-uboot.bin seek=0 conv=fsync,notrunc
-  dd if=${PKG_BUILD}/u-boot.img of=${PKG_BUILD}/rk3326-uboot.bin seek=16383 conv=fsync,notrunc
-  dd if=${PKG_BUILD}/trust.img of=${PKG_BUILD}/rk3326-uboot.bin seek=24575 conv=fsync,notrunc
+  dd if=${PKG_BUILD}/idbloader.img of=${PKG_BUILD}/rk3326-uboot.bin bs=512 seek=0 conv=fsync,notrunc
+  dd if=${PKG_BUILD}/u-boot.img of=${PKG_BUILD}/rk3326-uboot.bin bs=512 seek=16320 conv=fsync,notrunc
+  dd if=${PKG_BUILD}/trust.img of=${PKG_BUILD}/rk3326-uboot.bin bs=512 seek=24512 conv=fsync,notrunc
 }
 
 makeinstall_target() {
