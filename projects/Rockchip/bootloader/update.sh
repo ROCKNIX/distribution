@@ -61,11 +61,6 @@ for BOOT_IMAGE in ${SUBDEVICE}_u-boot.itb u-boot.itb u-boot.img; do
   fi
 done
 
-if [ -f $SYSTEM_ROOT/usr/share/bootloader/rk3326-uboot.bin.gz ]; then
-  echo "Updating rk3326-uboot.bin.gz on $BOOT_DISK..."
-  gunzip -c $SYSTEM_ROOT/usr/share/bootloader/rk3326-uboot.bin.gz | dd of=$BOOT_DISK bs=512 seek=64 conv=fsync &>/dev/null
-fi
-
 if [ -f $SYSTEM_ROOT/usr/share/bootloader/rk3399-uboot.bin ]; then
   echo "Updating rk3399-uboot.bin on $BOOT_DISK..."
   dd if=$SYSTEM_ROOT/usr/share/bootloader/rk3399-uboot.bin of=$BOOT_DISK bs=512 seek=64 conv=fsync &>/dev/null
