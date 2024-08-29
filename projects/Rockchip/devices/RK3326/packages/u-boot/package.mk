@@ -35,6 +35,8 @@ make_target() {
 
   ${PKG_BUILD}/tools/mkimage -n px30 -T rksd -d ${ROCKCHIP_TPL} -C bzip2 ${PKG_BUILD}/idbloader.img
 
+  cat ${PKG_LOADER} >> ${PKG_BUILD}/idbloader.img
+
   ${PKG_BUILD}/tools/loaderimage --pack --uboot ${PKG_BUILD}/u-boot-dtb.bin ${PKG_BUILD}/u-boot.img 0x00200000
 
   cat >${PKG_BUILD}/trust.ini <<EOF
