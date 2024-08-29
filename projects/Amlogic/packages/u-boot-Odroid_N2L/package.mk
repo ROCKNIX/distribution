@@ -7,10 +7,14 @@ PKG_VERSION="v2023.10"
 PKG_LICENSE="GPL"
 PKG_SITE="https://www.denx.de/wiki/U-Boot"
 PKG_URL="https://github.com/u-boot/u-boot/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain amlogic-boot-fip"
-PKG_DEPENDS_UNPACK="amlogic-boot-fip"
+PKG_DEPENDS_TARGET="toolchain openssl:host pkg-config:host Python3:host swig:host pyelftools:host"
 PKG_LONGDESC="Das U-Boot is a cross-platform bootloader for embedded systems."
 PKG_TOOLCHAIN="manual"
+
+if [ -n "${UBOOT_FIRMWARE}" ]; then
+  PKG_DEPENDS_TARGET+=" ${UBOOT_FIRMWARE}"
+  PKG_DEPENDS_UNPACK+=" ${UBOOT_FIRMWARE}"
+fi
 
 configure_package() {
   PKG_UBOOT_CONFIG="odroid-n2l_defconfig"
