@@ -7,9 +7,14 @@ PKG_VERSION="9235942906216dc529c1e96f67dd2364a94d0738"
 PKG_LICENSE="GPL"
 PKG_SITE="https://www.denx.de/wiki/U-Boot"
 PKG_URL="https://github.com/hardkernel/u-boot/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain gcc-linaro-aarch64-elf:host gcc-linaro-arm-eabi:host"
+PKG_DEPENDS_TARGET="toolchain openssl:host pkg-config:host Python3:host swig:host pyelftools:host gcc-linaro-aarch64-elf:host gcc-linaro-arm-eabi:host"
 PKG_LONGDESC="Das U-Boot is a cross-platform bootloader for embedded systems."
 PKG_TOOLCHAIN="manual"
+
+if [ -n "${UBOOT_FIRMWARE}" ]; then
+  PKG_DEPENDS_TARGET+=" ${UBOOT_FIRMWARE}"
+  PKG_DEPENDS_UNPACK+=" ${UBOOT_FIRMWARE}"
+fi
 
 configure_package() {
   PKG_UBOOT_CONFIG="odroidgou_defconfig"
