@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://rocknix.org)
+
+PKG_SOC="${DEVICE/RK/rk}"
+
+# Make idbloader.img
+case "${DEVICE}" in
+  RK3326)
+    # mkimage does not support packing second level bootloader on rk3326
+    ${PKG_BUILD}/tools/mkimage -n px30 -T rksd -d "${PKG_DDR_BIN}" -C bzip2 idbloader.img
+    cat ${PKG_MINILOADER} >> idbloader.img
+    ;;
+  RK3399|RK3566|RK3588)
+    [ "${PKG_SOC}" = "rk3566" ] && PKG_SOC="rk3568"
+    ${PKG_BUILD}/tools/mkimage -n "${PKG_SOC}" -T rksd -d "${PKG_DDR_BIN}":"${PKG_MINILOADER}" -C bzip2 idbloader.img
+    ;;
+esac
+
+# Pack uboot.img
+case "${DEVICE}" in
+  RK3326|RK3399)
+    ${PKG_RKBIN}/tools/loaderimage --pack --uboot u-boot-dtb.bin uboot.img 0x00200000
+    ;;
+esac
+
+# Merge trust.img
+case "${DEVICE}" in
+  RK3326)
+    cat >trust.ini <<EOF
+[BL30_OPTION]
+SEC=0
+[BL31_OPTION]
+SEC=1
+PATH=${PKG_BL31}
+ADDR=0x00010000
+[BL32_OPTION]
+SEC=0
+[BL33_OPTION]
+SEC=0
+[OUTPUT]
+PATH=trust.img
+EOF
+    ${PKG_RKBIN}/tools/trust_merger --verbose trust.ini
+    ;;
+  RK3399)
+    ${PKG_RKBIN}/tools/trust_merger --ignore-bl32 --prepath "${PKG_RKBIN}"/ "${PKG_ATF_INI}"
+    ;;
+esac
+
+# Build a unified uboot.bin image
+dd if=idbloader.img of=uboot.bin bs=512 seek=0 conv=fsync,notrunc
+for BOOT_IMAGE in uboot.img u-boot.itb; do
+  if [ -f "$BOOT_IMAGE" ]; then
+    dd if=$BOOT_IMAGE of=uboot.bin bs=512 seek=16320 conv=fsync,notrunc
+    break
+  fi
+done
+if [ -f "trust.img" ]; then
+  dd if=trust.img of=uboot.bin bs=512 seek=24512 conv=fsync,notrunc
+fi
