@@ -3,7 +3,7 @@
 # Copyright (C) 2019-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="fakeroot"
-PKG_VERSION="1.35.1"
+PKG_VERSION="1.36"
 PKG_LICENSE="GPL3"
 PKG_SITE="https://salsa.debian.org/clint/fakeroot"
 PKG_URL="http://deb.debian.org/debian/pool/main/f/fakeroot/fakeroot_${PKG_VERSION}.orig.tar.gz"
