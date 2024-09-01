@@ -12,12 +12,15 @@
 # PKG_GIT_CLONE_DEPTH (optional) history to clone, must be a number
 # PKG_GIT_SUBMODULE_DEPTH (optional) history of submodules to clone, must be a number
 
+export PS4='+${BASH_SOURCE}:${LINENO}: '
+
+set -x
 set -e
 set -o pipefail
 
 _clean_repo() {
   git clean -fdx
-  git checkout -- .
+  git restore --staged . || git switch --force # Clear changes and ensure correct branch
 }
 
 _repo_exists_and_valid() {
@@ -46,25 +49,86 @@ _repo_exists_and_valid() {
   return 1
 }
 
+_update_submodules() {
+  if [[ -n "${GIT_SUBMODULE_PARAMS}" ]]; then
+    git submodule update --init --recursive "${GIT_SUBMODULE_PARAMS}" || return 1
+  else
+    git submodule update --init --recursive || return 1
+  fi
+}
+
 _get_repo() {
-  local git_params="--recursive --shallow-submodules --filter=tree:0"
-  [[ -n "${PKG_GIT_CLONE_BRANCH}" ]] && git_params+=" --branch ${PKG_GIT_CLONE_BRANCH}"
-  [[ "${PKG_GIT_CLONE_SINGLE}" == "yes" ]] && git_params+=" --single-branch"
+  local git_params=("--recursive" "--shallow-submodules" "--filter=blob:none" "--no-tags")
+  
+  [[ -n "${PKG_GIT_CLONE_BRANCH}" ]] && git_params+=("--branch" "${PKG_GIT_CLONE_BRANCH}")
+  [[ "${PKG_GIT_CLONE_SINGLE}" == "yes" ]] && git_params+=("--single-branch")
 
   if [[ -n "${PKG_GIT_CLONE_DEPTH}" ]]; then
     if [[ "${PKG_GIT_CLONE_DEPTH}" =~ ^[0-9]+$ ]]; then
-      git_params+=" --depth ${PKG_GIT_CLONE_DEPTH}"
+      git_params+=("--depth" "${PKG_GIT_CLONE_DEPTH}")
     else
       echo "ERROR: PKG_GIT_CLONE_DEPTH is not a number! (${PKG_GIT_CLONE_DEPTH})" >&2
       return 1
     fi
   fi
 
-  git clone "${git_params}" "${PKG_URL}" "${PACKAGE}" || return 1
+  # Check if the destination directory exists and is non-empty
+  if [[ -d "${PACKAGE}" && "$(ls -A "${PACKAGE}")" ]]; then
+    echo "Directory ${PACKAGE} already exists and is not empty. Removing it."
+    rm -rf "${PACKAGE}"  && mkdir "${PACKAGE}" || return 1
+  fi
+
+  echo "Cloning repository with parameters: ${git_params[*]}"
+  git clone "${git_params[@]}" "${PKG_URL}" "${PACKAGE}" || return 1
+
+  pushd "${PACKAGE}" > /dev/null
+
+  echo "Resetting to commit: ${PKG_VERSION}"
+  git reset --hard "${PKG_VERSION}" || return 1
+
+  echo "Updating submodules..."
+  _update_submodules || {
+    echo "Submodule update failed."
+    return 1
+  }
+
+  popd > /dev/null
+
+  # Get the SHA of the current HEAD using pure Bash
+  local GIT_SHA
+  while read -r line; do
+    if [[ $line == *HEAD ]]; then
+      GIT_SHA="${line%%[[:space:]]*}"
+      break
+    fi
+  done < <(git ls-remote "${PACKAGE}")
+
+  if [[ -z "${GIT_SHA}" ]]; then
+    echo "Failed to retrieve GIT_SHA."
+    return 1
+  fi
+
+  if [[ -n "${PKG_GIT_SHA}" && "${PKG_GIT_SHA}" != "${GIT_SHA}" ]]; then
+    build_msg "CLR_WARNING" "WARNING" "Incorrect git hash in repository: got ${GIT_SHA}, wanted ${PKG_GIT_SHA}" >&2
+    return 1
+  fi
+
+  echo "Repository setup completed successfully."
+  return 0
 }
 
-_update_submodules() {
-  git submodule update --init --recursive "${GIT_SUBMODULE_PARAMS}" || return 1
+
+_fetch_missing_submodule_commits() {
+  git submodule sync --recursive
+  for submodule in $(git config --file .gitmodules --get-regexp path | awk '{ print $2 }'); do
+    pushd "${submodule}" > /dev/null
+    git fetch --all --tags --prune || return 1
+    
+    if ! git checkout "${PKG_VERSION}" ; then
+      echo "Failed to checkout commit ${PKG_VERSION} in ${submodule}, trying branch instead."
+      git checkout -B "${PKG_GIT_CLONE_BRANCH}" || return 1
+    fi
+  done
 }
 
 # Check if repo already exists and is valid
@@ -84,16 +148,30 @@ rm -f "${STAMP_URL}" "${STAMP_SHA}"
 if ! _repo_exists_and_valid; then
   _get_repo || exit 1
 elif [[ -n "${GIT_DIR}" ]] && [[ "${GIT_DIR}" != "${PACKAGE}" ]]; then
-  mv "${GIT_DIR}" "${PACKAGE}" || exit 1
+  mv "${GIT_DIR}" "${PACKAGE}" || return 1
 fi
 
 pushd "${PACKAGE}" > /dev/null
-git reset --hard "${PKG_VERSION}" || exit 1
-_update_submodules || exit 1
+git reset --hard "${PKG_VERSION}" || return 1
+_update_submodules || return 1
 popd > /dev/null
 
-# Verify the git hash
-GIT_SHA="$(git ls-remote "${PACKAGE}" | grep -m1 HEAD | awk '{print $1;}')" || exit 1
+# Verify the git hash using pure Bash
+GIT_SHA=""
+while IFS=$'\t' read -r sha ref; do
+  if [[ "$ref" == "HEAD" ]]; then
+    GIT_SHA="$sha"
+    break
+  fi
+done < <(git ls-remote "${PACKAGE}")
+
+# Check if GIT_SHA was successfully retrieved
+if [[ -z "$GIT_SHA" ]]; then
+  echo "Failed to retrieve GIT_SHA." >&2
+  exit 1
+fi
+
+# Verify that the retrieved SHA matches the expected one
 if [[ -n "${PKG_GIT_SHA}" && "${PKG_GIT_SHA}" != "${GIT_SHA}" ]]; then
   build_msg "CLR_WARNING" "WARNING" "Incorrect git hash in repository: got ${GIT_SHA}, wanted ${PKG_GIT_SHA}" >&2
   exit 1
