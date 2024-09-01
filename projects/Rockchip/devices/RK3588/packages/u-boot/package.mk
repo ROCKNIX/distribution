@@ -25,17 +25,10 @@ makeinstall_target() {
   mkdir -p $INSTALL/usr/share/bootloader
 
   # Always install the update script
-  find_file_path bootloader/update.sh && cp -av ${FOUND_PATH} $INSTALL/usr/share/bootloader
+  find_file_path bootloader/update.sh && cp -av ${FOUND_PATH} ${INSTALL}/usr/share/bootloader
 
-  for PKG_SUBDEVICE in $SUBDEVICES; do
-    unset PKG_IDBLOADER PKG_UBOOTIDB
-    PKG_IDBLOADER=$(get_build_dir u-boot-${PKG_SUBDEVICE})/idbloader.img
-    PKG_UBOOTITB=$(get_build_dir u-boot-${PKG_SUBDEVICE})/u-boot.itb
-    if [ ${PKG_IDBLOADER} ]; then
-      cp -av ${PKG_IDBLOADER} $INSTALL/usr/share/bootloader/${PKG_SUBDEVICE}_idbloader.img
-    fi
-    if [ ${PKG_UBOOTITB} ]; then
-      cp -av ${PKG_UBOOTITB} $INSTALL/usr/share/bootloader/${PKG_SUBDEVICE}_u-boot.itb
-    fi
+  for PKG_SUBDEVICE in ${SUBDEVICES}; do
+    PKG_UBOOTBIN=$(get_build_dir u-boot-${PKG_SUBDEVICE})/uboot.bin
+    cp -av ${PKG_UBOOTBIN} $INSTALL/usr/share/bootloader/${PKG_SUBDEVICE}_uboot.bin
   done
 }

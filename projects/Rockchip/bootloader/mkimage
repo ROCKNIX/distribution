@@ -1,78 +1,98 @@
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2022-24 JELOS (https://github.com/JustEnoughLinuxOS)
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
-source ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/options
-
-case "${PKG_SOC}" in
-  rk3399)
-    IDBSEEK="bs=512 seek=64"
-    ;;
-esac
-
-if [ -f "${RELEASE_DIR}/3rdparty/bootloader/idbloader.img" ]; then
-  echo "image: burn idbloader.img to image... (${PKG_SOC},${IDBSEEK})"
-  dd if="${RELEASE_DIR}/3rdparty/bootloader/idbloader.img" of="$DISK" ${IDBSEEK} conv=sync,noerror,notrunc >"${SAVE_ERROR}" 2>&1 || show_error
-fi
-
-case "${PKG_SOC}" in
-  rk3399)
-    if [ -f "${RELEASE_DIR}/3rdparty/bootloader/rk3399-uboot.bin" ]; then
-      echo "image: burn u-boot.bin to image..."
-      dd if="${RELEASE_DIR}/3rdparty/bootloader/rk3399-uboot.bin" of="${DISK}" bs=512 seek=64 conv=sync,noerror,notrunc >"${SAVE_ERROR}" 2>&1 || show_error
-    fi
-    ;;
-esac
-
-#Create boot.ini
-if [ "${BOOT_INI}" == true ]; then
-  echo "boot: create boot.ini..."
-  if [ -e "${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/boot/boot.ini" ]; then
-    cp -f ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/boot/boot.ini ${LE_TMP}/boot.ini
-    sed -e "s/@DISTRO_BOOTLABEL@/${DISTRO_BOOTLABEL}/" \
-        -e "s/@DISTRO_DISKLABEL@/${DISTRO_DISKLABEL}/" \
-        -e "s/@EXTRA_CMDLINE@/${EXTRA_CMDLINE}/" \
-        -i "${LE_TMP}/boot.ini"
-
-    mcopy -so "${LE_TMP}/boot.ini" ::
+mkimage_uboot() {
+  if [ "${SUBDEVICE}" ]; then
+    UBOOT_IMAGE="${SUBDEVICE}_uboot.bin"
   else
-    echo "ERROR: No boot.ini found in ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/boot/."
-    exit 1
+    UBOOT_IMAGE="uboot.bin"
   fi
-fi
+  if [ -f "${RELEASE_DIR}/3rdparty/bootloader/${UBOOT_IMAGE}" ]; then
+    echo "image: writing ${UBOOT_IMAGE} to $(basename ${DISK})..."
+    dd if="${RELEASE_DIR}/3rdparty/bootloader/${UBOOT_IMAGE}" of="${DISK}" bs=512 seek=64 conv=sync,noerror,notrunc >"${SAVE_ERROR}" 2>&1 || show_error
+  fi
+}
 
-mkdir -p "${LE_TMP}/extlinux"
+mkimage_bootini() {
+  echo "image: copying boot.ini..."
+  mcopy "${RELEASE_DIR}/3rdparty/bootloader/boot.ini" ::
+}
 
-# copy device trees to part1
-echo "image: copy device trees to image..."
-for dtb in ${DEVICE_DTB[@]}; do
-  mcopy ${RELEASE_DIR}/3rdparty/bootloader/${dtb}.dtb ::
-done
-
-# copy device tree overlays to part1
-if [ -d ${RELEASE_DIR}/3rdparty/bootloader/overlays ]; then
-  echo "image: copy device tree overlays to image..."
-  mcopy -s ${RELEASE_DIR}/3rdparty/bootloader/overlays ::
-fi
-
-if [ "${EXT_LINUX_CONF}" == true ]; then
+mkimage_extlinux(){
+  echo "image: set exlinux.conf to FDT /${DTB[0]}..."
   mkdir -p "${LE_TMP}/extlinux"
-
-  if [[ "${PKG_SOC}" != "rk3588" ]] && [[ "${TRUST_LABEL}" = "resource" || "${#DEVICE_DTB[@]}" -gt 1 ]]; then
-    echo "image: Set FDTDIR to /..."
-    FDTMODE="FDTDIR /"
-  else
-    echo "image: Set FDT to ${DEVICE_DTB}..."
-    FDTMODE="FDT /${DEVICE_DTB}.dtb"
-  fi
-
-  echo "image: Set extlinux.conf..."
   cat << EOF > "${LE_TMP}/extlinux/extlinux.conf"
 LABEL ${DISTRO}
   LINUX /${KERNEL_NAME}
-  ${FDTMODE}
+  FDT /${DTB[0]}.dtb
   APPEND boot=LABEL=${DISTRO_BOOTLABEL} disk=LABEL=${DISTRO_DISKLABEL} ${EXTRA_CMDLINE}
 EOF
+  echo "image: copying exlinux.conf..."
+  mcopy -s -o "${LE_TMP}/extlinux" ::
+}
 
-  mcopy -so "${LE_TMP}/extlinux" ::
-fi
+mkimage_extlinux_fdtdir(){
+  echo "image: set extlinux.conf to FDTDIR /..."
+  mkdir -p "${LE_TMP}/extlinux"
+  cat << EOF > "${LE_TMP}/extlinux/extlinux.conf"
+LABEL ${DISTRO}
+  LINUX /${KERNEL_NAME}
+  FDTDIR /
+  APPEND boot=LABEL=${DISTRO_BOOTLABEL} disk=LABEL=${DISTRO_DISKLABEL} ${EXTRA_CMDLINE}
+EOF
+  echo "image: copying exlinux.conf..."
+  mcopy -s -o "${LE_TMP}/extlinux" ::
+}
+
+mkimage_dtb() {
+  echo "image: copying device trees..."
+  for dtb in ${DTB[@]}; do
+    echo "image: copying ${dtb}.dtb..."
+    mcopy ${RELEASE_DIR}/3rdparty/bootloader/${dtb}.dtb ::
+  done
+  if [ -d ${RELEASE_DIR}/3rdparty/bootloader/overlays ]; then
+    echo "image: copying device tree overlays..."
+    mcopy -s ${RELEASE_DIR}/3rdparty/bootloader/overlays ::
+  fi
+}
+
+case ${DEVICE} in
+  RK3326)
+    DTB=("rk3326-anbernic-rg351m" "rk3326-anbernic-rg351v" "rk3326-gameconsole-r33s" "rk3326-gameconsole-r36s" "rk3326-odroid-go2" "rk3326-odroid-go2-v11" "rk3326-odroid-go3" "rk3326-powkiddy-rgb10" "rk3326-powkiddy-rgb20s"  "rk3326-magicx-xu10")
+    mkimage_dtb
+    mkimage_bootini
+    mkimage_uboot
+    ;;
+  RK3399)
+    DTB=("rk3399-anbernic-rg552")
+    mkimage_dtb
+    mkimage_extlinux
+    mkimage_uboot
+    ;;
+  RK3566)
+    case ${SUBDEVICE} in
+      Generic)
+        DTB=("rk3566-anbernic-rg353ps" "rk3566-anbernic-rg353vs" "rk3566-anbernic-rg503" "rk3566-anbernic-rg353p" "rk3566-anbernic-rg353v" "rk3566-powkiddy-rk2023" "rk3566-powkiddy-rgb20sx" "rk3566-powkiddy-rgb30" "rk3566-powkiddy-rgb10max3" "rk3566-powkiddy-rgb30r2" "rk3566-anbernic-rg-arc-d" "rk3566-anbernic-rg-arc-s")
+        mkimage_dtb
+        mkimage_extlinux_fdtdir
+        mkimage_uboot
+        ;;
+      Powkiddy_x55)
+        DTB=("rk3566-powkiddy-x55")
+        mkimage_dtb
+        mkimage_extlinux
+        mkimage_uboot
+        ;;
+    esac
+    ;;
+  RK3588)
+    case ${SUBDEVICE} in
+      Generic)
+        DTB=("rk3588s-gameforce-ace" "rk3588s-retro-lite-cm5" "rk3588s-orangepi-5" "rk3588s-rock-5a" "rk3588-rock-5b" "rk3588-rock-5b-plus" "rk3588-orangepi-5-plus")
+        mkimage_dtb
+        mkimage_extlinux
+        mkimage_uboot
+        ;;
+    esac
+    ;;
+esac

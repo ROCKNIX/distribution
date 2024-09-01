@@ -2,7 +2,7 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="mali-bifrost"
-PKG_VERSION="r50p0-00eac0"
+PKG_VERSION="r51p0-00eac0"
 PKG_LICENSE="GPL"
 PKG_SITE="https://developer.arm.com/downloads/-/mali-drivers/bifrost-kernel"
 PKG_URL="https://developer.arm.com/-/media/Files/downloads/mali-drivers/kernel/mali-bifrost-gpu/BX304L01B-SW-99002-${PKG_VERSION}.tar"
