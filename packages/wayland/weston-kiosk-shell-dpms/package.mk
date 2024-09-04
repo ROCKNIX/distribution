@@ -14,6 +14,9 @@ pre_configure_target() {
     weston11)
       sed -i 's~libweston_version =.*$~libweston_version = 11~g' ${PKG_BUILD}/meson.build
     ;;
+    *)
+      sed -i 's~libweston_version =.*$~libweston_version = 14~g' ${PKG_BUILD}/meson.build
+    ;;
   esac
 }
 
