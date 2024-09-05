@@ -73,6 +73,11 @@ case "${DEVICE}" in
     LIBRETRO_CORES+=" flycast-lr flycast2021-lr geolith-lr uae4arm"
     PKG_RETROARCH+=" retropie-shaders"
   ;;
+  SD865)
+    PKG_EMUS+=" aethersx2-sa box64 dolphin-sa drastic-sa lime3ds-sa mednafen melonds-sa portmaster scummvmsa supermodel-sa yabasanshiro-sa"
+    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr flycast-lr geolith-lr pcsx_rearmed-lr uae4arm"
+    PKG_RETROARCH+=" retropie-shaders"
+  ;;
 esac
 
 PKG_DEPENDS_TARGET+=" ${PKG_EMUS} ${EMUS_32BIT} ${PKG_RETROARCH} ${LIBRETRO_CORES}"
