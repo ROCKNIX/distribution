@@ -20,7 +20,7 @@
 ################################################################################
 
 PKG_NAME="beetle-pce-fast-lr"
-PKG_VERSION="3f1c0a14b16802998f4f32ea27b0c8ad81d3b9e7"
+PKG_VERSION="f2b4d9b24175348ca48bffd6fd4bb203d08e01d9"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/beetle-pce-fast-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
