@@ -3,10 +3,10 @@
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="avahi"
-PKG_VERSION="fddc410877660d9d8c93e0b75a9bad45ff868a72"
+PKG_VERSION="0.8"
 PKG_LICENSE="GPL"
 PKG_SITE="http://avahi.org/"
-PKG_URL="https://github.com/avahi/avahi/archive/${PKG_VERSION}.zip"
+PKG_URL="https://github.com/lathiat/avahi/archive/v${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain expat libdaemon dbus gettext"
 PKG_LONGDESC="Service Discovery for Linux using mDNS/DNS-SD, compatible with Bonjour."
 PKG_TOOLCHAIN="configure"
@@ -25,7 +25,6 @@ PKG_CONFIGURE_OPTS_TARGET="py_cv_mod_gtk_=yes \
                            py_cv_mod_dbus_=yes \
                            ac_cv_func_chroot=no \
                            --with-distro=none \
-                           --enable-static \
                            --disable-glib \
                            --disable-gobject \
                            --disable-qt3 \
@@ -74,15 +73,15 @@ post_configure_target() {
 }
 
 post_makeinstall_target() {
-# disable wide-area
+  # disable wide-area
   sed -e "s,^.*enable-wide-area=.*$,enable-wide-area=no,g" -i ${INSTALL}/etc/avahi/avahi-daemon.conf
-# publish-hinfo
+  # publish-hinfo
   sed -e "s,^.*publish-hinfo=.*$,publish-hinfo=no,g" -i ${INSTALL}/etc/avahi/avahi-daemon.conf
-# publish-workstation
+  # publish-workstation
   sed -e "s,^.*publish-workstation=.*$,publish-workstation=no,g" -i ${INSTALL}/etc/avahi/avahi-daemon.conf
-# browse domains?
+  # browse domains?
   sed -e "s,^.*browse-domains=.*$,# browse-domains=,g" -i ${INSTALL}/etc/avahi/avahi-daemon.conf
-# set root user as default
+  # set root user as default
   sed -e "s,<port>22</port>,<port>22</port>\n    <txt-record>path=/storage</txt-record>\n    <txt-record>u=root</txt-record>,g" -i ${INSTALL}/etc/avahi/services/sftp-ssh.service
 
   rm -rf ${INSTALL}/etc/avahi/avahi-dnsconfd.action
@@ -103,9 +102,9 @@ post_makeinstall_target() {
 }
 
 post_install() {
-  add_user avahi x 495 495 "avahi-daemon" "/var/run/avahi-daemon" "/bin/sh"
-  add_group avahi 495
+  add_user avahi x 70 70 "avahi-daemon" "/var/run/avahi-daemon" "/bin/sh"
+  add_group avahi 70
 
   enable_service avahi-defaults.service
-  #enable_service avahi-daemon.service
+ # enable_service avahi-daemon.service
 }
