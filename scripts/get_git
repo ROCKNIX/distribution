@@ -1,3 +1,4 @@
+#!/bin/bash
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
@@ -11,135 +12,221 @@
 # PKG_GIT_CLONE_DEPTH (optional) history to clone, must be a number
 # PKG_GIT_SUBMODULE_DEPTH (optional) history of submodules to clone, must be a number
 
-_get_repo_already_downloaded() {
-  if [ -d "${PACKAGE}" ]; then
-    (
-      cd "${PACKAGE}"
-      _get_repo_clean
-      [ -n "$(git ls-remote . | grep -m1 HEAD | awk "/^${PKG_VERSION}/ {print \$1;}")" ] || die "ERROR: ${PACKAGE}: failed to determine git HEAD"
-      [ "${PKG_URL}" = "$(git remote get-url origin)" ] || die "ERROR: ${PACKAGE}: failed to obtain URL of origin"
-      [ -z "${PKG_GIT_CLONE_BRANCH}" ] && exit 0
-      [ "${PKG_GIT_CLONE_BRANCH}" = "$(git branch | grep ^\* | cut -d ' ' -f2)" ] || die "ERROR: ${PACKAGE}: failed to determine current git branch"
-      exit 0
-    )
-    return
-  else
-    return 1
-  fi
-}
+set -e
+set -o pipefail
 
-_get_repo_clean() {
+
+#_debug=true
+if [[ "${_debug}" ]] ; then
+  export PS4='+${BASH_SOURCE}:${LINENO}: '
+  set -x
+fi
+
+
+_clean_repo() {
   git clean -fdx
-  git checkout -- .
+  git restore --staged . || git switch --force # Clear changes and ensure correct branch
 }
 
-# Latest file already present, exit now...
-_get_repo_already_downloaded && exit 0
+_repo_exists_and_valid() {
+  if [[ -d "${PACKAGE}" ]]; then
+    pushd "${PACKAGE}" > /dev/null
+    _clean_repo || return 1
 
-lock_source_dir "${1}"
+    if ! git ls-remote . | grep -q -m1 "^${PKG_VERSION}"; then
+      echo "ERROR: ${PACKAGE}: failed to determine git HEAD" >&2
+      return 1
+    fi
 
-# Check again in case of concurrent access - if nothing needs to be downloaded, exit now...
-_get_repo_already_downloaded && exit 0
+    if [[ "${PKG_URL}" != "$(git remote get-url origin)" ]]; then
+      echo "ERROR: ${PACKAGE}: failed to obtain URL of origin" >&2
+      return 1
+    fi
 
-# At this point, we need to download something...
-build_msg "CLR_GET" "GET" "${1} (git)" "indent"
+    if [[ -n "${PKG_GIT_CLONE_BRANCH}" && "${PKG_GIT_CLONE_BRANCH}" != "$(git rev-parse --abbrev-ref HEAD)" ]]; then
+      echo "ERROR: ${PACKAGE}: failed to determine current git branch" >&2
+      return 1
+    fi
 
-pkg_lock_status "GETPKG" "${PKG_NAME}" "unpack" "processing package repository..."
-
-rm -f "${STAMP_URL}" "${STAMP_SHA}"
-
-GIT_CLONE_PARAMS="--recursive --shallow-submodules --filter=tree:0"
-GIT_SUBMODULE_PARAMS=""
-
-[ -n "${PKG_GIT_CLONE_BRANCH}" ] && GIT_CLONE_PARAMS="${GIT_CLONE_PARAMS} --branch ${PKG_GIT_CLONE_BRANCH}"
-[ "${PKG_GIT_CLONE_SINGLE}" = "yes" ] && GIT_CLONE_PARAMS="${GIT_CLONE_PARAMS} --single-branch"
-
-if [ -n "${PKG_GIT_CLONE_DEPTH}" ]; then
-  if [[ "${PKG_GIT_CLONE_DEPTH}" =~ ^[0-9]+$ ]]; then
-    GIT_CLONE_PARAMS="${GIT_CLONE_PARAMS} --depth ${PKG_GIT_CLONE_DEPTH}"
-  else
-    die "ERROR: PKG_GIT_CLONE_DEPTH is not a number! (${PKG_GIT_CLONE_DEPTH})"
+    popd > /dev/null
+    return 0
   fi
-fi
+  return 1
+}
 
-if [ -n "${PKG_GIT_SUBMODULE_DEPTH}" ]; then
-  if [[ "${PKG_GIT_SUBMODULE_DEPTH}" =~ ^[0-9]+$ ]]; then
-    GIT_SUBMODULE_PARAMS="${GIT_SUBMODULE_PARAMS} --depth ${PKG_GIT_SUBMODULE_DEPTH}"
+_update_submodules() {
+  if [[ -n "${GIT_SUBMODULE_PARAMS}" ]]; then
+    submodules=$(git config --file .gitmodules --get-regexp path | awk '{ print $2 }')
   else
-    die "ERROR: PKG_GIT_SUBMODULE_DEPTH is not a number! (${PKG_GIT_SUBMODULE_DEPTH})"
+    submodules=$(git submodule | awk '{ print $2 }')
   fi
-fi
 
-GIT_FOUND="no"
-opwd="$(pwd)"
-for d in "${SOURCES}/${1}/${1}-"* ; do
-  if [ -d "${d}/.git" ]; then
-    if [ "${GIT_FOUND}" = "no" ]; then
-      cd "${d}"
-      if [ "${PKG_URL}" = "$(git remote get-url origin)" ]; then
-        if [[ -z "${PKG_GIT_CLONE_BRANCH}" ]] || [[ $(git branch | grep "^\* ${PKG_GIT_CLONE_BRANCH}$" | wc -l) -eq 1 ]]; then
-          GIT_FOUND="yes"
-          GIT_DIR="${d}"
-          _get_repo_clean
-        elif [ $(git branch | grep "^  ${PKG_GIT_CLONE_BRANCH}$" | wc -l) -eq 1 ]; then
-          GIT_FOUND="yes"
-          GIT_DIR="${d}"
-          _get_repo_clean
-          git checkout "${PKG_GIT_CLONE_BRANCH}"
-        elif [ $(git branch -a | grep "^  remotes/origin/${PKG_GIT_CLONE_BRANCH}$" | wc -l) -eq 1 ]; then
-          GIT_FOUND="yes"
-          GIT_DIR="${d}"
-          _get_repo_clean
-          git checkout -b "${PKG_GIT_CLONE_BRANCH}" "origin/${PKG_GIT_CLONE_BRANCH}"
-        else
-          build_msg "CLR_CLEAN" "DELETE" "(${d})"
-          cd "${opwd}"
-          rm -rf "${d}"
-        fi
-        if [ "${GIT_FOUND}" = "yes" ]; then
-          build_msg "CLR_GET" "GIT PULL" "${1}"
+  for submodule in $submodules; do
+    echo "Updating submodule: $submodule"
+    
+    # Try to update the submodule
+    git submodule update --init --recursive ${GIT_SUBMODULE_PARAMS} -- "${submodule}" 
+    _rv=$?
 
-          # If there is an error with 'git pull' or updating the submodules, just reclone
-          # NOTE: we run the submodule update twice if the clone already
-          #       exists - but deduplicating would complicate the logic quite a lot and
-          #       the second time is almost a no-op
-          if ! git pull || ! git submodule update --init --recursive ${GIT_SUBMODULE_PARAMS}; then
-              cd "${opwd}"
-              build_msg "CLR_CLEAN" "DELETE" "(${d})"
-              GIT_FOUND=NO
-              rm -rf "${d}"
-          fi
-          cd "${opwd}"
-        fi
-      else
-        build_msg "CLR_CLEAN" "DELETE" "(${d})"
-        cd "${opwd}"
-        rm -rf "${d}"
+    if [[ $_rv != 0 ]] ; then
+      echo "Failed to update submodule: $submodule"
+
+      # Deinit, sync, and reinit the submodule
+      echo "Deinitializing submodule: $submodule"
+      git submodule deinit -f "${submodule}"
+
+      echo "Syncing submodule: $submodule"
+      git submodule sync -- "${submodule}"
+
+      echo "Reinitializing submodule: $submodule"
+      git submodule update --init --recursive ${GIT_SUBMODULE_PARAMS} -- "${submodule}"
+      _rv=$?
+      if [[ $_rv != 0 ]] ; then
+        echo "Failed to reinitialize submodule: $submodule"
+        return 1
       fi
     fi
-  else
-    build_msg "CLR_CLEAN" "DELETE" "(${d})"
-    rm -rf "${d}"
+    
+    #popd > /dev/null
+  done
+
+  return 0
+}
+
+
+_get_repo() {
+  local git_params=("--recursive" "--shallow-submodules" "--filter=blob:none" "--no-tags")
+  
+  [[ -n "${PKG_GIT_CLONE_BRANCH}" ]] && git_params+=("--branch" "${PKG_GIT_CLONE_BRANCH}")
+  [[ "${PKG_GIT_CLONE_SINGLE}" == "yes" ]] && git_params+=("--single-branch")
+
+  if [[ -n "${PKG_GIT_CLONE_DEPTH}" ]]; then
+    if [[ "${PKG_GIT_CLONE_DEPTH}" =~ ^[0-9]+$ ]]; then
+      git_params+=("--depth" "${PKG_GIT_CLONE_DEPTH}")
+    else
+      echo "ERROR: PKG_GIT_CLONE_DEPTH is not a number! (${PKG_GIT_CLONE_DEPTH})" >&2
+      return 1
+    fi
   fi
-done
-cd "${opwd}"
 
-if [ "${GIT_FOUND}" = "no" ]; then
-  build_msg "CLR_GET" "GIT CLONE" "${1}"
-  git clone ${GIT_CLONE_PARAMS} "${PKG_URL}" "${PACKAGE}"
-elif [ ! "${GIT_DIR}" = "${PACKAGE}" ]; then
-  mv "${GIT_DIR}" "${PACKAGE}"
-fi
+  if [[ -n "${PKG_GIT_SUBMODULE_DEPTH}" ]]; then
+    if [[ "${PKG_GIT_SUBMODULE_DEPTH}" =~ ^[0-9]+$ ]]; then
+      GIT_SUBMODULE_PARAMS="${GIT_SUBMODULE_PARAMS} --depth ${PKG_GIT_SUBMODULE_DEPTH}"
+    else
+      die "ERROR: PKG_GIT_SUBMODULE_DEPTH is not a number! (${PKG_GIT_SUBMODULE_DEPTH})"
+    fi
+  fi
 
-( cd "${PACKAGE}"
-  [ $(git log --oneline --pretty=tformat:"%H" | grep "^${PKG_VERSION}" | wc -l) -eq 1 ] || die "There is no commit '${PKG_VERSION}' on branch '$(git branch | grep ^\* | cut -d ' ' -f2)' of package '${1}'! Aborting!"
-  git reset --hard "${PKG_VERSION}"
-  build_msg "CLR_GET" "GIT SUBMODULE" "${1}"
-  git submodule update --init --recursive ${GIT_SUBMODULE_PARAMS}
-)
+  # Check if the destination directory exists and is non-empty
+  if [[ -d "${PACKAGE}" && "$(ls -A "${PACKAGE}")" ]]; then
+    echo "Directory ${PACKAGE} already exists and is not empty. Removing it."
+    rm -rf "${PACKAGE}"  && mkdir "${PACKAGE}" || return 1
+  fi
 
-GIT_SHA="$(git ls-remote "${PACKAGE}" | grep -m1 HEAD | awk '{print $1;}')"
+  cd ..
 
-if [ -n "${PKG_GIT_SHA}" -a "${PKG_GIT_SHA}" != "${GIT_SHA}" ]; then
-  build_msg "CLR_WARNING" "WARNING" "Incorrect git hash in repository: got ${GIT_SHA}, wanted ${PKG_GIT_SHA}"
-fi
+  echo "Cloning repository with parameters: ${git_params[*]}"
+  git clone "${git_params[@]}" "${PKG_URL}" "${PACKAGE}" || return 1
+
+  pushd "${PACKAGE}" > /dev/null
+
+  echo "Resetting to commit: ${PKG_VERSION}"
+  git reset --hard "${PKG_VERSION}" || return 1
+
+  echo "Updating submodules..."
+  _update_submodules || {
+    echo "Submodule update failed."
+    return 1
+  }
+
+  popd > /dev/null
+
+  # Get the SHA of the current HEAD 
+  local GIT_SHA
+  while read -r line; do
+    if [[ $line == *HEAD ]]; then
+      GIT_SHA="${line%%[[:space:]]*}"
+      break
+    fi
+  done < <(git ls-remote "${PACKAGE}")
+
+  if [[ -z "${GIT_SHA}" ]]; then
+    echo "Failed to retrieve GIT_SHA."
+    return 1
+  fi
+
+  if [[ -n "${PKG_GIT_SHA}" && "${PKG_GIT_SHA}" != "${GIT_SHA}" ]]; then
+    build_msg "CLR_WARNING" "WARNING" "Incorrect git hash in repository: got ${GIT_SHA}, wanted ${PKG_GIT_SHA}" >&2
+    return 1
+  fi
+
+  echo "Repository setup completed successfully."
+  return 0
+}
+
+
+_fetch_missing_submodule_commits() {
+  git submodule sync --recursive
+  for submodule in $(git config --file .gitmodules --get-regexp path | awk '{ print $2 }'); do
+    pushd "${submodule}" > /dev/null
+    
+    echo "Fetching all refs and tags for submodule: ${submodule}"
+    git fetch --all --tags --prune || return 1
+    
+    if ! git rev-parse "${PKG_VERSION}" &> /dev/null; then
+      echo "Commit ${PKG_VERSION} not found in ${submodule}, attempting to fetch it explicitly."
+      git fetch origin "${PKG_VERSION}:${PKG_VERSION}" || return 1
+    fi
+    
+    if ! git checkout "${PKG_VERSION}" ; then
+      echo "Failed to checkout commit ${PKG_VERSION} in ${submodule}, trying branch instead."
+      git checkout -B "${PKG_GIT_CLONE_BRANCH}" || return 1
+    fi
+    
+    popd > /dev/null
+  done
+}
+
+
+main(){
+  # Acquire lock on source dir
+  lock_source_dir "${1}"
+
+  # Check if repo already exists and is valid
+  _repo_exists_and_valid && exit 0
+
+  # If not valid, proceed to get the repo
+  build_msg "CLR_GET" "GET" "${1} (git)" "indent"
+
+  # Remove stale stamps
+  rm -f "${STAMP_URL}" "${STAMP_SHA}"
+
+  # Clone or update the repository
+  _get_repo || exit 1
+
+  # Verify the git hash 
+  GIT_SHA=""
+  while IFS=$'\t' read -r sha ref; do
+    if [[ "$ref" == "HEAD" ]]; then
+      GIT_SHA="$sha"
+      break
+    fi
+  done < <(git ls-remote "${PACKAGE}")
+
+  # Check if GIT_SHA was successfully retrieved
+  if [[ -z "$GIT_SHA" ]]; then
+    echo "Failed to retrieve GIT_SHA." >&2
+    exit 1
+  fi
+
+  # Verify that the retrieved SHA matches the expected one
+  if [[ -n "${PKG_GIT_SHA}" && "${PKG_GIT_SHA}" != "${GIT_SHA}" ]]; then
+    build_msg "CLR_WARNING" "WARNING" "Incorrect git hash in repository: got ${GIT_SHA}, wanted ${PKG_GIT_SHA}" >&2
+    exit 1
+  fi
+
+  echo "Repository setup completed successfully."
+}
+
+
+main
