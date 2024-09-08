@@ -1,0 +1,289 @@
+From ae0d308b5f686548193e9b1d977d56aedad2f093 Mon Sep 17 00:00:00 2001
+From: Chris Morgan <macromorgan@hotmail.com>
+Date: Fri, 6 Sep 2024 15:07:35 -0500
+Subject: [PATCH 2/3] board: rockchip: Add vdd_cpu reg fixup for RGXX3 Series
+
+Some of the Powkiddy devices switched to using a different vendor for
+the vdd_cpu regulator. Unfortunately the device does not have a new
+revision to denote this, so users have no way of knowing in advance.
+
+Add code to detect if a device is present at addresses 0x1c or 0x40 on
+the i2c0 bus and update the devicetree if needed.
+
+Signed-off-by: Chris Morgan <macromorgan@hotmail.com>
+---
+ board/anbernic/rgxx3_rk3566/rgxx3-rk3566.c | 146 +++++++++++++++++++++
+ 1 file changed, 146 insertions(+)
+
+diff --git a/board/anbernic/rgxx3_rk3566/rgxx3-rk3566.c b/board/anbernic/rgxx3_rk3566/rgxx3-rk3566.c
+index e8ac181d81..c0353484f6 100644
+--- a/board/anbernic/rgxx3_rk3566/rgxx3-rk3566.c
++++ b/board/anbernic/rgxx3_rk3566/rgxx3-rk3566.c
+@@ -43,6 +43,7 @@ struct rg3xx_model {
+ 	const char *board_name;
+ 	const char *fdtfile;
+ 	const bool detect_panel;
++	const bool detect_regulator;
+ };
+ 
+ enum rgxx3_device_id {
+@@ -68,6 +69,7 @@ static const struct rg3xx_model rg3xx_model_details[] = {
+ 		/* Device is identical to RG353P. */
+ 		.fdtfile = DTB_DIR "rk3566-anbernic-rg353p.dtb",
+ 		.detect_panel = 1,
++		.detect_regulator = 0,
+ 	},
+ 	[RG353P] = {
+ 		.adc_value = 860, /* Documented value of 860 */
+@@ -75,6 +77,7 @@ static const struct rg3xx_model rg3xx_model_details[] = {
+ 		.board_name = "Anbernic RG353P",
+ 		.fdtfile = DTB_DIR "rk3566-anbernic-rg353p.dtb",
+ 		.detect_panel = 1,
++		.detect_regulator = 0,
+ 	},
+ 	[RG353V] = {
+ 		.adc_value = 695, /* Observed average from device */
+@@ -82,6 +85,7 @@ static const struct rg3xx_model rg3xx_model_details[] = {
+ 		.board_name = "Anbernic RG353V",
+ 		.fdtfile = DTB_DIR "rk3566-anbernic-rg353v.dtb",
+ 		.detect_panel = 1,
++		.detect_regulator = 0,
+ 	},
+ 	[RG503] = {
+ 		.adc_value = 1023, /* Observed average from device */
+@@ -89,6 +93,7 @@ static const struct rg3xx_model rg3xx_model_details[] = {
+ 		.board_name = "Anbernic RG503",
+ 		.fdtfile = DTB_DIR "rk3566-anbernic-rg503.dtb",
+ 		.detect_panel = 0,
++		.detect_regulator = 0,
+ 	},
+ 	[RGB30] = {
+ 		.adc_value = 383, /* Gathered from second hand information */
+@@ -96,6 +101,7 @@ static const struct rg3xx_model rg3xx_model_details[] = {
+ 		.board_name = "Powkiddy RGB30",
+ 		.fdtfile = DTB_DIR "rk3566-powkiddy-rgb30.dtb",
+ 		.detect_panel = 0,
++		.detect_regulator = 1,
+ 	},
+ 	[RK2023] = {
+ 		.adc_value = 635, /* Observed average from device */
+@@ -103,6 +109,7 @@ static const struct rg3xx_model rg3xx_model_details[] = {
+ 		.board_name = "Powkiddy RK2023",
+ 		.fdtfile = DTB_DIR "rk3566-powkiddy-rk2023.dtb",
+ 		.detect_panel = 0,
++		.detect_regulator = 1,
+ 	},
+ 	[RGARCD] = {
+ 		.adc_value = 183, /* Observed average from device */
+@@ -110,6 +117,7 @@ static const struct rg3xx_model rg3xx_model_details[] = {
+ 		.board_name = "Anbernic RG ARC-D",
+ 		.fdtfile = DTB_DIR "rk3566-anbernic-rg-arc-d.dtb",
+ 		.detect_panel = 0,
++		.detect_regulator = 0,
+ 	},
+ 	[RGB10MAX3] = {
+ 		.adc_value = 765, /* Observed average from device */
+@@ -117,6 +125,7 @@ static const struct rg3xx_model rg3xx_model_details[] = {
+ 		.board_name = "Powkiddy RGB10MAX3",
+ 		.fdtfile = DTB_DIR "rk3566-powkiddy-rgb10max3.dtb",
+ 		.detect_panel = 0,
++		.detect_regulator = 1,
+ 	},
+ 	/* Devices with duplicate ADC value */
+ 	[RG353PS] = {
+@@ -125,6 +134,7 @@ static const struct rg3xx_model rg3xx_model_details[] = {
+ 		.board_name = "Anbernic RG353PS",
+ 		.fdtfile = DTB_DIR "rk3566-anbernic-rg353ps.dtb",
+ 		.detect_panel = 1,
++		.detect_regulator = 0,
+ 	},
+ 	[RG353VS] = {
+ 		.adc_value = 695, /* Gathered from second hand information */
+@@ -132,6 +142,7 @@ static const struct rg3xx_model rg3xx_model_details[] = {
+ 		.board_name = "Anbernic RG353VS",
+ 		.fdtfile = DTB_DIR "rk3566-anbernic-rg353vs.dtb",
+ 		.detect_panel = 1,
++		.detect_regulator = 0,
+ 	},
+ 	[RGARCS] = {
+ 		.adc_value = 183, /* Observed average from device */
+@@ -139,6 +150,7 @@ static const struct rg3xx_model rg3xx_model_details[] = {
+ 		.board_name = "Anbernic RG ARC-S",
+ 		.fdtfile = DTB_DIR "rk3566-anbernic-rg-arc-s.dtb",
+ 		.detect_panel = 0,
++		.detect_regulator = 0,
+ 	},
+ };
+ 
+@@ -160,6 +172,22 @@ static const struct rg353_panel rg353_panel_details[] = {
+ 	},
+ };
+ 
++struct powkiddy_regulators {
++	const u8 addr;
++	const char *regulator_compat;
++};
++
++static const struct powkiddy_regulators regulator_details[] = {
++	{
++		.addr = 0x1c,
++		.regulator_compat = "tcs,tcs4525",
++	},
++	{
++		.addr = 0x40,
++		.regulator_compat = "fcs,fan53555",
++	},
++};
++
+ /*
+  * Start LED very early so user knows device is on. Set color
+  * to red.
+@@ -345,6 +373,44 @@ int rgxx3_detect_display(void)
+ 	return 0;
+ }
+ 
++/*
++ * Some of the Powkiddy devices switched the CPU regulator, but users
++ * are not able to determine this by looking at their hardware.
++ * Attempt to auto-detect this situation and fixup the device-tree.
++ */
++int rgxx3_detect_regulator(void)
++{
++	struct udevice *bus;
++	struct udevice *chip;
++	u8 val;
++	int ret;
++
++	/* Get the correct i2c bus (i2c0). */
++	ret = uclass_get_device_by_name(UCLASS_I2C,
++					"i2c@fdd40000", &bus);
++	if (ret)
++		return ret;
++
++	/*
++	 * Check for all vdd_cpu regulators and read an arbitrary
++	 * register to confirm it's present.
++	 */
++	for (int i = 0; i < ARRAY_SIZE(regulator_details); i++) {
++		ret = i2c_get_chip(bus, regulator_details[i].addr,
++				   1, &chip);
++		if (ret)
++			return ret;
++
++		ret = dm_i2c_read(chip, 0, &val, 1);
++		if (!ret) {
++			env_set("vdd_cpu", regulator_details[i].regulator_compat);
++			break;
++		}
++	}
++
++	return 0;
++}
++
+ int rgxx3_read_board_id(void)
+ {
+ 	u32 adc_info;
+@@ -463,6 +529,15 @@ int rk_board_late_init(void)
+ 			printf("Failed to detect panel type\n");
+ 	}
+ 
++	/*
++	 * Skip vdd_cpu regulator detection if not needed. Warn but
++	 * don't fail for errors in auto-detection of regulator.
++	 */
++	if (rg3xx_model_details[gd->board_type].detect_regulator) {
++		ret = rgxx3_detect_regulator();
++		if (ret)
++			printf("Unable to detect vdd_cpu regulator\n");
++	}
+ end:
+ 	/* Turn off red LED and turn on orange LED. */
+ 	writel(GPIO_WRITEMASK(GPIO_C7 | GPIO_C6 | GPIO_C5) | GPIO_C6,
+@@ -526,6 +601,71 @@ int rgxx3_panel_fixup(void *blob)
+ 	return 0;
+ }
+ 
++int rgxx3_regulator_fixup(void *blob)
++{
++	const struct powkiddy_regulators *vdd_cpu = NULL;
++	int node, ret, i;
++	char path[] = "/i2c@fdd40000/regulator@00";
++	char name[] = "regulator@00";
++	char *env;
++
++	env = env_get("vdd_cpu");
++	if (!env) {
++		printf("Can't get vdd_cpu env\n");
++		return -EINVAL;
++	}
++
++	/*
++	 * Find the device we have in our tree, which may or may not
++	 * be present.
++	 */
++	for (i = 0; i < ARRAY_SIZE(regulator_details); i++) {
++		sprintf(path, "/i2c@fdd40000/regulator@%02x",
++			regulator_details[i].addr);
++		node = fdt_path_offset(blob, path);
++		if (node > 0)
++			break;
++
++		printf("Unable to find vdd_cpu\n");
++		return -ENODEV;
++	}
++
++	node = fdt_path_offset(blob, path);
++	if (!(node > 0)) {
++		printf("Can't find the vdd_cpu node\n");
++		return -ENODEV;
++	}
++
++	ret = fdt_node_check_compatible(blob, node, env);
++	if (ret < 0)
++		return -ENODEV;
++
++	/* vdd_cpu regulators match, return 0. */
++	if (!ret)
++		return 0;
++
++	/* Regulators don't match, search by first compatible value. */
++	for (i = 0; i < ARRAY_SIZE(regulator_details); i++) {
++		if (!strcmp(env, regulator_details[i].regulator_compat)) {
++			vdd_cpu = &regulator_details[i];
++			break;
++		}
++	}
++
++	if (!vdd_cpu) {
++		printf("Unable to identify vdd_cpu by compat string\n");
++		return -ENODEV;
++	}
++
++	/* Set the compatible and reg with the auto-detected values */
++	fdt_setprop_string(blob, node, "compatible", vdd_cpu->regulator_compat);
++	fdt_setprop_u32(blob, node, "reg", vdd_cpu->addr);
++	sprintf(name, "regulator@%02x", vdd_cpu->addr);
++	fdt_set_name(blob, node, name);
++
++	return 0;
++}
++
+ int ft_board_setup(void *blob, struct bd_info *bd)
+ {
+ 	int ret;
+@@ -536,6 +676,12 @@ int ft_board_setup(void *blob, struct bd_info *bd)
+ 			printf("Unable to update panel compat\n");
+ 	}
+ 
++	if (rg3xx_model_details[gd->board_type].detect_regulator) {
++		ret = rgxx3_regulator_fixup(blob);
++		if (ret)
++			printf("Unable to update vdd_cpu compat\n");
++	}
++
+ 	return 0;
+ }
+ 
+-- 
+2.34.1
+
