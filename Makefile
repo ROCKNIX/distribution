@@ -31,11 +31,6 @@ AMD64:
 	PROJECT=PC DEVICE=AMD64 ARCH=i686 ./scripts/build_distro
 	PROJECT=PC DEVICE=AMD64 ARCH=x86_64 ./scripts/build_distro
 
-INTEL64:
-	unset DEVICE_ROOT
-	PROJECT=PC DEVICE=INTEL64 ARCH=i686 ./scripts/build_distro
-	PROJECT=PC DEVICE=INTEL64 ARCH=x86_64 ./scripts/build_distro
-
 RK3588:
 	unset DEVICE_ROOT
 	PROJECT=Rockchip DEVICE=RK3588 ARCH=arm ./scripts/build_distro
