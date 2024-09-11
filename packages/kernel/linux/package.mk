@@ -8,6 +8,7 @@ PKG_SITE="http://www.kernel.org"
 PKG_DEPENDS_HOST="ccache:host rsync:host openssl:host"
 PKG_DEPENDS_TARGET="linux:host kmod:host xz:host keyutils ncurses openssl:host ${KERNEL_EXTRA_DEPENDS_TARGET}"
 PKG_NEED_UNPACK="${LINUX_DEPENDS} $(get_pkg_directory initramfs) $(get_pkg_variable initramfs PKG_NEED_UNPACK)"
+PKG_NEED_UNPACK+=" ${PROJECT_DIR}/${PROJECT}/bootloader ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/bootloader"
 PKG_LONGDESC="This package contains a precompiled kernel image and the modules."
 PKG_IS_KERNEL_PKG="yes"
 PKG_STAMP="${KERNEL_TARGET} ${KERNEL_MAKE_EXTRACMD}"
@@ -261,16 +262,6 @@ makeinstall_target() {
         cp -v ${dtb} ${INSTALL}/usr/share/bootloader
       fi
     done
-
-    if [ "${PROJECT}" = "Rockchip" ]; then
-      . ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/options
-      if [ "${TRUST_LABEL}" = "resource" ]; then
-        ARCH=arm64 scripts/mkimg --dtb ${DEVICE_DTB[0]}.dtb
-        ARCH=arm64 scripts/mkmultidtb.py ${PKG_SOC}
-        cp -v resource.img ${INSTALL}/usr/share/bootloader
-        ARCH=${TARGET_ARCH}
-      fi
-    fi
   fi
   makeinstall_host
 }
