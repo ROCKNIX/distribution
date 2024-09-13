@@ -232,7 +232,7 @@ fi
         then
                 cp -r /storage/.config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.custom /storage/.config/dolphin-emu/GCPadNew.ini
         else
-		cp -r /storage/.config/dolphin-emu/GamecubeControllerProfiles/dolphin-emu/GCPadNew.ini.south /storage/.config/dolphin-emu/GCPadNew.ini
+		cp -r /storage/.config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.south /storage/.config/dolphin-emu/GCPadNew.ini
         fi
 
   #GC Controller Hotkey Enable
