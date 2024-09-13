@@ -2,15 +2,24 @@
 # Copyright (C) 2021-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="sway"
-PKG_VERSION="1c992d847d66161a28f12bfc7028966433fb249c"
-PKG_SHA256="387d37ede5d56f8474ce5706f78b1ad3311f6e58dcdfa4c495396d2ff0f1544d"
 PKG_LICENSE="MIT"
 PKG_SITE="https://swaywm.org/"
 #PKG_URL="https://github.com/swaywm/sway/releases/download/${PKG_VERSION}/sway-${PKG_VERSION}.tar.gz"
-PKG_URL="https://github.com/swaywm/sway/archive/${PKG_VERSION}.zip" # temporary until 1.10 is released
 PKG_DEPENDS_TARGET="toolchain wayland wayland-protocols libdrm libxkbcommon libinput cairo pango libjpeg-turbo dbus json-c wlroots gdk-pixbuf swaybg foot bemenu xcb-util-wm xwayland xkbcomp"
 PKG_LONGDESC="i3-compatible Wayland compositor"
 PKG_TOOLCHAIN="meson"
+
+case ${DEVICE} in
+  RK3588)
+    PKG_VERSION="1.9"
+    PKG_URL="https://github.com/swaywm/sway/archive/${PKG_VERSION}.zip"
+  ;;
+  *)
+    PKG_VERSION="1c992d847d66161a28f12bfc7028966433fb249c"
+    PKG_SHA256="387d37ede5d56f8474ce5706f78b1ad3311f6e58dcdfa4c495396d2ff0f1544d"
+    PKG_URL="https://github.com/swaywm/sway/archive/${PKG_VERSION}.zip" # temporary until 1.10 is released
+  ;;
+esac
 
 # to enable xwayland package: https://gitlab.freedesktop.org/xorg/lib/libxcb-wm/-/tree/master/icccm?ref_type=heads
 
