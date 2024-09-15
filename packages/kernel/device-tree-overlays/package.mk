@@ -17,5 +17,5 @@ makeinstall_target() {
     mkdir -p ${INSTALL}/usr/share/bootloader/overlays
     cp ${PKG_BUILD}/${DEVICE}/*.dtbo ${INSTALL}/usr/share/bootloader/overlays
     mkdir -p ${INSTALL}/usr/bin
-    cp ${PKG_BUILD}/${DEVICE}/dtb_overlay ${INSTALL}/usr/bin
+    cp ${PKG_BUILD}/dtb_overlay ${INSTALL}/usr/bin
 }

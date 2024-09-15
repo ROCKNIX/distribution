@@ -71,18 +71,27 @@ post_makeinstall_target() {
   case ${DEVICE} in
     RK3588)
       PAN="panthor"
-      DTB_OVERLAY="\/usr\/bin\/dtb_overlay \$1"
+      DTB_OVERLAY_LOAD="\/usr\/bin\/dtb_overlay set driver-gpu driver-gpu-panthor.dtbo"
+      DTB_OVERLAY_UNLOAD="\/usr\/bin\/dtb_overlay set driver-gpu None"
+      DTB_OVERLAY_WRITE="\/usr\/bin\/dtb_overlay write"
     ;;
     *)
       PAN="panfrost"
       DTB_OVERLAY=""
+      DTB_OVERLAY_UNLOAD=""
+      DTB_OVERLAY_WRITE=""
     ;;
   esac
 
   sed -e "s/@PAN@/${PAN}/g" \
       -i  ${INSTALL}/usr/bin/gpudriver
 
-  sed -e "s/@DTB_OVERLAY@/${DTB_OVERLAY}/g" \
+  sed -e "s/@DTB_OVERLAY_LOAD@/${DTB_OVERLAY_LOAD}/g" \
       -i  ${INSTALL}/usr/bin/gpudriver
 
+  sed -e "s/@DTB_OVERLAY_UNLOAD@/${DTB_OVERLAY_UNLOAD}/g" \
+      -i  ${INSTALL}/usr/bin/gpudriver
+
+  sed -e "s/@DTB_OVERLAY_WRITE@/${DTB_OVERLAY_WRITE}/g" \
+      -i  ${INSTALL}/usr/bin/gpudriver
 }
