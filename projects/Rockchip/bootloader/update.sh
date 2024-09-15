@@ -33,7 +33,7 @@ done
 if [ -d $SYSTEM_ROOT/usr/share/bootloader/overlays ]; then
   echo "Updating device tree overlays..."
   mkdir -p $BOOT_ROOT/overlays
-  for dtb in $SYSTEM_ROOT/usr/share/bootloader/overlays/*.dtb; do
+  for dtb in $SYSTEM_ROOT/usr/share/bootloader/overlays/*.dtbo; do
     cp -p $dtb $BOOT_ROOT/overlays
   done
 fi
