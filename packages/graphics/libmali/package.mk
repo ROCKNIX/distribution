@@ -73,13 +73,11 @@ post_makeinstall_target() {
       PAN="panthor"
       DTB_OVERLAY_LOAD="\/usr\/bin\/dtb_overlay set driver-gpu driver-gpu-panthor.dtbo"
       DTB_OVERLAY_UNLOAD="\/usr\/bin\/dtb_overlay set driver-gpu None"
-      DTB_OVERLAY_WRITE="\/usr\/bin\/dtb_overlay write"
     ;;
     *)
       PAN="panfrost"
       DTB_OVERLAY=""
       DTB_OVERLAY_UNLOAD=""
-      DTB_OVERLAY_WRITE=""
     ;;
   esac
 
@@ -90,8 +88,5 @@ post_makeinstall_target() {
       -i  ${INSTALL}/usr/bin/gpudriver
 
   sed -e "s/@DTB_OVERLAY_UNLOAD@/${DTB_OVERLAY_UNLOAD}/g" \
-      -i  ${INSTALL}/usr/bin/gpudriver
-
-  sed -e "s/@DTB_OVERLAY_WRITE@/${DTB_OVERLAY_WRITE}/g" \
       -i  ${INSTALL}/usr/bin/gpudriver
 }
