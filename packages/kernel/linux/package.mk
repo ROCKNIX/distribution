@@ -20,11 +20,6 @@ if [ "${DEVICE}" = "S922X" -a "${USE_MALI}" = "no" ]; then
 fi
 
 case ${DEVICE} in
-  RK3326)
-    PKG_VERSION="6.8.9"
-    PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
-    PKG_PATCH_DIRS+=" mainline"
-    ;;
   RK3588)
     PKG_VERSION="71039841e6100b280bc90d91b7b6b9d33ec84897"
     PKG_URL="https://github.com/armbian/linux-rockchip/archive/${PKG_VERSION}.tar.gz"
