@@ -14,6 +14,9 @@ PKG_TOOLCHAIN="manual"
 
 pre_configure_target() {
   sed -i 's/\-O[23]/-Ofast/' ${PKG_BUILD}/Makefile
+  export CFLAGS="${CFLAGS} -flto -fipa-pta"
+  export CXXFLAGS="${CXXFLAGS} -flto -fipa-pta"
+  export LDFLAGS="${LDFLAGS} -flto -fipa-pta"
 }
 
 make_target() {
