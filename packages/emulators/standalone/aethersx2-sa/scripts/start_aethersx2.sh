@@ -165,13 +165,16 @@ fi
         fi
 
 #Set OpenGL 3.3 on panfrost
-export MESA_GL_VERSION_OVERRIDE=3.3
-export MESA_GLSL_VERSION_OVERRIDE=330
+  export MESA_GL_VERSION_OVERRIDE=3.3
+  export MESA_GLSL_VERSION_OVERRIDE=330
 
 #Set QT enviornment to wayland
   export QT_QPA_PLATFORM=wayland
 
+# Extra Libs needed to run
+  export LD_LIBRARY_PATH=/usr/share/aethersx2-sa/libs
+
 #Run Aethersx2 emulator
   export SDL_AUDIODRIVER=pulseaudio
   set_kill set "-9 aethersx2"
-  ${EMUPERF} /usr/bin/@APPIMAGE@ -fullscreen "${1}"
+  ${EMUPERF} /usr/share/aethersx2-sa/aethersx2 -bigpicture -fullscreen "${1}"
