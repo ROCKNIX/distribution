@@ -26,7 +26,7 @@ case ${DEVICE} in
     PKG_PATCH_DIRS+=" mainline"
     ;;
   RK3588)
-    PKG_VERSION="71039841e6100b280bc90d91b7b6b9d33ec84897"
+    PKG_VERSION="8986153dd6a03ec24ca4f231d51cdd6024c8a887"
     PKG_URL="https://github.com/armbian/linux-rockchip/archive/${PKG_VERSION}.tar.gz"
     PKG_GIT_CLONE_BRANCH="rk-6.1-rkr3"
   ;;

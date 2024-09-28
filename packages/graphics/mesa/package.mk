@@ -24,7 +24,7 @@ case ${DEVICE} in
     fi
   ;;
   *)
-	PKG_VERSION="24.2.2"
+	PKG_VERSION="24.2.3"
 	PKG_BUILD_VERSION="${PKG_VERSION}"
 	PKG_SITE="http://www.mesa3d.org/"
 	PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
@@ -123,7 +123,7 @@ else
 fi
 
 post_makeinstall_target() {
-  if [ "${DEVICE}" = "S922X" -a "${USE_MALI}" != "no" ]; then
+  if listcontains "${GRAPHIC_DRIVERS}" "(panfrost)"; then
     rm -f ${INSTALL}/usr/lib/libvulkan_panfrost.so ${INSTALL}/usr/share/vulkan/icd.d/panfrost_icd.aarch64.json
   fi
 }
