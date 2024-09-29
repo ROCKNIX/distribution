@@ -80,6 +80,8 @@ then
   OPTIONS+=" -res=992,768"
 fi
 
+sway_fullscreen supermodel &
+
 cd ${CONFIG_DIR}
 echo "Command: supermodel ${1} ${OPTIONS}" >/var/log/exec.log 2>&1
 ${EMUPERF} supermodel "${1}" "${OPTIONS}" >>/var/log/exec.log 2>&1 ||:
