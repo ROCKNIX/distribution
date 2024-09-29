@@ -99,6 +99,13 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin
   cp -rf ${PKG_BUILD}/emulationstation ${INSTALL}/usr/bin
 
+  mkdir -p ${INSTALL}/usr/bin
+  cp ${PKG_BUILD}/es_settings ${INSTALL}/usr/bin
+  chmod 0755 ${INSTALL}/usr/bin/es_settings
+
+  cp ${PKG_BUILD}/start_es.sh ${INSTALL}/usr/bin
+  chmod 0755 ${INSTALL}/usr/bin/start_es.sh
+
   mkdir -p ${INSTALL}/etc/emulationstation/
   ln -sf /storage/.config/emulationstation/themes ${INSTALL}/etc/emulationstation/
 
@@ -136,3 +143,13 @@ EOF
   ln -sf /storage/.cache/system_timezone ${INSTALL}/etc/timezone
 }
 
+post_install() {
+  mkdir -p ${INSTALL}/usr/share
+  ln -sf /storage/.config/locale ${INSTALL}/usr/share/locale
+
+  mkdir -p ${INSTALL}/usr/lib
+  ln -sf /usr/share/locale ${INSTALL}/usr/lib/locale
+
+  ln -sf /usr/share/locale  ${INSTALL}/usr/config/emulationstation/locale
+
+}
