@@ -31,8 +31,8 @@ case ${DEVICE} in
     PKG_PATCH_DIRS="${LINUX} ${DEVICE} default"
   ;;
   H700)
-    PKG_VERSION="996b4126d10e68ee70b64fc9a2fbccdc92a64f93"
-    PKG_URL="https://git.sr.ht/~tokyovigilante/linux/archive/${PKG_VERSION}.tar.gz"
+    PKG_VERSION="6.12-rc2"
+    PKG_URL="https://git.kernel.org/torvalds/t/linux-${PKG_VERSION}.tar.gz"
     ;;
   SD865)
     PKG_VERSION="6.11.3"
