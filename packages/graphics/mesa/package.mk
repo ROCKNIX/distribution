@@ -10,11 +10,6 @@ PKG_TOOLCHAIN="meson"
 PKG_PATCH_DIRS+=" ${DEVICE}"
 
 case ${DEVICE} in
-  RK3588*)
-	PKG_VERSION="832c3c7117e4366e415ded92a6f07ec203fd9233"
-	PKG_SITE="https://github.com/ROCKNIX/mesa-panfork"
-	PKG_URL="${PKG_SITE}.git"
-  ;;
   S922X)
     if [ "${DEVICE}" = "S922X" -a "${USE_MALI}" != "no" ]; then
       PKG_VERSION="24.0.7"
@@ -29,7 +24,7 @@ case ${DEVICE} in
     fi
   ;;
   *)
-	PKG_VERSION="24.2.1"
+	PKG_VERSION="24.2.3"
 	PKG_BUILD_VERSION="${PKG_VERSION}"
 	PKG_SITE="http://www.mesa3d.org/"
 	PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
@@ -128,7 +123,7 @@ else
 fi
 
 post_makeinstall_target() {
-  if [ "${DEVICE}" = "S922X" -a "${USE_MALI}" != "no" ]; then
+  if listcontains "${GRAPHIC_DRIVERS}" "(panfrost)"; then
     rm -f ${INSTALL}/usr/lib/libvulkan_panfrost.so ${INSTALL}/usr/share/vulkan/icd.d/panfrost_icd.aarch64.json
   fi
 }

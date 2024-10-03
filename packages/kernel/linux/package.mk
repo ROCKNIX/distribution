@@ -8,6 +8,7 @@ PKG_SITE="http://www.kernel.org"
 PKG_DEPENDS_HOST="ccache:host rsync:host openssl:host"
 PKG_DEPENDS_TARGET="linux:host kmod:host xz:host keyutils ncurses openssl:host ${KERNEL_EXTRA_DEPENDS_TARGET}"
 PKG_NEED_UNPACK="${LINUX_DEPENDS} $(get_pkg_directory initramfs) $(get_pkg_variable initramfs PKG_NEED_UNPACK)"
+PKG_NEED_UNPACK+=" ${PROJECT_DIR}/${PROJECT}/bootloader ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/bootloader"
 PKG_LONGDESC="This package contains a precompiled kernel image and the modules."
 PKG_IS_KERNEL_PKG="yes"
 PKG_STAMP="${KERNEL_TARGET} ${KERNEL_MAKE_EXTRACMD}"
@@ -25,10 +26,10 @@ case ${DEVICE} in
     PKG_PATCH_DIRS+=" mainline"
     ;;
   RK3588)
-    PKG_VERSION="494c0a303537c55971421b5552d98eb55e652cf3"
+    PKG_VERSION="8986153dd6a03ec24ca4f231d51cdd6024c8a887"
     PKG_URL="https://github.com/armbian/linux-rockchip/archive/${PKG_VERSION}.tar.gz"
-    PKG_GIT_CLONE_BRANCH="rk-5.10-rkr6"
-    ;;
+    PKG_GIT_CLONE_BRANCH="rk-6.1-rkr3"
+  ;;
   H700)
     PKG_VERSION="996b4126d10e68ee70b64fc9a2fbccdc92a64f93"
     PKG_URL="https://git.sr.ht/~tokyovigilante/linux/archive/${PKG_VERSION}.tar.gz"
@@ -265,16 +266,6 @@ makeinstall_target() {
         cp -v ${dtb} ${INSTALL}/usr/share/bootloader
       fi
     done
-
-    if [ "${PROJECT}" = "Rockchip" ]; then
-      . ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/options
-      if [ "${TRUST_LABEL}" = "resource" ]; then
-        ARCH=arm64 scripts/mkimg --dtb ${DEVICE_DTB[0]}.dtb
-        ARCH=arm64 scripts/mkmultidtb.py ${PKG_SOC}
-        cp -v resource.img ${INSTALL}/usr/share/bootloader
-        ARCH=${TARGET_ARCH}
-      fi
-    fi
   fi
   makeinstall_host
 }

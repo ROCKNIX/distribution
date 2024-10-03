@@ -2,17 +2,26 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
 . /etc/profile.d/001-functions
-UV_CPU_ID="undervolt-cpu"
-UV_GPU_ID="undervolt-gpu"
-CUSTOM_TWEAKS="${UV_CPU_ID} ${UV_GPU_ID}"
+SPECIALIZATIONS="undervolt-cpu undervolt-gpu driver-gpu"
+
+check_valid_specialization() {
+    for spec in $SPECIALIZATIONS; do
+        if [ "$spec" = "${1}" ]; then
+            return
+        fi
+    done
+    echo "Unknown specialization: ${1}"
+    echo "Valid specializations are: ${SPECIALIZATIONS}"
+    exit 1
+}
 
 get_current_custom_overlay() {
     fdtoverlaysline=$(grep FDTOVERLAYS /flash/extlinux/extlinux.conf)
     overlays=${fdtoverlaysline##  FDTOVERLAYS}
     for ol in $overlays; do
         match=0
-        for tweak in $CUSTOM_TWEAKS; do
-            if [[ $ol == *"$tweak"* ]]; then
+        for spec in $SPECIALIZATIONS; do
+            if [[ $ol == *"$spec"* ]]; then
                match=1
                break
             fi
@@ -47,9 +56,9 @@ get_current_specialized_overlay() {
 }
 
 list_custom_overlays() {
-    for ol in /flash/overlays/*.dtb; do
-        for tweak in $CUSTOM_TWEAKS; do
-            if [[ $ol == *"$tweak"* ]]; then
+    for ol in /flash/overlays/*.dtbo; do
+        for spec in $SPECIALIZATIONS; do
+            if [[ $ol == *"$spec"* ]]; then
                 ol=""
         break
             fi
@@ -63,7 +72,7 @@ list_custom_overlays() {
 }
 
 list_specialized_overlays() {
-    for ol in /flash/overlays/*.dtb; do
+    for ol in /flash/overlays/*.dtbo; do
         if [[ $ol == *"$1"* ]]; then
             echo -n $ol | cut -d '/' -f 4 | tr -d '\n'
             echo -n " "
@@ -72,22 +81,20 @@ list_specialized_overlays() {
     echo
 }
 
-write_dtb() {
+write_dtbo() {
     PRE=/overlays/
-    CPU=$(get_setting system.${UV_CPU_ID})
-    GPU=$(get_setting system.${UV_GPU_ID})
-    CUSTOM=$(get_setting system.custom_dtb)
-    for dtb in $CPU $GPU $CUSTOM; do
-        if [ ! $dtb = "None" ]; then
-            dtbs+="${PRE}${dtb} "
+    for spec in $SPECIALIZATIONS custom_dtbo; do
+	ol=$(get_setting system.$spec)
+        if [ "$ol" != "None" ] && [[ ! -z $ol ]]; then
+            dtbos+="${PRE}${ol} "
         fi
     done
     mount -o remount,rw /flash
-    if [ $dtbs ];then
+    if [ "$dtbos" ]; then
         if grep --quiet FDTOVERLAYS /flash/extlinux/extlinux.conf; then
-            sed -i "/FDTOVERLAYS/c \ \ FDTOVERLAYS ${dtbs}" /flash/extlinux/extlinux.conf
+            sed -i "/FDTOVERLAYS/c \ \ FDTOVERLAYS ${dtbos}" /flash/extlinux/extlinux.conf
         else
-            sed -i "/FDT/a \ \ FDTOVERLAYS ${dtbs}" /flash/extlinux/extlinux.conf
+            sed -i "/FDT/a \ \ FDTOVERLAYS ${dtbos}" /flash/extlinux/extlinux.conf
         fi
     else
         sed -i "/FDTOVERLAYS/d" /flash/extlinux/extlinux.conf
@@ -102,13 +109,10 @@ case "$1" in
                 list_custom_overlays
                 exit 0
             ;;
-            $UV_CPU_ID|$UV_GPU_ID)
+            *)
+                check_valid_specialization $2
                 list_specialized_overlays $2
                 exit 0
-            ;;
-            *)
-                echo "Unknown arguments: ${1} ${2}"
-                exit 1
             ;;
         esac
     ;;
@@ -118,39 +122,42 @@ case "$1" in
                 get_current_custom_overlay
                 exit 0
             ;;
-            $UV_CPU_ID|$UV_GPU_ID)
+            *)
+                check_valid_specialization $2
                 get_current_specialized_overlay $2
                 exit 0
             ;;
-            *)
-                echo "Unknown arguments: ${1} ${2}"
-                exit 1
-            ;;
         esac
     ;;
-
    "set")
         case "$2" in
             "custom")
-                set_setting system.custom_dtb $3
-                exit 0
-            ;;
-            $UV_CPU_ID|$UV_GPU_ID)
-                set_setting system.$2 $3
-                exit 0
+                for ol in $(list_custom_overlays); do
+		            if [ "$3" = "$ol" ] || [ $3 = None ]; then
+                        set_setting system.custom_dtbo $3
+                        write_dtbo
+                        exit 0
+		            fi
+		        done
+                echo "dtbo doesn't exist: $3"
+                exit 1
             ;;
             *)
-                echo "Unknown arguments: ${1} ${2}"
+                check_valid_specialization $2
+	            for ol in $(list_specialized_overlays $2); do
+		            if [ "$3" = "$ol" ] || [ $3 = None ]; then
+                        set_setting system.$2 $3
+                        write_dtbo
+                        exit 0
+		            fi
+		        done
+                echo "dtbo doesn't exist: $3"
                 exit 1
             ;;
         esac
     ;;
-    "write")
-        write_dtb
-        exit 0
-    ;;
     *)
-        echo "Unknown arguments $@"
-        exit 0
+        echo "Unknown operation: ${1}"
+        exit 1
     ;;
 esac

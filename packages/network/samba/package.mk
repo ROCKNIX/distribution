@@ -3,7 +3,7 @@
 # Copyright (C) 2017-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="samba"
-PKG_VERSION="4.18.8"
+PKG_VERSION="4.21.0"
 PKG_LICENSE="GPLv3+"
 PKG_SITE="https://www.samba.org"
 PKG_URL="https://download.samba.org/pub/samba/stable/${PKG_NAME}-${PKG_VERSION}.tar.gz"
@@ -24,8 +24,6 @@ configure_package() {
 
   if [ "${TARGET_ARCH}" = x86_64 ]; then
     SMB_AESNI="--accel-aes=intelaesni"
-  else
-    SMB_AESNI="--accel-aes=none"
   fi
 
   PKG_CONFIGURE_OPTS="--prefix=/usr \
