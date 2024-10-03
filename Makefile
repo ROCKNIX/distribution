@@ -66,6 +66,11 @@ H700:
 	PROJECT=Allwinner DEVICE=H700 ARCH=arm ./scripts/build_distro
 	PROJECT=Allwinner DEVICE=H700 ARCH=aarch64 ./scripts/build_distro
 
+SD865:
+	unset DEVICE_ROOT
+	PROJECT=Qualcomm DEVICE=SD865 ARCH=arm ./scripts/build_distro
+	PROJECT=Qualcomm DEVICE=SD865 ARCH=aarch64 ./scripts/build_distro
+
 update:
 	PROJECT=Rockchip DEVICE=RK3588 ARCH=aarch64 ./scripts/update_packages
 

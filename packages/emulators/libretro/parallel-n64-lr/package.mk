@@ -24,7 +24,7 @@ if [ "${VULKAN_SUPPORT}" = "yes" ]; then
 fi
 
 case ${DEVICE} in
-  RK3*|S922X|H700)
+  RK3*|S922X|H700|SD865)
     PKG_MAKE_OPTS_TARGET+=" platform=${DEVICE}"
   ;;
   AMD64)
