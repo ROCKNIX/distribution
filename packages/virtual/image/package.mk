@@ -81,7 +81,7 @@ fi
 [ "${UDEVIL}" = "yes" ] && PKG_DEPENDS_TARGET+=" udevil"
 
 # EXFAT support
-[ "${EXFAT}" = "yes" ] && PKG_DEPENDS_TARGET+=" exfat exfatprogs"
+[ "${EXFAT}" = "yes" ] && PKG_DEPENDS_TARGET+=" exfatprogs"
 
 # NFS support
 [ "${NFS_SUPPORT}" = "yes" ] && PKG_DEPENDS_TARGET+=" nfs-utils"
