@@ -73,6 +73,11 @@ case "${DEVICE}" in
     LIBRETRO_CORES+=" flycast-lr flycast2021-lr geolith-lr uae4arm"
     PKG_RETROARCH+=" retropie-shaders"
   ;;
+  SD865)
+    PKG_EMUS+=" aethersx2-sa box64 dolphin-sa drastic-sa lime3ds-sa mednafen melonds-sa portmaster scummvmsa supermodel-sa yabasanshiro-sa"
+    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr flycast-lr geolith-lr pcsx_rearmed-lr uae4arm"
+    PKG_RETROARCH+=" retropie-shaders"
+  ;;
 esac
 
 PKG_DEPENDS_TARGET+=" ${PKG_EMUS} ${EMUS_32BIT} ${PKG_RETROARCH} ${LIBRETRO_CORES}"
@@ -127,7 +132,7 @@ makeinstall_target() {
 
   ### Nintendo 3DS
   case ${DEVICE} in
-    AMD64|S922X)
+    AMD64|S922X|SD865)
       add_emu_core 3ds lime3ds lime3ds-sa true
       add_es_system 3ds
     ;;
@@ -497,7 +502,7 @@ makeinstall_target() {
       add_emu_core gamecube retroarch dolphin false
       add_es_system gamecube
     ;;
-    S922X|RK3399|RK35*)
+    S922X|RK3399|RK35*|SD865)
       add_emu_core gamecube dolphin dolphin-sa-gc true
       add_emu_core gamecube retroarch dolphin false
       add_es_system gamecube
@@ -511,7 +516,7 @@ makeinstall_target() {
       add_emu_core wii retroarch dolphin false
       add_es_system wii
     ;;
-    S922X|RK3399|RK35*)
+    S922X|RK3399|RK35*|SD865)
       add_emu_core wii dolphin dolphin-sa-wii true
       add_emu_core wii retroarch dolphin false
       add_es_system wii
@@ -857,7 +862,7 @@ makeinstall_target() {
       add_es_system ps2
       install_script "Start PCSX2.sh"
     ;;
-    RK3588*|S922X|RK3399)
+    RK3588*|S922X|RK3399|SD865)
       add_emu_core ps2 aethersx2 aethersx2-sa true
       add_es_system ps2
       install_script "Start AetherSX2.sh"

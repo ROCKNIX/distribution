@@ -50,7 +50,7 @@ pre_configure_target() {
   fi
   sed -i 's/\-O[23]/-Ofast -ffast-math/' ${PKG_BUILD}/yabause/src/libretro/Makefile
   case ${DEVICE} in
-    RK3*|S922X)
+    RK3*|S922X|SD865)
       PKG_MAKE_OPTS_TARGET+=" -C yabause/src/libretro platform=rockpro64 HAVE_NEON=0 FORCE_GLES=1"
     ;;
     H700)
