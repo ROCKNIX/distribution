@@ -13,7 +13,7 @@ PKG_TOOLCHAIN="configure"
 
 PKG_CONFIGURE_OPTS_TARGET="LIBS=-lpthread \
                            ac_cv_header_libusb_1_0_libusb_h=no \
-                           --disable-shared \
+                           --disable-static \
                            --with-pcap=linux \
                            --disable-bluetooth \
                            --disable-can \
@@ -28,5 +28,6 @@ pre_configure_target() {
 }
 
 post_makeinstall_target() {
+  ln -sfv /usr/lib/libpcap.so.1 ${INSTALL}/usr/lib/libpcap.so.0.8
   rm -rf ${INSTALL}/usr/bin
 }

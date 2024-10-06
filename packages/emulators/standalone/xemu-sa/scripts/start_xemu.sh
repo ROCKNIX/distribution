@@ -38,7 +38,7 @@ fi
 
 CONFIG=/storage/.config/xemu/xemu.toml
 
-@APPIMAGE@ -full-screen -config_path $CONFIG -dvd_path "${1}"
+/usr/share/xemu-sa/@APPIMAGE@ -full-screen -config_path $CONFIG -dvd_path "${1}"
 
 #Workaround until we can learn why it doesn't exit cleanly when asked.
 killall -9 xemu-sa

@@ -74,7 +74,7 @@ case "${DEVICE}" in
     PKG_RETROARCH+=" retropie-shaders"
   ;;
   SD865)
-    PKG_EMUS+=" aethersx2-sa box64 dolphin-sa drastic-sa lime3ds-sa mednafen melonds-sa portmaster scummvmsa supermodel-sa yabasanshiro-sa"
+    PKG_EMUS+=" aethersx2-sa box64 dolphin-sa drastic-sa lime3ds-sa mednafen melonds-sa portmaster scummvmsa supermodel-sa xemu-sa yabasanshiro-sa"
     LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr flycast-lr geolith-lr pcsx_rearmed-lr uae4arm"
     PKG_RETROARCH+=" retropie-shaders"
   ;;
@@ -1014,8 +1014,8 @@ makeinstall_target() {
   add_es_system x1
 
   ### Microsoft XBox
-  case ${TARGET_ARCH} in
-    x86_64)
+  case ${DEVICE} in
+    AMD64|SD865)
       add_emu_core xbox xemu xemu-sa true
       add_es_system xbox
       install_script "Start Xemu.sh"
