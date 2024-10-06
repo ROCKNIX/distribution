@@ -21,7 +21,7 @@ makeinstall_target() {
   sed -e "s/@APPIMAGE@/${PKG_NAME}/g" -i ${INSTALL}/usr/bin/start_xemu.sh
   chmod 755 ${INSTALL}/usr/bin/*
   mkdir -p ${INSTALL}/usr/config
-  cp -rf ${PKG_DIR}/config/xemu ${INSTALL}/usr/config
+  cp -rf ${PKG_DIR}/config/${DEVICE}/xemu.toml ${INSTALL}/usr/config
 
   #Download HDD IMAGE
   curl -Lo ${INSTALL}/usr/config/xemu/hdd.zip ${PKG_HDD_IMAGE}

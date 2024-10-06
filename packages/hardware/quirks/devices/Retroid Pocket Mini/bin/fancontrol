@@ -1,0 +1,83 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+
+. /etc/profile
+
+DEBUG=false
+COOLING_PROFILE=$(get_setting "cooling.profile")
+FAN_PWM="${DEVICE_PWM_FAN}"
+
+log $0 "Setting profile to ${COOLING_PROFILE}"
+
+function set_control() {
+  log $0 "Set fan control to ${1}"
+  if [ -e "${DEVICE_PWM_FAN}_enable" ]
+  then
+    echo ${1} >${DEVICE_PWM_FAN}_enable
+  fi
+}
+
+trap "set_control 0 && exit 0" SIGHUP SIGINT SIGQUIT SIGABRT
+
+if [ -e "/storage/.config/fancontrol.conf" ] && [ "${COOLING_PROFILE}" = "custom" ]
+then
+  log $0 "Loading configuration file" 2>/dev/null
+  source /storage/.config/fancontrol.conf
+  if [ ! $? = 0 ]
+  then
+    WARN="Custom fan profile could not be loaded, defaulting to auto."
+    log $0 "${WARN}"
+    COOLING_PROFILE="auto"
+    set_setting cooling.profile auto
+  fi
+fi
+
+
+if [ ! "${COOLING_PROFILE}" = "custom" ]
+then
+  if [ "${COOLING_PROFILE}" = "aggressive" ]
+  then
+    SPEEDS=(255 225 195)
+    TEMPS=(55000 45000 0)
+  elif [ "${COOLING_PROFILE}" = "moderate" ]
+  then
+    SPEEDS=(255 192 128 96)
+    TEMPS=(65000 55000 45000 0)
+  elif [ "${COOLING_PROFILE}" = "quiet" ]
+  then
+    # Quiet.
+    SPEEDS=(255 192 128 96 64 48 32)
+    TEMPS=(70000 60000 55000 50000 49000 47000 0)
+  else
+    # auto
+    set_control 0 >/dev/null 2>&1
+    exit 0
+  fi
+fi
+
+log $0 "Enabling fan control."
+set_control 1 >/dev/null 2>&1
+
+while true
+do
+  INDEX=0
+  CPU_TEMP=$(awk '{total += $1; count++} END {printf "%d", total/count}' ${DEVICE_TEMP_SENSOR})
+  $DEBUG && log $0 "CPU TEMP: ${CPU_TEMP}" 2>/dev/null
+  for TEMP in "${TEMPS[@]}"
+  do
+    if (( "${CPU_TEMP}" > "${TEMP}" )) && \
+       [ ! "${LASTSPEED}" = "${SPEEDS[${INDEX}]}" ]
+    then
+      $DEBUG && log $0 "Setting PWM FAN to ${SPEEDS[${INDEX}]} (${TEMP})" 2>/dev/null
+      echo ${SPEEDS[${INDEX}]} >${FAN_PWM}
+      LASTSPEED=${SPEEDS[${INDEX}]}
+      break
+    fi
+    INDEX=$(( $INDEX + 1 ))
+  done
+  sleep 2
+done
+
+log $0 "Disabling fan control."
+set_control 0 >/dev/null 2>&1
