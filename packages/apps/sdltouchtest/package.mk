@@ -10,8 +10,11 @@ PKG_DEPENDS_TARGET="toolchain SDL2"
 PKG_LONGDESC="SDL2 touchscreen tester"
 PKG_TOOLCHAIN="make"
 
+pre_configure_target() {
+  sed -i "s|gcc|${CC}|" Makefile
+}
+
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin
-  cp ${PKG_BUILD}/test ${INSTALL}/usr/bin/sdltouchtest
-  chmod +x ${INSTALL}/usr/bin
+    cp ${PKG_BUILD}/test ${INSTALL}/usr/bin/sdltouchtest
 }

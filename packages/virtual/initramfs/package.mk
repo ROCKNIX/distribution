@@ -7,7 +7,7 @@ PKG_VERSION=""
 PKG_LICENSE="GPL"
 PKG_SITE="http://www.openelec.tv"
 PKG_URL=""
-PKG_DEPENDS_TARGET="libc:init glibc:init busybox:init util-linux:init e2fsprogs:init dosfstools:init exfat:init spleen-font:init"
+PKG_DEPENDS_TARGET="libc:init glibc:init busybox:init util-linux:init e2fsprogs:init dosfstools:init spleen-font:init"
 PKG_SECTION="virtual"
 PKG_LONGDESC="debug is a Metapackage for installing initramfs"
 
