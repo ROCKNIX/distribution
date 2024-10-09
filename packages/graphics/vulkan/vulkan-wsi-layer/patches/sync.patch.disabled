@@ -1,0 +1,151 @@
+diff --git a/wsi/swapchain_base.cpp b/wsi/swapchain_base.cpp
+index af87d9f..0f2872b 100644
+--- a/wsi/swapchain_base.cpp
++++ b/wsi/swapchain_base.cpp
+@@ -102,8 +102,9 @@ void swapchain_base::page_flip_thread()
+          image_index = *pending_index;
+       }
+ 
+-      /* We may need to wait for the payload of the present sync of the oldest pending image to be finished. */
+-      while ((vk_res = image_wait_present(sc_images[image_index], timeout)) == VK_TIMEOUT)
++      /* We wait for the fence of the oldest pending image to be signalled. */
++      while ((vk_res = m_device_data.disp.WaitForFences(m_device, 1,
++            &sc_images[image_index].present_fence, VK_TRUE, timeout)) == VK_TIMEOUT)
+       {
+          WSI_LOG_WARNING("Timeout waiting for image's present fences, retrying..");
+       }
+@@ -690,14 +691,33 @@ VkResult swapchain_base::queue_present(VkQueue queue, const VkPresentInfoKHR *pr
+       TRY_LOG_CALL(image_wait_present(m_swapchain_images[image_index], WAIT_PRESENT_TIMEOUT));
+    }
+ 
+-   queue_submit_semaphores semaphores = {
+-      wait_semaphores,
+-      sem_count,
+-      (presentation_parameters.present_fence != VK_NULL_HANDLE) ? &m_swapchain_images[image_index].present_fence_wait :
+-                                                                  nullptr,
+-      (presentation_parameters.present_fence != VK_NULL_HANDLE) ? 1u : 0,
+-   };
+-   TRY_LOG_CALL(image_set_present_payload(m_swapchain_images[image_index], queue, semaphores));
++   /* When the semaphore that comes in is signalled, we know that all work is done. So, we do not
++    * want to block any future Vulkan queue work on it. So, we pass in BOTTOM_OF_PIPE bit as the
++    * wait flag.
++    */
++   VkPipelineStageFlags pipeline_stage_flags = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
++
++   VkSubmitInfo submit_info = { VK_STRUCTURE_TYPE_SUBMIT_INFO,
++                               NULL,
++                               sem_count,
++                               wait_semaphores,
++                               &pipeline_stage_flags,
++                               0,
++                               NULL,
++                               0,
++                               NULL };
++
++   assert(m_swapchain_images[image_index].status == swapchain_image::ACQUIRED);
++   auto result = m_device_data.disp.ResetFences(m_device,
++		   (presentation_parameters.present_fence != VK_NULL_HANDLE) ? 1u : 0,
++		   (presentation_parameters.present_fence != VK_NULL_HANDLE) ?
++		         &m_swapchain_images[image_index].present_fence : nullptr);
++   if (result != VK_SUCCESS)
++   {
++      return result;
++   }
++
++   result = m_device_data.disp.QueueSubmit(queue, 1, &submit_info, m_swapchain_images[image_index].present_fence);
+ 
+    if (presentation_parameters.present_fence != VK_NULL_HANDLE)
+    {
+diff --git a/wsi/swapchain_base.hpp b/wsi/swapchain_base.hpp
+index ec56053..394d2ff 100644
+--- a/wsi/swapchain_base.hpp
++++ b/wsi/swapchain_base.hpp
+@@ -66,6 +66,7 @@ struct swapchain_image
+ 
+    VkImage image{ VK_NULL_HANDLE };
+    status status{ swapchain_image::INVALID };
++   VkFence present_fence{VK_NULL_HANDLE};
+    VkSemaphore present_semaphore{ VK_NULL_HANDLE };
+    VkSemaphore present_fence_wait{ VK_NULL_HANDLE };
+ };
+diff --git a/wsi/wayland/surface.cpp b/wsi/wayland/surface.cpp
+index 923b67e..106a2dd 100644
+--- a/wsi/wayland/surface.cpp
++++ b/wsi/wayland/surface.cpp
+@@ -216,22 +216,6 @@ bool surface::init()
+       return false;
+    }
+ 
+-   if (explicit_sync_interface.get() == nullptr)
+-   {
+-      WSI_LOG_ERROR("Failed to obtain zwp_linux_explicit_synchronization_v1 interface.");
+-      return false;
+-   }
+-
+-   auto surface_sync_obj =
+-      zwp_linux_explicit_synchronization_v1_get_synchronization(explicit_sync_interface.get(), wayland_surface);
+-   if (surface_sync_obj == nullptr)
+-   {
+-      WSI_LOG_ERROR("Failed to retrieve surface synchronization interface");
+-      return false;
+-   }
+-
+-   surface_sync_interface.reset(surface_sync_obj);
+-
+    VkResult vk_res = get_supported_formats_and_modifiers(wayland_display, surface_queue.get(), dmabuf_interface.get(),
+                                                          supported_formats);
+    if (vk_res != VK_SUCCESS)
+diff --git a/wsi/wayland/swapchain.cpp b/wsi/wayland/swapchain.cpp
+index e044f11..e43e6fe 100644
+--- a/wsi/wayland/swapchain.cpp
++++ b/wsi/wayland/swapchain.cpp
+@@ -402,12 +402,13 @@ VkResult swapchain::allocate_and_bind_swapchain_image(VkImageCreateInfo image_cr
+            "Failed to import memory and bind swapchain image");
+ 
+    /* Initialize presentation fence. */
+-   auto present_fence = sync_fd_fence_sync::create(m_device_data);
+-   if (!present_fence.has_value())
++   VkFenceCreateInfo fenceInfo = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, nullptr, 0 };
++   auto result = m_device_data.disp.CreateFence(m_device, &fenceInfo, get_allocation_callbacks(), &image.present_fence);
++   if (result != VK_SUCCESS)
+    {
+-      return VK_ERROR_OUT_OF_HOST_MEMORY;
++      destroy_image(image);
++      return result;
+    }
+-   image_data->present_fence = std::move(present_fence.value());
+ 
+    return VK_SUCCESS;
+ }
+@@ -477,18 +478,6 @@ void swapchain::present_image(uint32_t pendingIndex)
+ 
+    wl_surface_attach(m_surface, image_data->buffer, 0, 0);
+ 
+-   auto present_sync_fd = image_data->present_fence.export_sync_fd();
+-   if (!present_sync_fd.has_value())
+-   {
+-      WSI_LOG_ERROR("Failed to export present fence.");
+-      set_error_state(VK_ERROR_SURFACE_LOST_KHR);
+-   }
+-   else if (present_sync_fd->is_valid())
+-   {
+-      zwp_linux_surface_synchronization_v1_set_acquire_fence(m_wsi_surface->get_surface_sync_interface(),
+-                                                             present_sync_fd->get());
+-   }
+-
+    /* TODO: work out damage */
+    wl_surface_damage(m_surface, 0, 0, INT32_MAX, INT32_MAX);
+ 
+@@ -516,6 +505,12 @@ void swapchain::destroy_image(swapchain_image &image)
+ 
+    if (image.status != swapchain_image::INVALID)
+    {
++      if (image.present_fence != VK_NULL_HANDLE)
++      {
++         m_device_data.disp.DestroyFence(m_device, image.present_fence, get_allocation_callbacks());
++         image.present_fence = VK_NULL_HANDLE;
++      }
++
+       if (image.image != VK_NULL_HANDLE)
+       {
+          m_device_data.disp.DestroyImage(m_device, image.image, get_allocation_callbacks());
