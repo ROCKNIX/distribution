@@ -74,7 +74,7 @@ if [ "${OPENGLES_SUPPORT}" = "yes" ]; then
     PKG_DEPENDS_TARGET+=" ${OPENGLES}"
     PKG_CONFIGURE_OPTS_TARGET+=" --enable-opengles --enable-opengles3"
         case ${DEVICE} in
-            RK33*|RK35*|H700)
+            RK33*|RK35*|H700|SD856)
                 PKG_CONFIGURE_OPTS_TARGET+=" --enable-opengles3_1"
             ;;
             S922X)
