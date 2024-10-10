@@ -35,7 +35,7 @@ case ${DEVICE} in
     PKG_URL="https://git.sr.ht/~tokyovigilante/linux/archive/${PKG_VERSION}.tar.gz"
     ;;
   SD865)
-    PKG_VERSION="6.11.2"
+    PKG_VERSION="6.11.3"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
   ;;
   RK3566)
