@@ -1,7 +1,17 @@
-diff -rupN linux.orig/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-h.dts linux/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-h.dts
---- linux.orig/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-h.dts	2024-08-20 17:25:30.543982337 +0000
-+++ linux/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-h.dts	2024-08-22 13:54:38.799485906 +0000
-@@ -10,59 +10,144 @@
+From 1f589693359586e4755d98488aa80da9fd3844ac Mon Sep 17 00:00:00 2001
+From: Philippe Simons <simons.philippe@gmail.com>
+Date: Sat, 5 Oct 2024 19:00:55 +0200
+Subject: [PATCH] enable  rocknix-singleadc-joypad
+
+---
+ .../sun50i-h700-anbernic-rg35xx-h.dts         | 221 ++++++++++++------
+ 1 file changed, 149 insertions(+), 72 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-h.dts b/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-h.dts
+index ff453336e..9d5ddbe03 100644
+--- a/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-h.dts
++++ b/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-h.dts
+@@ -10,66 +10,157 @@ / {
  	model = "Anbernic RG35XX H";
  	compatible = "anbernic,rg35xx-h", "allwinner,sun50i-h700";
  
@@ -11,23 +21,8 @@ diff -rupN linux.orig/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-
 -			      <&adc_mux 1>,
 -			      <&adc_mux 2>,
 -			      <&adc_mux 3>;
-+	joypad: rocknix-joypad {
-+		compatible = "rocknix-joypad";
-+		status = "okay";
-+
-+		/* the following 4 dts entries starting from joypad-name are important to keep
-+		   compatibility with existing userspace programs such as ES and retroarch */
-+		joypad-name = "retrogame_joypad";
-+		joypad-product = <0x1101>;
-+		joypad-revision = <0x0100>;
-+		joypad-vendor = <0x484B>;
-+
-+		/* analog mux define */
-+		io-channel-names = "key-RY", "key-RX", "key-LY", "key-LX";
-+		//io-channels = <&adc_mux 3>, <&adc_mux 2>, <&adc_mux 1>, <&adc_mux 0>;	
-+
- 		pinctrl-0 = <&joy_mux_pin>;
- 		pinctrl-names = "default";
+-		pinctrl-0 = <&joy_mux_pin>;
+-		pinctrl-names = "default";
 -		poll-interval = <60>;
 -		#address-cells = <1>;
 -		#size-cells = <0>;
@@ -64,30 +59,65 @@ diff -rupN linux.orig/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-
 -			linux,code = <ABS_RY>;
 -		};
 -	};
++    joypad: rocknix-singleadc-joypad {
++		compatible = "rocknix-singleadc-joypad";
++		hw_info = <0x01>;
++
++		joypad-name = "retrogame_joypad";
++		joypad-product = <0x1101>;
++		joypad-revision = <0x0100>;
++		joypad-vendor = <0x484B>;
++
++		status = "okay";
  
 -	adc_mux: adc-mux {
 -		compatible = "io-channel-mux";
 -		channels = "left_x", "left_y", "right_x", "right_y";
 -		#io-channel-cells = <1>;
--		io-channels = <&gpadc 0>;
++		/* gpio pincontrol setup */
++ 		pinctrl-names = "default";
++ 		pinctrl-0 = <&joy_mux_pin>;
++
++		/* Analog mux define */
++		io-channel-names = "amux_adc";
+ 		io-channels = <&gpadc 0>;
 -		io-channel-names = "parent";
 -		mux-controls = <&gpio_mux>;
 -		settle-time-us = <100>;
+-	};
+ 
+-	gpio_mux: mux-controller {
+-		compatible = "gpio-mux";
+-		mux-gpios = <&pio 8 1 GPIO_ACTIVE_LOW>,
+-			    <&pio 8 2 GPIO_ACTIVE_LOW>;
+-		#mux-control-cells = <0>;
++		/* adc mux channel count */
++		amux-count = <4>;
++		/* ABS_RY ABS_RX ABS_Y ABS_X */
++		amux-channel-mapping = <0 2 1 3>;
++
++		/* adc mux select(a,b) gpio */
++		amux-a-gpios = <&pio 8 1 GPIO_ACTIVE_LOW>;
++		amux-b-gpios = <&pio 8 2 GPIO_ACTIVE_LOW>;
++
 +		/* adc calculate scale */
 +		button-adc-scale = <2>;
 +
-+		/* adc deadzone range (minimum should be around 12%) */
-+		button-adc-deadzone = <216>;
++		/* adc deadzone range  */
++		button-adc-deadzone = <128>;
 +
-+		/* specifies fuzz value that is used to filter noise from
-+		   the event stream. (around 3%) */
-+		button-adc-fuzz = <54>;
-+		button-adc-flat = <54>;
++		/*
++		  specifies fuzz value that is used to filter noise from
++		  the event stream.
++		*/
++		button-adc-fuzz = <32>;
++		button-adc-flat = <32>;
 +
-+		/* analog Stick data tuning value(precent)
-+		   p = positive direction, n = negative direction
-+		   report value = (real_adc_data * tuning_value) / 100 */
-+
++		/*
++		  Analog Stick data tuning value(precent)
++		  p = positive direction, n = negative direction
++		  report value = (real_adc_data * tuning_value) / 100
++		*/
 +		abs_x-p-tuning = <180>;
 +		abs_x-n-tuning = <180>;
 +		invert-absx;
@@ -194,9 +224,9 @@ diff -rupN linux.orig/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-
 +			linux,code = <BTN_TL2>;
 +		};
  	};
+ };
  
- 	gpio_mux: mux-controller {
-@@ -83,21 +168,7 @@
+@@ -83,21 +174,7 @@ channel@0 {
  	};
  };
  
@@ -219,3 +249,6 @@ diff -rupN linux.orig/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-
  
  &ehci1 {
  	status = "okay";
+-- 
+2.46.0
+

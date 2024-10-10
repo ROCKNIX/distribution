@@ -1,0 +1,125 @@
+From 0c2f127a768fed63376d20ffc72d424ecf358247 Mon Sep 17 00:00:00 2001
+From: Ryan Walklin <ryan@testtoast.com>
+Date: Sun, 18 Aug 2024 10:22:02 +1200
+Subject: [PATCH] More display faffing
+
+---
+ arch/arm/include/asm/arch-sunxi/display2.h | 20 ++++++++++++++++++-
+ drivers/video/sunxi/sunxi_de2.c            | 23 ++++++++++++++++++----
+ 2 files changed, 38 insertions(+), 5 deletions(-)
+
+diff --git a/arch/arm/include/asm/arch-sunxi/display2.h b/arch/arm/include/asm/arch-sunxi/display2.h
+index 7202d2756c..1d1f31e65d 100644
+--- a/arch/arm/include/asm/arch-sunxi/display2.h
++++ b/arch/arm/include/asm/arch-sunxi/display2.h
+@@ -25,8 +25,14 @@ struct de_clk {
+ struct de_glb {
+ 	u32 ctl;
+ 	u32 status;
++#ifdef CONFIG_MACH_SUNXI_H616
++	u32 size;
++	u32 clk;
++	u32 dbuff;
++#else
+ 	u32 dbuff;
+ 	u32 size;
++#endif
+ };
+ 
+ /* alpha blending */
+@@ -113,9 +119,21 @@ struct de_csc {
+ #define SUNXI_DE2_MUX1_BASE			(SUNXI_DE2_BASE + 0x200000)
+ 
+ #define SUNXI_DE2_MUX_GLB_REGS			0x00000
++
++#ifdef CONFIG_MACH_SUNXI_H616
++#define SUNXI_DE2_MUX_BLD_REGS			0x00800
++#else
+ #define SUNXI_DE2_MUX_BLD_REGS			0x01000
+-#define SUNXI_DE2_MUX_CHAN_REGS			0x02000
++#endif
++
++#ifdef CONFIG_MACH_SUNXI_H616
++#define SUNXI_DE2_MUX_CHAN_REGS			0x1000
++#define SUNXI_DE2_MUX_CHAN_SZ			0x0800
++#else
++#define SUNXI_DE2_MUX_CHAN_REGS			0x2000
+ #define SUNXI_DE2_MUX_CHAN_SZ			0x1000
++#endif
++
+ #define SUNXI_DE2_MUX_VSU_REGS			0x20000
+ #define SUNXI_DE2_MUX_GSU1_REGS			0x30000
+ #define SUNXI_DE2_MUX_GSU2_REGS			0x40000
+diff --git a/drivers/video/sunxi/sunxi_de2.c b/drivers/video/sunxi/sunxi_de2.c
+index 154641b9a6..da1ccf182c 100644
+--- a/drivers/video/sunxi/sunxi_de2.c
++++ b/drivers/video/sunxi/sunxi_de2.c
+@@ -54,6 +54,11 @@ static void sunxi_de2_composer_init(void)
+ 	setbits_le32(&ccm->ahb_reset1_cfg, 1 << AHB_RESET_OFFSET_DE);
+ 	setbits_le32(&ccm->ahb_gate1, 1 << AHB_GATE_OFFSET_DE);
+ 
++	if (IS_ENABLED(CONFIG_SUN50I_H616)) {
++		writel(0, &ccm->de_clk_cfg + 0x24);
++		writel(0x0000a980, &ccm->de_clk_cfg + 0x28);
++	}
++
+ 	/* Clock on */
+ 	setbits_le32(&ccm->de_clk_cfg, CCM_DE2_CTRL_GATE);
+ }
+@@ -71,10 +76,15 @@ static void sunxi_de2_mode_set(int mux, const struct display_timing *mode,
+ 	struct de_bld * const de_bld_regs =
+ 		(struct de_bld *)(de_mux_base +
+ 				  SUNXI_DE2_MUX_BLD_REGS);
+-	struct de_ui * const de_ui_regs =
++#ifdef CONFIG_MACH_SUNXI_H616
++		struct de_ui * const de_ui_regs =
++		(struct de_ui *)(de_mux_base + 6 * 0x20000 + DE2_CH_SIZE;
++#else
++		struct de_ui * const de_ui_regs =
+ 		(struct de_ui *)(de_mux_base +
+ 				 SUNXI_DE2_MUX_CHAN_REGS +
+ 				 SUNXI_DE2_MUX_CHAN_SZ * 1);
++#endif
+ 	struct de_csc * const de_csc_regs =
+ 		(struct de_csc *)(de_mux_base +
+ 				  SUNXI_DE2_MUX_DCSC_REGS);
+@@ -95,12 +105,17 @@ static void sunxi_de2_mode_set(int mux, const struct display_timing *mode,
+ 
+ 	writel(SUNXI_DE2_MUX_GLB_CTL_EN, &de_glb_regs->ctl);
+ 	writel(0, &de_glb_regs->status);
+-	writel(1, &de_glb_regs->dbuff);
++	// writel(1, &de_glb_regs->dbuff);
+ 	writel(size, &de_glb_regs->size);
+ 
+ 	for (channel = 0; channel < 4; channel++) {
++#ifdef CONFIG_MACH_SUNXI_H616
++		unsigned int map[4] = {0, 6, 7, 8};
++ 		void *ch = (void *)de_mux_base + map[channel] * 0x20000 + DE2_CH_SIZE;
++#else
+ 		void *ch = (void *)(de_mux_base + SUNXI_DE2_MUX_CHAN_REGS +
+ 				    SUNXI_DE2_MUX_CHAN_SZ * channel);
++#endif
+ 		memset(ch, 0, (channel == 0) ?
+ 			sizeof(struct de_vi) : sizeof(struct de_ui));
+ 	}
+@@ -256,7 +271,7 @@ static int sunxi_de2_probe(struct udevice *dev)
+ 					  DM_DRIVER_GET(sunxi_dw_hdmi), &disp);
+ 	if (!ret) {
+ 		int mux;
+-		if (IS_ENABLED(CONFIG_MACH_SUNXI_H3_H5))
++		if (IS_ENABLED(CONFIG_MACH_SUNXI_H3_H5) || IS_ENABLED(CONFIG_MACH_SUNXI_H616))
+ 			mux = 0;
+ 		else
+ 			mux = 1;
+@@ -316,7 +331,7 @@ int sunxi_simplefb_setup(void *blob)
+ 
+ 	debug("Setting up simplefb\n");
+ 
+-	if (IS_ENABLED(CONFIG_MACH_SUNXI_H3_H5))
++	if (IS_ENABLED(CONFIG_MACH_SUNXI_H3_H5) || IS_ENABLED(CONFIG_MACH_SUNXI_H616))
+ 		mux = 0;
+ 	else
+ 		mux = 1;
+-- 
+2.45.2
+

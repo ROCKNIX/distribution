@@ -1,0 +1,821 @@
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH 1/6] ASoC: sun4i-codec: Add support for different DAC FIFOC
+ addresses to quirks
+From: Marcus Cooper <codekipper@gmail.com>
+Date: Sun, 29 Sep 2024 23:06:02 +1300
+Message-Id: <20240929100750.860329-2-ryan@testtoast.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+The Allwinner H616 SoC uses a different register address to control the
+output FIFO.
+
+Allow this to be specified separately from the ADC FIFO control
+register.
+
+Signed-off-by: Marcus Cooper <codekipper@gmail.com>
+Signed-off-by: Ryan Walklin <ryan@testtoast.com>
+---
+ sound/soc/sunxi/sun4i-codec.c | 83 +++++++++++++++++++++--------------
+ 1 file changed, 51 insertions(+), 32 deletions(-)
+
+diff --git a/sound/soc/sunxi/sun4i-codec.c b/sound/soc/sunxi/sun4i-codec.c
+index 330bc0c09f56b..37f5678b55291 100644
+--- a/sound/soc/sunxi/sun4i-codec.c
++++ b/sound/soc/sunxi/sun4i-codec.c
+@@ -238,6 +238,8 @@ struct sun4i_codec {
+ 
+ 	/* ADC_FIFOC register is at different offset on different SoCs */
+ 	struct regmap_field *reg_adc_fifoc;
++	/* DAC_FIFOC register is at different offset on different SoCs */
++	struct regmap_field *reg_dac_fifoc;
+ 
+ 	struct snd_dmaengine_dai_dma_data	capture_dma_data;
+ 	struct snd_dmaengine_dai_dma_data	playback_dma_data;
+@@ -246,19 +248,19 @@ struct sun4i_codec {
+ static void sun4i_codec_start_playback(struct sun4i_codec *scodec)
+ {
+ 	/* Flush TX FIFO */
+-	regmap_set_bits(scodec->regmap, SUN4I_CODEC_DAC_FIFOC,
+-			BIT(SUN4I_CODEC_DAC_FIFOC_FIFO_FLUSH));
++	regmap_field_set_bits(scodec->reg_dac_fifoc,
++			      BIT(SUN4I_CODEC_DAC_FIFOC_FIFO_FLUSH));
+ 
+ 	/* Enable DAC DRQ */
+-	regmap_set_bits(scodec->regmap, SUN4I_CODEC_DAC_FIFOC,
+-			BIT(SUN4I_CODEC_DAC_FIFOC_DAC_DRQ_EN));
++	regmap_field_set_bits(scodec->reg_dac_fifoc,
++			      BIT(SUN4I_CODEC_DAC_FIFOC_DAC_DRQ_EN));
+ }
+ 
+ static void sun4i_codec_stop_playback(struct sun4i_codec *scodec)
+ {
+ 	/* Disable DAC DRQ */
+-	regmap_clear_bits(scodec->regmap, SUN4I_CODEC_DAC_FIFOC,
+-			  BIT(SUN4I_CODEC_DAC_FIFOC_DAC_DRQ_EN));
++	regmap_field_clear_bits(scodec->reg_dac_fifoc,
++				BIT(SUN4I_CODEC_DAC_FIFOC_DAC_DRQ_EN));
+ }
+ 
+ static void sun4i_codec_start_capture(struct sun4i_codec *scodec)
+@@ -356,13 +358,13 @@ static int sun4i_codec_prepare_playback(struct snd_pcm_substream *substream,
+ 	u32 val;
+ 
+ 	/* Flush the TX FIFO */
+-	regmap_set_bits(scodec->regmap, SUN4I_CODEC_DAC_FIFOC,
+-			   BIT(SUN4I_CODEC_DAC_FIFOC_FIFO_FLUSH));
++	regmap_field_set_bits(scodec->reg_dac_fifoc,
++			      BIT(SUN4I_CODEC_DAC_FIFOC_FIFO_FLUSH));
+ 
+ 	/* Set TX FIFO Empty Trigger Level */
+-	regmap_update_bits(scodec->regmap, SUN4I_CODEC_DAC_FIFOC,
+-			   0x3f << SUN4I_CODEC_DAC_FIFOC_TX_TRIG_LEVEL,
+-			   0xf << SUN4I_CODEC_DAC_FIFOC_TX_TRIG_LEVEL);
++	regmap_field_update_bits(scodec->reg_dac_fifoc,
++				 0x3f << SUN4I_CODEC_DAC_FIFOC_TX_TRIG_LEVEL,
++				 0xf << SUN4I_CODEC_DAC_FIFOC_TX_TRIG_LEVEL);
+ 
+ 	if (substream->runtime->rate > 32000)
+ 		/* Use 64 bits FIR filter */
+@@ -371,13 +373,13 @@ static int sun4i_codec_prepare_playback(struct snd_pcm_substream *substream,
+ 		/* Use 32 bits FIR filter */
+ 		val = BIT(SUN4I_CODEC_DAC_FIFOC_FIR_VERSION);
+ 
+-	regmap_update_bits(scodec->regmap, SUN4I_CODEC_DAC_FIFOC,
+-			   BIT(SUN4I_CODEC_DAC_FIFOC_FIR_VERSION),
+-			   val);
++	regmap_field_update_bits(scodec->reg_dac_fifoc,
++				 BIT(SUN4I_CODEC_DAC_FIFOC_FIR_VERSION),
++				 val);
+ 
+ 	/* Send zeros when we have an underrun */
+-	regmap_clear_bits(scodec->regmap, SUN4I_CODEC_DAC_FIFOC,
+-			   BIT(SUN4I_CODEC_DAC_FIFOC_SEND_LASAT));
++	regmap_field_clear_bits(scodec->reg_dac_fifoc,
++				BIT(SUN4I_CODEC_DAC_FIFOC_SEND_LASAT));
+ 
+ 	return 0;
+ };
+@@ -510,9 +512,9 @@ static int sun4i_codec_hw_params_playback(struct sun4i_codec *scodec,
+ 	u32 val;
+ 
+ 	/* Set DAC sample rate */
+-	regmap_update_bits(scodec->regmap, SUN4I_CODEC_DAC_FIFOC,
+-			   7 << SUN4I_CODEC_DAC_FIFOC_DAC_FS,
+-			   hwrate << SUN4I_CODEC_DAC_FIFOC_DAC_FS);
++	regmap_field_update_bits(scodec->reg_dac_fifoc,
++				 7 << SUN4I_CODEC_DAC_FIFOC_DAC_FS,
++				 hwrate << SUN4I_CODEC_DAC_FIFOC_DAC_FS);
+ 
+ 	/* Set the number of channels we want to use */
+ 	if (params_channels(params) == 1)
+@@ -520,27 +522,27 @@ static int sun4i_codec_hw_params_playback(struct sun4i_codec *scodec,
+ 	else
+ 		val = 0;
+ 
+-	regmap_update_bits(scodec->regmap, SUN4I_CODEC_DAC_FIFOC,
+-			   BIT(SUN4I_CODEC_DAC_FIFOC_MONO_EN),
+-			   val);
++	regmap_field_update_bits(scodec->reg_dac_fifoc,
++				 BIT(SUN4I_CODEC_DAC_FIFOC_MONO_EN),
++				 val);
+ 
+ 	/* Set the number of sample bits to either 16 or 24 bits */
+ 	if (hw_param_interval(params, SNDRV_PCM_HW_PARAM_SAMPLE_BITS)->min == 32) {
+-		regmap_set_bits(scodec->regmap, SUN4I_CODEC_DAC_FIFOC,
+-				   BIT(SUN4I_CODEC_DAC_FIFOC_TX_SAMPLE_BITS));
++		regmap_field_set_bits(scodec->reg_dac_fifoc,
++				      BIT(SUN4I_CODEC_DAC_FIFOC_TX_SAMPLE_BITS));
+ 
+ 		/* Set TX FIFO mode to padding the LSBs with 0 */
+-		regmap_clear_bits(scodec->regmap, SUN4I_CODEC_DAC_FIFOC,
+-				   BIT(SUN4I_CODEC_DAC_FIFOC_TX_FIFO_MODE));
++		regmap_field_clear_bits(scodec->reg_dac_fifoc,
++					BIT(SUN4I_CODEC_DAC_FIFOC_TX_FIFO_MODE));
+ 
+ 		scodec->playback_dma_data.addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
+ 	} else {
+-		regmap_clear_bits(scodec->regmap, SUN4I_CODEC_DAC_FIFOC,
+-				   BIT(SUN4I_CODEC_DAC_FIFOC_TX_SAMPLE_BITS));
++		regmap_field_clear_bits(scodec->reg_dac_fifoc,
++					BIT(SUN4I_CODEC_DAC_FIFOC_TX_SAMPLE_BITS));
+ 
+ 		/* Set TX FIFO mode to repeat the MSB */
+-		regmap_set_bits(scodec->regmap, SUN4I_CODEC_DAC_FIFOC,
+-				   BIT(SUN4I_CODEC_DAC_FIFOC_TX_FIFO_MODE));
++		regmap_field_set_bits(scodec->reg_dac_fifoc,
++				      BIT(SUN4I_CODEC_DAC_FIFOC_TX_FIFO_MODE));
+ 
+ 		scodec->playback_dma_data.addr_width = DMA_SLAVE_BUSWIDTH_2_BYTES;
+ 	}
+@@ -587,8 +589,8 @@ static int sun4i_codec_startup(struct snd_pcm_substream *substream,
+ 	 * Stop issuing DRQ when we have room for less than 16 samples
+ 	 * in our TX FIFO
+ 	 */
+-	regmap_set_bits(scodec->regmap, SUN4I_CODEC_DAC_FIFOC,
+-			   3 << SUN4I_CODEC_DAC_FIFOC_DRQ_CLR_CNT);
++	regmap_field_set_bits(scodec->reg_dac_fifoc,
++			      3 << SUN4I_CODEC_DAC_FIFOC_DRQ_CLR_CNT);
+ 
+ 	return clk_prepare_enable(scodec->clk_module);
+ }
+@@ -1565,6 +1567,7 @@ struct sun4i_codec_quirks {
+ 	const struct snd_soc_component_driver *codec;
+ 	struct snd_soc_card * (*create_card)(struct device *dev);
+ 	struct reg_field reg_adc_fifoc;	/* used for regmap_field */
++	struct reg_field reg_dac_fifoc;	/* used for regmap_field */
+ 	unsigned int reg_dac_txdata;	/* TX FIFO offset for DMA config */
+ 	unsigned int reg_adc_rxdata;	/* RX FIFO offset for DMA config */
+ 	bool has_reset;
+@@ -1575,6 +1578,7 @@ static const struct sun4i_codec_quirks sun4i_codec_quirks = {
+ 	.codec		= &sun4i_codec_codec,
+ 	.create_card	= sun4i_codec_create_card,
+ 	.reg_adc_fifoc	= REG_FIELD(SUN4I_CODEC_ADC_FIFOC, 0, 31),
++	.reg_dac_fifoc	= REG_FIELD(SUN4I_CODEC_DAC_FIFOC, 0, 31),
+ 	.reg_dac_txdata	= SUN4I_CODEC_DAC_TXDATA,
+ 	.reg_adc_rxdata	= SUN4I_CODEC_ADC_RXDATA,
+ };
+@@ -1584,6 +1588,7 @@ static const struct sun4i_codec_quirks sun6i_a31_codec_quirks = {
+ 	.codec		= &sun6i_codec_codec,
+ 	.create_card	= sun6i_codec_create_card,
+ 	.reg_adc_fifoc	= REG_FIELD(SUN6I_CODEC_ADC_FIFOC, 0, 31),
++	.reg_dac_fifoc	= REG_FIELD(SUN4I_CODEC_DAC_FIFOC, 0, 31),
+ 	.reg_dac_txdata	= SUN4I_CODEC_DAC_TXDATA,
+ 	.reg_adc_rxdata	= SUN6I_CODEC_ADC_RXDATA,
+ 	.has_reset	= true,
+@@ -1594,6 +1599,7 @@ static const struct sun4i_codec_quirks sun7i_codec_quirks = {
+ 	.codec		= &sun7i_codec_codec,
+ 	.create_card	= sun4i_codec_create_card,
+ 	.reg_adc_fifoc	= REG_FIELD(SUN4I_CODEC_ADC_FIFOC, 0, 31),
++	.reg_dac_fifoc	= REG_FIELD(SUN4I_CODEC_DAC_FIFOC, 0, 31),
+ 	.reg_dac_txdata	= SUN4I_CODEC_DAC_TXDATA,
+ 	.reg_adc_rxdata	= SUN4I_CODEC_ADC_RXDATA,
+ };
+@@ -1603,6 +1609,7 @@ static const struct sun4i_codec_quirks sun8i_a23_codec_quirks = {
+ 	.codec		= &sun8i_a23_codec_codec,
+ 	.create_card	= sun8i_a23_codec_create_card,
+ 	.reg_adc_fifoc	= REG_FIELD(SUN6I_CODEC_ADC_FIFOC, 0, 31),
++	.reg_dac_fifoc	= REG_FIELD(SUN4I_CODEC_DAC_FIFOC, 0, 31),
+ 	.reg_dac_txdata	= SUN4I_CODEC_DAC_TXDATA,
+ 	.reg_adc_rxdata	= SUN6I_CODEC_ADC_RXDATA,
+ 	.has_reset	= true,
+@@ -1618,6 +1625,7 @@ static const struct sun4i_codec_quirks sun8i_h3_codec_quirks = {
+ 	.codec		= &sun8i_a23_codec_codec,
+ 	.create_card	= sun8i_h3_codec_create_card,
+ 	.reg_adc_fifoc	= REG_FIELD(SUN6I_CODEC_ADC_FIFOC, 0, 31),
++	.reg_dac_fifoc	= REG_FIELD(SUN4I_CODEC_DAC_FIFOC, 0, 31),
+ 	.reg_dac_txdata	= SUN8I_H3_CODEC_DAC_TXDATA,
+ 	.reg_adc_rxdata	= SUN6I_CODEC_ADC_RXDATA,
+ 	.has_reset	= true,
+@@ -1632,6 +1640,7 @@ static const struct sun4i_codec_quirks sun8i_v3s_codec_quirks = {
+ 	.codec		= &sun8i_a23_codec_codec,
+ 	.create_card	= sun8i_v3s_codec_create_card,
+ 	.reg_adc_fifoc	= REG_FIELD(SUN6I_CODEC_ADC_FIFOC, 0, 31),
++	.reg_dac_fifoc	= REG_FIELD(SUN4I_CODEC_DAC_FIFOC, 0, 31),
+ 	.reg_dac_txdata	= SUN8I_H3_CODEC_DAC_TXDATA,
+ 	.reg_adc_rxdata	= SUN6I_CODEC_ADC_RXDATA,
+ 	.has_reset	= true,
+@@ -1739,6 +1748,16 @@ static int sun4i_codec_probe(struct platform_device *pdev)
+ 		return ret;
+ 	}
+ 
++	scodec->reg_dac_fifoc = devm_regmap_field_alloc(&pdev->dev,
++							scodec->regmap,
++							quirks->reg_dac_fifoc);
++	if (IS_ERR(scodec->reg_dac_fifoc)) {
++		ret = PTR_ERR(scodec->reg_dac_fifoc);
++		dev_err(&pdev->dev, "Failed to create regmap fields: %d\n",
++			ret);
++		return ret;
++	}
++
+ 	/* Enable the bus clock */
+ 	if (clk_prepare_enable(scodec->clk_apb)) {
+ 		dev_err(&pdev->dev, "Failed to enable the APB clock\n");
+-- 
+2.46.1
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH 2/6] ASoC: sun4i-codec: Add playback only flag to quirks
+From: Marcus Cooper <codekipper@gmail.com>
+Date: Sun, 29 Sep 2024 23:06:03 +1300
+Message-Id: <20240929100750.860329-3-ryan@testtoast.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Some devices only have the playback side of the codec implemented
+so add a quirk to check for this.
+
+Signed-off-by: Marcus Cooper <codekipper@gmail.com>
+Signed-off-by: Ryan Walklin <ryan@testtoast.com>
+---
+ sound/soc/sunxi/sun4i-codec.c | 12 ++++++++----
+ 1 file changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/sound/soc/sunxi/sun4i-codec.c b/sound/soc/sunxi/sun4i-codec.c
+index 37f5678b55291..312d2655c3f4e 100644
+--- a/sound/soc/sunxi/sun4i-codec.c
++++ b/sound/soc/sunxi/sun4i-codec.c
+@@ -1571,6 +1571,7 @@ struct sun4i_codec_quirks {
+ 	unsigned int reg_dac_txdata;	/* TX FIFO offset for DMA config */
+ 	unsigned int reg_adc_rxdata;	/* RX FIFO offset for DMA config */
+ 	bool has_reset;
++	bool playback_only;
+ };
+ 
+ static const struct sun4i_codec_quirks sun4i_codec_quirks = {
+@@ -1779,10 +1780,13 @@ static int sun4i_codec_probe(struct platform_device *pdev)
+ 	scodec->playback_dma_data.maxburst = 8;
+ 	scodec->playback_dma_data.addr_width = DMA_SLAVE_BUSWIDTH_2_BYTES;
+ 
+-	/* DMA configuration for RX FIFO */
+-	scodec->capture_dma_data.addr = res->start + quirks->reg_adc_rxdata;
+-	scodec->capture_dma_data.maxburst = 8;
+-	scodec->capture_dma_data.addr_width = DMA_SLAVE_BUSWIDTH_2_BYTES;
++	if (!quirks->playback_only) {
++		/* DMA configuration for RX FIFO */
++		scodec->capture_dma_data.addr = res->start +
++						quirks->reg_adc_rxdata;
++		scodec->capture_dma_data.maxburst = 8;
++		scodec->capture_dma_data.addr_width = DMA_SLAVE_BUSWIDTH_2_BYTES;
++	}
+ 
+ 	ret = devm_snd_soc_register_component(&pdev->dev, quirks->codec,
+ 				     &sun4i_codec_dai, 1);
+-- 
+2.46.1
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH 3/6] clk: sunxi-ng: h616: Add sigma-delta modulation
+ settings for audio PLL
+From: Ryan Walklin <ryan@testtoast.com>
+Date: Sun, 29 Sep 2024 23:06:04 +1300
+Message-Id: <20240929100750.860329-4-ryan@testtoast.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Allwinner has previously released a H616 audio driver which also
+provides sigma-delta modulation for the audio PLL clocks. This approach
+is used in other Allwinner SoCs, including the H3 and A64.
+
+One change from the vendor code is made to the PLL clocks, the 
+vendor-specified dividers of 4/2/1 for the 1/2/4x clocks respectively result 
+in audio playback that is too slow by 50%. Therefore the dividers are simply
+doubled to 8/4/2 which results in correct playback rates.
+
+Add SDM to the H616 clock control unit driver.
+
+Signed-off-by: Ryan Walklin <ryan@testtoast.com>
+---
+ drivers/clk/sunxi-ng/ccu-sun50i-h616.c | 36 +++++++++++++-------------
+ 1 file changed, 18 insertions(+), 18 deletions(-)
+
+diff --git a/drivers/clk/sunxi-ng/ccu-sun50i-h616.c b/drivers/clk/sunxi-ng/ccu-sun50i-h616.c
+index 84e406ddf9d12..be272947b0fee 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun50i-h616.c
++++ b/drivers/clk/sunxi-ng/ccu-sun50i-h616.c
+@@ -215,20 +215,23 @@ static struct ccu_nkmp pll_de_clk = {
+ 	},
+ };
+ 
+-/*
+- * TODO: Determine SDM settings for the audio PLL. The manual suggests
+- * PLL_FACTOR_N=16, PLL_POST_DIV_P=2, OUTPUT_DIV=2, pattern=0xe000c49b
+- * for 24.576 MHz, and PLL_FACTOR_N=22, PLL_POST_DIV_P=3, OUTPUT_DIV=2,
+- * pattern=0xe001288c for 22.5792 MHz.
+- * This clashes with our fixed PLL_POST_DIV_P.
+- */
+ #define SUN50I_H616_PLL_AUDIO_REG	0x078
++
++static struct ccu_sdm_setting pll_audio_sdm_table[] = {
++	{ .rate = 90316800, .pattern = 0xc001288d, .m = 3, .n = 22 },
++	{ .rate = 98304000, .pattern = 0xc001eb85, .m = 5, .n = 40 },
++};
++
+ static struct ccu_nm pll_audio_hs_clk = {
+ 	.enable		= BIT(31),
+ 	.lock		= BIT(28),
+-	.n		= _SUNXI_CCU_MULT_MIN(8, 8, 12),
+-	.m		= _SUNXI_CCU_DIV(1, 1), /* input divider */
++	.n			= _SUNXI_CCU_MULT_MIN(8, 8, 12),
++	.m			= _SUNXI_CCU_DIV(16, 6),
++	.sdm		= _SUNXI_CCU_SDM(pll_audio_sdm_table,
++				  BIT(24), 0x178, BIT(31)),
++
+ 	.common		= {
++		.features = CCU_FEATURE_SIGMA_DELTA_MOD,
+ 		.reg		= 0x078,
+ 		.hw.init	= CLK_HW_INIT("pll-audio-hs", "osc24M",
+ 					      &ccu_nm_ops,
+@@ -690,13 +693,13 @@ static const struct clk_hw *clk_parent_pll_audio[] = {
+  */
+ static CLK_FIXED_FACTOR_HWS(pll_audio_1x_clk, "pll-audio-1x",
+ 			    clk_parent_pll_audio,
+-			    96, 1, CLK_SET_RATE_PARENT);
++			    8, 1, CLK_SET_RATE_PARENT);
+ static CLK_FIXED_FACTOR_HWS(pll_audio_2x_clk, "pll-audio-2x",
+ 			    clk_parent_pll_audio,
+-			    48, 1, CLK_SET_RATE_PARENT);
++			    4, 1, CLK_SET_RATE_PARENT);
+ static CLK_FIXED_FACTOR_HWS(pll_audio_4x_clk, "pll-audio-4x",
+ 			    clk_parent_pll_audio,
+-			    24, 1, CLK_SET_RATE_PARENT);
++			    2, 1, CLK_SET_RATE_PARENT);
+ 
+ static const struct clk_hw *pll_periph0_parents[] = {
+ 	&pll_periph0_clk.common.hw
+@@ -1135,13 +1138,10 @@ static int sun50i_h616_ccu_probe(struct platform_device *pdev)
+ 		writel(val, reg + usb2_clk_regs[i]);
+ 	}
+ 
+-	/*
+-	 * Force the post-divider of pll-audio to 12 and the output divider
+-	 * of it to 2, so 24576000 and 22579200 rates can be set exactly.
+-	 */
+ 	val = readl(reg + SUN50I_H616_PLL_AUDIO_REG);
+-	val &= ~(GENMASK(21, 16) | BIT(0));
+-	writel(val | (11 << 16) | BIT(0), reg + SUN50I_H616_PLL_AUDIO_REG);
++	val &= ~BIT(1);
++	val |= BIT(0);
++	writel(val, reg + SUN50I_H616_PLL_AUDIO_REG);
+ 
+ 	/*
+ 	 * First clock parent (osc32K) is unusable for CEC. But since there
+-- 
+2.46.1
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH 4/6] dt-bindings: allwinner: add H616 sun4i audio codec
+ binding
+From: Ryan Walklin <ryan@testtoast.com>
+Date: Sun, 29 Sep 2024 23:06:05 +1300
+Message-Id: <20240929100750.860329-5-ryan@testtoast.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+The H616 has an audio codec compatible with the sun4i-a10 driver.
+
+The codec is relatively cut down compared to some of the other Allwinner
+SoCs and only has a single line-out route (relying on a separate digital
+microphone IP block for input). HDMI and SPDIF audio are handled
+separately by an audio hub IP block, which is not currently implemented
+in mainline kernels. This and the use of SDM requires some additional
+flexibility to the DMA and clock bindings.
+
+Add compatible string and routing for the H616 audio codec, and update
+the required clock and DMA descriptions.
+
+Signed-off-by: Ryan Walklin <ryan@testtoast.com>
+---
+ .../sound/allwinner,sun4i-a10-codec.yaml      | 55 +++++++++++++++----
+ 1 file changed, 43 insertions(+), 12 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/sound/allwinner,sun4i-a10-codec.yaml b/Documentation/devicetree/bindings/sound/allwinner,sun4i-a10-codec.yaml
+index 78273647f7665..5838600dbc730 100644
+--- a/Documentation/devicetree/bindings/sound/allwinner,sun4i-a10-codec.yaml
++++ b/Documentation/devicetree/bindings/sound/allwinner,sun4i-a10-codec.yaml
+@@ -22,6 +22,7 @@ properties:
+       - allwinner,sun8i-a23-codec
+       - allwinner,sun8i-h3-codec
+       - allwinner,sun8i-v3s-codec
++      - allwinner,sun50i-h616-codec
+ 
+   reg:
+     maxItems: 1
+@@ -30,24 +31,40 @@ properties:
+     maxItems: 1
+ 
+   clocks:
+-    items:
+-      - description: Bus Clock
+-      - description: Module Clock
++    oneOf:
++      - items:
++          - description: Bus Clock
++          - description: Module Clock
++      - items:
++          - description: Bus Clock
++          - description: Module Clock
++          - description: Module Clock (4X)
+ 
+   clock-names:
+-    items:
+-      - const: apb
+-      - const: codec
++    oneOf:
++      - items:
++          - const: apb
++          - const: codec
++      - items:
++          - const: apb
++          - const: codec
++          - const: audio-codec-4x
+ 
+   dmas:
+-    items:
+-      - description: RX DMA Channel
+-      - description: TX DMA Channel
++    oneOf:
++      - items:
++          - description: RX DMA Channel
++          - description: TX DMA Channel
++      - items:
++          - description: TX DMA Channel
+ 
+   dma-names:
+-    items:
+-      - const: rx
+-      - const: tx
++    oneOf:
++      - items:
++          - const: rx
++          - const: tx
++      - items:
++          - const: tx
+ 
+   resets:
+     maxItems: 1
+@@ -229,6 +246,20 @@ allOf:
+               - Mic
+               - Speaker
+ 
++  - if:
++      properties:
++        compatible:
++          enum:
++            - allwinner,sun50i-h616-codec
++
++    then:
++      properties:
++        allwinner,audio-routing:
++          items:
++            enum:
++              - LINEOUT
++              - Line Out
++
+ unevaluatedProperties: false
+ 
+ examples:
+-- 
+2.46.1
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH 5/6] ASoC: sun4i-codec: support allwinner H616 codec
+From: Ryan Walklin <ryan@testtoast.com>
+Date: Sun, 29 Sep 2024 23:06:06 +1300
+Message-Id: <20240929100750.860329-6-ryan@testtoast.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+The H616 SoC codec is playback-only with a single line-out route, and
+has some register differences from prior codecs.
+
+Add the required compatible string, registers, quirks, DAPM widgets,
+codec controls and routes, based on existing devices and the H616
+datasheet.
+
+Signed-off-by: Ryan Walklin <ryan@testtoast.com>
+---
+ sound/soc/sunxi/sun4i-codec.c | 202 ++++++++++++++++++++++++++++++++++
+ 1 file changed, 202 insertions(+)
+
+diff --git a/sound/soc/sunxi/sun4i-codec.c b/sound/soc/sunxi/sun4i-codec.c
+index 312d2655c3f4e..1cdda20e8ed59 100644
+--- a/sound/soc/sunxi/sun4i-codec.c
++++ b/sound/soc/sunxi/sun4i-codec.c
+@@ -226,6 +226,43 @@
+ #define SUN8I_H3_CODEC_DAC_DBG			(0x48)
+ #define SUN8I_H3_CODEC_ADC_DBG			(0x4c)
+ 
++/* H616 specific registers */
++#define SUN50I_H616_CODEC_DAC_FIFOC		(0x10)
++
++#define SUN50I_DAC_FIFO_STA			(0x14)
++#define SUN50I_DAC_TXE_INT			(3)
++#define SUN50I_DAC_TXU_INT			(2)
++#define SUN50I_DAC_TXO_INT			(1)
++
++#define SUN50I_DAC_CNT				(0x24)
++#define SUN50I_DAC_DG_REG			(0x28)
++#define SUN50I_DAC_DAP_CTL			(0xf0)
++
++#define SUN50I_H616_DAC_AC_DAC_REG		(0x310)
++#define SUN50I_H616_DAC_LEN			(15)
++#define SUN50I_H616_DAC_REN			(14)
++#define SUN50I_H616_LINEOUTL_EN			(13)
++#define SUN50I_H616_LMUTE			(12)
++#define SUN50I_H616_LINEOUTR_EN			(11)
++#define SUN50I_H616_RMUTE			(10)
++#define SUN50I_H616_RSWITCH			(9)
++#define SUN50I_H616_RAMPEN			(8)
++#define SUN50I_H616_LINEOUTL_SEL		(6)
++#define SUN50I_H616_LINEOUTR_SEL		(5)
++#define SUN50I_H616_LINEOUT_VOL			(0)
++
++#define SUN50I_H616_DAC_AC_MIXER_REG		(0x314)
++#define SUN50I_H616_LMIX_LDAC			(21)
++#define SUN50I_H616_LMIX_RDAC			(20)
++#define SUN50I_H616_RMIX_RDAC			(17)
++#define SUN50I_H616_RMIX_LDAC			(16)
++#define SUN50I_H616_LMIXEN			(11)
++#define SUN50I_H616_RMIXEN			(10)
++
++#define SUN50I_H616_DAC_AC_RAMP_REG		(0x31c)
++#define SUN50I_H616_RAMP_STEP			(4)
++#define SUN50I_H616_RDEN			(0)
++
+ /* TODO H3 DAP (Digital Audio Processing) bits */
+ 
+ struct sun4i_codec {
+@@ -1520,6 +1557,149 @@ static struct snd_soc_card *sun8i_v3s_codec_create_card(struct device *dev)
+ 	return card;
+ };
+ 
++static const struct snd_kcontrol_new sun50i_h616_codec_codec_controls[] = {
++	SOC_SINGLE_TLV("DAC Playback Volume", SUN4I_CODEC_DAC_DPC,
++		       SUN4I_CODEC_DAC_DPC_DVOL, 0x3f, 1,
++		       sun6i_codec_dvol_scale),
++	SOC_SINGLE_TLV("Line Out Playback Volume",
++		       SUN50I_H616_DAC_AC_DAC_REG,
++		       SUN50I_H616_LINEOUT_VOL, 0x1f, 0,
++		       sun6i_codec_lineout_vol_scale),
++	SOC_DOUBLE("Line Out Playback Switch",
++		   SUN50I_H616_DAC_AC_DAC_REG,
++		   SUN50I_H616_LINEOUTL_EN,
++		   SUN50I_H616_LINEOUTR_EN, 1, 0),
++};
++
++static const struct snd_kcontrol_new sun50i_h616_codec_mixer_controls[] = {
++	SOC_DAPM_DOUBLE("DAC Playback Switch",
++			SUN50I_H616_DAC_AC_MIXER_REG,
++			SUN50I_H616_LMIX_LDAC,
++			SUN50I_H616_RMIX_RDAC, 1, 0),
++	SOC_DAPM_DOUBLE("DAC Reversed Playback Switch",
++			SUN50I_H616_DAC_AC_MIXER_REG,
++			SUN50I_H616_LMIX_RDAC,
++			SUN50I_H616_RMIX_LDAC, 1, 0),
++};
++
++static SOC_ENUM_DOUBLE_DECL(sun50i_h616_codec_lineout_src_enum,
++			    SUN50I_H616_DAC_AC_DAC_REG,
++			    SUN50I_H616_LINEOUTL_SEL,
++			    SUN50I_H616_LINEOUTR_SEL,
++			    sun6i_codec_lineout_src_enum_text);
++
++static const struct snd_kcontrol_new sun50i_h616_codec_lineout_src[] = {
++		SOC_DAPM_ENUM("Line Out Source Playback Route",
++			      sun50i_h616_codec_lineout_src_enum),
++};
++
++static const struct snd_soc_dapm_widget sun50i_h616_codec_codec_widgets[] = {
++	/* Digital parts of the DACs */
++	SND_SOC_DAPM_SUPPLY("DAC Enable", SUN4I_CODEC_DAC_DPC,
++			    SUN4I_CODEC_DAC_DPC_EN_DA, 0,
++			    NULL, 0),
++
++	/* Analog parts of the DACs */
++	SND_SOC_DAPM_DAC("Left DAC", "Codec Playback",
++			 SUN50I_H616_DAC_AC_DAC_REG,
++			 SUN50I_H616_DAC_LEN, 0),
++	SND_SOC_DAPM_DAC("Right DAC", "Codec Playback",
++			 SUN50I_H616_DAC_AC_DAC_REG,
++			 SUN50I_H616_DAC_REN, 0),
++
++	/* Mixers */
++	SOC_MIXER_ARRAY("Left Mixer", SUN50I_H616_DAC_AC_MIXER_REG,
++			SUN50I_H616_LMIXEN, 0,
++			sun50i_h616_codec_mixer_controls),
++	SOC_MIXER_ARRAY("Right Mixer", SUN50I_H616_DAC_AC_MIXER_REG,
++			SUN50I_H616_RMIXEN, 0,
++			sun50i_h616_codec_mixer_controls),
++
++	/* Line Out path */
++	SND_SOC_DAPM_MUX("Line Out Source Playback Route",
++			 SND_SOC_NOPM, 0, 0, sun50i_h616_codec_lineout_src),
++	SND_SOC_DAPM_OUT_DRV("Line Out Ramp Controller",
++			     SUN50I_H616_DAC_AC_RAMP_REG,
++			     SUN50I_H616_RDEN, 0, NULL, 0),
++	SND_SOC_DAPM_OUTPUT("LINEOUT"),
++};
++
++static const struct snd_soc_component_driver sun50i_h616_codec_codec = {
++	.controls   = sun50i_h616_codec_codec_controls,
++	.num_controls   = ARRAY_SIZE(sun50i_h616_codec_codec_controls),
++	.dapm_widgets   = sun50i_h616_codec_codec_widgets,
++	.num_dapm_widgets = ARRAY_SIZE(sun50i_h616_codec_codec_widgets),
++	.idle_bias_on   = 1,
++	.use_pmdown_time  = 1,
++	.endianness   = 1,
++};
++
++static const struct snd_kcontrol_new sun50i_h616_card_controls[] = {
++	SOC_DAPM_PIN_SWITCH("LINEOUT"),
++};
++
++static const struct snd_soc_dapm_widget sun50i_h616_codec_card_dapm_widgets[] = {
++	SND_SOC_DAPM_LINE("Line Out", NULL),
++	SND_SOC_DAPM_SPK("Speaker", sun4i_codec_spk_event),
++};
++
++/* Connect digital side enables to analog side widgets */
++static const struct snd_soc_dapm_route sun50i_h616_codec_card_routes[] = {
++	/* DAC Routes */
++	{ "Left DAC", NULL, "DAC Enable" },
++	{ "Right DAC", NULL, "DAC Enable" },
++
++	/* Left Mixer Routes */
++	{ "Left Mixer", "DAC Playback Switch", "Left DAC" },
++	{ "Left Mixer", "DAC Reversed Playback Switch", "Right DAC" },
++
++	/* Right Mixer Routes */
++	{ "Right Mixer", "DAC Playback Switch", "Right DAC" },
++	{ "Right Mixer", "DAC Reversed Playback Switch", "Left DAC" },
++
++	/* Line Out Routes */
++	{ "Line Out Source Playback Route", "Stereo", "Left Mixer" },
++	{ "Line Out Source Playback Route", "Stereo", "Right Mixer" },
++	{ "Line Out Source Playback Route", "Mono Differential", "Left Mixer" },
++	{ "Line Out Source Playback Route", "Mono Differential", "Right Mixer" },
++	{ "Line Out Ramp Controller", NULL, "Line Out Source Playback Route" },
++	{ "LINEOUT", NULL, "Line Out Ramp Controller" },
++};
++
++static struct snd_soc_card *sun50i_h616_codec_create_card(struct device *dev)
++{
++	struct snd_soc_card *card;
++	int ret;
++
++	card = devm_kzalloc(dev, sizeof(*card), GFP_KERNEL);
++	if (!card)
++		return ERR_PTR(-ENOMEM);
++
++	card->dai_link = sun4i_codec_create_link(dev, &card->num_links);
++	if (!card->dai_link)
++		return ERR_PTR(-ENOMEM);
++
++	card->dai_link->playback_only = true;
++	card->dai_link->capture_only = false;
++
++	card->dev		= dev;
++	card->owner		= THIS_MODULE;
++	card->name		= "H616 Audio Codec";
++	card->controls		= sun50i_h616_card_controls;
++	card->num_controls	= ARRAY_SIZE(sun50i_h616_card_controls);
++	card->dapm_widgets	= sun50i_h616_codec_card_dapm_widgets;
++	card->num_dapm_widgets	= ARRAY_SIZE(sun50i_h616_codec_card_dapm_widgets);
++	card->dapm_routes	= sun50i_h616_codec_card_routes;
++	card->num_dapm_routes	= ARRAY_SIZE(sun50i_h616_codec_card_routes);
++	card->fully_routed	= true;
++
++	ret = snd_soc_of_parse_audio_routing(card, "allwinner,audio-routing");
++	if (ret)
++		dev_warn(dev, "failed to parse audio-routing: %d\n", ret);
++
++	return card;
++};
++
+ static const struct regmap_config sun4i_codec_regmap_config = {
+ 	.reg_bits	= 32,
+ 	.reg_stride	= 4,
+@@ -1562,6 +1742,14 @@ static const struct regmap_config sun8i_v3s_codec_regmap_config = {
+ 	.max_register	= SUN8I_H3_CODEC_ADC_DBG,
+ };
+ 
++static const struct regmap_config sun50i_h616_codec_regmap_config = {
++	.reg_bits	= 32,
++	.reg_stride	= 4,
++	.val_bits	= 32,
++	.max_register	= SUN50I_H616_DAC_AC_RAMP_REG,
++	.cache_type	= REGCACHE_NONE,
++};
++
+ struct sun4i_codec_quirks {
+ 	const struct regmap_config *regmap_config;
+ 	const struct snd_soc_component_driver *codec;
+@@ -1647,6 +1835,15 @@ static const struct sun4i_codec_quirks sun8i_v3s_codec_quirks = {
+ 	.has_reset	= true,
+ };
+ 
++static const struct sun4i_codec_quirks sun50i_h616_codec_quirks = {
++	.regmap_config	= &sun50i_h616_codec_regmap_config,
++	.codec		= &sun50i_h616_codec_codec,
++	.create_card	= sun50i_h616_codec_create_card,
++	.reg_dac_fifoc	= REG_FIELD(SUN50I_H616_CODEC_DAC_FIFOC, 0, 31),
++	.reg_dac_txdata	= SUN8I_H3_CODEC_DAC_TXDATA,
++	.has_reset	= true,
++};
++
+ static const struct of_device_id sun4i_codec_of_match[] = {
+ 	{
+ 		.compatible = "allwinner,sun4i-a10-codec",
+@@ -1672,6 +1869,10 @@ static const struct of_device_id sun4i_codec_of_match[] = {
+ 		.compatible = "allwinner,sun8i-v3s-codec",
+ 		.data = &sun8i_v3s_codec_quirks,
+ 	},
++	{
++		.compatible = "allwinner,sun50i-h616-codec",
++		.data = &sun50i_h616_codec_quirks,
++	},
+ 	{}
+ };
+ MODULE_DEVICE_TABLE(of, sun4i_codec_of_match);
+@@ -1860,4 +2061,5 @@ MODULE_AUTHOR("Emilio López <emilio@elopez.com.ar>");
+ MODULE_AUTHOR("Jon Smirl <jonsmirl@gmail.com>");
+ MODULE_AUTHOR("Maxime Ripard <maxime.ripard@free-electrons.com>");
+ MODULE_AUTHOR("Chen-Yu Tsai <wens@csie.org>");
++MODULE_AUTHOR("Ryan Walklin <ryan@testtoast.com");
+ MODULE_LICENSE("GPL");
+-- 
+2.46.1
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH 6/6] arm64: dts: allwinner: h616: Add audio codec node
+From: Ryan Walklin <ryan@testtoast.com>
+Date: Sun, 29 Sep 2024 23:06:07 +1300
+Message-Id: <20240929100750.860329-7-ryan@testtoast.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Now that the sun4i codec driver supports the H616, add a node in the
+device tree for it.
+
+Signed-off-by: Ryan Walklin <ryan@testtoast.com>
+---
+ arch/arm64/boot/dts/allwinner/sun50i-h616.dtsi | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun50i-h616.dtsi b/arch/arm64/boot/dts/allwinner/sun50i-h616.dtsi
+index e88c1fbac6acc..006fdb7e7e0ae 100644
+--- a/arch/arm64/boot/dts/allwinner/sun50i-h616.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun50i-h616.dtsi
+@@ -645,6 +645,21 @@ spdif: spdif@5093000 {
+ 			status = "disabled";
+ 		};
+ 
++		codec: codec@05096000 {
++			#sound-dai-cells = <0>;
++			compatible = "allwinner,sun50i-h616-codec";
++			reg = <0x05096000 0x31c>;
++			interrupts = <GIC_SPI 58 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_AUDIO_CODEC>,
++				 <&ccu CLK_AUDIO_CODEC_1X>,
++				 <&ccu CLK_AUDIO_CODEC_4X>;
++			clock-names = "apb", "codec", "audio-codec-4x";
++			resets = <&ccu RST_BUS_AUDIO_CODEC>;
++			dmas = <&dma 6>;
++			dma-names = "tx";
++			status = "disabled";
++		};
++
+ 		gpadc: adc@5070000 {
+ 			compatible = "allwinner,sun50i-h616-gpadc",
+ 				     "allwinner,sun20i-d1-gpadc";
+-- 
+2.46.1
+

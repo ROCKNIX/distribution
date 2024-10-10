@@ -13,8 +13,8 @@ PKG_NEED_UNPACK="$PROJECT_DIR/$PROJECT/bootloader"
 
 case ${DEVICE} in
   H700*)
-    PKG_VERSION="7198a049f4b4d990b95f94114a974a2238b20cd8"
-    PKG_URL="https://git.sr.ht/~tokyovigilante/u-boot/archive/7198a049f4b4d990b95f94114a974a2238b20cd8.tar.gz"
+    PKG_VERSION="v2024.10-rc6"
+    PKG_URL="https://github.com/u-boot/u-boot/archive/refs/tags/v2024.10-rc6.tar.gz"
   ;;
 esac
 

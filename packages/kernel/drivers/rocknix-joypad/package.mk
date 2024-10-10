@@ -9,6 +9,7 @@ PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_LONGDESC="rocknix-joypad: ROCKNIX joypad driver"
 PKG_TOOLCHAIN="manual"
 PKG_IS_KERNEL_PKG="yes"
+PKG_PATCH_DIRS+="${DEVICE}"
 
 pre_make_target() {
   unset LDFLAGS
