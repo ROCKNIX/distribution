@@ -6,13 +6,9 @@ PKG_VERSION="1.0"
 PKG_LICENSE="Proprietary:DRASTIC.pdf"
 PKG_ARCH="aarch64"
 PKG_URL="https://github.com/r3claimer/JelosAddOns/raw/main/drastic.tar.gz"
-PKG_DEPENDS_TARGET="toolchain rocknix-hotkey"
+PKG_DEPENDS_TARGET="toolchain rocknix-hotkey libegl"
 PKG_LONGDESC="Install Drastic Launcher script, will dowload bin on first run"
 PKG_TOOLCHAIN="make"
-
-if [ "${DEVICE}" = "S922X" -a "${USE_MALI}" != "no" ]; then
-  PKG_DEPENDS_TARGET+=" libegl"
-fi
 
 make_target() {
   :
@@ -33,12 +29,7 @@ makeinstall_target() {
 post_install() {
     case ${DEVICE} in
       S922X)
-        if [ "${USE_MALI}" != "no" ]; then
-          LIBEGL="export SDL_VIDEO_GL_DRIVER=\/usr\/lib\/egl\/libGL.so.1 SDL_VIDEO_EGL_DRIVER=\/usr\/lib\/egl\/libEGL.so.1"
-        else
-          LIBEGL=""
-        fi
-        
+        LIBEGL="export SDL_VIDEO_GL_DRIVER=\/usr\/lib\/egl\/libGL.so.1 SDL_VIDEO_EGL_DRIVER=\/usr\/lib\/egl\/libEGL.so.1"
         HOTKEY=""
       ;;
       RK3588)
