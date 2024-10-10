@@ -13,7 +13,7 @@ PKG_LONGDESC="This package contains a precompiled kernel image and the modules."
 PKG_IS_KERNEL_PKG="yes"
 PKG_STAMP="${KERNEL_TARGET} ${KERNEL_MAKE_EXTRACMD}"
 
-PKG_PATCH_DIRS="${LINUX} ${DEVICE} default"
+PKG_PATCH_DIRS="${LINUX} mainline ${DEVICE} default"
 
 if [ "${DEVICE}" = "S922X" -a "${USE_MALI}" = "no" ]; then
   PKG_PATCH_DIRS+=" S922X-PANFROST"
@@ -23,17 +23,16 @@ case ${DEVICE} in
   RK3326)
     PKG_VERSION="6.8.9"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
-    PKG_PATCH_DIRS+=" mainline"
     ;;
   RK3588)
     PKG_VERSION="8986153dd6a03ec24ca4f231d51cdd6024c8a887"
     PKG_URL="https://github.com/armbian/linux-rockchip/archive/${PKG_VERSION}.tar.gz"
     PKG_GIT_CLONE_BRANCH="rk-6.1-rkr3"
+    PKG_PATCH_DIRS="${LINUX} ${DEVICE} default"
   ;;
   H700)
     PKG_VERSION="996b4126d10e68ee70b64fc9a2fbccdc92a64f93"
     PKG_URL="https://git.sr.ht/~tokyovigilante/linux/archive/${PKG_VERSION}.tar.gz"
-    PKG_PATCH_DIRS+=" mainline"
     ;;
   SD865)
     PKG_VERSION="6.11.2"
@@ -42,12 +41,10 @@ case ${DEVICE} in
   RK3566)
     PKG_VERSION="6.10.13"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
-    PKG_PATCH_DIRS+=" mainline"
     ;;
   *)
     PKG_VERSION="6.9.12"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
-    PKG_PATCH_DIRS+=" mainline"
     ;;
 esac
 
