@@ -21,7 +21,7 @@ else
 fi
 
 case ${DEVICE} in
-  AMD64)
+  AMD64|SD865)
     PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
     export USE_GLES=0
   ;;
@@ -38,7 +38,7 @@ make_target() {
          V=1 \
          VC=0 \
          OSD=0
-  
+
   export BINUTILS="$(get_build_dir binutils)/.${TARGET_NAME}"
   export NEW_DYNAREC=1
   export SDL_CFLAGS="-I${SYSROOT_PREFIX}/usr/include/SDL2 -pthread -D_REENTRANT"
