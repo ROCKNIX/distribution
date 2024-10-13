@@ -1,0 +1,65 @@
+#!/bin/bash
+
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
+
+. /etc/profile
+
+# Prevent script from running until LED PWMs are ready
+dmesg > /tmp/dmesg.log
+while ! grep "htr3212-pwm" /tmp/dmesg.log
+do
+    sleep 1
+    dmesg > /tmp/dmesg.log
+done
+
+# identify which pwm channels are the LEDs as they are not persistant.
+n=0
+i=1
+while [ "$n" -lt 3 ]; do
+  if [ -f /sys/class/pwm/pwmchip${n}/device/name ]; then
+    PWM="$(cat /sys/class/pwm/pwmchip${n}/device/name)"
+  else
+    PWM="null"
+  fi
+
+  if [ ${PWM} = 'htr3212-pwm' ]; then
+    eval  PWM_LED_${i}="pwmchip${n}"
+    i=$(( i + 1 ))
+  fi
+
+  n=$(( n + 1 ))
+done
+
+# Activating each pwm LED and setting the brightness to zero
+x=0
+while [ "$x" -lt 12 ]; do
+    echo ${x} > /sys/class/pwm/${PWM_LED_1}/export
+    echo ${x} > /sys/class/pwm/${PWM_LED_2}/export
+    echo 0 > /sys/class/pwm/${PWM_LED_1}/pwm${x}/duty_cycle
+    echo 0 > /sys/class/pwm/${PWM_LED_2}/pwm${x}/duty_cycle
+    echo 1 > /sys/class/pwm/${PWM_LED_1}/pwm${x}/period
+    echo 1 > /sys/class/pwm/${PWM_LED_2}/pwm${x}/period
+    echo 1 > /sys/class/pwm/${PWM_LED_1}/pwm${x}/enable
+    echo 1 > /sys/class/pwm/${PWM_LED_2}/pwm${x}/enable
+    x=$(( x + 1 ))
+done
+
+echo ${PWM_LED_1} > /storage/pwm1.txt
+echo ${PWM_LED_2} > /storage/pwm2.txt
+
+# Set system wide variables
+DEVICE_LED_1=${PWM_LED_1}
+DEVICE_LED_2=${PWM_LED_2}
+
+# Get Internal LED State
+LED_STATE=$(get_setting "led.color")
+if [ ! -n "${LED_STATE}" ]; then
+  LED_STATE=off
+  set_setting "led.color" "off"
+fi
+
+echo ${LED_STATE} > /storage/led.txt
+
+# Run LED control at boot
+/usr/bin/ledcontrol ${LED_STATE}
