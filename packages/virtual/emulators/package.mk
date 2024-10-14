@@ -74,7 +74,9 @@ case "${DEVICE}" in
     PKG_RETROARCH+=" retropie-shaders"
   ;;
   SD865)
-    PKG_EMUS+=" aethersx2-sa box64 dolphin-sa drastic-sa lime3ds-sa mednafen melonds-sa portmaster scummvmsa supermodel-sa xemu-sa yabasanshiro-sa"
+    [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 desmume-lr gpsp-lr pcsx_rearmed-lr wine"
+    PKG_EMUS+=" aethersx2-sa box64 dolphin-sa drastic-sa lime3ds-sa mednafen melonds-sa portmaster scummvmsa supermodel-sa \
+               yabasanshiro-sa xemu-sa"
     LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr flycast-lr geolith-lr pcsx_rearmed-lr uae4arm"
     PKG_RETROARCH+=" retropie-shaders"
   ;;
@@ -434,7 +436,7 @@ makeinstall_target() {
   add_emu_core gba retroarch vba_next false
   add_emu_core gba retroarch beetle_gba false
   case ${DEVICE} in
-    RK356*|RK3326|H700)
+    RK356*|RK3326|H700|SD865)
       add_emu_core gba retroarch gpsp false
     ;;
     RK3399|RK3588*)
@@ -734,6 +736,7 @@ makeinstall_target() {
       add_emu_core nds retroarch melonds false
       add_emu_core nds retroarch melondsds false
       add_emu_core nds melonds melonds-sa true
+      add_emu_core nds retroarch desmume false
     ;;
     *)
       add_emu_core nds drastic drastic-sa true
@@ -895,8 +898,8 @@ makeinstall_target() {
   add_es_system pspminis
 
   ### Sony Playstation Vita
-  case ${TARGET_ARCH} in
-    x86_64)
+  case ${DEVICE} in
+    AMD64)
       add_emu_core psvita vita3k vita3k-sa true
       add_es_system psvita
     ;;
