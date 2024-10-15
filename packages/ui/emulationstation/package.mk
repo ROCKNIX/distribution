@@ -142,7 +142,7 @@ makeinstall_target() {
   if [ "${EMULATION_DEVICE}" = "no" ] || \
      [ "${BASE_ONLY}" = "true" ]
   then
-    cat <<EOF >${INSTALL}/etc/emulationstation/es_systems.cfg
+    cat <<EOF >${INSTALL}/usr/config/emulationstation/es_systems.cfg
 <?xml version="1.0" encoding="UTF-8"?>
 <systemList>
         <system>
