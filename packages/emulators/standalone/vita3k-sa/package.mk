@@ -3,11 +3,10 @@
 
 PKG_NAME="vita3k-sa"
 PKG_VERSION="087285ab6531bf34945512be3ac0b6c81977ed47"
-#PKG_VERSION="92c464648945a699f7e2c667c791f939b686550b"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/Vita3K/Vita3K"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain SDL2 SDL2_image zlib libogg libvorbis gtk3 openssl"
+PKG_DEPENDS_TARGET="toolchain SDL2 SDL2_image zlib libogg libvorbis gtk3 openssl ffmpeg"
 PKG_LONGDESC="vita3k"
 PKG_TOOLCHAIN="cmake"
 PKG_PATCH_DIRS+="${DEVICE}"
@@ -25,17 +24,28 @@ then
   PKG_DEPENDS_TARGET+=" vulkan-loader vulkan-headers"
 fi
 
-pre_configure_target() {
+ pre_configure_target() {
+  mkdir -p ${PKG_BUILD}/external
+  [ -d "nativefiledialog-cmake" ] && rm -rf nativefiledialog-cmake
+  cd ${PKG_BUILD}/external && git clone https://github.com/Vita3K/nativefiledialog-cmake
+  [ -d "ffmpeg" ] && rm -rf ffmpeg
+  cd ${PKG_BUILD}/external && git clone https://github.com/Vita3K/ffmpeg-core.git ffmpeg
 
-    mkdir -p ${PKG_BUILD}/external
-   [ -d "nativefiledialog-cmake" ] && rm -rf nativefiledialog-cmake
-   cd ${PKG_BUILD}/external && git clone https://github.com/Vita3K/nativefiledialog-cmake
+  case ${TARGET_ARCH} in
+    aarch64)
+      CMAKE_EXTRA_OPTS="-DXXHASH_BUILD_XXHSUM=ON \
+                        -DXXH_X86DISPATCH_ALLOW_AVX=OFF"
+    ;;
+    *)
+      CMAKE_EXTRA_OPTS="-DXXH_X86DISPATCH_ALLOW_AVX=ON"
+    ;;
+  esac
 
-   PKG_CMAKE_OPTS_TARGET+=" -DCMAKE_BUILD_TYPE=Release \
-                   -DBUILD_SHARED_LIBS=OFF \
-                   -DUSE_DISCORD_RICH_PRESENCE=OFF \
-                   -DUSE_VITA3K_UPDATE=OFF \
-                   -DXXH_X86DISPATCH_ALLOW_AVX=ON"
+  PKG_CMAKE_OPTS_TARGET+=" -DCMAKE_BUILD_TYPE=Release \
+                  -DBUILD_SHARED_LIBS=OFF \
+                  -DUSE_DISCORD_RICH_PRESENCE=OFF \
+                  -DUSE_VITA3K_UPDATE=OFF \
+                  ${CMAKE_EXTRA_OPTS}"
 }
 
 makeinstall_target() {
