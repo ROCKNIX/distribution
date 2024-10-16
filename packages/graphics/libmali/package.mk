@@ -74,6 +74,11 @@ post_makeinstall_target() {
       DTB_OVERLAY_LOAD="\/usr\/bin\/dtb_overlay set driver-gpu driver-gpu-panthor.dtbo"
       DTB_OVERLAY_UNLOAD="\/usr\/bin\/dtb_overlay set driver-gpu None"
     ;;
+    S922X)
+      PAN="panfrost"
+      DTB_OVERLAY_LOAD="\/usr\/bin\/dtb_overlay set driver-gpu driver-gpu-panfrost.dtbo"
+      DTB_OVERLAY_UNLOAD="\/usr\/bin\/dtb_overlay set driver-gpu None"
+    ;;
     *)
       PAN="panfrost"
       DTB_OVERLAY=""
