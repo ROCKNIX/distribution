@@ -8,28 +8,10 @@ PKG_DEPENDS_TARGET="toolchain expat libdrm zstd Mako:host pyyaml:host"
 PKG_LONGDESC="Mesa is a 3-D graphics library with an API."
 PKG_TOOLCHAIN="meson"
 PKG_PATCH_DIRS+=" ${DEVICE}"
-
-case ${DEVICE} in
-  S922X)
-    if [ "${DEVICE}" = "S922X" -a "${USE_MALI}" != "no" ]; then
-      PKG_VERSION="24.0.7"
-	    PKG_SITE="http://www.mesa3d.org/"
-	    PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
-    else
-      #Using upstream dev for panfrost
-	    PKG_VERSION="332252966bac19edcb1fe76642673ff71074b8a6"
-	    PKG_SITE="https://gitlab.freedesktop.org/mesa/mesa"
-	    PKG_URL="${PKG_SITE}.git"
-	    PKG_PATCH_DIRS+=" panfrost"
-    fi
-  ;;
-  *)
-	PKG_VERSION="24.2.4"
-	PKG_BUILD_VERSION="${PKG_VERSION}"
-	PKG_SITE="http://www.mesa3d.org/"
-	PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
-  ;;
-esac
+PKG_VERSION="24.2.4"
+PKG_BUILD_VERSION="${PKG_VERSION}"
+PKG_SITE="http://www.mesa3d.org/"
+PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
 
 get_graphicdrivers
 
