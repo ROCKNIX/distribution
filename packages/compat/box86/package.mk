@@ -29,7 +29,7 @@ case ${TARGET_ARCH} in
 esac
 
 case ${DEVICE} in
-  RK3588)
+  RK3588|SD865)
     PKG_CMAKE_OPTS_TARGET+=" -DRK3588=On"
   ;;
   RK3399)
