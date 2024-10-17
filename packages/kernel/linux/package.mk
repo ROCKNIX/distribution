@@ -34,16 +34,8 @@ case ${DEVICE} in
     PKG_VERSION="6.12-rc2"
     PKG_URL="https://git.kernel.org/torvalds/t/linux-${PKG_VERSION}.tar.gz"
     ;;
-  SD865)
-    PKG_VERSION="6.11.4"
-    PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
-  ;;
-  RK3566)
-    PKG_VERSION="6.10.13"
-    PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
-    ;;
   *)
-    PKG_VERSION="6.9.12"
+    PKG_VERSION="6.11.4"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     ;;
 esac
