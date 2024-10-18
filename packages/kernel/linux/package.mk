@@ -31,7 +31,7 @@ case ${DEVICE} in
     PKG_PATCH_DIRS="${LINUX} ${DEVICE} default"
   ;;
   H700)
-    PKG_VERSION="6.12-rc2"
+    PKG_VERSION="6.12-rc3"
     PKG_URL="https://git.kernel.org/torvalds/t/linux-${PKG_VERSION}.tar.gz"
     ;;
   *)
