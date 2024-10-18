@@ -9,7 +9,8 @@ PKG_DEPENDS_TARGET="toolchain Python3 swig:host atf glibc pyelftools:host"
 PKG_LONGDESC="Allwinner U-Boot is a bootloader for embedded systems."
 PKG_PATCH_DIRS+="${DEVICE}"
 
-PKG_NEED_UNPACK="$PROJECT_DIR/$PROJECT/bootloader"
+PKG_NEED_UNPACK="${PROJECT_DIR}/${PROJECT}/bootloader ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/bootloader"
+PKG_NEED_UNPACK+=" ${PROJECT_DIR}/${PROJECT}/options ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/options"
 
 case ${DEVICE} in
   H700*)
