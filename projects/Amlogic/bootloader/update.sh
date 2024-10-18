@@ -43,6 +43,14 @@ for all_dtb in $BOOT_ROOT/*.dtb; do
   fi
 done
 
+if [ -d $SYSTEM_ROOT/usr/share/bootloader/overlays ]; then
+  echo "Updating device tree overlays..."
+  mkdir -p $BOOT_ROOT/overlays
+  for dtb in $SYSTEM_ROOT/usr/share/bootloader/overlays/*.dtbo; do
+    cp -p $dtb $BOOT_ROOT/overlays
+  done
+fi
+
 if [ -f $SYSTEM_ROOT/usr/share/bootloader/${SUBDEVICE}_u-boot ]; then
   echo "Updating u-boot on: $BOOT_DISK..."
   dd if=$SYSTEM_ROOT/usr/share/bootloader/${SUBDEVICE}_u-boot of=$BOOT_DISK conv=fsync,notrunc bs=512 seek=1 &>/dev/null
