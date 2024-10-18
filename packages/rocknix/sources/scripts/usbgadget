@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
+. /etc/profile
+
 for mod in usb_f_ecm usb_f_fs; do
 	modprobe -q ${mod}
 done
@@ -96,12 +98,49 @@ usb_stop() {
 	) >/dev/null 2>&1
 }
 
+rk3326_peripheral() {
+	modprobe dtbocfg
+	mkdir /sys/kernel/config/device-tree/overlays/usb-drmode-peripheral
+	ls /sys/kernel/config/device-tree/overlays/usb-drmode-peripheral
+	cat /usr/share/bootloader/overlays/rk3326-usb-drmode-peripheral.dtbo > /sys/kernel/config/device-tree/overlays/usb-drmode-peripheral/dtbo
+	echo 1 > /sys/kernel/config/device-tree/overlays/usb-drmode-peripheral/status
+	sleep 2
+	echo ff300000.usb > /sys/bus/platform/drivers/dwc2/unbind
+	sleep 2
+	echo ff300000.usb > /sys/bus/platform/drivers/dwc2/bind
+	sleep 1
+}
+
+rk3326_otg() {
+	echo 0 > /sys/kernel/config/device-tree/overlays/usb-drmode-peripheral/status
+	sleep 2
+	echo ff300000.usb > /sys/bus/platform/drivers/dwc2/unbind
+	sleep 2
+	echo ff300000.usb > /sys/bus/platform/drivers/dwc2/bind
+	sleep 1
+}
+
+
+rk3326_check_start() {
+	if [[ $(cat /proc/device-tree/usb@ff300000/dr_mode) = otg ]]; then
+		rk3326_peripheral
+	fi
+}
+
+rk3326_check_stop() {
+	if [[ $(cat /proc/device-tree/usb@ff300000/dr_mode) = peripheral ]]; then
+		rk3326_otg
+	fi
+}
+
 case "$1" in
 	start)
+		if [[ "${HW_DEVICE}" = RK3326 ]]; then rk3326_check_start; fi
 		usb_start $2
 		;;
 	stop)
 		usb_stop
+		if [[ "${HW_DEVICE}" = RK3326 ]]; then rk3326_check_stop; fi
 		;;
 	restart)
 		usb_stop
