@@ -15,10 +15,6 @@ PKG_STAMP="${KERNEL_TARGET} ${KERNEL_MAKE_EXTRACMD}"
 
 PKG_PATCH_DIRS="${LINUX} mainline ${DEVICE} default"
 
-if [ "${DEVICE}" = "S922X" -a "${USE_MALI}" = "no" ]; then
-  PKG_PATCH_DIRS+=" S922X-PANFROST"
-fi
-
 case ${DEVICE} in
   RK3326)
     PKG_VERSION="6.8.9"
@@ -151,9 +147,6 @@ pre_make_target() {
     ${PKG_BUILD}/scripts/config --disable CONFIG_ISCSI_IBFT_FIND
     ${PKG_BUILD}/scripts/config --disable CONFIG_ISCSI_IBFT
   fi
-
-  # enable panfrost for S922X if Mali is not being used
-  [ "${DEVICE}" = "S922X" -a "${USE_MALI}" = "no" ] && ${PKG_BUILD}/scripts/config --enable CONFIG_DRM_PANFROST
 
   # disable lima/panfrost if libmali is configured
   if [ "${OPENGLES}" = "libmali" ]; then

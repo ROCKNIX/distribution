@@ -16,11 +16,25 @@ make_target() {
 }
 
 makeinstall_target() {
-  mkdir -p ${INSTALL}/usr/{lib,share}
+  mkdir -p ${INSTALL}/usr/{lib,mali,share}
+  mkdir -p ${INSTALL}/usr/lib/mali
   tar -xvJf ${PKG_BUILD}/mali.tar.xz -C ${INSTALL}
-  mv ${INSTALL}/lib/${TARGET_ARCH}-linux-gnu/* ${INSTALL}/usr/lib
+  mv ${INSTALL}/lib/${TARGET_ARCH}-linux-gnu/* ${INSTALL}/usr/lib/mali/
+  mv ${INSTALL}/usr/lib/mali/libmali.* ${INSTALL}/usr/lib/
+
   rm -r ${INSTALL}/lib
   tar -xvJf ${PKG_BUILD}/rootfs_additions.tar.xz -C ${INSTALL}/usr/share
   mv ${INSTALL}/usr/share/etc/vulkan/* ${INSTALL}/usr/share/vulkan/
   rm -r ${INSTALL}/usr/share/etc
+}
+
+post_makeinstall_target() {
+  mkdir -p "${INSTALL}/usr/bin/"
+  cp -v "${PKG_BUILD}/bin/gpudriver" "${INSTALL}/usr/bin/"
+
+  # set the correct mesa pan kernel driver module based on device
+  PAN="panfrost"
+  
+  sed -e "s/@PAN@/${PAN}/g" \
+      -i  ${INSTALL}/usr/bin/gpudriver
 }
