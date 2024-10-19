@@ -14,9 +14,9 @@ PKG_BUILD_FLAGS="+bfd -gold"
 
 case "${DEVICE}" in
   RK3588*)
-    OPT_ENABLE_KERNEL=5.10.0
+    OPT_ENABLE_KERNEL=6.1.0
   ;;
-  RK3566|SD865)
+  RK3566|SD865|RK3399)
     OPT_ENABLE_KERNEL=6.10.0
   ;;
   *)
