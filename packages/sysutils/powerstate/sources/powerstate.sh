@@ -77,7 +77,7 @@ do
     AUDIBLEALERT=$(get_setting system.battery.warning)
     if (( ${BATLEFT} < "26" ))
     then
-      if [ "${DEVICE_LED_CONTROL}" = "true" ]
+      if [ "${DEVICE_LED_CONTROL}" = "true" ]  &&  [ ! "${DEVICE_BATTERY_LED_STATUS}" = "true" ]
       then
         # Flash the RGB or power LED if available.
         led_flash
