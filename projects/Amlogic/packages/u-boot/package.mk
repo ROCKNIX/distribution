@@ -3,37 +3,45 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="u-boot"
-PKG_VERSION="1.0"
+PKG_VERSION="v2024.10"
 PKG_LICENSE="GPL"
 PKG_SITE="https://www.denx.de/wiki/U-Boot"
-PKG_URL=""
-PKG_DEPENDS_TARGET="toolchain"
+PKG_URL="https://github.com/u-boot/u-boot/archive/${PKG_VERSION}.tar.gz"
+PKG_DEPENDS_TARGET="toolchain openssl:host pkg-config:host Python3:host swig:host pyelftools:host"
 PKG_LONGDESC="Das U-Boot is a cross-platform bootloader for embedded systems."
 PKG_TOOLCHAIN="manual"
 
 PKG_NEED_UNPACK="${PROJECT_DIR}/${PROJECT}/bootloader ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/bootloader"
 PKG_NEED_UNPACK+=" ${PROJECT_DIR}/${PROJECT}/options ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/options"
 
-for PKG_SUBDEVICE in $SUBDEVICES; do
-  PKG_DEPENDS_TARGET+=" u-boot-${PKG_SUBDEVICE}"
-  PKG_NEED_UNPACK+=" $(get_pkg_directory u-boot-${PKG_SUBDEVICE})"
-done
+if [ -n "${UBOOT_FIRMWARE}" ]; then
+  PKG_DEPENDS_TARGET+=" ${UBOOT_FIRMWARE}"
+  PKG_DEPENDS_UNPACK+=" ${UBOOT_FIRMWARE}"
+fi
+
+configure_package() {
+  PKG_UBOOT_CONFIG="odroid-go-ultra_defconfig"
+  PKG_UBOOT_FIP="odroid-go-ultra"
+  FIP_DIR="$(get_build_dir amlogic-boot-fip)"
+}
 
 make_target() {
-  : # nothing
+  [ "${BUILD_WITH_DEBUG}" = "yes" ] && PKG_DEBUG=1 || PKG_DEBUG=0
+  setup_pkg_config_host
+  DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm make mrproper
+  DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm make HOSTCC="${HOST_CC}" HOSTCFLAGS="-I${TOOLCHAIN}/include" HOSTLDFLAGS="${HOST_LDFLAGS}" ${PKG_UBOOT_CONFIG}
+  DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm _python_sysroot="${TOOLCHAIN}" _python_prefix=/ _python_exec_prefix=/ make HOSTCC="${HOST_CC}" HOSTCFLAGS="-I${TOOLCHAIN}/include" HOSTLDFLAGS="${HOST_LDFLAGS}" HOSTSTRIP="true" CONFIG_MKIMAGE_DTC_PATH="scripts/dtc/dtc"
+
+  cp -av ${PKG_BUILD}/u-boot.bin ${FIP_DIR}/${PKG_UBOOT_FIP}
+  cd ${FIP_DIR}
+  ./build-fip.sh ${PKG_UBOOT_FIP} ${FIP_DIR}/${PKG_UBOOT_FIP}/u-boot.bin ${PKG_BUILD}
 }
 
 makeinstall_target() {
   mkdir -p $INSTALL/usr/share/bootloader
 
   # Always install the update script
-  find_file_path bootloader/update.sh && cp -av ${FOUND_PATH} $INSTALL/usr/share/bootloader
+  find_file_path bootloader/update.sh && cp -av ${FOUND_PATH} ${INSTALL}/usr/share/bootloader
 
-  for PKG_SUBDEVICE in $SUBDEVICES; do
-    unset PKG_UBOOTBIN
-    PKG_UBOOTBIN=$(get_build_dir u-boot-${PKG_SUBDEVICE})/u-boot.bin
-    if [ ${PKG_UBOOTBIN} ]; then
-      cp -av ${PKG_UBOOTBIN} $INSTALL/usr/share/bootloader/${PKG_SUBDEVICE}_u-boot
-    fi
-  done
+  cp -av ${PKG_BUILD}/u-boot.bin $INSTALL/usr/share/bootloader
 }

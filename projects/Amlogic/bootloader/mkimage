@@ -3,34 +3,14 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 mkimage_uboot() {
-if [ -f "${RELEASE_DIR}/3rdparty/bootloader/${SUBDEVICE}_u-boot" ]; then
-  echo "image: writing u-boot to $(basename ${DISK})..."
-  dd if="${RELEASE_DIR}/3rdparty/bootloader/${SUBDEVICE}_u-boot" of="${DISK}" bs=512 seek=1 conv=sync,noerror,notrunc >"${SAVE_ERROR}" 2>&1 || show_error
-fi
-}
-
-mkimage_bootini() {
-  echo "image: creating boot.ini..."
-  cat << EOF > "${LE_TMP}/boot.ini"
-${DISTRO}-UBOOT-CONFIG
-
-setenv dtb_loadaddr "0x10000000"
-setenv loadaddr "0x1B00000"
-
-setenv bootargs "boot=LABEL=${DISTRO_BOOTLABEL} disk=LABEL=${DISTRO_DISKLABEL} ${EXTRA_CMDLINE}"
-
-load mmc \${devno}:1 \${loadaddr} KERNEL
-load mmc \${devno}:1 \${dtb_loadaddr} \${fdtfile}
-
-fdt addr \${dtb_loadaddr}
-
-booti \${loadaddr} - \${dtb_loadaddr}
-EOF
-  mcopy -s -o "${LE_TMP}/boot.ini" ::
+  if [ -f "${RELEASE_DIR}/3rdparty/bootloader/u-boot.bin" ]; then
+    echo "image: writing u-boot.bin to $(basename ${DISK})..."
+    dd if="${RELEASE_DIR}/3rdparty/bootloader/u-boot.bin" of="${DISK}" bs=512 seek=1 conv=sync,noerror,notrunc >"${SAVE_ERROR}" 2>&1 || show_error
+  fi
 }
 
 mkimage_extlinux_fdtdir(){
-  echo "image: set extlinux.conf to FDTDIR /"
+  echo "image: set extlinux.conf to FDTDIR /..."
   mkdir -p "${LE_TMP}/extlinux"
   cat << EOF > "${LE_TMP}/extlinux/extlinux.conf"
 LABEL ${DISTRO}
@@ -45,33 +25,19 @@ EOF
 mkimage_dtb() {
   echo "image: copying device trees..."
   for dtb in ${DTB[@]}; do
+    echo "image: copying ${dtb}.dtb..."
     mcopy ${RELEASE_DIR}/3rdparty/bootloader/${dtb}.dtb ::
   done
+  if [ -d ${RELEASE_DIR}/3rdparty/bootloader/overlays ]; then
+    echo "image: copying device tree overlays..."
+    mcopy -s ${RELEASE_DIR}/3rdparty/bootloader/overlays ::
+  fi
 }
 
-mkimage_gou_extras() {
-  echo "image: copying ODROIDBIOS.BIN and res..."
-  mcopy ${RELEASE_DIR}/3rdparty/bootloader/ODROIDBIOS.BIN ::
-  mcopy ${RELEASE_DIR}/3rdparty/bootloader/res ::
-}
+DTBXML="${PROJECT_DIR}/${PROJECT}/bootloader/dtb.xml"
+readarray -t DTB < <(xmlstarlet sel -t -v "//dtb/${DEVICE}/${SUBDEVICE}/file" ${DTBXML})
+BOOTMETHOD=$(xmlstarlet sel -t -v "//dtb/${DEVICE}/${SUBDEVICE}/@bootmethod" ${DTBXML})
 
-case "${SUBDEVICE}" in
-  Odroid_GOU)
-    DTB=("meson-g12b-odroid-go-ultra" "meson-g12b-powkiddy-rgb10-max-3-pro")
-    mkimage_dtb
-    mkimage_extlinux_fdtdir
-    mkimage_uboot
-    ;;
-  Odroid_N2)
-    DTB=("meson-g12b-odroid-n2" "meson-g12b-odroid-n2-plus")
-    mkimage_dtb
-    mkimage_extlinux_fdtdir
-    mkimage_uboot
-    ;;
-  Odroid_N2L)
-    DTB=("meson-g12b-odroid-n2l")
-    mkimage_dtb
-    mkimage_extlinux_fdtdir
-    mkimage_uboot
-    ;;
-esac
+mkimage_dtb
+mkimage_${BOOTMETHOD}
+mkimage_uboot
