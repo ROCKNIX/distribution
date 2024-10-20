@@ -41,7 +41,7 @@ for all_dtb in $BOOT_ROOT/*.dtb; do
 done
 
 # Only update the bootloader for the Odroid Go Ultra and RGB10MAX3 Pro
-if [ $SUBDEVICE != "Odroid_GOU" ]; then
+if [ $SUBDEVICE = "Odroid_GOU" ]; then
   if [ -f $SYSTEM_ROOT/usr/share/bootloader/u-boot.bin ]; then
     echo "Updating u-boot on: $BOOT_DISK..."
     dd if=$SYSTEM_ROOT/usr/share/bootloader/u-boot.bin of=$BOOT_DISK conv=fsync,notrunc bs=512 seek=1 &>/dev/null
