@@ -48,20 +48,6 @@ if [ -f $SYSTEM_ROOT/usr/share/bootloader/${SUBDEVICE}_u-boot ]; then
   dd if=$SYSTEM_ROOT/usr/share/bootloader/${SUBDEVICE}_u-boot of=$BOOT_DISK conv=fsync,notrunc bs=512 seek=1 &>/dev/null
 fi
 
-if [ -f $BOOT_ROOT/ODROIDBIOS.BIN ]; then
-  if [ -f $SYSTEM_ROOT/usr/share/bootloader/ODROIDBIOS.BIN ]; then
-    echo "Updating ODROIDBIOS.BIN..."
-    cp -p $SYSTEM_ROOT/usr/share/bootloader/ODROIDBIOS.BIN $BOOT_ROOT
-  fi
-fi
-
-if [ -d $BOOT_ROOT/res ]; then
-  if [ -d $SYSTEM_ROOT/usr/share/bootloader/res ]; then
-    echo "Updating res..."
-    cp -rp $SYSTEM_ROOT/usr/share/bootloader/res $BOOT_ROOT
-  fi
-fi
-
 # mount $BOOT_ROOT ro
 sync
 mount -o remount,ro $BOOT_ROOT
