@@ -23,14 +23,11 @@ DT_ID=$($SYSTEM_ROOT/usr/bin/dtname)
 
 if [ -n "$DT_ID" ]; then
   case $DT_ID in
-    *odroid-go-ultra*|*rgb10-max-3*)
+    *odroid-go-ultra|*rgb10-max-3-pro)
       SUBDEVICE="Odroid_GOU"
       ;;
-    *odroid-n2|*odroid-n2-plus)
+    *odroid-n2*)
       SUBDEVICE="Odroid_N2"
-      ;;
-    *odroid-n2l)
-      SUBDEVICE="Odroid_N2L"
       ;;
   esac
 fi
@@ -43,9 +40,12 @@ for all_dtb in $BOOT_ROOT/*.dtb; do
   fi
 done
 
-if [ -f $SYSTEM_ROOT/usr/share/bootloader/${SUBDEVICE}_u-boot ]; then
-  echo "Updating u-boot on: $BOOT_DISK..."
-  dd if=$SYSTEM_ROOT/usr/share/bootloader/${SUBDEVICE}_u-boot of=$BOOT_DISK conv=fsync,notrunc bs=512 seek=1 &>/dev/null
+# Only update the bootloader for the Odroid Go Ultra and RGB10MAX3 Pro
+if [ $SUBDEVICE != "Odroid_GOU" ]; then
+  if [ -f $SYSTEM_ROOT/usr/share/bootloader/u-boot.bin ]; then
+    echo "Updating u-boot on: $BOOT_DISK..."
+    dd if=$SYSTEM_ROOT/usr/share/bootloader/u-boot.bin of=$BOOT_DISK conv=fsync,notrunc bs=512 seek=1 &>/dev/null
+  fi
 fi
 
 # mount $BOOT_ROOT ro
