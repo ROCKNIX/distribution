@@ -16,6 +16,9 @@ make_target() {
 makeinstall_target() {
     mkdir -p ${INSTALL}/usr/share/bootloader/overlays
     cp ${PKG_BUILD}/${DEVICE}/*.dtbo ${INSTALL}/usr/share/bootloader/overlays
-    mkdir -p ${INSTALL}/usr/bin
-    cp ${PKG_BUILD}/dtb_overlay ${INSTALL}/usr/bin
+
+    if [ ${DEVICE} != "RK3326" ]; then
+	    mkdir -p ${INSTALL}/usr/bin
+        cp ${PKG_BUILD}/dtb_overlay ${INSTALL}/usr/bin
+    fi
 }
