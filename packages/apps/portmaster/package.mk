@@ -8,13 +8,9 @@ PKG_URL="${PKG_SITE}/releases/download/${PKG_VERSION}/PortMaster.zip"
 COMPAT_URL="https://github.com/ROCKNIX/packages/raw/main/compat.zip"
 PKG_LICENSE="MIT"
 PKG_ARCH="arm aarch64"
-PKG_DEPENDS_TARGET="toolchain rocknix-hotkey gamecontrollerdb wget oga_controls control-gen xmlstarlet list-guid"
+PKG_DEPENDS_TARGET="toolchain rocknix-hotkey gamecontrollerdb wget oga_controls control-gen xmlstarlet list-guid libegl"
 PKG_TOOLCHAIN="manual"
 PKG_LONGDESC="Portmaster - a simple tool that allows you to download various game ports"
-
-if [ "${DEVICE}" = "S922X" -a "${USE_MALI}" != "no" ]; then
-  PKG_DEPENDS_TARGET+=" libegl"
-fi
 
 makeinstall_target() {
   export STRIP=true
@@ -35,11 +31,7 @@ makeinstall_target() {
 }
 
 post_install() {
-  if [ "${DEVICE}" = "S922X" -a "${USE_MALI}" != "no" ]; then
-    LIBEGL="export SDL_VIDEO_GL_DRIVER=\/usr\/lib\/egl\/libGL.so.1 SDL_VIDEO_EGL_DRIVER=\/usr\/lib\/egl\/libEGL.so.1"
-  else
-    LIBEGL=""
-  fi
+  LIBEGL="export SDL_VIDEO_GL_DRIVER=\/usr\/lib\/egl\/libGL.so.1 SDL_VIDEO_EGL_DRIVER=\/usr\/lib\/egl\/libEGL.so.1"
 
   sed -e "s/@LIBEGL@/${LIBEGL}/g" \
       -i ${INSTALL}/usr/bin/start_portmaster.sh
