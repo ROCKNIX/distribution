@@ -36,15 +36,11 @@ RK3588:
 	PROJECT=Rockchip DEVICE=RK3588 ARCH=arm ./scripts/build_distro
 	PROJECT=Rockchip DEVICE=RK3588 ARCH=aarch64 ./scripts/build_distro
 
+# Temporarily force clean of modified packages
 S922X:
 	unset DEVICE_ROOT
-	PROJECT=Amlogic DEVICE=S922X ARCH=arm ./scripts/build_distro
-	PROJECT=Amlogic DEVICE=S922X ARCH=aarch64 ./scripts/build_distro
-
-S922X-PANFROST:
-	unset DEVICE_ROOT
-	PROJECT=Amlogic DEVICE=S922X ARCH=arm USE_MALI=no ./scripts/build_distro
-	PROJECT=Amlogic DEVICE=S922X ARCH=aarch64 USE_MALI=no ./scripts/build_distro
+	CLEAN_PACKAGES="fileman portmaster dolphin-sa drastic-sa yabasanshiro-sa libmali-vulkan quirks device-tree-overlays linux ffmpeg emulationstation wayland" PROJECT=Amlogic DEVICE=S922X ARCH=arm ./scripts/build_distro
+	CLEAN_PACKAGES="fileman portmaster dolphin-sa drastic-sa yabasanshiro-sa libmali-vulkan quirks device-tree-overlays linux ffmpeg emulationstation wayland" PROJECT=Amlogic DEVICE=S922X ARCH=aarch64 ./scripts/build_distro
 
 RK3566:
 	unset DEVICE_ROOT

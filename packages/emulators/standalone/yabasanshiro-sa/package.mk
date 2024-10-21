@@ -62,13 +62,6 @@ pre_configure_target() {
     PKG_CMAKE_OPTS_TARGET+=" -DUSE_EGL=ON -DUSE_OPENGL=OFF"
   fi
 
-  #if [ "${VULKAN_SUPPORT}" = "yes" ]
-  #then
-  #  PKG_CMAKE_OPTS_TARGET+=" -DYAB_WANT_VULKAN=ON"
-  #else
-  #  PKG_CMAKE_OPTS_TARGET+=" -DYAB_WANT_VULKAN=OFF"
-  #fi
-
   case ${ARCH} in
     aarch64)
       PKG_CMAKE_OPTS_TARGET+=" -DYAB_WANT_ARM7=ON \
