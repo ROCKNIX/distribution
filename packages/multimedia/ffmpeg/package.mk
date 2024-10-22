@@ -62,14 +62,6 @@ if [ "${V4L2_SUPPORT}" = "yes" ]; then
   else
     PKG_FFMPEG_V4L2+=" --disable-libudev --disable-v4l2-request"
   fi
-
-  if [ "${PKG_V4L2_REQUEST}" = "yes" ]; then
-    PKG_DEPENDS_TARGET+=" systemd"
-    PKG_NEED_UNPACK+=" $(get_pkg_directory systemd)"
-    PKG_FFMPEG_V4L2+=" --enable-libudev --enable-v4l2-request"
-  else
-    PKG_FFMPEG_V4L2+=" --disable-libudev --disable-v4l2-request"
-  fi
 else
   PKG_FFMPEG_V4L2="--disable-v4l2_m2m --disable-libudev --disable-v4l2-request"
 fi

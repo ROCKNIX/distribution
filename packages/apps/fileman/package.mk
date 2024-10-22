@@ -9,8 +9,6 @@ PKG_SITE="https://github.com/ROCKNIX/fileman"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain SDL2 SDL2_image SDL2_gfx SDL2_ttf"
 PKG_LONGDESC="A Single panel file Manager."
-PKG_PATCH_DIRS="${DEVICE}"
-[ "${DEVICE}" = "S922X" -a "${USE_MALI}" != "no" ] && PKG_PATCH_DIRS+=" S922X-MALI"
 
 make_target() {
   MAKEDEVICE=$(echo ${DEVICE^^} | sed "s#-#_##g")
