@@ -21,7 +21,7 @@ fi
 
 case ${DEVICE} in
   RK3588)
-    PKG_VERSION="8986153dd6a03ec24ca4f231d51cdd6024c8a887"
+    PKG_VERSION="693a5ea9432443eb4a58eee8a37f3b34501eb21b"
     PKG_URL="https://github.com/armbian/linux-rockchip/archive/${PKG_VERSION}.tar.gz"
     PKG_GIT_CLONE_BRANCH="rk-6.1-rkr3"
     PKG_PATCH_DIRS="${LINUX} ${DEVICE} default"
@@ -31,7 +31,7 @@ case ${DEVICE} in
     PKG_URL="https://git.kernel.org/torvalds/t/linux-${PKG_VERSION}.tar.gz"
     ;;
   *)
-    PKG_VERSION="6.11.4"
+    PKG_VERSION="6.11.5"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     ;;
 esac
