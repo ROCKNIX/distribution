@@ -27,9 +27,9 @@ for all_dtb in $BOOT_ROOT/*.dtb; do
 done
 
 # update bootloader
-if [ -f $SYSTEM_ROOT/usr/share/bootloader/idbloader.img ]; then
-  echo -n "Updating u-boot.bin on $BOOT_DISK... "
-  dd if=$SYSTEM_ROOT/usr/share/bootloader/u-boot-sunxi-with-spl.bin of=$BOOT_DISK bs=1k seek=8 conv=fsync &>/dev/null
+if [ -f $SYSTEM_ROOT/usr/share/bootloader/u-boot-sunxi-with-spl.bin ]; then
+  echo "Updating u-boot on: $BOOT_DISK..."
+  dd if=$SYSTEM_ROOT/usr/share/bootloader/u-boot-sunxi-with-spl.bin of=$BOOT_DISK bs=1K seek=8 conv=fsync,notrunc &>/dev/null
 fi
 
 # mount $BOOT_ROOT ro
