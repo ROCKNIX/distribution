@@ -40,6 +40,14 @@ for all_dtb in $BOOT_ROOT/*.dtb; do
   fi
 done
 
+if [ -d $SYSTEM_ROOT/usr/share/bootloader/overlays ]; then
+  echo "Updating device tree overlays..."
+  mkdir -p $BOOT_ROOT/overlays
+  for dtb in $SYSTEM_ROOT/usr/share/bootloader/overlays/*.dtbo; do
+    cp -p $dtb $BOOT_ROOT/overlays
+  done
+fi
+
 # Only update the bootloader for the Odroid Go Ultra and RGB10MAX3 Pro
 if [ $SUBDEVICE = "Odroid_GOU" ]; then
   if [ -f $SYSTEM_ROOT/usr/share/bootloader/u-boot.bin ]; then
