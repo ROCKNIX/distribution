@@ -3,8 +3,8 @@
 
 PKG_NAME="grub"
 PKG_VERSION="2.12"
-PKG_SHA256="af4d58df3024988799225e94bc1cfaccdeaa9d5725b4ad5517f3b6cf2ee9ed78"
 PKG_LICENSE="GPLv3"
+PKG_ARCH="x86_64"
 PKG_SITE="https://www.gnu.org/software/grub/index.html"
 PKG_URL="http://git.savannah.gnu.org/cgit/grub.git/snapshot/${PKG_NAME}-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_HOST="toolchain flex freetype:host gettext:host"
