@@ -73,4 +73,7 @@ makeinstall_target() {
 
   mkdir -p ${TOOLCHAIN}/share/grub
      cp -P bootaa64.efi ${TOOLCHAIN}/share/grub
+
+  mkdir ${INSTALL}/usr/share/bootloader
+    find_file_path bootloader/update.sh && cp -av ${FOUND_PATH} ${INSTALL}/usr/share/bootloader
 }
