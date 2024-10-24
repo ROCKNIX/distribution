@@ -31,6 +31,7 @@ PLATFORM=$(echo "${2}"| sed "s#^/.*/##")
 ASPECT=$(get_setting aspect_ratio "${PLATFORM}" "${GAME}")
 ASKIP=$(get_setting auto_frame_skip "${PLATFORM}" "${GAME}")
 FPS=$(get_setting show_fps "${PLATFORM}" "${GAME}")
+RENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
 VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
 
 #Set the cores to use
@@ -75,6 +76,16 @@ fi
         if [ "$ASKIP" = "max" ]
         then
                 sed -i '/^pvr.AutoSkipFrame =/c\pvr.AutoSkipFrame = 2' /storage/.config/flycast/emu.cfg
+        fi
+
+  #Renderer
+        if [ "$RENDERER" = "opengl" ]
+        then
+                sed -i '/^pvr.rend =/c\pvr.rend = 0' /storage/.config/flycast/emu.cfg
+        fi
+        if [ "$RENDERER" = "vulkan" ]
+        then
+                sed -i '/^pvr.rend =/c\pvr.rend = 4' /storage/.config/flycast/emu.cfg
         fi
 
   #ShowFPS
