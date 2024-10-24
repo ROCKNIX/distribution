@@ -130,7 +130,7 @@ pre_make_target() {
   fi
 
   # disable nfs support if not enabled
-  if [ ! "${NFS_SUPPORT}" = yes ]; then
+  if [ "${NFS_SUPPORT}" = no ]; then
     ${PKG_BUILD}/scripts/config --disable CONFIG_NFS_FS
   fi
 
