@@ -21,7 +21,7 @@ fi
 
 case ${DEVICE} in
   RK3588)
-    PKG_VERSION="693a5ea9432443eb4a58eee8a37f3b34501eb21b"
+    PKG_VERSION="0c0949a270027b749ab2c818e7ff61fc542757cc"
     PKG_URL="https://github.com/armbian/linux-rockchip/archive/${PKG_VERSION}.tar.gz"
     PKG_GIT_CLONE_BRANCH="rk-6.1-rkr3"
     PKG_PATCH_DIRS="${LINUX} ${DEVICE} default"
