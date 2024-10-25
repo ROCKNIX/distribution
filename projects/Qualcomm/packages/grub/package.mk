@@ -61,9 +61,6 @@ make_target() {
        LDFLAGS="-L${SYSROOT_PREFIX}/usr/lib"
 }
 
-    #boot chain configfile ext2 fat linux search efi_gop \
-    #part_msdos gzio gettext loadenv memrw
-
 makeinstall_target() {
   ${PKG_BUILD}/.${HOST_NAME}/grub-mkimage -d grub-core -o bootaa64.efi -O arm64-efi -p /EFI/BOOT \
     boot linux ext2 fat squash4 part_msdos part_gpt normal efi_gop search search_fs_file search_fs_uuid search_label chain reboot
