@@ -4,23 +4,14 @@
 
 PKG_NAME="mesa"
 PKG_LICENSE="OSS"
+PKG_VERSION="24.2.4"
 PKG_SITE="http://www.mesa3d.org/"
+PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain expat libdrm zstd Mako:host pyyaml:host"
 PKG_LONGDESC="Mesa is a 3-D graphics library with an API."
 PKG_TOOLCHAIN="meson"
+PKG_BUILD_VERSION="${PKG_VERSION}"
 PKG_PATCH_DIRS+=" ${DEVICE}"
-
-case ${DEVICE} in
-  SD865)
-    PKG_VERSION="23.3.6"
-    PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
-  ;;
-  *)
-    PKG_VERSION="24.2.5"
-    PKG_BUILD_VERSION="${PKG_VERSION}"
-    PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
-  ;;
-esac
 
 get_graphicdrivers
 
