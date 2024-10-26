@@ -46,4 +46,7 @@ pre_configure_target() {
 
 post_makeinstall_host() {
   cp ${TOOLCHAIN}/lib/pkgconfig/wayland-scanner.pc ${SYSROOT_PREFIX}/usr/lib/pkgconfig/
+  # Needed for vulkan tools >= 1.3.299
+  mkdir -p ${TOOLCHAIN}/${TARGET_NAME}/sysroot/usr/share/wayland
+  cp ${PKG_BUILD}/protocol/wayland.xml ${TOOLCHAIN}/${TARGET_NAME}/sysroot/usr/share/wayland/wayland.xml
 }
