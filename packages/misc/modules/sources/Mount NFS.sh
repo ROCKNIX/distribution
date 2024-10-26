@@ -16,12 +16,12 @@ if [ -f "/storage/.nfs-mount" ]; then
                         mkdir -p "/storage/games-${UPPER}/.tmp/games-workdir"
         fi
 
-        mount overlay -t overlay -o lowerdir=/storage/games-${LOWER}/roms,upperdir=/storage/games-${UPPER}/roms,workdir=/storage/games-${
+        mount overlay -t overlay -o lowerdir=/storage/games-${LOWER}/roms,upperdir=/storage/games-${UPPER}/roms,workdir=/storage/games-${UPPER}/.tmp/games-workdir /storage/roms
 	systemctl restart ${UI_SERVICE}
 else
         echo "
         ATTENSION!
-        You need to create the .nfs-mount file on the root of the internal storage (/storage/.nfs-mount) the format of this file should b
+        You need to create the .nfs-mount file on the root of the internal storage (/storage/.nfs-mount) the format of this file should be:
 
                NFS_PATH=<valid NFS URI>
 
