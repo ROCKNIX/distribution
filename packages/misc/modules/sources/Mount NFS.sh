@@ -1,10 +1,9 @@
-#!/bin/bash
-# SPDX-License-Identifier: GPL-2.0-or-later
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 
 . /etc/profile
-. /etc/os-release
 
 if [ -f "/storage/.nfs-mount" ]; then
         source /storage/.nfs-mount
@@ -30,7 +29,7 @@ i.e:
 
 NFS_PATH=nfs.example.com:/upper-path-containing-roms-subdir
 
-Obviously you also need ot be connected to the appropriate network segment. The base URI should contain a roms subdirectory already to merge. No attempt is made to deal with umounting existing external storage(2nd SD) and it will result in the NFS mount being mounted over this location if it exists"
+Obviously you also need to be connected to the appropriate network segment. The base URI should contain a roms subdirectory already to merge. No attempt is made to deal with unmounting existing external storage(2nd SD) and it will result in the NFS mount being mounted over this location if it exists"
 
 sleep 5
 fi
