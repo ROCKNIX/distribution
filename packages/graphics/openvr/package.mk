@@ -11,8 +11,7 @@ PKG_LONGDESC="API and runtime that allows access to VR hardware from multiple ve
 GET_HANDLER_SUPPORT="git"
 PKG_TOOLCHAIN="cmake"
 pre_configure_target() {
-  #export TARGET_CFLAGS=$(echo "${TARGET_CFLAGS} -Wno-unused-variable")
-:
+  :
 }
 
 post_makeinstall_target() {
