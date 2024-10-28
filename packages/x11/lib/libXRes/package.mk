@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
-
 PKG_NAME="libXRes"
 PKG_VERSION="860f84072e864832d3a94c365241fe619967b63a"
 PKG_LICENSE="OSS"
