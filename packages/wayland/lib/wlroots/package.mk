@@ -15,8 +15,8 @@ case ${DEVICE} in
     PKG_URL="https://github.com/stolen/rockchip-wlroots/archive/refs/tags/${PKG_VERSION}.tar.gz"
   ;;
   *)
-    PKG_VERSION="0.18.0-rk"
-    PKG_SHA256="15855f05acfe32d4c51a4ad4bed988258fbce5c8f140573229d6889ca8503ed1"
+    PKG_VERSION="0.18.1-rk"
+    PKG_SHA256="93572a16ba48749e1a8cea4e78a1992008e2713dcb72019abfc6f7efd0947ccf"
     PKG_URL="https://github.com/stolen/rockchip-wlroots/archive/refs/tags/${PKG_VERSION}.tar.gz"
   ;;
 esac
