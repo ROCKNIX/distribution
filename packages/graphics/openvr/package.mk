@@ -10,9 +10,6 @@ PKG_DEPENDS_TARGET="toolchain jsoncpp"
 PKG_LONGDESC="API and runtime that allows access to VR hardware from multiple vendors"
 GET_HANDLER_SUPPORT="git"
 PKG_TOOLCHAIN="cmake"
-
-#PKG_MESON_OPTS_TARGET=""
-
 pre_configure_target() {
   #export TARGET_CFLAGS=$(echo "${TARGET_CFLAGS} -Wno-unused-variable")
 :
