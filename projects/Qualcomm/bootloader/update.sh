@@ -21,12 +21,14 @@ for dtb in $SYSTEM_ROOT/usr/share/bootloader/*.dtb; do
   cp -p $dtb $BOOT_ROOT
 done
 
-if [ -d $SYSTEM_ROOT/usr/share/bootloader/overlays ]; then
-  echo "Updating device tree overlays..."
-  mkdir -p $BOOT_ROOT/overlays
-  for dtb in $SYSTEM_ROOT/usr/share/bootloader/overlays/*.dtbo; do
-    cp -p $dtb $BOOT_ROOT/overlays
-  done
+if [ -f "$SYSTEM_ROOT/usr/share/bootloader/bootaa64.efi" ]; then
+  echo "Updating EFI..."
+  $SYSTEM_ROOT/usr/share/bootloader/bootaa64.efi $BOOT_ROOT/efi/boot
+fi
+
+if [ -f "$SYSTEM_ROOT/usr/share/bootloader/grub.cfg" ]; then
+  echo "Updating GRUB..."
+  $SYSTEM_ROOT/usr/share/bootloader/grub.cfg $BOOT_ROOT/efi/boot
 fi
 
 # mount $BOOT_ROOT ro
