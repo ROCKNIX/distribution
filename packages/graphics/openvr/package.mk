@@ -19,6 +19,6 @@ post_makeinstall_target() {
 }
 
 post_install() {
-:
+  :
 }
 
