@@ -10,18 +10,3 @@ PKG_DEPENDS_TARGET="toolchain wayland wayland-protocols libdrm libxkbcommon libi
 PKG_LONGDESC="gamescope is a micro wayland compositor useful for games. It creates a virtual environment for a game application to run in that helps solves various headaches such as resolution, alt-tabbing, mouse focusing issues etc. Gamescope also tries to remove as many unneccessary copies as it can and should provide better latency."
 GET_HANDLER_SUPPORT="git"
 PKG_TOOLCHAIN="meson"
-
-#PKG_MESON_OPTS_TARGET=""
-
-pre_configure_target() {
-:
-}
-
-post_makeinstall_target() {
-:
-}
-
-post_install() {
-:
-}
-
