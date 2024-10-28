@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
-
 PKG_NAME="gamescope"
 PKG_VERSION="426fc5865a5a00339ab17bf006fddcca8a68675f"
 PKG_LICENSE="GPL"
