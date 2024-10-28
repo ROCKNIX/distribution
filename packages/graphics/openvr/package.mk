@@ -2,7 +2,6 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="openvr"
-#gamescope needs beta/non release tag
 PKG_VERSION="ebd425331229365dc3ec42d1bb8b2cc3c2332f81"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/ValveSoftware/openvr"
