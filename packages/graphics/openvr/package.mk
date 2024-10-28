@@ -15,7 +15,7 @@ pre_configure_target() {
 }
 
 post_makeinstall_target() {
-:
+  :
 }
 
 post_install() {
