@@ -23,12 +23,12 @@ done
 
 if [ -f "$SYSTEM_ROOT/usr/share/bootloader/bootaa64.efi" ]; then
   echo "Updating EFI..."
-  $SYSTEM_ROOT/usr/share/bootloader/bootaa64.efi $BOOT_ROOT/efi/boot
+  cp -p $SYSTEM_ROOT/usr/share/bootloader/bootaa64.efi $BOOT_ROOT/efi/boot
 fi
 
 if [ -f "$SYSTEM_ROOT/usr/share/bootloader/grub.cfg" ]; then
   echo "Updating GRUB..."
-  $SYSTEM_ROOT/usr/share/bootloader/grub.cfg $BOOT_ROOT/efi/boot
+  cp -p $SYSTEM_ROOT/usr/share/bootloader/grub.cfg $BOOT_ROOT/efi/boot
 fi
 
 # mount $BOOT_ROOT ro
