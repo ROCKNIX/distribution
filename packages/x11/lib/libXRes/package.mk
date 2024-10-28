@@ -11,7 +11,6 @@ PKG_LONGDESC="libXRes - X-Resource extension client library"
 GET_HANDLER_SUPPORT="git"
 PKG_TOOLCHAIN="autotools"
 
-
 PKG_CONFIGURE_OPTS_TARGET="--enable-malloc0returnsnull --without-xmlto"
 
 post_configure_target() {
