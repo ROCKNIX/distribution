@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
+
+
+PKG_NAME="openvr"
+#gamescope needs beta/non release tag
+PKG_VERSION="ebd425331229365dc3ec42d1bb8b2cc3c2332f81"
+PKG_LICENSE="GPL"
+PKG_SITE="https://github.com/ValveSoftware/openvr"
+PKG_URL="https://github.com/ValveSoftware/openvr.git"
+PKG_DEPENDS_TARGET="toolchain jsoncpp"
+PKG_LONGDESC="API and runtime that allows access to VR hardware from multiple vendors"
+GET_HANDLER_SUPPORT="git"
+PKG_TOOLCHAIN="cmake"
+
+#PKG_MESON_OPTS_TARGET=""
+
+pre_configure_target() {
+  #export TARGET_CFLAGS=$(echo "${TARGET_CFLAGS} -Wno-unused-variable")
+:
+}
+
+post_makeinstall_target() {
+:
+}
+
+post_install() {
+:
+}
+
