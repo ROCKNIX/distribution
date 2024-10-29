@@ -25,7 +25,7 @@ then
 fi
 
 create_svm(){
-  /usr/bin/scummvm --list-targets | tail -n +4 | cut -d " " -f 1 | \
+  /usr/bin/scummvm --list-targets | tail -n +3 | cut -d " " -f 1 | \
   while read line
   do
     id=($line);

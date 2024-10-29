@@ -4,7 +4,7 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="freetype"
-PKG_VERSION="2.13.2"
+PKG_VERSION="2.13.3"
 PKG_LICENSE="GPL"
 PKG_SITE="http://www.freetype.org"
 PKG_URL="http://download.savannah.gnu.org/releases/freetype/freetype-${PKG_VERSION}.tar.xz"

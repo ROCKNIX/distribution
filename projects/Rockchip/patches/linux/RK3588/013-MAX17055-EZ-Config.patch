@@ -1,8 +1,8 @@
 diff --git a/drivers/power/supply/max17042_battery.c b/drivers/power/supply/max17042_battery.c
-index 76b0f45a20b4..3afb634706c3 100644
+index ab031bbfbe78..c909bcd07312 100644
 --- a/drivers/power/supply/max17042_battery.c
 +++ b/drivers/power/supply/max17042_battery.c
-@@ -885,18 +885,80 @@ static irqreturn_t max17042_thread_handler(int id, void *dev)
+@@ -891,18 +891,80 @@ static irqreturn_t max17042_thread_handler(int id, void *dev)
  
  static void max17042_init_worker(struct work_struct *work)
  {
@@ -23,7 +23,7 @@ index 76b0f45a20b4..3afb634706c3 100644
 +		uint16_t d_qacc = design_cap / 32;
 +		uint16_t d_pacc = ((int)d_qacc) * 44138 / design_cap;
 +		uint16_t ichgterm = 256 * 160 / 25; // 256mA
-+		uint16_t vempty = ((3100 / 10) << 7) | (3880 / 40); // 3.1V
++		uint16_t vempty = ((3300 / 10) << 7) | (3880 / 40); // 3.1V
 +		u32 hibcfg;
 +
 +		dev_info(&chip->client->dev,
@@ -50,7 +50,7 @@ index 76b0f45a20b4..3afb634706c3 100644
 +		regmap_write(map, MAX17042_DesignCap, design_cap);
 +		regmap_write(map, MAX17042_dQacc, d_qacc);
 +		regmap_write(map, MAX17042_ICHGTerm, ichgterm);
-+		regmap_write(map, MAX17055_V_empty, vempty);
++		regmap_write(map, MAX17047_V_empty, vempty);
 +		regmap_write(map, MAX17042_dPacc, d_pacc);
 +
 +		// Write ModelCFG
@@ -75,7 +75,7 @@ index 76b0f45a20b4..3afb634706c3 100644
 +	dev_info(&chip->client->dev,
 +		"Voltage: %d mV\n", (data >> 7) * 10);
 +
-+	regmap_read(map, MAX17055_V_empty, &data);
++	regmap_read(map, MAX17047_V_empty, &data);
 +	dev_info(&chip->client->dev,
 +		"Vempty: %d mV\n", (data >> 7) * 10);
  
@@ -83,7 +83,9 @@ index 76b0f45a20b4..3afb634706c3 100644
  }
  
  #ifdef CONFIG_OF
-@@ -1011,7 +1067,7 @@ static const struct regmap_config max17042_regmap_config = {
+@@ -1009,22 +1071,22 @@ static const struct regmap_config max17042_regmap_config = {
+ 	.val_bits = 16,
+ 	.val_format_endian = REGMAP_ENDIAN_NATIVE,
  };
  
  static const struct power_supply_desc max17042_psy_desc = {
@@ -92,7 +94,10 @@ index 76b0f45a20b4..3afb634706c3 100644
  	.type		= POWER_SUPPLY_TYPE_BATTERY,
  	.get_property	= max17042_get_property,
  	.set_property	= max17042_set_property,
-@@ -1022,7 +1078,7 @@ static const struct power_supply_desc max17042_psy_desc = {
+ 	.property_is_writeable	= max17042_property_is_writeable,
+ 	.external_power_changed	= max17042_external_power_changed,
+ 	.properties	= max17042_battery_props,
+ 	.num_properties	= ARRAY_SIZE(max17042_battery_props),
  };
  
  static const struct power_supply_desc max17042_no_current_sense_psy_desc = {
@@ -101,7 +106,9 @@ index 76b0f45a20b4..3afb634706c3 100644
  	.type		= POWER_SUPPLY_TYPE_BATTERY,
  	.get_property	= max17042_get_property,
  	.set_property	= max17042_set_property,
-@@ -1042,10 +1104,11 @@ static int max17042_probe(struct i2c_client *client,
+ 	.property_is_writeable	= max17042_property_is_writeable,
+ 	.properties	= max17042_battery_props,
+@@ -1041,10 +1103,11 @@ static int max17042_probe(struct i2c_client *client,
  	struct device *dev = &client->dev;
  	struct max17042_chip *chip;
  	int ret;
@@ -113,7 +120,7 @@ index 76b0f45a20b4..3afb634706c3 100644
  		return -EIO;
  
  	chip = devm_kzalloc(&client->dev, sizeof(*chip), GFP_KERNEL);
-@@ -1134,17 +1197,27 @@ static int max17042_probe(struct i2c_client *client,
+@@ -1133,17 +1196,27 @@ static int max17042_probe(struct i2c_client *client,
  	/* Not able to update the charge threshold when exceeded? -> disable */
  	if (!client->irq)
  		regmap_write(chip->regmap, MAX17042_SALRT_Th, 0xff00);
@@ -123,8 +130,8 @@ index 76b0f45a20b4..3afb634706c3 100644
 +	regmap_read(chip->regmap, MAX17042_DesignCap, &design_cap);
 +	design_cap /= 2;
 +	if ((val & STATUS_POR_BIT) || design_cap != 5000) {
- 		INIT_WORK(&chip->work, max17042_init_worker);
- 		ret = devm_add_action(&client->dev, max17042_stop_work, chip);
+ 		ret = devm_work_autocancel(&client->dev, &chip->work,
+ 					   max17042_init_worker);
  		if (ret)
  			return ret;
  		schedule_work(&chip->work);
@@ -133,7 +140,7 @@ index 76b0f45a20b4..3afb634706c3 100644
 +		dev_info(&chip->client->dev,
 +			"Voltage: %d mV\n", (val >> 7) * 10);
 +
-+		regmap_read(chip->regmap, MAX17055_V_empty, &val);
++		regmap_read(chip->regmap, MAX17047_V_empty, &val);
 +		dev_info(&chip->client->dev,
 +			"Vempty: %d mV\n", (val >> 7) * 10);
 +

@@ -3,17 +3,17 @@
 
 PKG_NAME="dolphin-sa"
 PKG_LICENSE="GPLv2"
-PKG_DEPENDS_TARGET="toolchain libevdev libdrm ffmpeg zlib libpng lzo libusb zstd ecm openal-soft pulseaudio alsa-lib libfmt"
+PKG_DEPENDS_TARGET="toolchain libevdev libdrm ffmpeg zlib libpng lzo libusb zstd ecm openal-soft pulseaudio alsa-lib libfmt hidapi"
 PKG_LONGDESC="Dolphin is a GameCube / Wii emulator, allowing you to play games for these two platforms on PC with improvements. "
 PKG_TOOLCHAIN="cmake"
 
 case ${DEVICE} in
-#  RK3588)
-#    PKG_VERSION="0c2b8fd58787b1aa9e5ee250f885c2691aef492a"
-#    PKG_SITE="https://github.com/dolphin-emu/dolphin"
-#    PKG_URL="${PKG_SITE}.git"
-#    PKG_PATCH_DIRS+=" x11"
-#  ;;
+  SD865)
+    PKG_VERSION="904ac5592daf7adc0013110da60a706b21c5d72d"
+    PKG_SITE="https://github.com/dolphin-emu/dolphin"
+    PKG_URL="${PKG_SITE}.git"
+    PKG_PATCH_DIRS+=" x11"
+  ;;
   *)
     PKG_SITE="https://github.com/dolphin-emu/dolphin"
     PKG_URL="${PKG_SITE}.git"
@@ -85,7 +85,11 @@ post_install() {
     case ${DEVICE} in
       RK3588)
         DOLPHIN_PLATFORM="\${PLATFORM}"
-        LIBMALI="if [ ! -z 'lsmod | grep panfrost' ]; then LD_LIBRARY_PATH='\/usr\/lib\/libmali-valhall-g610-g13p0-x11-gbm.so' PLATFORM='wayland'; else PLATFORM='x11'; fi"
+        LIBMALI="if [ ! -z 'lsmod | grep panthor' ]; then LD_LIBRARY_PATH='\/usr\/lib\/libmali-valhall-g610-g13p0-x11-gbm.so' PLATFORM='wayland'; else PLATFORM='x11'; fi"
+      ;;
+      SD865)
+        DOLPHIN_PLATFORM="x11"
+        LIBMALI=""
       ;;
       *)
         DOLPHIN_PLATFORM="wayland"

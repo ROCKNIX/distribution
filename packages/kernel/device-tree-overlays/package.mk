@@ -9,13 +9,16 @@ PKG_IS_KERNEL_PKG="yes"
 
 make_target() {
     for dts in ${PKG_BUILD}/${DEVICE}/*.dts; do
-        $(kernel_path)/scripts/dtc/dtc -@ -I dts -O dtb -o ${dts%.dts}.dtb ${dts}
+        $(kernel_path)/scripts/dtc/dtc -@ -I dts -O dtb -o ${dts%.dts}.dtbo ${dts}
     done
 }
 
 makeinstall_target() {
     mkdir -p ${INSTALL}/usr/share/bootloader/overlays
-    cp ${PKG_BUILD}/${DEVICE}/*.dtb ${INSTALL}/usr/share/bootloader/overlays
-    mkdir -p ${INSTALL}/usr/bin
-    cp ${PKG_BUILD}/dtb_overlay ${INSTALL}/usr/bin
+    cp ${PKG_BUILD}/${DEVICE}/*.dtbo ${INSTALL}/usr/share/bootloader/overlays
+
+    if [ ${DEVICE} != "RK3326" ]; then
+	    mkdir -p ${INSTALL}/usr/bin
+        cp ${PKG_BUILD}/dtb_overlay ${INSTALL}/usr/bin
+    fi
 }

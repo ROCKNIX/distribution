@@ -3,11 +3,11 @@
 # Copyright (C) 2021-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="vulkan-tools"
-PKG_VERSION="1.3.285"
+PKG_VERSION="1.3.300"
 PKG_LICENSE="Apache-2.0"
 PKG_SITE="https://github.com/KhronosGroup/Vulkan-Tools"
 PKG_URL="https://github.com/KhronosGroup/Vulkan-tools/archive/v${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain vulkan-loader glslang:host Python3:host volk"
+PKG_DEPENDS_TARGET="toolchain vulkan-loader glslang:host Python3:host volk wayland"
 PKG_LONGDESC="This project provides Khronos official Vulkan Tools and Utilities."
 
 configure_package() {
@@ -39,7 +39,7 @@ pre_configure_target() {
     PKG_CMAKE_OPTS_TARGET+=" -DBUILD_CUBE=ON \
                              -DBUILD_WSI_XCB_SUPPORT=ON \
                              -DBUILD_WSI_XLIB_SUPPORT=ON \
-                             -DBUILD_WSI_WAYLAND_SUPPORT=ON
+                             -DBUILD_WSI_WAYLAND_SUPPORT=ON \
                              -DCUBE_WSI_SELECTION=WAYLAND"
   else
     PKG_CMAKE_OPTS_TARGET+=" -DBUILD_CUBE=ON \

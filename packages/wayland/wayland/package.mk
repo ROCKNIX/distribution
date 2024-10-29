@@ -7,28 +7,8 @@ PKG_SITE="https://wayland.freedesktop.org/"
 PKG_DEPENDS_HOST="libffi:host expat:host libxml2:host"
 PKG_DEPENDS_TARGET="toolchain wayland:host libffi expat libxml2"
 PKG_LONGDESC="a display server protocol"
-
-case ${DEVICE} in
-  S922X)
-    if [ "${DEVICE}" = "S922X" -a "${USE_MALI}" != "no" ]; then
-      PKG_VERSION="1.21.0"
-      PKG_SHA256="6dc64d7fc16837a693a51cfdb2e568db538bfdc9f457d4656285bb9594ef11ac"
-      PKG_PATCH_DIRS+=" legacy"
-    else
-      PKG_VERSION="1.23.0"
-      PKG_SHA256="05b3e1574d3e67626b5974f862f36b5b427c7ceeb965cb36a4e6c2d342e45ab2"
-    fi
-  ;;
-  RK3588)
-    PKG_VERSION="1.22.0"
-    PKG_SHA256="1540af1ea698a471c2d8e9d288332c7e0fd360c8f1d12936ebb7e7cbc2425842"
-  ;;
-  *)
-    PKG_VERSION="1.23.0"
-    PKG_SHA256="05b3e1574d3e67626b5974f862f36b5b427c7ceeb965cb36a4e6c2d342e45ab2"
-  ;;
-esac
-
+PKG_VERSION="1.23.1"
+PKG_SHA256="864fb2a8399e2d0ec39d56e9d9b753c093775beadc6022ce81f441929a81e5ed"
 PKG_URL="https://gitlab.freedesktop.org/wayland/wayland/-/releases/${PKG_VERSION}/downloads/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 
 PKG_MESON_OPTS_HOST="-Dlibraries=false \
@@ -50,4 +30,7 @@ pre_configure_target() {
 
 post_makeinstall_host() {
   cp ${TOOLCHAIN}/lib/pkgconfig/wayland-scanner.pc ${SYSROOT_PREFIX}/usr/lib/pkgconfig/
+  # Needed for vulkan tools >= 1.3.299
+  mkdir -p ${TOOLCHAIN}/${TARGET_NAME}/sysroot/usr/share/wayland
+  cp ${PKG_BUILD}/protocol/wayland.xml ${TOOLCHAIN}/${TARGET_NAME}/sysroot/usr/share/wayland/wayland.xml
 }

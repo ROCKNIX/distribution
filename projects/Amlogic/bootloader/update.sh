@@ -1,7 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2017-2021 Team LibreELEC (https://libreelec.tv)
-# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2022-24 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 [ -z "$SYSTEM_ROOT" ] && SYSTEM_ROOT=""
 [ -z "$BOOT_ROOT" ] && BOOT_ROOT="/flash"
@@ -23,14 +23,11 @@ DT_ID=$($SYSTEM_ROOT/usr/bin/dtname)
 
 if [ -n "$DT_ID" ]; then
   case $DT_ID in
-    *odroid-go-ultra*|*rgb10-max-3*)
+    *odroid-go-ultra|*rgb10-max-3-pro)
       SUBDEVICE="Odroid_GOU"
       ;;
-    *odroid-n2|*odroid-n2-plus)
+    *odroid-n2*)
       SUBDEVICE="Odroid_N2"
-      ;;
-    *odroid-n2l)
-      SUBDEVICE="Odroid_N2L"
       ;;
   esac
 fi
@@ -43,41 +40,29 @@ for all_dtb in $BOOT_ROOT/*.dtb; do
   fi
 done
 
-if [ -f $BOOT_ROOT/extlinux/extlinux.conf ]; then
-  if [ -f $SYSTEM_ROOT/usr/share/bootloader/extlinux/extlinux.conf ]; then
-    echo "Updating extlinux.conf..."
-    cp -p $SYSTEM_ROOT/usr/share/bootloader/extlinux/extlinux.conf $BOOT_ROOT/extlinux
+# Only update the bootloader for the Odroid Go Ultra and RGB10MAX3 Pro
+if [ $SUBDEVICE = "Odroid_GOU" ]; then
+  if [ -f $SYSTEM_ROOT/usr/share/bootloader/u-boot.bin ]; then
+    echo "Updating u-boot on: $BOOT_DISK..."
+    dd if=$SYSTEM_ROOT/usr/share/bootloader/u-boot.bin of=$BOOT_DISK conv=fsync,notrunc bs=512 seek=1 &>/dev/null
   fi
 fi
 
-if [ -f $BOOT_ROOT/boot.ini ]; then
-  if [ -f /usr/share/bootloader/boot.ini ]; then
-    echo "Updating boot.ini"
-    cp -p /usr/share/bootloader/boot.ini $BOOT_ROOT/boot.ini
+# REMOVE ME IN THE FUTURE!
+# Convert from boot.ini to extlinux and cleanup
+  [ -e /flash/boot.ini ] && rm -f /flash/boot.ini
+  if [ ! -e /flash/extlinux/extlinux.conf ]; then
+    mkdir -p /flash/extlinux
+    cat <<EOF >/flash/extlinux/extlinux.conf
+LABEL ROCKNIX
+  LINUX /KERNEL
+  FDTDIR /
+  APPEND boot=LABEL=ROCKNIX disk=LABEL=STORAGE rootwait quiet systemd.debug_shell=ttyAML0 console=ttyAML0,115200n8 console=tty0 no_console_suspend net.ifnames=0 consoleblank=0 video=HDMI-A-1:1920x1080@60
+EOF
   fi
-fi
-
-if [ -f $SYSTEM_ROOT/usr/share/bootloader/${SUBDEVICE}_u-boot ]; then
-  echo "Updating u-boot on: $BOOT_DISK..."
-  dd if=$SYSTEM_ROOT/usr/share/bootloader/${SUBDEVICE}_u-boot of=$BOOT_DISK conv=fsync,notrunc bs=512 seek=1 &>/dev/null
-fi
-
-if [ -f $BOOT_ROOT/ODROIDBIOS.BIN ]; then
-  if [ -f $SYSTEM_ROOT/usr/share/bootloader/ODROIDBIOS.BIN ]; then
-    echo "Updating ODROIDBIOS.BIN..."
-    cp -p $SYSTEM_ROOT/usr/share/bootloader/ODROIDBIOS.BIN $BOOT_ROOT
-  fi
-fi
-
-if [ -d $BOOT_ROOT/res ]; then
-  if [ -d $SYSTEM_ROOT/usr/share/bootloader/res ]; then
-    echo "Updating res..."
-    cp -rp $SYSTEM_ROOT/usr/share/bootloader/res $BOOT_ROOT
-  fi
-fi
-
-# Update system partition label to ROCKNIX
-[ ! -z "$(blkid | grep JELOS)" ] && ${SYSTEM_ROOT}/usr/sbin/dosfslabel $BOOT_PART ROCKNIX
+  [ -e /flash/ODROIDBIOS.BIN ] && rm -f /flash/ODROIDBIOS.BIN
+  [ -d /flash/res ] && rm -rf /flash/res
+# END
 
 # mount $BOOT_ROOT ro
 sync

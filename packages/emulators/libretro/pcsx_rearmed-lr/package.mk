@@ -3,7 +3,7 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="pcsx_rearmed-lr"
-PKG_VERSION="19f1a7d2de3a136810a84341db77d4f5eb8f3361"
+PKG_VERSION="237887e817e23800997466632deb8ba63797a4cb"
 PKG_ARCH="arm aarch64"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/pcsx_rearmed"
@@ -14,6 +14,9 @@ PKG_TOOLCHAIN="manual"
 
 pre_configure_target() {
   sed -i 's/\-O[23]/-Ofast/' ${PKG_BUILD}/Makefile
+  export CFLAGS="${CFLAGS} -flto -fipa-pta"
+  export CXXFLAGS="${CXXFLAGS} -flto -fipa-pta"
+  export LDFLAGS="${LDFLAGS} -flto -fipa-pta"
 }
 
 make_target() {

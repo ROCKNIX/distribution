@@ -3,7 +3,7 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="emulationstation"
-PKG_VERSION="ed2692bf2264f7699fd13ab6f214940ac88dddb9"
+PKG_VERSION="3dcca5951701535aee4a0514b7b54fa5599617e3"
 PKG_GIT_CLONE_BRANCH="main"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/ROCKNIX/emulationstation"
@@ -142,7 +142,7 @@ makeinstall_target() {
   if [ "${EMULATION_DEVICE}" = "no" ] || \
      [ "${BASE_ONLY}" = "true" ]
   then
-    cat <<EOF >${INSTALL}/etc/emulationstation/es_systems.cfg
+    cat <<EOF >${INSTALL}/usr/config/emulationstation/es_systems.cfg
 <?xml version="1.0" encoding="UTF-8"?>
 <systemList>
         <system>

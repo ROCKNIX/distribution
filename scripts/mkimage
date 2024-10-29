@@ -121,14 +121,14 @@ alias mmd='mmd -i "${LE_TMP}/part1.fat"'
 # create filesystem on part1
 echo "image: creating filesystem on part1..."
 
-if [ "${BOOTLOADER}" = "syslinux" -o "${BOOTLOADER}" = "u-boot" ]; then
+if [ "${BOOTLOADER}" = "syslinux" -o "${BOOTLOADER}" = "arm-efi" -o "${BOOTLOADER}" = "u-boot" ]; then
   mformat -i "${LE_TMP}/part1.fat" -v "${DISTRO_BOOTLABEL}" -N "${UUID_SYSTEM//-/}" :: >"${SAVE_ERROR}" 2>&1 || show_error
 fi
 sync
 
 if [ "${BOOTLOADER}" = "syslinux" ]; then
   # create bootloader configuration
-  echo "image: creating bootloader configuration..."
+  echo "image: creating bootloader configuration... (syslinux)"
   cat << EOF > "${LE_TMP}/syslinux.cfg"
 DEFAULT run
 TIMEOUT 0
@@ -168,20 +168,45 @@ EOF
   mcopy "${TOOLCHAIN}/share/grub/bootia32.efi" ::/EFI/BOOT
   mcopy "${LE_TMP}/grub.cfg" ::/EFI/BOOT
 
-elif [ "${BOOTLOADER}" = "u-boot" -a \( -n "${UBOOT_CONFIG}" -o -n "${SUBDEVICE}" \) ]; then
+elif [ "${BOOTLOADER}" = "arm-efi" ]; then
+
+  # create bootloader configuration
+  echo "image: creating bootloader configuration... (arm-efi)"
+  if [ -f "${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/bootloader/grub" ]; then
+    . "${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/bootloader/grub"
+  elif [ -f "${PROJECT_DIR}/${PROJECT}/bootloader/grub" ]; then
+    . "${PROJECT_DIR}/${PROJECT}/bootloader/grub"
+  else
+  cat << EOF > "${LE_TMP}/grub.cfg"
+set timeout="0"
+set default="ROCKNIX"
+menuentry "ROCKNIX" {
+        search --set -f /KERNEL
+        linux /KERNEL boot=LABEL=${DISTRO_BOOTLABEL} disk=LABEL=${DISTRO_DISKLABEL} grub_portable ${EXTRA_CMDLINE}
+        devicetree /${DEVICE_DTB[0]}.dtb
+}
+EOF
+fi
+
+  # copy files
+  echo "image: copying files to part1..."
+  mcopy "${TARGET_IMG}/${BUILD_NAME}.kernel" "::/${KERNEL_NAME}"
+  mcopy "${TARGET_IMG}/${BUILD_NAME}.system" ::/SYSTEM
+  mcopy "${RELEASE_DIR}/target/KERNEL.md5" "::/${KERNEL_NAME}.md5"
+  mcopy "${RELEASE_DIR}/target/SYSTEM.md5" ::/SYSTEM.md5
+
+  for dtb in ${DEVICE_DTB[@]}; do
+echo "image: copying ${dtb}.dtb..."
+    mcopy "${RELEASE_DIR}/3rdparty/bootloader/${dtb}.dtb" ::
+done
+
+  mmd EFI EFI/BOOT
+  mcopy "${TOOLCHAIN}/share/grub/bootaa64.efi" ::/EFI/BOOT
+  mcopy "${LE_TMP}/grub.cfg" ::/EFI/BOOT
+
+elif [ "${BOOTLOADER}" = "u-boot" ]; then
   # create bootloader configuration
   echo "image: creating bootloader configuration... (u-boot)"
-  # If overlays exists copy all of them
-  if [ -d "${RELEASE_DIR}/3rdparty/bootloader/overlays" ]; then
-    mcopy -s ${RELEASE_DIR}/3rdparty/bootloader/overlays ::
-  fi
-  for DTB in ${DEVICE_DTB[@]}
-  do
-    if [ -f "${RELEASE_DIR}/3rdparty/bootloader/${DTB}.dtb" ]; then
-      mcopy "${RELEASE_DIR}/3rdparty/bootloader/${DTB}.dtb" ::
-    fi
-  done
-
   if [ -f "${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/bootloader/mkimage" ]; then
     . "${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/bootloader/mkimage"
   elif [ -f "${PROJECT_DIR}/${PROJECT}/bootloader/mkimage" ]; then
@@ -195,11 +220,6 @@ elif [ "${BOOTLOADER}" = "u-boot" -a \( -n "${UBOOT_CONFIG}" -o -n "${SUBDEVICE}
   mcopy "${TARGET_IMG}/${BUILD_NAME}.system" ::/SYSTEM
   mcopy "${RELEASE_DIR}/target/KERNEL.md5" "::/${KERNEL_NAME}.md5"
   mcopy "${RELEASE_DIR}/target/SYSTEM.md5" ::/SYSTEM.md5
-
-elif [ "${BOOTLOADER}" = "u-boot" ]; then
-  echo "to make an image using u-boot UBOOT_SYSTEM must be set"
-  cleanup
-  exit
 fi # bootloader
 
 # run fsck

@@ -2,7 +2,6 @@
 # Copyright (C) 2019-present Shanti Gilbert (https://github.com/shantigilbert)
 # Copyright (C) 2023 Nicholas Ricciuti (rishooty@gmail.com)
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
-
 PKG_NAME="mupen64plus-sa-core"
 PKG_VERSION="5340dafcc0f5e8284057ab931dd5c66222d3d49e"
 #PKG_VERSION="d4f3e12db0609158c7b4e0beef2bb950aad0ccb9"
@@ -22,7 +21,7 @@ else
 fi
 
 case ${DEVICE} in
-  AMD64)
+  AMD64|SD865)
     PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
     export USE_GLES=0
   ;;
@@ -33,7 +32,6 @@ case ${DEVICE} in
 esac
 
 make_target() {
-
   export HOST_CPU=${TARGET_ARCH} \
          NEW_DYNAREC=1 \
          VFP_HARD=1 \

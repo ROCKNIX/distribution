@@ -2,7 +2,7 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="mupen64plus-nx-lr"
-PKG_VERSION="c7cd8edcd015ddcbd4a2e984573c9c1d1ddd0b6e"
+PKG_VERSION="c2f6acfe3b7b07ab86c3e4cd89f61a9911191793"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/mupen64plus-libretro-nx"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
@@ -37,6 +37,9 @@ pre_configure_target() {
   case ${DEVICE} in
     RK3*|S922X)
       PKG_MAKE_OPTS_TARGET=" platform=${DEVICE}"
+    ;;
+    SD865)
+      PKG_MAKE_OPTS_TARGET=" platform=RK3588"
     ;;
     H700)
       PKG_MAKE_OPTS_TARGET=" platform=RK3326"

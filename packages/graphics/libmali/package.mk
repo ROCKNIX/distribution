@@ -62,8 +62,31 @@ post_makeinstall_target() {
   mkdir -p "${INSTALL}/usr/bin/"
   cp -v "${PKG_BUILD}/bin/gpudriver" "${INSTALL}/usr/bin/"
 
-  #x11 lib needed for some applications on the RK3588
+  # x11 lib needed for some applications on the RK3588
   if [ ${DEVICE} = "RK3588" ] && [ ${TARGET_ARCH} = "arch64" ]; then
       curl -Lo ${INSTALL}/usr/lib/libmali-valhall-g610-g13p0-x11-gbm.so ${PKG_SITE}/raw/master/lib/aarch64-linux-gnu/libmali-valhall-g610-g13p0-x11-gbm.so
   fi
+
+  # set the correct mesa pan kernel driver module based on device
+  case ${DEVICE} in
+    RK3588)
+      PAN="panthor"
+      DTB_OVERLAY_LOAD="\/usr\/bin\/dtb_overlay set driver-gpu driver-gpu-panthor.dtbo"
+      DTB_OVERLAY_UNLOAD="\/usr\/bin\/dtb_overlay set driver-gpu None"
+    ;;
+    *)
+      PAN="panfrost"
+      DTB_OVERLAY=""
+      DTB_OVERLAY_UNLOAD=""
+    ;;
+  esac
+
+  sed -e "s/@PAN@/${PAN}/g" \
+      -i  ${INSTALL}/usr/bin/gpudriver
+
+  sed -e "s/@DTB_OVERLAY_LOAD@/${DTB_OVERLAY_LOAD}/g" \
+      -i  ${INSTALL}/usr/bin/gpudriver
+
+  sed -e "s/@DTB_OVERLAY_UNLOAD@/${DTB_OVERLAY_UNLOAD}/g" \
+      -i  ${INSTALL}/usr/bin/gpudriver
 }

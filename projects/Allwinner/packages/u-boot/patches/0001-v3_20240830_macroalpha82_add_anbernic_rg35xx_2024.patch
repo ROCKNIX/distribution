@@ -1,0 +1,679 @@
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 1/9] sunxi: H616: dram: LPDDR4: adjust settings
+From: Jernej Skrabec <jernej.skrabec@gmail.com>
+Date: Fri, 30 Aug 2024 10:55:06 -0500
+Message-Id: <20240830155514.481410-2-macroalpha82@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Adjust H616 LPDDR4 DRAM settings to be in line with vendor driver.
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@gmail.com>
+Tested-by: Chris Morgan <macromorgan@hotmail.com>
+---
+ arch/arm/mach-sunxi/dram_sun50i_h616.c        | 33 +++++++++++++------
+ .../dram_timings/h616_lpddr4_2133.c           |  2 +-
+ 2 files changed, 24 insertions(+), 11 deletions(-)
+
+diff --git a/arch/arm/mach-sunxi/dram_sun50i_h616.c b/arch/arm/mach-sunxi/dram_sun50i_h616.c
+index 37c139e0ee..5be2887a06 100644
+--- a/arch/arm/mach-sunxi/dram_sun50i_h616.c
++++ b/arch/arm/mach-sunxi/dram_sun50i_h616.c
+@@ -293,14 +293,22 @@ static void mctl_phy_configure_odt(const struct dram_para *para)
+ 	dmb();
+ }
+ 
+-static bool mctl_phy_write_leveling(const struct dram_config *config)
++static bool mctl_phy_write_leveling(const struct dram_para *para,
++				    const struct dram_config *config)
+ {
+ 	bool result = true;
+ 	u32 val;
+ 
+ 	clrsetbits_le32(SUNXI_DRAM_PHY0_BASE + 8, 0xc0, 0x80);
+-	writel(4, SUNXI_DRAM_PHY0_BASE + 0xc);
+-	writel(0x40, SUNXI_DRAM_PHY0_BASE + 0x10);
++
++	if (para->type == SUNXI_DRAM_TYPE_LPDDR4) {
++		/* MR2 value */
++		writel(0x1b, SUNXI_DRAM_PHY0_BASE + 0xc);
++		writel(0, SUNXI_DRAM_PHY0_BASE + 0x10);
++	} else {
++		writel(4, SUNXI_DRAM_PHY0_BASE + 0xc);
++		writel(0x40, SUNXI_DRAM_PHY0_BASE + 0x10);
++	}
+ 
+ 	setbits_le32(SUNXI_DRAM_PHY0_BASE + 8, 4);
+ 
+@@ -859,9 +867,9 @@ static void mctl_phy_ca_bit_delay_compensation(const struct dram_para *para,
+ 		}
+ 		break;
+ 	case SUNXI_DRAM_TYPE_LPDDR4:
+-		if (para->tpr2 & 1) {
+-			writel(val, SUNXI_DRAM_PHY0_BASE + 0x788);
+-		} else {
++		writel(val, SUNXI_DRAM_PHY0_BASE + 0x788);
++		if (config->ranks == 2) {
++			val = (para->tpr10 >> 11) & 0x1e;
+ 			writel(val, SUNXI_DRAM_PHY0_BASE + 0x794);
+ 		};
+ 		break;
+@@ -1080,19 +1088,27 @@ static bool mctl_phy_init(const struct dram_para *para,
+ 		mctl_await_completion(&mctl_ctl->mrctrl0, BIT(31), 0);
+ 
+ 		writel(0xb04, &mctl_ctl->mrctrl1);
++		udelay(10);
+ 		writel(0x80000030, &mctl_ctl->mrctrl0);
++		udelay(10);
+ 		mctl_await_completion(&mctl_ctl->mrctrl0, BIT(31), 0);
+ 
+ 		writel(0xc72, &mctl_ctl->mrctrl1);
++		udelay(10);
+ 		writel(0x80000030, &mctl_ctl->mrctrl0);
++		udelay(10);
+ 		mctl_await_completion(&mctl_ctl->mrctrl0, BIT(31), 0);
+ 
+ 		writel(0xe09, &mctl_ctl->mrctrl1);
++		udelay(10);
+ 		writel(0x80000030, &mctl_ctl->mrctrl0);
++		udelay(10);
+ 		mctl_await_completion(&mctl_ctl->mrctrl0, BIT(31), 0);
+ 
+ 		writel(0x1624, &mctl_ctl->mrctrl1);
++		udelay(10);
+ 		writel(0x80000030, &mctl_ctl->mrctrl0);
++		udelay(10);
+ 		mctl_await_completion(&mctl_ctl->mrctrl0, BIT(31), 0);
+ 		break;
+ 	case SUNXI_DRAM_TYPE_DDR4:
+@@ -1108,7 +1124,7 @@ static bool mctl_phy_init(const struct dram_para *para,
+ 
+ 	if (para->tpr10 & TPR10_WRITE_LEVELING) {
+ 		for (i = 0; i < 5; i++)
+-			if (mctl_phy_write_leveling(config))
++			if (mctl_phy_write_leveling(para, config))
+ 				break;
+ 		if (i == 5) {
+ 			debug("write leveling failed!\n");
+@@ -1234,9 +1250,6 @@ static bool mctl_ctrl_init(const struct dram_para *para,
+ 	setbits_le32(&mctl_ctl->unk_0x3180, BIT(31) | BIT(30));
+ 	setbits_le32(&mctl_ctl->unk_0x4180, BIT(31) | BIT(30));
+ 
+-	if (para->type == SUNXI_DRAM_TYPE_LPDDR4)
+-		setbits_le32(&mctl_ctl->dbictl, 0x1);
+-
+ 	setbits_le32(&mctl_ctl->rfshctl3, BIT(0));
+ 	clrbits_le32(&mctl_ctl->dfimisc, BIT(0));
+ 
+diff --git a/arch/arm/mach-sunxi/dram_timings/h616_lpddr4_2133.c b/arch/arm/mach-sunxi/dram_timings/h616_lpddr4_2133.c
+index e6446b9180..6f5c4acbd6 100644
+--- a/arch/arm/mach-sunxi/dram_timings/h616_lpddr4_2133.c
++++ b/arch/arm/mach-sunxi/dram_timings/h616_lpddr4_2133.c
+@@ -23,7 +23,7 @@ void mctl_set_timing_params(const struct dram_para *para)
+ 	u8 trcd		= max(ns_to_t(18), 2);
+ 	u8 trc		= ns_to_t(65);
+ 	u8 txp		= max(ns_to_t(8), 2);
+-	u8 trtp		= max(ns_to_t(8), 4);
++	u8 trtp		= 4;
+ 	u8 trp		= ns_to_t(21);
+ 	u8 tras		= ns_to_t(42);
+ 	u16 trefi	= ns_to_t(3904) / 32;
+-- 
+2.34.1
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 2/9] sunxi: H616: DRAM: Add alternative pin mapping
+From: Chris Morgan <macromorgan@hotmail.com>
+Date: Fri, 30 Aug 2024 10:55:07 -0500
+Message-Id: <20240830155514.481410-3-macroalpha82@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+It seems that different dies need different PHY pin mapping. Select
+alternatives at compile time.
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@gmail.com>
+[adapted to switch from runtime to compile time config]
+Signed-off-by: Chris Morgan <macromorgan@hotmail.com>
+---
+ arch/arm/mach-sunxi/Kconfig            | 17 +++++++++++++++++
+ arch/arm/mach-sunxi/dram_sun50i_h616.c | 22 +++++++++++++++++++++-
+ 2 files changed, 38 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm/mach-sunxi/Kconfig b/arch/arm/mach-sunxi/Kconfig
+index 17666814c5..078f8c19fa 100644
+--- a/arch/arm/mach-sunxi/Kconfig
++++ b/arch/arm/mach-sunxi/Kconfig
+@@ -108,6 +108,23 @@ config DRAM_SUN50I_H616_TPR12
+ 	default 0x0
+ 	help
+ 	  TPR12 value from vendor DRAM settings.
++
++choice
++	prompt "H616 PHY pin mapping selection"
++	default DRAM_SUN50I_H616_PHY_ADDR_MAP_0
++
++config DRAM_SUN50I_H616_PHY_ADDR_MAP_0
++	bool "H313/H616/H618"
++	help
++	  The pin mapping selection used by the H313, H616, H618, and
++	  possibly other dies which use the H616 DRAM controller.
++
++config DRAM_SUN50I_H616_PHY_ADDR_MAP_1
++	bool "H700"
++	help
++	  The pin mapping selection used by the H700 and possibly other
++	  dies which use the H616 DRAM controller.
++endchoice
+ endif
+ 
+ config SUN6I_PRCM
+diff --git a/arch/arm/mach-sunxi/dram_sun50i_h616.c b/arch/arm/mach-sunxi/dram_sun50i_h616.c
+index 5be2887a06..52f7799173 100644
+--- a/arch/arm/mach-sunxi/dram_sun50i_h616.c
++++ b/arch/arm/mach-sunxi/dram_sun50i_h616.c
+@@ -225,6 +225,26 @@ static void mctl_set_addrmap(const struct dram_config *config)
+ 	mctl_ctl->addrmap[8] = 0x3F3F;
+ }
+ 
++#ifdef CONFIG_DRAM_SUN50I_H616_PHY_ADDR_MAP_1
++static const u8 phy_init[] = {
++#ifdef CONFIG_SUNXI_DRAM_H616_DDR3_1333
++	0x08, 0x02, 0x12, 0x05, 0x15, 0x17, 0x18, 0x0b,
++	0x14, 0x07, 0x04, 0x13, 0x0c, 0x00, 0x16, 0x1a,
++	0x0a, 0x11, 0x03, 0x10, 0x0e, 0x01, 0x0d, 0x19,
++	0x06, 0x09, 0x0f
++#elif defined(CONFIG_SUNXI_DRAM_H616_LPDDR3)
++	0x18, 0x00, 0x04, 0x09, 0x06, 0x05, 0x02, 0x19,
++	0x17, 0x03, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
++	0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x07,
++	0x08, 0x01, 0x1a
++#elif defined(CONFIG_SUNXI_DRAM_H616_LPDDR4)
++	0x03, 0x00, 0x17, 0x05, 0x02, 0x19, 0x06, 0x07,
++	0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
++	0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x01,
++	0x18, 0x04, 0x1a
++#endif
++};
++#else /* CONFIG_DRAM_SUN50I_H616_PHY_ADDR_MAP_0 */
+ static const u8 phy_init[] = {
+ #ifdef CONFIG_SUNXI_DRAM_H616_DDR3_1333
+ 	0x07, 0x0b, 0x02, 0x16, 0x0d, 0x0e, 0x14, 0x19,
+@@ -243,7 +263,7 @@ static const u8 phy_init[] = {
+ 	0x18, 0x03, 0x1a
+ #endif
+ };
+-
++#endif /* CONFIG_DRAM_SUN50I_H616_PHY_ADDR_MAP_0 */
+ #define MASK_BYTE(reg, nr) (((reg) >> ((nr) * 8)) & 0x1f)
+ static void mctl_phy_configure_odt(const struct dram_para *para)
+ {
+-- 
+2.34.1
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 3/9] sunxi: H616: DRAM: Adjust configuration procedure
+From: Jernej Skrabec <jernej.skrabec@gmail.com>
+Date: Fri, 30 Aug 2024 10:55:08 -0500
+Message-Id: <20240830155514.481410-4-macroalpha82@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+When comparing configuration procedure to vendor driver, I noticed that
+one command was out of order and that some delays were missing.
+
+Fix that.
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@gmail.com>
+Tested-by: Chris Morgan <macromorgan@hotmail.com>
+---
+ arch/arm/mach-sunxi/dram_sun50i_h616.c | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm/mach-sunxi/dram_sun50i_h616.c b/arch/arm/mach-sunxi/dram_sun50i_h616.c
+index 52f7799173..35405915e9 100644
+--- a/arch/arm/mach-sunxi/dram_sun50i_h616.c
++++ b/arch/arm/mach-sunxi/dram_sun50i_h616.c
+@@ -1014,12 +1014,16 @@ static bool mctl_phy_init(const struct dram_para *para,
+ 		clrsetbits_le32(SUNXI_DRAM_PHY0_BASE + 0x14c, 0xe0, 0x20);
+ 	}
+ 
++	clrbits_le32(&mctl_com->unk_0x500, 0x200);
++	udelay(1);
++
+ 	clrbits_le32(SUNXI_DRAM_PHY0_BASE + 0x14c, 8);
+ 
+ 	mctl_await_completion((u32 *)(SUNXI_DRAM_PHY0_BASE + 0x180), 4, 4);
+ 
++	udelay(1000);
++
+ 	writel(0x37, SUNXI_DRAM_PHY0_BASE + 0x58);
+-	clrbits_le32(&mctl_com->unk_0x500, 0x200);
+ 
+ 	writel(0, &mctl_ctl->swctl);
+ 	setbits_le32(&mctl_ctl->dfimisc, 1);
+@@ -1038,6 +1042,8 @@ static bool mctl_phy_init(const struct dram_para *para,
+ 	mctl_await_completion(&mctl_ctl->swstat, 1, 1);
+ 	mctl_await_completion(&mctl_ctl->statr, 3, 1);
+ 
++	udelay(200);
++
+ 	writel(0, &mctl_ctl->swctl);
+ 	clrbits_le32(&mctl_ctl->dfimisc, 1);
+ 
+@@ -1281,8 +1287,10 @@ static bool mctl_ctrl_init(const struct dram_para *para,
+ 	setbits_le32(&mctl_ctl->clken, BIT(8));
+ 
+ 	clrsetbits_le32(&mctl_com->unk_0x500, BIT(24), 0x300);
++	udelay(1);
+ 	/* this write seems to enable PHY MMIO region */
+ 	setbits_le32(&mctl_com->unk_0x500, BIT(24));
++	udelay(1);
+ 
+ 	if (!mctl_phy_init(para, config))
+ 		return false;
+-- 
+2.34.1
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 4/9] sunxi: H616: DRAM: Adjust size scan procedure
+From: Jernej Skrabec <jernej.skrabec@gmail.com>
+Date: Fri, 30 Aug 2024 10:55:09 -0500
+Message-Id: <20240830155514.481410-5-macroalpha82@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+It's safer to start scanning for columns first and then rows. Columns
+reside on LSB address pins, which means that second configuration will
+already have all needed row pins active.
+
+This is also preparation for introducing DDR4 support, which need scan
+for banks and bank groups too.
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@gmail.com>
+Tested-by: Chris Morgan <macromorgan@hotmail.com>
+---
+ arch/arm/mach-sunxi/dram_sun50i_h616.c | 31 +++++++++++++++-----------
+ 1 file changed, 18 insertions(+), 13 deletions(-)
+
+diff --git a/arch/arm/mach-sunxi/dram_sun50i_h616.c b/arch/arm/mach-sunxi/dram_sun50i_h616.c
+index 35405915e9..4782e6fe38 100644
+--- a/arch/arm/mach-sunxi/dram_sun50i_h616.c
++++ b/arch/arm/mach-sunxi/dram_sun50i_h616.c
+@@ -1362,28 +1362,33 @@ static void mctl_auto_detect_rank_width(const struct dram_para *para,
+ static void mctl_auto_detect_dram_size(const struct dram_para *para,
+ 				       struct dram_config *config)
+ {
+-	/* detect row address bits */
+-	config->cols = 8;
+-	config->rows = 18;
++	unsigned int shift;
++
++	/* max. config for columns, but not rows */
++	config->cols = 11;
++	config->rows = 13;
+ 	mctl_core_init(para, config);
+ 
+-	for (config->rows = 13; config->rows < 18; config->rows++) {
+-		/* 8 banks, 8 bit per byte and 16/32 bit width */
+-		if (mctl_mem_matches((1 << (config->rows + config->cols +
+-					    4 + config->bus_full_width))))
++	shift = config->bus_full_width + 1;
++
++	/* detect column address bits */
++	for (config->cols = 8; config->cols < 11; config->cols++) {
++		if (mctl_mem_matches(1ULL << (config->cols + shift)))
+ 			break;
+ 	}
++	debug("detected %u columns\n", config->cols);
+ 
+-	/* detect column address bits */
+-	config->cols = 11;
++	/* reconfigure to make sure that all active rows are accessible */
++	config->rows = 18;
+ 	mctl_core_init(para, config);
+ 
+-	for (config->cols = 8; config->cols < 11; config->cols++) {
+-		/* 8 bits per byte and 16/32 bit width */
+-		if (mctl_mem_matches(1 << (config->cols + 1 +
+-					   config->bus_full_width)))
++	/* detect row address bits */
++	shift = config->bus_full_width + 4 + config->cols;
++	for (config->rows = 13; config->rows < 18; config->rows++) {
++		if (mctl_mem_matches(1ULL << (config->rows + shift)))
+ 			break;
+ 	}
++	debug("detected %u rows\n", config->rows);
+ }
+ 
+ static unsigned long mctl_calc_size(const struct dram_config *config)
+-- 
+2.34.1
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 5/9] sunxi: H616: dram: Update mbus priorities
+From: Jernej Skrabec <jernej.skrabec@gmail.com>
+Date: Fri, 30 Aug 2024 10:55:10 -0500
+Message-Id: <20240830155514.481410-6-macroalpha82@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+CSI1 channel (22) is missing and IOMMU (25) has priority flag set in
+vendor bootloader. Fix that.
+
+While at it, replace bandwidth flag with priority since original flag has
+always value "true".
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@gmail.com>
+Tested-by: Chris Morgan <macromorgan@hotmail.com>
+Reviewed-by: Andre Przywara <andre.przywara@arm.com>
+---
+ arch/arm/mach-sunxi/dram_sun50i_h616.c | 41 +++++++++++++-------------
+ 1 file changed, 21 insertions(+), 20 deletions(-)
+
+diff --git a/arch/arm/mach-sunxi/dram_sun50i_h616.c b/arch/arm/mach-sunxi/dram_sun50i_h616.c
+index 4782e6fe38..863c4f1d7a 100644
+--- a/arch/arm/mach-sunxi/dram_sun50i_h616.c
++++ b/arch/arm/mach-sunxi/dram_sun50i_h616.c
+@@ -55,8 +55,8 @@ static void mbus_configure_port(u8 port,
+ 	writel_relaxed(cfg1, &mctl_com->master[port].cfg1);
+ }
+ 
+-#define MBUS_CONF(port, bwlimit, qos, acs, bwl0, bwl1, bwl2)	\
+-	mbus_configure_port(port, bwlimit, false, \
++#define MBUS_CONF(port, priority, qos, acs, bwl0, bwl1, bwl2)	\
++	mbus_configure_port(port, true, priority, \
+ 			    MBUS_QOS_ ## qos, 0, acs, bwl0, bwl1, bwl2)
+ 
+ static void mctl_set_master_priority(void)
+@@ -68,24 +68,25 @@ static void mctl_set_master_priority(void)
+ 	writel(399, &mctl_com->tmr);
+ 	writel(BIT(16), &mctl_com->bwcr);
+ 
+-	MBUS_CONF( 0, true, HIGHEST, 0,  256,  128,  100);
+-	MBUS_CONF( 1, true,    HIGH, 0, 1536, 1400,  256);
+-	MBUS_CONF( 2, true, HIGHEST, 0,  512,  256,   96);
+-	MBUS_CONF( 3, true,    HIGH, 0,  256,  100,   80);
+-	MBUS_CONF( 4, true,    HIGH, 2, 8192, 5500, 5000);
+-	MBUS_CONF( 5, true,    HIGH, 2,  100,   64,   32);
+-	MBUS_CONF( 6, true,    HIGH, 2,  100,   64,   32);
+-	MBUS_CONF( 8, true,    HIGH, 0,  256,  128,   64);
+-	MBUS_CONF(11, true,    HIGH, 0,  256,  128,  100);
+-	MBUS_CONF(14, true,    HIGH, 0, 1024,  256,   64);
+-	MBUS_CONF(16, true, HIGHEST, 6, 8192, 2800, 2400);
+-	MBUS_CONF(21, true, HIGHEST, 6, 2048,  768,  512);
+-	MBUS_CONF(25, true, HIGHEST, 0,  100,   64,   32);
+-	MBUS_CONF(26, true,    HIGH, 2, 8192, 5500, 5000);
+-	MBUS_CONF(37, true,    HIGH, 0,  256,  128,   64);
+-	MBUS_CONF(38, true,    HIGH, 2,  100,   64,   32);
+-	MBUS_CONF(39, true,    HIGH, 2, 8192, 5500, 5000);
+-	MBUS_CONF(40, true,    HIGH, 2,  100,   64,   32);
++	MBUS_CONF(0, false, HIGHEST, 0,  256,  128,  100);
++	MBUS_CONF(1, false,    HIGH, 0, 1536, 1400,  256);
++	MBUS_CONF(2, false, HIGHEST, 0,  512,  256,   96);
++	MBUS_CONF(3, false,    HIGH, 0,  256,  100,   80);
++	MBUS_CONF(4, false,    HIGH, 2, 8192, 5500, 5000);
++	MBUS_CONF(5, false,    HIGH, 2,  100,   64,   32);
++	MBUS_CONF(6, false,    HIGH, 2,  100,   64,   32);
++	MBUS_CONF(8, false,    HIGH, 0,  256,  128,   64);
++	MBUS_CONF(11, false,    HIGH, 0,  256,  128,  100);
++	MBUS_CONF(14, false,    HIGH, 0, 1024,  256,   64);
++	MBUS_CONF(16, false, HIGHEST, 6, 8192, 2800, 2400);
++	MBUS_CONF(21, false, HIGHEST, 6, 2048,  768,  512);
++	MBUS_CONF(22, false,    HIGH, 0,  256,  128,  100);
++	MBUS_CONF(25, true,  HIGHEST, 0,  100,   64,   32);
++	MBUS_CONF(26, false,    HIGH, 2, 8192, 5500, 5000);
++	MBUS_CONF(37, false,    HIGH, 0,  256,  128,   64);
++	MBUS_CONF(38, false,    HIGH, 2,  100,   64,   32);
++	MBUS_CONF(39, false,    HIGH, 2, 8192, 5500, 5000);
++	MBUS_CONF(40, false,    HIGH, 2,  100,   64,   32);
+ 
+ 	dmb();
+ }
+-- 
+2.34.1
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 6/9] sunxi: Correct TPR6 parameter for H616 DRAM driver
+From: Chris Morgan <macromorgan@hotmail.com>
+Date: Fri, 30 Aug 2024 10:55:11 -0500
+Message-Id: <20240830155514.481410-7-macroalpha82@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Correct the default TPR6 parameter based on suggestion from Mikhail
+Kalashnikov. [1]
+
+[1] https://lore.kernel.org/u-boot/4c003cab-c8b8-484d-924d-084e71fe666e@gmail.com/
+
+Fixes: 4b02f0120a4b ("sunxi: H616: add LPDDR4 DRAM support")
+Suggested-by: Mikhail Kalashnikov <iuncuim@gmail.com>
+Signed-off-by: Chris Morgan <macromorgan@hotmail.com>
+---
+ arch/arm/mach-sunxi/Kconfig | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm/mach-sunxi/Kconfig b/arch/arm/mach-sunxi/Kconfig
+index 078f8c19fa..5b3571025f 100644
+--- a/arch/arm/mach-sunxi/Kconfig
++++ b/arch/arm/mach-sunxi/Kconfig
+@@ -87,7 +87,7 @@ config DRAM_SUN50I_H616_TPR2
+ 
+ config DRAM_SUN50I_H616_TPR6
+ 	hex "H616 DRAM TPR6 parameter"
+-	default 0x3300c080
++	default 0x33c00080
+ 	help
+ 	  TPR6 value from vendor DRAM settings.
+ 
+-- 
+2.34.1
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 7/9] arm64: dts: allwinner: h616: Add r_i2c pinctrl
+ nodes
+From: Chris Morgan <macromorgan@hotmail.com>
+Date: Fri, 30 Aug 2024 10:55:12 -0500
+Message-Id: <20240830155514.481410-8-macroalpha82@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Add pinctrl nodes for the r_i2c node. Without the pinmux defined the
+r_i2c bus may fail to work, possibly if the bootloader uses rsb mode
+for the PMIC.
+
+Link: https://lore.kernel.org/linux-sunxi/172252952262.1669767.7675865282122079154.b4-ty@csie.org/
+
+[ upstream commit: 7c9ea4ab76176f65f4f55aa144f9145a4bccaacb ]
+
+Signed-off-by: Chris Morgan <macromorgan@hotmail.com>
+---
+ arch/arm/dts/sun50i-h616.dtsi                     | 2 ++
+ dts/upstream/src/arm64/allwinner/sun50i-h616.dtsi | 2 ++
+ 2 files changed, 4 insertions(+)
+
+diff --git a/arch/arm/dts/sun50i-h616.dtsi b/arch/arm/dts/sun50i-h616.dtsi
+index 921d5f61d8..41f2c23e07 100644
+--- a/arch/arm/dts/sun50i-h616.dtsi
++++ b/arch/arm/dts/sun50i-h616.dtsi
+@@ -836,6 +836,8 @@
+ 			clocks = <&r_ccu CLK_R_APB2_I2C>;
+ 			dmas = <&dma 48>, <&dma 48>;
+ 			dma-names = "rx", "tx";
++			pinctrl-names = "default";
++			pinctrl-0 = <&r_i2c_pins>;
+ 			resets = <&r_ccu RST_R_APB2_I2C>;
+ 			status = "disabled";
+ 			#address-cells = <1>;
+diff --git a/dts/upstream/src/arm64/allwinner/sun50i-h616.dtsi b/dts/upstream/src/arm64/allwinner/sun50i-h616.dtsi
+index 921d5f61d8..41f2c23e07 100644
+--- a/dts/upstream/src/arm64/allwinner/sun50i-h616.dtsi
++++ b/dts/upstream/src/arm64/allwinner/sun50i-h616.dtsi
+@@ -836,6 +836,8 @@
+ 			clocks = <&r_ccu CLK_R_APB2_I2C>;
+ 			dmas = <&dma 48>, <&dma 48>;
+ 			dma-names = "rx", "tx";
++			pinctrl-names = "default";
++			pinctrl-0 = <&r_i2c_pins>;
+ 			resets = <&r_ccu RST_R_APB2_I2C>;
+ 			status = "disabled";
+ 			#address-cells = <1>;
+-- 
+2.34.1
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 8/9] arm64: dts: allwinner: h616: Change RG35XX PMIC to
+ r_i2c
+From: Chris Morgan <macromorgan@hotmail.com>
+Date: Fri, 30 Aug 2024 10:55:13 -0500
+Message-Id: <20240830155514.481410-9-macroalpha82@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Change the Anbernic RG35XX series to use the r_i2c bus for the PMIC
+instead of the r_rsb bus. This is to keep the device tree consistent
+as there are at least 3 devices (the RG35XX-SP, RG28XX, and RG40XX-H)
+that have an external RTC on the r_i2c bus.
+
+Link: https://lore.kernel.org/linux-sunxi/172252952262.1669767.7675865282122079154.b4-ty@csie.org/
+
+[ upstream commit: c712e5d0985628b1df13930489b49b740e610a2b ]
+
+Signed-off-by: Chris Morgan <macromorgan@hotmail.com>
+---
+ arch/arm/dts/sun50i-h700-anbernic-rg35xx-2024.dts           | 6 +++---
+ .../arm64/allwinner/sun50i-h700-anbernic-rg35xx-2024.dts    | 6 +++---
+ 2 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/arch/arm/dts/sun50i-h700-anbernic-rg35xx-2024.dts b/arch/arm/dts/sun50i-h700-anbernic-rg35xx-2024.dts
+index ee30584b6a..e2bbd22bd8 100644
+--- a/arch/arm/dts/sun50i-h700-anbernic-rg35xx-2024.dts
++++ b/arch/arm/dts/sun50i-h700-anbernic-rg35xx-2024.dts
+@@ -201,12 +201,12 @@
+ 	vcc-pi-supply = <&reg_cldo3>;
+ };
+ 
+-&r_rsb {
++&r_i2c {
+ 	status = "okay";
+ 
+-	axp717: pmic@3a3 {
++	axp717: pmic@34 {
+ 		compatible = "x-powers,axp717";
+-		reg = <0x3a3>;
++		reg = <0x34>;
+ 		interrupt-controller;
+ 		#interrupt-cells = <1>;
+ 		interrupt-parent = <&nmi_intc>;
+diff --git a/dts/upstream/src/arm64/allwinner/sun50i-h700-anbernic-rg35xx-2024.dts b/dts/upstream/src/arm64/allwinner/sun50i-h700-anbernic-rg35xx-2024.dts
+index ee30584b6a..e2bbd22bd8 100644
+--- a/dts/upstream/src/arm64/allwinner/sun50i-h700-anbernic-rg35xx-2024.dts
++++ b/dts/upstream/src/arm64/allwinner/sun50i-h700-anbernic-rg35xx-2024.dts
+@@ -201,12 +201,12 @@
+ 	vcc-pi-supply = <&reg_cldo3>;
+ };
+ 
+-&r_rsb {
++&r_i2c {
+ 	status = "okay";
+ 
+-	axp717: pmic@3a3 {
++	axp717: pmic@34 {
+ 		compatible = "x-powers,axp717";
+-		reg = <0x3a3>;
++		reg = <0x34>;
+ 		interrupt-controller;
+ 		#interrupt-cells = <1>;
+ 		interrupt-parent = <&nmi_intc>;
+-- 
+2.34.1
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v3 9/9] sunxi: Add support for Anbernic RG35XX-2024
+From: Chris Morgan <macromorgan@hotmail.com>
+Date: Fri, 30 Aug 2024 10:55:14 -0500
+Message-Id: <20240830155514.481410-10-macroalpha82@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+The Anbernic RG35XX series of devices are based around an Allwinner
+H700 SoC with 1GB of RAM, 2 SD cards, and multiple input buttons.
+
+This bootloader has been tested on the Anbernic RG35XX-2024 and
+RG35XX-H, but should be suitable for the entire lineup of H700 based
+devices.
+
+A future series of updates will add board selection logic to identify
+and load the correct device tree automatically.
+
+Signed-off-by: Chris Morgan <macromorgan@hotmail.com>
+---
+ board/sunxi/MAINTAINERS                |  5 +++++
+ configs/anbernic_rg35xx_h700_defconfig | 28 ++++++++++++++++++++++++++
+ 2 files changed, 33 insertions(+)
+ create mode 100644 configs/anbernic_rg35xx_h700_defconfig
+
+diff --git a/board/sunxi/MAINTAINERS b/board/sunxi/MAINTAINERS
+index 4ad77c75f5..84799879e8 100644
+--- a/board/sunxi/MAINTAINERS
++++ b/board/sunxi/MAINTAINERS
+@@ -132,6 +132,11 @@ M:	Paul Kocialkowski <contact@paulk.fr>
+ S:	Maintained
+ F:	configs/Ampe_A76_defconfig
+ 
++ANBERNIC RG35XX-2024
++M:	Chris Morgan <macromorgan@hotmail.com>
++S:	Maintained
++F:	configs/anbernic_rg35xx_h700_defconfig
++
+ BANANAPI M1 PLUS
+ M:	Jagan Teki <jagan@amarulasolutions.com>
+ S:	Maintained
+diff --git a/configs/anbernic_rg35xx_h700_defconfig b/configs/anbernic_rg35xx_h700_defconfig
+new file mode 100644
+index 0000000000..57112f7d70
+--- /dev/null
++++ b/configs/anbernic_rg35xx_h700_defconfig
+@@ -0,0 +1,30 @@
++CONFIG_ARM=y
++CONFIG_ARCH_SUNXI=y
++CONFIG_BOOTDELAY=0
++CONFIG_DEFAULT_DEVICE_TREE="sun50i-h700-anbernic-rg35xx-2024"
++CONFIG_SPL=y
++CONFIG_DRAM_SUN50I_H616_DX_ODT=0x08080808
++CONFIG_DRAM_SUN50I_H616_DX_DRI=0x0e0e0e0e
++CONFIG_DRAM_SUN50I_H616_CA_DRI=0x0e0e
++CONFIG_DRAM_SUN50I_H616_ODT_EN=0x7887bbbb
++CONFIG_DRAM_SUN50I_H616_TPR2=0x1
++CONFIG_DRAM_SUN50I_H616_TPR6=0x33c00080
++CONFIG_DRAM_SUN50I_H616_TPR10=0x402f6633
++CONFIG_DRAM_SUN50I_H616_TPR11=0x1b1f1e1c
++CONFIG_DRAM_SUN50I_H616_TPR12=0x06060606
++CONFIG_DRAM_SUN50I_H616_PHY_ADDR_MAP_1=y
++CONFIG_MACH_SUN50I_H616=y
++CONFIG_SUNXI_DRAM_H616_LPDDR4=y
++CONFIG_DRAM_CLK=672
++CONFIG_R_I2C_ENABLE=y
++CONFIG_DEFAULT_FDT_FILE="sun50i-h700-anbernic-rg35xx-2024.dtb"
++CONFIG_SPL_I2C=y
++CONFIG_SPL_SYS_I2C_LEGACY=y
++CONFIG_SYS_I2C_MVTWSI=y
++CONFIG_SYS_I2C_SLAVE=0x7f
++CONFIG_SYS_I2C_SPEED=400000
++CONFIG_REGULATOR_AXP=y
++CONFIG_AXP717_POWER=y
++CONFIG_AXP_DCDC2_VOLT=940
++CONFIG_AXP_DCDC3_VOLT=1100
++CONFIG_EFI_LOADER=n
+-- 
+2.34.1
+

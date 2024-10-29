@@ -1,7 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2017-2021 Team LibreELEC (https://libreelec.tv)
-# Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 [ -z "$SYSTEM_ROOT" ] && SYSTEM_ROOT=""
 [ -z "$BOOT_ROOT" ] && BOOT_ROOT="/flash"
@@ -27,17 +26,10 @@ for all_dtb in $BOOT_ROOT/*.dtb; do
   fi
 done
 
-if [ -f $BOOT_ROOT/extlinux/extlinux.conf ]; then
-  if [ -f $SYSTEM_ROOT/usr/share/bootloader/extlinux/extlinux.conf ]; then
-    echo "Updating extlinux.conf..."
-    cp -p $SYSTEM_ROOT/usr/share/bootloader/extlinux/extlinux.conf $BOOT_ROOT/extlinux
-  fi
-fi
-
 # update bootloader
-if [ -f $SYSTEM_ROOT/usr/share/bootloader/idbloader.img ]; then
-  echo -n "Updating u-boot.bin on $BOOT_DISK... "
-  dd if=$SYSTEM_ROOT/usr/share/bootloader/u-boot-sunxi-with-spl.bin of=$BOOT_DISK bs=1k seek=8 conv=fsync &>/dev/null
+if [ -f $SYSTEM_ROOT/usr/share/bootloader/u-boot-sunxi-with-spl.bin ]; then
+  echo "Updating u-boot on: $BOOT_DISK..."
+  dd if=$SYSTEM_ROOT/usr/share/bootloader/u-boot-sunxi-with-spl.bin of=$BOOT_DISK bs=1K seek=8 conv=fsync,notrunc &>/dev/null
 fi
 
 # mount $BOOT_ROOT ro

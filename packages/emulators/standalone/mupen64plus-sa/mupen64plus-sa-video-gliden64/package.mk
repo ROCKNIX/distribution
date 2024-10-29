@@ -14,13 +14,13 @@ PKG_LONGDESC="Mupen64Plus Standalone GLide64 Video Driver"
 PKG_TOOLCHAIN="manual"
 
 case ${DEVICE} in
-  AMD64|RK3588|S922X|RK3399|RK3566*)
+  AMD64|RK3588|S922X|RK3399|RK3566*|SD865)
     PKG_DEPENDS_TARGET+=" mupen64plus-sa-simplecore"
   ;;
 esac
 
 case ${DEVICE} in
-  AMD64)
+  AMD64|SD865)
     PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
     export USE_GLES=0
   ;;

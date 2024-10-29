@@ -20,7 +20,7 @@
 ################################################################################
 
 PKG_NAME="libretro-database"
-PKG_VERSION="6ddbb571bf1bcd78867a0f4bc20caa0004bba689"
+PKG_VERSION="0f33272cdb2219c510fd65ef4997a1aadde508bf"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/libretro/libretro-database"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

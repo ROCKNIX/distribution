@@ -1,106 +1,68 @@
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2017-2020 Team LibreELEC (https://libreelec.tv)
-# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
-source ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/options
-
-case "${PKG_SOC}" in
-  rk35*|rk3399)
-    IDBSEEK="bs=512 seek=64"
-    ;;
-  *)
-    IDBSEEK="bs=32k seek=1"
-    ;;
-esac
-
-if [ -f "${RELEASE_DIR}/3rdparty/bootloader/idbloader.img" ]; then
-  echo "image: burn idbloader.img to image... (${PKG_SOC},${IDBSEEK})"
-  dd if="${RELEASE_DIR}/3rdparty/bootloader/idbloader.img" of="$DISK" ${IDBSEEK} conv=sync,noerror,notrunc >"${SAVE_ERROR}" 2>&1 || show_error
-fi
-
-case "${PKG_SOC}" in
-  rk35*)
-    for BOOT_IMAGE in u-boot.itb u-boot.img; do
-      if [ -f "${RELEASE_DIR}/3rdparty/bootloader/${BOOT_IMAGE}" ]; then
-        echo "image: burn ${BOOT_IMAGE} to image..."
-        dd if="${RELEASE_DIR}/3rdparty/bootloader/${BOOT_IMAGE}" of="${DISK}" bs=512 seek=16384 conv=sync,noerror,notrunc >"${SAVE_ERROR}" 2>&1 || show_error
-        break
-      fi
-    done
-    if [ -f "${RELEASE_DIR}/3rdparty/bootloader/trust.img" ]; then
-      echo "image: burn trust.img to image..."
-      dd if="${RELEASE_DIR}/3rdparty/bootloader/trust.img" of="${DISK}" bs=512 seek=24576 conv=sync,noerror,notrunc >"${SAVE_ERROR}" 2>&1 || show_error
-    elif [ -f "${RELEASE_DIR}/3rdparty/bootloader/resource.img" ]; then
-      echo "image: burn resource.img to image..."
-      dd if="${RELEASE_DIR}/3rdparty/bootloader/resource.img" of="${DISK}" bs=512 seek=24576 conv=sync,noerror,notrunc >"${SAVE_ERROR}" 2>&1 || show_error
-    fi
-    ;;
-  rk3399)
-    if [ -f "${RELEASE_DIR}/3rdparty/bootloader/rk3399-uboot.bin" ]; then
-      echo "image: burn u-boot.bin to image..."
-      dd if="${RELEASE_DIR}/3rdparty/bootloader/rk3399-uboot.bin" of="${DISK}" bs=512 seek=64 conv=sync,noerror,notrunc >"${SAVE_ERROR}" 2>&1 || show_error
-    fi
-    ;;
-  *)
-    for BOOT_IMAGE in u-boot.itb u-boot.img; do
-      if [ -f "${RELEASE_DIR}/3rdparty/bootloader/${BOOT_IMAGE}" ]; then
-        echo "image: burn ${BOOT_IMAGE} to image..."
-        dd if="${RELEASE_DIR}/3rdparty/bootloader/${BOOT_IMAGE}" of="${DISK}" bs=512 seek=16384 conv=sync,noerror,notrunc >"${SAVE_ERROR}" 2>&1 || show_error
-        break
-      fi
-    done
-    if [ -f "${RELEASE_DIR}/3rdparty/bootloader/trust.img" ]; then
-      echo "image: burn trust.img to image..."
-      dd if="${RELEASE_DIR}/3rdparty/bootloader/trust.img" of="$DISK" bs=512 seek=24576 conv=sync,noerror,notrunc >"${SAVE_ERROR}" 2>&1 || show_error
-    fi
-    ;;
-esac
-
-#Create boot.ini
-if [ "${BOOT_INI}" == true ]; then
-  echo "boot: create boot.ini..."
-  if [ -e "${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/boot/boot.ini" ]; then
-    cp -f ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/boot/boot.ini ${LE_TMP}/boot.ini
-    sed -e "s/@DISTRO_BOOTLABEL@/${DISTRO_BOOTLABEL}/" \
-        -e "s/@DISTRO_DISKLABEL@/${DISTRO_DISKLABEL}/" \
-        -e "s/@EXTRA_CMDLINE@/${EXTRA_CMDLINE}/" \
-        -i "${LE_TMP}/boot.ini"
-
-    mcopy -so "${LE_TMP}/boot.ini" ::
-  else
-    echo "ERROR: No boot.ini found in ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/boot/."
-    exit 1
+mkimage_uboot() {
+  if [ -f "${RELEASE_DIR}/3rdparty/bootloader/${SUBDEVICE}_uboot.bin" ]; then
+    echo "image: writing ${SUBDEVICE}_uboot.bin to $(basename ${DISK})..."
+    dd if="${RELEASE_DIR}/3rdparty/bootloader/${SUBDEVICE}_uboot.bin" of="${DISK}" bs=512 seek=64 conv=sync,noerror,notrunc >"${SAVE_ERROR}" 2>&1 || show_error
+  elif [ -f "${RELEASE_DIR}/3rdparty/bootloader/uboot.bin" ]; then
+    echo "image: writing uboot.bin to $(basename ${DISK})..."
+    dd if="${RELEASE_DIR}/3rdparty/bootloader/uboot.bin" of="${DISK}" bs=512 seek=64 conv=sync,noerror,notrunc >"${SAVE_ERROR}" 2>&1 || show_error
   fi
-fi
+}
 
-mkdir -p "${LE_TMP}/extlinux"
-
-# copy device trees to part1
-for DTB in ${DEVICE_DTB[@]}; do
-  if [ -e "${DTB}.dtb" ]; then
-    echo "image: copy device trees to image..."
-    mcopy -o "${DTB}.dtb" ::
+mkimage_bootini() {
+  if [ -f "${RELEASE_DIR}/3rdparty/bootloader/${SUBDEVICE}_boot.ini" ]; then
+    echo "image: copying ${SUBDEVICE}_boot.ini..."
+    mcopy "${RELEASE_DIR}/3rdparty/bootloader/${SUBDEVICE}_boot.ini" ::/boot.ini
+  elif [ -f "${RELEASE_DIR}/3rdparty/bootloader/boot.ini" ]; then
+    echo "image: copying boot.ini..."
+    mcopy "${RELEASE_DIR}/3rdparty/bootloader/boot.ini" ::
   fi
-done
+}
 
-if [ "${EXT_LINUX_CONF}" == true ]; then
+mkimage_extlinux(){
+  echo "image: set exlinux.conf to FDT /${DTB[0]}..."
   mkdir -p "${LE_TMP}/extlinux"
-
-  if [[ "${PKG_SOC}" != "rk3588" ]] && [[ "${TRUST_LABEL}" = "resource" || "${#DEVICE_DTB[@]}" -gt 1 ]]; then
-    echo "image: Set FDTDIR to /..."
-    FDTMODE="FDTDIR /"
-  else
-    echo "image: Set FDT to ${DEVICE_DTB}..."
-    FDTMODE="FDT /${DEVICE_DTB}.dtb"
-  fi
-
-  echo "image: Set extlinux.conf..."
   cat << EOF > "${LE_TMP}/extlinux/extlinux.conf"
 LABEL ${DISTRO}
   LINUX /${KERNEL_NAME}
-  ${FDTMODE}
+  FDT /${DTB[0]}.dtb
   APPEND boot=LABEL=${DISTRO_BOOTLABEL} disk=LABEL=${DISTRO_DISKLABEL} ${EXTRA_CMDLINE}
 EOF
+  echo "image: copying exlinux.conf..."
+  mcopy -s -o "${LE_TMP}/extlinux" ::
+}
 
-  mcopy -so "${LE_TMP}/extlinux" ::
-fi
+mkimage_extlinux_fdtdir(){
+  echo "image: set extlinux.conf to FDTDIR /..."
+  mkdir -p "${LE_TMP}/extlinux"
+  cat << EOF > "${LE_TMP}/extlinux/extlinux.conf"
+LABEL ${DISTRO}
+  LINUX /${KERNEL_NAME}
+  FDTDIR /
+  APPEND boot=LABEL=${DISTRO_BOOTLABEL} disk=LABEL=${DISTRO_DISKLABEL} ${EXTRA_CMDLINE}
+EOF
+  echo "image: copying exlinux.conf..."
+  mcopy -s -o "${LE_TMP}/extlinux" ::
+}
+
+mkimage_dtb() {
+  echo "image: copying device trees..."
+  for dtb in ${DTB[@]}; do
+    echo "image: copying ${dtb}.dtb..."
+    mcopy ${RELEASE_DIR}/3rdparty/bootloader/${dtb}.dtb ::
+  done
+  if [ -d ${RELEASE_DIR}/3rdparty/bootloader/overlays ]; then
+    echo "image: copying device tree overlays..."
+    mcopy -s ${RELEASE_DIR}/3rdparty/bootloader/overlays ::
+  fi
+}
+
+DTBXML="${PROJECT_DIR}/${PROJECT}/bootloader/dtb.xml"
+readarray -t DTB < <(xmlstarlet sel -t -v "//dtb/${DEVICE}/${SUBDEVICE}/file" ${DTBXML})
+BOOTMETHOD=$(xmlstarlet sel -t -v "//dtb/${DEVICE}/${SUBDEVICE}/@bootmethod" ${DTBXML})
+
+mkimage_dtb
+mkimage_${BOOTMETHOD}
+mkimage_uboot

@@ -4,7 +4,7 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="curl"
-PKG_VERSION="8.7.1"
+PKG_VERSION="8.9.1"
 PKG_LICENSE="MIT"
 PKG_SITE="https://curl.se"
 PKG_URL="https://curl.se/download/${PKG_NAME}-${PKG_VERSION}.tar.xz"

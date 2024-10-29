@@ -7,7 +7,7 @@ PKG_SITE="https://rocknix.org"
 PKG_SECTION="virtual"
 PKG_LONGDESC="Game support software metapackage."
 
-PKG_GAMESUPPORT="sixaxis rocknix-hotkey jstest-sdl gamecontrollerdb sdljoytest control-gen"
+PKG_GAMESUPPORT="sixaxis rocknix-hotkey jstest-sdl gamecontrollerdb sdljoytest sdltouchtest control-gen"
 
 PKG_DEPENDS_TARGET="${PKG_GAMESUPPORT}"
 

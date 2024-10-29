@@ -1,0 +1,69 @@
+From c14abaa36d10d104e0e9179e5215f8caff4ca096 Mon Sep 17 00:00:00 2001
+From: Erik Faye-Lund <kusmabite@gmail.com>
+Date: Tue, 3 Sep 2024 20:08:20 +0200
+Subject: [PATCH] vkgears: do not require vulkan 1.1
+
+We're passing zero as the flags to vkGetDeviceQueue2, meaning we might
+as well use vkGetDeviceQueue from Vulkan 1.0 instead. And this seems to
+be the only reason we depended on Vulkan 1.1 to start with.
+
+This makes it easier to use vkgears to test early bootstrapped Vulkan
+implementations. We still use Vulkan 1.1 if available, because GPU
+assisted validation requires it to function.
+
+While we're at it, switch away from VK_MAKE_VERSION(), which is
+deprecated. We don't really need it anyway, because we have dedicated
+defines for each version.
+
+Reviewed-by: Hoe Hao Cheng <haochengho12907@gmail.com>
+Reviewed-by: Antonino Maniscalco <antomani103@gmail.com>
+---
+ src/vulkan/vkgears.c | 21 +++++++++++----------
+ 1 file changed, 11 insertions(+), 10 deletions(-)
+
+diff --git a/src/vulkan/vkgears.c b/src/vulkan/vkgears.c
+index bb8f00640..b603e76b6 100644
+--- a/src/vulkan/vkgears.c
++++ b/src/vulkan/vkgears.c
+@@ -132,13 +132,21 @@ current_time(void)
+ static void
+ init_vk(const char *extension)
+ {
+-   VkResult res = vkCreateInstance(
++   uint32_t api_version = VK_API_VERSION_1_0;
++
++   // use Vulkan 1.1 if supported
++   uint32_t instance_version = api_version;
++   VkResult res = vkEnumerateInstanceVersion(&instance_version);
++   if (res == VK_SUCCESS && instance_version >= VK_API_VERSION_1_1)
++      api_version = VK_API_VERSION_1_1;
++
++   res = vkCreateInstance(
+       &(VkInstanceCreateInfo) {
+          .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+          .pApplicationInfo = &(VkApplicationInfo) {
+             .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+             .pApplicationName = "vkgears",
+-            .apiVersion = VK_MAKE_VERSION(1, 1, 0),
++            .apiVersion = api_version,
+          },
+          .enabledExtensionCount = extension ? 2 : 0,
+          .ppEnabledExtensionNames = (const char *[2]) {
+@@ -192,14 +200,7 @@ init_vk(const char *extension)
+    if (res != VK_SUCCESS)
+       error("Failed to create Vulkan device.\n");
+ 
+-   vkGetDeviceQueue2(device,
+-      &(VkDeviceQueueInfo2) {
+-         .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_INFO_2,
+-         .flags = 0,
+-         .queueFamilyIndex = 0,
+-         .queueIndex = 0,
+-      },
+-      &queue);
++   vkGetDeviceQueue(device, 0, 0, &queue);
+ 
+    vkCreateCommandPool(device,
+       &(const VkCommandPoolCreateInfo) {
+-- 
+GitLab

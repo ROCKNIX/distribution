@@ -4,6 +4,16 @@
 . /etc/profile
 set_kill set "-9 xemu"
 
+syscfg="/storage/.config/system/configs/system.cfg"
+if ! grep -q 'ports\["xemu"\].port_controller_layout=xbox' "$syscfg"; then
+echo 'ports["xemu"].port_controller_layout=xbox' >> "$syscfg"
+fi
+
+# Load gptokeyb support files
+control-gen_init.sh
+source /storage/.config/gptokeyb/control.ini
+get_controls
+
 #Check if xemu exists in .config
 if [ ! -d "/storage/.config/xemu" ]; then
     mkdir -p "/storage/.config/xemu"
@@ -35,10 +45,13 @@ if [ ! -f "/storage/roms/bios/xemu/hdd/xbox_hdd.qcow2" ]; then
     unzip -o /usr/config/xemu/hdd.zip -d /storage/roms/bios/xemu/hdd/
 fi
 
-
+# Set config file location
 CONFIG=/storage/.config/xemu/xemu.toml
 
-@APPIMAGE@ -full-screen -config_path $CONFIG -dvd_path "${1}"
+# Set gamecontroller db location
+export SDL_GAMECONTROLLERCONFIG_FILE="/tmp/gamecontrollerdb.txt"
+
+/usr/share/xemu-sa/@APPIMAGE@ -full-screen -config_path $CONFIG -dvd_path "${1}"
 
 #Workaround until we can learn why it doesn't exit cleanly when asked.
 killall -9 xemu-sa

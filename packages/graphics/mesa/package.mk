@@ -4,38 +4,28 @@
 
 PKG_NAME="mesa"
 PKG_LICENSE="OSS"
-PKG_DEPENDS_TARGET="toolchain expat libdrm zstd Mako:host"
+PKG_VERSION="24.2.5"
+PKG_SITE="http://www.mesa3d.org/"
+PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
+PKG_DEPENDS_TARGET="toolchain expat libdrm zstd Mako:host pyyaml:host"
 PKG_LONGDESC="Mesa is a 3-D graphics library with an API."
 PKG_TOOLCHAIN="meson"
+PKG_BUILD_VERSION="${PKG_VERSION}"
 PKG_PATCH_DIRS+=" ${DEVICE}"
 
-case ${DEVICE} in
-  RK3588*)
-	PKG_VERSION="832c3c7117e4366e415ded92a6f07ec203fd9233"
-	PKG_SITE="https://github.com/ROCKNIX/mesa-panfork"
-	PKG_URL="${PKG_SITE}.git"
-  ;;
-  RK3*|S922X)
-    if [ "${DEVICE}" = "S922X" -a "${USE_MALI}" != "no" ]; then
-      PKG_VERSION="24.0.7"
-	    PKG_SITE="http://www.mesa3d.org/"
-	    PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
+get_graphicdrivers
+
+# Fix for juggling multiple versions of mesa
+case ${PKG_VERSION} in
+  ${PKG_BUILD_VERSION})
+    GALLIUM_DRIVERS=${GALLIUM_DRIVERS//"kmsro "/}
+    if [ "${llVM_SUPPORT}" = "yes" ]; then
+      GALLIUM_DRIVERS=${GALLIUM_DRIVERS//"swrast"/"softpipe llvmpipe"}
     else
-      #Using upstream dev for panfrost
-	    PKG_VERSION="332252966bac19edcb1fe76642673ff71074b8a6"
-	    PKG_SITE="https://gitlab.freedesktop.org/mesa/mesa"
-	    PKG_URL="${PKG_SITE}.git"
-	    PKG_PATCH_DIRS+=" panfrost"
+      GALLIUM_DRIVERS=${GALLIUM_DRIVERS//"swrast"/"softpipe"}
     fi
   ;;
-  *)
-	PKG_VERSION="24.1.3"
-	PKG_SITE="http://www.mesa3d.org/"
-	PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
-  ;;
 esac
-
-get_graphicdrivers
 
 PKG_MESON_OPTS_TARGET=" ${MESA_LIBS_PATH_OPTS} \
                        -Dgallium-drivers=${GALLIUM_DRIVERS// /,} \
@@ -115,7 +105,7 @@ else
 fi
 
 post_makeinstall_target() {
-  if [ "${DEVICE}" = "S922X" -a "${USE_MALI}" != "no" ]; then
+  if listcontains "${GRAPHIC_DRIVERS}" "(panfrost)"; then
     rm -f ${INSTALL}/usr/lib/libvulkan_panfrost.so ${INSTALL}/usr/share/vulkan/icd.d/panfrost_icd.aarch64.json
   fi
 }

@@ -1,0 +1,173 @@
+#!/bin/bash
+
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
+
+# Simple script to watch the battery capacity and
+# turn the power LED orange when it reaches 30%, red at 20%, and blinking red at 10%
+
+. /etc/profile
+
+# Prevent script from running until LED PWMs are ready, max 5 attempts
+d=0
+  while [ "$d" -lt 5 ]; do
+  if [ ! -d "/sys/class/pwm/pwmchip1" ]; then
+    sleep 1
+    d=$(( d + 1 ))
+  else
+    d=5
+  fi
+done
+
+# Identify what pwms are LEDS
+n=0
+i=1
+while [ "$n" -lt 3 ]; do
+  if [ -f /sys/class/pwm/pwmchip${n}/device/name ]; then
+    PWM="$(cat /sys/class/pwm/pwmchip${n}/device/name)"
+  else
+    PWM="null"
+  fi
+
+  if [ ${PWM} = 'htr3212-pwm' ]; then
+    eval  DEVICE_LED_${i}="pwmchip${n}"
+    i=$(( i + 1 ))
+  fi
+
+  n=$(( n + 1 ))
+done
+
+function bat_led_off() {
+  x=0
+  while [ "$x" -lt 12 ]; do
+      echo 0 > /sys/class/pwm/${DEVICE_LED_1}/pwm${x}/duty_cycle
+      echo 0 > /sys/class/pwm/${DEVICE_LED_2}/pwm${x}/duty_cycle
+      x=$(( x + 1 ))
+  done
+}
+
+function bat_led_red() {
+  bat_led_off
+  r=0
+  while [ "$r" -lt 12 ]; do
+      echo 10 > /sys/class/pwm/${DEVICE_LED_1}/pwm${r}/duty_cycle
+      echo 10 > /sys/class/pwm/${DEVICE_LED_2}/pwm${r}/duty_cycle
+      echo 1 > /sys/class/pwm/${DEVICE_LED_1}/pwm${r}/period
+      echo 1 > /sys/class/pwm/${DEVICE_LED_2}/pwm${r}/period
+      r=$(( r + 3 ))
+  done
+}
+
+function bat_led_green() {
+  bat_led_off
+  g=1
+  while [ "$g" -lt 12 ]; do
+      echo 10 > /sys/class/pwm/${DEVICE_LED_1}/pwm${g}/duty_cycle
+      echo 10 > /sys/class/pwm/${DEVICE_LED_2}/pwm${g}/duty_cycle
+      echo 1 > /sys/class/pwm/${DEVICE_LED_1}/pwm${g}/period
+      echo 1 > /sys/class/pwm/${DEVICE_LED_2}/pwm${g}/period
+      g=$(( g + 3 ))
+  done
+}
+
+function bat_led_orange() {
+  bat_led_off
+  r=0
+  g=1
+  while [ "$r" -lt 12 ]; do
+      echo 10 > /sys/class/pwm/${DEVICE_LED_1}/pwm${r}/duty_cycle
+      echo 10 > /sys/class/pwm/${DEVICE_LED_2}/pwm${r}/duty_cycle
+      echo 1 > /sys/class/pwm/${DEVICE_LED_1}/pwm${r}/period
+      echo 1 > /sys/class/pwm/${DEVICE_LED_2}/pwm${r}/period
+      r=$(( r + 3 ))
+  done
+  while [ "$g" -lt 12 ]; do
+      echo 1 > /sys/class/pwm/${DEVICE_LED_1}/pwm${g}/duty_cycle
+      echo 1 > /sys/class/pwm/${DEVICE_LED_2}/pwm${g}/duty_cycle
+      echo 10 > /sys/class/pwm/${DEVICE_LED_1}/pwm${g}/period
+      echo 10 > /sys/class/pwm/${DEVICE_LED_2}/pwm${g}/period
+      g=$(( g + 3 ))
+  done
+}
+
+function bat_led_yellow() {
+  bat_led_off
+  r=0
+  g=1
+  while [ "$r" -lt 12 ]; do
+      echo 10 > /sys/class/pwm/${DEVICE_LED_1}/pwm${r}/duty_cycle
+      echo 10 > /sys/class/pwm/${DEVICE_LED_2}/pwm${r}/duty_cycle
+      echo 1 > /sys/class/pwm/${DEVICE_LED_1}/pwm${r}/period
+      echo 1 > /sys/class/pwm/${DEVICE_LED_2}/pwm${r}/period
+      r=$(( r + 3 ))
+  done
+  while [ "$g" -lt 12 ]; do
+      echo 10 > /sys/class/pwm/${DEVICE_LED_1}/pwm${g}/duty_cycle
+      echo 10 > /sys/class/pwm/${DEVICE_LED_2}/pwm${g}/duty_cycle
+      echo 15 > /sys/class/pwm/${DEVICE_LED_1}/pwm${g}/period
+      echo 15 > /sys/class/pwm/${DEVICE_LED_2}/pwm${g}/period
+      g=$(( g + 3 ))
+  done
+}
+
+PREV_BATCAP="null"
+while true
+  do
+  BAT_LED_STATE=$(get_setting led.color)
+  if [ ! ${BAT_LED_STATE} == "battery" ]; then
+    break
+  else
+    CAP=$(cat /sys/class/power_supply/battery/capacity)
+    STAT=$(cat /sys/class/power_supply/battery/status)
+      if [ ${STAT} == "Discharging" ]; then
+        if (( ${CAP} <= 10 ))
+          then
+            for ctr in $(seq 1 1 5)
+          do
+            bat_led_red
+            sleep .5
+            bat_led_off
+            sleep .5
+          done
+          continue
+        elif (( ${CAP} <= 20 ))
+        then
+          BATCAP="D_RED"
+          if [ ! ${BATCAP} = ${PREV_BATCAP} ]; then
+            bat_led_red
+          fi
+        elif (( ${CAP} <=  30 ))
+        then
+          BATCAP="D_ORANGE"
+          if [ ! ${BATCAP} = ${PREV_BATCAP} ]; then
+            bat_led_orange
+          fi
+        elif (( ${CAP} <=  40 ))
+        then
+          BATCAP="D_YELLOW"
+          if [ ! ${BATCAP} = ${PREV_BATCAP} ]; then
+            bat_led_yellow
+          fi
+        else
+          BATCAP="D_GREEN"
+          if [ ! ${BATCAP} = ${PREV_BATCAP} ]; then
+            bat_led_green
+          fi
+        fi
+      elif (( ${CAP} <= 94 ))
+      then
+        BATCAP="C_ORANGE"
+        if [ ! ${BATCAP} = ${PREV_BATCAP} ]; then
+          bat_led_orange
+        fi
+      elif (( ${CAP} >= 95 ))
+      then
+        BATCAP="C_GREEN"
+        if [ ! ${BATCAP} = ${PREV_BATCAP} ]; then
+          bat_led_green
+        fi
+      fi
+      PREV_BATCAP=${BATCAP}
+      sleep 15
+  fi
+done

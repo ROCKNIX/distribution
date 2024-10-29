@@ -1,35 +1,42 @@
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2017-2020 Team LibreELEC (https://libreelec.tv)
-# Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
-source ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/options
-
-if [ -f "${RELEASE_DIR}/3rdparty/bootloader/u-boot-sunxi-with-spl.bin" ]; then
-  echo "image: writing u-boot to $(basename ${DISK})..."
-  dd if="${RELEASE_DIR}/3rdparty/bootloader/u-boot-sunxi-with-spl.bin" of="${DISK}" bs=1k seek=8 conv=sync,noerror,notrunc >"${SAVE_ERROR}" 2>&1 || show_error
-fi
-
-# copy device trees to part1
-for DTB in ${DEVICE_DTB[@]}; do
-  if [ -e "${DTB}.dtb" ]; then
-    echo "image: copy device trees to image..."
-    mcopy -o "${DTB}.dtb" ::
+mkimage_uboot() {
+  if [ -f "${RELEASE_DIR}/3rdparty/bootloader/u-boot-sunxi-with-spl.bin" ]; then
+    echo "image: writing u-boot-sunxi-with-spl.bin to $(basename ${DISK})..."
+    dd if="${RELEASE_DIR}/3rdparty/bootloader/u-boot-sunxi-with-spl.bin" of="${DISK}" bs=1K seek=8 conv=fsync,notrunc >"${SAVE_ERROR}" 2>&1 || show_error
   fi
-done
+}
 
-if [ "${EXT_LINUX_CONF}" == true ]; then
+mkimage_extlinux(){
+  echo "image: set exlinux.conf to FDT /${DTB[0]}..."
   mkdir -p "${LE_TMP}/extlinux"
-
-    echo "image: Set FDT to ${DEVICE_DTB}..."
-    FDTMODE="FDT /${DEVICE_DTB}.dtb"
-
-  echo "image: Set extlinux.conf..."
   cat << EOF > "${LE_TMP}/extlinux/extlinux.conf"
 LABEL ${DISTRO}
   LINUX /${KERNEL_NAME}
-  ${FDTMODE}
+  FDT /${DTB[0]}.dtb
   APPEND boot=LABEL=${DISTRO_BOOTLABEL} disk=LABEL=${DISTRO_DISKLABEL} ${EXTRA_CMDLINE}
 EOF
+  echo "image: copying exlinux.conf..."
+  mcopy -s -o "${LE_TMP}/extlinux" ::
+}
 
-  mcopy -so "${LE_TMP}/extlinux" ::
-fi
+mkimage_dtb() {
+  echo "image: copying device trees..."
+  for dtb in ${DTB[@]}; do
+    echo "image: copying ${dtb}.dtb..."
+    mcopy ${RELEASE_DIR}/3rdparty/bootloader/${dtb}.dtb ::
+  done
+  if [ -d ${RELEASE_DIR}/3rdparty/bootloader/overlays ]; then
+    echo "image: copying device tree overlays..."
+    mcopy -s ${RELEASE_DIR}/3rdparty/bootloader/overlays ::
+  fi
+}
+
+DTBXML="${PROJECT_DIR}/${PROJECT}/bootloader/dtb.xml"
+readarray -t DTB < <(xmlstarlet sel -t -v "//dtb/${DEVICE}/${SUBDEVICE}/file" ${DTBXML})
+BOOTMETHOD=$(xmlstarlet sel -t -v "//dtb/${DEVICE}/${SUBDEVICE}/@bootmethod" ${DTBXML})
+
+mkimage_dtb
+mkimage_${BOOTMETHOD}
+mkimage_uboot

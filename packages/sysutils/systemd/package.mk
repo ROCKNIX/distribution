@@ -150,12 +150,17 @@ post_makeinstall_target() {
   safe_remove ${INSTALL}/usr/lib/systemd/system/dev-hugepages.mount
   safe_remove ${INSTALL}/usr/lib/systemd/system/*.target.wants/dev-hugepages.mount
 
+  safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-journald-audit.socket
+
   # adjust systemd-hwdb-update (we have read-only /etc).
   sed '/^ConditionNeedsUpdate=.*$/d' -i ${INSTALL}/usr/lib/systemd/system/systemd-hwdb-update.service
 
   # remove nspawn
   safe_remove ${INSTALL}/usr/bin/systemd-nspawn
   safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-nspawn@.service
+
+  # remove timedatectl
+  safe_remove ${INSTALL}/usr/bin/timedatectl
 
   # remove unneeded generators
   for gen in ${INSTALL}/usr/lib/systemd/system-generators/*; do
@@ -198,6 +203,10 @@ post_makeinstall_target() {
   sed -e "s,^.*RuntimeMaxFileSize=.*$,RuntimeMaxFileSize=128K,g" -i ${INSTALL}/etc/systemd/journald.conf
   sed -e "s,^.*SplitMode=.*$,SplitMode=none,g" -i ${INSTALL}/etc/systemd/journald.conf
   sed -e "s,^.*SystemMaxUse=.*$,SystemMaxUse=10M,g" -i ${INSTALL}/etc/systemd/journald.conf
+  if [ -n "${BUILD_WITH_DEBUG}" ]; then
+    sed -e "s,^.*ForwardToConsole=.*$,ForwardToConsole=yes,g" -i ${INSTALL}/etc/systemd/journald.conf
+    sed -e "s,^.*TTYPath=.*$,TTYPath=${DEBUG_TTY},g" -i ${INSTALL}/etc/systemd/journald.conf
+  fi
 
   # tune logind.conf
   sed -e "s,^.*HandleLidSwitch=.*$,HandleLidSwitch=suspend,g" -i ${INSTALL}/etc/systemd/logind.conf
@@ -263,20 +272,26 @@ post_install() {
   add_group systemd-network 193
   add_user systemd-network x 193 193 "systemd-network" "/" "/bin/sh"
 
-  add_group audio 63
+  add_group systemd-oom 194
+  add_user systemd-oom x 194 194 "systemd Userspace OOM Killer" "/" "/bin/false"
+
+  add_group adm 4
+  add_group tty 5
+  add_group disk 6
+  add_group lp 7
+  add_group kmem 9
+  add_group wheel 10
   add_group cdrom 11
   add_group dialout 18
-  add_group disk 6
   add_group floppy 19
-  add_group kmem 9
-  add_group kvm 10
-  add_group lp 7
-  add_group render 12
-  add_group tape 33
-  add_group tty 5
-  add_group video 39
   add_group utmp 22
-  add_group input 199
+  add_group tape 33
+  add_group kvm 36
+  add_group video 39 pipewire
+  add_group audio 63 pipewire
+  add_group input 104
+  add_group render 105
+  add_group sgx 106
 
   enable_service machine-id.service
   enable_service debugconfig.service

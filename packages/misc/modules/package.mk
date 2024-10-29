@@ -11,7 +11,7 @@ PKG_LONGDESC="OS Modules Package"
 PKG_TOOLCHAIN="manual"
 
 case ${DEVICE} in
-  RK3588|RK3399)
+  RK3588|RK3399|SD865)
     PKG_DEPENDS_TARGET+=" gamepadtester"
   ;;
 esac

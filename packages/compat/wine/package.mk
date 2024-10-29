@@ -2,7 +2,7 @@
 # Copyright (C) 2024-present JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="wine"
-PKG_VERSION="9.13"
+PKG_VERSION="9.19"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/Kron4ek/Wine-Builds"
 PKG_URL="${PKG_SITE}/releases/download/${PKG_VERSION}/wine-${PKG_VERSION}-x86.tar.xz"

@@ -1,0 +1,395 @@
+diff --git a/arch/arm64/boot/dts/rockchip/rk3566-powkiddy-rgb20-pro.dts b/arch/arm64/boot/dts/rockchip/rk3566-powkiddy-rgb20-pro.dts
+new file mode 100644
+index 000000000000..46699d079645
+--- /dev/null
++++ b/arch/arm64/boot/dts/rockchip/rk3566-powkiddy-rgb20-pro.dts
+@@ -0,0 +1,50 @@
++// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
++/*
++ * Copyright (c) 2024-present ROCKNIX (https://github.com/ROCKNIX)
++ */
++
++/dts-v1/;
++
++#include "rk3566-powkiddy-rk2023.dts"
++
++/ {
++	compatible = "powkiddy,rgb20-pro", "rockchip,rk3566";
++	model = "Powkiddy RGB20 Pro";
++
++	vibrator: pwm-vibrator {
++		compatible = "pwm-vibrator";
++		pwm-names = "enable";
++		pwms = <&pwm5 0 1000000000 0>;
++	};
++};
++
++&battery {
++	charge-full-design-microamp-hours = <5000000>;
++	factory-internal-resistance-micro-ohms = <110000>;
++	voltage-max-design-microvolt = <4148000>;
++	voltage-min-design-microvolt = <3500000>;
++
++	ocv-capacity-table-0 =  <4148000 100>, <4076000 95>, <4056000 90>, <40410000 85>,
++				<4030000 80>, <4015000 75>, <3993000 70>, <3964000 65>,
++				<3929000 60>, <3889000 55>, <3864000 50>, <3846000 45>,
++				<3827000 40>, <3806000 35>, <3780000 30>, <3740000 25>,
++				<3687000 20>, <3636000 15>, <3592000 10>, <3548000 5>,
++				<3500000 0>;
++};
++
++&cru {
++	assigned-clocks = <&pmucru CLK_RTC_32K>, <&cru PLL_GPLL>,
++			  <&pmucru PLL_PPLL>, <&cru PLL_VPLL>;
++	assigned-clock-rates = <32768>, <1200000000>,
++			       <200000000>, <102000000>;
++};
++
++&dsi0 {
++        panel: panel@0 {
++                compatible = "powkiddy,rgb20-pro-panel", "powkiddy";
++	};
++};
++
++&pwm5 {
++	status = "okay";
++};
+diff --git a/drivers/gpu/drm/panel/Makefile b/drivers/gpu/drm/panel/Makefile
+index f156d7fa0bcc..aeac69da12cd 100644
+--- a/drivers/gpu/drm/panel/Makefile
++++ b/drivers/gpu/drm/panel/Makefile
+@@ -93,3 +93,4 @@ obj-$(CONFIG_DRM_PANEL_VISIONOX_VTDR6130) += panel-visionox-vtdr6130.o
+ obj-$(CONFIG_DRM_PANEL_VISIONOX_R66451) += panel-visionox-r66451.o
+ obj-$(CONFIG_DRM_PANEL_WIDECHIPS_WS2401) += panel-widechips-ws2401.o
+ obj-$(CONFIG_DRM_PANEL_XINPENG_XPP055C272) += panel-xinpeng-xpp055c272.o
++obj-y += panel-powkiddy.o
+diff --git a/drivers/gpu/drm/panel/panel-powkiddy.c b/drivers/gpu/drm/panel/panel-powkiddy.c
+new file mode 100644
+index 000000000000..8e0d6a61253a
+--- /dev/null
++++ b/drivers/gpu/drm/panel/panel-powkiddy.c
+@@ -0,0 +1,324 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Powkiddy RGB20 Pro MIPI-DSI panel driver
++ *
++ * based on
++ *
++ * NV3051D MIPI-DSI panel driver for Anbernic RG353x
++ * Copyright (C) 2022 Chris Morgan
++ */
++
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/media-bus-format.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/regulator/consumer.h>
++
++#include <video/display_timing.h>
++#include <video/mipi_display.h>
++
++#include <drm/drm_mipi_dsi.h>
++#include <drm/drm_modes.h>
++#include <drm/drm_panel.h>
++
++struct powkiddy_panel_info {
++	const struct drm_display_mode *display_modes;
++	unsigned int num_modes;
++	u16 width_mm, height_mm;
++	u32 bus_flags;
++	u32 mode_flags;
++};
++
++struct panel_powkiddy {
++	struct device *dev;
++	struct drm_panel panel;
++	struct gpio_desc *reset_gpio;
++	const struct powkiddy_panel_info *panel_info;
++	struct regulator *vdd;
++};
++
++static inline struct panel_powkiddy *panel_to_panelpowkiddy(struct drm_panel *panel)
++{
++	return container_of(panel, struct panel_powkiddy, panel);
++}
++
++static int panel_powkiddy_init_sequence(struct panel_powkiddy *ctx)
++{
++	struct mipi_dsi_device *dsi = to_mipi_dsi_device(ctx->dev);
++
++	/*
++	 * Init sequence was supplied by device vendor with no
++	 * documentation.
++	 */
++	mipi_dsi_dcs_write_seq(dsi, 0xdf, 0x91, 0x68, 0xf9);
++	mipi_dsi_dcs_write_seq(dsi, 0xde, 0x00);
++	mipi_dsi_dcs_write_seq(dsi, 0xb2, 0x00, 0x7e);
++	mipi_dsi_dcs_write_seq(dsi, 0xb3, 0x00, 0x7e);
++	mipi_dsi_dcs_write_seq(dsi, 0xc1, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00);
++	mipi_dsi_dcs_write_seq(dsi, 0xbb, 0x02, 0x24, 0x07, 0x61, 0x19, 0x44, 0x44);
++	mipi_dsi_dcs_write_seq(dsi, 0xbe, 0x1a, 0xf2);
++	mipi_dsi_dcs_write_seq(dsi, 0xc3, 0x10, 0x17, 0x5a, 0x17, 0x5a, 0x05, 0x05, 0x05, 0x05, 0x15, 0x15, 0x31, 0x05, 0xdf);
++	mipi_dsi_dcs_write_seq(dsi, 0xc4, 0x11, 0x80, 0x00, 0xdf, 0x09, 0x06, 0x14);
++	mipi_dsi_dcs_write_seq(dsi, 0xce, 0x00, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x0f, 0x03);
++	mipi_dsi_dcs_write_seq(dsi, 0xcf, 0x00, 0x01, 0x40, 0x01, 0xca, 0x01, 0xca, 0x01, 0xca);
++	mipi_dsi_dcs_write_seq(dsi, 0xd0, 0x00, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x03, 0x01, 0x05, 0x07, 0x09, 0x0b, 0x1e, 0x15, 0x1f, 0x1f, 0x15, 0x1f);
++	mipi_dsi_dcs_write_seq(dsi, 0xd1, 0x00, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x02, 0x00, 0x04, 0x06, 0x08, 0x0a, 0x1e, 0x15, 0x1f, 0x1f, 0x15, 0x1f);
++	mipi_dsi_dcs_write_seq(dsi, 0xd2, 0x00, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x00, 0x02, 0x0a, 0x08, 0x06, 0x04, 0x1f, 0x15, 0x1f, 0x1f, 0x15, 0x1e);
++	mipi_dsi_dcs_write_seq(dsi, 0xd3, 0x00, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x01, 0x03, 0x0b, 0x09, 0x07, 0x05, 0x1f, 0x15, 0x1f, 0x1f, 0x15, 0x1e);
++	mipi_dsi_dcs_write_seq(dsi, 0xd4, 0x30, 0x00, 0x00, 0x04, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x03, 0x00, 0x11, 0x00, 0x01, 0xc0, 0x04, 0x01, 0x01, 0x11, 0x80, 0x01, 0xc0, 0x05, 0x01, 0x01, 0x00, 0x00, 0x00, 0x04, 0x00, 0x06, 0x18, 0x02, 0xe3);
++	mipi_dsi_dcs_write_seq(dsi, 0xd5, 0x68, 0x73, 0x00, 0x08, 0x08, 0x00, 0x03, 0x00);
++	mipi_dsi_dcs_write_seq(dsi, 0xb7, 0x00, 0xd8, 0x00, 0x00, 0xd8, 0x00);
++	mipi_dsi_dcs_write_seq(dsi, 0xc8, 0x7f, 0x69, 0x5a, 0x4e, 0x4a, 0x3b, 0x40, 0x2a, 0x44, 0x43, 0x44, 0x63, 0x51, 0x59, 0x4c, 0x48, 0x3a, 0x28, 0x0f, 0x7f, 0x69, 0x5a, 0x4e, 0x4a, 0x3b, 0x40, 0x2a, 0x44, 0x43, 0x44, 0x63, 0x51, 0x59, 0x4c, 0x48, 0x3a, 0x28, 0x0f);
++	mipi_dsi_dcs_write_seq(dsi, 0xde, 0x02);
++	mipi_dsi_dcs_write_seq(dsi, 0xbb, 0x00, 0x5b, 0x5c, 0x41);
++	mipi_dsi_dcs_write_seq(dsi, 0xb5, 0x00, 0x5a, 0x0a);
++	mipi_dsi_dcs_write_seq(dsi, 0xc6, 0x22);
++	mipi_dsi_dcs_write_seq(dsi, 0xd7, 0x12);
++	mipi_dsi_dcs_write_seq(dsi, 0xde, 0x00);
++	mipi_dsi_dcs_write_seq(dsi, 0x35, 0x00);
++
++	dev_dbg(ctx->dev, "Panel init sequence done\n");
++
++	return 0;
++}
++
++static int panel_powkiddy_unprepare(struct drm_panel *panel)
++{
++	struct panel_powkiddy *ctx = panel_to_panelpowkiddy(panel);
++	struct mipi_dsi_device *dsi = to_mipi_dsi_device(ctx->dev);
++	int ret;
++
++	ret = mipi_dsi_dcs_set_display_off(dsi);
++	if (ret < 0)
++		dev_err(ctx->dev, "failed to set display off: %d\n", ret);
++
++	msleep(20);
++
++	ret = mipi_dsi_dcs_enter_sleep_mode(dsi);
++	if (ret < 0) {
++		dev_err(ctx->dev, "failed to enter sleep mode: %d\n", ret);
++		return ret;
++	}
++
++	usleep_range(10000, 15000);
++
++	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++
++	regulator_disable(ctx->vdd);
++
++	return 0;
++}
++
++static int panel_powkiddy_prepare(struct drm_panel *panel)
++{
++	struct panel_powkiddy *ctx = panel_to_panelpowkiddy(panel);
++	struct mipi_dsi_device *dsi = to_mipi_dsi_device(ctx->dev);
++	int ret;
++
++	dev_dbg(ctx->dev, "Resetting the panel\n");
++	ret = regulator_enable(ctx->vdd);
++	if (ret < 0) {
++		dev_err(ctx->dev, "Failed to enable vdd supply: %d\n", ret);
++		return ret;
++	}
++
++	usleep_range(2000, 3000);
++	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++	msleep(150);
++	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
++	msleep(20);
++
++	ret = panel_powkiddy_init_sequence(ctx);
++	if (ret < 0) {
++		dev_err(ctx->dev, "Panel init sequence failed: %d\n", ret);
++		goto disable_vdd;
++	}
++
++	ret = mipi_dsi_dcs_exit_sleep_mode(dsi);
++	if (ret < 0) {
++		dev_err(ctx->dev, "Failed to exit sleep mode: %d\n", ret);
++		goto disable_vdd;
++	}
++
++	msleep(200);
++
++	ret = mipi_dsi_dcs_set_display_on(dsi);
++	if (ret < 0) {
++		dev_err(ctx->dev, "Failed to set display on: %d\n", ret);
++		goto disable_vdd;
++	}
++
++	usleep_range(10000, 15000);
++
++	return 0;
++
++disable_vdd:
++	regulator_disable(ctx->vdd);
++	return ret;
++}
++
++static int panel_powkiddy_get_modes(struct drm_panel *panel,
++				   struct drm_connector *connector)
++{
++	struct panel_powkiddy *ctx = panel_to_panelpowkiddy(panel);
++	const struct powkiddy_panel_info *panel_info = ctx->panel_info;
++	struct drm_display_mode *mode;
++	unsigned int i;
++
++	for (i = 0; i < panel_info->num_modes; i++) {
++		mode = drm_mode_duplicate(connector->dev,
++					  &panel_info->display_modes[i]);
++		if (!mode)
++			return -ENOMEM;
++
++		drm_mode_set_name(mode);
++
++		mode->type = DRM_MODE_TYPE_DRIVER;
++		if (panel_info->num_modes == 1)
++			mode->type |= DRM_MODE_TYPE_PREFERRED;
++
++		drm_mode_probed_add(connector, mode);
++	}
++
++	connector->display_info.bpc = 8;
++	connector->display_info.width_mm = panel_info->width_mm;
++	connector->display_info.height_mm = panel_info->height_mm;
++	connector->display_info.bus_flags = panel_info->bus_flags;
++
++	return panel_info->num_modes;
++}
++
++static const struct drm_panel_funcs panel_powkiddy_funcs = {
++	.unprepare	= panel_powkiddy_unprepare,
++	.prepare	= panel_powkiddy_prepare,
++	.get_modes	= panel_powkiddy_get_modes,
++};
++
++static int panel_powkiddy_probe(struct mipi_dsi_device *dsi)
++{
++	struct device *dev = &dsi->dev;
++	struct panel_powkiddy *ctx;
++	int ret;
++
++	ctx = devm_kzalloc(dev, sizeof(*ctx), GFP_KERNEL);
++	if (!ctx)
++		return -ENOMEM;
++
++	ctx->dev = dev;
++
++	ctx->panel_info = of_device_get_match_data(dev);
++	if (!ctx->panel_info)
++		return -EINVAL;
++
++	ctx->reset_gpio = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_HIGH);
++	if (IS_ERR(ctx->reset_gpio)) {
++		dev_err(dev, "cannot get reset gpio\n");
++		return PTR_ERR(ctx->reset_gpio);
++	}
++
++	ctx->vdd = devm_regulator_get(dev, "vdd");
++	if (IS_ERR(ctx->vdd)) {
++		ret = PTR_ERR(ctx->vdd);
++		if (ret != -EPROBE_DEFER)
++			dev_err(dev, "Failed to request vdd regulator: %d\n", ret);
++		return ret;
++	}
++
++	mipi_dsi_set_drvdata(dsi, ctx);
++
++	dsi->lanes = 4;
++	dsi->format = MIPI_DSI_FMT_RGB888;
++	dsi->mode_flags = ctx->panel_info->mode_flags;
++
++	drm_panel_init(&ctx->panel, &dsi->dev, &panel_powkiddy_funcs,
++		       DRM_MODE_CONNECTOR_DSI);
++
++	ret = drm_panel_of_backlight(&ctx->panel);
++	if (ret)
++		return ret;
++
++	drm_panel_add(&ctx->panel);
++
++	ret = mipi_dsi_attach(dsi);
++	if (ret < 0) {
++		dev_err(dev, "mipi_dsi_attach failed: %d\n", ret);
++		drm_panel_remove(&ctx->panel);
++		return ret;
++	}
++
++	return 0;
++}
++
++static void panel_powkiddy_shutdown(struct mipi_dsi_device *dsi)
++{
++	struct panel_powkiddy *ctx = mipi_dsi_get_drvdata(dsi);
++	int ret;
++
++	ret = drm_panel_unprepare(&ctx->panel);
++	if (ret < 0)
++		dev_err(&dsi->dev, "Failed to unprepare panel: %d\n", ret);
++
++	ret = drm_panel_disable(&ctx->panel);
++	if (ret < 0)
++		dev_err(&dsi->dev, "Failed to disable panel: %d\n", ret);
++}
++
++static void panel_powkiddy_remove(struct mipi_dsi_device *dsi)
++{
++	struct panel_powkiddy *ctx = mipi_dsi_get_drvdata(dsi);
++	int ret;
++
++	panel_powkiddy_shutdown(dsi);
++
++	ret = mipi_dsi_detach(dsi);
++	if (ret < 0)
++		dev_err(&dsi->dev, "Failed to detach from DSI host: %d\n", ret);
++
++	drm_panel_remove(&ctx->panel);
++}
++
++static const struct drm_display_mode powkiddy_rgb20_pro_modes[] = {
++    {
++		.hdisplay       = 1024,
++		.hsync_start    = 1024 + 20,
++		.hsync_end      = 1024 + 20 + 4,
++		.htotal         = 1024 + 20 + 4 + 20,
++		.vdisplay       = 768,
++		.vsync_start    = 768 + 15,
++		.vsync_end      = 768 + 15 + 3,
++		.vtotal         = 768 + 15 + 3 + 11,
++		.clock          = 51072,
++		.flags          = DRM_MODE_FLAG_NHSYNC | DRM_MODE_FLAG_NVSYNC,
++	}
++};
++
++static const struct powkiddy_panel_info powkiddy_rgb20_pro_info = {
++	.display_modes = powkiddy_rgb20_pro_modes,
++	.num_modes = ARRAY_SIZE(powkiddy_rgb20_pro_modes),
++	.width_mm = 70,
++	.height_mm = 57,
++	.bus_flags = DRM_BUS_FLAG_DE_LOW | DRM_BUS_FLAG_PIXDATA_DRIVE_NEGEDGE,
++	.mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_BURST |
++		      MIPI_DSI_MODE_LPM | MIPI_DSI_MODE_NO_EOT_PACKET,
++};
++
++static const struct of_device_id powkiddy_of_match[] = {
++	{ .compatible = "powkiddy,rgb20-pro-panel", .data = &powkiddy_rgb20_pro_info },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, powkiddy_of_match);
++
++static struct mipi_dsi_driver powkiddy_driver = {
++	.driver = {
++		.name = "panel-powkiddy",
++		.of_match_table = powkiddy_of_match,
++	},
++	.probe	= panel_powkiddy_probe,
++	.remove = panel_powkiddy_remove,
++	.shutdown = panel_powkiddy_shutdown,
++};
++module_mipi_dsi_driver(powkiddy_driver);
++
++MODULE_DESCRIPTION("DRM driver for Powkiddy RGB20 Pro MIPI DSI panels");
++MODULE_LICENSE("GPL");

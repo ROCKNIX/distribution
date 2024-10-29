@@ -2,12 +2,13 @@
 # Copyright (C) 2021-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="pipewire"
-PKG_VERSION="1.1.83"
+PKG_VERSION="1.2.5"
 PKG_LICENSE="LGPL"
 PKG_SITE="https://pipewire.org"
 PKG_URL="https://github.com/PipeWire/pipewire/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain libpthread-stubs dbus ncurses alsa-lib pulseaudio systemd libsndfile libusb"
 PKG_LONGDESC="PipeWire is a server and user space API to deal with multimedia pipeline"
+PKG_PATCH_DIRS+=" ${DEVICE}"
 
 if [ "${BLUETOOTH_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" bluez sbc ldacBT libfreeaptx fdk-aac"

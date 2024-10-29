@@ -2,7 +2,7 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="box86"
-PKG_VERSION="c5bccdf300ff5017b7225e49a934c395c51f297b"
+PKG_VERSION="a7855d3bcbc59e2952c8231a3c04896cd45301e6"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/ptitSeb/box86"
 PKG_URL="${PKG_SITE}.git"
@@ -29,7 +29,7 @@ case ${TARGET_ARCH} in
 esac
 
 case ${DEVICE} in
-  RK3588)
+  RK3588|SD865)
     PKG_CMAKE_OPTS_TARGET+=" -DRK3588=On"
   ;;
   RK3399)

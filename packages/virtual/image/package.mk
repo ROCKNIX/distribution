@@ -11,11 +11,16 @@ PKG_LONGDESC="Root package used to build and create complete image"
 PKG_DEPENDS_TARGET="toolchain squashfs-tools:host dosfstools:host fakeroot:host kmod:host \
                     mtools:host populatefs:host libc gcc linux linux-drivers linux-firmware \
                     ${BOOTLOADER} busybox umtprd util-linux usb-modeswitch unzip poppler jq socat \
-                    p7zip file initramfs grep wget util-linux zstd lz4 empty lzo libzip \
+                    p7zip file initramfs grep wget util-linux btrfs-progs zstd lz4 empty lzo libzip \
                     bash coreutils modules system-utils autostart quirks powerstate gnupg \
                     gzip six lynx xmlstarlet vim pyudev dialog dbus-python network rocknix"
 
-PKG_UI="emulationstation es-themes textviewer"
+if [ ${ES_WIP} ]; then
+  PKG_UI="rocknix-emulationstation "
+else
+  PKG_UI="emulationstation "
+fi
+PKG_UI+="es-themes textviewer"
 
 PKG_UI_TOOLS="fileman fbgrab"
 
@@ -29,7 +34,7 @@ PKG_SOUND="espeak libao"
 
 PKG_SYNC="synctools"
 
-PKG_TOOLS="patchelf git ectool make i2c-tools evtest"
+PKG_TOOLS="patchelf ectool make i2c-tools evtest"
 
 PKG_DEBUG="debug"
 
@@ -46,6 +51,9 @@ else
 
   # GLmark2
   [[ ! -z "${OPENGLES_SUPPORT}" ]] && PKG_DEPENDS_TARGET+=" glmark2"
+
+  # Vulkan demos and tools
+  [ "${VULKAN_SUPPORT}" = "yes" ] && PKG_DEPENDS_TARGET+=" vkmark"
 
   # Weston kiosk shell dpms support.
   [ "${WINDOWMANAGER}" = "weston" ] && PKG_DEPENDS_TARGET+=" weston-kiosk-shell-dpms"
@@ -73,7 +81,10 @@ fi
 [ "${UDEVIL}" = "yes" ] && PKG_DEPENDS_TARGET+=" udevil"
 
 # EXFAT support
-[ "${EXFAT}" = "yes" ] && PKG_DEPENDS_TARGET+=" exfat exfatprogs"
+[ "${EXFAT}" = "yes" ] && PKG_DEPENDS_TARGET+=" exfatprogs"
+
+# NFS support
+[ "${NFS_SUPPORT}" = "yes" ] && PKG_DEPENDS_TARGET+=" nfs-utils"
 
 # NTFS 3G support
 [ "${NTFS3G}" = "yes" ] && PKG_DEPENDS_TARGET+=" ntfs-3g_ntfsprogs"

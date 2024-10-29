@@ -24,17 +24,12 @@ src-pkg:
 docs:
 	./tools/foreach './scripts/clean emulators && ./scripts/build emulators'
 
-world: RK3588 RK3566 RK3566-X55 RK3326 RK3399 S922X
+world: RK3588 RK3566 RK3326 RK3399 S922X SD865
 
 AMD64:
 	unset DEVICE_ROOT
 	PROJECT=PC DEVICE=AMD64 ARCH=i686 ./scripts/build_distro
 	PROJECT=PC DEVICE=AMD64 ARCH=x86_64 ./scripts/build_distro
-
-INTEL64:
-	unset DEVICE_ROOT
-	PROJECT=PC DEVICE=INTEL64 ARCH=i686 ./scripts/build_distro
-	PROJECT=PC DEVICE=INTEL64 ARCH=x86_64 ./scripts/build_distro
 
 RK3588:
 	unset DEVICE_ROOT
@@ -56,10 +51,6 @@ RK3566:
 	DEVICE_ROOT=RK3566 PROJECT=Rockchip DEVICE=RK3566 ARCH=arm ./scripts/build_distro
 	DEVICE_ROOT=RK3566 PROJECT=Rockchip DEVICE=RK3566 ARCH=aarch64 ./scripts/build_distro
 
-RK3566-X55:
-	DEVICE_ROOT=RK3566 PROJECT=Rockchip DEVICE=RK3566-X55 ARCH=arm ./scripts/build_distro
-	DEVICE_ROOT=RK3566 PROJECT=Rockchip DEVICE=RK3566-X55 ARCH=aarch64 ./scripts/build_distro
-
 RK3326:
 	unset DEVICE_ROOT
 	PROJECT=Rockchip DEVICE=RK3326 ARCH=arm ./scripts/build_distro
@@ -74,6 +65,11 @@ H700:
 	unset DEVICE_ROOT
 	PROJECT=Allwinner DEVICE=H700 ARCH=arm ./scripts/build_distro
 	PROJECT=Allwinner DEVICE=H700 ARCH=aarch64 ./scripts/build_distro
+
+SD865:
+	unset DEVICE_ROOT
+	PROJECT=Qualcomm DEVICE=SD865 ARCH=arm ./scripts/build_distro
+	PROJECT=Qualcomm DEVICE=SD865 ARCH=aarch64 ./scripts/build_distro
 
 update:
 	PROJECT=Rockchip DEVICE=RK3588 ARCH=aarch64 ./scripts/update_packages
