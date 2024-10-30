@@ -2,7 +2,7 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="vitaquake2-rogue-lr"
-PKG_VERSION="69e56a470638ca8ed15b53212923220360a69f97"
+PKG_VERSION="49bb33e6e82ee3b5ee2e1043c56917587fda5934"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/vitaquake2"
 PKG_URL="$PKG_SITE/archive/$PKG_VERSION.tar.gz"
@@ -18,7 +18,13 @@ fi
 pre_make_target() {
   export BUILD_SYSROOT=${SYSROOT_PREFIX}
 
-  PKG_MAKE_OPTS_TARGET+=" basegame=rogue platform=${DEVICE}_rocknix"
+  PKG_MAKE_OPTS_TARGET+=" basegame=rogue"
+
+  case ${TARGET_ARCH} in
+    aarch64)
+      PKG_MAKE_OPTS_TARGET+=" platform=${DEVICE}_rocknix"
+    ;;
+  esac
 }
 
 makeinstall_target() {
