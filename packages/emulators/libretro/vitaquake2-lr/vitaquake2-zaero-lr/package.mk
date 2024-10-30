@@ -18,7 +18,13 @@ fi
 pre_make_target() {
   export BUILD_SYSROOT=${SYSROOT_PREFIX}
 
-  PKG_MAKE_OPTS_TARGET+=" basegame=zaero platform=${DEVICE}_rocknix"
+  PKG_MAKE_OPTS_TARGET+=" basegame=zaero"
+
+  case ${TARGET_ARCH} in
+    aarch64)
+      PKG_MAKE_OPTS_TARGET+=" platform=${DEVICE}_rocknix"
+    ;;
+  esac
 }
 
 makeinstall_target() {
