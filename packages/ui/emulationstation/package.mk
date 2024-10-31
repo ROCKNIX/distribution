@@ -39,14 +39,8 @@ if [ "${GRAPHIC_DRIVERS}" = "panfrost" ] && [ ! "${DEVICE}" = "RK3588" ]; then
   PKG_CMAKE_OPTS_TARGET+=" -DPANFROST=1"
 fi
 
-# Enable Moonlight for everything but S922X Mali Vulkan
-if [ "${DEVICE}" = "S922X" -a "${USE_MALI}" != "no" ]; then
-  PKG_CMAKE_OPTS_TARGET+=" -DMOONLIGHT=0"
-else
-  PKG_CMAKE_OPTS_TARGET+=" -DMOONLIGHT=1"
-fi
-
-PKG_CMAKE_OPTS_TARGET+=" -DENABLE_EMUELEC=1 \
+PKG_CMAKE_OPTS_TARGET+=" -DMOONLIGHT=1 \
+                         -DENABLE_EMUELEC=1 \
                          -DDISABLE_KODI=1 \
                          -DENABLE_FILEMANAGER=0 \
                          -DCEC=0 \

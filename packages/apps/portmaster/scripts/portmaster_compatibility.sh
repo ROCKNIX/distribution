@@ -4,6 +4,7 @@
 # Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
 
 . /etc/profile
+. /etc/os-release
 
 if [[ "${UI_SERVICE}" =~ "weston.service"|"*sway*" ]]; then
   if [[ $(glxinfo | grep -i "opengl renderer") =~ "Panfrost" ]]; then
@@ -26,8 +27,7 @@ if [[ "${UI_SERVICE}" =~ "weston.service"|"*sway*" ]]; then
       echo Fixing: "$port";
     done;
   else
-    case "${QUIRK_DEVICE}" in
-      "Hardkernel ODROID-GO-Ultra"|"Powkiddy RGB10 MAX 3 Pro"|"Hardkernel ODROID-N2*")
+    if [ "${HW_DEVICE}" = "S922X" ]; then
       #Fixing ports on S922X, exclude FNA games
       for port in /storage/roms/ports/*.sh; do
         if ! grep -q FNA "$port"; then
@@ -35,7 +35,6 @@ if [[ "${UI_SERVICE}" =~ "weston.service"|"*sway*" ]]; then
           echo Fixing: "$port";
         fi
       done;
-    ;;
-    esac
+    fi
   fi
 fi

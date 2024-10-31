@@ -53,16 +53,3 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/config/${PKG_NAME}
   cp ${PKG_DIR}/config/common/* ${INSTALL}/usr/config/${PKG_NAME}
 }
-
-post_install() {
-    case ${DEVICE} in
-      S922X)
-        LIBEGL="export SDL_VIDEO_GL_DRIVER=\/usr\/lib\/egl\/libGL.so.1 SDL_VIDEO_EGL_DRIVER=\/usr\/lib\/egl\/libEGL.so.1"
-      ;;
-      *)
-        LIBEGL=""
-      ;;
-    esac
-    sed -e "s/@LIBEGL@/${LIBEGL}/g" \
-        -i ${INSTALL}/usr/bin/start_mednafen.sh
-}
