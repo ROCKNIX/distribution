@@ -224,5 +224,14 @@ then
 fi
 
 #Run mednafen
-@LIBEGL@
+#Fix for libmali gpu driver on S922X platform
+if [ "${HW_DEVICE}" = "S922X" ]; then
+  GPUDRIVER=$(/usr/bin/gpudriver)
+
+  if [ "${GPUDRIVER}" = "libmali" ]; then
+    export SDL_VIDEO_GL_DRIVER=\/usr\/lib\/egl\/libGL.so.1
+    export SDL_VIDEO_EGL_DRIVER=\/usr\/lib\/egl\/libEGL.so.1
+  fi
+fi
+
 ${EMUPERF} /usr/bin/mednafen -force_module ${CORE} -${CORE}.stretch ${STRETCH:="aspect"} -${CORE}.shader ${SHADER:="ipsharper"} ${FEATURES_CMDLINE} "${1}"

@@ -4,6 +4,7 @@
 # Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
 
 . /etc/profile
+. /etc/os-release
 
 set_kill set "-9 drastic"
 
@@ -55,7 +56,17 @@ fi
 
 cd /storage/.config/drastic/
 @HOTKEY@
-@LIBEGL@
+
+# Fix for libmali gpu driver on S922X platform
+if [ "${HW_DEVICE}" = "S922X" ]; then
+  GPUDRIVER=$(/usr/bin/gpudriver)
+
+  if [ "${GPUDRIVER}" = "libmali" ]; then
+    export SDL_VIDEO_GL_DRIVER=\/usr\/lib\/egl\/libGL.so.1
+    export SDL_VIDEO_EGL_DRIVER=\/usr\/lib\/egl\/libEGL.so.1
+  fi
+fi
+
 $GPTOKEYB "drastic" -c "drastic.gptk" &
 ./drastic "$1"
 kill -9 $(pidof gptokeyb)
