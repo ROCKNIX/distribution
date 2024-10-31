@@ -4,16 +4,6 @@
 . /etc/profile
 set_kill set "-9 xemu"
 
-syscfg="/storage/.config/system/configs/system.cfg"
-if ! grep -q 'ports\["xemu"\].port_controller_layout=xbox' "$syscfg"; then
-echo 'ports["xemu"].port_controller_layout=xbox' >> "$syscfg"
-fi
-
-# Load gptokeyb support files
-control-gen_init.sh
-source /storage/.config/gptokeyb/control.ini
-get_controls
-
 #Check if xemu exists in .config
 if [ ! -d "/storage/.config/xemu" ]; then
     mkdir -p "/storage/.config/xemu"
@@ -45,11 +35,44 @@ if [ ! -f "/storage/roms/bios/xemu/hdd/xbox_hdd.qcow2" ]; then
     unzip -o /usr/config/xemu/hdd.zip -d /storage/roms/bios/xemu/hdd/
 fi
 
+#Emulation Station Features
+GAME=$(echo "${1}"| sed "s#^/.*/##")
+PLATFORM=$(echo "${2}"| sed "s#^/.*/##")
+ASPECT=$(get_setting aspect_ratio "${PLATFORM}" "${GAME}")
+#CLOCK=$(get_setting clock_speed "${PLATFORM}" "${GAME}")
+IRES=$(get_setting internal_resolution "${PLATFORM}" "${GAME}")
+#RENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
+SKIPBOOT=$(get_setting skip_boot_animation "${PLATFORM}" "${GAME}")
+
+  #Aspect Ratio
+	if [ "$ASPECT" = "0" ]; then
+  		sed -i "/aspect_ratio =/c\aspect_ratio = '4x3'" /storage/.config/xemu/xemu.toml
+        elif [ "$ASPECT" = "1" ]; then
+                sed -i "/aspect_ratio =/c\aspect_ratio = '16x9'" /storage/.config/xemu/xemu.toml
+        else
+                sed -i "/aspect_ratio =/c\aspect_ratio = 'native'" /storage/.config/xemu/xemu.toml
+        fi
+
+  #Internal Resolution
+        if [ "$IRES" = "2" ]; then
+                sed -i "/surface_scale =/c\surface_scale = 2" /storage/.config/xemu/xemu.toml
+        elif [ "$IRES" = "3" ]; then
+                sed -i "/surface_scale =/c\surface_scale = 3" /storage/.config/xemu/xemu.toml
+        elif [ "$IRES" = "4" ]; then
+                sed -i "/surface_scale =/c\surface_scale = 4" /storage/.config/xemu/xemu.toml
+        else
+                sed -i "/surface_scale =/c\surface_scale = 1" /storage/.config/xemu/xemu.toml
+        fi
+
+  #Skip boot animation
+        if [ "$SKIPBOOT" = "false" ]; then
+                sed -i "/skip_boot_anim =/c\skip_boot_anim = false" /storage/.config/xemu/xemu.toml
+        else
+                sed -i "/skip_boot_anim =/c\skip_boot_anim = true" /storage/.config/xemu/xemu.toml
+        fi
+
 # Set config file location
 CONFIG=/storage/.config/xemu/xemu.toml
-
-# Set gamecontroller db location
-export SDL_GAMECONTROLLERCONFIG_FILE="/tmp/gamecontrollerdb.txt"
 
 /usr/bin/xemu -full-screen -config_path $CONFIG -dvd_path "${1}"
 
