@@ -17,7 +17,7 @@ PKG_PATCH_DIRS="${LINUX} mainline ${DEVICE} default"
 
 case ${DEVICE} in
   RK3588)
-    PKG_VERSION="0c0949a270027b749ab2c818e7ff61fc542757cc"
+    PKG_VERSION="b8e62bed74766b6c8c423a767b35495e78b64caf"
     PKG_URL="https://github.com/armbian/linux-rockchip/archive/${PKG_VERSION}.tar.gz"
     PKG_GIT_CLONE_BRANCH="rk-6.1-rkr3"
     PKG_PATCH_DIRS="${LINUX} ${DEVICE} default"
