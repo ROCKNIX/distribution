@@ -65,6 +65,8 @@ if [ "${DEVICE}" = "RK3326" ]; then
     cp -v $(get_pkg_directory generic-dsi)/sources/panel-generic-dsi.c ${PKG_BUILD}/drivers/gpu/drm/panel/
     echo "obj-y" += panel-generic-dsi.o >> ${PKG_BUILD}/drivers/gpu/drm/panel/Makefile
   }
+elif [ "${DEVICE}" = "SD865" ]; then
+  PKG_DEPENDS_UNPACK+=" kernel-firmware"
 fi
 
 post_patch() {
