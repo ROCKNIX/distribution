@@ -1,10 +1,19 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
+
+# gadget setup functions (prepare_usb_network and cleanup_usb_network) are derived from code from
+#   * https://pastebin.com/VtAusEmf (author unknown)
+#   * David Lechner <david@lechnology.com>  https://github.com/ev3dev/ev3-systemd/blob/ev3dev-buster/scripts/ev3-usb.sh
+#   * rundekugel @github https://github.com/rundekugel/USBGadgetNetwork/blob/main/create-dual-rndis-and-cdcecm.sh
 
 . /etc/profile
 
-for mod in usb_f_ecm usb_f_fs; do
+MACHINEIDFILE=/storage/.cache/systemd-machine-id
+SERIAL=$(cat ${MACHINEIDFILE})
+
+for mod in usb_f_ecm usb_f_fs usb_f_rndis; do
 	modprobe -q ${mod}
 done
 
@@ -14,87 +23,289 @@ if [ ! -f /storage/.cache/usbgadget/ip_address.conf ] ; then
 	echo "10.1.1.2" > /storage/.cache/usbgadget/ip_address.conf
 fi
 
-if [ ! -f /storage/.cache/usbgadget/udhcpd.conf ] ; then
-	echo -e "interface usb0\nstart 10.1.1.1\nend 10.1.1.1\nopt subnet 255.255.255.0\nopt lease 86400\nmax_leases 1\nlease_file /dev/null\nremaining no" >> /storage/.cache/usbgadget/udhcpd.conf
+UDHCPCONF=/storage/.cache/usbgadget/udhcpd.conf
+if [ ! -f $UDHCPCONF ] ; then
+	echo -e "interface usbnet\nstart 10.1.1.1\nend 10.1.1.1\nopt subnet 255.255.255.0\nopt lease 86400\nmax_leases 1\nlease_file /dev/null\nremaining no" >> /storage/.cache/usbgadget/udhcpd.conf
+fi
+# Rename interface in old (pre-bridge) configs
+if ! grep -q usbnet $UDHCPCONF; then
+	sed -i 's|interface.*$|interface usbnet|' $UDHCPCONF
 fi
 
-VENDOR=ROCKNIX
-MACHINE=$(cat /etc/hostname)
+if [ -r /storage/.cache/usbgadget/usbgadget.conf ] ; then
+	. /storage/.cache/usbgadget/usbgadget.conf
+fi
+
 UDC_NAME=$(ls -1 /sys/class/udc |head -n1)
+CURRENT_MODE=$(cat /sys/class/udc/${UDC_NAME}/function)
+[ -z ${CURRENT_MODE} ] && CURRENT_MODE=disabled
+
 IP=$(cat /storage/.cache/usbgadget/ip_address.conf)
 
 usb_disable() {
-	echo "" > /sys/kernel/config/usb_gadget/gadget/UDC
 	echo "USB_MODE=disabled" > /storage/.cache/usbgadget/usbgadget.conf
+	echo "" > /sys/kernel/config/usb_gadget/${CURRENT_MODE}/UDC
+	CURRENT_MODE=disabled
 }
 
-usb_start() {
-	if [ -r /storage/.cache/usbgadget/usbgadget.conf ] ; then
-		. /storage/.cache/usbgadget/usbgadget.conf
-	fi
-	
-	if [ "$1" ] ; then
-		USB_MODE=$1
+# this function enables the UDC gadget when needed.
+# For RK3566 this should be done only when cable is connected, thus bizarre cable checks
+# For other devices, it may be just enabled even without connection
+usb_trigger() {
+	# no-op when mode is already set
+	[[ ${CURRENT_MODE} == ${USB_MODE} ]] && return
+	# only configured modes need processing
+	[[ ! -e /sys/kernel/config/usb_gadget/${USB_MODE}/UDC ]] && return
+
+	if [[ "${HW_DEVICE}" = RK3566 ]]; then
+		PHY_NAME=$(ls -d /sys/devices/platform/${UDC_NAME}/supplier:platform:*usb2phy | sed 's|^.*:platform:||')
+		CABLE0NAME=$(cat /sys/devices/platform/${PHY_NAME}/extcon/extcon0/cable.0/name)
+		[[ ${CABLE0NAME} == USB ]] || return   # assert we check the right cable
+		grep -q 1 /sys/devices/platform/${PHY_NAME}/extcon/extcon0/cable.0/state || return
 	fi
 
-	cd /sys/kernel/config/usb_gadget
-	mkdir gadget \
-		gadget/strings/0x409 \
-		gadget/configs/c.1 \
-		gadget/configs/c.1/strings/0x409 \
-		gadget/functions/ffs.mtp \
-		gadget/functions/ecm.usb0
-        
-	echo $VENDOR > gadget/strings/0x409/manufacturer
-	echo $MACHINE > gadget/strings/0x409/product
-	
-	
+	# Enable selected mode
+	echo "${UDC_NAME}" > /sys/kernel/config/usb_gadget/${USB_MODE}/UDC
+}
+
+
+#############################################
+# code below (prepare_usb_network and cleanup_usb_network) is derived from
+# https://github.com/rundekugel/USBGadgetNetwork
+# and adapted for Rocknix
+#############################################
+g_cdc="/sys/kernel/config/usb_gadget/cdc"
+verbose=0
+devversion=0x$(echo $OS_VERSION | cut -b 3-6)   # 0xYYMM; 20241025 -> 0x2410
+
+prepare_usb_network() {
+    set -e
+    usb_ver="0x0200" # USB 2.0
+    dev_class="2" # Communications
+    attr="0xC0" # Self powered
+    pwr="0xfe" #
+    cfg1="CDC"
+    cfg2="RNDIS"
+    ms_vendor_code="0xcd" # Microsoft
+    ms_qw_sign="MSFT100" # also Microsoft (if you couldn't tell)
+    ms_compat_id="RNDIS" # matches Windows RNDIS Drivers
+    ms_subcompat_id="5162001" # matches Windows RNDIS 6.0 Driver
+
+    if [ -d ${g_cdc} ]; then
+        if [ "$(cat ${g_cdc}/UDC)" != "" ]; then
+            if [ "$verbose" -gt "0" ];then echo "Gadget is already up."; fi
+            exit 1
+        fi
+        if [ "$verbose" -gt "0" ];then echo "Cleaning up old directory..."; fi
+        cleanup_usb_network
+    fi
+    if [ "$verbose" -gt "0" ];then echo "Setting up gadget..."; fi
+
+    # Create a new gadget
+
+    mkdir ${g_cdc}
+    echo "${usb_ver}" > ${g_cdc}/bcdUSB
+    echo "${dev_class}" > ${g_cdc}/bDeviceClass
+    echo "0x1d6b" > ${g_cdc}/idVendor
+    echo "0x0104" > ${g_cdc}/idProduct
+    echo "${devversion}" > ${g_cdc}/bcdDevice
+    mkdir ${g_cdc}/strings/0x409
+    echo "${OS_NAME}" > ${g_cdc}/strings/0x409/manufacturer
+    echo "${QUIRK_DEVICE}" > ${g_cdc}/strings/0x409/product
+    echo "${SERIAL}" > ${g_cdc}/strings/0x409/serialnumber
+
+    # Create 2 configurations. The first will be CDC. The second will be RNDIS.
+    # Thanks to os_desc, Windows should use the second configuration.
+
+    # config 1 is for CDC
+
+    mkdir ${g_cdc}/configs/c.1
+    echo "${attr}" > ${g_cdc}/configs/c.1/bmAttributes
+    echo "${pwr}" > ${g_cdc}/configs/c.1/MaxPower
+    mkdir ${g_cdc}/configs/c.1/strings/0x409
+    echo "${cfg1}" > ${g_cdc}/configs/c.1/strings/0x409/configuration
+
+    # Create the CDC function
+
+    mkdir ${g_cdc}/functions/ecm.usb0
+
+   # config 2 is for RNDIS
+
+    mkdir ${g_cdc}/configs/c.2
+    echo "${attr}" > ${g_cdc}/configs/c.2/bmAttributes
+    echo "${pwr}" > ${g_cdc}/configs/c.2/MaxPower
+    mkdir ${g_cdc}/configs/c.2/strings/0x409
+    echo "${cfg2}" > ${g_cdc}/configs/c.2/strings/0x409/configuration
+
+    # On Windows 7 and later, the RNDIS 5.1 driver would be used by default,
+    # but it does not work very well. The RNDIS 6.0 driver works better. In
+    # order to get this driver to load automatically, we have to use a
+    # Microsoft-specific extension of USB.
+
+    echo "1" > ${g_cdc}/os_desc/use
+    echo "${ms_vendor_code}" > ${g_cdc}/os_desc/b_vendor_code
+    echo "${ms_qw_sign}" > ${g_cdc}/os_desc/qw_sign
+
+    # Create the RNDIS function, including the Microsoft-specific bits
+
+    mkdir ${g_cdc}/functions/rndis.usb0
+    echo "${ms_compat_id}" > ${g_cdc}/functions/rndis.usb0/os_desc/interface.rndis/compatible_id
+    echo "${ms_subcompat_id}" > ${g_cdc}/functions/rndis.usb0/os_desc/interface.rndis/sub_compatible_id
+
+    smac=$(echo ${SERIAL} | cut -b 1-12)
+    # Change the first number for each MAC address - the second digit of 2 indicates
+    # that these are "locally assigned (b2=1), unicast (b1=0)" addresses. This is
+    # so that they don't conflict with any existing vendors. Care should be taken
+    # not to change these two bits.
+    dev_mac="02$(echo ${smac} | cut -b 3-)"
+    host_mac="12$(echo ${smac} | cut -b 3-)"
+
+    echo "${dev_mac}"  > ${g_cdc}/functions/ecm.usb0/dev_addr
+    echo "${host_mac}" > ${g_cdc}/functions/ecm.usb0/host_addr
+    echo "${dev_mac}"  > ${g_cdc}/functions/rndis.usb0/dev_addr
+    echo "${host_mac}" > ${g_cdc}/functions/rndis.usb0/host_addr
+
+    # Link everything up and bind the USB device
+    ln -s ${g_cdc}/functions/ecm.usb0 ${g_cdc}/configs/c.1
+    ln -s ${g_cdc}/functions/rndis.usb0 ${g_cdc}/configs/c.2
+    ln -s ${g_cdc}/configs/c.2 ${g_cdc}/os_desc
+
+    if [ -n "$verbose" ]; then echo "Done."; fi
+}
+
+cleanup_usb_network() {
+    if [ ! -d ${g_cdc} ]; then
+        if [ "$verbose" -gt "0" ];then echo "Gadget is already down."; fi
+        exit 1
+    fi
+    if [ "$verbose" -gt "0" ];then echo "Taking down gadget..."; fi
+
+    # Have to unlink and remove directories in reverse order.
+    # Checks allow to finish takedown after error.
+
+    if [ "$(cat ${g_cdc}/UDC)" != "" ]; then
+        echo "" > ${g_cdc}/UDC
+    fi
+    rm -f ${g_cdc}/os_desc/c.2
+    rm -f ${g_cdc}/configs/c.2/rndis.usb0
+    rm -f ${g_cdc}/configs/c.1/ecm.usb0
+    [ -d ${g_cdc}/functions/ecm.usb0 ] && rmdir ${g_cdc}/functions/ecm.usb0
+    [ -d ${g_cdc}/functions/rndis.usb0 ] && rmdir ${g_cdc}/functions/rndis.usb0
+    [ -d ${g_cdc}/configs/c.2/strings/0x409 ] && rmdir ${g_cdc}/configs/c.2/strings/0x409
+    [ -d ${g_cdc}/configs/c.2 ] && rmdir ${g_cdc}/configs/c.2
+    [ -d ${g_cdc}/configs/c.1/strings/0x409 ] && rmdir ${g_cdc}/configs/c.1/strings/0x409
+    [ -d ${g_cdc}/configs/c.1 ] && rmdir ${g_cdc}/configs/c.1
+    [ -d ${g_cdc}/strings/0x409 ] && rmdir ${g_cdc}/strings/0x409
+    rmdir ${g_cdc}
+
+    if [ -n "$verbose" ]; then echo "Done."; fi
+}
+
+
+
+g_mtp="/sys/kernel/config/usb_gadget/mtp"
+
+prepare_usb_mtp() {
+    usb_ver="0x0200" # USB 2.0
+    dev_class="2" # Communications
+    attr="0xC0" # Self powered
+    pwr="0xfe" #
+
+    mkdir ${g_mtp}
+    echo "${usb_ver}" > ${g_mtp}/bcdUSB
+    echo "${dev_class}" > ${g_mtp}/bDeviceClass
+    echo "0x1d6b" > ${g_mtp}/idVendor
+    echo "0x0104" > ${g_mtp}/idProduct
+    echo "${devversion}" > ${g_mtp}/bcdDevice
+    mkdir ${g_mtp}/strings/0x409
+    echo "${OS_NAME}" > ${g_mtp}/strings/0x409/manufacturer
+    echo "${QUIRK_DEVICE}" > ${g_mtp}/strings/0x409/product
+    echo "${SERIAL}" > ${g_mtp}/strings/0x409/serialnumber
+
+    # config 1 for MTP
+    mkdir ${g_mtp}/configs/c.1
+    echo "${attr}" > ${g_mtp}/configs/c.1/bmAttributes
+    echo "${pwr}" > ${g_mtp}/configs/c.1/MaxPower
+    mkdir ${g_mtp}/configs/c.1/strings/0x409
+    echo mtp > ${g_mtp}/configs/c.1/strings/0x409/configuration
+
+    mkdir ${g_mtp}/functions/ffs.mtp
+    ln -s ${g_mtp}/functions/ffs.mtp ${g_mtp}/configs/c.1
+}
+
+cleanup_usb_mtp() {
+    rm -f \
+        ${g_mtp}/configs/c.1/ffs.mtp
+
+    rmdir \
+        ${g_mtp}/configs/c.1/strings/0x409 \
+        ${g_mtp}/configs/c.1 \
+        ${g_mtp}/functions/ffs.mtp \
+        ${g_mtp}/strings/0x409 \
+        ${g_mtp}
+}
+
+
+usb_start() {
+	[[ -n $1 ]] && USB_MODE=$1
+	# This will reset both UDC and userspace when needed
+	if [ "${CURRENT_MODE}" != "disabled" ] && [ "${MODE}" != "${CURRENT_MODE}" ]; then
+		usb_stop
+	fi
+
 	if [ "${USB_MODE}" = mtp ] ; then
-		echo 0x1d6b > gadget/idVendor 
-		echo 0x0100 > gadget/idProduct
-		echo mtp > gadget/configs/c.1/strings/0x409/configuration
-		ln -s gadget/functions/ffs.mtp gadget/configs/c.1
+		if [ ! -d "${g_mtp}" ]; then
+			echo "MTP gadget not configured. Run '$0 prepare' first!" >&2
+			exit 3
+		fi
+
 		mkdir /dev/ffs-umtp
 		mount mtp -t functionfs /dev/ffs-umtp
 		/usr/sbin/umtprd &
 		sleep 1
-		echo "${UDC_NAME}" > gadget/UDC
+
+		usb_trigger
 
 	elif [ "${USB_MODE}" = cdc ] ; then
-		echo cdc > gadget/configs/c.1/strings/0x409/configuration
-		echo 0x1d6b > gadget/idVendor	
-		echo 0x104 > gadget/idProduct
-		ln -s gadget/functions/ecm.usb0 gadget/configs/c.1
-		echo "${UDC_NAME}" > gadget/UDC
-		ifconfig usb0 $IP up
-		/usr/sbin/udhcpd -S /storage/.cache/usbgadget/udhcpd.conf
+		if [ ! -d "${g_cdc}" ]; then
+			echo "CDC gadget not configured. Run '$0 prepare' first!" >&2
+			exit 3
+		fi
+
+		# Here we configure just empty bridge
+		brctl addbr usbnet
+		brctl stp usbnet 0
+		brctl setfd usbnet 0
+		ip link set usbnet up
+		ip address add $IP/24 dev usbnet
+
+		# when triggered, usb network interfaces appear, and udev rule adds them to the bridge
+		usb_trigger
+
+		/usr/sbin/udhcpd -S $UDHCPCONF
 	else
 		exit 0
 	fi
 
-	echo "USB_MODE=$(cat gadget/configs/c.1/strings/0x409/configuration)" > /storage/.cache/usbgadget/usbgadget.conf
+	echo "USB_MODE=${USB_MODE}" > /storage/.cache/usbgadget/usbgadget.conf
 }
 
 usb_stop() {
 	(
-		cd /sys/kernel/config/usb_gadget
-
 		usb_disable
-		umount /dev/ffs-umtp
-		rmdir /dev/ffs-umtp
-		
-		rm -f gadget/configs/c.1/ffs.mtp \
-			gadget/configs/c.1/ecm.usb0 \
 
-		rmdir gadget/configs/c.1/strings/0x409 \
-			gadget/configs/c.1 \
-			gadget/functions/ffs.mtp \
-			gadget/functions/ecm.usb0 \
-			gadget/strings/0x409 \
-			gadget
+		if [ -e /sys/class/net/usbnet ] ; then
+			killall udhcpd
+			ip link set usbnet down
+			brctl delbr usbnet
+		fi
 
-		killall udhcpd
-		killall umtprd
+		if [ -d /dev/ffs-umtp ] ; then
+			umount /dev/ffs-umtp
+			rmdir /dev/ffs-umtp
+
+			killall umtprd
+		fi
 	) >/dev/null 2>&1
 }
 
@@ -134,6 +345,14 @@ rk3326_check_stop() {
 }
 
 case "$1" in
+	prepare)
+		prepare_usb_network
+		prepare_usb_mtp
+		;;
+	cleanup)
+		cleanup_usb_network
+		cleanup_usb_mtp
+		;;
 	start)
 		if [[ "${HW_DEVICE}" = RK3326 ]]; then rk3326_check_start; fi
 		usb_start $2
@@ -142,11 +361,14 @@ case "$1" in
 		usb_stop
 		if [[ "${HW_DEVICE}" = RK3326 ]]; then rk3326_check_stop; fi
 		;;
+	trigger)
+		usb_trigger
+		;;
 	restart)
 		usb_stop
 		usb_start $2
 		;;
 	*)
-		echo "Usage: usbgadget [start|stop|restart]"
+		echo "Usage: usbgadget [prepare|start|trigger|stop|restart|cleanup]"
 		;;
 esac
