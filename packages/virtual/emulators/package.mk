@@ -977,6 +977,17 @@ makeinstall_target() {
   esac
   add_es_system megadrive
 
+  ### Sega MegaDrive Hacks
+  add_emu_core genh retroarch genesis_plus_gx true
+  add_emu_core genh retroarch genesis_plus_gx_wide false
+  add_emu_core genh retroarch picodrive false
+  case ${DEVICE} in
+    RK3399|AMD64|RK3326|RK3588*|RK356*|H700)
+      add_emu_core genh mednafen md false
+    ;;
+  esac
+  add_es_system megadriveh
+
   ### Welback Holdings Mega Duck
   add_emu_core megaduck retroarch sameduck true
   add_es_system megaduck
