@@ -978,12 +978,12 @@ makeinstall_target() {
   add_es_system megadrive
 
   ### Sega MegaDrive Hacks
-  add_emu_core genh retroarch genesis_plus_gx true
-  add_emu_core genh retroarch genesis_plus_gx_wide false
-  add_emu_core genh retroarch picodrive false
+  add_emu_core megadriveh retroarch genesis_plus_gx true
+  add_emu_core megadriveh retroarch genesis_plus_gx_wide false
+  add_emu_core megadriveh retroarch picodrive false
   case ${DEVICE} in
     RK3399|AMD64|RK3326|RK3588*|RK356*|H700)
-      add_emu_core genh mednafen md false
+      add_emu_core megadriveh mednafen md false
     ;;
   esac
   add_es_system megadriveh
