@@ -704,7 +704,10 @@ makeinstall_target() {
 
   ### Nintendo 64
   add_emu_core n64 retroarch mupen64plus_next true
-  add_emu_core n64 retroarch mupen64plus false
+  if [ "${PREFER_GLES}" = "yes" ]; then
+    # This core only has gles renderer
+    add_emu_core n64 retroarch mupen64plus false
+  fi
   add_emu_core n64 retroarch parallel_n64 false
   add_emu_core n64 mupen64plus mupen64plus-sa false
   add_es_system n64
