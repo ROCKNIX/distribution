@@ -2,7 +2,7 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="box64"
-PKG_VERSION="b29e9b706e00f4650cbce4b2c0b6fe27b6cccad4"
+PKG_VERSION="3ba91a651384b0ea4207e91e206440cae2684db2"
 PKG_ARCH="aarch64"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/ptitSeb/box64"
@@ -14,8 +14,11 @@ PKG_TOOLCHAIN="cmake"
 PKG_CMAKE_OPTS_TARGET+=" -DCMAKE_BUILD_TYPE=Release"
 
 case ${DEVICE} in
-  RK3588|SD865)
+  RK3588)
     PKG_CMAKE_OPTS_TARGET+=" -DRK3588=On"
+  ;;
+  SD865)
+    PKG_CMAKE_OPTS_TARGET+=" -DSD865=On"
   ;;
 esac
 
