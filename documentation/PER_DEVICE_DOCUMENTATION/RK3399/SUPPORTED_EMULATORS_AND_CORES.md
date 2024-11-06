@@ -96,6 +96,7 @@ This document describes all available systems emulators and cores available for 
 |Sega|Genesis (Hacks) (genh)|1989|`genh`|.bin .gen .md .sg .smd .zip .7z|**retroarch:** genesis_plus_gx (default)<br>**retroarch:** genesis_plus_gx_wide<br>**retroarch:** picodrive<br>**mednafen:** md<br>|
 |Sega|Master System (mastersystem)|1985|`mastersystem`|.bin .sms .zip .7z|**retroarch:** gearsystem (default)<br>**retroarch:** genesis_plus_gx<br>**retroarch:** picodrive<br>**retroarch:** smsplus<br>**mednafen:** sms<br>|
 |Sega|Mega CD (megacd)|1991|`megacd`|.chd .cue .iso .m3u|**retroarch:** genesis_plus_gx (default)<br>**retroarch:** picodrive<br>|
+|Sega|Mega Drive (Hacks) (megadriveh)|1990|`megadriveh`|.bin .gen .md .sg .smd .zip .7z|**retroarch:** genesis_plus_gx (default)<br>**retroarch:** genesis_plus_gx_wide<br>**retroarch:** picodrive<br>**mednafen:** md<br>|
 |Sega|Mega Drive (megadrive)|1990|`megadrive`|.bin .gen .md .sg .smd .zip .7z|**retroarch:** genesis_plus_gx (default)<br>**retroarch:** genesis_plus_gx_wide<br>**retroarch:** picodrive<br>**mednafen:** md<br>|
 |Sega|Mega Drive (megadrive-japan)|1988|`megadrive-japan`|.bin .gen .md .sg .smd .zip .7z|**retroarch:** genesis_plus_gx (default)<br>**retroarch:** genesis_plus_gx_wide<br>**retroarch:** picodrive<br>**mednafen:** md<br>|
 |Sega|Naomi (naomi)|1998|`naomi`|.lst .bin .dat .zip .7z|**retroarch:** flycast2021<br>**flycast:** flycast-sa<br>**retroarch:** flycast (default)<br>|
