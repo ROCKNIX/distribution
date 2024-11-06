@@ -74,18 +74,5 @@ fi
 /usr/bin/portmaster_compatibility.sh
 
 #Start PortMaster
-export SDL_VIDEO_GL_DRIVER=\/usr\/lib\/egl\/libGL.so.1
-export SDL_VIDEO_EGL_DRIVER=\/usr\/lib\/egl\/libEGL.so.1
-
-# Allow PortMaster GUI to launch on S922X platform with panfrost
-if [ "${HW_DEVICE}" = "S922X" ]; then
-  GPUDRIVER=$(/usr/bin/gpudriver)
-
-  if [ "${GPUDRIVER}" = "panfrost" ]; then
-    unset SDL_VIDEO_GL_DRIVER
-    unset SDL_VIDEO_EGL_DRIVER
-  fi
-fi
-
 cd /storage/roms/ports/PortMaster
 ./PortMaster.sh 2>/dev/null

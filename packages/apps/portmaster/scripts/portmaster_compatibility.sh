@@ -26,15 +26,5 @@ if [[ "${UI_SERVICE}" =~ "weston.service"|"*sway*" ]]; then
       sed -i '/get_controls && export/c\get_controls' "$port"
       echo Fixing: "$port";
     done;
-  else
-    if [ "${HW_DEVICE}" = "S922X" ]; then
-      #Fixing ports on S922X, exclude FNA games
-      for port in /storage/roms/ports/*.sh; do
-        if ! grep -q FNA "$port"; then
-          sed -i '/get_controls/c\get_controls && export SDL_VIDEO_GL_DRIVER=/usr/lib/egl/libGL.so.1 SDL_VIDEO_EGL_DRIVER=/usr/lib/egl/libEGL.so.1' "$port"
-          echo Fixing: "$port";
-        fi
-      done;
-    fi
   fi
 fi
