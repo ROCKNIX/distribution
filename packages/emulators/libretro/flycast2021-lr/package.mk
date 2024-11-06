@@ -30,31 +30,32 @@ PKG_TOOLCHAIN="make"
 PKG_BUILD_FLAGS="-gold"
 PKG_PATCH_DIRS+="${DEVICE}"
 
-if [ ! "${OPENGL}" = "no" ]; then
+if [ "${OPENGL_SUPPORT}" = "yes" ] && [ ! "${PREFER_GLES}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
-fi
-
-if [ "${OPENGLES_SUPPORT}" = yes ]; then
+  PKG_MAKE_OPTS_TARGET+=" FORCE_GLES=0"
+elif [ "${OPENGLES_SUPPORT}" = yes ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGLES}"
   PKG_MAKE_OPTS_TARGET+=" FORCE_GLES=1"
+fi
+
+if [ "${VULKAN_SUPPORT}" = "yes" ]; then
+  PKG_DEPENDS_TARGET+=" vulkan-loader vulkan-headers"
+  PKG_MAKE_OPTS_TARGET+=" HAVE_VULKAN=1"
 fi
 
 pre_configure_target() {
   export CXXFLAGS="${CXXFLAGS} -Wno-implicit-function-declaration"
   sed -i 's/define CORE_OPTION_NAME "reicast"/define CORE_OPTION_NAME "flycast2021"/g' core/libretro/libretro_core_option_defines.h
   sed -i 's/\-O[23]/-Ofast/' ${PKG_BUILD}/Makefile
-  PKG_MAKE_OPTS_TARGET="${PKG_MAKE_OPTS_TARGET} ARCH=${TARGET_ARCH} HAVE_OPENMP=1 GIT_VERSION=${PKG_VERSION:0:7}  HAVE_LTCG=0"
+  PKG_MAKE_OPTS_TARGET="${PKG_MAKE_OPTS_TARGET} ARCH=${TARGET_ARCH} HAVE_OPENMP=0 GIT_VERSION=${PKG_VERSION:0:7}  HAVE_LTCG=0"
 }
 
 pre_make_target() {
   export BUILD_SYSROOT=${SYSROOT_PREFIX}
-  case ${DEVICE} in
-    RK3*|S922X|SD865)
+  case ${ARCH} in
+    aarch64)
       PKG_MAKE_OPTS_TARGET+=" platform=${DEVICE}"
-    ;;
-    H700)
-      PKG_MAKE_OPTS_TARGET+=" platform=RK3326"
-    ;;
+	;;
   esac
 }
 

@@ -30,41 +30,23 @@ PKG_TOOLCHAIN="make"
 PKG_BUILD_FLAGS="-lto"
 PKG_PATCH_DIRS+=" ${DEVICE}"
 
-if [ ! "${OPENGL}" = "no" ]; then
+if [ "${OPENGL}" = "yes" ] && [ ! "${PREFER_GLES}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL} glu"
-fi
-
-if [ "${OPENGLES_SUPPORT}" = yes ]; then
+  PKG_MAKE_OPTS_TARGET+=" GLES=0 GL_LIB=\"-lGL\""
+elif [ "${OPENGLES_SUPPORT}" = yes ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGLES}"
+  PKG_MAKE_OPTS_TARGET+=" GLES=1 GL_LIB=\"-lGLESv2\""
 fi
-
-pre_make_target() {
-  export CFLAGS="${CFLAGS} -fcommon"
-}
 
 pre_configure_target() {
-export CFLAGS="${CFLAGS} -Wno-error=incompatible-pointer-types"
+  export CFLAGS="${CFLAGS} -fcommon -Wno-error=incompatible-pointer-types"
 
-  case ${DEVICE} in
-    RK3*)
-      PKG_MAKE_OPTS_TARGET=" platform=${DEVICE}"
-      CFLAGS="${CFLAGS} -DLINUX -DEGL_API_FB"
-      CPPFLAGS="${CPPFLAGS} -DLINUX -DEGL_API_FB"
-    ;;
-    SD865)
-      PKG_MAKE_OPTS_TARGET=" platform=RK3588"
-      CFLAGS="${CFLAGS} -DLINUX -DEGL_API_FB"
-      CPPFLAGS="${CPPFLAGS} -DLINUX -DEGL_API_FB"
-    ;;
-    H700)
-      PKG_MAKE_OPTS_TARGET=" platform=RKH700"
-      CFLAGS="${CFLAGS} -DLINUX -DEGL_API_FB"
-      CPPFLAGS="${CPPFLAGS} -DLINUX -DEGL_API_FB"
-    ;;
-    *)
-      PKG_MAKE_OPTS_TARGET="GLES=0 GLES3=0"
+  case ${ARCH} in
+    aarch64)
+      PKG_MAKE_OPTS_TARGET+=" OS_LINUX=1 platform=${DEVICE}"
     ;;
   esac
+
   sed -i 's/\-O[23]/-Ofast/' ${PKG_BUILD}/Makefile
 }
 

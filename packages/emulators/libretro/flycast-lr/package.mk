@@ -18,7 +18,7 @@ else
 fi
 
 if [ "${OPENGLES_SUPPORT}" = yes ] && \
-   [ ! "${TARGET_ARCH}" = "x86_64" ]
+   [ "${PREFER_GLES}" = "yes" ]
 then
   PKG_DEPENDS_TARGET+=" ${OPENGLES}"
   ### Will fail to compile if USE_OPENGL=OFF and USE_GLES=ON as both options are required.

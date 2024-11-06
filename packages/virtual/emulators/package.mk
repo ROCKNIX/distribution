@@ -76,7 +76,7 @@ case "${DEVICE}" in
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 desmume-lr gpsp-lr pcsx_rearmed-lr wine"
     PKG_EMUS+=" aethersx2-sa box64 dolphin-sa drastic-sa lime3ds-sa melonds-sa portmaster scummvmsa supermodel-sa \
                yabasanshiro-sa xemu-sa"
-    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr flycast-lr geolith-lr pcsx_rearmed-lr uae4arm"
+    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr flycast-lr geolith-lr pcsx_rearmed-lr uae4arm kronos-lr"
     PKG_RETROARCH+=" retropie-shaders"
   ;;
 esac
@@ -704,7 +704,10 @@ makeinstall_target() {
 
   ### Nintendo 64
   add_emu_core n64 retroarch mupen64plus_next true
-  add_emu_core n64 retroarch mupen64plus false
+  if [ "${PREFER_GLES}" = "yes" ]; then
+    # This core only has gles renderer
+    add_emu_core n64 retroarch mupen64plus false
+  fi
   add_emu_core n64 retroarch parallel_n64 false
   add_emu_core n64 mupen64plus mupen64plus-sa false
   add_es_system n64
@@ -1004,12 +1007,13 @@ makeinstall_target() {
     ;;
   esac
   case ${DEVICE} in
-    AMD64)
+    AMD64|RK358*)
       add_emu_core saturn retroarch beetle_saturn false
       add_emu_core saturn mednafen ss false
   ;;
-    RK358*|SD865)
+    SD865)
       add_emu_core saturn retroarch beetle_saturn false
+      add_emu_core saturn retroarch kronos false
       add_emu_core saturn mednafen ss false
   ;;
   esac
