@@ -131,31 +131,32 @@ fi
 	fi
 
   #Clock Speed
-        sed -i '/^OverclockEnable =/c\OverclockEnable = False' /storage/.config/dolphin-emu/Dolphin.ini
-        if [ "$CLOCK" = "0" ]
-        then
+        if [ "$CLOCK" = "050" ]; then
                 sed -i '/^Overclock =/c\Overclock = 0.5' /storage/.config/dolphin-emu/Dolphin.ini
                 sed -i '/^OverclockEnable =/c\OverclockEnable = True' /storage/.config/dolphin-emu/Dolphin.ini
-        fi
-        if [ "$CLOCK" = "1" ]
-        then
+        elif [ "$CLOCK" = "075" ]; then
                 sed -i '/^Overclock =/c\Overclock = 0.75' /storage/.config/dolphin-emu/Dolphin.ini
                 sed -i '/^OverclockEnable =/c\OverclockEnable = True' /storage/.config/dolphin-emu/Dolphin.ini
-        fi
-        if [ "$CLOCK" = "2" ]
-        then
+        elif [ "$CLOCK" = "100" ]; then
                 sed -i '/^Overclock =/c\Overclock = 1.0' /storage/.config/dolphin-emu/Dolphin.ini
                 sed -i '/^OverclockEnable =/c\OverclockEnable = False' /storage/.config/dolphin-emu/Dolphin.ini
-        fi
-        if [ "$CLOCK" = "3" ]
-        then
+        elif [ "$CLOCK" = "125" ]; then
                 sed -i '/^Overclock =/c\Overclock = 1.25' /storage/.config/dolphin-emu/Dolphin.ini
                 sed -i '/^OverclockEnable =/c\OverclockEnable = True' /storage/.config/dolphin-emu/Dolphin.ini
-        fi
-        if [ "$CLOCK" = "4" ]
-        then
+        elif [ "$CLOCK" = "150" ]; then
                 sed -i '/^Overclock =/c\Overclock = 1.5' /storage/.config/dolphin-emu/Dolphin.ini
                 sed -i '/^OverclockEnable =/c\OverclockEnable = True' /storage/.config/dolphin-emu/Dolphin.ini
+        elif [ "$CLOCK" = "200" ]; then
+                sed -i '/^Overclock =/c\Overclock = 2.0' /storage/.config/dolphin-emu/Dolphin.ini
+                sed -i '/^OverclockEnable =/c\OverclockEnable = True' /storage/.config/dolphin-emu/Dolphin.ini
+        elif [ "$CLOCK" = "300" ]; then
+                sed -i '/^Overclock =/c\Overclock = 3.0' /storage/.config/dolphin-emu/Dolphin.ini
+                sed -i '/^OverclockEnable =/c\OverclockEnable = True' /storage/.config/dolphin-emu/Dolphin.ini
+        elif [ "$CLOCK" = "400" ]; then
+                sed -i '/^Overclock =/c\Overclock = 4.0' /storage/.config/dolphin-emu/Dolphin.ini
+                sed -i '/^OverclockEnable =/c\OverclockEnable = True' /storage/.config/dolphin-emu/Dolphin.ini
+        else
+        sed -i '/^OverclockEnable =/c\OverclockEnable = False' /storage/.config/dolphin-emu/Dolphin.ini
         fi
 
   #Video Backend
