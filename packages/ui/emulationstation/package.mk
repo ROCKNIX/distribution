@@ -15,6 +15,12 @@ PKG_BUILD_FLAGS="-gold"
 GET_HANDLER_SUPPORT="git"
 PKG_PATCH_DIRS+="${DEVICE}"
 
+if [ "${ES_WIP}" ]; then
+  PKG_VERSION="a605d7020470f1d2930665f9e2a615ca947dddc1"
+  PKG_GIT_CLONE_BRANCH="master"
+  PKG_URL="https://github.com/ROCKNIX/emulationstation-next.git"
+fi
+
 if [ ! "${OPENGL}" = "no" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL} glu"
   PKG_CMAKE_OPTS_TARGET+=" -DGL=1"
