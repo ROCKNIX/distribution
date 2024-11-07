@@ -9,7 +9,7 @@ PKG_TOOLCHAIN="cmake"
 
 case ${DEVICE} in
   SD865)
-    PKG_VERSION="904ac5592daf7adc0013110da60a706b21c5d72d"
+    PKG_VERSION="7e1074b140809b0da7aa7d02b6303a68cc351be2"
     PKG_SITE="https://github.com/dolphin-emu/dolphin"
     PKG_URL="${PKG_SITE}.git"
     PKG_PATCH_DIRS+=" x11"
