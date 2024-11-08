@@ -1,0 +1,912 @@
+From 472804b8b90d3dc8f026ddbc403fe556d1c00789 Mon Sep 17 00:00:00 2001
+From: Spidy123222 <64176728+Spidy123222@users.noreply.github.com>
+Date: Thu, 29 Jun 2023 10:12:51 -0700
+Subject: [PATCH 01/20] Add Overclock setting and Override setting (#6)
+
+* Adds Overclock setting inside x86.c
+
+* Add clockspeed and override toggle in config_spec.yml
+
+* Implement Override Toggle
+
+* Add clock speed value to cpu
+
+* Add Changes to UI
+---
+ config_spec.yml     |  6 ++++++
+ hw/i386/x86.c       | 17 +++++++++++++++--
+ ui/xui/main-menu.cc |  9 +++++++++
+ 3 files changed, 30 insertions(+), 2 deletions(-)
+
+diff --git a/config_spec.yml b/config_spec.yml
+index b858606e685..5f8d9b064b0 100644
+--- a/config_spec.yml
++++ b/config_spec.yml
+@@ -253,3 +253,9 @@ perf:
+   cache_shaders:
+     type: bool
+     default: true
++  override_clockspeed: 
++    type: bool
++    default: false
++  cpu_clockspeed:
++    type: number
++    default: 0.5
+diff --git a/hw/i386/x86.c b/hw/i386/x86.c
+index 018fbb8b0ae..dce494e2749 100644
+--- a/hw/i386/x86.c
++++ b/hw/i386/x86.c
+@@ -59,6 +59,9 @@
+ #include CONFIG_DEVICES
+ #include "kvm/kvm_i386.h"
+ 
++#include "ui/xemu-settings.h"
++
++
+ /* Physical Address of PVH entry point read from kernel ELF NOTE */
+ static size_t pvh_start_addr;
+ 
+@@ -532,8 +535,18 @@ static long get_file_size(FILE *f)
+ uint64_t cpu_get_tsc(CPUX86State *env)
+ {
+ #ifdef XBOX
+-    return muldiv64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL), 733333333,
+-                    NANOSECONDS_PER_SECOND);
++    int DEFAULT_CPU_CLOCK = 733333333; /* 733333333 hz */
++    float clockOutput;
++    float OVERCLOCK_VALUE = g_config.perf.cpu_clockspeed; /* 0.5 is 100% */
++    float PERCENTAGE_OUTPUT = OVERCLOCK_VALUE * 2;
++    
++    if (g_config.perf.override_clockspeed) {
++        float clockOutput = DEFAULT_CPU_CLOCK * PERCENTAGE_OUTPUT;
++        return muldiv64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL), clockOutput, NANOSECONDS_PER_SECOND);
++    } else {
++        float clockOutput = DEFAULT_CPU_CLOCK;
++        return muldiv64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL), clockOutput, NANOSECONDS_PER_SECOND);
++    }
+ #else
+     return cpus_get_elapsed_ticks();
+ #endif
+diff --git a/ui/xui/main-menu.cc b/ui/xui/main-menu.cc
+index 75b88cafb6e..adef1a24443 100644
+--- a/ui/xui/main-menu.cc
++++ b/ui/xui/main-menu.cc
+@@ -66,6 +66,15 @@ void MainMenuGeneralView::Draw()
+     Toggle("Cache shaders to disk", &g_config.perf.cache_shaders,
+            "Reduce stutter in games by caching previously generated shaders");
+ 
++    Toggle("Emulated CPU clock override", &g_config.perf.override_clockspeed,
++           "Enables to override default CPU clock speed");
++    
++    char buf[32];
++    snprintf(buf, sizeof(buf), "Clock Speed (%d%%)",
++             (int)(g_config.perf.cpu_clockspeed * 200));
++    Slider("Virtual CPU clock", &g_config.perf.cpu_clockspeed, buf);
++
++    
+     SectionTitle("Miscellaneous");
+     Toggle("Skip startup animation", &g_config.general.skip_boot_anim,
+            "Skip the full Xbox boot animation sequence");
+
+From 371c430ca07149a89e47cef885c16bce2c5f38a5 Mon Sep 17 00:00:00 2001
+From: Spidy123222 <64176728+Spidy123222@users.noreply.github.com>
+Date: Thu, 29 Jun 2023 17:44:45 -0700
+Subject: [PATCH 02/20] Block reports using override toggle
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This adds a disable feature for when having the override toggle enabled to prevent bad reports. This also grey’s out the send button and tells a message that it’s not allowed.
+---
+ ui/xui/compat.cc | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/ui/xui/compat.cc b/ui/xui/compat.cc
+index d0405389f53..c9f47ae63b9 100644
+--- a/ui/xui/compat.cc
++++ b/ui/xui/compat.cc
+@@ -206,6 +206,11 @@ void CompatibilityReporter::Draw()
+     ImGui::SetCursorPosX(ImGui::GetWindowWidth()-(120+10)*g_viewport_mgr.m_scale);
+ 
+     ImGui::SetItemDefaultFocus();
++    if (g_config.perf.override_clockspeed)
++    {
++        ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
++        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f);
++    }
+     if (ImGui::Button("Send", ImVec2(120*g_viewport_mgr.m_scale, 0))) {
+         did_send = true;
+         send_result = report.Send();
+@@ -213,7 +218,12 @@ void CompatibilityReporter::Draw()
+             is_open = false;
+         }
+     }
+-
++    if (g_config.perf.override_clockspeed)
++    {
++        ImGui::Text("Reports using Emulated CPU clock override is not allowed.");
++        ImGui::PopItemFlag();
++        ImGui::PopStyleVar();
++    }
+     ImGui::End();
+ }
+ 
+
+From 241ca872b74600e5acc8a7506e94085b1df93a31 Mon Sep 17 00:00:00 2001
+From: Spidy123222 <64176728+Spidy123222@users.noreply.github.com>
+Date: Thu, 29 Jun 2023 17:48:03 -0700
+Subject: [PATCH 03/20] Update hw/i386/x86.c
+
+Co-authored-by: antangelo <antonio.abbatangelo@gmail.com>
+---
+ hw/i386/x86.c | 8 +++-----
+ 1 file changed, 3 insertions(+), 5 deletions(-)
+
+diff --git a/hw/i386/x86.c b/hw/i386/x86.c
+index dce494e2749..2b2727e6cce 100644
+--- a/hw/i386/x86.c
++++ b/hw/i386/x86.c
+@@ -540,13 +540,11 @@ uint64_t cpu_get_tsc(CPUX86State *env)
+     float OVERCLOCK_VALUE = g_config.perf.cpu_clockspeed; /* 0.5 is 100% */
+     float PERCENTAGE_OUTPUT = OVERCLOCK_VALUE * 2;
+     
++    float cpu_clock_hz = 733333333;
+     if (g_config.perf.override_clockspeed) {
+-        float clockOutput = DEFAULT_CPU_CLOCK * PERCENTAGE_OUTPUT;
+-        return muldiv64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL), clockOutput, NANOSECONDS_PER_SECOND);
+-    } else {
+-        float clockOutput = DEFAULT_CPU_CLOCK;
+-        return muldiv64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL), clockOutput, NANOSECONDS_PER_SECOND);
++      cpu_clock_hz *= clock_multiplier;
+     }
++    return muldiv64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL), cpu_clock_hz, NANOSECONDS_PER_SECOND);
+ #else
+     return cpus_get_elapsed_ticks();
+ #endif
+
+From 08f9ec0eb913fc74dd67c861065a440e63bdf657 Mon Sep 17 00:00:00 2001
+From: Spidy123222 <64176728+Spidy123222@users.noreply.github.com>
+Date: Thu, 29 Jun 2023 18:07:03 -0700
+Subject: [PATCH 04/20] Refine code
+
+---
+ hw/i386/x86.c | 13 ++++++-------
+ 1 file changed, 6 insertions(+), 7 deletions(-)
+
+diff --git a/hw/i386/x86.c b/hw/i386/x86.c
+index 2b2727e6cce..52b766aff32 100644
+--- a/hw/i386/x86.c
++++ b/hw/i386/x86.c
+@@ -59,8 +59,9 @@
+ #include CONFIG_DEVICES
+ #include "kvm/kvm_i386.h"
+ 
++#ifdef XBOX
+ #include "ui/xemu-settings.h"
+-
++#endif
+ 
+ /* Physical Address of PVH entry point read from kernel ELF NOTE */
+ static size_t pvh_start_addr;
+@@ -535,14 +536,12 @@ static long get_file_size(FILE *f)
+ uint64_t cpu_get_tsc(CPUX86State *env)
+ {
+ #ifdef XBOX
+-    int DEFAULT_CPU_CLOCK = 733333333; /* 733333333 hz */
+-    float clockOutput;
+-    float OVERCLOCK_VALUE = g_config.perf.cpu_clockspeed; /* 0.5 is 100% */
+-    float PERCENTAGE_OUTPUT = OVERCLOCK_VALUE * 2;
+-    
++    float clockOutput; 
++    float clock_multiplier = g_config.perf.cpu_clockspeed * 2;
+     float cpu_clock_hz = 733333333;
++    
+     if (g_config.perf.override_clockspeed) {
+-      cpu_clock_hz *= clock_multiplier;
++        cpu_clock_hz *= clock_multiplier;
+     }
+     return muldiv64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL), cpu_clock_hz, NANOSECONDS_PER_SECOND);
+ #else
+
+From 4e6af2f77f2a3c1daf861974902c35fdbb824ea4 Mon Sep 17 00:00:00 2001
+From: Spidy123222 <64176728+Spidy123222@users.noreply.github.com>
+Date: Thu, 29 Jun 2023 18:24:42 -0700
+Subject: [PATCH 05/20] Remove blank variable
+
+---
+ hw/i386/x86.c | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/hw/i386/x86.c b/hw/i386/x86.c
+index 52b766aff32..20ec0856f80 100644
+--- a/hw/i386/x86.c
++++ b/hw/i386/x86.c
+@@ -536,7 +536,6 @@ static long get_file_size(FILE *f)
+ uint64_t cpu_get_tsc(CPUX86State *env)
+ {
+ #ifdef XBOX
+-    float clockOutput; 
+     float clock_multiplier = g_config.perf.cpu_clockspeed * 2;
+     float cpu_clock_hz = 733333333;
+     
+
+From 62375177bbd143ccdc0007a31494eb23d0492b7b Mon Sep 17 00:00:00 2001
+From: Spidy123222 <64176728+Spidy123222@users.noreply.github.com>
+Date: Thu, 29 Jun 2023 19:21:12 -0700
+Subject: [PATCH 06/20] Make numbers to float.
+
+---
+ hw/i386/x86.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/hw/i386/x86.c b/hw/i386/x86.c
+index 20ec0856f80..5211d310fb7 100644
+--- a/hw/i386/x86.c
++++ b/hw/i386/x86.c
+@@ -536,12 +536,13 @@ static long get_file_size(FILE *f)
+ uint64_t cpu_get_tsc(CPUX86State *env)
+ {
+ #ifdef XBOX
+-    float clock_multiplier = g_config.perf.cpu_clockspeed * 2;
+-    float cpu_clock_hz = 733333333;
++    float clock_multiplier = g_config.perf.cpu_clockspeed * 2.0;
++    float cpu_clock_hz = 733333333.0;
+     
+     if (g_config.perf.override_clockspeed) {
+         cpu_clock_hz *= clock_multiplier;
+     }
++    printf(cpu_clock_hz)
+     return muldiv64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL), cpu_clock_hz, NANOSECONDS_PER_SECOND);
+ #else
+     return cpus_get_elapsed_ticks();
+
+From baf3d8f584a84dfaf4ddee7da65cec675bdfb5fa Mon Sep 17 00:00:00 2001
+From: Spidy123222 <64176728+Spidy123222@users.noreply.github.com>
+Date: Thu, 29 Jun 2023 19:37:18 -0700
+Subject: [PATCH 07/20] Add print for multiplier
+
+---
+ hw/i386/x86.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/hw/i386/x86.c b/hw/i386/x86.c
+index 5211d310fb7..f5c51830aa8 100644
+--- a/hw/i386/x86.c
++++ b/hw/i386/x86.c
+@@ -541,6 +541,7 @@ uint64_t cpu_get_tsc(CPUX86State *env)
+     
+     if (g_config.perf.override_clockspeed) {
+         cpu_clock_hz *= clock_multiplier;
++        printf(clock_multiplier)
+     }
+     printf(cpu_clock_hz)
+     return muldiv64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL), cpu_clock_hz, NANOSECONDS_PER_SECOND);
+
+From 349f9ad299e59580f813eed6c8f625212488b7bd Mon Sep 17 00:00:00 2001
+From: Spidy123222 <64176728+Spidy123222@users.noreply.github.com>
+Date: Thu, 29 Jun 2023 19:40:33 -0700
+Subject: [PATCH 08/20] Fix formatting
+
+---
+ hw/i386/x86.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/hw/i386/x86.c b/hw/i386/x86.c
+index f5c51830aa8..1ffc2988552 100644
+--- a/hw/i386/x86.c
++++ b/hw/i386/x86.c
+@@ -541,9 +541,9 @@ uint64_t cpu_get_tsc(CPUX86State *env)
+     
+     if (g_config.perf.override_clockspeed) {
+         cpu_clock_hz *= clock_multiplier;
+-        printf(clock_multiplier)
++        printf(clock_multiplier);
+     }
+-    printf(cpu_clock_hz)
++    printf(cpu_clock_hz);
+     return muldiv64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL), cpu_clock_hz, NANOSECONDS_PER_SECOND);
+ #else
+     return cpus_get_elapsed_ticks();
+
+From 30f5771cbfc0ba8c1971536bcf08eabe6e76c2a9 Mon Sep 17 00:00:00 2001
+From: Spidy123222 <64176728+Spidy123222@users.noreply.github.com>
+Date: Fri, 30 Jun 2023 20:57:52 -0700
+Subject: [PATCH 09/20] Remove printf
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Some reason before print was added it wasn’t working on my end and apparently it started working some reason. Might of been a compile issue.
+---
+ hw/i386/x86.c | 2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/hw/i386/x86.c b/hw/i386/x86.c
+index 1ffc2988552..1e64c748093 100644
+--- a/hw/i386/x86.c
++++ b/hw/i386/x86.c
+@@ -541,9 +541,7 @@ uint64_t cpu_get_tsc(CPUX86State *env)
+     
+     if (g_config.perf.override_clockspeed) {
+         cpu_clock_hz *= clock_multiplier;
+-        printf(clock_multiplier);
+     }
+-    printf(cpu_clock_hz);
+     return muldiv64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL), cpu_clock_hz, NANOSECONDS_PER_SECOND);
+ #else
+     return cpus_get_elapsed_ticks();
+
+From 552c5b96f53a87817bc0c5904871c3355a72ee1e Mon Sep 17 00:00:00 2001
+From: Spidy123222 <64176728+Spidy123222@users.noreply.github.com>
+Date: Fri, 30 Jun 2023 22:36:21 -0700
+Subject: [PATCH 10/20] Add mhz to slider
+
+* Add MHz to slider to be able to see the frequency.
+---
+ ui/xui/main-menu.cc | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/ui/xui/main-menu.cc b/ui/xui/main-menu.cc
+index adef1a24443..b76babe8282 100644
+--- a/ui/xui/main-menu.cc
++++ b/ui/xui/main-menu.cc
+@@ -70,8 +70,8 @@ void MainMenuGeneralView::Draw()
+            "Enables to override default CPU clock speed");
+     
+     char buf[32];
+-    snprintf(buf, sizeof(buf), "Clock Speed (%d%%)",
+-             (int)(g_config.perf.cpu_clockspeed * 200));
++    snprintf(buf, sizeof(buf), "Clock Speed %d%% (%.2f MHz)",
++             (int)(g_config.perf.cpu_clockspeed * 200), (733333333.0 * g_config.perf.cpu_clockspeed * 2.0)/1000000);
+     Slider("Virtual CPU clock", &g_config.perf.cpu_clockspeed, buf);
+ 
+     
+
+From 2286db6f5e5bc01b5d43154d65b7bae0ad125bea Mon Sep 17 00:00:00 2001
+From: Spidy123222 <64176728+Spidy123222@users.noreply.github.com>
+Date: Sat, 1 Jul 2023 01:21:35 -0700
+Subject: [PATCH 11/20] Snap Slider
+
+This snaps the slider to use default clockspeed if it is in 100% or very close to it.
+---
+ ui/xui/main-menu.cc | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/ui/xui/main-menu.cc b/ui/xui/main-menu.cc
+index b76babe8282..addf09552ed 100644
+--- a/ui/xui/main-menu.cc
++++ b/ui/xui/main-menu.cc
+@@ -70,10 +70,14 @@ void MainMenuGeneralView::Draw()
+            "Enables to override default CPU clock speed");
+     
+     char buf[32];
++
++
++    
+     snprintf(buf, sizeof(buf), "Clock Speed %d%% (%.2f MHz)",
+              (int)(g_config.perf.cpu_clockspeed * 200), (733333333.0 * g_config.perf.cpu_clockspeed * 2.0)/1000000);
+     Slider("Virtual CPU clock", &g_config.perf.cpu_clockspeed, buf);
+ 
++    if ((g_config.perf.cpu_clockspeed-0.495)*(g_config.perf.cpu_clockspeed-0.505) <= 0) {g_config.perf.cpu_clockspeed = 0.5;}
+     
+     SectionTitle("Miscellaneous");
+     Toggle("Skip startup animation", &g_config.general.skip_boot_anim,
+
+From 06c643a580f7819d0717e7d934d3c53355ca1a7d Mon Sep 17 00:00:00 2001
+From: spidy123222 <speedracer123222@gmail.com>
+Date: Sun, 9 Jul 2023 23:23:47 +0000
+Subject: [PATCH 12/20] remove 2x multiply
+
+---
+ hw/i386/x86.c       | 4 ++--
+ ui/xui/main-menu.cc | 3 +--
+ 2 files changed, 3 insertions(+), 4 deletions(-)
+
+diff --git a/hw/i386/x86.c b/hw/i386/x86.c
+index 1e64c748093..88cdd6f0785 100644
+--- a/hw/i386/x86.c
++++ b/hw/i386/x86.c
+@@ -536,8 +536,8 @@ static long get_file_size(FILE *f)
+ uint64_t cpu_get_tsc(CPUX86State *env)
+ {
+ #ifdef XBOX
+-    float clock_multiplier = g_config.perf.cpu_clockspeed * 2.0;
+-    float cpu_clock_hz = 733333333.0;
++    float clock_multiplier = g_config.perf.cpu_clockspeed;
++    int cpu_clock_hz = 733333333;
+     
+     if (g_config.perf.override_clockspeed) {
+         cpu_clock_hz *= clock_multiplier;
+diff --git a/ui/xui/main-menu.cc b/ui/xui/main-menu.cc
+index addf09552ed..d2119cc1999 100644
+--- a/ui/xui/main-menu.cc
++++ b/ui/xui/main-menu.cc
+@@ -73,8 +73,7 @@ void MainMenuGeneralView::Draw()
+ 
+ 
+     
+-    snprintf(buf, sizeof(buf), "Clock Speed %d%% (%.2f MHz)",
+-             (int)(g_config.perf.cpu_clockspeed * 200), (733333333.0 * g_config.perf.cpu_clockspeed * 2.0)/1000000);
++    snprintf(buf, sizeof(buf), "Clock Speed %d%% (%.2f MHz)", (int)(g_config.perf.cpu_clockspeed * 100), (733333333 * g_config.perf.cpu_clockspeed)/1000000);
+     Slider("Virtual CPU clock", &g_config.perf.cpu_clockspeed, buf);
+ 
+     if ((g_config.perf.cpu_clockspeed-0.495)*(g_config.perf.cpu_clockspeed-0.505) <= 0) {g_config.perf.cpu_clockspeed = 0.5;}
+
+From e0ef52d7cb70012c9e69d0b2c04d9282415419d0 Mon Sep 17 00:00:00 2001
+From: Spidy123222 <64176728+Spidy123222@users.noreply.github.com>
+Date: Wed, 19 Jul 2023 15:49:46 -0700
+Subject: [PATCH 13/20] Add max, minimum, gamepad speed Overloading to slider.
+ (#14)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This adds a minimum and maximum and gamepad speed values to change the behavior of the slider.
+
+This change included separating slider value and the properties value for the actual setting because increasing the sliders clamp also keeps the slider handle in the right position and if increased it will allow outside of the slider range. So using some math I was able to make the slider keep its range while also making the value change appropriately.
+
+Adding gamepad speed allowed for better fine control of the slider for certain sliders if needed. Minimum and maximum is value ranges that can be set when making a slider. In this commit I also slightly adjusted the notch when hitting 100% so that the gamepad can escape it. This also has been tested with audio to work like before and can even increase the range it can do even if audio won’t go higher but just proves that it Infact changes the range.
+---
+ ui/xui/main-menu.cc | 13 +++++++++----
+ ui/xui/widgets.cc   | 16 +++++++++-------
+ ui/xui/widgets.hh   |  2 +-
+ 3 files changed, 19 insertions(+), 12 deletions(-)
+
+diff --git a/ui/xui/main-menu.cc b/ui/xui/main-menu.cc
+index d2119cc1999..acaec50190a 100644
+--- a/ui/xui/main-menu.cc
++++ b/ui/xui/main-menu.cc
+@@ -70,13 +70,15 @@ void MainMenuGeneralView::Draw()
+            "Enables to override default CPU clock speed");
+     
+     char buf[32];
+-
++    float min = 0.01;
++    float max = 2;
++    float gpspeed = 0.01;
+ 
+     
+     snprintf(buf, sizeof(buf), "Clock Speed %d%% (%.2f MHz)", (int)(g_config.perf.cpu_clockspeed * 100), (733333333 * g_config.perf.cpu_clockspeed)/1000000);
+-    Slider("Virtual CPU clock", &g_config.perf.cpu_clockspeed, buf);
++    Slider("Virtual CPU clock", &g_config.perf.cpu_clockspeed, min , max, gpspeed, buf);
+ 
+-    if ((g_config.perf.cpu_clockspeed-0.495)*(g_config.perf.cpu_clockspeed-0.505) <= 0) {g_config.perf.cpu_clockspeed = 0.5;}
++    if ((g_config.perf.cpu_clockspeed-0.999)*(g_config.perf.cpu_clockspeed-1.009) <= 0) {g_config.perf.cpu_clockspeed = 1;}
+     
+     SectionTitle("Miscellaneous");
+     Toggle("Skip startup animation", &g_config.general.skip_boot_anim,
+@@ -549,9 +551,12 @@ void MainMenuAudioView::Draw()
+ {
+     SectionTitle("Volume");
+     char buf[32];
++    float min = 0;
++    float max = 1;
++    float gpspeed = 0.05;
+     snprintf(buf, sizeof(buf), "Limit output volume (%d%%)",
+              (int)(g_config.audio.volume_limit * 100));
+-    Slider("Output volume limit", &g_config.audio.volume_limit, buf);
++    Slider("Output volume limit", &g_config.audio.volume_limit, min, max, gpspeed, buf);
+ 
+     SectionTitle("Quality");
+     Toggle("Real-time DSP processing", &g_config.audio.use_dsp,
+diff --git a/ui/xui/widgets.cc b/ui/xui/widgets.cc
+index 67430ecda8a..3f3c3d8a565 100644
+--- a/ui/xui/widgets.cc
++++ b/ui/xui/widgets.cc
+@@ -222,8 +222,9 @@ bool Toggle(const char *str_id, bool *v, const char *description)
+     return status;
+ }
+ 
+-void Slider(const char *str_id, float *v, const char *description)
++void Slider(const char *str_id, float *v, float min, float max, float gpspeed, const char *description)
+ {
++    float x = *v / max;
+     ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32_BLACK_TRANS);
+ 
+     ImGuiStyle &style = ImGui::GetStyle();
+@@ -261,13 +262,13 @@ void Slider(const char *str_id, float *v, const char *description)
+             ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) ||
+             ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft) ||
+             ImGui::IsKeyPressed(ImGuiKey_GamepadRStickLeft)) {
+-                *v -= 0.05;
++                x -= gpspeed / max;
+         }
+         if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) ||
+             ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) ||
+             ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight) ||
+             ImGui::IsKeyPressed(ImGuiKey_GamepadRStickRight)) {
+-                *v += 0.05;
++                x += gpspeed / max;
+         }
+ 
+         if (
+@@ -283,13 +284,14 @@ void Slider(const char *str_id, float *v, const char *description)
+             ImGui::NavMoveRequestCancel();
+         }
+     }
+-
++    
+     if (ImGui::IsItemActive()) {
+         ImVec2 mouse = ImGui::GetMousePos();
+-        *v = GetSliderValueForMousePos(mouse, slider_pos, slider_size);
++        x = GetSliderValueForMousePos(mouse, slider_pos, slider_size);
+     }
+-    *v = fmax(0, fmin(*v, 1));
+-    DrawSlider(*v, ImGui::IsItemHovered() || ImGui::IsItemActive(), slider_pos,
++    x = fmax(0, fmin(x, 1));
++    *v = fmax(min,fmin(x * max,max));
++    DrawSlider(x, ImGui::IsItemHovered() || ImGui::IsItemActive(), slider_pos,
+                slider_size);
+ 
+     ImVec2 slider_max = ImVec2(slider_pos.x + slider_size.x, slider_pos.y + slider_size.y);
+diff --git a/ui/xui/widgets.hh b/ui/xui/widgets.hh
+index 168878bb9fc..41855ae92fc 100644
+--- a/ui/xui/widgets.hh
++++ b/ui/xui/widgets.hh
+@@ -34,7 +34,7 @@ float GetSliderValueForMousePos(ImVec2 mouse, ImVec2 pos, ImVec2 size);
+ void DrawSlider(float v, bool hovered, ImVec2 pos, ImVec2 size);
+ void DrawToggle(bool enabled, bool hovered, ImVec2 pos, ImVec2 size);
+ bool Toggle(const char *str_id, bool *v, const char *description = nullptr);
+-void Slider(const char *str_id, float *v, const char *description = nullptr);
++void Slider(const char *str_id, float *v, float min, float max, float gpspeed, const char *description = nullptr);
+ bool FilePicker(const char *str_id, const char **buf, const char *filters,
+                 bool dir = false);
+ void DrawComboChevron();
+
+From f23f21cb94adc392352526d902ddef665d2985df Mon Sep 17 00:00:00 2001
+From: Spidy123222 <64176728+Spidy123222@users.noreply.github.com>
+Date: Thu, 20 Jul 2023 03:53:01 -0700
+Subject: [PATCH 14/20] Cleanup Code and fix some code
+
+---
+ config_spec.yml     |  2 +-
+ ui/xui/compat.cc    |  5 ++---
+ ui/xui/main-menu.cc | 12 ++----------
+ ui/xui/widgets.cc   | 14 +++++++-------
+ ui/xui/widgets.hh   |  2 +-
+ 5 files changed, 13 insertions(+), 22 deletions(-)
+
+diff --git a/config_spec.yml b/config_spec.yml
+index 5f8d9b064b0..5db1a23f3ea 100644
+--- a/config_spec.yml
++++ b/config_spec.yml
+@@ -258,4 +258,4 @@ perf:
+     default: false
+   cpu_clockspeed:
+     type: number
+-    default: 0.5
++    default: 1
+diff --git a/ui/xui/compat.cc b/ui/xui/compat.cc
+index c9f47ae63b9..4e05b11e7bc 100644
+--- a/ui/xui/compat.cc
++++ b/ui/xui/compat.cc
+@@ -218,9 +218,8 @@ void CompatibilityReporter::Draw()
+             is_open = false;
+         }
+     }
+-    if (g_config.perf.override_clockspeed)
+-    {
+-        ImGui::Text("Reports using Emulated CPU clock override is not allowed.");
++    if (g_config.perf.override_clockspeed) {
++        ImGui::Text("Reports cannot be made while using altered CPU clock speeds");
+         ImGui::PopItemFlag();
+         ImGui::PopStyleVar();
+     }
+diff --git a/ui/xui/main-menu.cc b/ui/xui/main-menu.cc
+index acaec50190a..c8409e5c791 100644
+--- a/ui/xui/main-menu.cc
++++ b/ui/xui/main-menu.cc
+@@ -70,13 +70,8 @@ void MainMenuGeneralView::Draw()
+            "Enables to override default CPU clock speed");
+     
+     char buf[32];
+-    float min = 0.01;
+-    float max = 2;
+-    float gpspeed = 0.01;
+-
+-    
+     snprintf(buf, sizeof(buf), "Clock Speed %d%% (%.2f MHz)", (int)(g_config.perf.cpu_clockspeed * 100), (733333333 * g_config.perf.cpu_clockspeed)/1000000);
+-    Slider("Virtual CPU clock", &g_config.perf.cpu_clockspeed, min , max, gpspeed, buf);
++    Slider("Virtual CPU clock", &g_config.perf.cpu_clockspeed, buf,0.01f , 2.f, 0.01f);
+ 
+     if ((g_config.perf.cpu_clockspeed-0.999)*(g_config.perf.cpu_clockspeed-1.009) <= 0) {g_config.perf.cpu_clockspeed = 1;}
+     
+@@ -551,12 +546,9 @@ void MainMenuAudioView::Draw()
+ {
+     SectionTitle("Volume");
+     char buf[32];
+-    float min = 0;
+-    float max = 1;
+-    float gpspeed = 0.05;
+     snprintf(buf, sizeof(buf), "Limit output volume (%d%%)",
+              (int)(g_config.audio.volume_limit * 100));
+-    Slider("Output volume limit", &g_config.audio.volume_limit, min, max, gpspeed, buf);
++    Slider("Output volume limit", &g_config.audio.volume_limit, buf);
+ 
+     SectionTitle("Quality");
+     Toggle("Real-time DSP processing", &g_config.audio.use_dsp,
+diff --git a/ui/xui/widgets.cc b/ui/xui/widgets.cc
+index 3f3c3d8a565..8a173a11215 100644
+--- a/ui/xui/widgets.cc
++++ b/ui/xui/widgets.cc
+@@ -22,6 +22,7 @@
+ #include "viewport-manager.hh"
+ #include "ui/xemu-os-utils.h"
+ #include "gl-helpers.hh"
++#include <algorithm>
+ 
+ void Separator()
+ {
+@@ -222,9 +223,8 @@ bool Toggle(const char *str_id, bool *v, const char *description)
+     return status;
+ }
+ 
+-void Slider(const char *str_id, float *v, float min, float max, float gpspeed, const char *description)
+-{
+-    float x = *v / max;
++void Slider(const char *str_id, float *v, const char *description, float min, float max, float increment) {
++    float x = (*v - min) / (max - min);
+     ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32_BLACK_TRANS);
+ 
+     ImGuiStyle &style = ImGui::GetStyle();
+@@ -262,13 +262,13 @@ void Slider(const char *str_id, float *v, float min, float max, float gpspeed, c
+             ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) ||
+             ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft) ||
+             ImGui::IsKeyPressed(ImGuiKey_GamepadRStickLeft)) {
+-                x -= gpspeed / max;
++                x -= increment / max;
+         }
+         if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) ||
+             ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) ||
+             ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight) ||
+             ImGui::IsKeyPressed(ImGuiKey_GamepadRStickRight)) {
+-                x += gpspeed / max;
++                x += increment / max;
+         }
+ 
+         if (
+@@ -289,8 +289,8 @@ void Slider(const char *str_id, float *v, float min, float max, float gpspeed, c
+         ImVec2 mouse = ImGui::GetMousePos();
+         x = GetSliderValueForMousePos(mouse, slider_pos, slider_size);
+     }
+-    x = fmax(0, fmin(x, 1));
+-    *v = fmax(min,fmin(x * max,max));
++    x = std::clamp(x, 0.f, 1.f);
++    *v = x * (max - min) + min;
+     DrawSlider(x, ImGui::IsItemHovered() || ImGui::IsItemActive(), slider_pos,
+                slider_size);
+ 
+diff --git a/ui/xui/widgets.hh b/ui/xui/widgets.hh
+index 41855ae92fc..f698d437887 100644
+--- a/ui/xui/widgets.hh
++++ b/ui/xui/widgets.hh
+@@ -34,7 +34,7 @@ float GetSliderValueForMousePos(ImVec2 mouse, ImVec2 pos, ImVec2 size);
+ void DrawSlider(float v, bool hovered, ImVec2 pos, ImVec2 size);
+ void DrawToggle(bool enabled, bool hovered, ImVec2 pos, ImVec2 size);
+ bool Toggle(const char *str_id, bool *v, const char *description = nullptr);
+-void Slider(const char *str_id, float *v, float min, float max, float gpspeed, const char *description = nullptr);
++void Slider(const char *str_id, float *v, const char *description = nullptr, float min = 0, float max = 1, float increment = 0.05);
+ bool FilePicker(const char *str_id, const char **buf, const char *filters,
+                 bool dir = false);
+ void DrawComboChevron();
+
+From a8c461fd0830db70a30ec3a6f0c0a70d65c2857d Mon Sep 17 00:00:00 2001
+From: Spidy123222 <64176728+Spidy123222@users.noreply.github.com>
+Date: Thu, 20 Jul 2023 04:04:50 -0700
+Subject: [PATCH 15/20] nit: Fix formatting
+
+---
+ ui/xui/compat.cc | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/ui/xui/compat.cc b/ui/xui/compat.cc
+index 4e05b11e7bc..6f07b77e9dd 100644
+--- a/ui/xui/compat.cc
++++ b/ui/xui/compat.cc
+@@ -206,8 +206,7 @@ void CompatibilityReporter::Draw()
+     ImGui::SetCursorPosX(ImGui::GetWindowWidth()-(120+10)*g_viewport_mgr.m_scale);
+ 
+     ImGui::SetItemDefaultFocus();
+-    if (g_config.perf.override_clockspeed)
+-    {
++    if (g_config.perf.override_clockspeed) {
+         ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
+         ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f);
+     }
+
+From 3b6f7b3e83e328072dde6a73e4f9f97dbba783df Mon Sep 17 00:00:00 2001
+From: Spidy123222 <64176728+Spidy123222@users.noreply.github.com>
+Date: Thu, 20 Jul 2023 22:45:54 -0700
+Subject: [PATCH 16/20] Update ui/xui/main-menu.cc
+
+Co-authored-by: Stanislav Motylkov <x86corez@gmail.com>
+---
+ ui/xui/main-menu.cc | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ui/xui/main-menu.cc b/ui/xui/main-menu.cc
+index c8409e5c791..e0303edbcc9 100644
+--- a/ui/xui/main-menu.cc
++++ b/ui/xui/main-menu.cc
+@@ -71,7 +71,7 @@ void MainMenuGeneralView::Draw()
+     
+     char buf[32];
+     snprintf(buf, sizeof(buf), "Clock Speed %d%% (%.2f MHz)", (int)(g_config.perf.cpu_clockspeed * 100), (733333333 * g_config.perf.cpu_clockspeed)/1000000);
+-    Slider("Virtual CPU clock", &g_config.perf.cpu_clockspeed, buf,0.01f , 2.f, 0.01f);
++    Slider("Virtual CPU clock", &g_config.perf.cpu_clockspeed, buf, 0.01f, 2.f, 0.01f);
+ 
+     if ((g_config.perf.cpu_clockspeed-0.999)*(g_config.perf.cpu_clockspeed-1.009) <= 0) {g_config.perf.cpu_clockspeed = 1;}
+     
+
+From 8a7d2a84630f1c9adced3e59b387a94dac9a0506 Mon Sep 17 00:00:00 2001
+From: Spidy123222 <64176728+Spidy123222@users.noreply.github.com>
+Date: Sat, 22 Jul 2023 02:58:04 -0700
+Subject: [PATCH 17/20] Fix readability and use fabs
+
+---
+ ui/xui/main-menu.cc | 4 +++-
+ ui/xui/widgets.cc   | 2 +-
+ 2 files changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/ui/xui/main-menu.cc b/ui/xui/main-menu.cc
+index e0303edbcc9..1bf016fbfc3 100644
+--- a/ui/xui/main-menu.cc
++++ b/ui/xui/main-menu.cc
+@@ -73,7 +73,9 @@ void MainMenuGeneralView::Draw()
+     snprintf(buf, sizeof(buf), "Clock Speed %d%% (%.2f MHz)", (int)(g_config.perf.cpu_clockspeed * 100), (733333333 * g_config.perf.cpu_clockspeed)/1000000);
+     Slider("Virtual CPU clock", &g_config.perf.cpu_clockspeed, buf, 0.01f, 2.f, 0.01f);
+ 
+-    if ((g_config.perf.cpu_clockspeed-0.999)*(g_config.perf.cpu_clockspeed-1.009) <= 0) {g_config.perf.cpu_clockspeed = 1;}
++    if (fabs(g_config.perf.cpu_clockspeed - 1.f) <= 0.0099f) {
++        g_config.perf.cpu_clockspeed = 1;
++    }
+     
+     SectionTitle("Miscellaneous");
+     Toggle("Skip startup animation", &g_config.general.skip_boot_anim,
+diff --git a/ui/xui/widgets.cc b/ui/xui/widgets.cc
+index 8a173a11215..d8e930bca8a 100644
+--- a/ui/xui/widgets.cc
++++ b/ui/xui/widgets.cc
+@@ -284,7 +284,7 @@ void Slider(const char *str_id, float *v, const char *description, float min, fl
+             ImGui::NavMoveRequestCancel();
+         }
+     }
+-    
++
+     if (ImGui::IsItemActive()) {
+         ImVec2 mouse = ImGui::GetMousePos();
+         x = GetSliderValueForMousePos(mouse, slider_pos, slider_size);
+
+From 1f3f9e3499075fbab6c249572cb185364f857076 Mon Sep 17 00:00:00 2001
+From: Spidy123222 <64176728+Spidy123222@users.noreply.github.com>
+Date: Sat, 22 Jul 2023 18:49:27 -0700
+Subject: [PATCH 18/20] Align text and button in compatibility page
+
+Co-authored-by: antangelo <antonio.abbatangelo@gmail.com>
+---
+ ui/xui/compat.cc | 10 +++++++---
+ 1 file changed, 7 insertions(+), 3 deletions(-)
+
+diff --git a/ui/xui/compat.cc b/ui/xui/compat.cc
+index 6f07b77e9dd..063f1b07bdf 100644
+--- a/ui/xui/compat.cc
++++ b/ui/xui/compat.cc
+@@ -203,13 +203,17 @@ void CompatibilityReporter::Draw()
+         ImGui::SameLine();
+     }
+ 
+-    ImGui::SetCursorPosX(ImGui::GetWindowWidth()-(120+10)*g_viewport_mgr.m_scale);
+-
+-    ImGui::SetItemDefaultFocus();
+     if (g_config.perf.override_clockspeed) {
+         ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
+         ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f);
++
++        ImGui::Text("Reports cannot be made while using altered CPU clock speeds");
++        ImGui::SameLine();
+     }
++
++    ImGui::SetCursorPosX(ImGui::GetWindowWidth()-(120+10)*g_viewport_mgr.m_scale);
++
++    ImGui::SetItemDefaultFocus();
+     if (ImGui::Button("Send", ImVec2(120*g_viewport_mgr.m_scale, 0))) {
+         did_send = true;
+         send_result = report.Send();
+
+From 68f741b18b2bd909013b10f9feefaea7c8216cb9 Mon Sep 17 00:00:00 2001
+From: Spidy123222 <64176728+Spidy123222@users.noreply.github.com>
+Date: Sat, 22 Jul 2023 18:53:44 -0700
+Subject: [PATCH 19/20] Remove imgui text
+
+---
+ ui/xui/compat.cc | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/ui/xui/compat.cc b/ui/xui/compat.cc
+index 063f1b07bdf..34f5ac965b5 100644
+--- a/ui/xui/compat.cc
++++ b/ui/xui/compat.cc
+@@ -222,7 +222,6 @@ void CompatibilityReporter::Draw()
+         }
+     }
+     if (g_config.perf.override_clockspeed) {
+-        ImGui::Text("Reports cannot be made while using altered CPU clock speeds");
+         ImGui::PopItemFlag();
+         ImGui::PopStyleVar();
+     }
+
+From 83af776c60d61a4be897051118d3c6153638f8e2 Mon Sep 17 00:00:00 2001
+From: spidy123222 <speedracer123222@gmail.com>
+Date: Wed, 23 Aug 2023 04:57:05 +0000
+Subject: [PATCH 20/20] Fix Nit's
+
+---
+ config_spec.yml     | 2 +-
+ hw/i386/x86.c       | 3 +--
+ ui/xui/main-menu.cc | 8 ++++----
+ ui/xui/widgets.cc   | 3 ++-
+ 4 files changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/config_spec.yml b/config_spec.yml
+index 5db1a23f3ea..b8090035d18 100644
+--- a/config_spec.yml
++++ b/config_spec.yml
+@@ -256,6 +256,6 @@ perf:
+   override_clockspeed: 
+     type: bool
+     default: false
+-  cpu_clockspeed:
++  cpu_clockspeed_scale:
+     type: number
+     default: 1
+diff --git a/hw/i386/x86.c b/hw/i386/x86.c
+index 88cdd6f0785..6c5e27dc02a 100644
+--- a/hw/i386/x86.c
++++ b/hw/i386/x86.c
+@@ -536,11 +536,10 @@ static long get_file_size(FILE *f)
+ uint64_t cpu_get_tsc(CPUX86State *env)
+ {
+ #ifdef XBOX
+-    float clock_multiplier = g_config.perf.cpu_clockspeed;
+     int cpu_clock_hz = 733333333;
+     
+     if (g_config.perf.override_clockspeed) {
+-        cpu_clock_hz *= clock_multiplier;
++        cpu_clock_hz *= g_config.perf.cpu_clockspeed_scale;
+     }
+     return muldiv64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL), cpu_clock_hz, NANOSECONDS_PER_SECOND);
+ #else
+diff --git a/ui/xui/main-menu.cc b/ui/xui/main-menu.cc
+index 1bf016fbfc3..5c6f9dde42b 100644
+--- a/ui/xui/main-menu.cc
++++ b/ui/xui/main-menu.cc
+@@ -70,11 +70,11 @@ void MainMenuGeneralView::Draw()
+            "Enables to override default CPU clock speed");
+     
+     char buf[32];
+-    snprintf(buf, sizeof(buf), "Clock Speed %d%% (%.2f MHz)", (int)(g_config.perf.cpu_clockspeed * 100), (733333333 * g_config.perf.cpu_clockspeed)/1000000);
+-    Slider("Virtual CPU clock", &g_config.perf.cpu_clockspeed, buf, 0.01f, 2.f, 0.01f);
++    snprintf(buf, sizeof(buf), "Clock Speed %d%% (%.2f MHz)", (int)(g_config.perf.cpu_clockspeed_scale * 100), (733333333 * g_config.perf.cpu_clockspeed_scale) / 1000000);
++    Slider("Virtual CPU clock", &g_config.perf.cpu_clockspeed_scale, buf, 0.01f, 2.f, 0.01f);
+ 
+-    if (fabs(g_config.perf.cpu_clockspeed - 1.f) <= 0.0099f) {
+-        g_config.perf.cpu_clockspeed = 1;
++    if (fabs(g_config.perf.cpu_clockspeed_scale - 1.f) <= 0.0099f) {
++        g_config.perf.cpu_clockspeed_scale = 1;
+     }
+     
+     SectionTitle("Miscellaneous");
+diff --git a/ui/xui/widgets.cc b/ui/xui/widgets.cc
+index d8e930bca8a..3809a4a227f 100644
+--- a/ui/xui/widgets.cc
++++ b/ui/xui/widgets.cc
+@@ -223,7 +223,8 @@ bool Toggle(const char *str_id, bool *v, const char *description)
+     return status;
+ }
+ 
+-void Slider(const char *str_id, float *v, const char *description, float min, float max, float increment) {
++void Slider(const char *str_id, float *v, const char *description, float min, float max, float increment)
++{
+     float x = (*v - min) / (max - min);
+     ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32_BLACK_TRANS);
+ 
