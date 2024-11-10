@@ -22,8 +22,8 @@ case ${DEVICE} in
     PKG_GIT_CLONE_BRANCH="rk-6.1-rkr3"
     PKG_PATCH_DIRS="${LINUX} ${DEVICE} default"
   ;;
-  H700)
-    PKG_VERSION="6.12-rc3"
+  H700|SD865)
+    PKG_VERSION="6.12-rc6"
     PKG_URL="https://git.kernel.org/torvalds/t/linux-${PKG_VERSION}.tar.gz"
     ;;
   *)
