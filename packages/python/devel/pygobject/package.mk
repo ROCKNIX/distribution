@@ -7,7 +7,7 @@ PKG_NAME="pygobject"
 PKG_VERSION="3.46.0"
 PKG_LICENSE="LGPL"
 PKG_SITE="http://www.pygtk.org/"
-PKG_URL="http://ftp.gnome.org/pub/GNOME/sources/pygobject/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"
+PKG_URL="http://www.mirrorservice.org/sites/ftp.gnome.org//pub/GNOME/sources/pygobject/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_TARGET="toolchain Python3 glib libffi gobject-introspection pgi"
 PKG_LONGDESC="A convenient wrapper for the GObject+ library for use in Python programs."
 
