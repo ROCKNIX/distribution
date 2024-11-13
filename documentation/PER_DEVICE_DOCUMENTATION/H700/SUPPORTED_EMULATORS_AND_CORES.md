@@ -122,6 +122,6 @@ This document describes all available systems emulators and cores available for 
 |Various|OpenBOR (openbor)|2003|`openbor`|.pak|**OpenBOR:** OpenBOR (default)<br>|
 |Various|ScummVM (scummvm)|2001|`games`|.sh .svm .scummvm|**scummvmsa:** scummvm (default)<br>**retroarch:** scummvm<br>|
 |Various|Vircon32 (vircon32)|2021|`vircon32`|.v32|**retroarch:** vircon32 (default)<br>|
-|Watara|Supervision (supervision)|1992|`supervision`|.sv .zip .7z|**retroarch:** potator (default)<br>|
 |Various|WASM-4 (wasm4)|2017|`wasm4`|.wasm .wat|**retroarch:** wasm4 (default)<br>|
+|Watara|Supervision (supervision)|1992|`supervision`|.sv .zip .7z|**retroarch:** potator (default)<br>|
 |Welback Holdings|Mega Duck (megaduck)|1993|`megaduck`|.bin .zip .7z|**retroarch:** sameduck (default)<br>|
