@@ -9,10 +9,6 @@ PKG_URL="${PKG_SITE}/releases/files/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_TARGET="toolchain SDL2 flac"
 PKG_TOOLCHAIN="configure"
 
-if [ "${DEVICE}" = "S922X" ]; then
-  PKG_DEPENDS_TARGET+=" libegl"
-fi
-
 pre_configure_target() {
 
 export CFLAGS="${CFLAGS} -flto -fipa-pta"
@@ -29,10 +25,6 @@ case ${DEVICE} in
     DISABLED_MODULES+="   --disable-snes \
 			 --disable-ss \
 			 --disable-psx"
-  ;;
-  S922X)
-    DISABLED_MODULES+="  --disable-ss \
-			 --disable-snes"
   ;;
   RK3588*)
     DISABLED_MODULES+=" --disable-snes"

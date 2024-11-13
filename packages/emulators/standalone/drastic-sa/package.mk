@@ -6,9 +6,13 @@ PKG_VERSION="1.0"
 PKG_LICENSE="Proprietary:DRASTIC.pdf"
 PKG_ARCH="aarch64"
 PKG_URL="https://github.com/r3claimer/JelosAddOns/raw/main/drastic.tar.gz"
-PKG_DEPENDS_TARGET="toolchain rocknix-hotkey libegl"
+PKG_DEPENDS_TARGET="toolchain rocknix-hotkey"
 PKG_LONGDESC="Install Drastic Launcher script, will dowload bin on first run"
 PKG_TOOLCHAIN="make"
+
+if [ "${DEVICE}" = "S922X" ]; then
+  PKG_DEPENDS_TARGET+=" libegl"
+fi
 
 make_target() {
   :
