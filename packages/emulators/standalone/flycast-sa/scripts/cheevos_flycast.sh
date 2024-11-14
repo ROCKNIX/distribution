@@ -7,14 +7,22 @@
 . /etc/profile
 
 FLYCAST_CFG="/storage/.config/flycast/emu.cfg"
+LOG_FILE="/var/log/cheevos.log"
 
 username=$(get_setting "global.retroachievements.username")
 password=$(get_setting "global.retroachievements.password")
 token=$(get_setting "global.retroachievements.token")
+enabled=$(get_setting "global.retroachievements")
+
+if [ ! ${enabled} = 1 ]; then
+    echo "RetroAchievements are not enabled, please turn them on in Emulation Station." > ${LOG_FILE}
+    sed -i '/\[achievements\]/,/^\s*$/s/Enabled =.*/Enabled = no/' ${FLYCAST_CFG}
+    exit 1
+fi
 
 # Test the token if empty exit 1.
 if [ -z "${token}" ]; then
-    echo "Token is empty you must log in retroachievements first in Emulation Station" > /var/log/cheevos.log
+    echo "RetroAchievements token is empty, please log in with your RetroAchievements credentials in Emulation Station." > ${LOG_FILE}
     exit 1
 fi
 
