@@ -34,6 +34,7 @@ FPS=$(get_setting show_fps "${PLATFORM}" "${GAME}")
 IRES=$(get_setting internal_resolution "${PLATFORM}" "${GAME}")
 RENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
 VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
+CHEEVOS=$(get_setting retroachievements "${PLATFORM}" "${GAME}")
 
 #Set the cores to use
 CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
@@ -123,6 +124,13 @@ fi
         then
                 sed -i '/^rend.vsync =/c\rend.vsync = yes' /storage/.config/flycast/emu.cfg
         fi
+
+#Retroachievements
+if [ "$CHEEVOS" = "yes" ]; then
+/usr/bin/cheevos_flycast.sh
+else
+  sed -i '/\[achievements\]/,/^\s*$/s/Enabled =.*/Enabled = no/' /storage/.config/flycast/emu.cfg
+fi
 
 #Run flycast emulator
 ${EMUPERF} /usr/bin/flycast "${1}"
