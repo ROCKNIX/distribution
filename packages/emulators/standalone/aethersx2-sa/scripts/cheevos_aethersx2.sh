@@ -35,7 +35,6 @@ else
     fi
 
     if ! grep -q "^Token = " ${AETHERSX2_CFG}; then
-echo fuck your couch
         sed -i "/^\[Achievements\]/a Token = ${token}" ${AETHERSX2_CFG}
     else
         sed -i "/^\[Achievements\]/,/^\[/{s/^Token = .*/Token = ${token}/;}" ${AETHERSX2_CFG}
