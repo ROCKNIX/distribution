@@ -22,6 +22,7 @@ IRES=$(get_setting internal_resolution "${PLATFORM}" "${GAME}")
 GRENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
 SKIPB=$(get_setting skip_buffer_effects "${PLATFORM}" "${GAME}")
 VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
+CHEEVOS=$(get_setting retroachievements "${PLATFORM}" "${GAME}")
 
 #Set the cores to use
 CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
@@ -127,6 +128,14 @@ fi
         then
                 sed -i '/^VSyncInterval =/c\VSyncInterval = True' ${CONF_DIR}/${PPSSPP_INI}
         fi
+
+#Retroachievements
+if [ "$CHEEVOS" = "yes" ]; then
+/usr/bin/cheevos_ppsspp.sh
+else
+  sed -i '/^AchievementsEnable =/c\AchievementsEnable = False' ${CONF_DIR}/${PPSSPP_INI}
+fi
+
 
 ARG=${1//[\\]/}
 

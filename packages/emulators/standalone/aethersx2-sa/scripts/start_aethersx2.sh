@@ -32,6 +32,7 @@ SKIP=$(get_setting ee_cycle_skip "${PLATFORM}" "${GAME}")
 GRENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
 IRES=$(get_setting internal_resolution "${PLATFORM}" "${GAME}")
 VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
+CHEEVOS=$(get_setting retroachievements "${PLATFORM}" "${GAME}")
 
 #Set the cores to use
 CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
@@ -163,6 +164,13 @@ fi
         then
                 sed -i '/^EECycleSkip =/c\EECycleSkip = 3' /storage/.config/aethersx2/inis/PCSX2.ini
         fi
+
+#Retroachievements
+if [ "$CHEEVOS" = "yes" ]; then
+/usr/bin/cheevos_aethersx2.sh
+else
+  sed -i '/\[Achievements\]/,/^\s*$/s/Enabled =.*/Enabled = false/' /storage/.config/aethersx2/inis/PCSX2.ini
+fi
 
 #Set OpenGL 3.3 on panfrost
   export MESA_GL_VERSION_OVERRIDE=3.3
