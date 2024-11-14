@@ -15,18 +15,20 @@ token=$(get_setting "global.retroachievements.token")
 
 # Test the token if empty exit 1.
 if [ -z "${token}" ]; then
-    echo "Token is empty you must log in retroachievements first in Emulation Station" > /var/log/cheevos.log
+    echo "RetroAchievements token is empty, please log in with your RetroAchievements credentials in Emulation Station." > /var/log/cheevos.log
     exit 1
 fi
 
 # Variables for checking if [Cheevos] or enabled true or false are present.
-zcheevos=$(grep -Fx "[achievements]" ${AETHERSX2_CFG})
+zcheevos=$(grep -Fx "[Achievements]" ${AETHERSX2_CFG})
+datets=$(date +%s%N | cut -b1-13)
 
 if [ -z "${zcheevos}" ]; then
-    sed -i "\$a [Achievements]\nEnabled = true\nUsername = ${username}\nToken = ${token}" ${AETHERSX2_CFG}
+    sed -i "\$a [Achievements]\nEnabled = true\nUsername = ${username}\nToken = ${token}\nLoginTimestamp = ${datets}" ${AETHERSX2_CFG}
 else
     sed -i '/\[Achievements\]/,/^\s*$/s/Enabled =.*/Enabled = true/' ${AETHERSX2_CFG}
-    if ! grep -q "^UserName = " ${AETHERSX2_CFG}; then
+
+    if ! grep -q "^Username = " ${AETHERSX2_CFG}; then
         sed -i "/^\[Achievements\]/a Username = ${username}" ${AETHERSX2_CFG}
     else
         sed -i "/^\[Achievements\]/,/^\[/{s/^Username = .*/Username = ${username}/;}" ${AETHERSX2_CFG}
@@ -35,6 +37,7 @@ else
     if ! grep -q "^Token = " ${AETHERSX2_CFG}; then
         sed -i "/^\[Achievements\]/a Token = ${token}" ${AETHERSX2_CFG}
     else
-        sed -i "/^\[achievements\]/,/^\[/{s/^Token = .*/Token = ${token}/;}" ${AETHERSX2_CFG}
+        sed -i "/^\[Achievements\]/,/^\[/{s/^Token = .*/Token = ${token}/;}" ${AETHERSX2_CFG}
     fi
+    sed -i "/^\[Achievements\]/,/^\[/{s/^LoginTimestamp = .*/LoginTimestamp = ${datets}/;}" ${AETHERSX2_CFG}
 fi
