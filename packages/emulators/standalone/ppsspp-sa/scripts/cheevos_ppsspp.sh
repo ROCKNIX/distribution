@@ -8,17 +8,25 @@
 
 PPSSPP_ACHIEVEMENTS="/storage/.config/ppsspp/PSP/SYSTEM/ppsspp_retroachievements.dat"
 PPSSPP_INI="/storage/.config/ppsspp/PSP/SYSTEM/ppsspp.ini"
+LOG_FILE="/var/log/cheevos.log"
 
 username=$(get_setting "global.retroachievements.username")
 password=$(get_setting "global.retroachievements.password")
 token=$(get_setting "global.retroachievements.token")
+enabled=$(get_setting "global.retroachievements")
 
-#Test the token if empty exit 1.
-if [ -z "${token}" ]
-then
-      echo "Token is empty you must log in retroachievements first in Emulation Station" > /var/log/cheevos.log
-      exit 1
+if [ ! ${enabled} = 1 ]; then
+    echo "RetroAchievements are not enabled, please turn them on in Emulation Station." > ${LOG_FILE}
+    sed -i '/^AchievementsEnable =/c\AchievementsEnable = False' ${PPSSPP_INI}
+    exit 1
 fi
+
+# Test the token if empty exit 1.
+if [ -z "${token}" ]; then
+    echo "RetroAchievements token is empty, please log in with your RetroAchievements credentials in Emulation Station." > ${LOG_FILE}
+    exit 1
+fi
+
 echo "${token}" > ${PPSSPP_ACHIEVEMENTS}
 
 #Variables for checking if [Cheevos] or enabled true or false are presente.

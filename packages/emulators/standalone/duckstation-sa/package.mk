@@ -9,14 +9,14 @@ PKG_URL="${PKG_SITE}.git"
 PKG_LONGDESC="Fast PlayStation 1 emulator for x86-64/AArch32/AArch64 "
 PKG_TOOLCHAIN="cmake"
 
-case ${TARGET_ARCH} in
-  aarch64)
-    PKG_VERSION="bfa792ddbff11c102521124f235ccb310cac6e6a"
-    PKG_PATCH_DIRS+=" wayland/${TARGET_ARCH}"
-  ;;
-  x86_64)
+case ${DEVICE} in
+  AMD64|SD865)
       PKG_VERSION="a45b50c3e996af823d35a6a193458532c4f4316d"
-      PKG_PATCH_DIRS+=" wayland/${TARGET_ARCH}"
+      PKG_PATCH_DIRS+=" wayland"
+  ;;
+  *)
+    PKG_VERSION="bfa792ddbff11c102521124f235ccb310cac6e6a"
+    PKG_PATCH_DIRS+=" legacy"
   ;;
 esac
 

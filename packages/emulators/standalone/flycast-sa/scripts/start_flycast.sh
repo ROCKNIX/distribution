@@ -126,11 +126,7 @@ fi
         fi
 
 #Retroachievements
-if [ "$CHEEVOS" = "yes" ]; then
 /usr/bin/cheevos_flycast.sh
-else
-  sed -i '/\[achievements\]/,/^\s*$/s/Enabled =.*/Enabled = no/' /storage/.config/flycast/emu.cfg
-fi
 
 #Run flycast emulator
 ${EMUPERF} /usr/bin/flycast "${1}"
