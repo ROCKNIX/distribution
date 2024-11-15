@@ -17,7 +17,7 @@ enabled=$(get_setting "global.retroachievements")
 
 if [ ! ${enabled} = 1 ]; then
     echo "RetroAchievements are not enabled, please turn them on in Emulation Station." > ${LOG_FILE}
-    sed -i '/\[Cheevos]\]/,/^\s*$/s/Enabled =.*/Enabled = false/' ${DUCK_CFG}
+    sed -i '/\[Cheevos\]/,/^\s*$/s/Enabled =.*/Enabled = false/' ${DUCK_CFG}
     exit 1
 fi
 
@@ -32,9 +32,9 @@ zcheevos=$(grep -Fx "[Cheevos]" ${DUCK_CFG})
 datets=$(date +%s%N | cut -b1-13)
 
 if [ -z "${zcheevos}" ]; then
-    sed -i "\$a [Cheevos]]\nEnabled = true\nUsername = ${username}\nToken = ${token}\nLoginTimestamp = ${datets}" ${DUCK_CFG}
+    sed -i "\$a [Cheevos]\nEnabled = true\nUsername = ${username}\nToken = ${token}\nLoginTimestamp = ${datets}" ${DUCK_CFG}
 else
-    sed -i '/\[Cheevos]\]/,/^\s*$/s/Enabled =.*/Enabled = true/' ${DUCK_CFG}
+    sed -i '/\[Cheevos\]/,/^\s*$/s/Enabled =.*/Enabled = true/' ${DUCK_CFG}
     if ! grep -q "^Username = " ${DUCK_CFG}; then
         sed -i "/^\[Cheevos]\]/a Username = ${username}" ${DUCK_CFG}
     else
