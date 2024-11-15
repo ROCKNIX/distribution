@@ -72,5 +72,5 @@ makeinstall_target() {
   rm -rf ${INSTALL}/usr/config/duckstation/duckstation-nogui
   rm -rf ${INSTALL}/usr/config/duckstation/common-tests
 
-  chmod +x ${INSTALL}/usr/bin/start_duckstation.sh
+  chmod +x ${INSTALL}/usr/bin/*
 }
