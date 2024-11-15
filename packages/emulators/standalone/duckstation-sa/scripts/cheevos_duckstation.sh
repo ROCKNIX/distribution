@@ -17,7 +17,7 @@ enabled=$(get_setting "global.retroachievements")
 
 if [ ! ${enabled} = 1 ]; then
     echo "RetroAchievements are not enabled, please turn them on in Emulation Station." > ${LOG_FILE}
-    sed -i sed -i '/\[Cheevos\]/,/^\s*$/s/Enabled =.*/Enabled = false/' ${DUCK_CFG}
+    sed -i '/\[Cheevos\]/,/^\s*$/s/Enabled =.*/Enabled = false/' ${DUCK_CFG}
     exit 1
 fi
 
