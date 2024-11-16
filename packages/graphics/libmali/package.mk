@@ -4,11 +4,12 @@
 # Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="libmali"
-PKG_VERSION="v1.9-1-b9619b9"
+PKG_VERSION="fa005557b3a0d43c6368272568d1ec0240e976dd"
 PKG_LICENSE="nonfree"
 PKG_SITE="https://github.com/tsukumijima/libmali-rockchip"
 # zip format makes extract very fast (<1s). tgz takes 20 seconds to scan the whole file
-PKG_URL="${PKG_SITE}/archive/refs/tags/${PKG_VERSION}.zip"
+#PKG_URL="${PKG_SITE}/archive/refs/tags/${PKG_VERSION}.zip"
+PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.zip"
 PKG_DEPENDS_TARGET="toolchain libdrm patchelf:host gpudriver"
 PKG_LONGDESC="OpenGL ES user-space binary for the ARM Mali GPU family"
 PKG_TOOLCHAIN="meson"
@@ -46,18 +47,15 @@ unpack() {
   ln -s lib optimize_3
 }
 
-pre_make_target() {
-  patchelf --rename-dynamic-symbols "${PKG_BUILD}/rename.syms" libmali-prebuilt.so
-}
-
 post_makeinstall_target() {
   rm -rf "${SYSROOT_PREFIX}/usr/include"   # all needed headers are installed by glvnd, mesa and wayland
   rm -rf "${INSTALL}/etc/ld.so.conf.d" "${SYSROOT_PREFIX}/etc/ld.so.conf.d"  # upstream installs ld.so config and we don't need it
 
-  for lib in "${INSTALL}/usr/lib*/mali/*.so"; do
-    echo ${lib}
-    patchelf --add-needed libmali-hook.so.1 ${lib}
+  # IDK how libs in ubuntu package get these dependencies. Need to specify them manually here.
+  for lib in "${INSTALL}"/usr/lib*/mali/lib*.so.*; do
+    patchelf --add-needed libmali-hook.so.1 "${lib}"
   done
+  patchelf --add-needed libmali.so.1 "${INSTALL}"/usr/lib*/libmali-hook.so.1
 
   # x11 lib needed for some applications on the RK3588
   if [ ${DEVICE} = "RK3588" ] && [ ${TARGET_ARCH} = "arch64" ]; then
