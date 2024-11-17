@@ -8,12 +8,13 @@ PKG_SITE="https://mednafen.github.io/"
 PKG_URL="${PKG_SITE}/releases/files/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_TARGET="toolchain SDL2 flac"
 PKG_TOOLCHAIN="configure"
+PKG_PATCH_DIRS+=" ${DEVICE}"
 
 pre_configure_target() {
 
-export CFLAGS="${CFLAGS} -flto -fipa-pta"
-export CXXFLAGS="${CXXFLAGS} -flto -fipa-pta"
-export LDFLAGS="${LDFLAGS} -flto -fipa-pta"
+export CFLAGS="${CFLAGS} -flto -fipa-pta --param max-gcse-memory=256351"
+export CXXFLAGS="${CXXFLAGS} -flto -fipa-pta --param max-gcse-memory=256351"
+export LDFLAGS="${LDFLAGS} -flto -fipa-pta --param max-gcse-memory=256351"
 
 # unsupported modules
 DISABLED_MODULES+=" --disable-apple2 \
@@ -28,6 +29,10 @@ case ${DEVICE} in
   ;;
   RK3588*)
     DISABLED_MODULES+=" --disable-snes"
+  ;;
+  S922X)
+    DISABLED_MODULES+="  --disable-ss \
+			 --disable-snes"
   ;;
 esac
 
