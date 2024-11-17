@@ -152,6 +152,40 @@ done
 
 fi
 
+# Retroid pocket has analog triggers, set them before mapping the rest of the GPIO controller
+if [[ "${NAME}" = "PocketGamepad" ]]
+then
+
+DEVICE_BTN_TL2="abs_4+"
+DEVICE_BTN_TR2="abs_5+"
+# No other GPIO device has analog triggers (I think), Just set them to the same
+DEVICE_BTN_TL2_MINUS=${DEVICE_BTN_TL2}
+DEVICE_BTN_TR2_MINUS=${DEVICE_BTN_TR2}
+
+# Left analog
+DEVICE_BTN_AL_DOWN="abs_1+"
+DEVICE_BTN_AL_UP="abs_1-"
+DEVICE_BTN_AL_LEFT="abs_0-"
+DEVICE_BTN_AL_RIGHT="abs_0+"
+
+# Right analog
+DEVICE_BTN_AR_DOWN="abs_3+"
+DEVICE_BTN_AR_UP="abs_3-"
+DEVICE_BTN_AR_LEFT="abs_4-"
+DEVICE_BTN_AR_RIGHT="abs_4+"
+
+
+for CONTROL in DEVICE_BTN_TL2 DEVICE_BTN_TR2    \
+               DEVICE_BTN_TL2_MINUS DEVICE_BTN_TR2_MINUS \
+               DEVICE_BTN_AL_DOWN DEVICE_BTN_AL_UP DEVICE_BTN_AL_LEFT    \
+               DEVICE_BTN_AL_RIGHT DEVICE_BTN_AR_DOWN DEVICE_BTN_AR_UP   \
+               DEVICE_BTN_AR_LEFT DEVICE_BTN_AR_RIGHT
+do
+    sed -i -e "s/@${CONTROL}@/${!CONTROL}/g" $MEDNAFEN_HOME/mednafen.cfg
+done
+
+fi
+
 # These are the inputs prefixed with button_
 for CONTROL in DEVICE_BTN_SOUTH DEVICE_BTN_EAST DEVICE_BTN_NORTH         \
                DEVICE_BTN_WEST DEVICE_BTN_TL DEVICE_BTN_TR               \
