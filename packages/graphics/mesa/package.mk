@@ -103,9 +103,3 @@ if [ "${VULKAN_SUPPORT}" = "yes" ]; then
 else
   PKG_MESON_OPTS_TARGET+=" -Dvulkan-drivers="
 fi
-
-post_makeinstall_target() {
-  if listcontains "${GRAPHIC_DRIVERS}" "(panfrost)"; then
-    rm -f ${INSTALL}/usr/lib/libvulkan_panfrost.so ${INSTALL}/usr/share/vulkan/icd.d/panfrost_icd.aarch64.json
-  fi
-}
