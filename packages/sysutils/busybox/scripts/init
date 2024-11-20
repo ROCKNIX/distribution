@@ -368,7 +368,7 @@ update_file() {
   if [ -f "${UPDATE_DIR}/$2" -a -f "$3" ]; then
     mount -o remount,rw /flash
 
-    StartProgress percent "Updating $1... " "$3" $(stat -t "${UPDATE_DIR}/$2" | awk '{print $2}')
+    StartProgress percent "Updating $1... " "$3" $(stat -Lt "${UPDATE_DIR}/$2" | awk '{print $2}')
       # use dd here with conv=fsync so that all writes are non-buffered
       # ensuring accurate progress - take the sync hit during the
       # transfer, rather than when flushing file buffers after the progress
@@ -711,28 +711,41 @@ check_out_of_space() {
 do_cleanup() {
   StartProgress spinner "Cleaning up... "
 
+  # Busybox losetup doesn't have -D option
+  for loop in $(losetup -a | cut -d: -f1); do
+    losetup -d $loop
+  done
+
+  # update is mounted last on top of mnt and avfs, so it should be unmounted first
+  if mountpoint -q /update; then
+    umount /update &>/dev/null
+  fi
+
+  # mnt is a partition of .img loop, it uses avfs
   if [ -d ${UPDATE_ROOT}/.tmp/mnt ]; then
     if mountpoint -q ${UPDATE_ROOT}/.tmp/mnt ; then
       # busybox umount deletes loop device automatically
       umount ${UPDATE_ROOT}/.tmp/mnt &>/dev/null
     fi
-
-    [ -n ${LOOP} ] && losetup -d ${LOOP} &>/dev/null
   fi
 
-  [ -f "${UPDATE_TAR}" ] && rm -f "${UPDATE_TAR}" &>/dev/null
-  [ -f "${UPDATE_IMG_GZ}" ] && rm -f "${UPDATE_IMG_GZ}" &>/dev/null
-  [ -f "${UPDATE_IMG}" ] && rm -f "${UPDATE_IMG}" &>/dev/null
+  # among update stuff, avfs is mounted first, so, is unmounted last
+  if [ -d ${UPDATE_ROOT}/.tmp/avfs ]; then
+    if mountpoint -q ${UPDATE_ROOT}/.tmp/avfs ; then
+      umount ${UPDATE_ROOT}/.tmp/avfs &>/dev/null
+    fi
+  fi
+
+  rm -f "${UPDATE_TAR}" &>/dev/null
+  rm -f "${UPDATE_IMG_GZ}" &>/dev/null
+  rm -f "${UPDATE_IMG}" &>/dev/null
 
   rm -rf ${UPDATE_ROOT}/.[0-9a-zA-Z]* &>/dev/null
-  rm -rf  ${UPDATE_ROOT}/* &>/dev/null
+  rm -rf ${UPDATE_ROOT}/* &>/dev/null
 
+  # All previous unmounts were needed to safely unmount storage partition
   if mountpoint -q /storage; then
     umount /storage &>/dev/null
-  fi
-
-  if mountpoint -q /update; then
-    umount /update &>/dev/null
   fi
 
   sync
@@ -781,6 +794,7 @@ check_update() {
   fi
 
   mkdir -p ${UPDATE_DIR}/.tmp &>/dev/null
+  mkdir -p ${UPDATE_DIR}/.tmp/avfs &>/dev/null
   sync
 
   clear >/dev/console
@@ -794,12 +808,22 @@ check_update() {
 
     echo "Found new .tar archive"
     UPDATE_FILENAME="${UPDATE_TAR}"
-    StartProgress spinner "Extracting contents of archive... "
-    tar -xf "${UPDATE_TAR}" -C ${UPDATE_DIR}/.tmp 1>/dev/null 2>/tmp/tarresult.txt || TARRESULT="1"
+    StartProgress spinner "AVFS mounting archive... "
+    /usr/bin/avfsd -o modules=subdir -o subdir="${UPDATE_TAR}#" ${UPDATE_DIR}/.tmp/avfs 2>/tmp/tarresult.txt
+    # AVFS returns success (0) even when fuse kernel module is not available, so we need extra check
+    if ls -d ${UPDATE_DIR}/.tmp/avfs/*/target 1>/dev/null 2>>/tmp/tarresult.txt; then
+      # avfs mount succeeded
+      UPDATE_DIR=$(ls -d -1 "${UPDATE_DIR}"/.tmp/avfs/*/target 2>/dev/null | head -n 1)
+    else
+      StopProgress "FAILED"
+      cat /tmp/tarresult.txt
+      # Fallback to extraction
+      StartProgress spinner "Extracting contents of archive... "
+      tar -xf "${UPDATE_TAR}" -C ${UPDATE_DIR}/.tmp 1>/dev/null 2>/tmp/tarresult.txt || TARRESULT="1"
+      UPDATE_DIR=$(ls -d -1 "${UPDATE_DIR}"/.tmp/*/target 2>/dev/null | head -n 1)
+    fi
 
     if [ "${TARRESULT}" -eq "0" ]; then
-      mv ${UPDATE_DIR}/.tmp/*/target/* ${UPDATE_DIR} &>/dev/null
-      sync
       StopProgress "done"
     else
       StopProgress "FAILED"
@@ -815,17 +839,34 @@ check_update() {
       reboot
     fi
   elif [ -f "${UPDATE_IMG_GZ}" -o -f "${UPDATE_IMG}" ]; then
-    mkdir -p ${UPDATE_DIR}/.tmp/mnt &>/dev/null
-    IMG_FILE="${UPDATE_DIR}/.tmp/update.img"
-    GZRESULT="0"
+    LOOP=$(losetup -f)
 
     if [ -f "${UPDATE_IMG_GZ}" ]; then
       echo "Found new compressed image file"
+      GZRESULT="0"
       UPDATE_FILENAME="${UPDATE_IMG_GZ}"
-      StartProgress spinner "Decompressing image file... "
+      StartProgress spinner "AVFS mounting image file... "
+      GZ_BASENAME=$(basename "${UPDATE_IMG_GZ}")
+      /usr/bin/avfsd -o modules=subdir -o subdir=${UPDATE_DIR} ${UPDATE_DIR}/.tmp/avfs 2>/tmp/gzresult.txt
+      AVFS_IMG_FILE=${UPDATE_DIR}/.tmp/avfs/"${GZ_BASENAME}#"
+      # AVFS returns success (0) even when fuse kernel module is not available, so we need extra check
+      if losetup -P ${LOOP} ${AVFS_IMG_FILE}; then
+        StopProgress "OK"
+      else
+        StopProgress "FAILED"
+        cat /tmp/gzresult.txt
+        # Fallback to decompressing the image
+        IMG_FILE="${UPDATE_DIR}/.tmp/update.img"
+        StartProgress spinner "Decompressing image file... "
         gunzip -d -c "${UPDATE_IMG_GZ}" 1>${IMG_FILE} 2>/tmp/gzresult.txt || GZRESULT="1"
         sync
-        [ "${GZRESULT}" -eq "0" ] && StopProgress "OK" || StopProgress "FAILED"
+        if [ "${GZRESULT}" -eq "0" ]; then
+          StopProgress "OK"
+          losetup -P ${LOOP} ${IMG_FILE}
+        else
+          StopProgress "FAILED"
+        fi
+      fi
 
       if [ "${GZRESULT}" -eq "1" ]; then
         echo "Failed to decompress image file!"
@@ -841,37 +882,12 @@ check_update() {
     else
       echo "Found new image file"
       UPDATE_FILENAME="${UPDATE_IMG}"
-      mv "${UPDATE_IMG}" ${IMG_FILE}
+      losetup -P ${LOOP} "${UPDATE_IMG}"
     fi
 
-    LOOP=$(losetup -f)
-    LOOP_NUM=$(echo ${LOOP} | sed 's|/dev/loop||')
-    mknod ${LOOP} b 7 ${LOOP_NUM} &>/dev/null
-    losetup ${LOOP} ${IMG_FILE}
-
-    # check for MBR partititon
-    OFFSET=$(fdisk -u -l ${LOOP }2>/dev/null | awk '/^[ ]*Device/{part=1; next}; part{if ($2 == "*") {print $5} else {print $4} ; exit}')
-    if [ -z "${OFFSET}" ]; then
-      # check for GPT partititon
-      OFFSET=$(fdisk -u -l ${LOOP} 2>/dev/null | awk '/^Number/{part=1; next}; part{print $2; exit}')
-      if [ -z "${OFFSET}" ]; then
-        echo "Could not find a valid system partition in image file!"
-        do_cleanup
-        StartProgress countdown "Normal startup in 5s... " 5 "NOW"
-        return 0
-      fi
-    fi
-
-    SECTOR_SIZE=$(cat /sys/devices/virtual/block/loop${LOOP_NUM}/queue/hw_sector_size)
-    losetup -d ${LOOP}
-    sync
-
-    OFFSET=$((${OFFSET} * ${SECTOR_SIZE}))
-
-    # use losetup because busybox mount does not support the -o offset option
     echo "Mounting system partition..."
-    losetup -o ${OFFSET} ${LOOP} ${IMG_FILE}
-    mount -o ro,loop ${LOOP} ${UPDATE_DIR}/.tmp/mnt
+    mkdir -p ${UPDATE_DIR}/.tmp/mnt &>/dev/null
+    mount -o ro,loop ${LOOP}p1 ${UPDATE_DIR}/.tmp/mnt
 
     # don't make temporary files but instead copy
     # directly from mountpoint to /flash
@@ -890,7 +906,8 @@ check_update() {
     return 0
   fi
 
-  if [ ! -f "${UPDATE_DIR}/${UPDATE_KERNEL}" -o ! -f "${UPDATE_DIR}/${UPDATE_SYSTEM}" ]; then
+  # update parts may be symlinks, so check just for existence
+  if [ ! -e "${UPDATE_DIR}/${UPDATE_KERNEL}" -o ! -e "${UPDATE_DIR}/${UPDATE_SYSTEM}" ]; then
     echo "Missing (source) ${UPDATE_KERNEL} or ${UPDATE_SYSTEM}!"
     do_cleanup
     StartProgress countdown "Normal startup in 30s... " 30 "NOW"
@@ -961,8 +978,8 @@ check_update() {
   fi
 
   OLD_SYSTEM=$(stat -t "/flash/${IMAGE_SYSTEM}" | awk '{print $2}')
-  NEW_KERNEL=$(stat -t "${UPDATE_DIR}/${UPDATE_KERNEL}" | awk '{print $2}')
-  NEW_SYSTEM=$(stat -t "${UPDATE_DIR}/${UPDATE_SYSTEM}" | awk '{print $2}')
+  NEW_KERNEL=$(stat -Lt "${UPDATE_DIR}/${UPDATE_KERNEL}" | awk '{print $2}')
+  NEW_SYSTEM=$(stat -Lt "${UPDATE_DIR}/${UPDATE_SYSTEM}" | awk '{print $2}')
 
   # old KERNEL+SYSTEM+free space - new KERNEL+SYSTEM must be higher than 5MB
   # at least 5MB free after update
