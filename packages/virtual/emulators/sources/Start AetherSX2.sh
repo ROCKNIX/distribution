@@ -14,4 +14,7 @@ set_kill set "aethersx2-sa"
 #Set QT enviornment to wayland
   export QT_QPA_PLATFORM=wayland
 
-/usr/bin/aethersx2-sa -bigpicture -fullscreen >/dev/null 2>&1
+# Extra Libs needed to run
+  export LD_LIBRARY_PATH=/usr/share/aethersx2-sa/libs
+
+/usr/share/aethersx2-sa/aethersx2 -bigpicture -fullscreen >/dev/null 2>&1
