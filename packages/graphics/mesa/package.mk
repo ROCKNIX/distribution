@@ -4,7 +4,7 @@
 
 PKG_NAME="mesa"
 PKG_LICENSE="OSS"
-PKG_VERSION="24.2.5"
+PKG_VERSION="24.2.7"
 PKG_SITE="http://www.mesa3d.org/"
 PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain expat libdrm zstd Mako:host pyyaml:host"
@@ -103,9 +103,3 @@ if [ "${VULKAN_SUPPORT}" = "yes" ]; then
 else
   PKG_MESON_OPTS_TARGET+=" -Dvulkan-drivers="
 fi
-
-post_makeinstall_target() {
-  if listcontains "${GRAPHIC_DRIVERS}" "(panfrost)"; then
-    rm -f ${INSTALL}/usr/lib/libvulkan_panfrost.so ${INSTALL}/usr/share/vulkan/icd.d/panfrost_icd.aarch64.json
-  fi
-}

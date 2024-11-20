@@ -1,0 +1,268 @@
+From d979b244e845f20b4d98b568f69b0b9c095f7fbe Mon Sep 17 00:00:00 2001
+From: sydarn <sydarn@proton.me>
+Date: Sat, 26 Oct 2024 10:29:10 +0200
+Subject: [PATCH] Revert "usb: dwc3: core: Prevent phy suspend during init"
+
+This reverts commit 6d735722063a945de56472bdc6bfcb170fd43b86.
+---
+ drivers/usb/dwc3/core.c   | 98 ++++++++++++++++++++++-----------------
+ drivers/usb/dwc3/core.h   |  1 -
+ drivers/usb/dwc3/gadget.c |  2 -
+ drivers/usb/dwc3/host.c   | 27 -----------
+ 4 files changed, 55 insertions(+), 73 deletions(-)
+
+diff --git a/drivers/usb/dwc3/core.c b/drivers/usb/dwc3/core.c
+index 9eb085f359ce..05f53abb14ad 100644
+--- a/drivers/usb/dwc3/core.c
++++ b/drivers/usb/dwc3/core.c
+@@ -105,32 +105,6 @@ static int dwc3_get_dr_mode(struct dwc3 *dwc)
+ 	return 0;
+ }
+ 
+-void dwc3_enable_susphy(struct dwc3 *dwc, bool enable)
+-{
+-	u32 reg;
+-	int i;
+-
+-	for (i = 0; i < dwc->num_usb3_ports; i++) {
+-		reg = dwc3_readl(dwc->regs, DWC3_GUSB3PIPECTL(i));
+-		if (enable && !dwc->dis_u3_susphy_quirk)
+-			reg |= DWC3_GUSB3PIPECTL_SUSPHY;
+-		else
+-			reg &= ~DWC3_GUSB3PIPECTL_SUSPHY;
+-
+-		dwc3_writel(dwc->regs, DWC3_GUSB3PIPECTL(i), reg);
+-	}
+-
+-	for (i = 0; i < dwc->num_usb2_ports; i++) {
+-		reg = dwc3_readl(dwc->regs, DWC3_GUSB2PHYCFG(i));
+-		if (enable && !dwc->dis_u2_susphy_quirk)
+-			reg |= DWC3_GUSB2PHYCFG_SUSPHY;
+-		else
+-			reg &= ~DWC3_GUSB2PHYCFG_SUSPHY;
+-
+-		dwc3_writel(dwc->regs, DWC3_GUSB2PHYCFG(i), reg);
+-	}
+-}
+-
+ void dwc3_set_prtcap(struct dwc3 *dwc, u32 mode)
+ {
+ 	u32 reg;
+@@ -642,8 +616,11 @@ static int dwc3_core_ulpi_init(struct dwc3 *dwc)
+ 
+ static int dwc3_ss_phy_setup(struct dwc3 *dwc, int index)
+ {
++	unsigned int hw_mode;
+ 	u32 reg;
+ 
++	hw_mode = DWC3_GHWPARAMS0_MODE(dwc->hwparams.hwparams0);
++
+ 	reg = dwc3_readl(dwc->regs, DWC3_GUSB3PIPECTL(index));
+ 
+ 	/*
+@@ -653,16 +630,21 @@ static int dwc3_ss_phy_setup(struct dwc3 *dwc, int index)
+ 	reg &= ~DWC3_GUSB3PIPECTL_UX_EXIT_PX;
+ 
+ 	/*
+-	 * Above DWC_usb3.0 1.94a, it is recommended to set
+-	 * DWC3_GUSB3PIPECTL_SUSPHY to '0' during coreConsultant configuration.
+-	 * So default value will be '0' when the core is reset. Application
+-	 * needs to set it to '1' after the core initialization is completed.
+-	 *
+-	 * Similarly for DRD controllers, GUSB3PIPECTL.SUSPENDENABLE must be
+-	 * cleared after power-on reset, and it can be set after core
+-	 * initialization.
++	 * Above 1.94a, it is recommended to set DWC3_GUSB3PIPECTL_SUSPHY
++	 * to '0' during coreConsultant configuration. So default value
++	 * will be '0' when the core is reset. Application needs to set it
++	 * to '1' after the core initialization is completed.
+ 	 */
+-	reg &= ~DWC3_GUSB3PIPECTL_SUSPHY;
++	if (!DWC3_VER_IS_WITHIN(DWC3, ANY, 194A))
++		reg |= DWC3_GUSB3PIPECTL_SUSPHY;
++
++	/*
++	 * For DRD controllers, GUSB3PIPECTL.SUSPENDENABLE must be cleared after
++	 * power-on reset, and it can be set after core initialization, which is
++	 * after device soft-reset during initialization.
++	 */
++	if (hw_mode == DWC3_GHWPARAMS0_MODE_DRD)
++		reg &= ~DWC3_GUSB3PIPECTL_SUSPHY;
+ 
+ 	if (dwc->u2ss_inp3_quirk)
+ 		reg |= DWC3_GUSB3PIPECTL_U2SSINP3OK;
+@@ -688,6 +670,9 @@ static int dwc3_ss_phy_setup(struct dwc3 *dwc, int index)
+ 	if (dwc->tx_de_emphasis_quirk)
+ 		reg |= DWC3_GUSB3PIPECTL_TX_DEEPH(dwc->tx_de_emphasis);
+ 
++	if (dwc->dis_u3_susphy_quirk)
++		reg &= ~DWC3_GUSB3PIPECTL_SUSPHY;
++
+ 	if (dwc->dis_del_phy_power_chg_quirk)
+ 		reg &= ~DWC3_GUSB3PIPECTL_DEPOCHANGE;
+ 
+@@ -698,8 +683,11 @@ static int dwc3_ss_phy_setup(struct dwc3 *dwc, int index)
+ 
+ static int dwc3_hs_phy_setup(struct dwc3 *dwc, int index)
+ {
++	unsigned int hw_mode;
+ 	u32 reg;
+ 
++	hw_mode = DWC3_GHWPARAMS0_MODE(dwc->hwparams.hwparams0);
++
+ 	reg = dwc3_readl(dwc->regs, DWC3_GUSB2PHYCFG(index));
+ 
+ 	/* Select the HS PHY interface */
+@@ -742,15 +730,24 @@ static int dwc3_hs_phy_setup(struct dwc3 *dwc, int index)
+ 	}
+ 
+ 	/*
+-	 * Above DWC_usb3.0 1.94a, it is recommended to set
+-	 * DWC3_GUSB2PHYCFG_SUSPHY to '0' during coreConsultant configuration.
+-	 * So default value will be '0' when the core is reset. Application
+-	 * needs to set it to '1' after the core initialization is completed.
+-	 *
+-	 * Similarly for DRD controllers, GUSB2PHYCFG.SUSPHY must be cleared
+-	 * after power-on reset, and it can be set after core initialization.
++	 * Above 1.94a, it is recommended to set DWC3_GUSB2PHYCFG_SUSPHY to
++	 * '0' during coreConsultant configuration. So default value will
++	 * be '0' when the core is reset. Application needs to set it to
++	 * '1' after the core initialization is completed.
++	 */
++	if (!DWC3_VER_IS_WITHIN(DWC3, ANY, 194A))
++		reg |= DWC3_GUSB2PHYCFG_SUSPHY;
++
++	/*
++	 * For DRD controllers, GUSB2PHYCFG.SUSPHY must be cleared after
++	 * power-on reset, and it can be set after core initialization, which is
++	 * after device soft-reset during initialization.
+ 	 */
+-	reg &= ~DWC3_GUSB2PHYCFG_SUSPHY;
++	if (hw_mode == DWC3_GHWPARAMS0_MODE_DRD)
++		reg &= ~DWC3_GUSB2PHYCFG_SUSPHY;
++
++	if (dwc->dis_u2_susphy_quirk)
++		reg &= ~DWC3_GUSB2PHYCFG_SUSPHY;
+ 
+ 	if (dwc->dis_enblslpm_quirk)
+ 		reg &= ~DWC3_GUSB2PHYCFG_ENBLSLPM;
+@@ -1349,6 +1346,21 @@ static int dwc3_core_init(struct dwc3 *dwc)
+ 	if (ret)
+ 		goto err_exit_phy;
+ 
++	if (hw_mode == DWC3_GHWPARAMS0_MODE_DRD &&
++	    !DWC3_VER_IS_WITHIN(DWC3, ANY, 194A)) {
++		if (!dwc->dis_u3_susphy_quirk) {
++			reg = dwc3_readl(dwc->regs, DWC3_GUSB3PIPECTL(0));
++			reg |= DWC3_GUSB3PIPECTL_SUSPHY;
++			dwc3_writel(dwc->regs, DWC3_GUSB3PIPECTL(0), reg);
++		}
++
++		if (!dwc->dis_u2_susphy_quirk) {
++			reg = dwc3_readl(dwc->regs, DWC3_GUSB2PHYCFG(0));
++			reg |= DWC3_GUSB2PHYCFG_SUSPHY;
++			dwc3_writel(dwc->regs, DWC3_GUSB2PHYCFG(0), reg);
++		}
++	}
++
+ 	dwc3_core_setup_global_control(dwc);
+ 	dwc3_core_num_eps(dwc);
+ 
+diff --git a/drivers/usb/dwc3/core.h b/drivers/usb/dwc3/core.h
+index c71240e8f7c7..45d6e86a06b7 100644
+--- a/drivers/usb/dwc3/core.h
++++ b/drivers/usb/dwc3/core.h
+@@ -1602,7 +1602,6 @@ int dwc3_event_buffers_setup(struct dwc3 *dwc);
+ void dwc3_event_buffers_cleanup(struct dwc3 *dwc);
+ 
+ int dwc3_core_soft_reset(struct dwc3 *dwc);
+-void dwc3_enable_susphy(struct dwc3 *dwc, bool enable);
+ 
+ #if IS_ENABLED(CONFIG_USB_DWC3_HOST) || IS_ENABLED(CONFIG_USB_DWC3_DUAL_ROLE)
+ int dwc3_host_init(struct dwc3 *dwc);
+diff --git a/drivers/usb/dwc3/gadget.c b/drivers/usb/dwc3/gadget.c
+index 291bc549935b..31d5eafd76ac 100644
+--- a/drivers/usb/dwc3/gadget.c
++++ b/drivers/usb/dwc3/gadget.c
+@@ -2915,7 +2915,6 @@ static int __dwc3_gadget_start(struct dwc3 *dwc)
+ 	dwc3_ep0_out_start(dwc);
+ 
+ 	dwc3_gadget_enable_irq(dwc);
+-	dwc3_enable_susphy(dwc, true);
+ 
+ 	return 0;
+ 
+@@ -4682,7 +4681,6 @@ void dwc3_gadget_exit(struct dwc3 *dwc)
+ 	if (!dwc->gadget)
+ 		return;
+ 
+-	dwc3_enable_susphy(dwc, false);
+ 	usb_del_gadget(dwc->gadget);
+ 	dwc3_gadget_free_endpoints(dwc);
+ 	usb_put_gadget(dwc->gadget);
+diff --git a/drivers/usb/dwc3/host.c b/drivers/usb/dwc3/host.c
+index e0533cee6870..21cf3f0c9570 100644
+--- a/drivers/usb/dwc3/host.c
++++ b/drivers/usb/dwc3/host.c
+@@ -10,13 +10,10 @@
+ #include <linux/irq.h>
+ #include <linux/of.h>
+ #include <linux/platform_device.h>
+-#include <linux/usb.h>
+-#include <linux/usb/hcd.h>
+ 
+ #include "../host/xhci-port.h"
+ #include "../host/xhci-ext-caps.h"
+ #include "../host/xhci-caps.h"
+-#include "../host/xhci-plat.h"
+ #include "core.h"
+ 
+ #define XHCI_HCSPARAMS1		0x4
+@@ -60,24 +57,6 @@ static void dwc3_power_off_all_roothub_ports(struct dwc3 *dwc)
+ 	}
+ }
+ 
+-static void dwc3_xhci_plat_start(struct usb_hcd *hcd)
+-{
+-	struct platform_device *pdev;
+-	struct dwc3 *dwc;
+-
+-	if (!usb_hcd_is_primary_hcd(hcd))
+-		return;
+-
+-	pdev = to_platform_device(hcd->self.controller);
+-	dwc = dev_get_drvdata(pdev->dev.parent);
+-
+-	dwc3_enable_susphy(dwc, true);
+-}
+-
+-static const struct xhci_plat_priv dwc3_xhci_plat_quirk = {
+-	.plat_start = dwc3_xhci_plat_start,
+-};
+-
+ static void dwc3_host_fill_xhci_irq_res(struct dwc3 *dwc,
+ 					int irq, char *name)
+ {
+@@ -190,11 +169,6 @@ int dwc3_host_init(struct dwc3 *dwc)
+ 		}
+ 	}
+ 
+-	ret = platform_device_add_data(xhci, &dwc3_xhci_plat_quirk,
+-				       sizeof(struct xhci_plat_priv));
+-	if (ret)
+-		goto err;
+-
+ 	ret = platform_device_add(xhci);
+ 	if (ret) {
+ 		dev_err(dwc->dev, "failed to register xHCI device\n");
+@@ -220,7 +194,6 @@ void dwc3_host_exit(struct dwc3 *dwc)
+ 	if (dwc->sys_wakeup)
+ 		device_init_wakeup(&dwc->xhci->dev, false);
+ 
+-	dwc3_enable_susphy(dwc, false);
+ 	platform_device_unregister(dwc->xhci);
+ 	dwc->xhci = NULL;
+ }
+-- 
+2.43.0
+

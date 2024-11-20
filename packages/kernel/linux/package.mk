@@ -15,13 +15,9 @@ PKG_STAMP="${KERNEL_TARGET} ${KERNEL_MAKE_EXTRACMD}"
 
 PKG_PATCH_DIRS="${LINUX} mainline ${DEVICE} default"
 
-if [ "${DEVICE}" = "S922X" -a "${USE_MALI}" = "no" ]; then
-  PKG_PATCH_DIRS+=" S922X-PANFROST"
-fi
-
 case ${DEVICE} in
   RK3588)
-    PKG_VERSION="0c0949a270027b749ab2c818e7ff61fc542757cc"
+    PKG_VERSION="b8e62bed74766b6c8c423a767b35495e78b64caf"
     PKG_URL="https://github.com/armbian/linux-rockchip/archive/${PKG_VERSION}.tar.gz"
     PKG_GIT_CLONE_BRANCH="rk-6.1-rkr3"
     PKG_PATCH_DIRS="${LINUX} ${DEVICE} default"
@@ -30,12 +26,8 @@ case ${DEVICE} in
     PKG_VERSION="6.12-rc3"
     PKG_URL="https://git.kernel.org/torvalds/t/linux-${PKG_VERSION}.tar.gz"
     ;;
-  RK3566)
-    PKG_VERSION="6.11.4"
-    PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
-    ;;
   *)
-    PKG_VERSION="6.11.5"
+    PKG_VERSION="6.11.9"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     ;;
 esac
@@ -66,13 +58,10 @@ for pkg in $(get_pkg_variable initramfs PKG_DEPENDS_TARGET); do
   ! listcontains "${PKG_DEPENDS_TARGET}" "${pkg}" && PKG_DEPENDS_TARGET+=" ${pkg}" || true
 done
 
-if [ "${DEVICE}" = "RK3326" ]; then
+if [ "${DEVICE}" = "RK3326" -o "${DEVICE}" = "RK3566" ]; then
   PKG_DEPENDS_UNPACK+=" generic-dsi"
-
-  post_unpack() {
-    cp -v $(get_pkg_directory generic-dsi)/sources/panel-generic-dsi.c ${PKG_BUILD}/drivers/gpu/drm/panel/
-    echo "obj-y" += panel-generic-dsi.o >> ${PKG_BUILD}/drivers/gpu/drm/panel/Makefile
-  }
+elif [ "${DEVICE}" = "SD865" ]; then
+  PKG_DEPENDS_UNPACK+=" kernel-firmware"
 fi
 
 post_patch() {
@@ -83,6 +72,11 @@ post_patch() {
 
     # restore the required Module.symvers from an earlier build
     cp -p ${PKG_INSTALL}/.image/Module.symvers ${PKG_BUILD}
+  fi
+
+  if [ "${DEVICE}" = "RK3326" -o "${DEVICE}" = "RK3566" ]; then
+    cp -v $(get_pkg_directory generic-dsi)/sources/panel-generic-dsi.c ${PKG_BUILD}/drivers/gpu/drm/panel/
+    echo "obj-y" += panel-generic-dsi.o >> ${PKG_BUILD}/drivers/gpu/drm/panel/Makefile
   fi
 }
 
@@ -152,9 +146,6 @@ pre_make_target() {
     ${PKG_BUILD}/scripts/config --disable CONFIG_ISCSI_IBFT
   fi
 
-  # enable panfrost for S922X if Mali is not being used
-  [ "${DEVICE}" = "S922X" -a "${USE_MALI}" = "no" ] && ${PKG_BUILD}/scripts/config --enable CONFIG_DRM_PANFROST
-
   # disable lima/panfrost if libmali is configured
   if [ "${OPENGLES}" = "libmali" ]; then
     ${PKG_BUILD}/scripts/config --disable CONFIG_DRM_LIMA
@@ -174,6 +165,19 @@ pre_make_target() {
     cp -a $(get_build_dir intel-ucode)/intel-ucode ${PKG_BUILD}/external-firmware
 
     FW_LIST="$(find ${PKG_BUILD}/external-firmware \( -type f -o -type l \) \( -iname '*.bin' -o -iname '*.fw' -o -path '*/intel-ucode/*' \) | sed 's|.*external-firmware/||' | sort | xargs)"
+
+    ${PKG_BUILD}/scripts/config --set-str CONFIG_EXTRA_FIRMWARE "${FW_LIST}"
+    ${PKG_BUILD}/scripts/config --set-str CONFIG_EXTRA_FIRMWARE_DIR "external-firmware"
+  elif [ "${TARGET_ARCH}" = "aarch64" -a "${DEVICE}" = "SD865" ]; then
+    mkdir -p ${PKG_BUILD}/external-firmware/qcom/sm8250
+    mkdir -p ${PKG_BUILD}/external-firmware/qcom/vpu-1.0
+      cp -Lv $(get_build_dir kernel-firmware)/.copied-firmware/qcom/a650_gmu.bin ${PKG_BUILD}/external-firmware/qcom
+      cp -Lv $(get_build_dir kernel-firmware)/.copied-firmware/qcom/a650_sqe.fw ${PKG_BUILD}/external-firmware/qcom
+      cp -Lv $(get_build_dir kernel-firmware)/.copied-firmware/qcom/sm8250/a650_zap.mbn ${PKG_BUILD}/external-firmware/qcom/sm8250
+      cp -Lv $(get_build_dir kernel-firmware)/.copied-firmware/qcom/sm8250/adsp.mbn ${PKG_BUILD}/external-firmware/qcom/sm8250
+      cp -Lv $(get_build_dir kernel-firmware)/.copied-firmware/qcom/sm8250/cdsp.mbn ${PKG_BUILD}/external-firmware/qcom/sm8250
+
+    FW_LIST="$(find ${PKG_BUILD}/external-firmware -type f | sed 's|.*external-firmware/||' | sort | xargs)"
 
     ${PKG_BUILD}/scripts/config --set-str CONFIG_EXTRA_FIRMWARE "${FW_LIST}"
     ${PKG_BUILD}/scripts/config --set-str CONFIG_EXTRA_FIRMWARE_DIR "external-firmware"

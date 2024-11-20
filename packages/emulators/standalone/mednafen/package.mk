@@ -9,10 +9,6 @@ PKG_URL="${PKG_SITE}/releases/files/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_TARGET="toolchain SDL2 flac"
 PKG_TOOLCHAIN="configure"
 
-if [ "${DEVICE}" = "S922X" ]; then
-  PKG_DEPENDS_TARGET+=" libegl"
-fi
-
 pre_configure_target() {
 
 export CFLAGS="${CFLAGS} -flto -fipa-pta"
@@ -29,10 +25,6 @@ case ${DEVICE} in
     DISABLED_MODULES+="   --disable-snes \
 			 --disable-ss \
 			 --disable-psx"
-  ;;
-  S922X)
-    DISABLED_MODULES+="  --disable-ss \
-			 --disable-snes"
   ;;
   RK3588*)
     DISABLED_MODULES+=" --disable-snes"
@@ -52,17 +44,4 @@ makeinstall_target() {
 
   mkdir -p ${INSTALL}/usr/config/${PKG_NAME}
   cp ${PKG_DIR}/config/common/* ${INSTALL}/usr/config/${PKG_NAME}
-}
-
-post_install() {
-    case ${DEVICE} in
-      S922X)
-        LIBEGL="export SDL_VIDEO_GL_DRIVER=\/usr\/lib\/egl\/libGL.so.1 SDL_VIDEO_EGL_DRIVER=\/usr\/lib\/egl\/libEGL.so.1"
-      ;;
-      *)
-        LIBEGL=""
-      ;;
-    esac
-    sed -e "s/@LIBEGL@/${LIBEGL}/g" \
-        -i ${INSTALL}/usr/bin/start_mednafen.sh
 }

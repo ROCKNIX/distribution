@@ -120,6 +120,8 @@ fi
                 sed -i '/^VSync =/c\VSync = true' /storage/.config/duckstation/settings.ini
         fi
 
+#Retroachievements
+/usr/bin/cheevos_duckstation.sh
 
 #Run Duckstation
 ${EMUPERF} duckstation-nogui -fullscreen -settings "/storage/.config/duckstation/settings.ini" -- "${1}" > /dev/null 2>&1

@@ -128,6 +128,9 @@ fi
                 sed -i '/^VSyncInterval =/c\VSyncInterval = True' ${CONF_DIR}/${PPSSPP_INI}
         fi
 
+#Retroachievements
+/usr/bin/cheevos_ppsspp.sh
+
 ARG=${1//[\\]/}
 
 set_kill set "-9 ppsspp"

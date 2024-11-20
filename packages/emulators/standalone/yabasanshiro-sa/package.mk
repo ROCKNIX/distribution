@@ -5,26 +5,16 @@
 
 PKG_NAME="yabasanshiro-sa"
 PKG_LICENSE="GPLv2"
-PKG_SITE="https://github.com/devmiyax/yabause"
-PKG_ARCH="arm aarch64"
+PKG_SITE="https://github.com/sydarn/yabause"
 PKG_URL="${PKG_SITE}.git"
+PKG_VERSION="a40dace1ae0af3ebd45848549fdf396f40e3930f"
+PKG_GIT_CLONE_BRANCH="pi4-update"
+PKG_ARCH="aarch64"
 PKG_DEPENDS_TARGET="toolchain SDL2 boost openal-soft zlib"
 PKG_LONGDESC="Yabause is a Sega Saturn emulator and took over as Yaba Sanshiro"
 PKG_TOOLCHAIN="cmake-make"
 GET_HANDLER_SUPPORT="git"
 PKG_BUILD_FLAGS="+speed"
-PKG_PATCH_DIRS+="${DEVICE}"
-
-case ${TARGET_ARCH} in
-  aarch64|arm)
-    PKG_VERSION="c7618d2ecbf77b1e8188fa8af4fa1cfb34833a72"
-    PKG_GIT_CLONE_BRANCH="pi4-1-9-0"
-  ;;
-  *)
-    PKG_VERSION="82cb29171ebe61cf0129682794af5ceb5acaa0f2"
-    PKG_GIT_CLONE_BRANCH="master"
-  ;;
-esac
 
 if [ ! "${OPENGL}" = "no" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
@@ -61,13 +51,6 @@ pre_configure_target() {
   if [ "${OPENGLES_SUPPORT}" = yes ]; then
     PKG_CMAKE_OPTS_TARGET+=" -DUSE_EGL=ON -DUSE_OPENGL=OFF"
   fi
-
-  #if [ "${VULKAN_SUPPORT}" = "yes" ]
-  #then
-  #  PKG_CMAKE_OPTS_TARGET+=" -DYAB_WANT_VULKAN=ON"
-  #else
-  #  PKG_CMAKE_OPTS_TARGET+=" -DYAB_WANT_VULKAN=OFF"
-  #fi
 
   case ${ARCH} in
     aarch64)

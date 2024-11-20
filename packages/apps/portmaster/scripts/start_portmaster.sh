@@ -4,6 +4,7 @@
 # Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
 
 . /etc/profile
+. /etc/os-release
 set_kill set "PortMaster"
 
 #Make sure PortMaster exists in .config/PortMaster
@@ -73,6 +74,5 @@ fi
 /usr/bin/portmaster_compatibility.sh
 
 #Start PortMaster
-@LIBEGL@
 cd /storage/roms/ports/PortMaster
 ./PortMaster.sh 2>/dev/null

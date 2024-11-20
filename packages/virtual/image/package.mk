@@ -15,12 +15,7 @@ PKG_DEPENDS_TARGET="toolchain squashfs-tools:host dosfstools:host fakeroot:host 
                     bash coreutils modules system-utils autostart quirks powerstate gnupg \
                     gzip six lynx xmlstarlet vim pyudev dialog dbus-python network rocknix"
 
-if [ ${ES_WIP} ]; then
-  PKG_UI="rocknix-emulationstation "
-else
-  PKG_UI="emulationstation "
-fi
-PKG_UI+="es-themes textviewer"
+PKG_UI="emulationstation es-themes textviewer"
 
 PKG_UI_TOOLS="fileman fbgrab"
 

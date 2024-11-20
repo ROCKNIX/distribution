@@ -18,7 +18,7 @@ PKG_CONFIGURE_OPTS_TARGET="ac_cv_func_malloc_0_nonnull=yes \
                            --disable-modern-top \
                            --enable-static"
 
-PKG_MAKE_OPTS_TARGET="src/free src/top/top library/libproc2.la library/libproc2.pc"
+PKG_MAKE_OPTS_TARGET="src/free src/top/top src/ps/pscommand library/libproc2.la library/libproc2.pc"
 
 PKG_MAKEINSTALL_OPTS_TARGET="install-libLTLIBRARIES install-pkgconfigDATA install-library_libproc2_la_includeHEADERS"
 
@@ -30,6 +30,7 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin
     cp -P ${PKG_BUILD}/.${TARGET_NAME}/src/free ${INSTALL}/usr/bin
     cp -P ${PKG_BUILD}/.${TARGET_NAME}/src/top/top ${INSTALL}/usr/bin
+    cp -P ${PKG_BUILD}/.${TARGET_NAME}/src/ps/pscommand ${INSTALL}/usr/bin/ps
 
   make DESTDIR=${SYSROOT_PREFIX} -j1 ${PKG_MAKEINSTALL_OPTS_TARGET}
 

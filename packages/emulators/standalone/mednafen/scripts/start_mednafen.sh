@@ -224,5 +224,4 @@ then
 fi
 
 #Run mednafen
-@LIBEGL@
 ${EMUPERF} /usr/bin/mednafen -force_module ${CORE} -${CORE}.stretch ${STRETCH:="aspect"} -${CORE}.shader ${SHADER:="ipsharper"} ${FEATURES_CMDLINE} "${1}"

@@ -36,7 +36,7 @@ The ROCKNIX community utilizes Discord for discussion, if you would like to join
 
 ## Licenses
 
-**ROCKNIX** is a fork of [JELOS](https://jelos.org/), all licenses apply and credit to the JELOS team. 
+**ROCKNIX** is a fork of [JELOS](https://github.com/JustEnoughLinuxOS/distribution/), all licenses apply and credit to the JELOS team. 
 
 You are free to:
 

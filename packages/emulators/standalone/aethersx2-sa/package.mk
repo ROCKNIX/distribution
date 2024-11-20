@@ -21,7 +21,7 @@ makeinstall_target() {
 
   cp -rf ${PKG_BUILD}/usr/share/* ${INSTALL}/usr/share/aethersx2-sa/
 
-  cp -rf ${PKG_DIR}/scripts/start_aethersx2.sh ${INSTALL}/usr/bin
+  cp -rf ${PKG_DIR}/scripts/* ${INSTALL}/usr/bin
   chmod 755 ${INSTALL}/usr/bin/*
 
   mkdir -p ${INSTALL}/usr/config

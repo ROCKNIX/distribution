@@ -6,6 +6,7 @@ labels: ISSUE NEEDS REVIEW
 assignees: ''
 
 ---
+### Have you first reported the issue on the rocknix discord and / or checked rocknix.org for a solution?
 
 ### Describe the bug
 <!-- A clear description of what the bug is. -->

@@ -2,11 +2,11 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="lime3ds-sa"
-PKG_VERSION="ff46656809278d797ff8d79514e0a1c6e57bf9be"
+PKG_VERSION="1f7247c86156a13b93e372a51ec84a9697a4a619"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/Lime3DS/Lime3DS"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain ffmpeg mesa SDL2 boost zlib libusb boost zstd control-gen"
+PKG_DEPENDS_TARGET="toolchain ffmpeg mesa SDL2 boost zlib libusb boost zstd control-gen spirv-tools"
 PKG_LONGDESC="Lime3DS - Nintendo 3DS emulator"
 PKG_TOOLCHAIN="cmake"
 
@@ -26,12 +26,14 @@ fi
 PKG_CMAKE_OPTS_TARGET+="-DENABLE_QT=OFF \
                         -DENABLE_QT_TRANSLATION=OFF \
                         -DENABLE_SDL2=ON \
-                        -DCITRA_WARNINGS_AS_ERRORS=OFF \
+                        -DENABLE_SDL2_FRONTEND=ON \
+                        -DENABLE_TESTS=OFF \
+                        -DENABLE_DEDICATED_ROOM=OFF \
                         -DUSE_DISCORD_PRESENCE=OFF"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin
-    cp ${PKG_BUILD}/.${TARGET_NAME}/bin/MinSizeRel/lime ${INSTALL}/usr/bin/lime3ds
+    cp ${PKG_BUILD}/.${TARGET_NAME}/bin/MinSizeRel/lime3ds ${INSTALL}/usr/bin/lime3ds
     cp ${PKG_DIR}/scripts/* ${INSTALL}/usr/bin
 
   mkdir -p ${INSTALL}/usr/config/lime3ds

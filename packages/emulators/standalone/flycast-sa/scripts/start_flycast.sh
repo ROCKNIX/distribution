@@ -31,8 +31,10 @@ PLATFORM=$(echo "${2}"| sed "s#^/.*/##")
 ASPECT=$(get_setting aspect_ratio "${PLATFORM}" "${GAME}")
 ASKIP=$(get_setting auto_frame_skip "${PLATFORM}" "${GAME}")
 FPS=$(get_setting show_fps "${PLATFORM}" "${GAME}")
+IRES=$(get_setting internal_resolution "${PLATFORM}" "${GAME}")
 RENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
 VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
+CHEEVOS=$(get_setting retroachievements "${PLATFORM}" "${GAME}")
 
 #Set the cores to use
 CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
@@ -78,6 +80,21 @@ fi
                 sed -i '/^pvr.AutoSkipFrame =/c\pvr.AutoSkipFrame = 2' /storage/.config/flycast/emu.cfg
         fi
 
+  #Internal Resolution
+        if [ "$IRES" = "0" ]; then
+                sed -i '/rend.Resolution =/c\rend.Resolution = 240' /storage/.config/flycast/emu.cfg
+        elif [ "$IRES" = "2" ]; then
+                sed -i '/rend.Resolution =/c\rend.Resolution = 720' /storage/.config/flycast/emu.cfg
+        elif [ "$IRES" = "3" ]; then
+                sed -i '/rend.Resolution =/c\rend.Resolution = 960' /storage/.config/flycast/emu.cfg
+        elif [ "$IRES" = "4" ]; then
+                sed -i '/rend.Resolution =/c\rend.Resolution = 1200' /storage/.config/flycast/emu.cfg
+        elif [ "$IRES" = "5" ]; then
+                sed -i '/rend.Resolution =/c\rend.Resolution = 1440' /storage/.config/flycast/emu.cfg
+        else
+                sed -i '/rend.Resolution =/c\rend.Resolution = 480' /storage/.config/flycast/emu.cfg
+        fi
+
   #Renderer
         if [ "$RENDERER" = "opengl" ]
         then
@@ -107,6 +124,9 @@ fi
         then
                 sed -i '/^rend.vsync =/c\rend.vsync = yes' /storage/.config/flycast/emu.cfg
         fi
+
+#Retroachievements
+/usr/bin/cheevos_flycast.sh
 
 #Run flycast emulator
 ${EMUPERF} /usr/bin/flycast "${1}"

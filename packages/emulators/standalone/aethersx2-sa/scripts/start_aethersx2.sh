@@ -164,6 +164,9 @@ fi
                 sed -i '/^EECycleSkip =/c\EECycleSkip = 3' /storage/.config/aethersx2/inis/PCSX2.ini
         fi
 
+#Retroachievements
+  /usr/bin/cheevos_aethersx2.sh
+
 #Set OpenGL 3.3 on panfrost
   export MESA_GL_VERSION_OVERRIDE=3.3
   export MESA_GLSL_VERSION_OVERRIDE=330

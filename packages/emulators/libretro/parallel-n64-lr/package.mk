@@ -11,25 +11,18 @@ PKG_LONGDESC="Optimized/rewritten Nintendo 64 emulator made specifically for Lib
 PKG_TOOLCHAIN="make"
 PKG_BUILD_FLAGS="-lto"
 
-if [ ! "${OPENGL}" = "no" ]; then
+if [ "${OPENGL_SUPPORT}" = "yes" ] && [ ! "${PREFER_GLES}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
-fi
-
-if [ "${OPENGLES_SUPPORT}" = yes ]; then
+  PKG_MAKE_OPTS_TARGET+=" GLES=0 GL_LIB=\"-lGL\""
+elif [ "${OPENGLES_SUPPORT}" = yes ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGLES}"
+  PKG_MAKE_OPTS_TARGET+=" GLES=1 GL_LIB=\"-lGLESv2\""
 fi
 
-if [ "${VULKAN_SUPPORT}" = "yes" ]; then
+if [ "${VULKAN_SUPPORT}" = "yes" ] && [ ! ${DEVICE} = "SD865" ]; then
+  PKG_DEPENDS_TARGET+=" vulkan-loader vulkan-headers"
   PKG_MAKE_OPTS_TARGET+=" HAVE_PARALLEL=1"
 fi
-
-case ${DEVICE} in
-  RK3*|S922X|H700|SD865)
-    PKG_MAKE_OPTS_TARGET+=" platform=${DEVICE}"
-  ;;
-  AMD64)
-    PKG_MAKE_OPTS_TARGET+=" HAVE_PARALLEL_RSP=1"
-esac
 
 pre_configure_target() {
   if [ "${ARCH}" = "aarch64" ]; then
@@ -37,6 +30,7 @@ pre_configure_target() {
     # as it prohibits the use of LSE-instructions, this is a package bug most likely
     export CFLAGS="${CFLAGS} -mno-outline-atomics"
     export CXXFLAGS="${CXXFLAGS} -mno-outline-atomics"
+    PKG_MAKE_OPTS_TARGET+=" platform=${DEVICE}"
   fi
 }
 

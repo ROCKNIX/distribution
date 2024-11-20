@@ -3,7 +3,7 @@
 # Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="flycast-sa"
-PKG_VERSION="8e96590065fd23cd37a0d426d30f4aef6587d860"
+PKG_VERSION="8108e63907fc676f898522d20c762a4de3cd2a21" #v2.4
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/flyinghead/flycast"
 PKG_URL="${PKG_SITE}.git"
@@ -41,5 +41,5 @@ makeinstall_target() {
   cp ${PKG_DIR}/scripts/* ${INSTALL}/usr/bin
   cp -r ${PKG_DIR}/config/${DEVICE}/* ${INSTALL}/usr/config/flycast
 
-  chmod +x ${INSTALL}/usr/bin/start_flycast.sh
+  chmod +x ${INSTALL}/usr/bin/*
 }

@@ -2,7 +2,7 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="ayn-platform"
-PKG_VERSION="02befd684c15743f9c8fd8e018c50b86feb0ae7b"
+PKG_VERSION="7ec810ed2aebe196b68b9cce580d3c9e520e6425"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/ShadowBlip/ayn-platform"
 PKG_URL="${PKG_SITE}.git"

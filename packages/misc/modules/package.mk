@@ -34,13 +34,6 @@ post_makeinstall_target() {
     ;;
   esac
 
-  case ${DEVICE} in
-    S922X)
-      rm -f ${INSTALL}/usr/config/modules/*ScummVM*
-      rm -f ${INSTALL}/usr/config/modules/*32bit*
-    ;;
-  esac
-
   if [ ! "${INSTALLER_SUPPORT}" = "yes" ] || \
      [ ! "${DISPLAYSERVER}" = "wl" ]
   then

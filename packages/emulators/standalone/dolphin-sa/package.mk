@@ -9,7 +9,7 @@ PKG_TOOLCHAIN="cmake"
 
 case ${DEVICE} in
   SD865)
-    PKG_VERSION="904ac5592daf7adc0013110da60a706b21c5d72d"
+    PKG_VERSION="80ea68b13c06ae3fa57775de39c902ed9c3c8e84"
     PKG_SITE="https://github.com/dolphin-emu/dolphin"
     PKG_URL="${PKG_SITE}.git"
     PKG_PATCH_DIRS+=" x11"
@@ -105,8 +105,4 @@ post_install() {
         -i  ${INSTALL}/usr/bin/start_dolphin_gc.sh
     sed -e "s/@LIBMALI@/${LIBMALI}/g" \
         -i  ${INSTALL}/usr/bin/start_dolphin_wii.sh
-
-    if [ "${DEVICE}" = "S922X" -a "${USE_MALI}" = "no" ]; then
-      sed -e "s/GFXBackend = Vulkan/GFXBackend =/g" -i ${INSTALL}/usr/config/dolphin-emu/Dolphin.ini
-    fi
 }

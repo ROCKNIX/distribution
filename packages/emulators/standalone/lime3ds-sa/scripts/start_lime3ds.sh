@@ -26,14 +26,15 @@ ln -sf /storage/roms/3ds/lime3ds/nand /storage/.config/lime3ds/nand
 
 # Emulation Station Features
 GAME=$(echo "${1}"| sed "s#^/.*/##")
-CPU=$(get_setting cpu_speed 3ds "${GAME}")
-EMOUSE=$(get_setting emulate_mouse 3ds "${GAME}")
-RENDERER=$(get_setting graphics_backend 3ds "${GAME}")
-RES=$(get_setting resolution_scale 3ds "${GAME}")
-ROTATE=$(get_setting rotate_screen 3ds "${GAME}")
-SLAYOUT=$(get_setting screen_layout 3ds "${GAME}")
-CSHADERS=$(get_setting cache_shaders 3ds "${GAME}")
-HSHADERS=$(get_setting hardware_shaders 3ds "${GAME}")
+PLATFORM=$(echo "${2}"| sed "s#^/.*/##")
+CPU=$(get_setting cpu_speed "${PLATFORM}" "${GAME}")
+EMOUSE=$(get_setting emulate_mouse "${PLATFORM}" "${GAME}")
+RENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
+RES=$(get_setting resolution_scale "${PLATFORM}" "${GAME}")
+ROTATE=$(get_setting rotate_screen "${PLATFORM}" "${GAME}")
+SLAYOUT=$(get_setting screen_layout "${PLATFORM}" "${GAME}")
+CSHADERS=$(get_setting cache_shaders "${PLATFORM}" "${GAME}")
+HSHADERS=$(get_setting hardware_shaders "${PLATFORM}" "${GAME}")
 
 
 # CPU Underclock
@@ -67,8 +68,8 @@ esac
 
 # Hardware Shaders
 case "${HSHADERS}" in
-  0) sed -i '/use_hw_shader =/c\use_hw_shader = 0' /storage/.config/lime3ds/sdl2-config.ini;;
   1) sed -i '/use_hw_shader =/c\use_hw_shader = 1' /storage/.config/lime3ds/sdl2-config.ini;;
+  *) sed -i '/use_hw_shader =/c\use_hw_shader = 0' /storage/.config/lime3ds/sdl2-config.ini;;
 esac
 
 # Screen Layout
