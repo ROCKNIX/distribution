@@ -124,6 +124,11 @@ makeinstall_target() {
   ### Add save states directory
   add_system_dir /storage/roms/savestates
 
+  ### Add ES directories
+  add_system_dir /storage/roms/_userdata/BGM
+  add_system_dir /storage/roms/_userdata/bezels
+  add_system_dir /storage/roms/_userdata/themes
+
   ### Apply documentation header
   start_system_doc
 

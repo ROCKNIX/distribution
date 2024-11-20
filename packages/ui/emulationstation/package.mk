@@ -3,10 +3,10 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="emulationstation"
-PKG_VERSION="8af0be8f1d03c7a258ed59769b5c44c719d1b7fb"
-PKG_GIT_CLONE_BRANCH="main"
+PKG_VERSION="19b84ffd1d86d55d6422a187e303878370b666e2"
+PKG_GIT_CLONE_BRANCH="master"
 PKG_LICENSE="GPL"
-PKG_SITE="https://github.com/ROCKNIX/emulationstation"
+PKG_SITE="https://github.com/ROCKNIX/emulationstation-next"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="boost toolchain SDL2 freetype curl freeimage bash rapidjson SDL2_mixer fping p7zip alsa vlc drm_tool pugixml"
 PKG_NEED_UNPACK="busybox"
@@ -14,12 +14,6 @@ PKG_LONGDESC="Emulationstation emulator frontend"
 PKG_BUILD_FLAGS="-gold"
 GET_HANDLER_SUPPORT="git"
 PKG_PATCH_DIRS+="${DEVICE}"
-
-if [ "${ES_WIP}" ]; then
-  PKG_VERSION="a605d7020470f1d2930665f9e2a615ca947dddc1"
-  PKG_GIT_CLONE_BRANCH="master"
-  PKG_URL="https://github.com/ROCKNIX/emulationstation-next.git"
-fi
 
 if [ ! "${OPENGL}" = "no" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL} glu"
@@ -31,22 +25,7 @@ if [ ! "${OPENGLES_SUPPORT}" = no ]; then
   PKG_CMAKE_OPTS_TARGET+=" -DGLES2=1"
 fi
 
-if [ ! "${ENABLE_UPDATES}" = "no" ]; then
-  PKG_CMAKE_OPTS_TARGET+=" -DENABLE_UPDATES=1"
-else
-  PKG_CMAKE_OPTS_TARGET+=" -DENABLE_UPDATES=0"
-fi
-
-if [ "${WINDOWMANAGER}" = "swaywm-env" ]; then
-  PKG_CMAKE_OPTS_TARGET+=" -DWLROOTS=1"
-fi
-
-if [ "${GRAPHIC_DRIVERS}" = "panfrost" ] && [ ! "${DEVICE}" = "RK3588" ]; then
-  PKG_CMAKE_OPTS_TARGET+=" -DPANFROST=1"
-fi
-
-PKG_CMAKE_OPTS_TARGET+=" -DMOONLIGHT=1 \
-                         -DENABLE_EMUELEC=1 \
+PKG_CMAKE_OPTS_TARGET+=" -DROCKNIX=1 \
                          -DDISABLE_KODI=1 \
                          -DENABLE_FILEMANAGER=0 \
                          -DCEC=0 \

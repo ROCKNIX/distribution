@@ -116,7 +116,7 @@ case $1 in
     inputsense start
     bluetooth start
 
-    if [ "$(get_setting network.enabled)" == "1" ]
+    if [ "$(get_setting wifi.enabled)" == "1" ]
     then
       log $0 "Connecting WIFI."
       nohup wifictl enable >${EVENTLOG} 2>&1
