@@ -1,110 +1,284 @@
-#!/bin/bash
+#!/bin/sh
+
+. /etc/profile
 
 ACTION=$1
-shift
 
 do_help() {
     echo "${1} list" >&2
-    echo "${1} trust" >&2
+    echo "${1} trust <device address>" >&2
+    echo "${1} trust input" >&2
     echo "${1} remove <device address>" >&2
+    echo "${1} save" >&2
+    echo "${1} restore" >&2
+    echo "${1} start_live_devices" >&2
+    echo "${1} stop_live_devices" >&2
+    echo "${1} enable" >&2
+    echo "${1} disable" >&2
+    echo "${1} connect <device address>" >&2
+    echo "${1} disconnect <device address>" >&2
+}
+
+do_save() {
+    mkdir -p /storage/roms/backups
+    BCK=/storage/roms/backups/bluetooth.tar
+    (cd /storage/.cache && tar cf "${BCK}" bluetooth)
+}
+
+do_restore() {
+    BCK=/storage/roms/backups/bluetooth.tar
+    [ -f "${BCK}" ] && (cd /storage/.cache && tar xf "${BCK}")
 }
 
 do_list() {
     find /storage/.cache/bluetooth -type f -name info |
-	while read FILE
-	do
-	    if grep -qE '^Trusted=true$' "${FILE}"
-	    then
-		DEVNAME=$(grep -E '^Name=' "${FILE}" | sed -e s+"^Name="++)
-		DEVADDR=$(basename $(dirname "${FILE}"))
-		echo "${DEVADDR} ${DEVNAME}"
-	    fi
-	done
+    while read FILE
+    do
+        if grep -qE '^Trusted=true$' "${FILE}"
+        then
+            DEVNAME=$(grep -E '^Name=' "${FILE}" | sed -e s+"^Name="++)
+            DEVCLASS=$(grep -E '^Class=' "${FILE}" | sed -e s+"^Class="++)
+            DEVADDR=$(basename $(dirname "${FILE}"))
+
+            DEVTYPE=
+            test "${DEVCLASS}" = "0x002508" && DEVTYPE="joystick"
+            test "${DEVCLASS}" = "0x000508" && DEVTYPE="joystick"
+
+            # Check if the device is connected
+            if bluetoothctl -- info "${DEVADDR}" | grep -q "Connected: yes"; then
+                CONNECTED="yes"
+            else
+                CONNECTED="no"
+            fi
+
+            echo "<device id=\""${DEVADDR}"\" name=\""${DEVNAME}"\" type=\""${DEVTYPE}"\" connected=\""${CONNECTED}"\" />"
+        fi
+    done
 }
 
 do_remove() {
     DEV="${1}"
 
     # output is never nice
-    if ! (echo "untrust ${DEV}" ; echo "remove ${DEV}") | bluetoothctl >/dev/null 2>/dev/null
-    then
-	return 1
-    fi
+    (echo "untrust ${DEV}" ; echo "remove ${DEV}") | bluetoothctl >/dev/null 2>/dev/null
+    find /storage/.cache/bluetooth -name "${DEV}" | while read X
+    do
+	rm -rf "${X}"
+    done
 
+    do_save # save
     return 0
 }
 
+do_devlist() {
+    # clean any remining previous info
+    if ! > /run/bt_device
+    then
+	exit 1
+    fi
+
+    # tell listing mode
+    if ! > /run/bt_listing
+    then
+	exit 1
+    fi
+
+    NPID=$(cat /run/bluetooth-agent.pid)
+    trap "kill -12 ${NPID} ; rm -f /run/bt_listing; rm -f /run/bt_device" 2 3
+
+    kill -10 "${NPID}"
+    # ok, not 10 lines should happen during this instant (between kill and tail)
+    tail -f /run/bt_listing &
+    echo $! > "/run/bt_listing.pid"
+    wait
+}
+
+do_stopdevlist() {
+    KPID=$(cat /run/bt_listing.pid)
+    test -n "${KPID}" && kill -15 "${KPID}"
+}
+
 do_trust() {
-	NPID=$(pgrep -f rocknix-bluetooth-agent)
+    TRUSTDEV=$1
+    NPID=$(cat /run/bluetooth-agent.pid)
     test -z "${NPID}" && return 0
 
-    touch "/var/run/bt_status" || retrun 1
-    LAST_MSG=$(cat "/var/run/bt_status")
+    touch "/run/bt_status" || retrun 1
+    LAST_MSG=$(cat "/run/bt_status")
 
-    # start discovering
-    kill -10 "${NPID}"
+    # check input
+    if test "${TRUSTDEV}" != "input"
+    then
+	# trust device
+	if ! echo "${TRUSTDEV}" | grep -qE "^([0-9A-F]{2}:){5}[0-9A-F]{2}$"
+	then
+	    return 1
+	fi
+    fi
+    echo "${TRUSTDEV}" > /run/bt_device || return 1
 
-    trap "kill -12 ${NPID}" 2 3
+    # for input mode, we start automatically the discovery at the same time
+    if test "${TRUSTDEV}" = "input"
+    then
+	rm -f "/run/bt_listing"
+	NPID=$(cat /run/bluetooth-agent.pid)
+	trap "kill -12 ${NPID}; rm -f /run/bt_device" 2 3
+	kill -10 "${NPID}"
+    fi
 
-    N=30
+    N=60
     while test $N -gt 0
     do
-	NEW_MSG=$(cat "/var/run/bt_status")
+	NEW_MSG=$(cat "/run/bt_status")
 	if test "${LAST_MSG}" != "${NEW_MSG}"
 	then
 	    LAST_MSG="${NEW_MSG}"
 	    echo "${NEW_MSG}"
 	fi
-	sleep 1
-	let N--
+
+	# check is in list and uniq trusting
+	if echo "${TRUSTDEV}" | grep -qE "^([0-9A-F]{2}:){5}[0-9A-F]{2}$"
+	then
+	    if do_list | grep -qE "id=\"${TRUSTDEV}\""
+	    then
+		# end when found
+		N=0
+	    fi
+	fi
+
+	# wait
+	test $N -gt 0 && sleep 1
+
+	N=$((N-1))
     done
 
-    # stop discovering
-    kill -12 "${NPID}"
+    # stop automatic discovery
+    if test "${TRUSTDEV}" = "input"
+    then
+	NPID=$(cat /run/bluetooth-agent.pid)
+	kill -12 "${NPID}"
+	rm -f /run/bt_device
+    fi
 
+    do_save # save
 }
 
-do_starttrust() {
-	NPID=$(pgrep -f rocknix-bluetooth-agent)
-    test -z "${NPID}" && exit 0
-
-    # start discovering
-    kill -10 "${NPID}"
+do_enable() {
+  do_disable
+  sleep 1
+  set_setting controllers.bluetooth.enabled 1
+  systemctl start bluetooth bluetoothsense bluetooth-agent
+  rfkill unblock bluetooth
+  sleep 1
+  pgrep -f rocknix-bluetooth-agent > /run/bluetooth-agent.pid
 }
 
-do_stoptrust() {
-	NPID=$(pgrep -f rocknix-bluetooth-agent)
-    test -z "${NPID}" && exit 0
+do_disable() {
+  set_setting controllers.bluetooth.enabled 0
+  systemctl stop bluetooth bluetoothsense bluetooth-agent
+  rfkill block bluetooth
+  rm -f /run/bluetooth-agent.pid
+}
 
-    # stop discovering
-    kill -12 "${NPID}"
+do_connect() {
+    DEV="${1}"
+    if ! echo "${DEV}" | grep -qE "^([0-9A-F]{2}:){5}[0-9A-F]{2}$"; then
+        echo "Invalid device address format. Please use the format XX:XX:XX:XX:XX:XX" >&2
+        return 1
+    fi
+
+    if bluetoothctl -- info "${DEV}" | grep -q "Connected: yes"; then
+        echo "Device ${DEV} is already connected." >&2
+        return 0
+    fi
+
+    echo "Attempting to connect to device ${DEV}..."
+    if bluetoothctl -- connect "${DEV}"; then
+        echo "Successfully connected to device ${DEV}"
+        return 0
+    else
+        echo "Failed to connect to device ${DEV}" >&2
+        return 1
+    fi
+}
+
+do_disconnect() {
+    DEV="${1}"
+    if ! echo "${DEV}" | grep -qE "^([0-9A-F]{2}:){5}[0-9A-F]{2}$"; then
+        echo "Invalid device address format. Please use the format XX:XX:XX:XX:XX:XX" >&2
+        return 1
+    fi
+
+    if ! bluetoothctl -- info "${DEV}" | grep -q "Connected: yes"; then
+        echo "Device ${DEV} is not connected." >&2
+        return 1
+    fi
+
+    if bluetoothctl -- disconnect "${DEV}"; then
+        echo "Successfully disconnected device ${DEV}"
+        return 0
+    else
+        echo "Failed to disconnect device ${DEV}" >&2
+        return 1
+    fi
 }
 
 case "${ACTION}" in
     "list")
-	do_list
-	;;
+        do_list
+        ;;
     "trust")
-	do_trust
-	;;
-    "starttrust")
-	do_starttrust
-	;;
-    "stoptrust")
-	do_stoptrust
-	;;
+        TRUSTDEV=$2
+        do_trust "${TRUSTDEV}"
+        ;;
     "remove")
-	if test $# = 1
-	then
-	    do_remove "${1}" || exit 1
-	else
-	    do_help "${0}"
-	    exit 1
-	fi
-	;;
+        if test $# = 2
+        then
+            do_remove "${2}" || exit 1
+        else
+            do_help "${0}"
+            exit 1
+        fi
+        ;;
+    "save")
+        do_save
+        ;;
+    "restore")
+        do_restore
+        ;;
+    "start_live_devices"|"live_devices")
+        do_devlist
+        ;;
+    "stop_live_devices")
+        do_stopdevlist
+        ;;
+    "enable")
+        do_enable
+        ;;
+    "disable")
+        do_disable
+        ;;
+    "connect")
+        if test $# = 2
+        then
+            do_connect "${2}" || exit 1
+        else
+            do_help "${0}"
+            exit 1
+        fi
+        ;;
+    "disconnect")
+        if test $# = 2
+        then
+            do_disconnect "${2}" || exit 1
+        else
+            do_help "${0}"
+            exit 1
+        fi
+        ;;
     *)
-	do_help "${0}"
-	exit 1
+        do_help "${0}"
+        exit 1
 esac
 
 exit 0
