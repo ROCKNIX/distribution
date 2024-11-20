@@ -58,7 +58,7 @@ post_install() {
   cp ${PKG_DIR}/sources/issue ${INSTALL}/etc
   ln -sf /etc/issue ${INSTALL}/etc/motd
   cat <<EOF >> ${INSTALL}/etc/issue
-... Version: ${OS_VERSION}-${OS_BUILD} (${BUILD_ID:0:7})
+... Version: ${OS_VERSION} (${OS_BUILD})
 ... Built: ${BUILD_DATE}
 
 EOF
