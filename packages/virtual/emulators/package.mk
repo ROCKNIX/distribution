@@ -115,6 +115,9 @@ makeinstall_target() {
   clean_es_cache
   clean_doc_cache
 
+  ### Add bezels directory
+  add_system_dir /storage/roms/bezels
+
   ### Add BIOS directory
   add_system_dir /storage/roms/bios
 
@@ -124,10 +127,8 @@ makeinstall_target() {
   ### Add save states directory
   add_system_dir /storage/roms/savestates
 
-  ### Add ES directories
-  add_system_dir /storage/roms/_userdata/BGM
-  add_system_dir /storage/roms/_userdata/bezels
-  add_system_dir /storage/roms/_userdata/themes
+  ### Add themes directory
+  add_system_dir /storage/roms/themes
 
   ### Apply documentation header
   start_system_doc
