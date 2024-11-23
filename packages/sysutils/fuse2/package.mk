@@ -10,6 +10,7 @@ PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/libfuse/libfuse/"
 PKG_URL="https://github.com/libfuse/libfuse/releases/download/fuse-${PKG_VERSION}/fuse-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_INIT="toolchain fuse2"
 PKG_LONGDESC="FUSE provides a simple interface for userspace programs to export a virtual filesystem to the Linux kernel."
 # fuse fails to build with GOLD linker on gcc-4.9
 PKG_BUILD_FLAGS="-gold"
@@ -23,6 +24,27 @@ PKG_CONFIGURE_OPTS_TARGET="MOUNT_FUSE_PATH=/usr/sbin \
                            --enable-mtab \
                            --disable-rpath \
                            --with-gnu-ld"
+
+pre_configure_init() {
+  : # reuse pre_configure_target()
+}
+
+post_configure_init() {
+  : # reuse post_configure_target()
+}
+
+configure_init() {
+  : # reuse configure_target()
+}
+
+make_init() {
+  : # reuse make_target()
+}
+
+makeinstall_init() {
+  mkdir -p ${INSTALL}/usr/lib
+    cp ../.${TARGET_NAME}/lib/.libs/libfuse.so.2 ${INSTALL}/usr/lib/
+}
 
 post_makeinstall_target() {
   rm -rf ${INSTALL}/usr/{bin,sbin}
