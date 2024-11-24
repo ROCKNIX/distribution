@@ -2,29 +2,34 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="vulkan-wsi-layer"
-#PKG_VERSION="r51p0-00eac0"
-PKG_VERSION="7e27d1d7"
+PKG_VERSION="cb1a50cf7e640ad7306e673131ded98c0f133628"
 PKG_LICENSE="MIT"
 PKG_SITE="https://gitlab.freedesktop.org/mesa/vulkan-wsi-layer"
-PKG_URL="${PKG_SITE}.git"
-#PKG_URL="https://developer.arm.com/-/media/Files/downloads/mali-drivers/WSI-Layer/VX501X08X-SW-99009-${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_URL="${PKG_SITE}/-/archive/${PKG_VERSION}.tar.gz"
+PKG_DEPENDS_TARGET="toolchain vulkan-loader vulkan-headers"
 PKG_LONGDESC="Implements Vulkan extensions for Window System Integration inside a Vulkan layer."
 PKG_TOOLCHAIN="cmake"
 
 pre_configure_target() {
-#PKG_CMAKE_SCRIPT=${PKG_BUILD}/product/vulkan_wsi/tools/wsi_layer/CMakeLists.txt
+if [ "${DEVICE}" = "RK3588" ]; then
+  #BSP name?, probably can be removed when moving to mainline
+  HEAP_NAME=cma
+else
+  HEAP_NAME=linux,cma
+fi
 
-if [ "${VULKAN_SUPPORT}" = "yes" ]
-then
-  PKG_DEPENDS_TARGET+=" vulkan-loader vulkan-headers"
+if [ "${ARCH}" = "aarch64" ]; then
+  INCLUDE_ARCH=arm64
+else
+  INCLUDE_ARCH=${ARCH}
 fi
 
 PKG_CMAKE_OPTS_TARGET+=" -DVULKAN_CXX_INCLUDE=${SYSROOT_PREFIX}/usr \
         -DBUILD_WSI_HEADLESS=0 \
         -DBUILD_WSI_WAYLAND=1 \
-        -DSELECT_EXTERNAL_ALLOCATOR=ion
-        -DKERNEL_DIR=$(get_build_dir linux)"
+        -DSELECT_EXTERNAL_ALLOCATOR=dma_buf_heaps \
+		-DWSIALLOC_MEMORY_HEAP_NAME=${HEAP_NAME} \
+        -DKERNEL_HEADER_DIR=$(get_build_dir linux)/arch/${INCLUDE_ARCH}/include"
 }
 
 makeinstall_target() {
