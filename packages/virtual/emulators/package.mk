@@ -81,6 +81,10 @@ case "${DEVICE}" in
   ;;
 esac
 
+if [ "${PROJECT}" = "Rockchip" ]; then
+  PKG_EMUS+=" retrorun"
+fi
+
 # Split building emulators into 2 stages, needed to fit the jobs into the 6 hour GH runner time limit.
 case "${TARGET_TYPE}" in
   cores_only)
