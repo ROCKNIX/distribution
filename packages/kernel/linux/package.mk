@@ -24,7 +24,7 @@ case ${DEVICE} in
   ;;
   H700)
     PKG_VERSION="6.12-rc3"
-    PKG_URL="https://git.kernel.org/torvalds/t/linux-${PKG_VERSION}.tar.gz"
+    PKG_URL="https://github.com/torvalds/linux/archive/refs/tags/v${PKG_VERSION}.tar.gz"
     ;;
   *)
     PKG_VERSION="6.11.9"
