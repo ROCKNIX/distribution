@@ -1,32 +1,23 @@
 #!/bin/bash
-# SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2022-24 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 ## Load minimal distribution settings to improve
 ## performance.
 . /etc/profile.d/001-functions
 
 BRIGHTNESS_DEV="$(find /sys/class/backlight/*/ -name brightness -print -quit 2>/dev/null)"
-BRIGHTNESS_PATH="${BRIGHTNESS_DEV%/brightness}"
 
-declare -a BRIGHTNESS_TABLE
-BRIGHTNESS_TABLE=($(get_setting brightness_table))
-if [ -z ${BRIGHTNESS_TABLE} ]; then
-  BRIGHTNESS_TABLE=(0 0.02 0.05 0.10 0.15 0.20 0.25 0.30 0.35 0.40 0.45 0.50 0.55 0.60 0.65 0.70 0.75 0.80 0.85 0.90 1)
-  set_setting brightness_table "${BRIGHTNESS_TABLE[*]}"
-fi
-NUM_STEPS=${#BRIGHTNESS_TABLE[@]}
-
-MAX=$(<$(find /sys/class/backlight/*/ -name max_brightness -print -quit 2>/dev/null))
-function compute() {
-  echo "(${BRIGHTNESS_TABLE[$NEXT]} * ${MAX})/1" | bc
-}
-
-if [ ! -f "${BRIGHTNESS_DEV}" ]
-then
+if [ ! -f "${BRIGHTNESS_DEV}" ]; then
   echo "ERROR: There is no BRIGHTNESS object to manage."
   exit 1
 fi
+
+function compute() {
+  MAX=$(<$(find /sys/class/backlight/*/ -name max_brightness -print -quit 2>/dev/null))
+  echo "(${BRIGHTNESS} / 100 * ${MAX})" | bc -l | cut -f1 -d.
+}
 
 getBrightness() {
   echo $(<${BRIGHTNESS_DEV})
@@ -34,57 +25,15 @@ getBrightness() {
 
 setBrightness() {
   echo "${1}" > ${BRIGHTNESS_DEV}
-  set_setting system.brightness "${2}"
-}
-
-stepUp() {
-  CURRENT=$(get_setting system.brightness)
-  NEXT=$(( ${CURRENT} + 1 ))
-  if (( ${NEXT} >= $NUM_STEPS ))
-  then
-    NEXT=$(( $NUM_STEPS - 1 ))
-  fi
-
-  BRIGHTNESS=$(printf '%d' "$(compute)")
-  if (($BRIGHTNESS > $MAX ))
-  then
-    BRIGHTNESS=$MAX
-  fi
-
-  setBrightness ${BRIGHTNESS} ${NEXT}
-}
-
-stepDown() {
-  CURRENT=$(get_setting system.brightness)
-  NEXT=$(( ${CURRENT} - 1 ))
-  if (( ${NEXT} < 0 ))
-  then
-    NEXT=0
-  fi
-
-  BRIGHTNESS=$(printf '%d' "$(compute)")
-
-  setBrightness ${BRIGHTNESS} ${NEXT}
+  set_setting display.brightness "${2}"
 }
 
 case ${1} in
-        "up")
-          stepUp
-        ;;
-        "down")
-          stepDown
-        ;;
-        "device")
-          echo ${BRIGHTNESS_DEV}
-        ;;
-        "path")
-          echo ${BRIGHTNESS_PATH}
-        ;;
-        "set")
-          NEXT=${2}
-          setBrightness "$(printf '%d' "$(compute)")" ${2}
-        ;;
-        *)
-          echo $(getBrightness)
-        ;;
+  "set")
+    BRIGHTNESS=${2}
+    setBrightness $(compute) ${2}
+    ;;
+  *)
+    echo $(getBrightness)
+    ;;
 esac
