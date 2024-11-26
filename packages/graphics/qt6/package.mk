@@ -2,11 +2,11 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="qt6"
-PKG_VERSION="d302ec578f03866cece4a4f4dd014df1b48398d5"
+PKG_VERSION="41d5d04f71871d94a76a1910ef153139a9746c32"
 PKG_LICENSE="GPL"
 PKG_SITE="http://qt-project.org"
 PKG_URL="https://github.com/qt/qt5.git"
-PKG_DEPENDS_TARGET="toolchain qt6:host"
+PKG_DEPENDS_TARGET="toolchain qt6:host openssl libjpeg-turbo libpng pcre2 sqlite zlib freetype SDL2 gstreamer gst-plugins-base gst-plugins-good gst-libav"
 PKG_DEPENDS_HOST="toolchain:host"
 PKG_LONGDESC="A cross-platform application and UI framework"
 GET_HANDLER_SUPPORT="git"
@@ -30,15 +30,13 @@ configure_package() {
 
   # XCB support for X11
   if [ "${DISPLAYSERVER}" = "x11" ]; then
-    PKG_DEPENDS_TARGET+=" xcb-util xcb-util-image xcb-util-keysyms xcb-util-renderutil xcb-util-wm"
-    PKG_CMAKE_OPTS_TARGET+=" -DQT_QPA_PLATFORM=xcb"
+    PKG_DEPENDS_TARGET+=" xcb-util xcb-util-image xcb-util-keysyms xcb-util-renderutil xcb-util-wm libxcb-cursor libxkbcommon"
   fi
 
   # Wayland support
   if [ "${DISPLAYSERVER}" = "wl" ]; then
-    PKG_DEPENDS_TARGET+=" wayland xcb-util xcb-util-image xcb-util-keysyms xcb-util-renderutil xcb-util-wm"
-    PKG_CMAKE_OPTS_TARGET+=" -DQT_QPA_PLATFORM=wayland \
-                             -DBUILD_qtwayland=ON"
+    PKG_DEPENDS_TARGET+=" wayland xcb-util xcb-util-image xcb-util-keysyms xcb-util-renderutil xcb-util-wm libxcb-cursor libxkbcommon"
+    PKG_CMAKE_OPTS_TARGET+=" -DBUILD_qtwayland=ON"
   else
     PKG_CMAKE_OPTS_TARGET+=" -DBUILD_qtwayland=OFF"
   fi
@@ -80,6 +78,7 @@ pre_configure_host() {
                          -DQT_BUILD_TESTS=OFF \
                          -DQT_USE_CCACHE=ON \
                          -DQT_GENERATE_SBOM=OFF \
+                         -DQT_FEATURE_icu=OFF \
                          -DQT_FEATURE_wayland=ON"
 }
 
@@ -105,37 +104,27 @@ pre_configure_target(){
     PKG_CMAKE_OPTS_TARGET+=" -DBUILD_${module}=ON"
   done
 
-  PKG_CMAKE_OPTS_TARGET+=" -DCMAKE_INSTALL_PREFIX=/usr/local/qt6 \
+  PKG_CMAKE_OPTS_TARGET+=" -DCMAKE_INSTALL_PREFIX=/usr \
                            -DCMAKE_SYSROOT=${SYSROOT_PREFIX} \
                            -DCMAKE_TOOLCHAIN_FILE=${CMAKE_CONF} \
+                           -DQT_HOST_PATH=${TOOLCHAIN}/usr/local/qt6
                            -DCMAKE_BUILD_TYPE=Release \
-                           -DQT_HOST_PATH=${TOOLCHAIN}/usr/local/qt6 \
                            -DQT_DEBUG_FIND_PACKAGE=ON \
                            -DBUILD_SHARED_LIBS=ON \
                            -DQT_BUILD_EXAMPLES=OFF \
                            -DQT_BUILD_TESTS=OFF \
                            -DQT_FEATURE_printer=OFF \
                            -DQT_USE_CCACHE=ON \
+                           -DQT_FEATURE_xcb=ON \
                            -DQT_GENERATE_SBOM=OFF"
 }
 
 makeinstall_target() {
-  QT6_INSTALL_PREFIX=usr/local/qt6
-  QT6_LIB=${INSTALL}/${QT6_INSTALL_PREFIX}/lib
-  QT6_PLUGINS=${INSTALL}/${QT6_INSTALL_PREFIX}/plugins
-  QT6_QML=${INSTALL}/${QT6_INSTALL_PREFIX}/qml
-  # Create necessary directories for installation
-  mkdir -p ${QT6_LIB}
-  mkdir -p ${QT6_PLUGINS}
-  mkdir -p ${QT6_QML}
+  mkdir -p ${INSTALL}/usr/lib
+  mkdir -p ${INSTALL}/usr/plugins
+  mkdir -p ${INSTALL}/usr/qml
 
-  # Define the sysroot path for Qt6 files
-  PKG_QT6_SYSROOT_PATH=${PKG_ORIG_SYSROOT_PREFIX:-${SYSROOT_PREFIX}}/${QT6_INSTALL_PREFIX}
-
-  # Copy Libs
-  cp -PR ${PKG_QT6_SYSROOT_PATH}/lib/*.so* ${QT6_LIB}
-  # Copy Plugins
-  cp -PR ${PKG_QT6_SYSROOT_PATH}/plugins/* ${QT6_PLUGINS}
-  # Copy QML
-  cp -PR ${PKG_QT6_SYSROOT_PATH}/qml/* ${QT6_QML}
+  cp -rf ${PKG_BUILD}/.${TARGET_NAME}/qtbase/lib/*.so* ${INSTALL}/usr/lib/
+  cp -rf ${PKG_BUILD}/.${TARGET_NAME}/qtbase/plugins/* ${INSTALL}/usr/plugins/
+  cp -rf ${PKG_BUILD}/.${TARGET_NAME}/qtbase/qml/* ${INSTALL}/usr/qml/
 }
