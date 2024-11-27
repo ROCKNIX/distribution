@@ -3,7 +3,7 @@
 
 PKG_NAME="duckstation-sa"
 PKG_LICENSE="GPLv3"
-PKG_DEPENDS_TARGET="toolchain SDL2 nasm:host pulseaudio openssl libidn2 nghttp2 zlib curl libevdev ecm"
+PKG_DEPENDS_TARGET="toolchain SDL2 nasm:host pulseaudio openssl libidn2 nghttp2 zlib curl libevdev ecm libzip soundtouch cpuinfo lunasvg"
 PKG_SITE="https://github.com/stenzek/duckstation"
 PKG_URL="${PKG_SITE}.git"
 PKG_LONGDESC="Fast PlayStation 1 emulator for x86-64/AArch32/AArch64 "
