@@ -21,7 +21,7 @@ RUN apt-get install -y \
     bc default-jre file gawk gcc git golang-go gperf libjson-perl libncurses5-dev \
     libparse-yapp-perl libxml-parser-perl lzop make patchutils python-is-python3  \
     python3 parted unzip wget curl xfonts-utils xsltproc zip zstd rdfind automake \
-    xmlstarlet
+    xmlstarlet libgl1-mesa-dev libxext-dev libwayland-dev wayland-protocols
 
 ### Cross compiling on ARM
 RUN if [ "$(uname -m)" = "aarch64" ]; then apt-get install -y --no-install-recommends qemu-user-binfmt libc6-dev-amd64-cross; fi
