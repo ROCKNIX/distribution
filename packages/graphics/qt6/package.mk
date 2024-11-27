@@ -119,7 +119,9 @@ pre_configure_target(){
                            -DQT_GENERATE_SBOM=OFF"
 }
 
-makeinstall_target() {
+post_makeinstall_target() {
+  rm -rf ${INSTALL}/usr
+
   mkdir -p ${INSTALL}/usr/lib
   mkdir -p ${INSTALL}/usr/plugins
   mkdir -p ${INSTALL}/usr/qml
