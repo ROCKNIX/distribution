@@ -9,15 +9,15 @@ PKG_LONGDESC="Moonlight is an open source implementation of NVIDIA's GameStream,
 GET_HANDLER_SUPPORT="git"
 PKG_PATCH_DIRS+="${DEVICE}"
 
-if [ "${TARGET_ARCH}" = "x86_64" ]
+if [ "${TARGET_ARCH}" = "null" ]
 then
   PKG_SITE+="qt"
   PKG_URL="${PKG_SITE}.git"
   PKG_VERSION="8a87a09947f27dd2fe4bee7ae9faabe86873a5c4"
-  PKG_DEPENDS_TARGET+=" qt5"
+  PKG_DEPENDS_TARGET+=" qt6"
   PKG_TOOLCHAIN="manual"
   make_target() {
-    qmake "CONFIG+=embedded" moonlight-qt.pro
+    qmake6 "CONFIG+=embedded" moonlight-qt.pro
     make release
   }
   post_makeinstall_target() {
