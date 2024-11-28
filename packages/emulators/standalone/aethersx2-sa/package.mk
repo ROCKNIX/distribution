@@ -7,7 +7,7 @@ PKG_ARCH="aarch64"
 PKG_LICENSE="LGPL"
 PKG_SITE="https://github.com/ROCKNIX/packages"
 PKG_URL="${PKG_SITE}/raw/refs/heads/main/aethersx2.tar.gz"
-PKG_DEPENDS_TARGET="toolchain qt5 libgpg-error fuse2"
+PKG_DEPENDS_TARGET="toolchain qt6 libgpg-error fuse2"
 PKG_LONGDESC="Arm PS2 Emulator appimage"
 PKG_TOOLCHAIN="manual"
 
