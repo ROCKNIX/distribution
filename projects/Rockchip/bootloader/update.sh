@@ -41,7 +41,11 @@ fi
 for BOOT_IMAGE in ${SUBDEVICE}_uboot.bin uboot.bin; do
   if [ -f "$SYSTEM_ROOT/usr/share/bootloader/$BOOT_IMAGE" ]; then
     echo "Updating $BOOT_IMAGE on $BOOT_DISK..."
-    dd if=$SYSTEM_ROOT/usr/share/bootloader/$BOOT_IMAGE of=$BOOT_DISK bs=512 seek=64 conv=fsync &>/dev/null
+    # instead of using small bs, read the missing part from target and do a perfectly aligned write
+    {
+      dd if=$BOOT_DISK bs=32K count=1
+      cat $SYSTEM_ROOT/usr/share/bootloader/$BOOT_IMAGE
+    } | dd of=$BOOT_DISK bs=4M conv=fsync &>/dev/null
     break
   fi
 done
