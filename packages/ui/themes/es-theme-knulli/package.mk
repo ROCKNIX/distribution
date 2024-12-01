@@ -2,7 +2,7 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="es-theme-knulli"
-PKG_VERSION="v1.8.2"
+PKG_VERSION="3aa11fb69342b01074f66f56a2912083954b72e5"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/symbuzzer/es-theme-knulli"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
