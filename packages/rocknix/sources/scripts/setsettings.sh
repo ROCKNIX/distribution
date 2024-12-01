@@ -678,7 +678,7 @@ function set_shader() {
 }
 
 function set_filter() {
-    local FILTER="$(game_setting filterset)"
+    local FILTER="$(game_setting videofilter)"
     case ${FILTER} in
         0|false|none)
             add_setting "none" "video_filter" ""
