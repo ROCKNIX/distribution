@@ -2,16 +2,14 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="qt6"
-PKG_VERSION="41d5d04f71871d94a76a1910ef153139a9746c32"
+PKG_VERSION_MAJOR="6.8"
+PKG_VERSION="${PKG_VERSION_MAJOR}.1"
 PKG_LICENSE="GPL"
-PKG_SITE="http://qt-project.org"
-PKG_URL="https://github.com/qt/qt5.git"
+PKG_SITE="https://download.qt.io"
+PKG_URL="${PKG_SITE}/archive/qt/${PKG_VERSION_MAJOR}/${PKG_VERSION}/single/qt-everywhere-src-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_TARGET="toolchain qt6:host openssl libjpeg-turbo libpng pcre2 sqlite zlib freetype SDL2 gstreamer gst-plugins-base gst-plugins-good gst-libav"
 PKG_DEPENDS_HOST="toolchain:host"
 PKG_LONGDESC="A cross-platform application and UI framework"
-GET_HANDLER_SUPPORT="git"
-PKG_GIT_CLONE_BRANCH="6.8.1"
-PKG_GIT_CLONE_SINGLE="yes"
 
 configure_package() {
   # Apply project-specific patches
@@ -56,7 +54,7 @@ pre_configure_host() {
   # Disable unneeded modules
   MODULES_TO_DISABLE=("qt3d" "qt5compat" "qtactiveqt" "qtcharts" "qtcoap" "qtconnectivity" "qtdatavis3d"
                       "qtdoc" "qtgraphs" "qtgrpc" "qthttpserver" "qtlocation" "qtlottie" "qtmqtt"
-                      "qtmultimedia" "qtnetworkauth" "qtopcua" "qtpositioning" "qtqa" "qtquick3d" "qtquick3dphysics"
+                      "qtmultimedia" "qtnetworkauth" "qtopcua" "qtpositioning" "qtquick3d" "qtquick3dphysics"
                       "qtquickeffectmaker" "qtquicktimeline" "qtremoteobjects" "qtscxml" "qtsensors" "qtserialbus"
                       "qtserialport" "qtspeech" "qttranslations" "qtvirtualkeyboard" "qtwebchannel"
                       "qtwebengine" "qtwebsockets" "qtwebview")
@@ -88,7 +86,7 @@ pre_configure_target(){
   MODULES_TO_DISABLE=("qt3d" "qtactiveqt" "qtcharts" "qtcoap" "qtconnectivity" "qtdatavis3d"
                       "qtdoc" "qtgraphs" "qtgrpc" "qthttpserver" "qtimageformats"
                       "qtlocation" "qtlottie" "qtmqtt" "qtnetworkauth" "qtopcua" "qtpositioning"
-                      "qtqa" "qtquick3d" "qtquick3dphysics" "qtquickeffectmaker" "qtquicktimeline" "qtremoteobjects"
+                      "qtquick3d" "qtquick3dphysics" "qtquickeffectmaker" "qtquicktimeline" "qtremoteobjects"
                       "qtscxml" "qtsensors" "qtspeech" "qttranslations" "qtvirtualkeyboard"
                       "qtwebchannel" "qtwebengine" "qtwebview")
   for module in "${MODULES_TO_DISABLE[@]}"; do
