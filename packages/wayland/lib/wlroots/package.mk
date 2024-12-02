@@ -9,6 +9,10 @@ PKG_LONGDESC="A modular Wayland compositor library"
 PKG_TOOLCHAIN="meson"
 
 case ${DEVICE} in
+  SD865|AMD64|RK3399)
+  PKG_VERSION="0.18.1"
+  PKG_URL="${PKG_SITE}/-/archive/${PKG_VERSION}/wlroots-${PKG_VERSION}.tar.gz"
+  ;;
   RK3588)
     PKG_VERSION="0.17.4-rk"
     PKG_SHA256="e9e1e14966c6272ca595307fa817fd0fefae96b13fe36c8084b3a7a55fed20d1"
@@ -42,5 +46,5 @@ unpack() {
 
 pre_configure_target() {
   # wlroots does not build without -Wno flags as all warnings being treated as errors
-  export TARGET_CFLAGS=$(echo "${TARGET_CFLAGS} -Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function")
+  export TARGET_CFLAGS=$(echo "${TARGET_CFLAGS} -Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function -Wno-return-type")
 }
