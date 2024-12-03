@@ -40,6 +40,9 @@ then
   if [ "${HW_DEVICE}" = "RK3588" ]; then
     FEATURES_CMDLINE+=" -affinity.emu 0x30 "
     FEATURES_CMDLINE+=" -ss.affinity.vdp2 0xc0 "
+  elif [ "${HW_DEVICE}" = "SD865" ]; then
+    FEATURES_CMDLINE+=" -affinity.emu 0x40 "
+    FEATURES_CMDLINE+=" -ss.affinity.vdp2 0x80 "
   fi
 else
   ### All..
