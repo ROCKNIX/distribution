@@ -77,7 +77,8 @@ pre_configure_host() {
                          -DQT_USE_CCACHE=ON \
                          -DQT_GENERATE_SBOM=OFF \
                          -DQT_FEATURE_icu=OFF \
-                         -DQT_FEATURE_wayland=ON"
+                         -DQT_FEATURE_wayland=ON \
+                         -DBUILD_WITH_PCH=OFF"
 }
 
 pre_configure_target(){
@@ -114,7 +115,8 @@ pre_configure_target(){
                            -DQT_FEATURE_printer=OFF \
                            -DQT_USE_CCACHE=ON \
                            -DQT_FEATURE_xcb=ON \
-                           -DQT_GENERATE_SBOM=OFF"
+                           -DQT_GENERATE_SBOM=OFF \
+                           -DBUILD_WITH_PCH=OFF"
 }
 
 post_makeinstall_target() {
