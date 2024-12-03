@@ -35,7 +35,7 @@ ROTATE=$(get_setting rotate_screen "${PLATFORM}" "${GAME}")
 SLAYOUT=$(get_setting screen_layout "${PLATFORM}" "${GAME}")
 CSHADERS=$(get_setting cache_shaders "${PLATFORM}" "${GAME}")
 HSHADERS=$(get_setting hardware_shaders "${PLATFORM}" "${GAME}")
-
+ACCURATE_HW_SHADERS=$(get_setting accurate_hardware_shaders "${PLATFORM}" "${GAME}")
 
 # CPU Underclock
 case "${CPU}" in
@@ -70,6 +70,12 @@ esac
 case "${HSHADERS}" in
   1) sed -i '/use_hw_shader =/c\use_hw_shader = 1' /storage/.config/lime3ds/sdl2-config.ini;;
   *) sed -i '/use_hw_shader =/c\use_hw_shader = 0' /storage/.config/lime3ds/sdl2-config.ini;;
+esac
+
+# Use accurate multiplication in hardware shaders
+case "${ACCURATE_HW_SHADERS}" in
+  1) sed -i '/shaders_accurate_mul =/c\shaders_accurate_mul = 1' /storage/.config/lime3ds/sdl2-config.ini;;
+  *) sed -i '/shaders_accurate_mul =/c\shaders_accurate_mul = 0' /storage/.config/lime3ds/sdl2-config.ini;;
 esac
 
 # Screen Layout
