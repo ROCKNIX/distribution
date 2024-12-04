@@ -4,7 +4,16 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 . /etc/profile
-set_kill set "-9 dolphin-emu-nogui"
+
+#Detect version of Dolphin
+DOLPHIN_CORE=$(echo "${3}"| sed "s#^/.*/##")
+if [ "${DOLPHIN_CORE}" = 'dolphin-qt-gc' ]; then
+  DOLPHIN_CORE="dolphin-emu"
+else
+  DOLPHIN_CORE="dolphin-emu-nogui"
+fi
+
+set_kill set "-9 ${DOLPHIN_CORE}"
 
 # Load gptokeyb support files
 control-gen_init.sh
@@ -15,6 +24,13 @@ get_controls
 if [ ! -d "/storage/.config/dolphin-emu" ]; then
     mkdir -p "/storage/.config/dolphin-emu"
         cp -r "/usr/config/dolphin-emu" "/storage/.config/"
+fi
+
+#Check if Hotkeys.ini exists
+if [ "${DOLPHIN_CORE}" = 'dolphin-emu' ]; then
+  if [ ! -f "/storage/.config/dolphin-emu/Hotkeys.ini" ]; then
+        cp -r "/usr/config/dolphin-emu/Hotkeys.ini" "/storage/.config/dolphin-emu/"
+  fi
 fi
 
 #Check if GC controller dir exists in .config/dolphin-emu/GamecubeControllerProfiles
@@ -44,6 +60,7 @@ GAME=$(echo "${1}"| sed "s#^/.*/##")
 PLATFORM=$(echo "${2}"| sed "s#^/.*/##")
 AA=$(get_setting anti_aliasing "${PLATFORM}" "${GAME}")
 ASPECT=$(get_setting aspect_ratio "${PLATFORM}" "${GAME}")
+AUDIOBE=$(get_setting audio_backend "${PLATFORM}" "${GAME}")
 CLOCK=$(get_setting clock_speed "${PLATFORM}" "${GAME}")
 RENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
 IRES=$(get_setting internal_resolution "${PLATFORM}" "${GAME}")
@@ -122,6 +139,14 @@ fi
   		sed -i '/AspectRatio/c\AspectRatio = 3' /storage/.config/dolphin-emu/GFX.ini
 	fi
 
+  #Audio Backend
+        if [ "$AUDIOBE" = "lle" ]
+        then
+                AUDIO_BACKEND="LLE"
+        else
+                AUDIO_BACKEND="HLE"
+        fi
+
   #Clock Speed
         if [ "$CLOCK" = "050" ]; then
                 sed -i '/^Overclock =/c\Overclock = 0.5' /storage/.config/dolphin-emu/Dolphin.ini
@@ -152,33 +177,32 @@ fi
         fi
 
   #Video Backend
-	if [ "$RENDERER" = "opengl" ]
-	then
-  		sed -i '/GFXBackend/c\GFXBackend = OGL' /storage/.config/dolphin-emu/Dolphin.ini
-	fi
 	if [ "$RENDERER" = "vulkan" ]
 	then
   		sed -i '/GFXBackend/c\GFXBackend = Vulkan' /storage/.config/dolphin-emu/Dolphin.ini
+	else
+		sed -i '/GFXBackend/c\GFXBackend = OGL' /storage/.config/dolphin-emu/Dolphin.ini
 	fi
-        if [ "$RENDERER" = "software" ]
-        then
-                sed -i '/GFXBackend/c\GFXBackend = Software Renderer' /storage/.config/dolphin-emu/Dolphin.ini
-        fi
+
 
   #Internal Resolution
-        if [ "$IRES" = "0" ]
+        if [ "$IRES" = "1" ]
         then
                 sed -i '/InternalResolution/c\InternalResolution = 1' /storage/.config/dolphin-emu/GFX.ini
         fi
-        if [ "$IRES" = "1" ]
+        if [ "$IRES" = "2" ]
         then
                 sed -i '/InternalResolution/c\InternalResolution = 2' /storage/.config/dolphin-emu/GFX.ini
         fi
-        if [ "$IRES" = "2" ]
+        if [ "$IRES" = "3" ]
+        then
+                sed -i '/InternalResolution/c\InternalResolution = 3' /storage/.config/dolphin-emu/GFX.ini
+        fi
+        if [ "$IRES" = "4" ]
         then
                 sed -i '/InternalResolution/c\InternalResolution = 4' /storage/.config/dolphin-emu/GFX.ini
         fi
-        if [ "$IRES" = "3" ]
+        if [ "$IRES" = "6" ]
         then
                 sed -i '/InternalResolution/c\InternalResolution = 6' /storage/.config/dolphin-emu/GFX.ini
         fi
@@ -258,9 +282,19 @@ fi
 rm -rf /storage/.local/share/dolphin-emu
 ln -sf /storage/.config/dolphin-emu /storage/.local/share/dolphin-emu
 
-@LIBMALI@
+@EXPORTS@
+
+#Retroachievements
+/usr/bin/cheevos_dolphin.sh
+
+#Run commands
+if [ ${DOLPHIN_CORE} = "dolphin-emu" ]; then
+  CMD="-b -a ${AUDIO_BACKEND}"
+else
+  CMD="-p @DOLPHIN_PLATFORM@ -a ${AUDIO_BACKEND}"
+fi
 
 #Run Dolphin emulator
-  ${GPTOKEYB} dolphin-emu-nogui xbox360 &
-  ${EMUPERF} /usr/bin/dolphin-emu-nogui -p @DOLPHIN_PLATFORM@ -a HLE -e "${1}"
+  ${GPTOKEYB} ${DOLPHIN_CORE} xbox360 &
+  ${EMUPERF} /usr/bin/${DOLPHIN_CORE} ${CMD} -e "${1}"
   kill -9 "$(pidof gptokeyb)"
