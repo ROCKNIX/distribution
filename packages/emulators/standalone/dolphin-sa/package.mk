@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="dolphin-sa"
 PKG_LICENSE="GPLv2"
@@ -8,8 +9,8 @@ PKG_LONGDESC="Dolphin is a GameCube / Wii emulator, allowing you to play games f
 PKG_TOOLCHAIN="cmake"
 
 case ${DEVICE} in
-  SD865)
-    PKG_VERSION="cf29214c0335d124aa95b88a8994d079631afb45"
+  SD865|AMD64|RK3399)
+    PKG_VERSION="8c3b9c9cf6a4c40e773c5b13ed4dc7ea1912d05b"
     PKG_SITE="https://github.com/dolphin-emu/dolphin"
     PKG_URL="${PKG_SITE}.git"
     PKG_DEPENDS_TARGET+=" qt6"
@@ -92,7 +93,7 @@ post_install() {
         DOLPHIN_PLATFORM="\${PLATFORM}"
         EXPORTS="if [ ! -z 'lsmod | grep panthor' ]; then LD_LIBRARY_PATH='\/usr\/lib\/libmali-valhall-g610-g13p0-x11-gbm.so' PLATFORM='wayland'; else PLATFORM='x11'; fi"
       ;;
-      SD865)
+      SD865|AMD64|RK3399)
         DOLPHIN_PLATFORM="x11"
         EXPORTS="export QT_QPA_PLATFORM=xcb"
       ;;
