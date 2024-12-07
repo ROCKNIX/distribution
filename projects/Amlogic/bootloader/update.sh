@@ -50,6 +50,10 @@ fi
 
 # Only update the bootloader for the Odroid Go Ultra and RGB10MAX3 Pro
 if [ $SUBDEVICE = "Odroid_GOU" ]; then
+  if [ -d $SYSTEM_ROOT/usr/share/bootloader/res ]; then
+    echo "Updating res..."
+    cp -rp $SYSTEM_ROOT/usr/share/bootloader/res $BOOT_ROOT
+  fi
   if [ -f $SYSTEM_ROOT/usr/share/bootloader/u-boot.bin ]; then
     echo "Updating u-boot on: $BOOT_DISK..."
     dd if=$SYSTEM_ROOT/usr/share/bootloader/u-boot.bin of=$BOOT_DISK conv=fsync,notrunc bs=512 seek=1 &>/dev/null
@@ -69,7 +73,6 @@ LABEL ROCKNIX
 EOF
   fi
   [ -e /flash/ODROIDBIOS.BIN ] && rm -f /flash/ODROIDBIOS.BIN
-  [ -d /flash/res ] && rm -rf /flash/res
 # END
 
 # mount $BOOT_ROOT ro
