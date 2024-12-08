@@ -81,6 +81,10 @@ case "${DEVICE}" in
   ;;
 esac
 
+if [ "${PROJECT}" = "Rockchip" ]; then
+  PKG_DEPENDS_TARGET+=" retrorun"
+fi
+
 PKG_DEPENDS_TARGET+=" ${PKG_EMUS} ${EMUS_32BIT} ${PKG_RETROARCH} ${LIBRETRO_CORES}"
 
 install_script() {
