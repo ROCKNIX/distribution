@@ -47,6 +47,7 @@ NBD_DEVS="0"
 FLASH_FREE_MIN="5"
 
 LIVE="no"
+FORCE_RECOVERY="no"
 
 BREAK_TRIPPED="no"
 
@@ -492,6 +493,92 @@ do_reboot() {
   usleep 2000000
   /usr/bin/busybox reboot
 }
+
+
+is_key_pressed() {
+  # Here we do not have /dev/input/by-path/ yet, so iterate over all event devices
+  for evdev in /dev/input/event*; do
+    evtest --query "$evdev" EV_KEY $1
+    if [ $? -eq 10 ]; then return 0; fi
+  done
+  return 1
+}
+
+KEY_VOLUMEDOWN=114
+KEY_VOLUMEUP=115
+
+recovery_mode() {
+  # Silent keycode mode to read Vol buttons and not echo garbage
+  stty -echo
+
+  # Do recovery only if it is requested in cmdline or Vol- button is pressed
+  if [ "${FORCE_RECOVERY}" != "yes" ] && ! is_key_pressed $KEY_VOLUMEDOWN; then
+    # Return to normal boot, roll back tty changes
+    stty echo
+    return
+  fi
+
+  StartProgress spinner "Exporting storage as USB MSC... "
+
+  sleep 1
+  # If there is a role switch, switch to device mode (applies to RK3326 which has a single USB port)
+  for sw in /sys/class/udc/*/device/usb_role/*/role; do
+    echo device > $sw
+  done
+  # Let everything settle
+  sleep 1
+
+  # USB gadget boilerplate
+  mount configfs -t configfs /sys/kernel/config
+  g=/sys/kernel/config/usb_gadget/msc
+  mkdir ${g}
+  echo "0x0200" > ${g}/bcdUSB
+  echo "8" > ${g}/bDeviceClass # mass storage device class
+  echo "0x1d6b" > ${g}/idVendor
+  echo "0x0104" > ${g}/idProduct
+  mkdir ${g}/strings/0x409
+  echo "00000000" > ${g}/strings/0x409/serialnumber
+  echo "ROCKNIX" > ${g}/strings/0x409/manufacturer
+  echo "RECOVERY" > ${g}/strings/0x409/product
+  mkdir ${g}/configs/c.1
+  echo 120 > ${g}/configs/c.1/MaxPower
+
+  # Configure mass storage function
+  msf=${g}/functions/mass_storage.0
+  mkdir ${msf}
+  # Every found mmcblk device gets its lun
+  I=0
+  for m in /dev/mmcblk?; do
+    mkdir -p ${g}/functions/mass_storage.0/lun.${I}
+    echo ${m} > ${g}/functions/mass_storage.0/lun.${I}/file
+    ms=/sys/block/${m##*/}/device
+    cat $ms/name $ms/serial $ms/date | tr '\n' ' ' > /tmp/msc_lun_string
+    cat /tmp/msc_lun_string > ${g}/functions/mass_storage.0/lun.${I}/inquiry_string
+    I=$((I+1))
+  done
+
+  # activate mass storage gadget
+  ln -s ${g}/functions/mass_storage.0 ${g}/configs/c.1/
+  ls /sys/class/udc/ | head -n 1 > ${g}/UDC
+
+  StopProgress "done"
+  echo "Exported devices:"
+  cat ${g}/functions/mass_storage.0/lun.*/inquiry_string
+  echo
+  echo "Remember to properly eject partitions to prevent data corruption!"
+  echo
+
+  StartProgress spinner "Press VOLUMEUP to reboot "
+  while ! is_key_pressed $KEY_VOLUMEUP; do
+    read -t 0.1 discard # Faster polling than integer sleep
+  done
+
+  sync
+  StopProgress "rebooting"
+  sleep 1
+  /usr/bin/busybox reboot
+}
+
 
 force_fsck() {
   echo "Filesystem corruption has been detected!"
@@ -1108,6 +1195,9 @@ for arg in $(cat /proc/cmdline); do
     debugging)
       DEBUG=yes
       ;;
+    recovery)
+      FORCE_RECOVERY=yes
+      ;;
     quiet)
       QUIET=yes
       ;;
@@ -1179,6 +1269,7 @@ debug_msg "Unique identifier for this client: ${MACHINE_UID:-NOT AVAILABLE}"
 # main boot sequence
 for BOOT_STEP in \
     load_modules \
+    recovery_mode \
     check_disks \
     mount_flash \
     set_consolefont \

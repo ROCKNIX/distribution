@@ -187,6 +187,9 @@ pre_make_target() {
   if [ "${INTERACTIVE_CONFIG}" = "yes" ]; then
     # manually answer .config changes
     kernel_make oldconfig
+  elif [ "${INTERACTIVE_CONFIG}" = "menuconfig" ]; then
+    # manually answer .config changes
+    kernel_make menuconfig
   else
     # accept default answers for .config changes
     yes "" | kernel_make oldconfig > /dev/null
