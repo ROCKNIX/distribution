@@ -3,7 +3,7 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="u-boot"
-PKG_VERSION="6e07c57a22182bcdc9e2b828a68a2e7025a6385c"
+PKG_VERSION="b91540f886e8655a1547532eb0077e83a7b431d7"
 PKG_LICENSE="GPL"
 PKG_SITE="https://www.denx.de/wiki/U-Boot"
 PKG_URL="https://github.com/ROCKNIX/u-boot/archive/${PKG_VERSION}.tar.gz"
