@@ -81,7 +81,18 @@ case "${DEVICE}" in
   ;;
 esac
 
-PKG_DEPENDS_TARGET+=" ${PKG_EMUS} ${EMUS_32BIT} ${PKG_RETROARCH} ${LIBRETRO_CORES}"
+# Split building emulators into 2 stages, needed to fit the jobs into the 6 hour GH runner time limit.
+case "${TARGET_TYPE}" in
+  cores_only)
+    PKG_DEPENDS_TARGET+=" ${LIBRETRO_CORES}"
+  ;;
+  emus_only)
+    PKG_DEPENDS_TARGET+=" ${PKG_EMUS} ${EMUS_32BIT} ${PKG_RETROARCH}"
+  ;;
+  *)
+    PKG_DEPENDS_TARGET+=" ${PKG_EMUS} ${EMUS_32BIT} ${PKG_RETROARCH} ${LIBRETRO_CORES}"
+  ;;
+esac
 
 install_script() {
   if [ ! -d "${INSTALL}/usr/config/modules" ]
