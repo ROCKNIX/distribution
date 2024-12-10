@@ -25,4 +25,4 @@ done
 
 set_kill set "rpcs3"
 
-/usr/bin/rpcs3 >/dev/null 2>&1
+/usr/bin/rpcs3-sa >/dev/null 2>&1
