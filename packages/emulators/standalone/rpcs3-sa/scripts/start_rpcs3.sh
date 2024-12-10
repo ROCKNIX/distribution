@@ -33,7 +33,7 @@ done
 GAME=$(echo "${1}" | sed "s#^/.*/##")
 SUI=$(get_setting start_ui ps3 "${GAME}")
 
-# Check if its a PSN game
+ Check if its a PSN game
 GAME_PATH=""
 PSNID=""
 if [[ "${1}" == *.psn ]]; then
@@ -44,16 +44,16 @@ else
   GAME_PATH="${1}"
 fi
 
-sed -i "s#Resolution:.*\$#Resolution: $(fbwidth)x$(fbheight)#g" /storage/.config/rpcs3/config.yml
+#sed -i "s#Resolution:.*\$#Resolution: $(fbwidth)x$(fbheight)#g" /storage/.config/rpcs3/config.yml
 
 # Run rpcs3
 if [ "$SUI" = "1" ]; then
   export QT_QPA_PLATFORM=wayland
   set_kill set "-9 rpcs3"
-  /usr/bin/rpcs3
+  /usr/bin/rpcs3-sa
 else
   export QT_QPA_PLATFORM=xcb
-  export SDL_AUDIODRIVER=pulseaudio
+ # export SDL_AUDIODRIVER=pulseaudio
   set_kill set "-9 rpcs3"
-	/usr/bin/rpcs3 --no-gui "$GAME_PATH"
+	/usr/bin/rpcs3-sa --no-gui "$GAME_PATH"
 fi
