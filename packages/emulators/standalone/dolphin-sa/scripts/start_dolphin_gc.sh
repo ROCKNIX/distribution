@@ -282,7 +282,14 @@ fi
 rm -rf /storage/.local/share/dolphin-emu
 ln -sf /storage/.config/dolphin-emu /storage/.local/share/dolphin-emu
 
-@EXPORTS@
+case $(/usr/bin/gpudriver) in
+  libmali)
+    export QT_QPA_PLATFORM=wayland
+  ;;
+  *)
+    export QT_QPA_PLATFORM=xcb
+  ;;
+esac
 
 #Retroachievements
 /usr/bin/cheevos_dolphin.sh
