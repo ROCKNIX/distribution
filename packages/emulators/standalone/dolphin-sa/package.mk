@@ -91,15 +91,12 @@ post_install() {
     case ${DEVICE} in
       RK3588)
         DOLPHIN_PLATFORM="\${PLATFORM}"
-        EXPORTS="if [ ! -z 'lsmod | grep panthor' ]; then LD_LIBRARY_PATH='\/usr\/lib\/libmali-valhall-g610-g13p0-x11-gbm.so' PLATFORM='wayland'; else PLATFORM='x11'; fi"
       ;;
       SD865|AMD64|RK3399)
         DOLPHIN_PLATFORM="x11"
-        EXPORTS="export QT_QPA_PLATFORM=xcb"
       ;;
       *)
         DOLPHIN_PLATFORM="wayland"
-        EXPORTS=""
       ;;
     esac
     sed -e "s/@DOLPHIN_PLATFORM@/${DOLPHIN_PLATFORM}/g" -i ${INSTALL}/usr/bin/start_dolphin_gc.sh
