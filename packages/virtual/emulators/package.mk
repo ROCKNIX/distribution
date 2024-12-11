@@ -502,13 +502,13 @@ makeinstall_target() {
 
   ### Nintendo GameCube
   case ${DEVICE} in
-    AMD64|SD865|RK3399)
+    AMD64|SD865|RK3399|S922X|RK3588)
       add_emu_core gamecube dolphin dolphin-sa-gc true
       add_emu_core gamecube dolphin dolphin-qt-gc false
       add_emu_core gamecube retroarch dolphin false
       add_es_system gamecube
     ;;
-    S922X|RK35*)
+    RK3566)
       add_emu_core gamecube dolphin dolphin-sa-gc true
       add_emu_core gamecube retroarch dolphin false
       add_es_system gamecube
@@ -517,13 +517,13 @@ makeinstall_target() {
 
   ### Nintendo Wii
   case ${DEVICE} in
-    AMD64|SD865|RK3399)
+    AMD64|SD865|RK3399|S922X|RK3588)
       add_emu_core wii dolphin dolphin-sa-wii true
       add_emu_core wii dolphin dolphin-qt-gc false
       add_emu_core wii retroarch dolphin false
       add_es_system wii
     ;;
-    S922X|RK35*)
+    RK3566)
       add_emu_core wii dolphin dolphin-sa-wii true
       add_emu_core wii retroarch dolphin false
       add_es_system wii
