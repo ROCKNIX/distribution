@@ -9,7 +9,16 @@ PKG_LONGDESC="Dolphin is a GameCube / Wii emulator, allowing you to play games f
 PKG_TOOLCHAIN="cmake"
 
 case ${DEVICE} in
-  SD865|AMD64|RK3399)
+  RK3566)
+    PKG_SITE="https://github.com/dolphin-emu/dolphin"
+    PKG_URL="${PKG_SITE}.git"
+    PKG_VERSION="e6583f8bec814d8f3748f1d7738457600ce0de56"
+    PKG_PATCH_DIRS+=" wayland"
+    PKG_CMAKE_OPTS_TARGET+=" -DENABLE_QT=OFF \
+                             -DUSE_RETRO_ACHIEVEMENTS=OFF \
+                             -DENABLE_HEADLESS=ON"
+  ;;
+  *)
     PKG_VERSION="8c3b9c9cf6a4c40e773c5b13ed4dc7ea1912d05b"
     PKG_SITE="https://github.com/dolphin-emu/dolphin"
     PKG_URL="${PKG_SITE}.git"
@@ -18,15 +27,6 @@ case ${DEVICE} in
     PKG_CMAKE_OPTS_TARGET+=" -DENABLE_QT=ON \
                              -DUSE_RETRO_ACHIEVEMENTS=ON \
                              -DENABLE_HEADLESS=OFF"
-  ;;
-  *)
-    PKG_SITE="https://github.com/dolphin-emu/dolphin"
-    PKG_URL="${PKG_SITE}.git"
-    PKG_VERSION="e6583f8bec814d8f3748f1d7738457600ce0de56"
-    PKG_PATCH_DIRS+=" wayland"
-    PKG_CMAKE_OPTS_TARGET+=" -DENABLE_QT=OFF \
-                             -DUSE_RETRO_ACHIEVEMENTS=OFF \
-                             -DENABLE_HEADLESS=ON"
   ;;
 esac
 
