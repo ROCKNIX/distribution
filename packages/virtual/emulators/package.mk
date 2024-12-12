@@ -7,12 +7,14 @@ PKG_SITE="https://rocknix.org"
 PKG_SECTION="emulation" # Do not change to virtual or makeinstall_target will not execute.
 PKG_LONGDESC="Emulation metapackage."
 PKG_TOOLCHAIN="manual"
+DEVICE_SPECIFIC_EMULATORS="${DEVICE_SPECIFIC_EMULATORS-true}"
+COMMON_EMULATORS="${COMMON_EMULATORS-true}"
 
-PKG_EMUS="amiberry flycast-sa gzdoom-sa hatarisa hypseus-singe moonlight mupen64plus-sa openbor pico-8 ppsspp-sa vice-sa"
+[ "${COMMON_EMULATORS}" == "true" ] && PKG_EMUS="amiberry flycast-sa gzdoom-sa hatarisa hypseus-singe moonlight mupen64plus-sa openbor pico-8 ppsspp-sa vice-sa"
 
-PKG_RETROARCH="core-info libretro-database retroarch retroarch-assets retroarch-joypads retroarch-overlays slang-shaders"
+[ "${COMMON_EMULATORS}" == "true" ] && PKG_RETROARCH="core-info libretro-database retroarch retroarch-assets retroarch-joypads retroarch-overlays slang-shaders"
 
-LIBRETRO_CORES="81-lr a5200-lr arduous-lr atari800-lr beetle-gba-lr beetle-lynx-lr beetle-ngp-lr beetle-pce-lr beetle-pce-fast-lr    \
+[ "${COMMON_EMULATORS}" == "true" ] && LIBRETRO_CORES="81-lr a5200-lr arduous-lr atari800-lr beetle-gba-lr beetle-lynx-lr beetle-ngp-lr beetle-pce-lr beetle-pce-fast-lr    \
                 beetle-pcfx-lr bsnes-mercury-accuracy-lr bsnes-mercury-balanced-lr bsnes-mercury-performance-lr beetle-supafaust-lr  \
                 beetle-supergrafx-lr beetle-vb-lr beetle-wswan-lr bluemsx-lr cap32-lr crocods-lr daphne-lr doublecherrygb-lr         \
                 dosbox-svn-lr dosbox-pure-lr duckstation-lr duckstation-sa easyrpg-lr emuscv-lr fake08-lr fbalpha2012-lr             \
@@ -26,7 +28,7 @@ LIBRETRO_CORES="81-lr a5200-lr arduous-lr atari800-lr beetle-gba-lr beetle-lynx-
                 vircon32-lr virtualjaguar-lr xmil-lr wasm4-lr yabasanshiro-lr"
 
 ### Emulators or cores for specific devices
-case "${DEVICE}" in
+[ "${DEVICE_SPECIFIC_EMULATORS}" == "true" ] && case "${DEVICE}" in
   AMD64)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="wine"
     PKG_EMUS+=" cemu-sa dolphin-sa lime3ds-sa mednafen melonds-sa minivmacsa mupen64plus-sa nanoboyadvance-sa pcsx2-sa     \
