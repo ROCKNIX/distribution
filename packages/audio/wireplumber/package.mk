@@ -64,7 +64,7 @@ monitor.bluez.rules = [
     matches = [
       {
         ## This matches all bluetooth devices.
-        device.name = "~bluez_card.*"
+        device.name = "~bluez_output.*"
       }
     ]
     actions = {
