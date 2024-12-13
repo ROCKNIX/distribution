@@ -1,0 +1,110 @@
+From 0610809d94588b41847928eec5e7e81ccc962798 Mon Sep 17 00:00:00 2001
+From: Philippe Simons <simons.philippe@gmail.com>
+Date: Wed, 18 Dec 2024 21:29:59 +0100
+Subject: [PATCH] Update irq-sunxi-nmi.c
+
+---
+ .../sun50i-h700-anbernic-rg35xx-2024.dts      |  9 ++++
+ drivers/irqchip/irq-sunxi-nmi.c               | 45 ++++++++++++++++++-
+ 2 files changed, 53 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-2024.dts b/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-2024.dts
+index 80ccab7b5..ff9b964cd 100644
+--- a/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-2024.dts
++++ b/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-2024.dts
+@@ -207,6 +207,15 @@ &pio {
+ 	vcc-pi-supply = <&reg_cldo3>;
+ };
+ 
++&nmi_intc {
++	pad-control-v1 = <0x7000208>;
++	wakeup-source;
++};
++
++&crypto {
++	status = "disabled";
++};
++
+ &r_i2c {
+ 	status = "okay";
+ 
+diff --git a/drivers/irqchip/irq-sunxi-nmi.c b/drivers/irqchip/irq-sunxi-nmi.c
+index bb92fd85e..c864f97ed 100644
+--- a/drivers/irqchip/irq-sunxi-nmi.c
++++ b/drivers/irqchip/irq-sunxi-nmi.c
+@@ -21,6 +21,7 @@
+ #include <linux/of_address.h>
+ #include <linux/irqchip.h>
+ #include <linux/irqchip/chained_irq.h>
++#include <linux/syscore_ops.h>
+ 
+ #define SUNXI_NMI_SRC_TYPE_MASK	0x00000003
+ 
+@@ -142,6 +143,43 @@ static int sunxi_sc_nmi_set_type(struct irq_data *data, unsigned int flow_type)
+ 	return IRQ_SET_MASK_OK;
+ }
+ 
++static void sunxi_nmi_pad_control(struct device_node *node)
++{
++	u32 v;
++	u32 __iomem *pad;
++
++	/* if we read pad-control-v1, the we use the addr to contorl nmi */
++	if (of_property_read_u32(node, "pad-control-v1", &v))
++		return;
++
++	pad = ioremap(v, 4);
++	*pad = *pad & ~BIT(0);
++	iounmap(pad);
++}
++
++/*
++ * on some standby, the prcm control register can lowpower down
++ * so it must resume the register value first
++ */
++static struct irq_chip_generic *sys_gc;
++static struct sunxi_sc_nmi_reg_offs *sys_reg_offs;
++static uint32_t sys_vaule;
++static int sunxi_nmi_suspend(void)
++{
++	sys_vaule = sunxi_sc_nmi_read(sys_gc, sys_reg_offs->enable);
++	return 0;
++}
++
++static void sunxi_nmi_resume(void)
++{
++	sunxi_sc_nmi_write(sys_gc, sys_reg_offs->enable, sys_vaule);
++}
++
++static struct syscore_ops sunxi_nmi_syscore_ops = {
++	.suspend = sunxi_nmi_suspend,
++	.resume = sunxi_nmi_resume,
++};
++
+ static int __init sunxi_sc_nmi_irq_init(struct device_node *node,
+ 					const struct sunxi_sc_nmi_reg_offs *reg_offs)
+ {
+@@ -186,7 +224,7 @@ static int __init sunxi_sc_nmi_irq_init(struct device_node *node,
+ 	gc->chip_types[0].chip.irq_unmask	= irq_gc_mask_set_bit;
+ 	gc->chip_types[0].chip.irq_eoi		= irq_gc_ack_set_bit;
+ 	gc->chip_types[0].chip.irq_set_type	= sunxi_sc_nmi_set_type;
+-	gc->chip_types[0].chip.flags		= IRQCHIP_EOI_THREADED | IRQCHIP_EOI_IF_HANDLED;
++	gc->chip_types[0].chip.flags		= IRQCHIP_EOI_THREADED | IRQCHIP_EOI_IF_HANDLED | IRQCHIP_SKIP_SET_WAKE;
+ 	gc->chip_types[0].regs.ack		= reg_offs->pend;
+ 	gc->chip_types[0].regs.mask		= reg_offs->enable;
+ 	gc->chip_types[0].regs.type		= reg_offs->ctrl;
+@@ -207,6 +245,11 @@ static int __init sunxi_sc_nmi_irq_init(struct device_node *node,
+ 	/* Clear any pending NMI interrupts */
+ 	sunxi_sc_nmi_write(gc, reg_offs->pend, SUNXI_NMI_IRQ_BIT);
+ 
++	sunxi_nmi_pad_control(node);
++	sys_gc = gc;
++	sys_reg_offs = reg_offs;
++	register_syscore_ops(&sunxi_nmi_syscore_ops);
++
+ 	irq_set_chained_handler_and_data(irq, sunxi_sc_nmi_handle_irq, domain);
+ 
+ 	return 0;
+-- 
+2.47.1
+
