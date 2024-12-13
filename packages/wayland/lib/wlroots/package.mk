@@ -10,7 +10,7 @@ PKG_TOOLCHAIN="meson"
 
 case ${DEVICE} in
   SD865|AMD64|RK3399|H700)
-  PKG_VERSION="0.18.1"
+  PKG_VERSION="0.18.2"
   PKG_URL="${PKG_SITE}/-/archive/${PKG_VERSION}/wlroots-${PKG_VERSION}.tar.gz"
   ;;
   RK3588)
