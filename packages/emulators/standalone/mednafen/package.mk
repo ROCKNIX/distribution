@@ -9,6 +9,12 @@ PKG_URL="${PKG_SITE}/releases/files/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_TARGET="toolchain SDL2 flac"
 PKG_TOOLCHAIN="configure"
 
+case ${DEVICE} in
+  H700)
+    PKG_PATCH_DIRS+=" sdl-input"
+  ;;
+esac
+
 pre_configure_target() {
 
 export CFLAGS="${CFLAGS} -flto -fipa-pta"
