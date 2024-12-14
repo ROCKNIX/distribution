@@ -92,6 +92,9 @@ else
   unset EMUPERF
 fi
 
+# Default to X, set to wayland where supported
+export QT_QPA_PLATFORM=xcb
+
   #Anti-Aliasing
 	if [ "$AA" = "0" ]
 	then
@@ -187,9 +190,13 @@ fi
   #Video Backend
         if [ "$RENDERER" = "vulkan" ]
         then
-                sed -i '/GFXBackend/c\GFXBackend = Vulkan' /storage/.config/dolphin-emu/Dolphin.ini
+          sed -i '/GFXBackend/c\GFXBackend = Vulkan' /storage/.config/dolphin-emu/Dolphin.ini
+          # Use wayland when QT and vulkan is selected
+          if [ ${DOLPHIN_CORE} = "dolphin-emu" ]; then
+            export QT_QPA_PLATFORM=wayland
+          fi
         else
-                sed -i '/GFXBackend/c\GFXBackend = OGL' /storage/.config/dolphin-emu/Dolphin.ini
+          sed -i '/GFXBackend/c\GFXBackend = OGL' /storage/.config/dolphin-emu/Dolphin.ini
         fi
 
 
@@ -291,22 +298,24 @@ fi
                 sed -i '/VSync =/c\VSync = True' /storage/.config/dolphin-emu/GFX.ini
         fi
 
+# Skip bios always, it's untested for Wii
+sed -i '/SkipIPL/c\SkipIPL = True' /storage/.config/dolphin-emu/Dolphin.ini
+
 #Link  .config/dolphin-emu to .local
 rm -rf /storage/.local/share/dolphin-emu
 ln -sf /storage/.config/dolphin-emu /storage/.local/share/dolphin-emu
 
-case $(/usr/bin/gpudriver) in
-  libmali)
-    export QT_QPA_PLATFORM=wayland
-  ;;
-  *)
-    export QT_QPA_PLATFORM=xcb
-  ;;
-esac
-
 
 #Retroachievements
 /usr/bin/cheevos_dolphin.sh
+
+# Libmali exception
+if [ "$(/usr/bin/gpudriver)" = "libmali" ] && [ "${HW_DEVICE}" != "RK3566" ]; then
+    export QT_QPA_PLATFORM=wayland
+    # Force only working combo for libmali: QT + Vulkan
+    DOLPHIN_CORE=dolphin-emu
+    sed -i '/GFXBackend/c\GFXBackend = Vulkan' /storage/.config/dolphin-emu/Dolphin.ini
+fi
 
 #Run commands
 if [ ${DOLPHIN_CORE} = "dolphin-emu" ]; then

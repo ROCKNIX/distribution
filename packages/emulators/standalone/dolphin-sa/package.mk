@@ -89,14 +89,11 @@ makeinstall_target() {
 
 post_install() {
     case ${DEVICE} in
-      RK3588)
-        DOLPHIN_PLATFORM="\${PLATFORM}"
-      ;;
-      SD865|AMD64|RK3399)
-        DOLPHIN_PLATFORM="x11"
+      RK3566)
+        DOLPHIN_PLATFORM="wayland"
       ;;
       *)
-        DOLPHIN_PLATFORM="wayland"
+        DOLPHIN_PLATFORM="x11"
       ;;
     esac
     sed -e "s/@DOLPHIN_PLATFORM@/${DOLPHIN_PLATFORM}/g" -i ${INSTALL}/usr/bin/start_dolphin_gc.sh
