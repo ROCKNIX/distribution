@@ -15,8 +15,8 @@ case ${TARGET_ARCH} in
     PKG_URL="${PKG_SITE}/releases/download/build-${PKG_VERSION}/rpcs3-${PKG_REL_VERSION}_linux64.AppImage"
   ;;
   aarch64)
-    PKG_VERSION="68b7e5971d8e279d7d385b96b5aa2feebd220506"
-    PKG_REL_VERSION="v0.0.34-17173-68b7e597"
+    PKG_VERSION="8dbe88782ce39aeab998079e82b3541e653889c9"
+    PKG_REL_VERSION="v0.0.34-17183-8dbe8878"
     PKG_URL="${PKG_SITE}-arm64/releases/download/build-${PKG_VERSION}/rpcs3-${PKG_REL_VERSION}_linux_aarch64.AppImage"
   ;;
 esac
