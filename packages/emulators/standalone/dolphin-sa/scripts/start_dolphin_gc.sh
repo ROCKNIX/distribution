@@ -38,6 +38,11 @@ if [ ! -d "/storage/.config/dolphin-emu/GamecubeControllerProfiles" ]; then
         cp -r "/usr/config/dolphin-emu/GamecubeControllerProfiles" "/storage/.config/dolphin-emu/"
 fi
 
+#Check if GC custom east profile exists in .config/dolphin-emu/GamecubeControllerProfiles
+if [ ! -f "/storage/.config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.east" ]; then
+        cp -r "/usr/config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.east" "/storage/.config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.east"
+fi
+
 #Check if GC custom controller profile exists in .config/dolphin-emu/GamecubeControllerProfiles
 if [ ! -f "/storage/.config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.custom" ]; then
         cp -r "/usr/config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.south" "/storage/.config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.custom"
@@ -250,9 +255,9 @@ fi
         if [ "$CON" = "south" ]
         then
                 cp -r /storage/.config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.south /storage/.config/dolphin-emu/GCPadNew.ini
-        elif [ "$CON" = "west" ]
+        elif [ "$CON" = "east" ]
         then
-                cp -r /storage/.config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.west /storage/.config/dolphin-emu/GCPadNew.ini
+                cp -r /storage/.config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.east /storage/.config/dolphin-emu/GCPadNew.ini
         elif [ "$CON" = "custom" ]
         then
                 cp -r /storage/.config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.custom /storage/.config/dolphin-emu/GCPadNew.ini
