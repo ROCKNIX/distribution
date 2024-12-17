@@ -9,6 +9,7 @@ PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain zlib libzip"
 PKG_LONGDESC="Flycast is a multi-platform Sega Dreamcast, Naomi and Atomiswave emulator"
 PKG_TOOLCHAIN="cmake"
+PKG_PATCH_DIRS+=" ${DEVICE}"
 
 if [ "${OPENGL_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
