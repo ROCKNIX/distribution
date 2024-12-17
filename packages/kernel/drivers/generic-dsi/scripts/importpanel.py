@@ -9,9 +9,12 @@ import math
 
 parser = argparse.ArgumentParser(description="Extract MIPI panel description from stock dtb to use with panel-mipi-generic driver")
 parser.add_argument("-n", "--name", help="human readable panel name")
-parser.add_argument("-O", "--dtbo", help="store result in ready to use .dtbo file")
+parser.add_argument("-O", "--out-format", help="output format", choices=['dts', 'dtbo', 'pdesc'], default='pdesc', dest='outfmt')
+parser.add_argument("-o", "--out", help="output file")
+parser.add_argument("-D", "--diagonal", help="panel size (diagonal), inches; used to calculate physical size when dtb lacks it", type=float)
 parser.add_argument(metavar="/path/to/vendor.dtb", dest="source_dtb", help="dtb file from stock firmware")
 args = parser.parse_args()
+comment = (args.outfmt == 'pdesc')
 
 with open(args.source_dtb, "rb") as f:
     dtb_data = f.read()
@@ -21,16 +24,25 @@ acc = []
 g_name = f"name='{args.name}' " if args.name else ""
 
 dt = fdt.parse_dtb(dtb_data)
-panel = dt.get_node("dsi@ff450000/panel@0")
+for target in ["dsi@ff450000/panel@0", "dsi@fe060000/panel@0"]:
+    try:
+        panel = dt.get_node(target)
+        break
+    except:
+        pass
 
-w = panel.get_property("width-mm").value
-h = panel.get_property("height-mm").value
+
+def prop_default(prop, default):
+    try:
+        return panel.get_property(prop).value
+    except:
+        return default
 
 delays = [
-        panel.get_property("prepare-delay-ms").value,
-        panel.get_property("reset-delay-ms").value,
-        panel.get_property("init-delay-ms").value,
-        panel.get_property("enable-delay-ms").value,
+        prop_default("prepare-delay-ms", 50),
+        prop_default("reset-delay-ms", 50),
+        prop_default("init-delay-ms", 50),
+        prop_default("enable-delay-ms", 50),
         20  # ready -- no such timeout in legacy dtbs
         ]
 delays_str = ','.join(map(str, delays))
@@ -39,9 +51,6 @@ fmt = ['rgb888', 'rgb666', 'rgb666_packed', 'rgb565'] [panel.get_property("dsi,f
 lanes = panel.get_property("dsi,lanes").value
 flags = panel.get_property("dsi,flags").value
 flags |= 0x0400
-
-# G size=52,70 delays=2,1,20,120,50,20 format=rgb888 lanes=4 flags=0xe03
-acc += [f"G {g_name}size={w},{h} delays={delays_str} format={fmt} lanes={lanes} flags=0x{flags:x}", ""]
 
 
 timings = panel.get_subnode("display-timings")
@@ -80,6 +89,24 @@ for m in timings.nodes:
         orig_def_fps = fps
 
 
+try:
+    w = panel.get_property("width-mm").value
+    h = panel.get_property("height-mm").value
+except:
+    if not args.diagonal:
+        sys.stderr.buffer.write(b'width-mm or height-mm not set, specify diagonal with -D option\n')
+        exit(1)
+    randmode = list(modes.values())[0]
+    hactive = randmode['hor'][0]
+    vactive = randmode['ver'][0]
+    pxdiag = math.sqrt(hactive*hactive + vactive*vactive)
+    diag_mm = args.diagonal * 25.4
+    w = round(diag_mm * hactive/pxdiag)
+    h = round(diag_mm * vactive/pxdiag)
+
+# G size=52,70 delays=2,1,20,120,50,20 format=rgb888 lanes=4 flags=0xe03
+acc += [f"G {g_name}size={w},{h} delays={delays_str} format={fmt} lanes={lanes} flags=0x{flags:x}", ""]
+
 def absfrac(x):
     return abs(x - round(x))
 
@@ -96,7 +123,9 @@ def absfrac(x):
 def_fps = 60
 if orig_def_fps:
     def_fps = orig_def_fps
-for targetfps in [orig_def_fps, 50/1.001, 50, 50.0070, 57.5, 59.7275, 60/1.001, 60, 60.0988, 75.47, 90, 120]:
+common_fpss = [50/1.001, 50, 50.0070, 57.5, 59.7275, 60/1.001, 60, 60.0988, 75.47, 90, 120];
+common_fpss = [ fps for fps in common_fpss if fps != orig_def_fps]
+for targetfps in [orig_def_fps] + common_fpss:
     if not targetfps:
         continue
     warn = ""
@@ -146,7 +175,8 @@ for targetfps in [orig_def_fps, 50/1.001, 50, 50.0070, 57.5, 59.7275, 60/1.001, 
     hor_str = ','.join(map(str, hor))
     ver_str = ','.join(map(str, ver))
     maybe_default = " default=1" if targetfps == def_fps else ""
-    acc += [f"M clock={newclock} horizontal={hor_str} vertical={ver_str}{maybe_default} # {warn}fps={expectedfps:.6f} (target={targetfps:.6f})"]
+    maybe_comment = f" # {warn}fps={expectedfps:.6f} (target={targetfps:.6f})" if comment else ""
+    acc += [f"M clock={newclock} horizontal={hor_str} vertical={ver_str}{maybe_default}{maybe_comment}"]
 
 acc += [""]
 
@@ -166,19 +196,79 @@ while iseq:
     iseq = iseq[datalen:]
 
     maybe_wait = f" wait={wait}" if (wait) else ""
-    acc += [f"I seq={data.hex()}{maybe_wait} # orig_cmd=0x{cmd:x}"]
+    maybe_comment = f" # orig_cmd=0x{cmd:x}" if comment else ""
+    acc += [f"I seq={data.hex()}{maybe_wait}{maybe_comment}"]
 
-if args.dtbo:
+
+# pre-formatted dts parts
+dts_header = f"""/dts-v1/;
+// version: 17
+// last_comp_version: 16
+
+/ {{
+    fragment@0 {{
+        target-path = "/{target}";
+        __overlay__ {{
+            compatible = "rocknix,generic-dsi";
+            panel_description ="""
+dts_footer = """;
+        };
+    };
+};
+"""
+
+# choose where to output
+if args.out:
+    f = open(args.out, "wb")
+else:
+    f = sys.stdout.buffer
+
+# Helper for short cmd grouping
+def cmd_prefix(line):
+    if len(line) != 10:
+        return None
+    if line[0:6] != 'I seq=':
+        return None
+    # "I seq=0320"   ->  "0l"
+    return line[6:7] + ('l' if line[7] < '8' else 'H')
+    
+if args.outfmt == 'dts':
+    # For fancy multi-line format we do not use fdt.FDT.to_dts(), but craft custom dts
+    f.write(dts_header.encode())
+    prevpfx = None;
+    nocomma = True
+    for l in acc:
+        comma = '' if nocomma else ','
+
+        curpfx = cmd_prefix(l)
+        if curpfx and curpfx == prevpfx:
+            delimiter = ' '
+        else:
+            delimiter = '\n                '
+        prevpfx = curpfx
+
+        if l == '':
+            f.write((comma + '\n').encode())
+            nocomma = True
+        else:
+            f.write((comma + delimiter + '"' + l + '"').encode())
+            nocomma = False
+
+    f.write(dts_footer.encode())
+elif args.outfmt == 'dtbo':
     # remove empty lines as pyfdt does not like them
     acc = [ l for l in acc if l != '']
     # create an overlay tree
     overlay = fdt.FDT()
-    overlay.set_property('target-path', '/dsi@ff450000/panel@0', path='fragment@0')
+    overlay.header.version = 17
+    overlay.set_property('target-path', '/'+target, path='fragment@0')
     overlay.set_property('compatible', 'rocknix,generic-dsi', path='fragment@0/__overlay__')
     overlay.set_property('panel_description', acc, path='fragment@0/__overlay__')
-    # store the overlay
-    with open(args.dtbo, "wb") as f:
-        f.write(overlay.to_dtb(version=17))
+    # send the overlay to output
+    f.write(overlay.to_dtb())
 else:
     for l in acc:
-        print(l)
+        f.write((l + "\n").encode())
+
+if args.out:
+    f.close()
