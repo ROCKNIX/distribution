@@ -3,10 +3,10 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="libvpx"
-PKG_VERSION="v1.15.0"
+PKG_VERSION="df655cf4fb6c2a23b964544acd015cc715752830" # 1.13.1
 PKG_LICENSE="BSD"
 PKG_SITE="https://github.com/webmproject/libvpx"
-PKG_URL="https://github.com/webmproject/libvpx/archive/refs/tags/${PKG_VERSION}.tar.gz"
+PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_HOST="toolchain nasm:host"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="WebM VP8/VP9 Codec"
