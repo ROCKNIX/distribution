@@ -31,14 +31,27 @@ configure_package() {
   if [ "${OPENGLES_SUPPORT}" = "yes" ]; then
     PKG_DEPENDS_TARGET+=" ${OPENGLES}"
   fi
+
+  if [ "${VULKAN_SUPPORT}" = "yes" ]; then
+    PKG_DEPENDS_TARGET+=" ${VULKAN}"
+  fi
 }
-# to enable xwayland package: https://gitlab.freedesktop.org/xorg/lib/libxcb-wm/-/tree/master/icccm?ref_type=heads
-PKG_MESON_OPTS_TARGET="-Dxcb-errors=disabled \
+
+# Vulkan Support
+  if [ "${VULKAN_SUPPORT}" = "yes" ]; then
+    PKG_MESON_OPTS_TARGET="-Dxcb-errors=disabled \
+                       -Dxwayland=enabled \
+                       -Dexamples=false \
+                       -Drenderers=vulkan,gles2 \
+                       -Dbackends=drm,libinput"
+  else
+    # to enable xwayland package: https://gitlab.freedesktop.org/xorg/lib/libxcb-wm/-/tree/master/icccm?ref_type=heads
+    PKG_MESON_OPTS_TARGET="-Dxcb-errors=disabled \
                        -Dxwayland=enabled \
                        -Dexamples=false \
                        -Drenderers=gles2 \
                        -Dbackends=drm,libinput"
-
+ fi
 unpack() {
   mkdir -p ${PKG_BUILD}
   tar --strip-components=1 -xf ${SOURCES}/${PKG_NAME}/${PKG_NAME}-${PKG_VERSION}.tar.gz -C ${PKG_BUILD}
