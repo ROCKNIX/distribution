@@ -23,6 +23,6 @@ for FOLDER_LINK in "${FOLDER_LINKS[@]}"; do
   ln -sf "$TARGET_FOLDER" "$SOURCE_FOLDER"
 done
 
-export QT_QPA_PLATFORM=wayland
+export QT_QPA_PLATFORM=xcb
 set_kill set "-9 rpcs3"
 /usr/bin/rpcs3-sa
