@@ -506,6 +506,7 @@ makeinstall_target() {
       add_emu_core gamecube dolphin dolphin-sa-gc true
       add_emu_core gamecube dolphin dolphin-qt-gc false
       add_emu_core gamecube retroarch dolphin false
+      install_script "Start Dolphin.sh"
       add_es_system gamecube
     ;;
     S922X|RK35*)
