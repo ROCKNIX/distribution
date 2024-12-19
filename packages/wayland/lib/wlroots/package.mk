@@ -7,6 +7,7 @@ PKG_SITE="https://gitlab.freedesktop.org/wlroots/wlroots/"
 PKG_DEPENDS_TARGET="toolchain libinput libxkbcommon pixman libdrm wayland wayland-protocols seatd xwayland hwdata libxcb xcb-util-wm"
 PKG_LONGDESC="A modular Wayland compositor library"
 PKG_TOOLCHAIN="meson"
+PKG_PATCH_DIRS+="${DEVICE}"
 
 case ${DEVICE} in
   SD865|AMD64|RK3399|H700)
