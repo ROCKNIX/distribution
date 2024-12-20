@@ -841,8 +841,8 @@ makeinstall_target() {
       add_emu_core psx retroarch beetle_psx false
     ;;
     RK3588*)
-      add_emu_core psx retroarch pcsx_rearmed32 true
-      add_emu_core psx retroarch pcsx_rearmed false
+      add_emu_core psx retroarch pcsx_rearmed true
+      add_emu_core psx retroarch pcsx_rearmed32 false
       add_emu_core psx retroarch beetle_psx false
       add_emu_core psx mednafen psx false
     ;;
