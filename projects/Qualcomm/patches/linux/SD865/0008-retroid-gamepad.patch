@@ -25,8 +25,8 @@ diff -rupbN linux.orig/drivers/input/joystick/Makefile linux/drivers/input/joyst
  obj-$(CONFIG_JOYSTICK_QWIIC)		+= qwiic-joystick.o
 diff -rupbN linux.orig/drivers/input/joystick/retroid.c linux/drivers/input/joystick/retroid.c
 --- linux.orig/drivers/input/joystick/retroid.c	1970-01-01 00:00:00.000000000 +0000
-+++ linux/drivers/input/joystick/retroid.c	2024-11-29 21:42:23.377473246 +0000
-@@ -0,0 +1,313 @@
++++ linux/drivers/input/joystick/retroid.c	2024-12-18 16:08:54
+@@ -0,0 +1,485 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Driver for Retroid Pocket Gamepad
@@ -44,6 +44,7 @@ diff -rupbN linux.orig/drivers/input/joystick/retroid.c linux/drivers/input/joys
 +#include <linux/input.h>
 +#include <linux/kernel.h>
 +#include <linux/module.h>
++#include <linux/moduleparam.h>
 +#include <linux/of.h>
 +#include <linux/serdev.h>
 +#include <linux/slab.h>
@@ -51,6 +52,7 @@ diff -rupbN linux.orig/drivers/input/joystick/retroid.c linux/drivers/input/joys
 +
 +#define DRIVER_NAME "retroid-pocket-gamepad"
 +#define MAX_DATA_LEN 64
++#define INT_SIGN(X) ((X > 0) - (X < 0))
 +
 +#define gamepad_serdev_write_seq(serdev, seq...)                      \
 +	do {                                                              \
@@ -87,6 +89,102 @@ diff -rupbN linux.orig/drivers/input/joystick/retroid.c linux/drivers/input/joys
 +	struct gpio_desc *reset_gpio;
 +	struct input_dev *dev_input;
 +};
++
++
++static int update_params=0;
++
++static int trigger_left_max=0x610;
++static int trigger_left_deadzone=0x0;
++static int trigger_left_antideadzone=0x0;
++
++static int trigger_right_max=0x610;
++static int trigger_right_deadzone=0x0;
++static int trigger_right_antideadzone=0x0;
++
++static int axis_leftx_min=-0x580;
++static int axis_leftx_center=0x0;
++static int axis_leftx_max=0x580;
++static int axis_leftx_deadzone=0x0;
++static int axis_leftx_antideadzone=0x0;
++
++static int axis_lefty_min=-0x580;
++static int axis_lefty_center=0x0;
++static int axis_lefty_max=0x580;
++static int axis_lefty_deadzone=0x0;
++static int axis_lefty_antideadzone=0x0;
++
++static int axis_leftz_min=-0x580;
++static int axis_leftz_center=0x0;
++static int axis_leftz_max=0x580;
++static int axis_leftz_deadzone=0x0;
++static int axis_leftz_antideadzone=0x0;
++
++static int axis_rightx_min=-0x580;
++static int axis_rightx_center=0x0;
++static int axis_rightx_max=0x580;
++static int axis_rightx_deadzone=0x0;
++static int axis_rightx_antideadzone=0x0;
++
++static int axis_righty_min=-0x580;
++static int axis_righty_center=0x0;
++static int axis_righty_max=0x580;
++static int axis_righty_deadzone=0x0;
++static int axis_righty_antideadzone=0x0;
++
++static int axis_rightz_min=-0x580;
++static int axis_rightz_center=0x0;
++static int axis_rightz_max=0x580;
++static int axis_rightz_deadzone=0x0;
++static int axis_rightz_antideadzone=0x0;
++
++module_param(update_params,int,0660);
++
++module_param(trigger_left_max,int,0660);
++module_param(trigger_left_deadzone,int,0660);
++module_param(trigger_left_antideadzone,int,0660);
++
++
++module_param(trigger_right_max,int,0660);
++module_param(trigger_right_deadzone,int,0660);
++module_param(trigger_right_antideadzone,int,0660);
++
++module_param(axis_leftx_min,int,0660);
++module_param(axis_leftx_center,int,0660);
++module_param(axis_leftx_max,int,0660);
++module_param(axis_leftx_deadzone,int,0660);
++module_param(axis_leftx_antideadzone,int,0660);
++
++
++module_param(axis_lefty_min,int,0660);
++module_param(axis_lefty_center,int,0660);
++module_param(axis_lefty_max,int,0660);
++module_param(axis_lefty_deadzone,int,0660);
++module_param(axis_lefty_antideadzone,int,0660);
++
++module_param(axis_leftz_min,int,0660);
++module_param(axis_leftz_center,int,0660);
++module_param(axis_leftz_max,int,0660);
++module_param(axis_leftz_deadzone,int,0660);
++module_param(axis_leftz_antideadzone,int,0660);
++
++module_param(axis_rightx_min,int,0660);
++module_param(axis_rightx_center,int,0660);
++module_param(axis_rightx_max,int,0660);
++module_param(axis_rightx_deadzone,int,0660);
++module_param(axis_rightx_antideadzone,int,0660);
++
++module_param(axis_righty_min,int,0660);
++module_param(axis_righty_center,int,0660);
++module_param(axis_righty_max,int,0660);
++module_param(axis_righty_deadzone,int,0660);
++module_param(axis_righty_antideadzone,int,0660);
++
++module_param(axis_rightz_min,int,0660);
++module_param(axis_rightz_center,int,0660);
++module_param(axis_rightz_max,int,0660);
++module_param(axis_rightz_deadzone,int,0660);
++module_param(axis_rightz_antideadzone,int,0660);
++
 +
 +static u8 gamepad_data_checksum(const u8 *data, size_t count)
 +{
@@ -134,24 +232,75 @@ diff -rupbN linux.orig/drivers/input/joystick/retroid.c linux/drivers/input/joys
 +	if (!indev)
 +		return;
 +
++	if (update_params)
++	{
++		input_set_abs_params(indev, ABS_X,
++			INT_SIGN(axis_leftx_min) * ( abs(axis_leftx_min) - axis_leftx_antideadzone ),
++			INT_SIGN(axis_leftx_max) * ( abs(axis_leftx_max) - axis_leftx_antideadzone ),
++			0, 0);
++		input_set_abs_params(indev, ABS_Y,
++			INT_SIGN(axis_lefty_min) * ( abs(axis_lefty_min) - axis_leftx_antideadzone ),
++			INT_SIGN(axis_lefty_max) * ( abs(axis_lefty_max) - axis_leftx_antideadzone ),
++			 0, 0);
++		input_set_abs_params(indev, ABS_Z,
++			INT_SIGN(axis_leftz_min) * ( abs(axis_leftz_min) - axis_leftx_antideadzone ),
++			INT_SIGN(axis_leftz_max) * ( abs(axis_leftz_max) - axis_leftx_antideadzone ),
++			 0, 0);
++
++		input_set_abs_params(indev, ABS_RX,
++			INT_SIGN(axis_rightx_min) * ( abs(axis_rightx_min) - axis_leftx_antideadzone ),
++			INT_SIGN(axis_rightx_max) * ( abs(axis_rightx_max) - axis_leftx_antideadzone ),
++			0, 0);
++		input_set_abs_params(indev, ABS_RY,
++			INT_SIGN(axis_righty_min) * ( abs(axis_righty_min) - axis_leftx_antideadzone ),
++			INT_SIGN(axis_righty_max) * ( abs(axis_righty_max) - axis_leftx_antideadzone ),
++			 0, 0);
++		input_set_abs_params(indev, ABS_RZ,
++			INT_SIGN(axis_rightz_min) * ( abs(axis_rightz_min) - axis_leftx_antideadzone ),
++			INT_SIGN(axis_rightz_max) * ( abs(axis_rightz_max) - axis_leftx_antideadzone ),
++			 0, 0);
++
++		input_set_abs_params(indev, ABS_HAT2X, 0, trigger_left_max - trigger_left_antideadzone, 0, 30);
++		input_set_abs_params(indev, ABS_HAT2Y, 0, trigger_right_max - trigger_right_antideadzone, 0, 30);
++		update_params = 0;
++	}
++
++
 +	bitmap_xor(&changes, &current_states, &prev_states, ARRAY_SIZE(keymap));
 +
 +	for_each_set_bit(i, &changes, ARRAY_SIZE(keymap)) {
 +		input_report_key(indev, keymap[i], (current_states & BIT(i)));
 +	}
 +
++	int16_t value;
++
++	value = (int16_t)(trigger_left_max - (data->data[2] | (data->data[3] << 8)));
 +	input_report_abs(indev, ABS_HAT2X,
-+			 0x610 - (data->data[2] | (data->data[3] << 8)));
++			 ( value < trigger_left_deadzone )? 0 : value - trigger_left_antideadzone);
++
++	value = (int16_t)(trigger_right_max - (data->data[4] | (data->data[5] << 8)));
 +	input_report_abs(indev, ABS_HAT2Y,
-+			 0x610 - (data->data[4] | (data->data[5] << 8)));
++			 ( value < trigger_right_deadzone )? 0 : value - trigger_right_antideadzone);
++
++	value = -(int16_t)(data->data[6] | (data->data[7] << 8));
++	value += axis_leftx_center;
 +	input_report_abs(indev, ABS_X,
-+			 -(int16_t)(data->data[6] | (data->data[7] << 8)));
++			 ( abs(value) < axis_leftx_deadzone )? 0 : INT_SIGN(value) * ( abs(value) - axis_leftx_antideadzone ));
++
++	value = -(int16_t)(data->data[8] | (data->data[9] << 8));
++	value += axis_lefty_center;
 +	input_report_abs(indev, ABS_Y,
-+			 -(int16_t)(data->data[8] | (data->data[9] << 8)));
++			 ( abs(value) < axis_lefty_deadzone )? 0 : INT_SIGN(value) * ( abs(value) - axis_lefty_antideadzone ));
++
++	value = -(int16_t)(data->data[10] | (data->data[11] << 8));
++	value += axis_rightx_center;
 +	input_report_abs(indev, ABS_RX,
-+			 -(int16_t)(data->data[10] | (data->data[11] << 8)));
++			 ( abs(value) < axis_rightx_deadzone )? 0 : INT_SIGN(value) * ( abs(value) - axis_rightx_antideadzone ));
++
++	value = -(int16_t)(data->data[12] | (data->data[13] << 8));
++	value += axis_righty_center;
 +	input_report_abs(indev, ABS_RY,
-+			 -(int16_t)(data->data[12] | (data->data[13] << 8)));
++			 ( abs(value) < axis_righty_deadzone )? 0 : INT_SIGN(value) * ( abs(value) - axis_righty_antideadzone ));
 +
 +	input_sync(indev);
 +	prev_states = keys;
@@ -300,12 +449,35 @@ diff -rupbN linux.orig/drivers/input/joystick/retroid.c linux/drivers/input/joys
 +		input_set_capability(gamepad_dev->dev_input, EV_KEY, keymap[i]);
 +
 +	__set_bit(EV_ABS, gamepad_dev->dev_input->evbit);
-+	for (int i = ABS_X; i <= ABS_RZ; i++)
-+		input_set_abs_params(gamepad_dev->dev_input, i, -0x580, 0x580,
-+				     0, 0);
 +
-+	input_set_abs_params(gamepad_dev->dev_input, ABS_HAT2X, 0, 1550, 0, 30);
-+	input_set_abs_params(gamepad_dev->dev_input, ABS_HAT2Y, 0, 1550, 0, 30);
++	input_set_abs_params(gamepad_dev->dev_input, ABS_X,
++		INT_SIGN(axis_leftx_min) * ( abs(axis_leftx_min) - axis_leftx_antideadzone ),
++		INT_SIGN(axis_leftx_max) * ( abs(axis_leftx_max) - axis_leftx_antideadzone ),
++		0, 0);
++	input_set_abs_params(gamepad_dev->dev_input, ABS_Y,
++		INT_SIGN(axis_lefty_min) * ( abs(axis_lefty_min) - axis_leftx_antideadzone ),
++		INT_SIGN(axis_lefty_max) * ( abs(axis_lefty_max) - axis_leftx_antideadzone ),
++		0, 0);
++	input_set_abs_params(gamepad_dev->dev_input, ABS_Z,
++		INT_SIGN(axis_leftz_min) * ( abs(axis_leftz_min) - axis_leftx_antideadzone ),
++		INT_SIGN(axis_leftz_max) * ( abs(axis_leftz_max) - axis_leftx_antideadzone ),
++		0, 0);
++
++	input_set_abs_params(gamepad_dev->dev_input, ABS_RX,
++		INT_SIGN(axis_rightx_min) * ( abs(axis_rightx_min) - axis_leftx_antideadzone ),
++		INT_SIGN(axis_rightx_max) * ( abs(axis_rightx_max) - axis_leftx_antideadzone ),
++		0, 0);
++	input_set_abs_params(gamepad_dev->dev_input, ABS_RY,
++		INT_SIGN(axis_righty_min) * ( abs(axis_righty_min) - axis_leftx_antideadzone ),
++		INT_SIGN(axis_righty_max) * ( abs(axis_righty_max) - axis_leftx_antideadzone ),
++		0, 0);
++	input_set_abs_params(gamepad_dev->dev_input, ABS_RZ,
++		INT_SIGN(axis_rightz_min) * ( abs(axis_rightz_min) - axis_leftx_antideadzone ),
++		INT_SIGN(axis_rightz_max) * ( abs(axis_rightz_max) - axis_leftx_antideadzone ),
++		0, 0);
++
++		input_set_abs_params(gamepad_dev->dev_input, ABS_HAT2X, 0, trigger_left_max - trigger_left_antideadzone, 0, 30);
++		input_set_abs_params(gamepad_dev->dev_input, ABS_HAT2Y, 0, trigger_right_max - trigger_right_antideadzone, 0, 30);
 +
 +	ret = input_register_device(gamepad_dev->dev_input);
 +	if (ret)
