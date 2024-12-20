@@ -89,7 +89,6 @@ post_makeinstall_target() {
     rm -rf ${INSTALL}/etc/avahi/services/ssh.service
     rm -rf ${INSTALL}/etc/avahi/services/sftp-ssh.service
   fi
-  rm -rf ${INSTALL}/usr/lib/systemd
   rm -f ${INSTALL}/usr/share/dbus-1/system-services/org.freedesktop.Avahi.service
   rm -f ${INSTALL}/usr/sbin/avahi-dnsconfd
   rm -f ${INSTALL}/usr/bin/avahi-bookmarks
