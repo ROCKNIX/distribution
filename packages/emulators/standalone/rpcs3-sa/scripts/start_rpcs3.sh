@@ -34,6 +34,7 @@ GAME=$(echo "${1}"| sed "s#^/.*/##")
 PLATFORM=$(echo "${2}"| sed "s#^/.*/##")
 ASPECT=$(get_setting aspect_ratio "${PLATFORM}" "${GAME}")
 ATEXTURE=$(get_setting async_texture_streaming "${PLATFORM}" "${GAME}")
+FLIMIT=$(get_setting frame_limit "${PLATFORM}" "${GAME}")
 GRENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
 IPS3RES=$(get_setting internal_ps3_resolution "${PLATFORM}" "${GAME}")
 IRES_SCALE=$(get_setting internal_resolution_scale "${PLATFORM}" "${GAME}")
@@ -66,6 +67,15 @@ if [ "$GRENDERER" = "vulkan" ]; then
   sed -i '/Video:/ {n; s/Renderer: .*/Renderer: Vulkan/}' "${CONFIG_YML}"
 else
   sed -i '/Video:/ {n; s/Renderer: .*/Renderer: OpenGL/}' "${CONFIG_YML}"
+fi
+
+#Internal Resolution
+if [ "${FLIMIT}" = "30" ]; then
+  sed -i "s#Frame limit:.*\$#Frame limit: 30#g" "${CONFIG_YML}"
+elif [ "${FLIMIT}" = "60" ]; then
+  sed -i "s#Frame limit:.*\$#Frame limit: 60#g" "${CONFIG_YML}"
+else
+  sed -i "s#Frame limit:.*\$#Frame limit: Auto#g" "${CONFIG_YML}"
 fi
 
 #Internal Resolution
