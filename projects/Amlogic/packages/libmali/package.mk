@@ -7,7 +7,7 @@ PKG_LICENSE="mali_driver"
 PKG_ARCH="aarch64"
 PKG_SITE="https://developer.arm.com/downloads/-/mali-drivers/user-space"
 PKG_URL="https://developer.arm.com/-/media/Files/downloads/mali-drivers/user-space/odroid-n2plus/BXODROIDN2PL-${PKG_VERSION}.tar"
-PKG_DEPENDS_TARGET="toolchain mesa vulkan-tools gpudriver"
+PKG_DEPENDS_TARGET="toolchain mesa vulkan-tools gpudriver vulkan-wsi-layer"
 PKG_TOOLCHAIN="manual"
 PKG_LONGDESC="OpenGL ES and Vulkan Mali drivers for s922x soc"
 
@@ -26,4 +26,6 @@ makeinstall_target() {
   tar -xvJf ${PKG_BUILD}/rootfs_additions.tar.xz -C ${INSTALL}/usr/share
   mv ${INSTALL}/usr/share/etc/vulkan/* ${INSTALL}/usr/share/vulkan/
   rm -r ${INSTALL}/usr/share/etc
+  # Remove packages WSI layer, we build our own
+  rm -r ${INSTALL}/usr/share/vulkan/implicit_layer.d
 }

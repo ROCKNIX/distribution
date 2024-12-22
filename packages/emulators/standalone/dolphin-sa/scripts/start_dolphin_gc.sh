@@ -56,6 +56,15 @@ fi
 rm -rf /storage/.config/dolphin-emu/StateSaves
 ln -sf /storage/roms/savestates/gamecube /storage/.config/dolphin-emu/StateSaves
 
+#Link and copy bios and other system stuff to roms
+if [ ! -d "/storage/roms/bios/GC/" ]; then
+    mkdir -p "/storage/roms/bios/GC/"
+    cp -r /storage/.config/dolphin-emu/GC /storage/roms/bios/
+fi
+
+rm -rf /storage/.config/dolphin-emu/GC
+ln -sf /storage/roms/bios/GC /storage/.config/dolphin-emu/GC
+
 #Grab a clean settings file during boot
 cp -r /usr/config/dolphin-emu/GFX.ini /storage/.config/dolphin-emu.GFX.ini
 cp -r /usr/config/dolphin-emu/Dolphin.ini /storage/.config/dolphin-emu.Dolphin.ini
@@ -75,6 +84,7 @@ HKEY=$(get_setting hotkey_enable_button "${PLATFORM}" "${GAME}")
 SHADERM=$(get_setting shader_mode "${PLATFORM}" "${GAME}")
 SHADERP=$(get_setting shader_precompile "${PLATFORM}" "${GAME}")
 VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
+SKIPBIOS=$(get_setting use_bios "${PLATFORM}" "${GAME}")
 
 #Set the cores to use
 CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
@@ -88,6 +98,9 @@ else
   ### All..
   unset EMUPERF
 fi
+
+# Default to X, set to wayland where supported
+export QT_QPA_PLATFORM=xcb
 
   #Anti-Aliasing
 	if [ "$AA" = "0" ]
@@ -185,6 +198,10 @@ fi
 	if [ "$RENDERER" = "vulkan" ]
 	then
   		sed -i '/GFXBackend/c\GFXBackend = Vulkan' /storage/.config/dolphin-emu/Dolphin.ini
+        # Use wayland when QT and vulkan is selected
+        if [ ${DOLPHIN_CORE} = "dolphin-emu" ]; then
+          export QT_QPA_PLATFORM=wayland
+        fi
 	else
 		sed -i '/GFXBackend/c\GFXBackend = OGL' /storage/.config/dolphin-emu/Dolphin.ini
 	fi
@@ -251,6 +268,14 @@ fi
   		sed -i '/ShowFPS/c\ShowFPS = true' /storage/.config/dolphin-emu/GFX.ini
 	fi
 
+  #Skip Bios
+	if [ "$SKIPBIOS" = "false" ]
+	then
+  		sed -i '/SkipIPL/c\SkipIPL = False' /storage/.config/dolphin-emu/Dolphin.ini
+    else
+  		sed -i '/SkipIPL/c\SkipIPL = True' /storage/.config/dolphin-emu/Dolphin.ini
+	fi
+
   #GC Controller Profile
         if [ "$CON" = "south" ]
         then
@@ -287,10 +312,17 @@ fi
 rm -rf /storage/.local/share/dolphin-emu
 ln -sf /storage/.config/dolphin-emu /storage/.local/share/dolphin-emu
 
-@EXPORTS@
 
 #Retroachievements
 /usr/bin/cheevos_dolphin.sh
+
+# Libmali exception
+if [ "$(/usr/bin/gpudriver)" = "libmali" ] && [ "${HW_DEVICE}" != "RK3566" ]; then
+    export QT_QPA_PLATFORM=wayland
+    # Force only working combo for libmali: QT + Vulkan
+    DOLPHIN_CORE=dolphin-emu
+    sed -i '/GFXBackend/c\GFXBackend = Vulkan' /storage/.config/dolphin-emu/Dolphin.ini
+fi
 
 #Run commands
 if [ ${DOLPHIN_CORE} = "dolphin-emu" ]; then

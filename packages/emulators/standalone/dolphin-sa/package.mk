@@ -9,7 +9,16 @@ PKG_LONGDESC="Dolphin is a GameCube / Wii emulator, allowing you to play games f
 PKG_TOOLCHAIN="cmake"
 
 case ${DEVICE} in
-  SD865|AMD64|RK3399)
+  RK3566)
+    PKG_SITE="https://github.com/dolphin-emu/dolphin"
+    PKG_URL="${PKG_SITE}.git"
+    PKG_VERSION="e6583f8bec814d8f3748f1d7738457600ce0de56"
+    PKG_PATCH_DIRS+=" wayland"
+    PKG_CMAKE_OPTS_TARGET+=" -DENABLE_QT=OFF \
+                             -DUSE_RETRO_ACHIEVEMENTS=OFF \
+                             -DENABLE_HEADLESS=ON"
+  ;;
+  *)
     PKG_VERSION="8c3b9c9cf6a4c40e773c5b13ed4dc7ea1912d05b"
     PKG_SITE="https://github.com/dolphin-emu/dolphin"
     PKG_URL="${PKG_SITE}.git"
@@ -18,15 +27,6 @@ case ${DEVICE} in
     PKG_CMAKE_OPTS_TARGET+=" -DENABLE_QT=ON \
                              -DUSE_RETRO_ACHIEVEMENTS=ON \
                              -DENABLE_HEADLESS=OFF"
-  ;;
-  *)
-    PKG_SITE="https://github.com/dolphin-emu/dolphin"
-    PKG_URL="${PKG_SITE}.git"
-    PKG_VERSION="e6583f8bec814d8f3748f1d7738457600ce0de56"
-    PKG_PATCH_DIRS+=" wayland"
-    PKG_CMAKE_OPTS_TARGET+=" -DENABLE_QT=OFF \
-                             -DUSE_RETRO_ACHIEVEMENTS=OFF \
-                             -DENABLE_HEADLESS=ON"
   ;;
 esac
 
@@ -89,17 +89,11 @@ makeinstall_target() {
 
 post_install() {
     case ${DEVICE} in
-      RK3588)
-        DOLPHIN_PLATFORM="\${PLATFORM}"
-        EXPORTS="if [ ! -z 'lsmod | grep panthor' ]; then LD_LIBRARY_PATH='\/usr\/lib\/libmali-valhall-g610-g13p0-x11-gbm.so' PLATFORM='wayland'; else PLATFORM='x11'; fi"
-      ;;
-      SD865|AMD64|RK3399)
-        DOLPHIN_PLATFORM="x11"
-        EXPORTS="export QT_QPA_PLATFORM=xcb"
+      RK3566)
+        DOLPHIN_PLATFORM="wayland"
       ;;
       *)
-        DOLPHIN_PLATFORM="wayland"
-        EXPORTS=""
+        DOLPHIN_PLATFORM="x11"
       ;;
     esac
     sed -e "s/@DOLPHIN_PLATFORM@/${DOLPHIN_PLATFORM}/g" -i ${INSTALL}/usr/bin/start_dolphin_gc.sh
