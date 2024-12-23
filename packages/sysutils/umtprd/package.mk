@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0
 
 PKG_NAME="umtprd"
-PKG_VERSION="1.6.2"
-PKG_SHA256="1de40511c1dd4618719cff2058dfe68a595f1b9284c80afa89d6d1a1c80aec29"
+PKG_VERSION="1.6.8"
+PKG_SHA256="e0b3c308016595a5d956eaaa086d3bfe4c9af2270857181695338df9affb3574"
 PKG_LICENSE="GPL-3.0+"
 PKG_SITE="https://github.com/viveris/uMTP-Responder/"
 PKG_URL="https://github.com/viveris/uMTP-Responder/archive/umtprd-${PKG_VERSION}.tar.gz"
