@@ -11,6 +11,15 @@ PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="WSD/LLMNR Discovery/Name Service Daemon"
 PKG_BUILD_FLAGS="+size"
 
+pre_make_target() {
+  sed -i 's|^ExecStart=.*$|ExecStart=/usr/libexec/samba/rocknix_wsdd.sh|' "${PKG_BUILD}/wsdd2.service"
+}
+
+post_makeinstall_target() {
+  mkdir -p "${INSTALL}/usr/libexec/samba"
+  cp -v "${PKG_BUILD}/rocknix_wsdd.sh" "${INSTALL}/usr/libexec/samba"
+}
+
 post_install() {
   enable_service wsdd2.service
 }
