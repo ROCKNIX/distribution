@@ -19,7 +19,7 @@ case ${DEVICE} in
                              -DENABLE_HEADLESS=ON"
   ;;
   *)
-    PKG_VERSION="8c3b9c9cf6a4c40e773c5b13ed4dc7ea1912d05b"
+    PKG_VERSION="f9ce2b9d764014ab59cf2c19e49c2c848604e6fc"
     PKG_SITE="https://github.com/dolphin-emu/dolphin"
     PKG_URL="${PKG_SITE}.git"
     PKG_DEPENDS_TARGET+=" qt6"
@@ -97,11 +97,5 @@ post_install() {
       ;;
     esac
     sed -e "s/@DOLPHIN_PLATFORM@/${DOLPHIN_PLATFORM}/g" -i ${INSTALL}/usr/bin/start_dolphin_gc.sh
-    sed -e "s/@DOLPHIN_PLATFORM@/${DOLPHIN_PLATFORM}/g" \
-        -i  ${INSTALL}/usr/bin/start_dolphin_wii.sh
-
-    sed -e "s/@EXPORTS@/${EXPORTS}/g" \
-        -i  ${INSTALL}/usr/bin/start_dolphin_gc.sh
-    sed -e "s/@EXPORTS@/${EXPORTS}/g" \
-        -i  ${INSTALL}/usr/bin/start_dolphin_wii.sh
+    sed -e "s/@DOLPHIN_PLATFORM@/${DOLPHIN_PLATFORM}/g" -i  ${INSTALL}/usr/bin/start_dolphin_wii.sh
 }
