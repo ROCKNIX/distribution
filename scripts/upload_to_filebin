@@ -1,0 +1,54 @@
+#!/bin/bash
+
+if [ -z "$1" ]; then
+  echo -e "Usage:\n  $0 path/to/file path/to/file ...\n" >&2
+  echo -e "Example:\n  $0 release/*.tar\n" >&2
+  echo -e "The script: will return an URL of created bin, e.g. https://filebin.net/filebin-helper-b1eeb559d" >&2
+  echo -e "Bin ID is generated from branch name and revision, so new commit = new bin\n" >&2
+  echo -e "Env vars:" >&2
+  echo -e "  FILEBIN_BIN_ID     bin id to upload files to (as in url, 'filebin-helper-b1eeb559d' above)" >&2
+  echo -e "  FILEBIN_CID        client id token, used for authorization" >&2
+  exit 1
+fi
+
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+REV=$(git rev-parse --short HEAD)
+
+if [ -z "${FILEBIN_CID}" ]; then
+  FILEBIN_CID=$(echo $USER $HOSTNAME $BRANCH | md5sum | cut -d" " -f1)
+fi
+
+if [ -z "${FILEBIN_BIN_ID}" ]; then
+  FILEBIN_BIN_ID="${BRANCH//[^a-zA-Z0-9-._]}-${REV}"
+fi
+BIN_URL="https://filebin.net/${FILEBIN_BIN_ID}"
+
+echo "FILEBIN_CID=${FILEBIN_CID}"
+
+COUNT_TOTAL=0
+COUNT_SUCCESS=0
+
+for FILE in "$@"; do
+  COUNT_TOTAL=$(($COUNT_TOTAL + 1))
+  if [ ! -s "$FILE" ]; then
+    echo "${FILE} seems to be broken" >&2
+    continue
+  fi
+  FILE_IN_BIN="$(basename $FILE)"
+  FILE_IN_BIN="${FILE_IN_BIN//[^a-zA-Z0-9-._]}"
+  UPLOAD_URL="${BIN_URL}/${FILE_IN_BIN}"
+
+  echo "Uploading ${FILE}"
+  echo "File URL: ${UPLOAD_URL}"
+  curl --fail --progress-bar ${CURL_EXTRA} \
+    -H "cid: ${FILEBIN_CID}" -H 'accept: application/json' -H 'Content-Type: application/octet-stream' \
+    -X POST "${UPLOAD_URL}" -T "${FILE}" > /dev/null
+
+  if [[ $? -eq 0 ]]; then
+    COUNT_SUCCESS=$(($COUNT_SUCCESS + 1))
+  else
+    echo -e "Failed: ${FILE}\n" >&2
+  fi
+done
+
+echo "${COUNT_SUCCESS}/${COUNT_TOTAL} file(s) uploaded to ${BIN_URL}"
