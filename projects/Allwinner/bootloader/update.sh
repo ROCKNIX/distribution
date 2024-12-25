@@ -18,13 +18,12 @@ fi
 # mount $BOOT_ROOT rw
 mount -o remount,rw $BOOT_ROOT
 
-for all_dtb in $BOOT_ROOT/*.dtb; do
-  dtb=$(basename $all_dtb)
-  if [ -f $SYSTEM_ROOT/usr/share/bootloader/$dtb ]; then
-    echo "Updating $dtb..."
-    cp -p $SYSTEM_ROOT/usr/share/bootloader/$dtb $BOOT_ROOT
-  fi
-done
+DT_ID=$(cat /proc/device-tree/rocknix-dt-id)
+UPDATE_DTB_SOURCE="$SYSTEM_ROOT/usr/share/bootloader/device_trees/$DT_ID.dtb"
+if [ -f "$UPDATE_DTB_SOURCE" ]; then
+  echo "Updating dtb.img from $UPDATE_DTB_SOURCE..."
+  cp -f "$UPDATE_DTB_SOURCE" "$BOOT_ROOT/dtb.img"
+fi
 
 # update bootloader
 if [ -f $SYSTEM_ROOT/usr/share/bootloader/u-boot-sunxi-with-spl.bin ]; then
