@@ -1,0 +1,264 @@
+diff --git a/test.c b/test.c
+index 8ff9eb3..9ec3be2 100644
+--- a/test.c
++++ b/test.c
+@@ -3,105 +3,164 @@
+ #include <stdio.h>
+ #include <math.h>
+ 
+-#define stop_timer(tid)			\
+-do {							\
+-	if (tid) {					\
+-		SDL_RemoveTimer (tid);	\
+-		tid = 0;				\
+-	}							\
++#define MAX_FINGERS 10
++
++// Stop timer macro definition
++#define stop_timer(tid)         \
++do {                            \
++    if (tid) {                  \
++        SDL_RemoveTimer(tid);   \
++        tid = 0;                \
++    }                           \
+ } while (0)
+ 
+-
+-static Uint32 cb_haptic (Uint32 interval, void *arg) {
+-	SDL_Haptic *haptic = arg;
+-
+-	if (haptic) {
+-		SDL_HapticRumblePlay (haptic, 0.5f, 250);
+-	}
++// Define a custom structure to store finger information
++typedef struct {
++    int touchId;
++    float x, y;
++} Finger;
++
++// Haptic callback function
++static Uint32 cb_haptic(Uint32 interval, void *arg) {
++    SDL_Haptic *haptic = arg;
++    if (haptic) {
++        SDL_HapticRumblePlay(haptic, 0.5f, 250);  // Trigger a short rumble
++    }
++    return 0;  // No need to repeat
+ }
+ 
+-int main (void) {
+-	SDL_Init (SDL_INIT_EVERYTHING);
+-	SDL_Window *window = SDL_CreateWindow (
+-		"Test",
+-		SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
+-		720, 1440,
+-		SDL_WINDOW_SHOWN
+-	);
+-	if (!window)
+-		return 1;
+-
+-	SDL_Renderer *renderer = SDL_CreateRenderer (window, -1, SDL_RENDERER_ACCELERATED);
+-	if (!renderer)
+-		return 1;
+-
+-	SDL_Haptic *haptic = SDL_HapticOpen (0);
+-	if (haptic) {
+-		SDL_HapticRumbleInit (haptic);
+-	} else {
+-
+-		printf ("No haptic device found.\n");
+-	}
+-
+-	int ww, wh, num_fingers = 0;
+-	SDL_GetWindowSize (window, &ww, &wh);
+-	float x = 0.0f, y = 0.0f;
+-	float scale = 50.0f;
+-	SDL_TimerID timerID = 0;
+-
+-	while (1) {
+-		SDL_Event e;
+-		while (SDL_PollEvent (&e)) {
+-			switch (e.type) {
+-			case SDL_QUIT:
+-				goto end;
+-
+-			case SDL_MULTIGESTURE:
+-				if (e.mgesture.numFingers == 2) {
+-					stop_timer (timerID);
+-					scale *= 1.0f + e.mgesture.dDist * 5.0f;
+-				}
+-				/*printf ("touchId = %u\n", (unsigned)e.mgesture.touchId);
+-				printf ("dTheta = %f\n", e.mgesture.dTheta);
+-				printf ("dDist = %f\n", e.mgesture.dDist);
+-				printf ("x = %f\n", e.mgesture.x);
+-				printf ("y = %f\n", e.mgesture.y);
+-				printf ("num_fingers = %u\n", (unsigned)e.mgesture.numFingers);*/
+-				break;
+-			case SDL_FINGERDOWN:
+-				if (!timerID && num_fingers == 0)
+-					timerID = SDL_AddTimer (500, &cb_haptic, haptic);
+-
+-				++num_fingers;
+-				break;
+-			case SDL_FINGERUP:
+-				stop_timer (timerID);
+-				--num_fingers;
+-				break;
+-			case SDL_FINGERMOTION:
+-				if (num_fingers == 1) {
+-					stop_timer (timerID);
+-					x += e.tfinger.dx;
+-					y += e.tfinger.dy;
+-				}
+-				break;
+-			}
+-		}
+-		SDL_SetRenderDrawColor (renderer, 255, 255, 255, 255);
+-		SDL_RenderClear (renderer);
+-
+-		const SDL_Rect rect = { x * ww, y * wh, scale, scale };
+-		SDL_SetRenderDrawColor (renderer, 0, 0, 0, 255);
+-		SDL_RenderFillRect (renderer, &rect);
+-
+-		SDL_RenderPresent (renderer);
+-	}
++int main() {
++    if (SDL_Init(SDL_INIT_EVERYTHING) != 0) {
++        printf("SDL_Init Error: %s\n", SDL_GetError());
++        return 1;
++    }
++
++    // Get the current screen resolution
++    SDL_DisplayMode mode;
++    if (SDL_GetDesktopDisplayMode(0, &mode) != 0) {
++        printf("SDL_GetDesktopDisplayMode Error: %s\n", SDL_GetError());
++        return 1;
++    }
++    int screen_width = mode.w;
++    int screen_height = mode.h;
++
++    // Create a fullscreen window
++    SDL_Window *window = SDL_CreateWindow(
++        "Test",
++        SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
++        screen_width, screen_height,
++        SDL_WINDOW_FULLSCREEN
++    );
++
++    if (!window) {
++        printf("SDL_CreateWindow Error: %s\n", SDL_GetError());
++        return 1;
++    }
++
++    // Create the renderer
++    SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
++    if (!renderer) {
++        printf("SDL_CreateRenderer Error: %s\n", SDL_GetError());
++        return 1;
++    }
++
++    // Check for haptic support
++    SDL_Haptic *haptic = SDL_HapticOpen(0);
++    if (haptic) {
++        SDL_HapticRumbleInit(haptic);
++    } else {
++        printf("No haptic device found.\n");
++    }
++
++    // Initialize variables
++    int ww, wh, num_fingers = 0;
++    SDL_GetWindowSize(window, &ww, &wh);
++    float scale = 50.0f;
++    SDL_TimerID timerID = 0;
++
++    // Store positions of active fingers (custom structure)
++    Finger fingers[MAX_FINGERS];
++    for (int i = 0; i < MAX_FINGERS; ++i) {
++        fingers[i].touchId = -1; // Mark all touchIds as unused initially
++    }
++
++    // Variables for tracking the position of the square
++    float square_x = 0.0f, square_y = 0.0f;  // To track the movement of the square
++
++    // Main loop
++    while (1) {
++        SDL_Event e;
++        while (SDL_PollEvent(&e)) {
++            switch (e.type) {
++            case SDL_QUIT:
++                goto end;
++
++            case SDL_FINGERDOWN:
++                // Ensure that we don't exceed MAX_FINGERS
++                if (num_fingers < MAX_FINGERS) {
++                    if (!timerID && num_fingers == 0)
++                        timerID = SDL_AddTimer(500, &cb_haptic, haptic);
++
++                    // Find an empty slot for the new finger
++                    for (int i = 0; i < MAX_FINGERS; ++i) {
++                        if (fingers[i].touchId == -1) {
++                            fingers[i].touchId = e.tfinger.touchId;
++                            fingers[i].x = e.tfinger.x;
++                            fingers[i].y = e.tfinger.y;
++                            ++num_fingers;
++                            break;
++                        }
++                    }
++                }
++                break;
++
++            case SDL_FINGERUP:
++                stop_timer(timerID);
++
++                // Remove the finger from tracking
++                for (int i = 0; i < MAX_FINGERS; ++i) {
++                    if (fingers[i].touchId == e.tfinger.touchId) {
++                        fingers[i].touchId = -1;
++                        --num_fingers;
++                        break;
++                    }
++                }
++                break;
++
++            case SDL_FINGERMOTION:
++                // Handle finger motion for moving the square
++                for (int i = 0; i < MAX_FINGERS; ++i) {
++                    if (fingers[i].touchId == e.tfinger.touchId) {
++                        // Update the square position based on this finger
++                        square_x = e.tfinger.x * ww;  // Convert normalized X to pixel
++                        square_y = e.tfinger.y * wh;  // Convert normalized Y to pixel
++                        break;
++                    }
++                }
++                break;
++            }
++        }
++
++        // Render
++        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
++        SDL_RenderClear(renderer);
++
++        // Calculate the new position and scale of the square
++        const SDL_Rect rect = {(int)(square_x - scale / 2), (int)(square_y - scale / 2), (int)(scale), (int)(scale)};
++        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
++        SDL_RenderFillRect(renderer, &rect);
++
++        SDL_RenderPresent(renderer);
++    }
+ 
+ end:
+-	if (haptic)
+-		SDL_HapticClose (haptic);
+-	SDL_DestroyRenderer (renderer);
+-	SDL_DestroyWindow (window);
+-	SDL_Quit ();
++    // Cleanup
++    if (haptic) {
++        SDL_HapticClose(haptic);
++    }
++    SDL_DestroyRenderer(renderer);
++    SDL_DestroyWindow(window);
++    SDL_Quit();
++
++    return 0;
+ }
+-
