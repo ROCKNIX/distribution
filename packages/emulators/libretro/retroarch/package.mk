@@ -148,6 +148,10 @@ makeinstall_target() {
     mkdir -p ${INSTALL}/usr/share/${dir}
     touch ${INSTALL}/usr/share/${dir}/.overlay
   done
+
+  # Copy achievment sounds
+  mkdir -p ${INSTALL}/usr/share/libretro
+    cp -R ${PKG_DIR}/sounds ${INSTALL}/usr/share/libretro
 }
 
 post_install() {

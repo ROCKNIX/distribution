@@ -435,7 +435,13 @@ function set_cheevos() {
         add_setting "retroachievements.testunofficial" "cheevos_test_unofficial"
         add_setting "retroachievements.badges" "cheevos_badges_enable"
         add_setting "retroachievements.active" "cheevos_start_active"
-        add_setting "retroachievements.soundenable" "cheevos_unlock_sound_enable"
+        local CHEEVOS_SOUND_ENABLE=$(game_setting "retroachievements.sound")
+        if [ "${CHEEVOS_SOUND_ENABLE}" != "none" ]; then
+            add_setting "none" "cheevos_unlock_sound_enable" "true"
+            add_setting "retroachievements.sound" "cheevos_unlock_sound"
+        else
+            add_setting "none" "cheevos_unlock_sound_enable" "false"
+        fi
     else
         add_setting "none" "cheevos_enable" "false"
     fi
