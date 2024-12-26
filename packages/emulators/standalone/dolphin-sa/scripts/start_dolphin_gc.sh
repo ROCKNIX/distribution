@@ -85,6 +85,10 @@ SHADERM=$(get_setting shader_mode "${PLATFORM}" "${GAME}")
 SHADERP=$(get_setting shader_precompile "${PLATFORM}" "${GAME}")
 VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
 SKIPBIOS=$(get_setting use_bios "${PLATFORM}" "${GAME}")
+EFBACCESS=$(get_setting skip_efb_cpu_access "${PLATFORM}" "${GAME}")
+EFBTEXTURE=$(get_setting store_efb_to_texture_only "${PLATFORM}" "${GAME}")
+XFBTEXTURE=$(get_setting store_xfb_to_texture_only "${PLATFORM}" "${GAME}")
+WHACK=$(get_setting widescreen_hack "${PLATFORM}" "${GAME}")
 
 # Set the cores to use
 CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
@@ -209,7 +213,6 @@ fi
     sed -i '/WaitForShadersBeforeStarting =/c\WaitForShadersBeforeStarting = True' /storage/.config/dolphin-emu/GFX.ini
   fi
 
-
   # Show FPS
   if [ "$FPS" = "true" ]; then
     sed -i '/ShowFPS/c\ShowFPS = True' /storage/.config/dolphin-emu/GFX.ini
@@ -222,6 +225,34 @@ fi
     sed -i '/SkipIPL/c\SkipIPL = False' /storage/.config/dolphin-emu/Dolphin.ini
   else
     sed -i '/SkipIPL/c\SkipIPL = True' /storage/.config/dolphin-emu/Dolphin.ini
+  fi
+
+  # Skip EFB CPU Access
+  if [ "$EFBACCESS" = "false" ]; then
+    sed -i '/EFBAccessEnable =/c\EFBAccessEnable = False' /storage/.config/dolphin-emu/GFX.ini
+  else
+    sed -i '/EFBAccessEnable =/c\EFBAccessEnable = True' /storage/.config/dolphin-emu/GFX.ini
+  fi
+
+  # Store EFB to texture only
+  if [ "$EFBTEXTURE" = "false" ]; then
+    sed -i '/EFBToTextureEnable =/c\EFBToTextureEnable = False' /storage/.config/dolphin-emu/GFX.ini
+  else
+    sed -i '/EFBToTextureEnable =/c\EFBToTextureEnable = True' /storage/.config/dolphin-emu/GFX.ini
+  fi
+
+  # Store EFB to texture only
+  if [ "$XFBTEXTURE" = "false" ]; then
+    sed -i '/XFBToTextureEnable =/c\XFBToTextureEnable = False' /storage/.config/dolphin-emu/GFX.ini
+  else
+    sed -i '/XFBToTextureEnable =/c\XFBToTextureEnable = True' /storage/.config/dolphin-emu/GFX.ini
+  fi
+
+  # Widescreen Hack
+  if [ "$WHACK" = "true" ]; then
+    sed -i '/wideScreenHack =/c\wideScreenHack = True' /storage/.config/dolphin-emu/GFX.ini
+  else
+    sed -i '/wideScreenHack =/c\wideScreenHack = False' /storage/.config/dolphin-emu/GFX.ini
   fi
 
   # GC Controller Profile

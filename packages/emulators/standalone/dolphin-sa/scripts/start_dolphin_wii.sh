@@ -78,6 +78,10 @@ HKEY=$(get_setting hotkey_enable_button "${PLATFORM}" "${GAME}")
 SHADERM=$(get_setting shader_mode "${PLATFORM}" "${GAME}")
 SHADERP=$(get_setting shader_precompile "${PLATFORM}" "${GAME}")
 VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
+EFBACCESS=$(get_setting skip_efb_cpu_access "${PLATFORM}" "${GAME}")
+EFBTEXTURE=$(get_setting store_efb_to_texture_only "${PLATFORM}" "${GAME}")
+XFBTEXTURE=$(get_setting store_xfb_to_texture_only "${PLATFORM}" "${GAME}")
+WHACK=$(get_setting widescreen_hack "${PLATFORM}" "${GAME}")
 
 #Set the cores to use
 CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
@@ -237,6 +241,34 @@ fi
     sed -i '/VSync =/c\VSync = True' /storage/.config/dolphin-emu/GFX.ini
   else
     sed -i '/VSync =/c\VSync = False' /storage/.config/dolphin-emu/GFX.ini
+  fi
+
+  # Skip EFB CPU Access
+  if [ "$EFBACCESS" = "false" ]; then
+    sed -i '/EFBAccessEnable =/c\EFBAccessEnable = False' /storage/.config/dolphin-emu/GFX.ini
+  else
+    sed -i '/EFBAccessEnable =/c\EFBAccessEnable = True' /storage/.config/dolphin-emu/GFX.ini
+  fi
+
+  # Store EFB to texture only
+  if [ "$EFBTEXTURE" = "false" ]; then
+    sed -i '/EFBToTextureEnable =/c\EFBToTextureEnable = False' /storage/.config/dolphin-emu/GFX.ini
+  else
+    sed -i '/EFBToTextureEnable =/c\EFBToTextureEnable = True' /storage/.config/dolphin-emu/GFX.ini
+  fi
+
+  # Store EFB to texture only
+  if [ "$XFBTEXTURE" = "false" ]; then
+    sed -i '/XFBToTextureEnable =/c\XFBToTextureEnable = False' /storage/.config/dolphin-emu/GFX.ini
+  else
+    sed -i '/XFBToTextureEnable =/c\XFBToTextureEnable = True' /storage/.config/dolphin-emu/GFX.ini
+  fi
+
+  # Widescreen Hack
+  if [ "$WHACK" = "true" ]; then
+    sed -i '/wideScreenHack =/c\wideScreenHack = True' /storage/.config/dolphin-emu/GFX.ini
+  else
+    sed -i '/wideScreenHack =/c\wideScreenHack = False' /storage/.config/dolphin-emu/GFX.ini
   fi
 
 # Skip bios always, it's untested for Wii
