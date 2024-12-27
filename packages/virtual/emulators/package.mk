@@ -8,14 +8,14 @@ PKG_SECTION="emulation" # Do not change to virtual or makeinstall_target will no
 PKG_LONGDESC="Emulation metapackage."
 PKG_TOOLCHAIN="manual"
 
-PKG_EMUS="amiberry flycast-sa gzdoom-sa hatarisa hypseus-singe moonlight mupen64plus-sa openbor pico-8 ppsspp-sa vice-sa"
+PKG_EMUS="amiberry duckstation-sa flycast-sa gzdoom-sa hatarisa hypseus-singe moonlight mupen64plus-sa openbor pico-8 ppsspp-sa vice-sa"
 
 PKG_RETROARCH="core-info libretro-database retroarch retroarch-assets retroarch-joypads retroarch-overlays slang-shaders"
 
 LIBRETRO_CORES="81-lr a5200-lr arduous-lr atari800-lr beetle-gba-lr beetle-lynx-lr beetle-ngp-lr beetle-pce-lr beetle-pce-fast-lr    \
                 beetle-pcfx-lr bsnes-mercury-accuracy-lr bsnes-mercury-balanced-lr bsnes-mercury-performance-lr beetle-supafaust-lr  \
                 beetle-supergrafx-lr beetle-vb-lr beetle-wswan-lr bluemsx-lr cap32-lr crocods-lr daphne-lr doublecherrygb-lr         \
-                dosbox-svn-lr dosbox-pure-lr duckstation-lr duckstation-sa easyrpg-lr emuscv-lr fake08-lr fbalpha2012-lr             \
+                dosbox-svn-lr dosbox-pure-lr duckstation-lr easyrpg-lr emuscv-lr fake08-lr fbalpha2012-lr                            \
                 fbalpha2019-lr fbneo-lr fceumm-lr flycast2021-lr fmsx-lr freechaf-lr freeintv-lr freej2me-lr fuse-lr gambatte-lr     \
                 gearboy-lr gearcoleco-lr gearsystem-lr genesis-plus-gx-lr genesis-plus-gx-wide-lr gw-lr handy-lr hatari-lr idtech-lr \
                 jaxe-lr mame-lr mame2003-plus-lr mame2010-lr mame2015-lr melonds-lr melonds-ds-lr mesen-lr mgba-lr minivmac-lr       \
@@ -31,7 +31,7 @@ case "${DEVICE}" in
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="wine"
     PKG_EMUS+=" cemu-sa dolphin-sa lime3ds-sa mednafen melonds-sa minivmacsa mupen64plus-sa nanoboyadvance-sa pcsx2-sa     \
                rpcs3-sa scummvmsa vita3k-sa xemu-sa"
-    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr desmume-lr dolphin-lr flycast-lr lrps2-lr play-lr"
+    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr desmume-lr dolphin-lr flycast-lr lrps2-lr panda3ds-lr play-lr"
   ;;
   RK3588)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 desmume-lr gpsp-lr pcsx_rearmed-lr wine"
@@ -55,7 +55,7 @@ case "${DEVICE}" in
   S922X)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 pcsx_rearmed-lr wine"
     PKG_EMUS+=" aethersx2-sa box64 dolphin-sa drastic-sa portmaster scummvmsa yabasanshiro-sa"
-    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr geolith-lr flycast-lr lime3ds-sa uae4arm"
+    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr geolith-lr flycast-lr lime3ds-sa panda3ds-lr uae4arm"
     PKG_RETROARCH+=" retropie-shaders"
   ;;
   RK3326)
@@ -76,7 +76,7 @@ case "${DEVICE}" in
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 desmume-lr gpsp-lr pcsx_rearmed-lr wine"
     PKG_EMUS+=" aethersx2-sa box64 dolphin-sa drastic-sa lime3ds-sa melonds-sa portmaster rpcs3-sa scummvmsa supermodel-sa \
                yabasanshiro-sa xemu-sa"
-    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr flycast-lr geolith-lr pcsx_rearmed-lr uae4arm kronos-lr"
+    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr flycast-lr geolith-lr panda3ds-lr pcsx_rearmed-lr uae4arm kronos-lr"
     PKG_RETROARCH+=" retropie-shaders"
   ;;
 esac
@@ -141,9 +141,10 @@ makeinstall_target() {
   case ${DEVICE} in
     AMD64|S922X|SD865)
       add_emu_core 3ds lime3ds lime3ds-sa true
+      add_emu_core 3ds retroarch panda3ds false
       add_es_system 3ds
     ;;
-    *)
+    RK3588)
       add_emu_core 3ds retroarch panda3ds true
       add_es_system 3ds
     ;;
@@ -726,6 +727,7 @@ makeinstall_target() {
       add_emu_core nds retroarch melondsds false
       add_emu_core nds retroarch desmume false
       add_emu_core nds melonds melonds-sa false
+      install_script "Start MelonDS.sh"
     ;;
     RK3399|RK3*)
       add_emu_core nds drastic drastic-sa true
@@ -733,6 +735,7 @@ makeinstall_target() {
       add_emu_core nds retroarch melondsds false
       add_emu_core nds melonds melonds-sa false
       add_emu_core nds retroarch desmume false
+      install_script "Start MelonDS.sh"
     ;;
     RK3326|H700)
       add_emu_core nds drastic drastic-sa true
@@ -746,6 +749,7 @@ makeinstall_target() {
       add_emu_core nds retroarch melondsds false
       add_emu_core nds melonds melonds-sa true
       add_emu_core nds retroarch desmume false
+      install_script "Start MelonDS.sh"
     ;;
     *)
       add_emu_core nds drastic drastic-sa true
@@ -867,6 +871,7 @@ makeinstall_target() {
   add_emu_core psx retroarch duckstation false
   add_emu_core psx retroarch swanstation false
   add_es_system psx
+  install_script "Start Duckstation.sh"
 
   ### Sony Playstation 2
   case ${DEVICE} in
