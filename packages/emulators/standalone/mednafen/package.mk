@@ -10,16 +10,16 @@ PKG_DEPENDS_TARGET="toolchain SDL2 flac"
 PKG_TOOLCHAIN="configure"
 
 case ${DEVICE} in
-  H700)
+  H700|SD865)
     PKG_PATCH_DIRS+=" sdl-input"
   ;;
 esac
 
 pre_configure_target() {
 
-export CFLAGS="${CFLAGS} -flto -fipa-pta"
-export CXXFLAGS="${CXXFLAGS} -flto -fipa-pta"
-export LDFLAGS="${LDFLAGS} -flto -fipa-pta"
+export CFLAGS="${CFLAGS} -flto -fipa-pta --param max-gcse-memory=256351"
+export CXXFLAGS="${CXXFLAGS} -flto -fipa-pta --param max-gcse-memory=256351"
+export LDFLAGS="${LDFLAGS} -flto -fipa-pta --param max-gcse-memory=256351"
 
 # unsupported modules
 DISABLED_MODULES+=" --disable-apple2 \
@@ -34,6 +34,10 @@ case ${DEVICE} in
   ;;
   RK3588*)
     DISABLED_MODULES+=" --disable-snes"
+  ;;
+  S922X)
+    DISABLED_MODULES+="  --disable-ss \
+			 --disable-snes"
   ;;
 esac
 
