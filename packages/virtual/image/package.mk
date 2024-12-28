@@ -23,7 +23,7 @@ PKG_GRAPHICS="imagemagick"
 
 PKG_FONTS="corefonts"
 
-PKG_MULTIMEDIA="ffmpeg vlc mpv gmu"
+PKG_MULTIMEDIA="ffmpeg vlc mpv gmu m8c"
 
 PKG_SOUND="espeak libao"
 
