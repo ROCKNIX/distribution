@@ -23,7 +23,7 @@ case ${DEVICE} in
     PKG_PATCH_DIRS="${LINUX} ${DEVICE} default"
   ;;
   SD865|H700|AMD64|RK3399|S922X)
-    PKG_VERSION="6.12.6"
+    PKG_VERSION="6.12.7"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
   ;;
   *)
