@@ -264,7 +264,7 @@ makeinstall_target() {
     mkdir -p ${INSTALL}/usr/share/bootloader
     for dtb in arch/${TARGET_KERNEL_ARCH}/boot/dts/*.dtb arch/${TARGET_KERNEL_ARCH}/boot/dts/*/*.dtb; do
       if [ -f ${dtb} ]; then
-        if [ "${DEVICE}" = "H700" ]; then
+        if [ "${PROJECT}" = "Allwinner" -o "${PROJECT}" = "Rockchip" ]; then
           mkdir -p ${INSTALL}/usr/share/bootloader/device_trees
           cp -v ${dtb} ${INSTALL}/usr/share/bootloader/device_trees
         else
