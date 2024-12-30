@@ -18,10 +18,15 @@ fi
 # mount $BOOT_ROOT rw
 mount -o remount,rw $BOOT_ROOT
 
+echo "Updating device trees..."
+for dtb in $SYSTEM_ROOT/usr/share/bootloader/device_trees/*.dtb; do
+  cp -p $dtb $BOOT_ROOT/device_trees
+done
+
 DT_ID=$(cat /proc/device-tree/rocknix-dt-id)
-UPDATE_DTB_SOURCE="$SYSTEM_ROOT/usr/share/bootloader/device_trees/$DT_ID.dtb"
+UPDATE_DTB_SOURCE="$BOOT_ROOT/device_trees/$DT_ID.dtb"
 if [ -f "$UPDATE_DTB_SOURCE" ]; then
-  echo "Updating dtb.img from $UPDATE_DTB_SOURCE..."
+  echo "Updating dtb.img from $(basename $UPDATE_DTB_SOURCE)..."
   cp -f "$UPDATE_DTB_SOURCE" "$BOOT_ROOT/dtb.img"
 fi
 
