@@ -25,9 +25,26 @@ if [ -n "$DT_ID" ]; then
   esac
 fi
 
+### Migrate device trees to subfolder - remove in the future
+if [ ! -d "$BOOT_ROOT/device_trees" ]; then
+  mkdir $BOOT_ROOT/device_trees
+  mv $BOOT_ROOT/*.dtb $BOOT_ROOT/device_trees
+  if [ -f "$BOOT_ROOT/boot.ini" ]; then
+    ! grep -q "device_trees" $BOOT_ROOT/boot.ini &&
+      sed -i 's/${dtb_loadaddr} /${dtb_loadaddr} device_trees\//g' $BOOT_ROOT/boot.ini
+  fi
+  if [ -f "$BOOT_ROOT/extlinux/extlinux.conf" ]; then
+    if ! grep -q "device_trees" $BOOT_ROOT/extlinux/extlinux.conf; then
+      sed -i 's/FDT /FDT \/device_trees/g' $BOOT_ROOT/extlinux/extlinux.conf
+      sed -i 's/FDTDIR \//FDTDIR \/device_trees/g' $BOOT_ROOT/extlinux/extlinux.conf
+    fi
+  fi
+fi
+###
+
 echo "Updating device trees..."
-for dtb in $SYSTEM_ROOT/usr/share/bootloader/*.dtb; do
-  cp -p $dtb $BOOT_ROOT
+for dtb in $SYSTEM_ROOT/usr/share/bootloader/device_trees/*.dtb; do
+  cp -p $dtb $BOOT_ROOT/device_trees
 done
 
 if [ -d $SYSTEM_ROOT/usr/share/bootloader/overlays ]; then
