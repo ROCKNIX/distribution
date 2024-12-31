@@ -33,6 +33,19 @@ if [ ! -f "/storage/roms/bios/xemu/hdd/xbox_hdd.qcow2" ]; then
     unzip -o /usr/config/xemu/hdd.zip -d /storage/roms/bios/xemu/hdd/
 fi
 
+# Set the cores to use
+CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
+if [ "${CORES}" = "little" ]
+then
+  EMUPERF="${SLOW_CORES}"
+elif [ "${CORES}" = "big" ]
+then
+  EMUPERF="${FAST_CORES}"
+else
+  ### All..
+  unset EMUPERF
+fi
+
 #Emulation Station Features
 GAME=$(echo "${1}"| sed "s#^/.*/##")
 PLATFORM=$(echo "${2}"| sed "s#^/.*/##")
@@ -40,7 +53,7 @@ ASPECT=$(get_setting aspect_ratio "${PLATFORM}" "${GAME}")
 CLOCK=$(get_setting cpu_clock_speed "${PLATFORM}" "${GAME}")
 CSHADERS=$(get_setting cache_shaders_to_disk "${PLATFORM}" "${GAME}")
 IRES=$(get_setting internal_resolution "${PLATFORM}" "${GAME}")
-#RENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
+RENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
 SHOWFPS=$(get_setting show_fps "${PLATFORM}" "${GAME}")
 SKIPBOOT=$(get_setting skip_boot_animation "${PLATFORM}" "${GAME}")
 SMEM=$(get_setting system_memory "${PLATFORM}" "${GAME}")
@@ -96,6 +109,13 @@ VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
 	else
                 sed -i "/override_clockspeed =/c\override_clockspeed = false" /storage/.config/xemu/xemu.toml
 	fi
+
+  #Graphics Backend
+	if [ "$RENDERER" = "opengl" ]; then
+		sed -i "/renderer =/c\renderer = 'OPENGL'" /storage/.config/xemu/xemu.toml
+	else
+		sed -i "/renderer =/c\renderer = 'VULKAN'" /storage/.config/xemu/xemu.toml
+  	fi
 
   #Internal Resolution
         if [ "$IRES" = "2" ]; then

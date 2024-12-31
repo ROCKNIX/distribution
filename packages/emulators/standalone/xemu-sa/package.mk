@@ -2,7 +2,7 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="xemu-sa"
-PKG_VERSION="2c08c76b095748eb28a1c26157ddf67e5541ca44"
+PKG_VERSION="8f478e017a0f7bac7d72d4abe23e77233f221bce"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/xemu-project/xemu"
 PKG_URL="${PKG_SITE}.git"
@@ -20,7 +20,7 @@ fi
 
 if [ "${VULKAN_SUPPORT}" = "yes" ]
 then
-  PKG_DEPENDS_TARGET+=" vulkan-loader vulkan-headers"
+  PKG_DEPENDS_TARGET+=" vulkan-loader vulkan-headers glslang"
 fi
 
 pre_configure_target() {
