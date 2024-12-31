@@ -40,7 +40,7 @@ ASPECT=$(get_setting aspect_ratio "${PLATFORM}" "${GAME}")
 CLOCK=$(get_setting cpu_clock_speed "${PLATFORM}" "${GAME}")
 CSHADERS=$(get_setting cache_shaders_to_disk "${PLATFORM}" "${GAME}")
 IRES=$(get_setting internal_resolution "${PLATFORM}" "${GAME}")
-#RENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
+RENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
 SHOWFPS=$(get_setting show_fps "${PLATFORM}" "${GAME}")
 SKIPBOOT=$(get_setting skip_boot_animation "${PLATFORM}" "${GAME}")
 SMEM=$(get_setting system_memory "${PLATFORM}" "${GAME}")
@@ -96,6 +96,13 @@ VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
 	else
                 sed -i "/override_clockspeed =/c\override_clockspeed = false" /storage/.config/xemu/xemu.toml
 	fi
+
+  #Graphics Backend
+	if [ "$RENDERER" = "opengl" ]; then
+		sed -i "/renderer =/c\GFXBackend = 'OPENGL'" /storage/.config/xemu/xemu.toml
+	else
+		sed -i "/renderer =/c\GFXBackend = 'VULKAN'" /storage/.config/xemu/xemu.toml
+  	fi
 
   #Internal Resolution
         if [ "$IRES" = "2" ]; then
