@@ -7,7 +7,7 @@
 gptokeyb fileman textinput &
 
 . /etc/profile
-set_kill set "FileMan"
+set_kill set "fileman"
 
 fileman
 
