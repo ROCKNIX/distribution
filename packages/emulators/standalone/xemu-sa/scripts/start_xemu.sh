@@ -33,6 +33,19 @@ if [ ! -f "/storage/roms/bios/xemu/hdd/xbox_hdd.qcow2" ]; then
     unzip -o /usr/config/xemu/hdd.zip -d /storage/roms/bios/xemu/hdd/
 fi
 
+# Set the cores to use
+CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
+if [ "${CORES}" = "little" ]
+then
+  EMUPERF="${SLOW_CORES}"
+elif [ "${CORES}" = "big" ]
+then
+  EMUPERF="${FAST_CORES}"
+else
+  ### All..
+  unset EMUPERF
+fi
+
 #Emulation Station Features
 GAME=$(echo "${1}"| sed "s#^/.*/##")
 PLATFORM=$(echo "${2}"| sed "s#^/.*/##")
@@ -99,9 +112,9 @@ VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
 
   #Graphics Backend
 	if [ "$RENDERER" = "opengl" ]; then
-		sed -i "/renderer =/c\GFXBackend = 'OPENGL'" /storage/.config/xemu/xemu.toml
+		sed -i "/renderer =/c\renderer = 'OPENGL'" /storage/.config/xemu/xemu.toml
 	else
-		sed -i "/renderer =/c\GFXBackend = 'VULKAN'" /storage/.config/xemu/xemu.toml
+		sed -i "/renderer =/c\renderer = 'VULKAN'" /storage/.config/xemu/xemu.toml
   	fi
 
   #Internal Resolution
