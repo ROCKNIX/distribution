@@ -22,7 +22,7 @@ pre_make_target() {
   PKG_UBOOT_CONFIG="orangepi_5_defconfig"
   PKG_RKBIN="$(get_build_dir rkbin)"
   PKG_MINILOADER="spl/u-boot-spl.bin"
-  PKG_BL31="${PKG_RKBIN}/bin/rk35/rk3588_bl31_v1.38.elf"
+  PKG_BL31="${PKG_RKBIN}/bin/rk35/rk3588_bl31_v1.47.elf"
   PKG_DDR_BIN="${PKG_RKBIN}/bin/rk35/rk3588_ddr_lp4_1848MHz_lp5_2736MHz_v1.10.bin"
 }
 
