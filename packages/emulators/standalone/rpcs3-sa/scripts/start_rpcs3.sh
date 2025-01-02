@@ -184,6 +184,15 @@ else
   GAME_PATH="${1}"
 fi
 
+#check if path is M3U
+if [[ "${1}" == *.m3u ]]; then
+  read -r M3UPATH < "${1}"
+  echo ${M3UPATH}
+  GAME_PATH="/roms/ps3/${M3UPATH}"
+else
+  GAME_PATH="${1}"
+fi
+
 #Log Settings
 cat <<EOF >/var/log/rpcs3-sa.log
 GAME: ${GAME}
