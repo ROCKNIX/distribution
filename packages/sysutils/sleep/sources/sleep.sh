@@ -35,7 +35,7 @@ powerstate() {
 }
 
 bluetooth() {
-  if [ "$(get_setting bluetooth.enabled)" == "1" ]
+  if [ "$(get_setting controllers.bluetooth.enabled)" == "1" ]
   then
     log $0 "Bluetooth: ${1}"
     systemctl ${1} bluetooth >${EVENTLOG} 2>&1
