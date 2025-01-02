@@ -70,15 +70,16 @@ post_makeinstall_target() {
 
   mkdir -p ${INSTALL}/etc/bluetooth
     cp src/main.conf ${INSTALL}/etc/bluetooth
-
-  cat <<EOF >${INSTALL}/etc/bluetooth/input.conf
-[General]
-ClassicBondedOnly=false
-EOF
+    sed -i ${INSTALL}/etc/bluetooth/main.conf \
+        -e "s|^#AutoEnable.*|AutoEnable=true|g" \
+        -e "s|^#JustWorksRepairing.*|JustWorksRepairing=always|g" \
+        -e "s|^#ControllerMode.*|ControllerMode=dual|g" \
+        -e "s|^#FastConnectable.*|FastConnectable=true|g"
+    echo "[General]" >${INSTALL}/etc/bluetooth/input.conf
+    echo "ClassicBondedOnly=false" >>${INSTALL}/etc/bluetooth/input.conf
 
   mkdir -p ${INSTALL}/usr/share/services
     cp -P ${PKG_DIR}/default.d/*.conf ${INSTALL}/usr/share/services
-
 
   # bluez looks in /etc/firmware/
     ln -sf /usr/lib/firmware ${INSTALL}/etc/firmware
