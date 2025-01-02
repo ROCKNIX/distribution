@@ -17,6 +17,7 @@ case ${DEVICE} in
   *)
     PKG_VERSION="bfa792ddbff11c102521124f235ccb310cac6e6a"
     PKG_PATCH_DIRS+=" legacy"
+    NO_RA="true"
   ;;
 esac
 
@@ -63,6 +64,9 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin
   cp -rf ${PKG_BUILD}/.${TARGET_NAME}/bin/duckstation-nogui ${INSTALL}/usr/bin
   cp -rf ${PKG_DIR}/scripts/* ${INSTALL}/usr/bin
+  if [ "${NO_RA}" = "true" ]; then
+    sed -i '/\/usr\/bin\/cheevos_duckstation.sh/d' ${INSTALL}/usr/bin/start_duckstation.sh
+  fi
 
   mkdir -p ${INSTALL}/usr/config/duckstation
   cp -rf ${PKG_BUILD}/.${TARGET_NAME}/bin/* ${INSTALL}/usr/config/duckstation
