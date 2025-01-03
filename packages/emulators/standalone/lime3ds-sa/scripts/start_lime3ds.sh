@@ -114,6 +114,14 @@ case "${SLAYOUT}" in
     # Custom Layout
     sed -i '/layout_option =/c\layout_option = 6' /storage/.config/lime3ds/sdl2-config.ini 
     sed -i '/swap_screen =/c\swap_screen = 0' /storage/.config/lime3ds/sdl2-config.ini
+    sed -i '/custom_top_/d' /storage/.config/lime3ds/sdl2-config.ini 
+    sed -i '/custom_bottom_/d' /storage/.config/lime3ds/sdl2-config.ini 
+    CUSTOM_LAYOUT="${1}.ini"
+    if [ -f "$CUSTOM_LAYOUT" ]; then
+        sed -i "/# Screen placement/r $CUSTOM_LAYOUT" /storage/.config/lime3ds/sdl2-config.ini
+    else
+        sed -i '/# Screen placement/r /storage/.config/lime3ds/default_custom_layout.ini' /storage/.config/lime3ds/sdl2-config.ini
+    fi
     ;;
 esac
 
