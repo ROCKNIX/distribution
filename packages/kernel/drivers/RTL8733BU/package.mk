@@ -2,7 +2,7 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="RTL8733BU"
-PKG_VERSION="b3798a2d22b57597982d35fa58c86711e69caead"
+PKG_VERSION="308919f005f439de433aac977f925bb57f59acf4"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/wirenboard/rtl8733bu"
 PKG_URL="https://github.com/ROCKNIX/RTL8733BU/archive/${PKG_VERSION}.tar.gz"
