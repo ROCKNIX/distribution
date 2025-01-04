@@ -2,7 +2,7 @@
 # Copyright (C) 2023-present Daedalia (https://github.com/daedalia)
 
 PKG_NAME="bsnes-hd-lr"
-PKG_VERSION="f46b6d6368ea93943a30b5d4e79e8ed51c2da5e8"
+PKG_VERSION="0bb7b8645e22ea2476cabd58f32e987b14686601"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/DerKoun/bsnes-hd"
 PKG_URL="${PKG_SITE}.git"

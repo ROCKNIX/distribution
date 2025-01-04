@@ -20,7 +20,7 @@
 ################################################################################
 
 PKG_NAME="gambatte-lr"
-PKG_VERSION="1fbeee0a46b12d3ab28c4795172929ebb31808ea"
+PKG_VERSION="695b915839acd8dbbcbb8e4f9985df1e0db2b23e"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/gambatte-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

@@ -19,7 +19,7 @@
 ################################################################################
 
 PKG_NAME="o2em-lr"
-PKG_VERSION="c8f458d035392963823fbb50db0cec0033d9315f"
+PKG_VERSION="3ba4231c1dc8dcdf487428712856b790d2e4b8f3"
 PKG_LICENSE="Artistic License"
 PKG_SITE="https://github.com/libretro/libretro-o2em"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

@@ -21,7 +21,7 @@
 ################################################################################
 
 PKG_NAME="retropie-shaders"
-PKG_VERSION="015fe2aaad5f4a219c8fd85b9a4fd71bc4f1f731"
+PKG_VERSION="43eaf9b91857eb8515310c74ae750895d77b20f8"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/RetroPie/common-shaders"
 PKG_URL="${PKG_SITE}.git"

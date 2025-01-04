@@ -19,7 +19,7 @@
 ################################################################################
 
 PKG_NAME="handy-lr"
-PKG_VERSION="15d3c87e0eba52464ed759d3702d7cb7fdd0d7e0"
+PKG_VERSION="4e9e072796e5552a9d57f6ab83b3f85f27b17fb6"
 PKG_LICENSE="Zlib"
 PKG_SITE="https://github.com/libretro/libretro-handy"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

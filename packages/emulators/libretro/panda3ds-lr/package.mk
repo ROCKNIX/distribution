@@ -2,7 +2,7 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="panda3ds-lr"
-PKG_VERSION="7c2918f3f749b9f93e7bd69fdff7055d29164457"
+PKG_VERSION="b559725920d77a49718196207033a9877b9de7e6"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/wheremyfoodat/Panda3DS"
 PKG_URL="${PKG_SITE}.git"

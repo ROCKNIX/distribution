@@ -19,7 +19,7 @@
 ################################################################################
 
 PKG_NAME="pokemini-lr"
-PKG_VERSION="a62d157d2fc10a1400ffa435b4beb08f7a7d8e09"
+PKG_VERSION="78656d4615691c393e65e48672ce5fff5b1f97d3"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/libretro/pokemini"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
