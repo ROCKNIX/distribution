@@ -1,0 +1,167 @@
+From 0e43544967428971a9518429e3f65cdbf8bd70a8 Mon Sep 17 00:00:00 2001
+From: Chris Healy <cphealy@gmail.com>
+Date: Thu, 19 Dec 2024 13:49:13 -0800
+Subject: [PATCH 1/2] drm/panfrost: Add SYSTEM_TIMESTAMP and
+ SYSTEM_TIMESTAMP_FREQUENCY parameters
+
+Expose system timestamp and frequency supported by the GPU.
+
+Mali uses an external timer as GPU system time. On ARM, this is wired to
+the generic arch timer so we wire cntfrq_el0 as device frequency.
+
+This new uAPI will be used in Mesa to implement timestamp queries and
+VK_KHR_calibrated_timestamps.
+
+v2:
+- Rewrote to use GPU timestamp register
+- Add missing include for arch_timer_get_cntfrq
+- Rework commit message
+
+v3:
+- Move panfrost_cycle_counter_get and panfrost_cycle_counter_put to
+  panfrost_ioctl_query_timestamp
+- Handle possible overflow in panfrost_timestamp_read
+
+Signed-off-by: Mary Guillemard <mary.guillemard@collabora.com>
+Tested-by: Heiko Stuebner <heiko@sntech.de>
+Reviewed-by: Steven Price <steven.price@arm.com>
+Signed-off-by: Steven Price <steven.price@arm.com>
+Link: https://patchwork.freedesktop.org/patch/msgid/20240819080224.24914-2-mary.guillemard@collabora.com
+---
+ drivers/gpu/drm/panfrost/panfrost_drv.c  | 37 ++++++++++++++++++++++++
+ drivers/gpu/drm/panfrost/panfrost_gpu.c  | 12 ++++++++
+ drivers/gpu/drm/panfrost/panfrost_gpu.h  |  1 +
+ drivers/gpu/drm/panfrost/panfrost_regs.h |  2 ++
+ include/uapi/drm/panfrost_drm.h          |  2 ++
+ 5 files changed, 54 insertions(+)
+
+diff --git a/drivers/gpu/drm/panfrost/panfrost_drv.c b/drivers/gpu/drm/panfrost/panfrost_drv.c
+index 671eed4ad..790c4ad31 100644
+--- a/drivers/gpu/drm/panfrost/panfrost_drv.c
++++ b/drivers/gpu/drm/panfrost/panfrost_drv.c
+@@ -3,6 +3,10 @@
+ /* Copyright 2019 Linaro, Ltd., Rob Herring <robh@kernel.org> */
+ /* Copyright 2019 Collabora ltd. */
+ 
++#ifdef CONFIG_ARM_ARCH_TIMER
++#include <asm/arch_timer.h>
++#endif
++
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/pagemap.h>
+@@ -24,10 +28,28 @@
+ static bool unstable_ioctls;
+ module_param_unsafe(unstable_ioctls, bool, 0600);
+ 
++static int panfrost_ioctl_query_timestamp(struct panfrost_device *pfdev,
++					  u64 *arg)
++{
++	int ret;
++
++	ret = pm_runtime_resume_and_get(pfdev->dev);
++	if (ret)
++		return ret;
++
++	panfrost_cycle_counter_get(pfdev);
++	*arg = panfrost_timestamp_read(pfdev);
++	panfrost_cycle_counter_put(pfdev);
++
++	pm_runtime_put(pfdev->dev);
++	return 0;
++}
++
+ static int panfrost_ioctl_get_param(struct drm_device *ddev, void *data, struct drm_file *file)
+ {
+ 	struct drm_panfrost_get_param *param = data;
+ 	struct panfrost_device *pfdev = ddev->dev_private;
++	int ret;
+ 
+ 	if (param->pad != 0)
+ 		return -EINVAL;
+@@ -69,6 +91,21 @@ static int panfrost_ioctl_get_param(struct drm_device *ddev, void *data, struct
+ 		PANFROST_FEATURE_ARRAY(JS_FEATURES, js_features, 15);
+ 		PANFROST_FEATURE(NR_CORE_GROUPS, nr_core_groups);
+ 		PANFROST_FEATURE(THREAD_TLS_ALLOC, thread_tls_alloc);
++
++	case DRM_PANFROST_PARAM_SYSTEM_TIMESTAMP:
++		ret = panfrost_ioctl_query_timestamp(pfdev, &param->value);
++		if (ret)
++			return ret;
++		break;
++
++	case DRM_PANFROST_PARAM_SYSTEM_TIMESTAMP_FREQUENCY:
++#ifdef CONFIG_ARM_ARCH_TIMER
++		param->value = arch_timer_get_cntfrq();
++#else
++		param->value = 0;
++#endif
++		break;
++
+ 	default:
+ 		return -EINVAL;
+ 	}
+diff --git a/drivers/gpu/drm/panfrost/panfrost_gpu.c b/drivers/gpu/drm/panfrost/panfrost_gpu.c
+index b52dd510e..f5abde386 100644
+--- a/drivers/gpu/drm/panfrost/panfrost_gpu.c
++++ b/drivers/gpu/drm/panfrost/panfrost_gpu.c
+@@ -379,6 +379,18 @@ unsigned long long panfrost_cycle_counter_read(struct panfrost_device *pfdev)
+ 	return ((u64)hi << 32) | lo;
+ }
+ 
++unsigned long long panfrost_timestamp_read(struct panfrost_device *pfdev)
++{
++	u32 hi, lo;
++
++	do {
++		hi = gpu_read(pfdev, GPU_TIMESTAMP_HI);
++		lo = gpu_read(pfdev, GPU_TIMESTAMP_LO);
++	} while (hi != gpu_read(pfdev, GPU_TIMESTAMP_HI));
++
++	return ((u64)hi << 32) | lo;
++}
++
+ static u64 panfrost_get_core_mask(struct panfrost_device *pfdev)
+ {
+ 	u64 core_mask;
+diff --git a/drivers/gpu/drm/panfrost/panfrost_gpu.h b/drivers/gpu/drm/panfrost/panfrost_gpu.h
+index d841b8650..b4fef1121 100644
+--- a/drivers/gpu/drm/panfrost/panfrost_gpu.h
++++ b/drivers/gpu/drm/panfrost/panfrost_gpu.h
+@@ -20,6 +20,7 @@ void panfrost_gpu_suspend_irq(struct panfrost_device *pfdev);
+ void panfrost_cycle_counter_get(struct panfrost_device *pfdev);
+ void panfrost_cycle_counter_put(struct panfrost_device *pfdev);
+ unsigned long long panfrost_cycle_counter_read(struct panfrost_device *pfdev);
++unsigned long long panfrost_timestamp_read(struct panfrost_device *pfdev);
+ 
+ void panfrost_gpu_amlogic_quirk(struct panfrost_device *pfdev);
+ 
+diff --git a/drivers/gpu/drm/panfrost/panfrost_regs.h b/drivers/gpu/drm/panfrost/panfrost_regs.h
+index c25743b05..c7bba476a 100644
+--- a/drivers/gpu/drm/panfrost/panfrost_regs.h
++++ b/drivers/gpu/drm/panfrost/panfrost_regs.h
+@@ -78,6 +78,8 @@
+ 
+ #define GPU_CYCLE_COUNT_LO		0x90
+ #define GPU_CYCLE_COUNT_HI		0x94
++#define GPU_TIMESTAMP_LO		0x98
++#define GPU_TIMESTAMP_HI		0x9C
+ 
+ #define GPU_THREAD_MAX_THREADS		0x0A0	/* (RO) Maximum number of threads per core */
+ #define GPU_THREAD_MAX_WORKGROUP_SIZE	0x0A4	/* (RO) Maximum workgroup size */
+diff --git a/include/uapi/drm/panfrost_drm.h b/include/uapi/drm/panfrost_drm.h
+index 9f231d40a..52b050e2b 100644
+--- a/include/uapi/drm/panfrost_drm.h
++++ b/include/uapi/drm/panfrost_drm.h
+@@ -172,6 +172,8 @@ enum drm_panfrost_param {
+ 	DRM_PANFROST_PARAM_NR_CORE_GROUPS,
+ 	DRM_PANFROST_PARAM_THREAD_TLS_ALLOC,
+ 	DRM_PANFROST_PARAM_AFBC_FEATURES,
++	DRM_PANFROST_PARAM_SYSTEM_TIMESTAMP,
++	DRM_PANFROST_PARAM_SYSTEM_TIMESTAMP_FREQUENCY,
+ };
+ 
+ struct drm_panfrost_get_param {
+-- 
+2.34.1
+
