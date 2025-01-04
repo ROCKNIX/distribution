@@ -466,6 +466,7 @@ makeinstall_target() {
   add_emu_core gbah retroarch beetle_gba false
   case ${DEVICE} in
     RK3399|AMD64|RK3326|RK3588*|RK356*|H700)
+      add_emu_core gbah retroarch gpsp false
       add_emu_core gbah mednafen gba false
     ;;
   esac
