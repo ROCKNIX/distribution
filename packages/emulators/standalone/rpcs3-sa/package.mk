@@ -10,13 +10,13 @@ PKG_TOOLCHAIN="manual"
 
 case ${TARGET_ARCH} in
   x86_64)
-    PKG_VERSION="68b7e5971d8e279d7d385b96b5aa2feebd220506"
-    PKG_REL_VERSION="v0.0.34-17173-68b7e597"
-    PKG_URL="${PKG_SITE}/releases/download/build-${PKG_VERSION}/rpcs3-${PKG_REL_VERSION}_linux64.AppImage"
+    PKG_VERSION="d2b96636db1d76c8ea00064a5dbd3c120b69afdf"
+    PKG_REL_VERSION="0.0.34-17303-d2b96636"
+    PKG_URL="${PKG_SITE}/releases/download/build-${PKG_VERSION}/rpcs3-v${PKG_REL_VERSION}_linux64.AppImage"
   ;;
   aarch64)
-    PKG_VERSION="30ca2370ab1d3fa508c9dece5bc613bd03245fb4"
-    PKG_REL_VERSION="0.0.34-17195-30ca2370"
+    PKG_VERSION="d2b96636db1d76c8ea00064a5dbd3c120b69afdf"
+    PKG_REL_VERSION="0.0.34-17303-d2b96636"
     PKG_URL="${PKG_SITE}-arm64/releases/download/build-${PKG_VERSION}/rpcs3-v${PKG_REL_VERSION}_linux_aarch64.AppImage"
   ;;
 esac

@@ -20,7 +20,7 @@
 ################################################################################
 
 PKG_NAME="fmsx-lr"
-PKG_VERSION="cf97a3c6da07d5f8e98c90c907ad987ffea432e0"
+PKG_VERSION="9eb5f25df5397212a3e3088ca1a64db0740bbe5f"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/fmsx-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

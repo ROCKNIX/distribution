@@ -20,7 +20,7 @@
 ################################################################################
 
 PKG_NAME="crocods-lr"
-PKG_VERSION="e80f49c21c6788617e57ab86e9442a162d24f38a"
+PKG_VERSION="a320f6e38af49af84a63f81329a1bdb9322022b4"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/libretro/libretro-crocods"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

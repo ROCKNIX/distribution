@@ -2,7 +2,7 @@
 # Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="beetle-psx-lr"
-PKG_VERSION="3b6aa830f1345a588c6217f0bf8f5da2f8e08c29"
+PKG_VERSION="deb295ba5c4d8054e722c9d4cd4d4aa1b4e519d5"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://git.libretro.com/libretro/beetle-psx-libretro"
 PKG_URL="${PKG_SITE}.git"

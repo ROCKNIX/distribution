@@ -20,7 +20,7 @@
 ################################################################################
 
 PKG_NAME="gearsystem-lr"
-PKG_VERSION="1b344d7c4adc17484f53352ceef73e5a968ed8c2"
+PKG_VERSION="1c090b698bb910c053cc9b10bc67c1a5612cb054"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/drhelius/Gearsystem"
 PKG_URL="${PKG_SITE}.git"
