@@ -81,34 +81,47 @@ esac
 # Screen Layout
 case "${SLAYOUT}" in
   0)
+    # Default (Top / Bottom)
     sed -i '/layout_option =/c\layout_option = 0' /storage/.config/lime3ds/sdl2-config.ini
     sed -i '/swap_screen =/c\swap_screen = 0' /storage/.config/lime3ds/sdl2-config.ini
-    sed -i '/custom_layout =/c\custom_layout = 0' /storage/.config/lime3ds/sdl2-config.ini
     ;;
   1a)
+    # Single Screen (TOP)
     sed -i '/layout_option =/c\layout_option = 1' /storage/.config/lime3ds/sdl2-config.ini
     sed -i '/swap_screen =/c\swap_screen = 0' /storage/.config/lime3ds/sdl2-config.ini
-    sed -i '/custom_layout =/c\custom_layout = 0' /storage/.config/lime3ds/sdl2-config.ini
     ;;
   1b)
+    # Single Screen (BOTTOM)
     sed -i '/layout_option =/c\layout_option = 1' /storage/.config/lime3ds/sdl2-config.ini
     sed -i '/swap_screen =/c\swap_screen = 1' /storage/.config/lime3ds/sdl2-config.ini
-    sed -i '/custom_layout =/c\custom_layout = 0' /storage/.config/lime3ds/sdl2-config.ini
     ;;
   2)
+    # Large Screen, Small Screen
     sed -i '/layout_option =/c\layout_option = 2' /storage/.config/lime3ds/sdl2-config.ini
     sed -i '/swap_screen =/c\swap_screen = 0' /storage/.config/lime3ds/sdl2-config.ini
-    sed -i '/custom_layout =/c\custom_layout = 0' /storage/.config/lime3ds/sdl2-config.ini
     ;;
   3)
+    # Side by Side
     sed -i '/layout_option =/c\layout_option = 3' /storage/.config/lime3ds/sdl2-config.ini
     sed -i '/swap_screen =/c\swap_screen = 0' /storage/.config/lime3ds/sdl2-config.ini
-    sed -i '/custom_layout =/c\custom_layout = 0' /storage/.config/lime3ds/sdl2-config.ini
     ;;
   4)
-    sed -i '/layout_option =/c\layout_option = 0' /storage/.config/lime3ds/sdl2-config.ini
+    # Hybrid
+    sed -i '/layout_option =/c\layout_option = 5' /storage/.config/lime3ds/sdl2-config.ini
     sed -i '/swap_screen =/c\swap_screen = 0' /storage/.config/lime3ds/sdl2-config.ini
-    sed -i '/custom_layout =/c\custom_layout = 1' /storage/.config/lime3ds/sdl2-config.ini
+    ;;
+  5)
+    # Custom Layout
+    sed -i '/layout_option =/c\layout_option = 6' /storage/.config/lime3ds/sdl2-config.ini 
+    sed -i '/swap_screen =/c\swap_screen = 0' /storage/.config/lime3ds/sdl2-config.ini
+    sed -i '/custom_top_/d' /storage/.config/lime3ds/sdl2-config.ini 
+    sed -i '/custom_bottom_/d' /storage/.config/lime3ds/sdl2-config.ini 
+    CUSTOM_LAYOUT="${1}.ini"
+    if [ -f "$CUSTOM_LAYOUT" ]; then
+        sed -i "/# Screen placement/r $CUSTOM_LAYOUT" /storage/.config/lime3ds/sdl2-config.ini
+    else
+        sed -i '/# Screen placement/r /storage/.config/lime3ds/default_custom_layout.ini' /storage/.config/lime3ds/sdl2-config.ini
+    fi
     ;;
 esac
 
