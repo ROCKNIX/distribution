@@ -7,8 +7,7 @@
 
 # Check if rpcs3 exists in .config
 if [ ! -d "/storage/.config/rpcs3" ]; then
-  mkdir -p "/storage/.config/rpcs3"
-  cp -r "/usr/config/rpcs3" "/storage/.config/rpcs3"
+  cp -r "/usr/config/rpcs3" "/storage/.config/"
 fi
 
 # Link certain RPCS3 folders to a location in /storage/roms/bios
