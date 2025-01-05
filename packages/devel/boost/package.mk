@@ -13,6 +13,10 @@ PKG_DEPENDS_TARGET="toolchain boost:host Python3 zlib bzip2"
 PKG_LONGDESC="boost: Peer-reviewed STL style libraries for C++"
 PKG_TOOLCHAIN="manual"
 PKG_BUILD_FLAGS="+pic"
+PKG_B2_PARAM=" binary-format=elf link=static threading=multi toolset=gcc "
+if [ "${TARGET_ARCH}" = "aarch64" ]; then
+	PKG_B2_PARAM+=" abi=aapcs address-model=64 architecture=arm "
+fi
 
 make_host() {
   cd tools/build/src/engine
@@ -35,18 +39,17 @@ configure_target() {
                   --with-python=${TOOLCHAIN}/bin/python \
                   --with-python-root=${SYSROOT_PREFIX}/usr
 
-  echo "using gcc : $(${CC} -v 2>&1  | tail -n 1 |awk '{print $3}') : ${CC}  : <compileflags>\"${CFLAGS}\" <linkflags>\"${LDFLAGS}\" ;" \
+  echo "using gcc : $(${CC} -v 2>&1  | tail -n 1 |awk '{print $3}') : ${CXX}  : <compileflags>\"${CFLAGS}\" <linkflags>\"${LDFLAGS}\" ;" \
     > tools/build/src/user-config.jam
   echo "using python : ${PKG_PYTHON_VERSION/#python} : ${TOOLCHAIN} : ${SYSROOT_PREFIX}/usr/include : ${SYSROOT_PREFIX}/usr/lib ;" \
     >> tools/build/src/user-config.jam
 }
-
 makeinstall_target() {
   ln -sf ${TOOLCHAIN}/bin/b2 ${TOOLCHAIN}/bin/bjam
   ${TOOLCHAIN}/bin/bjam -d2 --ignore-site-config \
+                          ${PKG_B2_PARAM} \
                           --layout=system \
                           --prefix=${SYSROOT_PREFIX}/usr \
-                          --toolset=gcc link=static \
                           --with-chrono \
                           --with-date_time \
                           --with-filesystem \
