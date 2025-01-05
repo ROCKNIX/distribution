@@ -24,6 +24,9 @@ src-pkg:
 docs:
 	./tools/foreach './scripts/clean emulators && ./scripts/build emulators'
 
+kconfig:
+	./tools/foreach './tools/adjust_kernel_config savedefconfig'
+	
 world: RK3588 RK3566 RK3326 RK3399 S922X SD865 H700
 
 AMD64:
