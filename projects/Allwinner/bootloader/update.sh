@@ -15,9 +15,6 @@ if [ -z "$BOOT_DISK" ]; then
   esac
 fi
 
-# mount $BOOT_ROOT rw
-mount -o remount,rw $BOOT_ROOT
-
 echo "Updating device trees..."
 for dtb in $SYSTEM_ROOT/usr/share/bootloader/device_trees/*.dtb; do
   cp -p $dtb $BOOT_ROOT/device_trees
@@ -36,8 +33,6 @@ if [ -f $SYSTEM_ROOT/usr/share/bootloader/u-boot-sunxi-with-spl.bin ]; then
   dd if=$SYSTEM_ROOT/usr/share/bootloader/u-boot-sunxi-with-spl.bin of=$BOOT_DISK bs=1K seek=8 conv=fsync,notrunc &>/dev/null
 fi
 
-# mount $BOOT_ROOT ro
 sync
-mount -o remount,ro $BOOT_ROOT
 
 echo "UPDATE" > /storage/.boot.hint
