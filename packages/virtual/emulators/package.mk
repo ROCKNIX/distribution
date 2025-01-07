@@ -35,7 +35,7 @@ case "${DEVICE}" in
   ;;
   RK3588)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 desmume-lr gpsp-lr pcsx_rearmed-lr wine"
-    PKG_EMUS+=" aethersx2-sa box64 dolphin-sa drastic-sa mednafen melonds-sa portmaster scummvmsa supermodel-sa yabasanshiro-sa"
+    PKG_EMUS+=" aethersx2-sa box64 dolphin-sa lime3ds-sa drastic-sa mednafen melonds-sa portmaster scummvmsa supermodel-sa yabasanshiro-sa"
     LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr flycast-lr geolith-lr panda3ds-lr pcsx_rearmed-lr uae4arm"
     PKG_RETROARCH+=" retropie-shaders"
   ;;
@@ -145,7 +145,8 @@ makeinstall_target() {
       add_es_system 3ds
     ;;
     RK3588)
-      add_emu_core 3ds retroarch panda3ds true
+      add_emu_core 3ds lime3ds lime3ds-sa true
+      add_emu_core 3ds retroarch panda3ds false
       add_es_system 3ds
     ;;
   esac
