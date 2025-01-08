@@ -58,7 +58,7 @@ ln -sf /storage/roms/savestates/gamecube /storage/.config/dolphin-emu/StateSaves
 
 # Link and copy bios and other system stuff to roms
 if [ ! -d "/storage/roms/bios/GC/" ]; then
-    mkdir -p "/storage/roms/bios/GC/"
+    mkdir -p /storage/roms/bios/GC/{USA,JAP,EUR}
     cp -r /storage/.config/dolphin-emu/GC /storage/roms/bios/
 fi
 
