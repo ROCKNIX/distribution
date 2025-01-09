@@ -43,16 +43,12 @@ fi
 ###
 
 echo "Updating device trees..."
-for dtb in $SYSTEM_ROOT/usr/share/bootloader/device_trees/*.dtb; do
-  cp -p $dtb $BOOT_ROOT/device_trees
-done
+cp -f $SYSTEM_ROOT/usr/share/bootloader/device_trees/* $BOOT_ROOT/device_trees
 
 if [ -d $SYSTEM_ROOT/usr/share/bootloader/overlays ]; then
   echo "Updating device tree overlays..."
   mkdir -p $BOOT_ROOT/overlays
-  for dtb in $SYSTEM_ROOT/usr/share/bootloader/overlays/*.dtbo; do
-    cp -p $dtb $BOOT_ROOT/overlays
-  done
+  cp -f $SYSTEM_ROOT/usr/share/bootloader/overlays/* $BOOT_ROOT/overlays
 fi
 
 for BOOT_IMAGE in ${SUBDEVICE}_uboot.bin uboot.bin; do
