@@ -52,6 +52,9 @@ case $1 in
   ;;
 
   "add")
+    if [ ! -d "${ROMSPATH}/scummvm" ]; then
+      mkdir "${ROMSPATH}/scummvm"
+    fi
     /usr/bin/scummvm --add --path="${ROMSPATH}/scummvm" --recursive
     mkdir -p ${BIOSPATH}
     cp ${CONFIG_DIR}/scummvm.ini ${BIOSPATH}/scummvm.ini
@@ -62,6 +65,7 @@ case $1 in
   ;;
 
   *)
+    set_kill set "-9 scummvm"
     GAME=$(cat "${GAME}")
     systemctl start fluidsynth
     eval /usr/bin/scummvm --fullscreen --joystick=0 --themepath=/usr/config/scummvm/themes "${GAME}"
