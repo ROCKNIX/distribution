@@ -16,6 +16,9 @@ if [ -z "$BOOT_DISK" ]; then
   esac
 fi
 
+# mount $BOOT_ROOT rw
+mount -o remount,rw $BOOT_ROOT
+
 DT_ID=$($SYSTEM_ROOT/usr/bin/dtname)
 
 if [ -n "$DT_ID" ]; then
@@ -72,6 +75,8 @@ EOF
   [ -e /flash/ODROIDBIOS.BIN ] && rm -f /flash/ODROIDBIOS.BIN
 # END
 
+# mount $BOOT_ROOT ro
 sync
+mount -o remount,ro $BOOT_ROOT
 
 echo "UPDATE" > /storage/.boot.hint

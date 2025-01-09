@@ -13,6 +13,9 @@ if [ -z "$BOOT_DISK" ]; then
   esac
 fi
 
+# mount $BOOT_ROOT rw
+mount -o remount,rw $BOOT_ROOT
+
 echo "Updating device trees..."
 for dtb in $SYSTEM_ROOT/usr/share/bootloader/*.dtb; do
   cp -p $dtb $BOOT_ROOT
@@ -28,6 +31,8 @@ if [ -f "$SYSTEM_ROOT/usr/share/bootloader/grub.cfg" ]; then
   cp -p $SYSTEM_ROOT/usr/share/bootloader/grub.cfg $BOOT_ROOT/efi/boot
 fi
 
+# mount $BOOT_ROOT ro
 sync
+mount -o remount,ro $BOOT_ROOT
 
 echo "UPDATE" > /storage/.boot.hint
