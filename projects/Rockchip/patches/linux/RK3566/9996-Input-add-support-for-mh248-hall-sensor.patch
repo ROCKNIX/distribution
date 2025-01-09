@@ -1,0 +1,221 @@
+From c9d37fdc0aa2cc9ee48d9614cd72ac948cb4a754 Mon Sep 17 00:00:00 2001
+From: spycat88 <spycat88@users.noreply.github.com>
+Date: Sat, 4 Jan 2025 21:25:57 +0000
+Subject: [PATCH] Input: add support for mh248 hall sensor
+
+---
+ drivers/input/misc/Makefile |   1 +
+ drivers/input/misc/mh248.c  | 192 ++++++++++++++++++++++++++++++++++++
+ 2 files changed, 193 insertions(+)
+ create mode 100644 drivers/input/misc/mh248.c
+
+diff --git a/drivers/input/misc/Makefile b/drivers/input/misc/Makefile
+index 4f7f736831ba..dabe0321b208 100644
+--- a/drivers/input/misc/Makefile
++++ b/drivers/input/misc/Makefile
+@@ -92,3 +92,4 @@ obj-$(CONFIG_INPUT_WM831X_ON)		+= wm831x-on.o
+ obj-$(CONFIG_INPUT_XEN_KBDDEV_FRONTEND)	+= xen-kbdfront.o
+ obj-$(CONFIG_INPUT_YEALINK)		+= yealink.o
+ obj-$(CONFIG_INPUT_IDEAPAD_SLIDEBAR)	+= ideapad_slidebar.o
++obj-m += mh248.o
+diff --git a/drivers/input/misc/mh248.c b/drivers/input/misc/mh248.c
+new file mode 100644
+index 000000000000..afb58cbc028b
+--- /dev/null
++++ b/drivers/input/misc/mh248.c
+@@ -0,0 +1,192 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * mh248 hall sensor driver
++ *
++ * Copyright (C) 2025 ROCKNIX (https://github.com/ROCKNIX)
++ */
++
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/interrupt.h>
++#include <linux/gpio/consumer.h>
++#include <linux/input.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/of_device.h>
++#include <linux/of_gpio.h>
++#include <linux/pm.h>
++#include <linux/slab.h>
++
++struct mh248_para {
++	struct device *dev;
++	struct input_dev *input;
++	struct gpio_desc *gpio_pin;
++	struct mutex ops_lock;
++	int irq;
++	int active_value;
++	bool is_suspend;
++};
++
++static irqreturn_t hall_mh248_interrupt(int irq, void *dev_id)
++{
++	struct mh248_para *mh248 = dev_id;
++	int gpio_value;
++
++	gpio_value = gpiod_get_value(mh248->gpio_pin);
++
++	if (!mh248->is_suspend) {
++		if (gpio_value == mh248->active_value)
++			input_report_key(mh248->input, KEY_POWER, 1);
++		else
++			input_report_key(mh248->input, KEY_POWER, 0);
++		input_sync(mh248->input);
++	}
++
++	return IRQ_HANDLED;
++}
++
++#ifdef CONFIG_PM_SLEEP
++static int hall_mh248_suspend(struct device *dev)
++{
++	struct mh248_para *mh248 = dev_get_drvdata(dev);
++	int ret;
++
++	mutex_lock(&mh248->ops_lock);
++	mh248->is_suspend = true;
++
++	/* Enable IRQ as a wakeup source */
++	if (device_may_wakeup(dev)) {
++		ret = enable_irq_wake(mh248->irq);
++		if (ret)
++			dev_err(dev, "Failed to enable IRQ wake: %d\n", ret);
++	}
++	mutex_unlock(&mh248->ops_lock);
++
++	return 0;
++}
++
++static int hall_mh248_resume(struct device *dev)
++{
++	struct mh248_para *mh248 = dev_get_drvdata(dev);
++	int ret;
++
++	mutex_lock(&mh248->ops_lock);
++	mh248->is_suspend = false;
++
++	/* Disable IRQ wakeup */
++	if (device_may_wakeup(dev)) {
++		ret = disable_irq_wake(mh248->irq);
++		if (ret)
++			dev_err(dev, "Failed to disable IRQ wake: %d\n", ret);
++	}
++	mutex_unlock(&mh248->ops_lock);
++
++	return 0;
++}
++#endif
++
++static int hall_mh248_probe(struct platform_device *pdev)
++{
++	struct device_node *np = pdev->dev.of_node;
++	struct mh248_para *mh248;
++	int ret;
++
++	mh248 = devm_kzalloc(&pdev->dev, sizeof(*mh248), GFP_KERNEL);
++	if (!mh248)
++		return -ENOMEM;
++
++	mh248->dev = &pdev->dev;
++
++	mh248->gpio_pin = devm_gpiod_get(mh248->dev, "irq", GPIOD_IN);
++	if (IS_ERR(mh248->gpio_pin)) {
++		dev_err(mh248->dev, "Failed to get GPIO\n");
++		return PTR_ERR(mh248->gpio_pin);
++	}
++
++	ret = of_property_read_u32(np, "hall-active", &mh248->active_value);
++	if (ret) {
++		dev_err(mh248->dev, "Failed to read hall-active property\n");
++		return ret;
++	}
++
++	mh248->irq = gpiod_to_irq(mh248->gpio_pin);
++	if (mh248->irq < 0) {
++		dev_err(mh248->dev, "Failed to get IRQ\n");
++		return mh248->irq;
++	}
++
++	mutex_init(&mh248->ops_lock);
++
++	mh248->input = devm_input_allocate_device(mh248->dev);
++	if (!mh248->input) {
++		dev_err(mh248->dev, "Failed to allocate input device\n");
++		return -ENOMEM;
++	}
++
++	mh248->input->name = "mh248 hall sensor";
++	mh248->input->id.bustype = BUS_HOST;
++	mh248->input->dev.parent = mh248->dev;
++	input_set_capability(mh248->input, EV_KEY, KEY_POWER);
++
++	ret = input_register_device(mh248->input);
++	if (ret) {
++		dev_err(mh248->dev, "Failed to register input device\n");
++		return ret;
++	}
++
++	ret = devm_request_threaded_irq(mh248->dev, mh248->irq, NULL,
++					      hall_mh248_interrupt,
++					      IRQF_ONESHOT | IRQF_TRIGGER_RISING |
++					      IRQF_TRIGGER_FALLING,
++					      "hall_mh248", mh248);
++	if (ret) {
++		dev_err(mh248->dev, "Failed to request IRQ\n");
++		return ret;
++	}
++
++	device_set_wakeup_capable(&pdev->dev, true);
++	device_set_wakeup_enable(&pdev->dev, true);
++	platform_set_drvdata(pdev, mh248);
++
++	dev_info(mh248->dev, "mh248 hall sensor initialized\n");
++
++	return 0;
++}
++
++static void hall_mh248_remove(struct platform_device *pdev)
++{
++	struct mh248_para *mh248 = platform_get_drvdata(pdev);
++
++	device_set_wakeup_capable(&pdev->dev, false);
++	device_set_wakeup_enable(&pdev->dev, false);
++	input_unregister_device(mh248->input);
++}
++
++static const struct of_device_id hall_mh248_match[] = {
++	{ .compatible = "hall-mh248" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, hall_mh248_match);
++
++static const struct dev_pm_ops hall_mh248_pm_ops = {
++#ifdef CONFIG_PM_SLEEP
++	.suspend = hall_mh248_suspend,
++	.resume = hall_mh248_resume,
++#endif
++};
++
++static struct platform_driver hall_mh248_driver = {
++	.probe = hall_mh248_probe,
++	.remove_new = hall_mh248_remove,
++	.driver = {
++		.name = "mh248",
++		.of_match_table = hall_mh248_match,
++		.pm = &hall_mh248_pm_ops,
++	},
++};
++module_platform_driver(hall_mh248_driver);
++
++MODULE_ALIAS("platform:mh248");
++MODULE_AUTHOR("ROCKNIX (https://github.com/ROCKNIX)");
++MODULE_LICENSE("GPL v2");
++MODULE_DESCRIPTION("mh248 hall sensor driver");
+-- 
+2.34.1
+
