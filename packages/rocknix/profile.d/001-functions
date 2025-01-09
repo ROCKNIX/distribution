@@ -178,7 +178,15 @@ function cpu_vendor() {
 
 # sway window manager utility function to enable fullscreen on a window for an input app_id
 function sway_fullscreen {
-  local APPID="${1}"
+  # value for swaymsg criteria
+  # for 'virtual' attributes pidof / pgrep this is the process to look up pid for
+  local VALUE="${1}"
+  
+  # attribute for swaymsg criteria - default to app_id for backwards compatibility
+  # 'virtual' attributes pidof / pgrep result in the value being evaluted at runtime
+  local ATTRIBUTE="${2:-app_id}"
+
+  # retry control vars
   local QUERY_LIMIT=5
   local QUERY_COUNT=0
 
@@ -187,8 +195,31 @@ function sway_fullscreen {
       # loop, attempting to fullscreen window for app_id
       ((QUERY_COUNT++))
 
-      echo "Attempting to fullscreen app_id=${APPID}"
-      swaymsg '[app_id='"${APPID}"'] fullscreen enable'
+      # Derive swaymsg criteria attribute and value where they are dynamic
+      if [[ "${ATTRIBUTE}" = @(pidof|pgrep) ]]; then
+        local PID=""
+
+        case "${ATTRIBUTE}" in
+          "pidof")
+            PID=$(pidof "${VALUE}")
+            ;;
+          "pgrep")
+            PID=$(pgrep "${VALUE}")
+            ;;
+        esac
+
+        if [ -z "${PID}" ]; then
+          echo "No PID found for VALUE=${VALUE}"
+          sleep 1
+          continue
+        else
+          ATTRIBUTE="pid"
+          VALUE="${PID}"
+        fi
+      fi
+
+      echo "Attempting to fullscreen ${ATTRIBUTE}=${VALUE}"
+      swaymsg '['"${ATTRIBUTE}"'='"${VALUE}"'] fullscreen enable'
       local RESULT=$?
 
       if [ $RESULT -eq 0 ]; then

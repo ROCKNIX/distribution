@@ -7,4 +7,6 @@
 
 set_kill set "-9 duckstation-nogui"
 
+sway_fullscreen "duckstation-nogui" "pgrep"  &
+
 /usr/bin/duckstation-nogui -fullscreen -settings "/storage/.config/duckstation/settings.ini"

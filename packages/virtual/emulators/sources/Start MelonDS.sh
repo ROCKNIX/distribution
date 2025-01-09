@@ -8,6 +8,8 @@
 
 set_kill set "-9 melonDS"
 
+sway_fullscreen "net.kuribo64.melonDS" &
+
 export QT_QPA_PLATFORM=wayland
 
 /usr/bin/melonDS
