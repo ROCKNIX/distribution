@@ -1,0 +1,131 @@
+diff --git a/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-2024.dts b/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-2024.dts
+index 9c522ee..2ab6610 100644
+--- a/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-2024.dts
++++ b/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-2024.dts
+@@ -337,6 +337,26 @@ h616_vqmmc_regulator: mmc-regulator {
+ 		regulator-max-microvolt = <3300000>;
+ 		regulator-boot-on;
+ 	};
++
++	reg_vcc3v8_usb: regulator-vcc3v8-usb {
++		compatible = "regulator-fixed";
++		enable-active-high;
++		gpio = <&pio 4 5 GPIO_ACTIVE_HIGH>; /* PE5 */
++		regulator-min-microvolt = <3800000>;
++		regulator-max-microvolt = <3800000>;
++		regulator-name = "vcc3v8-usb";
++	};
++
++	reg_vcc5v0_usb: regulator-vcc5v0-usb {
++		compatible = "regulator-fixed";
++		enable-active-high;
++		gpio = <&pio 8 16 GPIO_ACTIVE_HIGH>; /* PI16 */
++		regulator-min-microvolt = <5000000>;
++		regulator-max-microvolt = <5000000>;
++		regulator-name = "vcc5v0-usb";
++		vin-supply = <&reg_vcc3v8_usb>;
++	};
++
+ };
+ 
+ &codec {
+@@ -363,6 +383,15 @@ &de {
+ 	status = "okay";
+ };
+ 
++&ehci0 {
++        status = "okay";
++};
++
++&ohci0 {
++        status = "okay";
++};
++
++
+ &mmc0 {
+ 	vmmc-supply = <&reg_cldo3>;
+ 	vqmmc-supply = <&h616_vqmmc_regulator>;	
+@@ -587,11 +616,14 @@ &uart0 {
+ 
+ /* the AXP717 has USB type-C role switch functionality, not yet described by the binding */
+ &usbotg {
+-	dr_mode = "peripheral";   /* USB type-C receptable */
++	dr_mode = "otg";   /* USB type-C receptable */
+ 	status = "okay";
+ };
+ 
+ &usbphy {
++	usb0_id_det-gpios = <&pio 8 4 GPIO_ACTIVE_LOW>;
++	usb0_vbus-supply = <&reg_vcc5v0_usb>;
++	usb0_vbus_power-supply = <&usb_power>;
+ 	status = "okay";
+ };
+ 
+diff --git a/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-h.dts b/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-h.dts
+index 652e03e..ef9e522 100644
+--- a/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-h.dts
++++ b/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-h.dts
+@@ -11,22 +11,13 @@ / {
+ 	compatible = "anbernic,rg35xx-h", "allwinner,sun50i-h700";
+ 	rocknix-dt-id = "sun50i-h700-anbernic-rg35xx-h";
+ 
+-	reg_vcc3v8_usb: regulator-vcc3v8-usb {
+-		compatible = "regulator-fixed";
+-		enable-active-high;
+-		gpio = <&pio 4 5 GPIO_ACTIVE_HIGH>; /* PE5 */
+-		regulator-min-microvolt = <3800000>;
+-		regulator-max-microvolt = <3800000>;
+-		regulator-name = "vcc3v8-usb";
+-	};
+-
+-	reg_vcc5v0_usb: regulator-vcc5v0-usb {
++	reg_vcc5v0_usb1: regulator-vcc5v0-usb1 {
+ 		compatible = "regulator-fixed";
+ 		enable-active-high;
+ 		gpio = <&pio 8 7 GPIO_ACTIVE_HIGH>; /* PI7 */
+ 		regulator-min-microvolt = <5000000>;
+ 		regulator-max-microvolt = <5000000>;
+-		regulator-name = "vcc5v0-usb";
++		regulator-name = "vcc5v0-usb1";
+ 		vin-supply = <&reg_vcc3v8_usb>;
+ 	};
+ };
+@@ -44,5 +35,5 @@ &ohci1 {
+ };
+ 
+ &usbphy {
+-	usb1_vbus-supply = <&reg_vcc5v0_usb>;
++	usb1_vbus-supply = <&reg_vcc5v0_usb1>;
+ };
+diff --git a/drivers/phy/allwinner/phy-sun4i-usb.c b/drivers/phy/allwinner/phy-sun4i-usb.c
+index b0f19e9..d7d0bb6 100644
+--- a/drivers/phy/allwinner/phy-sun4i-usb.c
++++ b/drivers/phy/allwinner/phy-sun4i-usb.c
+@@ -588,6 +588,7 @@ static void sun4i_usb_phy0_id_vbus_det_scan(struct work_struct *work)
+ 	struct sun4i_usb_phy *phy;
+ 	bool force_session_end, id_notify = false, vbus_notify = false;
+ 	int id_det, vbus_det;
++	static int id_det_start = 0;
+ 
+ 	if (!phy0)
+ 		return;
+@@ -620,6 +621,19 @@ static void sun4i_usb_phy0_id_vbus_det_scan(struct work_struct *work)
+ 		}
+ 		sun4i_usb_phy0_set_id_detect(phy0, id_det);
+ 		data->id_det = id_det;
++		pr_info("id_det: %d\n",id_det);
++		if (id_det == 1 ) {
++		    id_det_start = 1;
++		    if ( phy->regulator_on == true) {
++			regulator_disable(phy->vbus);
++			phy->regulator_on = false;
++		    }
++		} else {
++		    if (id_det_start == 1) {
++			regulator_enable(phy->vbus);
++			phy->regulator_on = true;
++		    }
++		}
+ 		id_notify = true;
+ 	}
+ 
