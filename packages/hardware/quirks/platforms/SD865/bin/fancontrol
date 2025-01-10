@@ -36,19 +36,25 @@ fi
 
 if [ ! "${COOLING_PROFILE}" = "custom" ]
 then
-  if [ "${COOLING_PROFILE}" = "aggressive" ]
-  then
-    SPEEDS=(255 225 195)
-    TEMPS=(55000 45000 0)
-  elif [ "${COOLING_PROFILE}" = "moderate" ]
-  then
-    SPEEDS=(255 192 128 96)
-    TEMPS=(65000 55000 45000 0)
-  elif [ "${COOLING_PROFILE}" = "quiet" ]
-  then
+  if [ "${COOLING_PROFILE}" = "aggressive" ]; then
+    MAXTEMP="75000"
+    HIGHTEMP="65000"
+    MIDTEMP="55000"
+    LOWTEMP="45000"
+    MINTEMP="35000"
+  elif [ "${COOLING_PROFILE}" = "moderate" ]; then
+    MAXTEMP="80000"
+    HIGHTEMP="70000"
+    MIDTEMP="60000"
+    LOWTEMP="50000"
+    MINTEMP="40000"
+  elif [ "${COOLING_PROFILE}" = "quiet" ]; then
     # Quiet.
-    SPEEDS=(255 192 128 96 64 48 32)
-    TEMPS=(70000 60000 55000 50000 49000 47000 0)
+    MAXTEMP="85000"
+    HIGHTEMP="75000"
+    MIDTEMP="65000"
+    LOWTEMP="55000"
+    MINTEMP="45000"
   else
     # auto
     set_control 0 >/dev/null 2>&1
@@ -56,27 +62,41 @@ then
   fi
 fi
 
+CTEMP="1"
+
 log $0 "Enabling fan control."
 set_control 1 >/dev/null 2>&1
 
 while true
-do
+  do
   INDEX=0
   CPU_TEMP=$(awk '{total += $1; count++} END {printf "%d", total/count}' ${DEVICE_TEMP_SENSOR})
   $DEBUG && log $0 "CPU TEMP: ${CPU_TEMP}" 2>/dev/null
-  for TEMP in "${TEMPS[@]}"
-  do
-    if (( "${CPU_TEMP}" > "${TEMP}" )) && \
-       [ ! "${LASTSPEED}" = "${SPEEDS[${INDEX}]}" ]
-    then
-      $DEBUG && log $0 "Setting PWM FAN to ${SPEEDS[${INDEX}]} (${TEMP})" 2>/dev/null
-      echo ${SPEEDS[${INDEX}]} >${FAN_PWM}
-      LASTSPEED=${SPEEDS[${INDEX}]}
-      break
-    fi
-    INDEX=$(( $INDEX + 1 ))
-  done
-  sleep 2
+  if (( "${CPU_TEMP}" > "${MAXTEMP}" )); then
+    FSPEED="255"
+    TEMP="${MAXTEMP}"
+  elif (( "${CPU_TEMP}" > "${HIGHTEMP}" )); then
+    FSPEED="196"
+    TEMP="${HIGHTEMP}"
+  elif (( "${CPU_TEMP}" > "${MIDTEMP}" )); then
+    FSPEED="128"
+    TEMP="${MIDTEMP}"
+  elif (( "${CPU_TEMP}" > "${LOWTEMP}" )); then
+    FSPEED="96"
+    TEMP="${LOWTEMP}"
+  elif (( "${CPU_TEMP}" > "${MINTEMP}" )); then
+    FSPEED="64"
+    TEMP="${MINTEMP}"
+  else
+    FSPEED="32"
+    TEMP=0
+  fi
+  if (( ${TEMP} != ${CTEMP} )); then
+    echo ${FSPEED} > ${FAN_PWM}
+    CTEMP=${TEMP}
+    $DEBUG && log $0 "Setting PWM FAN to ${FSPEED} at CPU Temp: ${CPU_TEMP}" 2>/dev/null
+  fi
+  sleep 3
 done
 
 log $0 "Disabling fan control."
