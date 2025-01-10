@@ -38,7 +38,7 @@ mkdir -p ${GAMEDATA}
 
 # Copy files to GAMEDATA
 if [[ ! -f "${M64PCONF}" ]]; then
-    cp ${SHARE}/mupen64plus.cfg* ${M64PCONF}
+    cp ${SHARE}/mupen64plus.cfg* ${GAMEDATA}
 fi
 if [[ ! -f "${CUSTOMINP}" ]]; then
     cp ${SHARE}/default.ini ${CUSTOMINP}
