@@ -7,4 +7,6 @@ source /etc/profile
 
 set_kill set "gamepad-tester"
 
+sway_fullscreen "gamepad-tester" &
+
 /usr/bin/gamepad-tester

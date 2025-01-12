@@ -284,16 +284,10 @@ sed -i '/SkipIPL/c\SkipIPL = True' /storage/.config/dolphin-emu/Dolphin.ini
 rm -rf /storage/.local/share/dolphin-emu
 ln -sf /storage/.config/dolphin-emu /storage/.local/share/dolphin-emu
 
+@EXPORTS@
 
 # Retroachievements
 /usr/bin/cheevos_dolphin.sh
-
-# Libmali exception
-if [ "$(/usr/bin/gpudriver)" = "libmali" ] && [ "${HW_DEVICE}" != "RK3566" ]; then
-    # Force only working combo for libmali: QT + Vulkan
-    DOLPHIN_CORE=dolphin-emu
-    sed -i '/GFXBackend/c\GFXBackend = Vulkan' /storage/.config/dolphin-emu/Dolphin.ini
-fi
 
 # Set audio and video backend
 if [ ${DOLPHIN_CORE} = "dolphin-emu" ]; then
