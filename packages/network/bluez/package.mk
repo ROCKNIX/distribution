@@ -78,9 +78,6 @@ post_makeinstall_target() {
     echo "[General]" >${INSTALL}/etc/bluetooth/input.conf
     echo "ClassicBondedOnly=false" >>${INSTALL}/etc/bluetooth/input.conf
 
-  mkdir -p ${INSTALL}/usr/share/services
-    cp -P ${PKG_DIR}/default.d/*.conf ${INSTALL}/usr/share/services
-
   # bluez looks in /etc/firmware/
     ln -sf /usr/lib/firmware ${INSTALL}/etc/firmware
 
@@ -88,10 +85,4 @@ post_makeinstall_target() {
   #  sed -i 's/-lbluetooth//g' ${PKG_BUILD}/lib/bluez.pc
     cp -P ${PKG_BUILD}/lib/bluez.pc ${SYSROOT_PREFIX}/usr/lib/pkgconfig
     cp -P -r ${PKG_BUILD}/lib/bluetooth ${SYSROOT_PREFIX}/usr/include/
-}
-
-post_install() {
-  enable_service bluetooth-defaults.service
-  enable_service bluetooth.service
-  enable_service obex.service
 }
