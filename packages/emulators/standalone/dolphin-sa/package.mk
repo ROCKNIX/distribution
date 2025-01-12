@@ -9,16 +9,7 @@ PKG_LONGDESC="Dolphin is a GameCube / Wii emulator, allowing you to play games f
 PKG_TOOLCHAIN="cmake"
 
 case ${DEVICE} in
-  RK3566)
-    PKG_SITE="https://github.com/dolphin-emu/dolphin"
-    PKG_URL="${PKG_SITE}.git"
-    PKG_VERSION="e6583f8bec814d8f3748f1d7738457600ce0de56"
-    PKG_PATCH_DIRS+=" wayland"
-    PKG_CMAKE_OPTS_TARGET+=" -DENABLE_QT=OFF \
-                             -DUSE_RETRO_ACHIEVEMENTS=OFF \
-                             -DENABLE_HEADLESS=ON"
-  ;;
-  *)
+  SD865|AMD64|RK3399)
     PKG_VERSION="9b3b6bea9d088c52cfaa455bb8f2702d13f6002d"
     PKG_SITE="https://github.com/dolphin-emu/dolphin"
     PKG_URL="${PKG_SITE}.git"
@@ -27,6 +18,15 @@ case ${DEVICE} in
     PKG_CMAKE_OPTS_TARGET+=" -DENABLE_QT=ON \
                              -DUSE_RETRO_ACHIEVEMENTS=ON \
                              -DENABLE_HEADLESS=OFF"
+  ;;
+  *)
+    PKG_SITE="https://github.com/dolphin-emu/dolphin"
+    PKG_URL="${PKG_SITE}.git"
+    PKG_VERSION="e6583f8bec814d8f3748f1d7738457600ce0de56"
+    PKG_PATCH_DIRS+=" wayland"
+    PKG_CMAKE_OPTS_TARGET+=" -DENABLE_QT=OFF \
+                             -DUSE_RETRO_ACHIEVEMENTS=OFF \
+                             -DENABLE_HEADLESS=ON"
   ;;
 esac
 
@@ -89,13 +89,24 @@ makeinstall_target() {
 
 post_install() {
     case ${DEVICE} in
-      RK3566)
-        DOLPHIN_PLATFORM="wayland"
+      RK3588)
+        DOLPHIN_PLATFORM="\${PLATFORM}"
+        EXPORTS="if [ ! -z 'lsmod | grep panthor' ]; then LD_LIBRARY_PATH='\/usr\/lib\/libmali-valhall-g610-g13p0-x11-gbm.so' PLATFORM='wayland'; else PLATFORM='x11'; fi"
+      ;;
+      SD865|AMD64|RK3399)
+        DOLPHIN_PLATFORM="x11"
+        EXPORTS="export QT_QPA_PLATFORM=xcb"
       ;;
       *)
-        DOLPHIN_PLATFORM="x11"
+        DOLPHIN_PLATFORM="wayland"
+        EXPORTS=""
       ;;
     esac
     sed -e "s/@DOLPHIN_PLATFORM@/${DOLPHIN_PLATFORM}/g" -i ${INSTALL}/usr/bin/start_dolphin_gc.sh
     sed -e "s/@DOLPHIN_PLATFORM@/${DOLPHIN_PLATFORM}/g" -i  ${INSTALL}/usr/bin/start_dolphin_wii.sh
+
+    sed -e "s/@EXPORTS@/${EXPORTS}/g" \
+        -i  ${INSTALL}/usr/bin/start_dolphin_gc.sh
+    sed -e "s/@EXPORTS@/${EXPORTS}/g" \
+        -i  ${INSTALL}/usr/bin/start_dolphin_wii.sh
 }
