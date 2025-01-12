@@ -88,6 +88,7 @@ SKIPBIOS=$(get_setting use_bios "${PLATFORM}" "${GAME}")
 EFBACCESS=$(get_setting skip_efb_cpu_access "${PLATFORM}" "${GAME}")
 EFBTEXTURE=$(get_setting store_efb_to_texture_only "${PLATFORM}" "${GAME}")
 XFBTEXTURE=$(get_setting store_xfb_to_texture_only "${PLATFORM}" "${GAME}")
+RUMBLE=$(get_setting rumble "${PLATFORM}" "${GAME}")
 WHACK=$(get_setting widescreen_hack "${PLATFORM}" "${GAME}")
 
 # Set the cores to use
@@ -262,6 +263,11 @@ fi
     cp -r /storage/.config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.custom /storage/.config/dolphin-emu/GCPadNew.ini
   else
     cp -r /storage/.config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.south /storage/.config/dolphin-emu/GCPadNew.ini
+  fi
+
+  # GC Controller Rumble
+  if [ "$RUMBLE" = "false" ]; then
+    sed -i '/^Rumble/d' /storage/.config/dolphin-emu/GCPadNew.ini
   fi
 
   # GC Controller Hotkey Enable

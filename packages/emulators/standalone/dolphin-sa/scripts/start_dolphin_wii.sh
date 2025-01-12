@@ -81,6 +81,7 @@ VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
 EFBACCESS=$(get_setting skip_efb_cpu_access "${PLATFORM}" "${GAME}")
 EFBTEXTURE=$(get_setting store_efb_to_texture_only "${PLATFORM}" "${GAME}")
 XFBTEXTURE=$(get_setting store_xfb_to_texture_only "${PLATFORM}" "${GAME}")
+RUMBLE=$(get_setting rumble "${PLATFORM}" "${GAME}")
 WHACK=$(get_setting widescreen_hack "${PLATFORM}" "${GAME}")
 
 #Set the cores to use
@@ -227,6 +228,11 @@ fi
     cp -r /storage/.config/dolphin-emu/WiiControllerProfiles/custom.ini /storage/.config/dolphin-emu/WiimoteNew.ini
   else
     cp -r /storage/.config/dolphin-emu/WiiControllerProfiles/classic.ini /storage/.config/dolphin-emu/WiimoteNew.ini
+  fi
+
+  # Wii Controller Rumble
+  if [ "$RUMBLE" = "false" ]; then
+    sed -i '/^Rumble/d' /storage/.config/dolphin-emu/WiimoteNew.ini
   fi
 
   # Wii Controller Hotkey Enable
