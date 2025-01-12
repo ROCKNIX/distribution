@@ -505,8 +505,8 @@ makeinstall_target() {
   ### Nintendo GameCube
   case ${DEVICE} in
     AMD64|SD865|RK3399)
-      add_emu_core gamecube dolphin dolphin-sa-gc true
-      add_emu_core gamecube dolphin dolphin-qt-gc false
+      add_emu_core gamecube dolphin dolphin-qt-gc true
+      add_emu_core gamecube dolphin dolphin-sa-gc false
       add_emu_core gamecube retroarch dolphin false
       install_script "Start Dolphin.sh"
       add_es_system gamecube
@@ -521,8 +521,8 @@ makeinstall_target() {
   ### Nintendo Wii
   case ${DEVICE} in
     AMD64|SD865|RK3399)
-      add_emu_core wii dolphin dolphin-sa-wii true
-      add_emu_core wii dolphin dolphin-qt-gc false
+      add_emu_core wii dolphin dolphin-qt-wii true
+      add_emu_core wii dolphin dolphin-sa-wii false
       add_emu_core wii retroarch dolphin false
       add_es_system wii
     ;;
