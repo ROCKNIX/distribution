@@ -25,4 +25,5 @@ done
 
 export QT_QPA_PLATFORM=xcb
 set_kill set "-9 rpcs3"
+sway_fullscreen "RPCS3" "class" &
 /usr/bin/rpcs3-sa
