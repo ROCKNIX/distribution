@@ -1,0 +1,259 @@
+From ff8bf1482d13cfbd23bc4983c0834fd8d47ca230 Mon Sep 17 00:00:00 2001
+From: Philippe Simons <simons.philippe@gmail.com>
+Date: Mon, 13 Jan 2025 00:05:58 +0100
+Subject: [PATCH] enable usb otg
+
+---
+ .../sun50i-h700-anbernic-rg35xx-2024.dts      | 23 ++++-
+ .../sun50i-h700-anbernic-rg35xx-h.dts         |  6 +-
+ drivers/phy/allwinner/phy-sun4i-usb.c         | 96 +++++++++++++++++--
+ 3 files changed, 113 insertions(+), 12 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-2024.dts b/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-2024.dts
+index 9c522ee2c..59a5b94cf 100644
+--- a/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-2024.dts
++++ b/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-2024.dts
+@@ -337,6 +337,16 @@ h616_vqmmc_regulator: mmc-regulator {
+ 		regulator-max-microvolt = <3300000>;
+ 		regulator-boot-on;
+ 	};
++
++	reg_usb0_vbus: regulator-usb0-vbus {
++		compatible = "regulator-fixed";
++		enable-active-high;
++		gpio = <&pio 8 16 GPIO_ACTIVE_HIGH>; /* PI16 */
++		regulator-min-microvolt = <5000000>;
++		regulator-max-microvolt = <5000000>;
++		regulator-name = "usb0-vbus";
++		vin-supply = <&reg_boost>;
++	};
+ };
+ 
+ &codec {
+@@ -587,11 +597,22 @@ &uart0 {
+ 
+ /* the AXP717 has USB type-C role switch functionality, not yet described by the binding */
+ &usbotg {
+-	dr_mode = "peripheral";   /* USB type-C receptable */
++	dr_mode = "otg";   /* USB type-C receptable */
++	status = "okay";
++};
++
++&ehci0 {
++	status = "okay";
++};
++
++&ohci0 {
+ 	status = "okay";
+ };
+ 
+ &usbphy {
++	usb0_id_det-gpios = <&pio 8 4 GPIO_ACTIVE_LOW>;
++	usb0_vbus_power-supply = <&usb_power>;
++	usb0_vbus-supply = <&reg_usb0_vbus>;
+ 	status = "okay";
+ };
+ 
+diff --git a/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-h.dts b/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-h.dts
+index 652e03ea8..ef55a6fd8 100644
+--- a/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-h.dts
++++ b/arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-h.dts
+@@ -20,13 +20,13 @@ reg_vcc3v8_usb: regulator-vcc3v8-usb {
+ 		regulator-name = "vcc3v8-usb";
+ 	};
+ 
+-	reg_vcc5v0_usb: regulator-vcc5v0-usb {
++	reg_usb1_vbus: regulator-usb1-vbus {
+ 		compatible = "regulator-fixed";
+ 		enable-active-high;
+ 		gpio = <&pio 8 7 GPIO_ACTIVE_HIGH>; /* PI7 */
+ 		regulator-min-microvolt = <5000000>;
+ 		regulator-max-microvolt = <5000000>;
+-		regulator-name = "vcc5v0-usb";
++		regulator-name = "usb1-vbus";
+ 		vin-supply = <&reg_vcc3v8_usb>;
+ 	};
+ };
+@@ -44,5 +44,5 @@ &ohci1 {
+ };
+ 
+ &usbphy {
+-	usb1_vbus-supply = <&reg_vcc5v0_usb>;
++	usb1_vbus-supply = <&reg_usb1_vbus>;
+ };
+diff --git a/drivers/phy/allwinner/phy-sun4i-usb.c b/drivers/phy/allwinner/phy-sun4i-usb.c
+index b0f19e950..0160b5022 100644
+--- a/drivers/phy/allwinner/phy-sun4i-usb.c
++++ b/drivers/phy/allwinner/phy-sun4i-usb.c
+@@ -33,6 +33,8 @@
+ #include <linux/spinlock.h>
+ #include <linux/usb/of.h>
+ #include <linux/workqueue.h>
++#include <linux/usb/role.h>
++#include <linux/usb/usb_phy_generic.h>
+ 
+ #define REG_ISCR			0x00
+ #define REG_PHYCTL_A10			0x04
+@@ -140,6 +142,7 @@ struct sun4i_usb_phy_data {
+ 	int id_det;
+ 	int vbus_det;
+ 	struct delayed_work detect;
++	struct usb_role_switch *role_sw;
+ };
+ 
+ #define to_sun4i_usb_phy_data(phy) \
+@@ -509,6 +512,18 @@ static int sun4i_usb_phy_power_off(struct phy *_phy)
+ 	return 0;
+ }
+ 
++static void sun4i_usb_phy0_set_dr_mode(struct sun4i_usb_phy_data *data, int new_mode)
++{
++	if (new_mode != data->dr_mode) {
++		dev_info(&data->phys[0].phy->dev, "Changing dr_mode to %d\n", new_mode);
++		data->dr_mode = new_mode;
++	}
++
++	data->id_det = -1; /* Force reprocessing of id */
++	data->force_session_end = true;
++	queue_delayed_work(system_wq, &data->detect, 0);
++}
++
+ static int sun4i_usb_phy_set_mode(struct phy *_phy,
+ 				  enum phy_mode mode, int submode)
+ {
+@@ -536,14 +551,19 @@ static int sun4i_usb_phy_set_mode(struct phy *_phy,
+ 		return -EINVAL;
+ 	}
+ 
+-	if (new_mode != data->dr_mode) {
+-		dev_info(&_phy->dev, "Changing dr_mode to %d\n", new_mode);
+-		data->dr_mode = new_mode;
++	if (data->cfg->phy0_dual_route) {
++		/*
++		 For SoCs with dual route the PHY mode is fully determined by 
++		 the selected mux route (i.e. USB controller to use).
++		 As both host (EHCI/OHCI) and peripheral (MUSB) controllers uses
++		 the same PHY, both drivers can try to set PHY mode.
++		 We need to ignore this requests, but not report error in case
++		 of valid mode values.
++		*/
++		return 0;
+ 	}
+ 
+-	data->id_det = -1; /* Force reprocessing of id */
+-	data->force_session_end = true;
+-	queue_delayed_work(system_wq, &data->detect, 0);
++	sun4i_usb_phy0_set_dr_mode(data, new_mode);
+ 
+ 	return 0;
+ }
+@@ -647,8 +667,13 @@ static void sun4i_usb_phy0_id_vbus_det_scan(struct work_struct *work)
+ 		sun4i_usb_phy_passby(phy, !id_det);
+ 
+ 		/* Re-route PHY0 if necessary */
+-		if (data->cfg->phy0_dual_route)
++		if (data->cfg->phy0_dual_route) {
++			if (id_det)
++				sun4i_usb_phy_power_off(phy->phy);
++			else
++				sun4i_usb_phy_power_on(phy->phy);
+ 			sun4i_usb_phy0_reroute(data, id_det);
++		}
+ 	}
+ 
+ 	if (vbus_notify)
+@@ -701,6 +726,7 @@ static void sun4i_usb_phy_remove(struct platform_device *pdev)
+ 	struct device *dev = &pdev->dev;
+ 	struct sun4i_usb_phy_data *data = dev_get_drvdata(dev);
+ 
++	usb_role_switch_unregister(data->role_sw);
+ 	if (data->vbus_power_nb_registered)
+ 		power_supply_unreg_notifier(&data->vbus_power_nb);
+ 	if (data->id_det_irq > 0)
+@@ -717,12 +743,52 @@ static const unsigned int sun4i_usb_phy0_cable[] = {
+ 	EXTCON_NONE,
+ };
+ 
++static int sun4i_usb_phy0_usb_role_set(struct usb_role_switch *sw, enum usb_role role)
++{
++	struct sun4i_usb_phy_data *data = usb_role_switch_get_drvdata(sw);
++	int dr_mode;
++
++	switch (role) {
++		case USB_ROLE_DEVICE:
++			dr_mode = USB_DR_MODE_PERIPHERAL;
++			break;
++		case USB_ROLE_HOST:
++			dr_mode = USB_DR_MODE_HOST;
++			break;
++		default:
++			dr_mode = USB_DR_MODE_OTG;
++	}
++	sun4i_usb_phy0_set_dr_mode(data, dr_mode);
++	
++	return 0;
++}
++
++static enum usb_role sun4i_usb_phy0_usb_role_get(struct usb_role_switch *sw)
++{
++	struct sun4i_usb_phy_data *data = usb_role_switch_get_drvdata(sw);
++	enum usb_role role;
++	int id_det = sun4i_usb_phy0_get_id_det(data);
++	switch (id_det) {
++		case 1:
++			role = USB_ROLE_DEVICE;
++			break;
++		case 0:
++			role = USB_ROLE_HOST;
++			break;
++		default:
++			role = USB_ROLE_NONE;
++	};
++
++	return role;
++}
++
+ static int sun4i_usb_phy_probe(struct platform_device *pdev)
+ {
+ 	struct sun4i_usb_phy_data *data;
+ 	struct device *dev = &pdev->dev;
+ 	struct device_node *np = dev->of_node;
+ 	struct phy_provider *phy_provider;
++	struct usb_role_switch_desc role_sw_desc = { 0 };
+ 	int i, ret;
+ 
+ 	data = devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
+@@ -766,8 +832,15 @@ static int sun4i_usb_phy_probe(struct platform_device *pdev)
+ 			return -EPROBE_DEFER;
+ 	}
+ 
+-	data->dr_mode = of_usb_get_dr_mode_by_phy(np, 0);
++	data->dr_mode = usb_get_dr_mode(dev);
++	if (data->dr_mode == USB_DR_MODE_UNKNOWN) {
++		data->dr_mode = of_usb_get_dr_mode_by_phy(np, 0);
++		if (data->dr_mode == USB_DR_MODE_UNKNOWN) {
++			data->dr_mode = USB_DR_MODE_OTG;
++		}
++	}
+ 
++	dev_info(dev, "phy0 dr_mode=%d\n",data->dr_mode);
+ 	data->extcon = devm_extcon_dev_allocate(dev, sun4i_usb_phy0_cable);
+ 	if (IS_ERR(data->extcon)) {
+ 		dev_err(dev, "Couldn't allocate our extcon device\n");
+@@ -896,6 +969,13 @@ static int sun4i_usb_phy_probe(struct platform_device *pdev)
+ 		return PTR_ERR(phy_provider);
+ 	}
+ 
++	role_sw_desc.set = sun4i_usb_phy0_usb_role_set;
++	role_sw_desc.get = sun4i_usb_phy0_usb_role_get;
++	role_sw_desc.fwnode = dev_fwnode(dev);
++	role_sw_desc.driver_data = data;
++	role_sw_desc.allow_userspace_control = true;
++	data->role_sw = usb_role_switch_register(dev, &role_sw_desc);
++
+ 	dev_dbg(dev, "successfully loaded\n");
+ 
+ 	return 0;
+-- 
+2.47.1
+
