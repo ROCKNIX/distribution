@@ -11,4 +11,7 @@ set_kill set "dolphin-emu"
 /usr/bin/cheevos_dolphin.sh
 
 export QT_QPA_PLATFORM=xcb
+
+sway_fullscreen "dolphin-emu" "class" &
+
 /usr/bin/dolphin-emu >/dev/null 2>&1
