@@ -11,11 +11,19 @@ PKG_LONGDESC="Cross-platform M8 tracker headless client"
 PKG_TOOLCHAIN="cmake"
 
 makeinstall_target(){
+  # Create directories
   mkdir -p ${INSTALL}/usr/bin
+  mkdir -p ${INSTALL}/usr/config/m8c
+  mkdir -p ${INSTALL}/usr/config/modules
+
   cp -f m8c ${INSTALL}/usr/bin
   chmod 0755 ${INSTALL}/usr/bin/m8c
 
-  mkdir -p ${INSTALL}/usr/config/modules
   cp -rf ${PKG_DIR}/scripts/* ${INSTALL}/usr/config/modules
   chmod 0755 ${INSTALL}/usr/config/modules/*
+
+  if [ -d ${PKG_DIR}/config/${DEVICE} ]
+  then
+    cp -ra ${PKG_DIR}/config/${DEVICE}/* ${INSTALL}/usr/config/m8c/
+  fi
 }
