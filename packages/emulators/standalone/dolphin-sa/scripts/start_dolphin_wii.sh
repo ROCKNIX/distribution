@@ -296,15 +296,6 @@ else
   CMD="-p @DOLPHIN_PLATFORM@ -a ${AUDIO_BACKEND}"
 fi
 
-# Set QT Backend, vulkan as wayland and opengl as xwayland
-if [ ${DOLPHIN_CORE} = "dolphin-emu" ]; then
-  if [ "$RENDERER" = "vulkan" ]; then
-    export QT_QPA_PLATFORM=wayland
-  else
-    export QT_QPA_PLATFORM=xcb
-  fi
-fi
-
 # Run Dolphin emulator
   ${GPTOKEYB} ${DOLPHIN_CORE} xbox360 &
   ${EMUPERF} /usr/bin/${DOLPHIN_CORE} ${CMD} -e "${1}"
