@@ -184,8 +184,8 @@ fi
   fi
 
   # Internal Resolution
-  if [ "$IRES" = "2" ]; then
-    sed -i '/InternalResolution/c\InternalResolution = 2' /storage/.config/dolphin-emu/GFX.ini
+  if [ "$IRES" = "1" ]; then
+    sed -i '/InternalResolution/c\InternalResolution = 1' /storage/.config/dolphin-emu/GFX.ini
   elif [ "$IRES" = "3" ]; then
     sed -i '/InternalResolution/c\InternalResolution = 3' /storage/.config/dolphin-emu/GFX.ini
   elif [ "$IRES" = "4" ]; then
@@ -193,7 +193,7 @@ fi
   elif [ "$IRES" = "6" ]; then
     sed -i '/InternalResolution/c\InternalResolution = 6' /storage/.config/dolphin-emu/GFX.ini
   else
-    sed -i '/InternalResolution/c\InternalResolution = 1' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/InternalResolution/c\InternalResolution = 2' /storage/.config/dolphin-emu/GFX.ini
   fi
 
   # Shader Mode
