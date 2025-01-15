@@ -16,7 +16,7 @@ fi
 
 if [ ! -f "${M8C_DIR}/config.ini" ]; then
     if [ -f "${M8C_CONF_DIR}/${QUIRK_DEVICE}.ini" ]; then
-        cp "${M8C_CONF_DIR}/${QUIRK_DEVICE}" "${M8C_DIR}/config.ini"
+        cp "${M8C_CONF_DIR}/${QUIRK_DEVICE}.ini" "${M8C_DIR}/config.ini"
     else
         if [ -f "${M8C_CONF_DIR}/config.ini" ]; then
             cp "${M8C_CONF_DIR}/config.ini" "${M8C_DIR}/config.ini"
