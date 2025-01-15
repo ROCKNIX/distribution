@@ -8,66 +8,93 @@
 #   * David Lechner <david@lechnology.com>  https://github.com/ev3dev/ev3-systemd/blob/ev3dev-buster/scripts/ev3-usb.sh
 #   * rundekugel @github https://github.com/rundekugel/USBGadgetNetwork/blob/main/create-dual-rndis-and-cdcecm.sh
 
-. /etc/profile
+# For implementation benchmark results, see the end of this file
+
+. /etc/os-release
 
 MACHINEIDFILE=/storage/.cache/systemd-machine-id
 SERIAL=$(cat ${MACHINEIDFILE})
 
-for mod in usb_f_ecm usb_f_fs usb_f_rndis; do
+CACHEDIR=/storage/.cache/usbgadget
+GADGETCONF=${CACHEDIR}/usbgadget.conf
+GADGETNETCONF=${CACHEDIR}/network.conf
+UDHCPCONF=/var/run/udhcpd.conf
+UDHCPPIDFILE=/var/run/udhcpd.pid
+
+for mod in usb_f_ncm usb_f_fs; do
 	modprobe -q ${mod}
 done
 
-mkdir -p /storage/.cache/usbgadget
+mkdir -p ${CACHEDIR}
 
-if [ ! -f /storage/.cache/usbgadget/ip_address.conf ] ; then
-	echo "10.1.1.2" > /storage/.cache/usbgadget/ip_address.conf
-fi
-
-UDHCPCONF=/storage/.cache/usbgadget/udhcpd.conf
-if [ ! -f $UDHCPCONF ] ; then
-	echo -e "interface usbnet\nstart 10.1.1.1\nend 10.1.1.1\nopt subnet 255.255.255.0\nopt lease 86400\nmax_leases 1\nlease_file /dev/null\nremaining no" >> /storage/.cache/usbgadget/udhcpd.conf
-fi
-# Rename interface in old (pre-bridge) configs
-if ! grep -q usbnet $UDHCPCONF; then
-	sed -i 's|interface.*$|interface usbnet|' $UDHCPCONF
-fi
-
-if [ -r /storage/.cache/usbgadget/usbgadget.conf ] ; then
-	. /storage/.cache/usbgadget/usbgadget.conf
+if [ -r ${GADGETCONF} ] ; then
+	. ${GADGETCONF}
 fi
 
 UDC_NAME=$(ls -1 /sys/class/udc |head -n1)
 CURRENT_MODE=$(cat /sys/class/udc/${UDC_NAME}/function)
 [ -z ${CURRENT_MODE} ] && CURRENT_MODE=disabled
 
-IP=$(cat /storage/.cache/usbgadget/ip_address.conf)
 
 usb_disable() {
-	echo "USB_MODE=disabled" > /storage/.cache/usbgadget/usbgadget.conf
+	echo "USB_MODE=disabled" > ${GADGETCONF}
+	if [[ "${CURRENT_MODE}" == "disabled" ]]; then return; fi
 	echo "" > /sys/kernel/config/usb_gadget/${CURRENT_MODE}/UDC
 	CURRENT_MODE=disabled
 }
 
-# this function enables the UDC gadget when needed.
-# For RK3566 this should be done only when cable is connected, thus bizarre cable checks
-# For other devices, it may be just enabled even without connection
-usb_trigger() {
-	# no-op when mode is already set
-	[[ ${CURRENT_MODE} == ${USB_MODE} ]] && return
-	# only configured modes need processing
-	[[ ! -e /sys/kernel/config/usb_gadget/${USB_MODE}/UDC ]] && return
 
-	if [[ "${HW_DEVICE}" = RK3566 ]]; then
-		PHY_NAME=$(ls -d /sys/devices/platform/${UDC_NAME}/supplier:platform:*usb2phy | sed 's|^.*:platform:||')
-		CABLE0NAME=$(cat /sys/devices/platform/${PHY_NAME}/extcon/extcon0/cable.0/name)
-		[[ ${CABLE0NAME} == USB ]] || return   # assert we check the right cable
-		grep -q 1 /sys/devices/platform/${PHY_NAME}/extcon/extcon0/cable.0/state || return
-	fi
-
-	# Enable selected mode
-	echo "${UDC_NAME}" > /sys/kernel/config/usb_gadget/${USB_MODE}/UDC
+is_cable_connected() {
+	# https://developerhelp.microchip.com/xwiki/bin/view/applications/usb/power-delivery/battery-charging/
+	PHY_NAME=$(ls -d /sys/devices/platform/${UDC_NAME}/supplier:platform:*usb2phy | sed 's|^.*:platform:||')
+	for cable in /sys/devices/platform/${PHY_NAME}/extcon/*/cable.*; do
+		cable_name="$(cat ${cable}/name)"
+		case "${cable_name}" in
+			SDP|CDP)
+				# Standard Downstream Port  and  Charging Downstream Port  carry data
+				# these are different types of hub ports, okay for transfer
+				if grep -q 1 ${cable}/state; then
+					return 0
+				fi
+				;;
+			*)
+				# Dedicated Charging Port  or  anything else (derived),
+				# these do not (reliably) indicate data transfer capability
+				true
+				;;
+		esac
+	done
+	return 1
 }
 
+
+# This function issues soft disconnect and then connect on RK3566 devices
+# If gadget is activated with cable unplugged, RK3566 prints 'dwc3 fcc00000.usb: failed to enable ep0out'
+# and then host cannot enumerate the gadget.
+# Always activating the gadget allows simple setup logic (e.g. start udhcpd immediately),
+# and few seconds to soft-disconnect should be OK when done in background
+# When cable is plugged, udev calls this function again, and the gadget is soft-connected.
+usb_trigger() {
+	if [[ "${HW_DEVICE}" != "RK3566" ]]; then
+		return
+	fi
+	# do the weird stuff only when ep0 failed
+	grep -q 'control' /sys/kernel/debug/usb/${UDC_NAME}/ep0out/transfer_type && return
+
+	# initial disconnect takes few seconds, but later it's fast.
+	# After successful connect, ep0out/transfer_type is control, and we stop doing this stuff
+	if is_cable_connected; then
+		CONNECT_CMD=connect
+	else
+		CONNECT_CMD=disconnect
+	fi
+	if [ "$verbose" -gt "0" ]; then echo "quirk: $1 soft ${CONNECT_CMD} ${UDC_NAME}"; fi
+	if [[ "$1" == "async" ]]; then
+		echo ${CONNECT_CMD} > /sys/class/udc/${UDC_NAME}/soft_connect &
+	else
+		echo ${CONNECT_CMD} > /sys/class/udc/${UDC_NAME}/soft_connect
+	fi
+}
 
 #############################################
 # code below (prepare_usb_network and cleanup_usb_network) is derived from
@@ -75,7 +102,7 @@ usb_trigger() {
 # and adapted for Rocknix
 #############################################
 g_cdc="/sys/kernel/config/usb_gadget/cdc"
-verbose=0
+verbose=${verbose:-0}
 devversion=0x$(echo $OS_VERSION | cut -b 3-6)   # 0xYYMM; 20241025 -> 0x2410
 
 prepare_usb_network() {
@@ -85,11 +112,8 @@ prepare_usb_network() {
     attr="0xC0" # Self powered
     pwr="0xfe" #
     cfg1="CDC"
-    cfg2="RNDIS"
     ms_vendor_code="0xcd" # Microsoft
     ms_qw_sign="MSFT100" # also Microsoft (if you couldn't tell)
-    ms_compat_id="RNDIS" # matches Windows RNDIS Drivers
-    ms_subcompat_id="5162001" # matches Windows RNDIS 6.0 Driver
 
     if [ -d ${g_cdc} ]; then
         if [ "$(cat ${g_cdc}/UDC)" != "" ]; then
@@ -114,9 +138,6 @@ prepare_usb_network() {
     echo "${QUIRK_DEVICE}" > ${g_cdc}/strings/0x409/product
     echo "${SERIAL}" > ${g_cdc}/strings/0x409/serialnumber
 
-    # Create 2 configurations. The first will be CDC. The second will be RNDIS.
-    # Thanks to os_desc, Windows should use the second configuration.
-
     # config 1 is for CDC
 
     mkdir ${g_cdc}/configs/c.1
@@ -127,51 +148,82 @@ prepare_usb_network() {
 
     # Create the CDC function
 
-    mkdir ${g_cdc}/functions/ecm.usb0
-
-   # config 2 is for RNDIS
-
-    mkdir ${g_cdc}/configs/c.2
-    echo "${attr}" > ${g_cdc}/configs/c.2/bmAttributes
-    echo "${pwr}" > ${g_cdc}/configs/c.2/MaxPower
-    mkdir ${g_cdc}/configs/c.2/strings/0x409
-    echo "${cfg2}" > ${g_cdc}/configs/c.2/strings/0x409/configuration
-
-    # On Windows 7 and later, the RNDIS 5.1 driver would be used by default,
-    # but it does not work very well. The RNDIS 6.0 driver works better. In
-    # order to get this driver to load automatically, we have to use a
-    # Microsoft-specific extension of USB.
+    mkdir ${g_cdc}/functions/ncm.usb0
+    echo "WINNCM" > ${g_cdc}/functions/ncm.usb0/os_desc/interface.ncm/compatible_id
 
     echo "1" > ${g_cdc}/os_desc/use
     echo "${ms_vendor_code}" > ${g_cdc}/os_desc/b_vendor_code
     echo "${ms_qw_sign}" > ${g_cdc}/os_desc/qw_sign
 
-    # Create the RNDIS function, including the Microsoft-specific bits
-
-    mkdir ${g_cdc}/functions/rndis.usb0
-    echo "${ms_compat_id}" > ${g_cdc}/functions/rndis.usb0/os_desc/interface.rndis/compatible_id
-    echo "${ms_subcompat_id}" > ${g_cdc}/functions/rndis.usb0/os_desc/interface.rndis/sub_compatible_id
 
     smac=$(echo ${SERIAL} | cut -b 1-12)
     # Change the first number for each MAC address - the second digit of 2 indicates
     # that these are "locally assigned (b2=1), unicast (b1=0)" addresses. This is
     # so that they don't conflict with any existing vendors. Care should be taken
     # not to change these two bits.
-    dev_mac="02$(echo ${smac} | cut -b 3-)"
+    dev_mac="82ba1c9278b1"  # Static to make all devices the same network for Windows, switch to "Private" once for all
     host_mac="12$(echo ${smac} | cut -b 3-)"
 
-    echo "${dev_mac}"  > ${g_cdc}/functions/ecm.usb0/dev_addr
-    echo "${host_mac}" > ${g_cdc}/functions/ecm.usb0/host_addr
-    echo "${dev_mac}"  > ${g_cdc}/functions/rndis.usb0/dev_addr
-    echo "${host_mac}" > ${g_cdc}/functions/rndis.usb0/host_addr
+    echo "${dev_mac}"  > ${g_cdc}/functions/ncm.usb0/dev_addr
+    echo "${host_mac}" > ${g_cdc}/functions/ncm.usb0/host_addr
+    # max_segment_size allows higher MTUs which lead to higher transfer rates and lower CPU usage.
+    # However it needs some more work to be done as host needs to set high MTU as well
+    #echo "8000" > ${g_cdc}/functions/ncm.usb0/max_segment_size # f_ncm.c: #define MAX_DATAGRAM_SIZE	8000
 
-    # Link everything up and bind the USB device
-    ln -s ${g_cdc}/functions/ecm.usb0 ${g_cdc}/configs/c.1
-    ln -s ${g_cdc}/functions/rndis.usb0 ${g_cdc}/configs/c.2
-    ln -s ${g_cdc}/configs/c.2 ${g_cdc}/os_desc
+    # Make NCM the first configuration
+    ln -s ${g_cdc}/functions/ncm.usb0 ${g_cdc}/configs/c.1
 
     if [ -n "$verbose" ]; then echo "Done."; fi
 }
+
+configure_iface() {
+	IFACE_NAME=$(cat "${g_cdc}/functions/ncm.usb0/ifname")
+
+	OLDIPADDRFILE=${CACHEDIR}/ip_address.conf
+	if [ ! -f ${GADGETNETCONF} ] ; then
+		NETMASK="255.255.255.252"
+		# Migrate old configs
+		if [ -f "${OLDIPADDRFILE}" ] ; then
+			IP=$(cat "${OLDIPADDRFILE}")
+			# if IP has last octed modified, fall back to large netmask
+			[[ "${IP##*.}" == "2" ]] || NETMASK="255.255.255.0"
+		fi
+		[ -z "$IP" ] && IP="10.1.1.2"
+
+		cat <<EOF > ${GADGETNETCONF}
+IP=${IP}
+NETMASK=${NETMASK}
+# Stupid calculator just subtracting 1 from last octet.
+# Combined with /30 subnet only (4*N+2) numbers are valid in last octet
+HOSTIP=\${IP%.*}.\$((\${IP##*.}-1))
+EOF
+	fi
+	rm -f ${OLDIPADDRFILE} ${CACHEDIR}/udhcpd.conf
+
+	. ${GADGETNETCONF}
+
+
+	ip address add ${IP}/${NETMASK} dev ${IFACE_NAME} 2>/dev/null
+	ip link set ${IFACE_NAME} up
+
+	cat <<EOF > ${UDHCPCONF}
+interface ${IFACE_NAME}
+start ${HOSTIP}
+end ${HOSTIP}
+opt subnet ${NETMASK}
+
+# Windows needs some route to "indentify" network, this allows to make connection "private" and accept samba announces
+option msstaticroutes 0.0.0.0/32 ${IP}
+
+opt lease 86400
+max_leases 1
+lease_file /dev/null
+pidfile	${UDHCPPIDFILE}
+remaining no
+EOF
+	/usr/sbin/udhcpd -S ${UDHCPCONF}
+}
+
 
 cleanup_usb_network() {
     if [ ! -d ${g_cdc} ]; then
@@ -186,17 +238,14 @@ cleanup_usb_network() {
     if [ "$(cat ${g_cdc}/UDC)" != "" ]; then
         echo "" > ${g_cdc}/UDC
     fi
-    rm -f ${g_cdc}/os_desc/c.2
-    rm -f ${g_cdc}/configs/c.2/rndis.usb0
-    rm -f ${g_cdc}/configs/c.1/ecm.usb0
-    [ -d ${g_cdc}/functions/ecm.usb0 ] && rmdir ${g_cdc}/functions/ecm.usb0
-    [ -d ${g_cdc}/functions/rndis.usb0 ] && rmdir ${g_cdc}/functions/rndis.usb0
-    [ -d ${g_cdc}/configs/c.2/strings/0x409 ] && rmdir ${g_cdc}/configs/c.2/strings/0x409
-    [ -d ${g_cdc}/configs/c.2 ] && rmdir ${g_cdc}/configs/c.2
+    rm -f ${g_cdc}/configs/c.1/ncm.usb0
+    [ -d ${g_cdc}/functions/ncm.usb0 ] && rmdir ${g_cdc}/functions/ncm.usb0
     [ -d ${g_cdc}/configs/c.1/strings/0x409 ] && rmdir ${g_cdc}/configs/c.1/strings/0x409
     [ -d ${g_cdc}/configs/c.1 ] && rmdir ${g_cdc}/configs/c.1
     [ -d ${g_cdc}/strings/0x409 ] && rmdir ${g_cdc}/strings/0x409
     rmdir ${g_cdc}
+
+    rm -f ${UDHCPCONF}
 
     if [ -n "$verbose" ]; then echo "Done."; fi
 }
@@ -246,12 +295,32 @@ cleanup_usb_mtp() {
 }
 
 
+# USB_MODE is how the gadget was last configured (got from state file)
+# CURRENT_MODE is USB gadget subsystem state -- which gadget has UDC
+# $1 is desired mode, passed by caller
 usb_start() {
-	[[ -n $1 ]] && USB_MODE=$1
+	if [ "$verbose" -gt "0" ];then echo "STORED=${USB_MODE}, CURRENT=${CURRENT_MODE}, DESIRED=$1"; fi
+
+	# with no argument setup previous mode
+	[[ -n "$1" ]] && USB_MODE=$1
+
+	# Avoid double start
+	if [ "${CURRENT_MODE}" == "${USB_MODE}" ]; then
+		if [ "$verbose" -gt "0" ]; then echo "Already in target mode: ${CURRENT_MODE}; skip"; fi
+		return
+	fi
+
 	# This will reset both UDC and userspace when needed
-	if [ "${CURRENT_MODE}" != "disabled" ] && [ "${MODE}" != "${CURRENT_MODE}" ]; then
+	if [ "${CURRENT_MODE}" != "disabled" ]; then
+		if [ "$verbose" -gt "0" ]; then echo "Stopping previous mode: ${CURRENT_MODE}"; fi
 		usb_stop
 	fi
+
+	# If there is a role switch, switch to device mode
+	for sw in $(ls -1 /sys/class/udc/${UDC_NAME}/device/usb_role/*/role 2>/dev/null); do
+		if [ "$verbose" -gt "0" ]; then echo "swithing usb role to device: $sw"; fi
+		echo device > $sw
+	done
 
 	if [ "${USB_MODE}" = mtp ] ; then
 		if [ ! -d "${g_mtp}" ]; then
@@ -264,41 +333,39 @@ usb_start() {
 		/usr/sbin/umtprd &
 		sleep 1
 
-		usb_trigger
-
 	elif [ "${USB_MODE}" = cdc ] ; then
 		if [ ! -d "${g_cdc}" ]; then
 			echo "CDC gadget not configured. Run '$0 prepare' first!" >&2
 			exit 3
 		fi
-
-		# Here we configure just empty bridge
-		brctl addbr usbnet
-		brctl stp usbnet 0
-		brctl setfd usbnet 0
-		ip link set usbnet up
-		ip address add $IP/24 dev usbnet
-
-		# when triggered, usb network interfaces appear, and udev rule adds them to the bridge
-		usb_trigger
-
-		/usr/sbin/udhcpd -S $UDHCPCONF
 	else
 		exit 0
 	fi
 
-	echo "USB_MODE=${USB_MODE}" > /storage/.cache/usbgadget/usbgadget.conf
+	# Enable selected mode
+	echo "${UDC_NAME}" > /sys/kernel/config/usb_gadget/${USB_MODE}/UDC
+	echo "USB_MODE=${USB_MODE}" > ${GADGETCONF}
+
+	[[ "${USB_MODE}" == "cdc" ]] && configure_iface
+
+	# For RK3566 we need to perform a soft disconnect when cable is not plugged
+	# This leaves network interface available for configuration, and will be re-connected later by udev
+	usb_trigger async
 }
 
 usb_stop() {
-	(
-		usb_disable
+	# If there is a role switch, switch to host mode
+	for sw in $(ls -1 /sys/class/udc/${UDC_NAME}/device/usb_role/*/role 2>/dev/null); do
+		if [ "$verbose" -gt "0" ]; then echo "swithing usb role to host: $sw"; fi
+		echo host > $sw
+	done
 
-		if [ -e /sys/class/net/usbnet ] ; then
-			killall udhcpd
-			ip link set usbnet down
-			brctl delbr usbnet
+	(
+		if [ -f ${UDHCPPIDFILE} ] ; then
+			cat ${UDHCPPIDFILE} | xargs -r -n 1 kill
 		fi
+
+		usb_disable
 
 		if [ -d /dev/ffs-umtp ] ; then
 			umount /dev/ffs-umtp
@@ -307,41 +374,6 @@ usb_stop() {
 			killall umtprd
 		fi
 	) >/dev/null 2>&1
-}
-
-rk3326_peripheral() {
-	modprobe dtbocfg
-	mkdir /sys/kernel/config/device-tree/overlays/usb-drmode-peripheral
-	ls /sys/kernel/config/device-tree/overlays/usb-drmode-peripheral
-	cat /usr/share/bootloader/overlays/rk3326-usb-drmode-peripheral.dtbo > /sys/kernel/config/device-tree/overlays/usb-drmode-peripheral/dtbo
-	echo 1 > /sys/kernel/config/device-tree/overlays/usb-drmode-peripheral/status
-	sleep 2
-	echo ff300000.usb > /sys/bus/platform/drivers/dwc2/unbind
-	sleep 2
-	echo ff300000.usb > /sys/bus/platform/drivers/dwc2/bind
-	sleep 1
-}
-
-rk3326_otg() {
-	echo 0 > /sys/kernel/config/device-tree/overlays/usb-drmode-peripheral/status
-	sleep 2
-	echo ff300000.usb > /sys/bus/platform/drivers/dwc2/unbind
-	sleep 2
-	echo ff300000.usb > /sys/bus/platform/drivers/dwc2/bind
-	sleep 1
-}
-
-
-rk3326_check_start() {
-	if [[ $(cat /proc/device-tree/usb@ff300000/dr_mode) = otg ]]; then
-		rk3326_peripheral
-	fi
-}
-
-rk3326_check_stop() {
-	if [[ $(cat /proc/device-tree/usb@ff300000/dr_mode) = peripheral ]]; then
-		rk3326_otg
-	fi
 }
 
 case "$1" in
@@ -354,12 +386,10 @@ case "$1" in
 		cleanup_usb_mtp
 		;;
 	start)
-		if [[ "${HW_DEVICE}" = RK3326 ]]; then rk3326_check_start; fi
 		usb_start $2
 		;;
 	stop)
 		usb_stop
-		if [[ "${HW_DEVICE}" = RK3326 ]]; then rk3326_check_stop; fi
 		;;
 	trigger)
 		usb_trigger
@@ -368,7 +398,84 @@ case "$1" in
 		usb_stop
 		usb_start $2
 		;;
+	is_cable_connected)
+		is_cable_connected
+		;;
+	
+	#
+	# API inspired by gpudriver
+	#
+	"--options")
+		echo "disabled network file_transfer"
+		;;
+	"--start")
+		prepare_usb_network
+		prepare_usb_mtp
+		usb_start
+		;;
+	"")
+		case ${CURRENT_MODE} in
+			"cdc")  echo "network"; ;;
+			"mtp")  echo "file_transfer"; ;;
+			*)      echo "disabled"; ;;
+		esac
+		;;
+	"disabled")
+		usb_stop
+		;;
+	"network")
+		usb_start cdc
+		;;
+	"file_transfer")
+		usb_start mtp
+		;;
+	"address")
+		. ${GADGETNETCONF}
+		echo ${IP}
+		;;
 	*)
-		echo "Usage: usbgadget [prepare|start|trigger|stop|restart|cleanup]"
+		echo "Usage:"
+		echo "$0 --options                  List available modes"
+		echo "$0 --start                    Restore previously chosen mode"
+		echo "$0                            Show current mode"
+		echo "$0 disabled                   Disable USB gadget"
+		echo "$0 <network|file_transfer>    Activate specified mode"
+		echo "$0 address                    Show network gadget IP address"
+
+		echo "Deprecated usage: usbgadget [prepare|start|trigger|stop|restart|cleanup|address]"
 		;;
 esac
+
+
+
+# Benchmarks performed by @stolen with RK3326 Linux 6.11.9 as gadget and Linux 6.8.0 as host:
+#
+# Conditions:
+#   * performance governor: `echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor`
+#   * server on gadget: `socat -b 4194304 /dev/null,ignoreeof tcp-listen:2003,fork,reuseaddr`
+#   * client on host: `dd if=/dev/urandom bs=1M status=progress | nc 10.1.1.2 2003`
+#   * switch NCM to direct mode: `brctl delif usbnet usb0; ip ad de 10.1.1.2/24 dev usbnet; ip ad ad 10.1.1.2/24 dev usb0`
+#   * back to bridge mode (restart): `usbgadget cleanup; usbgadget prepare; usbgadget start cdc`
+#   * switch to rndis: `sudo usb_modeswitch -v 1d6b -p 0104 -u 2`
+#   * top delay 10 seconds
+#
+# Measurements:
+#   * speed: as reported by dd after 90 seconds
+#   * socat: socat '%CPU' as reported by top
+#   * idle: total idle as reported by top in '%Cpu(s):' line
+#   * utilization (after '->'): `(100 - idle) * 4`
+#   * hidden: `utilization - socat`
+#
+# Results:
+#   * NCM   direct: speed 30.3, socat 30.8%, idle 77.7% (x4) ->  89.2% (58.4% hidden)
+#   * NCM   bridge: speed 30.4, socat 34.1%, idle 75.5% (x4) ->  98.0% (63.9% hidden)
+#   * RNDIS direct: speed 35.0, socat 80.3%, idle 55.7% (x4) -> 177.2% (96.9% hidden)
+#   * RNDIS bridge: speed 34.9, socat 80.2%, idle 54.9% (x4) -> 180.4% (100.2% hidden)
+#
+# With extra actions to increase MTU (9000 for RNDIS, 7986 for NCM):
+#   * NCM bridge  : speed 35.7, socat 18.7%, idle 82.0% (x4) -> 72.0% (53.3% hidden)
+#   * NCM direct  : speed 36.0, socat 17.5%, idle 83.1% (x4) -> 67.6% (50.1% hidden)
+#   * RNDIS direct: speed 36.0, socat 25.1%, idle 83.4% (x4) -> 66.4% (41.3% hidden)
+#
+# High MTU needs more research to announce, so host side sets it on connect without user intervention (via DHCP?)
+# See `max_segment_size` for increasing possible MTU on NCM link

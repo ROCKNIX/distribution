@@ -28,7 +28,7 @@ BASEROMNAME=${ROMNAME##*/}
 GAMEFOLDER="${ROMNAME//${BASEROMNAME}}"
 
 ### Define the variables used throughout the script
-BLUETOOTH_STATE=$(get_setting bluetooth.enabled)
+BLUETOOTH_STATE=$(get_setting controllers.bluetooth.enabled)
 ES_CONFIG="/storage/.emulationstation/es_settings.cfg"
 VERBOSE=false
 LOG_DIRECTORY="/var/log"
@@ -270,10 +270,10 @@ case ${EMULATOR} in
         RUNTHIS='${RUN_SHELL} "${ROMNAME}"'
       ;;
       "gamecube")
-        RUNTHIS='${RUN_SHELL} /usr/bin/start_dolphin_gc.sh "${ROMNAME}" "${PLATFORM}"'
+        RUNTHIS='${RUN_SHELL} /usr/bin/start_dolphin_gc.sh "${ROMNAME}" "${PLATFORM}" "${CORE}"'
       ;;
       "wii")
-        RUNTHIS='${RUN_SHELL} /usr/bin/start_dolphin_wii.sh "${ROMNAME}" "${PLATFORM}"'
+        RUNTHIS='${RUN_SHELL} /usr/bin/start_dolphin_wii.sh "${ROMNAME}" "${PLATFORM}" "${CORE}"'
       ;;
       "ports")
         RUNTHIS='${EMUPERF} ${RUN_SHELL} "${ROMNAME}"'

@@ -22,12 +22,8 @@ case ${DEVICE} in
     PKG_GIT_CLONE_BRANCH="rk-6.1-rkr3"
     PKG_PATCH_DIRS="${LINUX} ${DEVICE} default"
   ;;
-  H700)
-    PKG_VERSION="6.12-rc3"
-    PKG_URL="https://git.kernel.org/torvalds/t/linux-${PKG_VERSION}.tar.gz"
-    ;;
   *)
-    PKG_VERSION="6.11.9"
+    PKG_VERSION="6.12.9"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     ;;
 esac
@@ -60,7 +56,7 @@ done
 
 if [ "${DEVICE}" = "RK3326" -o "${DEVICE}" = "RK3566" ]; then
   PKG_DEPENDS_UNPACK+=" generic-dsi"
-elif [ "${DEVICE}" = "SD865" ]; then
+elif [ "${DEVICE}" = "SD865" -o "${DEVICE}" = "H700" ]; then
   PKG_DEPENDS_UNPACK+=" kernel-firmware"
 fi
 
@@ -181,12 +177,26 @@ pre_make_target() {
 
     ${PKG_BUILD}/scripts/config --set-str CONFIG_EXTRA_FIRMWARE "${FW_LIST}"
     ${PKG_BUILD}/scripts/config --set-str CONFIG_EXTRA_FIRMWARE_DIR "external-firmware"
+  elif [ "${TARGET_ARCH}" = "aarch64" -a "${DEVICE}" = "H700" ]; then
+    mkdir -p ${PKG_BUILD}/external-firmware/rtl_bt
+    mkdir -p ${PKG_BUILD}/external-firmware/rtw88
+      cp -Lv $(get_build_dir kernel-firmware)/.copied-firmware/rtl_bt/rtl8821cs_config.bin ${PKG_BUILD}/external-firmware/rtl_bt
+      cp -Lv $(get_build_dir kernel-firmware)/.copied-firmware/rtl_bt/rtl8821cs_fw.bin ${PKG_BUILD}/external-firmware/rtl_bt
+      cp -Lv $(get_build_dir kernel-firmware)/.copied-firmware/rtw88/rtw8821c_fw.bin ${PKG_BUILD}/external-firmware/rtw88
+
+    FW_LIST="$(find ${PKG_BUILD}/external-firmware -type f | sed 's|.*external-firmware/||' | sort | xargs)"
+
+    ${PKG_BUILD}/scripts/config --set-str CONFIG_EXTRA_FIRMWARE "${FW_LIST}"
+    ${PKG_BUILD}/scripts/config --set-str CONFIG_EXTRA_FIRMWARE_DIR "external-firmware"
   fi
 
   kernel_make listnewconfig
   if [ "${INTERACTIVE_CONFIG}" = "yes" ]; then
     # manually answer .config changes
     kernel_make oldconfig
+  elif [ "${INTERACTIVE_CONFIG}" = "menuconfig" ]; then
+    # manually answer .config changes
+    kernel_make menuconfig
   else
     # accept default answers for .config changes
     yes "" | kernel_make oldconfig > /dev/null
@@ -261,7 +271,12 @@ makeinstall_target() {
     mkdir -p ${INSTALL}/usr/share/bootloader
     for dtb in arch/${TARGET_KERNEL_ARCH}/boot/dts/*.dtb arch/${TARGET_KERNEL_ARCH}/boot/dts/*/*.dtb; do
       if [ -f ${dtb} ]; then
-        cp -v ${dtb} ${INSTALL}/usr/share/bootloader
+        if [ "${PROJECT}" = "Allwinner" -o "${PROJECT}" = "Rockchip" ]; then
+          mkdir -p ${INSTALL}/usr/share/bootloader/device_trees
+          cp -v ${dtb} ${INSTALL}/usr/share/bootloader/device_trees
+        else
+          cp -v ${dtb} ${INSTALL}/usr/share/bootloader
+        fi
       fi
     done
   fi

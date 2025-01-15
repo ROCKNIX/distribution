@@ -2,7 +2,7 @@
 # Copyright (C) 2024 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="theodore-lr"
-PKG_VERSION="503b2bb4fa747442fb91b89644238e5267637bcd"
+PKG_VERSION="70cd7965abe607a28ab3cee5689ed433d8f41da3"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/Zlika/theodore"
 PKG_URL="${PKG_SITE}.git"

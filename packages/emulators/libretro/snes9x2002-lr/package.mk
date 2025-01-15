@@ -19,7 +19,7 @@
 ################################################################################
 
 PKG_NAME="snes9x2002-lr"
-PKG_VERSION="2790d03b2266c58444429b4f7d76ba298e0bde87"
+PKG_VERSION="a0709ec7dcd6de2fbebb43106bd757b649e3b7cf"
 PKG_LICENSE="Non-commercial"
 PKG_SITE="https://github.com/libretro/snes9x2002"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

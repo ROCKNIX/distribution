@@ -2,12 +2,12 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="box64"
-PKG_VERSION="3ba91a651384b0ea4207e91e206440cae2684db2"
+PKG_VERSION="5fa65a4b38c1a449af3703a3f760eb09bc9dbca8"
 PKG_ARCH="aarch64"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/ptitSeb/box64"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain ncurses SDL_sound cabextract libXss libXdmcp libXft"
+PKG_DEPENDS_TARGET="toolchain ncurses SDL_sound cabextract libXss libXdmcp libXft gtk2"
 PKG_LONGDESC="Box64 lets you run x86_64 Linux programs (such as games) on non-x86_64 Linux systems, like ARM."
 PKG_TOOLCHAIN="cmake"
 

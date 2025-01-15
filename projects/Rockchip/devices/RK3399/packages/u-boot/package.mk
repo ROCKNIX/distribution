@@ -21,7 +21,7 @@ fi
 pre_make_target() {
   PKG_UBOOT_CONFIG="evb-rk3399_defconfig"
   PKG_RKBIN="$(get_build_dir rkbin)"
-  PKG_MINILOADER="${PKG_RKBIN}/bin/rk33/rk3399_miniloader_v1.26.bin"
+  PKG_MINILOADER="${PKG_RKBIN}/bin/rk33/rk3399_miniloader_v1.30.bin"
   PKG_BL31="$(get_build_dir atf)/build/rk3399/release/bl31/bl31.elf"
   PKG_DDR_BIN="${PKG_RKBIN}/bin/rk33/rk3399_ddr_933MHz_v1.30.bin"
   PKG_ATF_INI="${PKG_RKBIN}/RKTRUST/RK3399TRUST.ini"

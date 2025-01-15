@@ -6,7 +6,9 @@ labels: ISSUE NEEDS REVIEW
 assignees: ''
 
 ---
-### Have you first reported the issue on the rocknix discord and / or checked rocknix.org for a solution?
+### Have you first reported the issue on the rocknix discord and checked rocknix.org for a solution?
+[ROCKNIX DISCORD:](https://discord.gg/4KbUWe4z)
+<!-- Any issue created without first being discussed on our discord server will be closed automatically. -->
 
 ### Describe the bug
 <!-- A clear description of what the bug is. -->

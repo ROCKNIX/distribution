@@ -2,7 +2,7 @@
 # Copyright (C) 2009-2016 Stephan Raue (stephan@openelec.tv)
 
 PKG_NAME="zlib"
-PKG_VERSION="1.3"
+PKG_VERSION="1.3.1"
 PKG_LICENSE="OSS"
 PKG_SITE="http://www.zlib.net"
 PKG_URL="https://zlib.net/fossils/${PKG_NAME}-${PKG_VERSION}.tar.gz"

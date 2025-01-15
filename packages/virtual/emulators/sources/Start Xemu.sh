@@ -5,6 +5,8 @@
 
 source /etc/profile
 
-set_kill set "xemu-sa"
+set_kill set "xemu"
 
-/usr/bin/xemu-sa >/dev/null 2>&1
+sway_fullscreen "xemu" &
+
+/usr/bin/xemu >/dev/null 2>&1

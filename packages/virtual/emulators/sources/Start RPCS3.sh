@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
-source /etc/profile
+. /etc/profile
 
 # Link certain RPCS3 folders to a location in /storage/roms/bios
 FOLDER_LINKS=("dev_flash" "dev_hdd0" "dev_hdd1" "custom_configs")
@@ -23,6 +23,7 @@ for FOLDER_LINK in "${FOLDER_LINKS[@]}"; do
   ln -sf "$TARGET_FOLDER" "$SOURCE_FOLDER"
 done
 
-set_kill set "rpcs3"
-
-/usr/bin/rpcs3 >/dev/null 2>&1
+export QT_QPA_PLATFORM=xcb
+set_kill set "-9 rpcs3"
+sway_fullscreen "RPCS3" "class" &
+/usr/bin/rpcs3-sa

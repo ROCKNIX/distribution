@@ -2,7 +2,7 @@
 # Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="melonds-lr"
-PKG_VERSION="c6488c88cb4c7583dbcd61609e0eef441572fae8"
+PKG_VERSION="7a3c11ff970cd36ca806961fae6db94b30dd5401"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://git.libretro.com/libretro/melonDS"
 PKG_URL="${PKG_SITE}.git"

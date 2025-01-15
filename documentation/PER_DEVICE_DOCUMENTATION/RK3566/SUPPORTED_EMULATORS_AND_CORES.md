@@ -66,13 +66,12 @@ This document describes all available systems emulators and cores available for 
 |Nintendo|Game &amp; Watch (gameandwatch)|1980|`gameandwatch`|.mgw .zip .7z|**retroarch:** gw<br>**retroarch:** mame<br>|
 |Nintendo|Game Boy (gb)|1989|`gb`|.gb .gbc .zip .7z|**retroarch:** gambatte (default)<br>**retroarch:** sameboy<br>**retroarch:** gearboy<br>**retroarch:** tgbdual<br>**retroarch:** mgba<br>**retroarch:** vbam<br>**retroarch:** DoubleCherryGB<br>**mednafen:** gb<br>|
 |Nintendo|Game Boy (Hacks) (gbh)|1989|`gbh`|.gb .zip .7z|**retroarch:** gambatte (default)<br>**retroarch:** sameboy<br>**retroarch:** gearboy<br>**retroarch:** tgbdual<br>**retroarch:** mgba<br>**retroarch:** vbam<br>**retroarch:** DoubleCherryGB<br>**mednafen:** gb<br>|
-|Nintendo|Game Boy Advance (gba)|2001|`gba`|.gba .zip .7z|**retroarch:** mgba (default)<br>**retroarch:** gbsp<br>**retroarch:** vbam<br>**retroarch:** vba_next<br>**retroarch:** beetle_gba<br>**retroarch:** gpsp<br>**mednafen:** gba<br>|
-|Nintendo|Game Boy Advance (Hacks) (gbah)|2001|`gbah`|.gba .zip .7z|**retroarch:** mgba (default)<br>**retroarch:** gbsp<br>**retroarch:** vbam<br>**retroarch:** vba_next<br>**retroarch:** beetle_gba<br>**mednafen:** gba<br>|
+|Nintendo|Game Boy Advance (gba)|2001|`gba`|.gba .zip .7z|**retroarch:** mgba (default)<br>**retroarch:** vbam<br>**retroarch:** vba_next<br>**retroarch:** beetle_gba<br>**retroarch:** gpsp<br>**mednafen:** gba<br>|
+|Nintendo|Game Boy Advance (Hacks) (gbah)|2001|`gbah`|.gba .zip .7z|**retroarch:** mgba (default)<br>**retroarch:** vbam<br>**retroarch:** vba_next<br>**retroarch:** beetle_gba<br>**retroarch:** gpsp<br>**mednafen:** gba<br>|
 |Nintendo|Game Boy Color (gbc)|1998|`gbc`|.gb .gbc .zip .7z|**retroarch:** gambatte (default)<br>**retroarch:** sameboy<br>**retroarch:** gearboy<br>**retroarch:** tgbdual<br>**retroarch:** mgba<br>**retroarch:** vbam<br>**retroarch:** DoubleCherryGB<br>**mednafen:** gb<br>|
 |Nintendo|Game Boy Color (Hacks) (gbch)|1998|`gbch`|.gb .gbc .zip .7z|**retroarch:** gambatte (default)<br>**retroarch:** sameboy<br>**retroarch:** gearboy<br>**retroarch:** tgbdual<br>**retroarch:** mgba<br>**retroarch:** vbam<br>**retroarch:** DoubleCherryGB<br>**mednafen:** gb<br>|
 |Nintendo|GameCube (gamecube)|2001|`gamecube`|.gcm .iso .gcz .ciso .wbfs .rvz .dol|**dolphin:** dolphin-sa-gc (default)<br>**retroarch:** dolphin<br>|
 |Nintendo|NES (Hacks) (nesh)|1985|`nesh`|.nes .unif .unf .zip .7z|**retroarch:** nestopia (default)<br>**retroarch:** fceumm<br>**retroarch:** quicknes<br>**retroarch:** mesen<br>**mednafen:** nesh<br>|
-|Nintendo|Nintendo 3DS (3ds)|2010|`3ds`|.3ds .3dsx .elf .axf .cci .cxi .app|**retroarch:** panda3ds (default)<br>|
 |Nintendo|Nintendo 64 (n64)|1996|`n64`|.z64 .n64 .v64 .zip .7z|**retroarch:** mupen64plus_next (default)<br>**retroarch:** mupen64plus<br>**retroarch:** parallel_n64<br>**mupen64plus:** mupen64plus-sa<br>|
 |Nintendo|Nintendo DS (nds)|2005|`nds`|.nds .zip .7z|**drastic:** drastic-sa (default)<br>**retroarch:** melonds<br>**retroarch:** melondsds<br>**melonds:** melonds-sa<br>**retroarch:** desmume<br>|
 |Nintendo|Nintendo Entertainment System (nes)|1985|`nes`|.nes .unif .unf .zip .7z|**retroarch:** nestopia (default)<br>**retroarch:** fceumm<br>**retroarch:** quicknes<br>**retroarch:** mesen<br>**mednafen:** nes<br>|
@@ -116,7 +115,7 @@ This document describes all available systems emulators and cores available for 
 |SNK|Neo Geo Pocket Color (ngpc)|1999|`ngpc`|.ngp .ngc .zip .7z|**retroarch:** beetle_ngp (default)<br>**retroarch:** race<br>**mednafen:** ngp<br>|
 |Sony|PlayStation (psx)|1994|`psx`|.bin .cue .img .mdf .pbp .toc .cbn .m3u .ccd .chd .iso|**retroarch:** pcsx_rearmed32 (default)<br>**retroarch:** pcsx_rearmed<br>**duckstation:** duckstation-sa<br>**retroarch:** duckstation<br>**retroarch:** swanstation<br>|
 |Sony|PlayStation Portable (psp)|2004|`psp`|.iso .cso .pbp .chd|**ppsspp:** ppsspp-sa (default)<br>|
-|Sony|PSP Minis (pspminis)|2004|`pspminis`|.iso .cso .pbp|**ppsspp:** ppsspp-sa (default)<br>**retroarch:** ppsspp<br>|
+|Sony|PSP Minis (pspminis)|2004|`pspminis`|.iso .cso .pbp .chd|**ppsspp:** ppsspp-sa (default)<br>**retroarch:** ppsspp<br>|
 |Sun Microsystems|J2ME (j2me)|2002|`j2me`|.jar|**retroarch:** freej2me (default)<br>|
 |Thomson|MO/TO family (TO7, TO7/70, TO8, TO8D, TO9, TO9+, MO5 and MO6) (moto)|1982|`moto`|.fd .sap .k7 .m7 .m5 .rom|**retroarch:** theodore (default)<br>|
 |Various|CHIP-8 / S-CHIP / XO-CHIP (chip-8)|1978|`chip-8`|.ch8 .sc8 .xo8|**retroarch:** jaxe (default)<br>|

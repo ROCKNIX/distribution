@@ -35,7 +35,7 @@ makeinstall_target() {
 
   if [ -n "${LOCAL_WIFI_SSID}" ]
   then
-    sed -i "s#network.enabled=0#network.enabled=1#g" ${INSTALL}/usr/config/system/configs/system.cfg
+    sed -i "s#wifi.enabled=0#wifi.enabled=1#g" ${INSTALL}/usr/config/system/configs/system.cfg
     cat <<EOF >> ${INSTALL}/usr/config/system/configs/system.cfg
 wifi.ssid=${LOCAL_WIFI_SSID}
 wifi.key=${LOCAL_WIFI_KEY}
@@ -58,7 +58,7 @@ post_install() {
   cp ${PKG_DIR}/sources/issue ${INSTALL}/etc
   ln -sf /etc/issue ${INSTALL}/etc/motd
   cat <<EOF >> ${INSTALL}/etc/issue
-... Version: ${OS_VERSION}-${OS_BUILD} (${BUILD_ID:0:7})
+... Version: ${OS_VERSION} (${OS_BUILD})
 ... Built: ${BUILD_DATE}
 
 EOF
@@ -80,7 +80,7 @@ EOF
   then
     sed -i "s#samba.enabled=0#samba.enabled=1#g" ${INSTALL}/usr/config/system/configs/system.cfg
     sed -i "s#ssh.enabled=0#ssh.enabled=1#g" ${INSTALL}/usr/config/system/configs/system.cfg
-    sed -i "s#network.enabled=0#network.enabled=1#g" ${INSTALL}/usr/config/system/configs/system.cfg
+    sed -i "s#wifi.enabled=0#wifi.enabled=1#g" ${INSTALL}/usr/config/system/configs/system.cfg
     sed -i "s#system.loglevel=none#system.loglevel=verbose#g" ${INSTALL}/usr/config/system/configs/system.cfg
   fi
 

@@ -16,5 +16,14 @@ pre_configure_target() {
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin
-    cp ${PKG_BUILD}/test ${INSTALL}/usr/bin/sdltouchtest
+  cp ${PKG_BUILD}/test ${INSTALL}/usr/bin/sdltouchtest
+  chmod 0755 ${INSTALL}/usr/bin/*
+
+case ${DEVICE} in
+  AMD64|RK35*|SD865)
+    mkdir -p ${INSTALL}/usr/config/modules
+    cp -rf ${PKG_DIR}/scripts/* ${INSTALL}/usr/config/modules
+    chmod 0755 ${INSTALL}/usr/config/modules/*
+  ;;
+esac
 }

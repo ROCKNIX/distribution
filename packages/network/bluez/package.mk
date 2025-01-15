@@ -70,15 +70,13 @@ post_makeinstall_target() {
 
   mkdir -p ${INSTALL}/etc/bluetooth
     cp src/main.conf ${INSTALL}/etc/bluetooth
-
-  cat <<EOF >${INSTALL}/etc/bluetooth/input.conf
-[General]
-ClassicBondedOnly=false
-EOF
-
-  mkdir -p ${INSTALL}/usr/share/services
-    cp -P ${PKG_DIR}/default.d/*.conf ${INSTALL}/usr/share/services
-
+    sed -i ${INSTALL}/etc/bluetooth/main.conf \
+        -e "s|^#AutoEnable.*|AutoEnable=true|g" \
+        -e "s|^#JustWorksRepairing.*|JustWorksRepairing=always|g" \
+        -e "s|^#ControllerMode.*|ControllerMode=dual|g" \
+        -e "s|^#FastConnectable.*|FastConnectable=true|g"
+    echo "[General]" >${INSTALL}/etc/bluetooth/input.conf
+    echo "ClassicBondedOnly=false" >>${INSTALL}/etc/bluetooth/input.conf
 
   # bluez looks in /etc/firmware/
     ln -sf /usr/lib/firmware ${INSTALL}/etc/firmware
@@ -87,10 +85,4 @@ EOF
   #  sed -i 's/-lbluetooth//g' ${PKG_BUILD}/lib/bluez.pc
     cp -P ${PKG_BUILD}/lib/bluez.pc ${SYSROOT_PREFIX}/usr/lib/pkgconfig
     cp -P -r ${PKG_BUILD}/lib/bluetooth ${SYSROOT_PREFIX}/usr/include/
-}
-
-post_install() {
-  enable_service bluetooth-defaults.service
-  enable_service bluetooth.service
-  enable_service obex.service
 }

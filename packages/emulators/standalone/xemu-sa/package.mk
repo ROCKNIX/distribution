@@ -2,11 +2,11 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="xemu-sa"
-PKG_VERSION="2f8981168143a11e3001cab724975c73f24bcc4b"
+PKG_VERSION="02d35be3030119099f45f2ff56a4a911ab7e6c34"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/xemu-project/xemu"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain libthai gtk3 libsamplerate libpcap atk SDL2 Python3 zlib pixman bzip2 openssl xwayland"
+PKG_DEPENDS_TARGET="toolchain libthai gtk3 libsamplerate libpcap atk SDL2 Python3 zlib pixman bzip2 openssl xwayland libslirp"
 PKG_LONGDESC="Xemu - A free and open-source application that emulates the original Microsoft Xbox game console."
 PKG_TOOLCHAIN="make"
 PKG_PATCH_DIRS+="${DEVICE}"
@@ -20,7 +20,7 @@ fi
 
 if [ "${VULKAN_SUPPORT}" = "yes" ]
 then
-  PKG_DEPENDS_TARGET+=" vulkan-loader vulkan-headers"
+  PKG_DEPENDS_TARGET+=" vulkan-loader vulkan-headers glslang"
 fi
 
 pre_configure_target() {

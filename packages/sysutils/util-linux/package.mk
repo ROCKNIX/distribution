@@ -54,6 +54,7 @@ PKG_CONFIGURE_OPTS_TARGET="${UTILLINUX_CONFIG_DEFAULT} \
                            --enable-fsck \
                            --enable-fstrim \
                            --enable-blkid \
+                           --enable-blkdiscard \
                            --enable-schedutils \
                            --enable-lscpu"
 

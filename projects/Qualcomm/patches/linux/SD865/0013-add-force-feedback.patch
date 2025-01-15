@@ -1,0 +1,188 @@
+From 41f4c599b400188537b97693feac17bd822805aa Mon Sep 17 00:00:00 2001
+From: spycat88 <spycat88@users.noreply.github.com>
+Date: Fri, 10 Jan 2025 14:46:39 +0000
+Subject: [PATCH] Input: add force feedback (rumble) support to RP5 gamepad
+ driver
+
+---
+ drivers/input/joystick/retroid.c       | 52 ++++++++++++++++++++++++++
+ drivers/input/misc/qcom-spmi-haptics.c | 27 +++++++++++++
+ 2 files changed, 79 insertions(+)
+
+diff --git a/drivers/input/joystick/retroid.c b/drivers/input/joystick/retroid.c
+index 58714577a053..97e9c7a6cbfe 100644
+--- a/drivers/input/joystick/retroid.c
++++ b/drivers/input/joystick/retroid.c
+@@ -5,6 +5,7 @@
+  * Copyright (C) 2024 Molly Sophia <mollysophia379@gmail.com>
+  * Copyright (C) 2024 BigfootACA <bigfoot@classfun.cn>
+  * Copyright (C) 2024 Teguh Sobirin <teguh@sobir.in>
++ * Copyright (C) 2025 ROCKNIX Team <admin@rocknix.org>
+  *
+  */
+ 
+@@ -19,6 +20,7 @@
+ #include <linux/of.h>
+ #include <linux/serdev.h>
+ #include <linux/slab.h>
++#include <linux/platform_device.h>
+ #include <uapi/linux/sched/types.h>
+ 
+ #define DRIVER_NAME "retroid-pocket-gamepad"
+@@ -59,8 +61,11 @@ struct gamepad_device {
+ 	struct gpio_desc *enable_gpio;
+ 	struct gpio_desc *reset_gpio;
+ 	struct input_dev *dev_input;
++	struct platform_device *platform_dev;
+ };
+ 
++static bool rumble_enable = true;
++module_param(rumble_enable, bool, 0660);
+ 
+ static int update_params=0;
+ 
+@@ -330,6 +335,39 @@ static const struct serdev_device_ops gamepad_mcu_uart_client_ops = {
+ 	.receive_buf = gamepad_mcu_uart_rx_bytes,
+ };
+ 
++extern int qcom_spmi_haptics_rumble(unsigned int strong_magnitude, unsigned int weak_magnitude);
++
++static int retroid_rumble_play(struct input_dev *dev, void *data, struct ff_effect *effect)
++{
++	if (!rumble_enable)
++		return 0;
++
++	return qcom_spmi_haptics_rumble(effect->u.rumble.strong_magnitude,
++					effect->u.rumble.weak_magnitude);
++}
++
++static ssize_t rumble_enable_show(struct device *dev, struct device_attribute *attr,
++				  char *buf)
++{
++	return sprintf(buf, "%d\n", rumble_enable);
++}
++
++static ssize_t rumble_enable_store(struct device *dev, struct device_attribute *attr,
++				   const char *buf, size_t count)
++{
++	int ret;
++	bool val;
++
++	ret = kstrtobool(buf, &val);
++	if (ret)
++		return ret;
++
++	rumble_enable = val;
++	return count;
++}
++
++static DEVICE_ATTR_RW(rumble_enable);
++
+ static int gamepad_mcu_uart_probe(struct serdev_device *serdev)
+ {
+ 	struct device *dev = &serdev->dev;
+@@ -450,10 +488,23 @@ static int gamepad_mcu_uart_probe(struct serdev_device *serdev)
+ 		input_set_abs_params(gamepad_dev->dev_input, ABS_HAT2X, 0, trigger_left_max - trigger_left_antideadzone, 0, 30);
+ 		input_set_abs_params(gamepad_dev->dev_input, ABS_HAT2Y, 0, trigger_right_max - trigger_right_antideadzone, 0, 30);
+ 
++		input_set_capability(gamepad_dev->dev_input, EV_FF, FF_RUMBLE);
++		input_ff_create_memless(gamepad_dev->dev_input, NULL, retroid_rumble_play);
++
+ 	ret = input_register_device(gamepad_dev->dev_input);
+ 	if (ret)
+ 		return dev_err_probe(dev, ret, "Could not register input device\n");
+ 
++	gamepad_dev->platform_dev = platform_device_register_simple(DRIVER_NAME, -1, NULL, 0);
++	if (IS_ERR(gamepad_dev->platform_dev)) {
++		ret = PTR_ERR(gamepad_dev->platform_dev);
++		dev_warn(dev, "Failed to register platform device: %d\n", ret);
++	} else {
++		ret = device_create_file(&gamepad_dev->platform_dev->dev, &dev_attr_rumble_enable);
++		if (ret)
++			dev_warn(dev, "Failed to create rumble_enable sysfs on platform device: %d\n", ret);
++	}
++
+ 	serdev_device_set_client_ops(serdev, &gamepad_mcu_uart_client_ops);
+ 
+ 	gamepad_send_init_sequence(serdev);
+@@ -482,3 +533,4 @@ MODULE_DESCRIPTION("Gamepad driver for Retroid Pocket");
+ MODULE_AUTHOR("Molly Sophia <mollysophia379@gmail.com>");
+ MODULE_AUTHOR("BigfootACA <bigfoot@classfun.cn>");
+ MODULE_AUTHOR("Teguh Sobirin <teguh@sobir.in>");
++MODULE_AUTHOR("ROCKNIX Team <admin@rocknix.org>");
+diff --git a/drivers/input/misc/qcom-spmi-haptics.c b/drivers/input/misc/qcom-spmi-haptics.c
+index 64ef78ec1821..96e6e8c73980 100644
+--- a/drivers/input/misc/qcom-spmi-haptics.c
++++ b/drivers/input/misc/qcom-spmi-haptics.c
+@@ -23,6 +23,7 @@
+ #include <linux/slab.h>
+ #include <linux/time.h>
+ #include <linux/types.h>
++#include <linux/export.h>
+ 
+ #define HAP_STATUS_1_REG		0x0A
+ #define HAP_BUSY_BIT			BIT(1)
+@@ -195,6 +196,8 @@ struct spmi_haptics {
+ 	struct mutex play_lock;
+ };
+ 
++static struct spmi_haptics *global_haptics;
++
+ static inline bool is_secure_addr(u16 addr)
+ {
+ 	return (addr & 0xFF) > 0xD0;
+@@ -775,6 +778,22 @@ static int spmi_haptics_play_effect(struct input_dev *dev, void *data,
+ 	return 0;
+ }
+ 
++int qcom_spmi_haptics_rumble(unsigned int strong_magnitude, unsigned int weak_magnitude)
++{
++	struct ff_effect effect;
++
++	if (!global_haptics)
++		return -ENODEV;
++
++	memset(&effect, 0, sizeof(effect));
++	effect.type = FF_RUMBLE;
++	effect.u.rumble.strong_magnitude = strong_magnitude;
++	effect.u.rumble.weak_magnitude = weak_magnitude;
++
++	return spmi_haptics_play_effect(global_haptics->haptics_input_dev, NULL, &effect);
++}
++EXPORT_SYMBOL_GPL(qcom_spmi_haptics_rumble);
++
+ static int spmi_haptics_probe(struct platform_device *pdev)
+ {
+ 	struct spmi_haptics *haptics;
+@@ -922,6 +941,8 @@ static int spmi_haptics_probe(struct platform_device *pdev)
+ 		goto register_fail;
+ 	}
+ 
++	global_haptics = haptics;
++
+ 	return 0;
+ 
+ register_fail:
+@@ -953,6 +974,9 @@ static void spmi_haptics_remove(struct platform_device *pdev)
+ 
+ 	if (haptics->boost)
+ 		gpiod_set_value_cansleep(haptics->boost, 0);
++
++	if (global_haptics == haptics)
++		global_haptics = NULL;
+ }
+ 
+ static void spmi_haptics_shutdown(struct platform_device *pdev)
+@@ -965,6 +989,9 @@ static void spmi_haptics_shutdown(struct platform_device *pdev)
+ 
+ 	if (haptics->boost)
+ 		gpiod_set_value_cansleep(haptics->boost, 0);
++
++	if (global_haptics == haptics)
++		global_haptics = NULL;
+ }
+ 
+ static const struct of_device_id spmi_haptics_match_table[] = {
+-- 
+2.34.1
+

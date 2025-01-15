@@ -176,38 +176,17 @@ function cpu_vendor() {
   awk '/vendor_id/ {print $3;exit}' /proc/cpuinfo
 }
 
-function get_aspect_ratio() {
-  FBWIDTH=$(fbwidth)
-  FBHEIGHT=$(fbheight)
-
-  ASPECT=$(printf "%.2f" $(echo "(${FBWIDTH} / ${FBHEIGHT})" | bc -l))
-
-  case ${ASPECT} in
-    1.00)
-      ASPECT="1:1"
-    ;;
-    1.50|0.67)
-      ASPECT="3:2"
-    ;;
-    1.33|0.75)
-      ASPECT="4:3"
-    ;;
-    1.67|0.60)
-      ASPECT="5:3"
-    ;;
-    1.7*|0.56)
-      ASPECT="16:9"
-    ;;
-    1.60|0.62)
-      ASPECT="16:10"
-    ;;
-  esac
-  echo ${ASPECT}
-}
-
 # sway window manager utility function to enable fullscreen on a window for an input app_id
 function sway_fullscreen {
-  local APPID="${1}"
+  # value for swaymsg criteria
+  # for 'virtual' attributes pidof / pgrep this is the process to look up pid for
+  local VALUE="${1}"
+  
+  # attribute for swaymsg criteria - default to app_id for backwards compatibility
+  # 'virtual' attributes pidof / pgrep result in the value being evaluted at runtime
+  local ATTRIBUTE="${2:-app_id}"
+
+  # retry control vars
   local QUERY_LIMIT=5
   local QUERY_COUNT=0
 
@@ -216,8 +195,31 @@ function sway_fullscreen {
       # loop, attempting to fullscreen window for app_id
       ((QUERY_COUNT++))
 
-      echo "Attempting to fullscreen app_id=${APPID}"
-      swaymsg '[app_id='"${APPID}"'] fullscreen enable'
+      # Derive swaymsg criteria attribute and value where they are dynamic
+      if [[ "${ATTRIBUTE}" = @(pidof|pgrep) ]]; then
+        local PID=""
+
+        case "${ATTRIBUTE}" in
+          "pidof")
+            PID=$(pidof "${VALUE}")
+            ;;
+          "pgrep")
+            PID=$(pgrep "${VALUE}")
+            ;;
+        esac
+
+        if [ -z "${PID}" ]; then
+          echo "No PID found for VALUE=${VALUE}"
+          sleep 1
+          continue
+        else
+          ATTRIBUTE="pid"
+          VALUE="${PID}"
+        fi
+      fi
+
+      echo "Attempting to fullscreen ${ATTRIBUTE}=${VALUE}"
+      swaymsg '['"${ATTRIBUTE}"'='"${VALUE}"'] fullscreen enable'
       local RESULT=$?
 
       if [ $RESULT -eq 0 ]; then

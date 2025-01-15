@@ -2,7 +2,7 @@
 # Copyright (C) 2019-present asakous (https://github.com/asakous)
 
 PKG_NAME="xmil-lr"
-PKG_VERSION="927e2eb8c097e88f623efdf15c4372b973a6c5e5"
+PKG_VERSION="6a52dc21a5ff106137670bb600ab2ce3fcebeb1b"
 PKG_LICENSE="Unknown"
 PKG_SITE="https://github.com/libretro/xmil-libretro"
 PKG_URL="${PKG_SITE}.git"

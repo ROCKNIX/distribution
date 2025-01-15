@@ -1,0 +1,510 @@
+From 579eecdef08ff87ed7c1a925f2ef331c62cb9643 Mon Sep 17 00:00:00 2001
+From: Philippe Simons <simons.philippe@gmail.com>
+Date: Mon, 23 Dec 2024 14:37:58 +0100
+Subject: [PATCH] add rg34xx panel + 120Hz
+
+---
+ .../gpu/drm/panel/panel-newvision-nv3052c.c   | 368 +++++++++++++++---
+ 1 file changed, 304 insertions(+), 64 deletions(-)
+
+diff --git a/drivers/gpu/drm/panel/panel-newvision-nv3052c.c b/drivers/gpu/drm/panel/panel-newvision-nv3052c.c
+index 73ae5c0e9..c2f639610 100644
+--- a/drivers/gpu/drm/panel/panel-newvision-nv3052c.c
++++ b/drivers/gpu/drm/panel/panel-newvision-nv3052c.c
+@@ -634,7 +634,7 @@ static const struct nv3052c_reg ylm_lbv0345001h_v2_panel_regs[] = {
+ 	{ 0xff, 0x30 }, { 0xff, 0x52 }, { 0xff, 0x01 },
+ 	// Mostly unknown registers
+ 	{ 0xe3, 0x00 },
+-	{ 0x0a, 0x01 },
++	{ 0x0a, 0x01 }, // WRMADC_EN
+ 	{ 0x23, 0x00 }, // RGB interface control: DE+SYNC MODE PCLK-N
+ 	{ 0x24, 0x10 },
+ 	{ 0x25, 0x09 },
+@@ -689,11 +689,11 @@ static const struct nv3052c_reg ylm_lbv0345001h_v2_panel_regs[] = {
+ 	{ 0xc0, 0x17 }, // PGAMPK8
+ 	{ 0xc1, 0x07 }, // PGAMPK9
+ 	{ 0xd0, 0x02 }, // NGAMVR0
+-	{ 0xd1, 0x10 }, // NGAMVR0
+-	{ 0xd2, 0x12 }, // NGAMVR1
+-	{ 0xd3, 0x33 }, // NGAMVR2
+-	{ 0xd4, 0x36 }, // NGAMVR3
+-	{ 0xd5, 0x3c }, // NGAMVR4
++	{ 0xd1, 0x10 }, // NGAMVR1
++	{ 0xd2, 0x12 }, // NGAMVR2
++	{ 0xd3, 0x33 }, // NGAMVR3
++	{ 0xd4, 0x36 }, // NGAMVR4
++	{ 0xd5, 0x3c }, // NGAMVR5
+ 	{ 0xd6, 0x20 }, // NGAMPR0
+ 	{ 0xd7, 0x3e }, // NGAMPR1
+ 	{ 0xd8, 0x0d }, // NGAMPK0
+@@ -784,19 +784,19 @@ static const struct nv3052c_reg ylm_lbv0400001x_v1_panel_regs[] = {
+ 	{ 0xff, 0x30 }, { 0xff, 0x52 }, { 0xff, 0x01 },
+ 	// Mostly unknown registers
+ 	{ 0xe3, 0x00 },
+-	{ 0x0a, 0x01 },
++	{ 0x0a, 0x01 }, // WRMADC_EN
+ 	{ 0x23, 0x00 }, // RGB interface control: DE+SYNC MODE PCLK-N
+ 	{ 0x25, 0x14 },
+ 	{ 0x28, 0x47 },
+ 	{ 0x29, 0x01 },
+ 	{ 0x2a, 0xdf },
+-	{ 0x38, 0x9c },
+-	{ 0x39, 0xa7 },
+-	{ 0x3a, 0x47 },
+-	{ 0x91, 0x77 },
+-	{ 0x92, 0x77 },
+-	{ 0x99, 0x52 },
+-	{ 0x9b, 0x5b },
++	{ 0x38, 0x9c }, // VCOM_ADJ1
++	{ 0x39, 0xa7 }, // VCOM_ADJ2
++	{ 0x3a, 0x47 }, // VCOM_ADJ3
++	{ 0x91, 0x77 }, // EXTPW_CTRL2
++	{ 0x92, 0x77 }, // EXTPW_CTRL3
++	{ 0x99, 0x52 }, // PUMP_CTRL2
++	{ 0x9b, 0x5b }, // PUMP_CTRL4
+ 	{ 0xa0, 0x55 },
+ 	{ 0xa1, 0x50 },
+ 	{ 0xa4, 0x9c },
+@@ -840,11 +840,11 @@ static const struct nv3052c_reg ylm_lbv0400001x_v1_panel_regs[] = {
+ 	{ 0xc0, 0x1d }, // PGAMPK8
+ 	{ 0xc1, 0x09 }, // PGAMPK9
+ 	{ 0xd0, 0x02 }, // NGAMVR0
+-	{ 0xd1, 0x1c }, // NGAMVR0
+-	{ 0xd2, 0x1d }, // NGAMVR1
+-	{ 0xd3, 0x36 }, // NGAMVR2
+-	{ 0xd4, 0x34 }, // NGAMVR3
+-	{ 0xd5, 0x32 }, // NGAMVR4
++	{ 0xd1, 0x1c }, // NGAMVR1
++	{ 0xd2, 0x1d }, // NGAMVR2
++	{ 0xd3, 0x36 }, // NGAMVR3
++	{ 0xd4, 0x34 }, // NGAMVR4
++	{ 0xd5, 0x32 }, // NGAMVR5
+ 	{ 0xd6, 0x25 }, // NGAMPR0
+ 	{ 0xd7, 0x40 }, // NGAMPR1
+ 	{ 0xd8, 0x0d }, // NGAMPK0
+@@ -968,18 +968,18 @@ static const struct nv3052c_reg ylm_lbn0395004h_v1_panel_regs[] = {
+ 	{ 0xff, 0x30 }, { 0xff, 0x52 }, { 0xff, 0x01 },
+ 	// Mostly unknown registers
+ 	{ 0xe3, 0x00 },
+-	{ 0x0a, 0x01 },
++	{ 0x0a, 0x01 }, // WRMADC_EN
+ 	{ 0x23, 0x00 }, // RGB interface control: DE+SYNC MODE PCLK-N
+ 	{ 0x25, 0x14 },
+ 	{ 0x29, 0x02 },
+ 	{ 0x2a, 0xcf },
+-	{ 0x38, 0x9c },
+-	{ 0x39, 0xa7 },
+-	{ 0x3a, 0x5f },
+-	{ 0x91, 0x77 },
+-	{ 0x92, 0x77 },
+-	{ 0x99, 0x52 },
+-	{ 0x9b, 0x5b },
++	{ 0x38, 0x9c }, // VCOM_ADJ1
++	{ 0x39, 0xa7 }, // VCOM_ADJ2
++	{ 0x3a, 0x5f }, // VCOM_ADJ3
++	{ 0x91, 0x77 }, // EXTPW_CTRL2
++	{ 0x92, 0x77 }, // EXTPW_CTRL3
++	{ 0x99, 0x52 }, // PUMP_CTRL2
++	{ 0x9b, 0x5b }, // PUMP_CTRL4
+ 	{ 0xa0, 0x55 },
+ 	{ 0xa1, 0x50 },
+ 	{ 0xa4, 0x9c },
+@@ -1023,11 +1023,11 @@ static const struct nv3052c_reg ylm_lbn0395004h_v1_panel_regs[] = {
+ 	{ 0xc0, 0x15 }, // PGAMPK8
+ 	{ 0xc1, 0x04 }, // PGAMPK9
+ 	{ 0xd0, 0x05 }, // NGAMVR0
+-	{ 0xd1, 0x07 }, // NGAMVR0
+-	{ 0xd2, 0x08 }, // NGAMVR1
+-	{ 0xd3, 0x30 }, // NGAMVR2
+-	{ 0xd4, 0x2e }, // NGAMVR3
+-	{ 0xd5, 0x32 }, // NGAMVR4
++	{ 0xd1, 0x07 }, // NGAMVR1
++	{ 0xd2, 0x08 }, // NGAMVR2
++	{ 0xd3, 0x30 }, // NGAMVR3
++	{ 0xd4, 0x2e }, // NGAMVR4
++	{ 0xd5, 0x32 }, // NGAMVR5
+ 	{ 0xd6, 0x1c }, // NGAMPR0
+ 	{ 0xd7, 0x3b }, // NGAMPR1
+ 	{ 0xd8, 0x10 }, // NGAMPK0
+@@ -1133,6 +1133,153 @@ static const struct nv3052c_reg ylm_lbn0395004h_v1_panel_regs[] = {
+ 	{ 0x36, 0x0a }, // bgr = 1, ss = 1, gs = 0
+ };
+ 
++static const struct nv3052c_reg rg34xx_panel_regs[] = {
++	// EXTC Command set enable, select page 1
++	{ 0xff, 0x30 }, { 0xff, 0x52 }, { 0xff, 0x01 },
++	// Mostly unknown registers
++	{ 0xe3, 0x00 },
++	{ 0x0a, 0x01 }, // WRMADC_EN
++	{ 0x23, 0x00 }, // RGB interface control: DE+SYNC MODE PCLK-N
++	{ 0x25, 0x14 },
++	{ 0x29, 0x01 },
++	{ 0x2a, 0xdf },
++	{ 0x38, 0x9c }, // VCOM_ADJ1
++	{ 0x39, 0xa7 }, // VCOM_ADJ2
++	{ 0x3a, 0x5f }, // VCOM_ADJ3
++	{ 0x91, 0x77 }, // EXTPW_CTRL2
++	{ 0x92, 0x77 }, // EXTPW_CTRL3
++	{ 0x99, 0x52 }, // PUMP_CTRL2
++	{ 0x9b, 0x5b }, // PUMP_CTRL4
++	{ 0xa0, 0x55 },
++	{ 0xa1, 0x50 },
++	{ 0xa3, 0x58 },
++	{ 0xa4, 0x9c },
++	{ 0xa7, 0x02 },
++	{ 0xa8, 0x01 },
++	{ 0xa9, 0x01 },
++	{ 0xaa, 0xfc },
++	{ 0xab, 0x28 },
++	{ 0xac, 0x06 },
++	{ 0xad, 0x06 },
++	{ 0xae, 0x06 },
++	{ 0xaf, 0x03 },
++	{ 0xb0, 0x08 },
++	{ 0xb1, 0x26 },
++	{ 0xb2, 0x28 },
++	{ 0xb3, 0x28 },
++	{ 0xb4, 0x03 },
++	{ 0xb5, 0x08 },
++	{ 0xb6, 0x26 },
++	{ 0xb7, 0x08 },
++	{ 0xb8, 0x26 },
++	// EXTC Command set enable, select page 2
++	{ 0xff, 0x30 }, { 0xff, 0x52 }, { 0xff, 0x02 },
++	// Set gray scale voltage to adjust gamma
++	{ 0xb0, 0x02 }, // PGAMVR0
++	{ 0xb1, 0x11 }, // PGAMVR1
++	{ 0xb2, 0x12 }, // PGAMVR2
++	{ 0xb3, 0x2e }, // PGAMVR3
++	{ 0xb4, 0x30 }, // PGAMVR4
++	{ 0xb5, 0x37 }, // PGAMVR5
++	{ 0xb6, 0x1c }, // PGAMPR0
++	{ 0xb7, 0x39 }, // PGAMPR1
++	{ 0xb8, 0x08 }, // PGAMPK0
++	{ 0xb9, 0x00 }, // PGAMPK1
++	{ 0xba, 0x12 }, // PGAMPK2
++	{ 0xbb, 0x12 }, // PGAMPK3
++	{ 0xbc, 0x14 }, // PGAMPK4
++	{ 0xbd, 0x15 }, // PGAMPK5
++	{ 0xbe, 0x16 }, // PGAMPK6
++	{ 0xbf, 0x0d }, // PGAMPK7
++	{ 0xc0, 0x15 }, // PGAMPK8
++	{ 0xc1, 0x04 }, // PGAMPK9
++	{ 0xd0, 0x05 }, // NGAMVR0
++	{ 0xd1, 0x07 }, // NGAMVR1
++	{ 0xd2, 0x08 }, // NGAMVR2
++	{ 0xd3, 0x30 }, // NGAMVR3
++	{ 0xd4, 0x2e }, // NGAMVR4
++	{ 0xd5, 0x32 }, // NGAMVR5
++	{ 0xd6, 0x1c }, // NGAMPR0
++	{ 0xd7, 0x3b }, // NGAMPR1
++	{ 0xd8, 0x10 }, // NGAMPK0
++	{ 0xd9, 0x06 }, // NGAMPK1
++	{ 0xda, 0x12 }, // NGAMPK2
++	{ 0xdb, 0x12 }, // NGAMPK3
++	{ 0xdc, 0x14 }, // NGAMPK4
++	{ 0xdd, 0x15 }, // NGAMPK5
++	{ 0xde, 0x18 }, // NGAMPK6
++	{ 0xdf, 0x0f }, // NGAMPK7
++	{ 0xe0, 0x17 }, // NGAMPK8
++	{ 0xe1, 0x0a }, // NGAMPK9
++	// EXTC Command set enable, select page 3
++	{ 0xff, 0x30 }, { 0xff, 0x52 }, { 0xff, 0x03 },
++	// Set various timing settings
++	{ 0x08, 0x09 }, // GIP_VST_9
++	{ 0x09, 0x0a }, // GIP_VST_10
++	{ 0x0a, 0x0b }, // GIP_VST_11
++	{ 0x0b, 0x0c }, // GIP_VST_12
++	{ 0x28, 0x11 }, // GIP_VEND_9
++	{ 0x2a, 0xf9 }, // GIP_VEND_11
++	{ 0x2b, 0xf9 }, // GIP_VEND_12
++	{ 0x30, 0x00 }, // GIP_CLK_1
++	{ 0x31, 0x00 }, // GIP_CLK_2
++	{ 0x32, 0x00 }, // GIP_CLK_3
++	{ 0x33, 0x00 }, // GIP_CLK_4
++	{ 0x34, 0x61 }, // GIP_CLK_5
++	{ 0x35, 0xd4 }, // GIP_CLK_6
++	{ 0x36, 0x24 }, // GIP_CLK_7
++	{ 0x37, 0x03 }, // GIP_CLK_8
++	{ 0x40, 0x0d }, // GIP_CLKA_1
++	{ 0x41, 0x0e }, // GIP_CLKA_2
++	{ 0x42, 0x0f }, // GIP_CLKA_3
++	{ 0x43, 0x10 }, // GIP_CLKA_4
++	{ 0x44, 0x11 }, // GIP_CLKA_5
++	{ 0x45, 0xf9 }, // GIP_CLKA_6
++	{ 0x46, 0xfa }, // GIP_CLKA_7
++	{ 0x47, 0x11 }, // GIP_CLKA_8
++	{ 0x48, 0xfb }, // GIP_CLKA_9
++	{ 0x49, 0xfc }, // GIP_CLKA_10
++	{ 0x50, 0x11 }, // GIP_CLKB_1
++	{ 0x51, 0x12 }, // GIP_CLKB_2
++	{ 0x52, 0x13 }, // GIP_CLKB_3
++	{ 0x53, 0x14 }, // GIP_CLKB_4
++	{ 0x54, 0x11 }, // GIP_CLKB_5
++	{ 0x55, 0xfd }, // GIP_CLKB_6
++	{ 0x56, 0xfe }, // GIP_CLKB_7
++	{ 0x57, 0x21 }, // GIP_CLKB_8
++	{ 0x58, 0xff }, // GIP_CLKB_9
++	{ 0x59, 0x00 }, // GIP_CLKB_10
++	// Map internal GOA signals to GOA output pad
++	{ 0xb0, 0x05 }, // PANELD2U1
++	{ 0xb1, 0x1f }, // PANELD2U2
++	{ 0xb2, 0x03 }, // PANELD2U3
++	{ 0xb3, 0x01 }, // PANELD2U4
++	{ 0xb4, 0x1e }, // PANELD2U5
++	{ 0xb5, 0x1e }, // PANELD2U6
++	{ 0xb6, 0x1f }, // PANELD2U7
++	{ 0xb7, 0x1e }, // PANELD2U8
++	{ 0xb8, 0x0b }, // PANELD2U9
++	{ 0xb9, 0x09 }, // PANELD2U10
++	{ 0xba, 0x0f }, // PANELD2U11
++	{ 0xbb, 0x0d }, // PANELD2U12
++	{ 0xc6, 0x05 }, // PANELD2U23
++	{ 0xc7, 0x1f }, // PANELD2U24
++	{ 0xc8, 0x04 }, // PANELD2U25
++	{ 0xc9, 0x02 }, // PANELD2U26
++	{ 0xca, 0x1e }, // PANELD2U27
++	{ 0xcb, 0x1e }, // PANELD2U28
++	{ 0xcc, 0x1f }, // PANELD2U29
++	{ 0xcd, 0x1e }, // PANELD2U30
++	{ 0xce, 0x0c }, // PANELD2U31
++	{ 0xcf, 0x0a }, // PANELD2U32
++	{ 0xd0, 0x10 }, // PANELD2U33
++	{ 0xd1, 0x0e }, // PANELD2U34
++	// EXTC Command set enable, select page 0
++	{ 0xff, 0x30 }, { 0xff, 0x52 }, { 0xff, 0x00 },
++	// Display Access Control
++	{ 0x36, 0x09 }, // bgr = 1, ss = 0, gs = 1
++};
++
+ static inline struct nv3052c *to_nv3052c(struct drm_panel *panel)
+ {
+ 	return container_of(panel, struct nv3052c, panel);
+@@ -1249,7 +1396,7 @@ static int nv3052c_get_modes(struct drm_panel *panel,
+ 
+ 		drm_mode_set_name(mode);
+ 
+-		mode->type = DRM_MODE_TYPE_DRIVER;
++		mode->type |= DRM_MODE_TYPE_DRIVER;
+ 		if (panel_info->num_modes == 1)
+ 			mode->type |= DRM_MODE_TYPE_PREFERRED;
+ 
+@@ -1371,61 +1518,141 @@ static const struct drm_display_mode fs035vg158_modes[] = {
+ };
+ 
+ static const struct drm_display_mode wl_355608_a8_mode[] = {
+-	{
++	{ /* 60 Hz */
+ 		.clock = 24000,
+ 		.hdisplay = 640,
+-		.hsync_start = 640 + 64,
+-		.hsync_end = 640 + 64 + 20,
+-		.htotal = 640 + 64 + 20 + 46,
++		.hsync_start = 640 + 140,
++		.hsync_end = 640 + 140 + 4,
++		.htotal = 640 + 140 + 4 + 16,
+ 		.vdisplay = 480,
+-		.vsync_start = 480 + 21,
+-		.vsync_end = 480 + 21 + 4,
+-		.vtotal = 480 + 21 + 4 + 15,
++		.vsync_start = 480 + 14,
++		.vsync_end = 480 + 14 + 4,
++		.vtotal = 480 + 14 + 4 + 2,
++		.flags = DRM_MODE_FLAG_NVSYNC | DRM_MODE_FLAG_NHSYNC,
++		.type = DRM_MODE_TYPE_PREFERRED,
++	},
++	{ /* 120 Hz */
++		.clock = 48000,
++		.hdisplay = 640,
++		.hsync_start = 640 + 140,
++		.hsync_end = 640 + 140 + 4,
++		.htotal = 640 + 140 + 4 + 16,
++		.vdisplay = 480,
++		.vsync_start = 480 + 14,
++		.vsync_end = 480 + 14 + 4,
++		.vtotal = 480 + 14 + 4 + 2,
+ 		.flags = DRM_MODE_FLAG_NVSYNC | DRM_MODE_FLAG_NHSYNC,
+ 	},
+ };
+ 
+ static const struct drm_display_mode ylm_lbv0345001h_v2_mode[] = {
+-	{
++	{ /* 60 Hz */
+ 		.clock = 24000,
+ 		.hdisplay = 640,
+-		.hsync_start = 640 + 84,
+-		.hsync_end = 640 + 84 + 20,
+-		.htotal = 640 + 84 + 20 + 26,
++		.hsync_start = 640 + 114,
++		.hsync_end = 640 + 114 + 20,
++		.htotal = 640 + 114 + 20 + 26,
++		.vdisplay = 480,
++		.vsync_start = 480 + 11,
++		.vsync_end = 480 + 11 + 4,
++		.vtotal = 480 + 11 + 4 + 5,
++		.flags = DRM_MODE_FLAG_NVSYNC | DRM_MODE_FLAG_NHSYNC,
++		.type = DRM_MODE_TYPE_PREFERRED,
++	},
++	{ /* 120 Hz */
++		.clock = 48000,
++		.hdisplay = 640,
++		.hsync_start = 640 + 114,
++		.hsync_end = 640 + 114 + 20,
++		.htotal = 640 + 114 + 20 + 26,
+ 		.vdisplay = 480,
+-		.vsync_start = 480 + 32,
+-		.vsync_end = 480 + 32 + 4,
+-		.vtotal = 480 + 32 + 4 + 5,
++		.vsync_start = 480 + 11,
++		.vsync_end = 480 + 11 + 4,
++		.vtotal = 480 + 11 + 4 + 5,
+ 		.flags = DRM_MODE_FLAG_NVSYNC | DRM_MODE_FLAG_NHSYNC,
+ 	},
+ };
+ 
+ static const struct drm_display_mode ylm_lbv0400001x_v1_mode[] = {
+-	{
+-		.clock = 24000,
++	{ /* 60 Hz */
++		.clock = 27000,
+ 		.hdisplay = 640,
+-		.hsync_start = 640 + 84,
+-		.hsync_end = 640 + 84 + 20,
+-		.htotal = 640 + 84 + 20 + 26,
++		.hsync_start = 640 + 64,
++		.hsync_end = 640 + 64 + 4,
++		.htotal = 640 + 64 + 4 + 42,
+ 		.vdisplay = 480,
+-		.vsync_start = 480 + 20,
+-		.vsync_end = 480 + 20 + 4,
+-		.vtotal = 480 + 20 + 4 + 16,
++		.vsync_start = 480 + 100,
++		.vsync_end = 480 + 100 + 4,
++		.vtotal = 480 + 100 + 4 + 16,
++		.flags = DRM_MODE_FLAG_NVSYNC | DRM_MODE_FLAG_NHSYNC,
++		.type = DRM_MODE_TYPE_PREFERRED,
++	},
++	{ /* 120 Hz */
++		.clock = 54000,
++		.hdisplay = 640,
++		.hsync_start = 640 + 64,
++		.hsync_end = 640 + 64 + 4,
++		.htotal = 640 + 64 + 4 + 42,
++		.vdisplay = 480,
++		.vsync_start = 480 + 100,
++		.vsync_end = 480 + 100 + 4,
++		.vtotal = 480 + 100 + 4 + 16,
+ 		.flags = DRM_MODE_FLAG_NVSYNC | DRM_MODE_FLAG_NHSYNC,
+ 	},
+ };
+ 
+ static const struct drm_display_mode ylm_lbn0395004h_v1_mode[] = {
+-	{
++	{ /* 60 Hz */
+ 		.clock = 36000,
+ 		.hdisplay = 720,
+-		.hsync_start = 720 + 28,
+-		.hsync_end = 720 + 28 + 4,
+-		.htotal = 720 + 28 + 4 + 42,
++		.hsync_start = 720 + 34,
++		.hsync_end = 720 + 34 + 4,
++		.htotal = 720 + 34 + 4 + 42,
+ 		.vdisplay = 720,
+-		.vsync_start = 720 + 16,
+-		.vsync_end = 720 + 16 + 4,
+-		.vtotal = 720 + 16 + 4 + 16,
++		.vsync_start = 720 + 10,
++		.vsync_end = 720 + 10 + 4,
++		.vtotal = 720 + 10 + 4 + 16,
++		.flags = DRM_MODE_FLAG_NVSYNC | DRM_MODE_FLAG_NHSYNC,
++		.type = DRM_MODE_TYPE_PREFERRED,
++	},
++	{ /* 120 Hz */
++		.clock = 73000,
++		.hdisplay = 720,
++		.hsync_start = 720 + 22,
++		.hsync_end = 720 + 22 + 4,
++		.htotal = 720 + 22 + 4 + 42,
++		.vdisplay = 720,
++		.vsync_start = 720 + 32,
++		.vsync_end = 720 + 32 + 4,
++		.vtotal = 720 + 32 + 4 + 16,
++		.flags = DRM_MODE_FLAG_NVSYNC | DRM_MODE_FLAG_NHSYNC,
++	},
++};
++
++static const struct drm_display_mode rg34xx_mode[] = {
++	{ /* 60 Hz */
++		.clock = 26000,
++		.hdisplay = 720,
++		.hsync_start = 720 + 47,
++		.hsync_end = 720 + 47 + 4,
++		.htotal = 720 + 47 + 4 + 42,
++		.vdisplay = 480,
++		.vsync_start = 480 + 33,
++		.vsync_end = 480 + 33 + 4,
++		.vtotal = 480 + 33 + 4 + 16,
++		.flags = DRM_MODE_FLAG_NVSYNC | DRM_MODE_FLAG_NHSYNC,
++		.type = DRM_MODE_TYPE_PREFERRED,
++	},
++	{ /* 120 Hz */
++		.clock = 52000,
++		.hdisplay = 720,
++		.hsync_start = 720 + 47,
++		.hsync_end = 720 + 47 + 4,
++		.htotal = 720 + 47 + 4 + 42,
++		.vdisplay = 480,
++		.vsync_start = 480 + 33,
++		.vsync_end = 480 + 33 + 4,
++		.vtotal = 480 + 33 + 4 + 16,
+ 		.flags = DRM_MODE_FLAG_NVSYNC | DRM_MODE_FLAG_NHSYNC,
+ 	},
+ };
+@@ -1455,8 +1682,8 @@ static const struct nv3052c_panel_info fs035vg158_panel_info = {
+ static const struct nv3052c_panel_info wl_355608_a8_panel_info = {
+ 	.display_modes = wl_355608_a8_mode,
+ 	.num_modes = ARRAY_SIZE(wl_355608_a8_mode),
+-	.width_mm = 150,
+-	.height_mm = 94,
++	.width_mm = 70,
++	.height_mm = 53,
+ 	.bus_format = MEDIA_BUS_FMT_RGB888_1X24,
+ 	.bus_flags = DRM_BUS_FLAG_DE_HIGH | DRM_BUS_FLAG_PIXDATA_DRIVE_NEGEDGE,
+ 	.panel_regs = wl_355608_a8_panel_regs,
+@@ -1496,6 +1723,17 @@ static const struct nv3052c_panel_info ylm_lbn0395004h_v1_panel_info = {
+ 	.panel_regs_len = ARRAY_SIZE(ylm_lbn0395004h_v1_panel_regs),
+ };
+ 
++static const struct nv3052c_panel_info rg34xx_panel_info = {
++	.display_modes = rg34xx_mode,
++	.num_modes = ARRAY_SIZE(rg34xx_mode),
++	.width_mm = 71,
++	.height_mm = 48,
++	.bus_format = MEDIA_BUS_FMT_RGB888_1X24,
++	.bus_flags = DRM_BUS_FLAG_DE_HIGH | DRM_BUS_FLAG_PIXDATA_DRIVE_NEGEDGE,
++	.panel_regs = rg34xx_panel_regs,
++	.panel_regs_len = ARRAY_SIZE(rg34xx_panel_regs),
++};
++
+ static const struct spi_device_id nv3052c_ids[] = {
+ 	{ "ltk035c5444t", },
+ 	{ "fs035vg158", },
+@@ -1503,6 +1741,7 @@ static const struct spi_device_id nv3052c_ids[] = {
+ 	{ "rg35xx-plus-rev6-panel", },
+ 	{ "rg40xx-panel", },
+ 	{ "rgcubexx-panel", },
++	{ "rg34xx-panel", },
+ 	{ /* sentinel */ }
+ };
+ MODULE_DEVICE_TABLE(spi, nv3052c_ids);
+@@ -1514,6 +1753,7 @@ static const struct of_device_id nv3052c_of_match[] = {
+ 	{ .compatible = "anbernic,rg35xx-plus-rev6-panel", .data = &ylm_lbv0345001h_v2_panel_info },
+ 	{ .compatible = "anbernic,rg40xx-panel", .data = &ylm_lbv0400001x_v1_panel_info },
+ 	{ .compatible = "anbernic,rgcubexx-panel", .data = &ylm_lbn0395004h_v1_panel_info },
++	{ .compatible = "anbernic,rg34xx-panel", .data = &rg34xx_panel_info },
+ 	{ /* sentinel */ }
+ };
+ MODULE_DEVICE_TABLE(of, nv3052c_of_match);
+-- 
+2.47.1
+

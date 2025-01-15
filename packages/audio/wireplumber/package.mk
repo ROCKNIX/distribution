@@ -57,6 +57,25 @@ wireplumber.profiles = {
   }
 }
 EOF
+
+  cat >${INSTALL}/usr/share/wireplumber/wireplumber.conf.d/89-bluez-auto-connect.conf <<EOF
+monitor.bluez.rules = [
+  {
+    matches = [
+      {
+        ## This matches all bluetooth devices.
+        device.name = "~bluez_card.*"
+      }
+    ]
+    actions = {
+      update-props = {
+        bluez5.auto-connect = [ hfp_hf hsp_hs a2dp_sink ]
+        bluez5.hw-volume = [ hfp_hf hsp_hs a2dp_sink ]
+      }
+    }
+  }
+]
+EOF
 }
 
 post_install() {

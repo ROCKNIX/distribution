@@ -3,14 +3,13 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="zmusic"
-PKG_VERSION="5ce525efc75a97d1391b46cca4def41a13ff1619"
+PKG_VERSION="1.1.14"
 PKG_LICENSE="GPL"
-PKG_SITE="https://github.com/coelckers/ZMusic"
-PKG_URL="${PKG_SITE}.git"
+PKG_SITE="https://github.com/ZDoom/ZMusic"
+PKG_URL="https://github.com/ZDoom/ZMusic/archive/refs/tags/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_HOST="toolchain"
 PKG_DEPENDS_TARGET="toolchain zmusic:host"
 PKG_LONGDESC="GZDoom's music system as a standalone library"
-GET_HANDLER_SUPPORT="git"
 PKG_TOOLCHAIN="cmake-make"
 
 make_host() {

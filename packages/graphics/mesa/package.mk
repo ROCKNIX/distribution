@@ -4,33 +4,19 @@
 
 PKG_NAME="mesa"
 PKG_LICENSE="OSS"
-PKG_VERSION="24.2.7"
+PKG_VERSION="24.3.3"
 PKG_SITE="http://www.mesa3d.org/"
 PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain expat libdrm zstd Mako:host pyyaml:host"
 PKG_LONGDESC="Mesa is a 3-D graphics library with an API."
 PKG_TOOLCHAIN="meson"
-PKG_BUILD_VERSION="${PKG_VERSION}"
 PKG_PATCH_DIRS+=" ${DEVICE}"
 
 get_graphicdrivers
 
-# Fix for juggling multiple versions of mesa
-case ${PKG_VERSION} in
-  ${PKG_BUILD_VERSION})
-    GALLIUM_DRIVERS=${GALLIUM_DRIVERS//"kmsro "/}
-    if [ "${llVM_SUPPORT}" = "yes" ]; then
-      GALLIUM_DRIVERS=${GALLIUM_DRIVERS//"swrast"/"softpipe llvmpipe"}
-    else
-      GALLIUM_DRIVERS=${GALLIUM_DRIVERS//"swrast"/"softpipe"}
-    fi
-  ;;
-esac
-
 PKG_MESON_OPTS_TARGET=" ${MESA_LIBS_PATH_OPTS} \
                        -Dgallium-drivers=${GALLIUM_DRIVERS// /,} \
                        -Dgallium-extra-hud=false \
-                       -Dgallium-omx=disabled \
                        -Dgallium-opencl=disabled \
                        -Dgallium-xa=disabled \
                        -Dshader-cache=enabled \
@@ -41,32 +27,28 @@ PKG_MESON_OPTS_TARGET=" ${MESA_LIBS_PATH_OPTS} \
                        -Dlibunwind=disabled \
                        -Dlmsensors=disabled \
                        -Dbuild-tests=false \
-                       -Dselinux=false \
                        -Dosmesa=false"
 
 if [ "${DISPLAYSERVER}" = "x11" ]; then
   PKG_DEPENDS_TARGET+=" xorgproto libXext libXdamage libXfixes libXxf86vm libxcb libX11 libxshmfence libXrandr libglvnd glfw"
   export X11_INCLUDES=
   PKG_MESON_OPTS_TARGET+="	-Dplatforms=x11 \
-				-Ddri3=enabled \
 				-Dgallium-nine=true \
 				-Dglx=dri \
-				-Dglvnd=true"
+				-Dglvnd=enabled"
 elif [ "${DISPLAYSERVER}" = "wl" ]; then
   PKG_DEPENDS_TARGET+=" wayland wayland-protocols libglvnd glfw"
   PKG_MESON_OPTS_TARGET+=" 	-Dplatforms=wayland,x11 \
-				-Ddri3=enabled \
 				-Dgallium-nine=true \
 				-Dglx=dri \
-				-Dglvnd=true"
+				-Dglvnd=enabled"
   PKG_DEPENDS_TARGET+=" xorgproto libXext libXdamage libXfixes libXxf86vm libxcb libX11 libxshmfence libXrandr libglvnd"
   export X11_INCLUDES=
 else
   PKG_MESON_OPTS_TARGET+="	-Dplatforms="" \
-				-Ddri3=disabled \
 				-Dgallium-nine=false \
 				-Dglx=disabled \
-				-Dglvnd=false"
+				-Dglvnd=disabled"
 fi
 
 if [ "${LLVM_SUPPORT}" = "yes" ]; then

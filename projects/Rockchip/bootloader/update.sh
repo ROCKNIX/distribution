@@ -25,23 +25,40 @@ if [ -n "$DT_ID" ]; then
   esac
 fi
 
+### Migrate device trees to subfolder - remove in the future
+if [ ! -d "$BOOT_ROOT/device_trees" ]; then
+  mkdir $BOOT_ROOT/device_trees
+  mv $BOOT_ROOT/*.dtb $BOOT_ROOT/device_trees
+  if [ -f "$BOOT_ROOT/boot.ini" ]; then
+    ! grep -q "device_trees" $BOOT_ROOT/boot.ini &&
+      sed -i 's/${dtb_loadaddr} /${dtb_loadaddr} device_trees\//g' $BOOT_ROOT/boot.ini
+  fi
+  if [ -f "$BOOT_ROOT/extlinux/extlinux.conf" ]; then
+    if ! grep -q "device_trees" $BOOT_ROOT/extlinux/extlinux.conf; then
+      sed -i 's/FDT /FDT \/device_trees/g' $BOOT_ROOT/extlinux/extlinux.conf
+      sed -i 's/FDTDIR \//FDTDIR \/device_trees/g' $BOOT_ROOT/extlinux/extlinux.conf
+    fi
+  fi
+fi
+###
+
 echo "Updating device trees..."
-for dtb in $SYSTEM_ROOT/usr/share/bootloader/*.dtb; do
-  cp -p $dtb $BOOT_ROOT
-done
+cp -f $SYSTEM_ROOT/usr/share/bootloader/device_trees/* $BOOT_ROOT/device_trees
 
 if [ -d $SYSTEM_ROOT/usr/share/bootloader/overlays ]; then
   echo "Updating device tree overlays..."
   mkdir -p $BOOT_ROOT/overlays
-  for dtb in $SYSTEM_ROOT/usr/share/bootloader/overlays/*.dtbo; do
-    cp -p $dtb $BOOT_ROOT/overlays
-  done
+  cp -f $SYSTEM_ROOT/usr/share/bootloader/overlays/* $BOOT_ROOT/overlays
 fi
 
 for BOOT_IMAGE in ${SUBDEVICE}_uboot.bin uboot.bin; do
   if [ -f "$SYSTEM_ROOT/usr/share/bootloader/$BOOT_IMAGE" ]; then
     echo "Updating $BOOT_IMAGE on $BOOT_DISK..."
-    dd if=$SYSTEM_ROOT/usr/share/bootloader/$BOOT_IMAGE of=$BOOT_DISK bs=512 seek=64 conv=fsync &>/dev/null
+    # instead of using small bs, read the missing part from target and do a perfectly aligned write
+    {
+      dd if=$BOOT_DISK bs=32K count=1
+      cat $SYSTEM_ROOT/usr/share/bootloader/$BOOT_IMAGE
+    } | dd of=$BOOT_DISK bs=4M conv=fsync &>/dev/null
     break
   fi
 done

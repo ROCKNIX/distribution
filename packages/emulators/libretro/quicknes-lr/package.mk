@@ -19,7 +19,7 @@
 ################################################################################
 
 PKG_NAME="quicknes-lr"
-PKG_VERSION="89d649a544e7d37a5cdbc77c811e88753fa23131"
+PKG_VERSION="dbf19f73e3eb9701d1c7f5898f57c097e05c9fbd"
 PKG_LICENSE="LGPLv2.1+"
 PKG_SITE="https://github.com/libretro/QuickNES_Core"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="dolphin-sa"
 PKG_LICENSE="GPLv2"
@@ -8,28 +9,33 @@ PKG_LONGDESC="Dolphin is a GameCube / Wii emulator, allowing you to play games f
 PKG_TOOLCHAIN="cmake"
 
 case ${DEVICE} in
-  SD865)
-    PKG_VERSION="80ea68b13c06ae3fa57775de39c902ed9c3c8e84"
+  SD865|AMD64|RK3399)
+    PKG_VERSION="3ea870ef8c5f4d4b86bd3ce0c2e3ddba6f1f25aa"
     PKG_SITE="https://github.com/dolphin-emu/dolphin"
     PKG_URL="${PKG_SITE}.git"
-    PKG_PATCH_DIRS+=" x11"
+    PKG_DEPENDS_TARGET+=" qt6"
+    PKG_PATCH_DIRS+=" qt6"
+    PKG_CMAKE_OPTS_TARGET+=" -DENABLE_QT=ON \
+                             -DUSE_RETRO_ACHIEVEMENTS=ON \
+                             -DENABLE_HEADLESS=OFF"
   ;;
   *)
     PKG_SITE="https://github.com/dolphin-emu/dolphin"
     PKG_URL="${PKG_SITE}.git"
     PKG_VERSION="e6583f8bec814d8f3748f1d7738457600ce0de56"
     PKG_PATCH_DIRS+=" wayland"
+    PKG_CMAKE_OPTS_TARGET+=" -DENABLE_QT=OFF \
+                             -DUSE_RETRO_ACHIEVEMENTS=OFF \
+                             -DENABLE_HEADLESS=ON"
   ;;
 esac
 
-if [ ! "${OPENGL}" = "no" ]; then
+if [ "${OPENGL_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
-  PKG_CMAKE_OPTS_TARGET+="		-DENABLE_EGL=ON"
-fi
-
-if [ "${OPENGLES_SUPPORT}" = yes ]; then
+  PKG_CMAKE_OPTS_TARGET+=" -DENABLE_EGL=ON"
+elif [ "${OPENGLES_SUPPORT}" = yes ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGLES}"
-  PKG_CMAKE_OPTS_TARGET+="		-DENABLE_EGL=ON"
+  PKG_CMAKE_OPTS_TARGET+=" -DENABLE_EGL=ON"
 fi
 
 if [ "${DISPLAYSERVER}" = "wl" ]; then
@@ -49,23 +55,24 @@ else
 fi
 
 pre_configure_target() {
-  PKG_CMAKE_OPTS_TARGET+=" -DENABLE_HEADLESS=ON \
-                         -DENABLE_EVDEV=ON \
-                         -DUSE_DISCORD_PRESENCE=OFF \
-                         -DBUILD_SHARED_LIBS=OFF \
-                         -DLINUX_LOCAL_DEV=ON \
-                         -DENABLE_PULSEAUDIO=ON \
-                         -DENABLE_ALSA=ON \
-                         -DENABLE_TESTS=OFF \
-                         -DENABLE_LLVM=OFF \
-                         -DENABLE_ANALYTICS=OFF \
-                         -DENABLE_LTO=ON \
-                         -DENABLE_QT=OFF \
-                         -DENCODE_FRAMEDUMPS=OFF \
-                         -DENABLE_CLI_TOOL=OFF"
+  PKG_CMAKE_OPTS_TARGET+=" -DCMAKE_BUILD_TYPE=Release \
+                           -DENABLE_NOGUI=ON \
+                           -DENABLE_EVDEV=ON \
+                           -DUSE_DISCORD_PRESENCE=OFF \
+                           -DBUILD_SHARED_LIBS=OFF \
+                           -DLINUX_LOCAL_DEV=OFF \
+                           -DENABLE_PULSEAUDIO=ON \
+                           -DENABLE_ALSA=ON \
+                           -DENABLE_TESTS=OFF \
+                           -DENABLE_LLVM=OFF \
+                           -DENABLE_ANALYTICS=OFF \
+                           -DENABLE_LTO=ON \
+                           -DENCODE_FRAMEDUMPS=OFF \
+                           -DENABLE_AUTOUPDATE=OFF \
+                           -DUSE_MGBA=OFF \
+                           -DENABLE_CLI_TOOL=OFF"
   sed -i 's~#include <cstdlib>~#include <cstdlib>\n#include <cstdint>~g' ${PKG_BUILD}/Externals/VulkanMemoryAllocator/include/vk_mem_alloc.h
   sed -i 's~#include <cstdint>~#include <cstdint>\n#include <string>~g' ${PKG_BUILD}/Externals/VulkanMemoryAllocator/include/vk_mem_alloc.h
-
 }
 
 makeinstall_target() {
@@ -73,8 +80,7 @@ makeinstall_target() {
   cp -rf ${PKG_BUILD}/.${TARGET_NAME}/Binaries/dolphin* ${INSTALL}/usr/bin
   cp -rf ${PKG_DIR}/scripts/* ${INSTALL}/usr/bin
 
-  chmod +x ${INSTALL}/usr/bin/start_dolphin_gc.sh
-  chmod +x ${INSTALL}/usr/bin/start_dolphin_wii.sh
+  chmod +x ${INSTALL}/usr/bin/*
 
   mkdir -p ${INSTALL}/usr/config/dolphin-emu
   cp -rf ${PKG_BUILD}/Data/Sys/* ${INSTALL}/usr/config/dolphin-emu
@@ -85,24 +91,22 @@ post_install() {
     case ${DEVICE} in
       RK3588)
         DOLPHIN_PLATFORM="\${PLATFORM}"
-        LIBMALI="if [ ! -z 'lsmod | grep panthor' ]; then LD_LIBRARY_PATH='\/usr\/lib\/libmali-valhall-g610-g13p0-x11-gbm.so' PLATFORM='wayland'; else PLATFORM='x11'; fi"
+        EXPORTS="if [ ! -z 'lsmod | grep panthor' ]; then LD_LIBRARY_PATH='\/usr\/lib\/libmali-valhall-g610-g13p0-x11-gbm.so' PLATFORM='wayland'; else PLATFORM='x11'; fi"
       ;;
-      SD865)
+      SD865|AMD64|RK3399)
         DOLPHIN_PLATFORM="x11"
-        LIBMALI=""
+        EXPORTS="export QT_QPA_PLATFORM=xcb"
       ;;
       *)
         DOLPHIN_PLATFORM="wayland"
-        LIBMALI=""
+        EXPORTS=""
       ;;
     esac
-    sed -e "s/@DOLPHIN_PLATFORM@/${DOLPHIN_PLATFORM}/g" \
-        -i  ${INSTALL}/usr/bin/start_dolphin_gc.sh
-    sed -e "s/@DOLPHIN_PLATFORM@/${DOLPHIN_PLATFORM}/g" \
-        -i  ${INSTALL}/usr/bin/start_dolphin_wii.sh
+    sed -e "s/@DOLPHIN_PLATFORM@/${DOLPHIN_PLATFORM}/g" -i ${INSTALL}/usr/bin/start_dolphin_gc.sh
+    sed -e "s/@DOLPHIN_PLATFORM@/${DOLPHIN_PLATFORM}/g" -i  ${INSTALL}/usr/bin/start_dolphin_wii.sh
 
-    sed -e "s/@LIBMALI@/${LIBMALI}/g" \
+    sed -e "s/@EXPORTS@/${EXPORTS}/g" \
         -i  ${INSTALL}/usr/bin/start_dolphin_gc.sh
-    sed -e "s/@LIBMALI@/${LIBMALI}/g" \
+    sed -e "s/@EXPORTS@/${EXPORTS}/g" \
         -i  ${INSTALL}/usr/bin/start_dolphin_wii.sh
 }

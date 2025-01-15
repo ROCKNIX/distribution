@@ -28,4 +28,14 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/compat
   curl -Lo ${PKG_BUILD}/compat.zip ${COMPAT_URL}
   unzip -qq ${PKG_BUILD}/compat.zip -d ${INSTALL}/usr/lib/compat/
+
+  case ${DEVICE} in
+    SD865|H700)
+      GUIDEBUTTON='"hotkeyenable")     TR_NAME="guide";;'
+      sed -e "s/@GUIDEBUTTON@/${GUIDEBUTTON}/g" -i ${INSTALL}/usr/config/PortMaster/mapper.txt
+    ;;
+    *)
+      sed -i "/@GUIDEBUTTON@/d" ${INSTALL}/usr/config/PortMaster/mapper.txt 
+    ;;
+  esac
 }

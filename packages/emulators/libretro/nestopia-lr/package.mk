@@ -19,7 +19,7 @@
 ################################################################################
 
 PKG_NAME="nestopia-lr"
-PKG_VERSION="be1139ec4d89151fc65b81a3494d2b9c0fd0b7dc"
+PKG_VERSION="6bbfff9a56ead67f0da696ab2c3aea3c11896964"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/nestopia"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

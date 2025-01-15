@@ -35,7 +35,7 @@ powerstate() {
 }
 
 bluetooth() {
-  if [ "$(get_setting bluetooth.enabled)" == "1" ]
+  if [ "$(get_setting controllers.bluetooth.enabled)" == "1" ]
   then
     log $0 "Bluetooth: ${1}"
     systemctl ${1} bluetooth >${EVENTLOG} 2>&1
@@ -116,7 +116,7 @@ case $1 in
     inputsense start
     bluetooth start
 
-    if [ "$(get_setting network.enabled)" == "1" ]
+    if [ "$(get_setting wifi.enabled)" == "1" ]
     then
       log $0 "Connecting WIFI."
       nohup wifictl enable >${EVENTLOG} 2>&1
@@ -126,7 +126,7 @@ case $1 in
     log $0 "Restoring volume to ${DEVICE_VOLUME}%."
     amixer -c 0 -M set "${DEVICE_AUDIO_MIXER}" ${DEVICE_VOLUME}% >${EVENTLOG} 2>&1
 
-    BRIGHTNESS=$(get_setting system.brightness)
+    BRIGHTNESS=$(get_setting display.brightness)
     log $0 "Restoring brightness to ${BRIGHTNESS}."
     brightness set ${BRIGHTNESS} >${EVENTLOG} 2>&1
     quirks post

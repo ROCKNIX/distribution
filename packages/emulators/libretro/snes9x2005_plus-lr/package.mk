@@ -19,7 +19,7 @@
 ################################################################################
 
 PKG_NAME="snes9x2005_plus-lr"
-PKG_VERSION="285220ed696ec661ce5c42856e033a1586fda967"
+PKG_VERSION="74d871db9b4dba6dbe6c5ecebc88cbf255be5349"
 PKG_LICENSE="Non-commercial"
 PKG_SITE="https://github.com/libretro/snes9x2005"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

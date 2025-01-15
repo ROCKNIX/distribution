@@ -4,7 +4,7 @@
 PKG_NAME="xterm"
 PKG_VERSION="379"
 PKG_LICENSE="MIT"
-PKG_SITE="http://invisible-mirror.net/archives/xterm"
+PKG_SITE="http://invisible-island.net/archives/xterm"
 PKG_URL="${PKG_SITE}/${PKG_NAME}-${PKG_VERSION}.tgz"
 PKG_DEPENDS_TARGET="toolchain ncurses xwayland libXaw libXpm"
 PKG_LONGDESC="Terminal emulator for X11."

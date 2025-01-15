@@ -1,0 +1,89 @@
+From cce6d81aa5f1313bfefe4d4af40ebffffcfb5661 Mon Sep 17 00:00:00 2001
+From: Philippe Simons <simons.philippe@gmail.com>
+Date: Thu, 9 Jan 2025 14:44:07 +0100
+Subject: [PATCH] h616_dram_detection
+
+---
+ arch/arm/mach-sunxi/dram_sun50i_h616.c | 48 ++++++++++++++++++++++----
+ 1 file changed, 42 insertions(+), 6 deletions(-)
+
+diff --git a/arch/arm/mach-sunxi/dram_sun50i_h616.c b/arch/arm/mach-sunxi/dram_sun50i_h616.c
+index 863c4f1d7a..e29b93c03d 100644
+--- a/arch/arm/mach-sunxi/dram_sun50i_h616.c
++++ b/arch/arm/mach-sunxi/dram_sun50i_h616.c
+@@ -1360,6 +1360,39 @@ static void mctl_auto_detect_rank_width(const struct dram_para *para,
+ 	panic("This DRAM setup is currently not supported.\n");
+ }
+ 
++static bool compare_mem(ulong offset)
++{
++	unsigned int i;
++	u32 *ptr, val;
++
++	ptr = (u32*)CFG_SYS_SDRAM_BASE;
++	for (i = 0; i < 16; ptr++, i++) {
++		if (i & 1)
++			val = ~(ulong)ptr;
++		else
++			val = (ulong)ptr;
++		if (val != *(ptr + offset / 4))
++			return false;
++	}
++
++	return true;
++}
++
++static void init_mem(void)
++{
++	unsigned int i;
++	u32 *ptr, val;
++
++	ptr = (u32*)CFG_SYS_SDRAM_BASE;
++	for (i = 0; i < 16; ptr++, i++) {
++		if (i & 1)
++			val = ~(ulong)ptr;
++		else
++			val = (ulong)ptr;
++		writel(val, ptr);
++	}
++}
++
+ static void mctl_auto_detect_dram_size(const struct dram_para *para,
+ 				       struct dram_config *config)
+ {
+@@ -1370,23 +1403,26 @@ static void mctl_auto_detect_dram_size(const struct dram_para *para,
+ 	config->rows = 13;
+ 	mctl_core_init(para, config);
+ 
+-	shift = config->bus_full_width + 1;
++	init_mem();
+ 
+ 	/* detect column address bits */
++	shift = config->bus_full_width + 1;
+ 	for (config->cols = 8; config->cols < 11; config->cols++) {
+-		if (mctl_mem_matches(1ULL << (config->cols + shift)))
++		if (compare_mem(1ULL << (config->cols + shift)))
+ 			break;
+ 	}
+ 	debug("detected %u columns\n", config->cols);
+ 
+ 	/* reconfigure to make sure that all active rows are accessible */
+-	config->rows = 18;
++	config->rows = 17;
+ 	mctl_core_init(para, config);
+ 
++	init_mem();
++
+ 	/* detect row address bits */
+-	shift = config->bus_full_width + 4 + config->cols;
+-	for (config->rows = 13; config->rows < 18; config->rows++) {
+-		if (mctl_mem_matches(1ULL << (config->rows + shift)))
++	shift = config->bus_full_width + 1 + 3 + config->cols;
++	for (config->rows = 13; config->rows < 17; config->rows++) {
++		if (compare_mem(1ULL << (config->rows + shift)))
+ 			break;
+ 	}
+ 	debug("detected %u rows\n", config->rows);
+-- 
+2.47.1
+

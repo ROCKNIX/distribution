@@ -22,6 +22,7 @@ PAK=$(get_setting controller_pak "${PLATFORM}" "${GAME}")
 CON=$(get_setting input_configuration "${PLATFORM}" "${GAME}")
 VPLUGIN=$(get_setting video_plugin "${PLATFORM}" "${GAME}")
 CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
+GLIDEN64CONF=$(get_setting gliden64_profiles "${PLATFORM}" "${GAME}")
 
 # File locations
 SHARE="/usr/local/share/mupen64plus"
@@ -37,7 +38,7 @@ mkdir -p ${GAMEDATA}
 
 # Copy files to GAMEDATA
 if [[ ! -f "${M64PCONF}" ]]; then
-    cp ${SHARE}/mupen64plus.cfg* ${M64PCONF}
+    cp ${SHARE}/mupen64plus.cfg* ${GAMEDATA}
 fi
 if [[ ! -f "${CUSTOMINP}" ]]; then
     cp ${SHARE}/default.ini ${CUSTOMINP}
@@ -124,6 +125,25 @@ else
     SET_PARAMS+=" --set Video-GLideN64[ShowFPS]=False"
     SET_PARAMS+=" --set Video-Glide64mk2[show_fps]=0"
     SET_PARAMS+=" --set Video-Rice[ShowFPS]=False"
+fi
+
+# GLideN64 Profiles
+if [ "${GLIDEN64CONF}" = "performance" ]; then
+	SET_PARAMS+=" --set Video-GLideN64[EnableLOD]=False"
+	SET_PARAMS+=" --set Video-GLideN64[EnableLegacyBlending]=True"
+	SET_PARAMS+=" --set Video-GLideN64[EnableHybridFilter]=False"
+	SET_PARAMS+=" --set Video-GLideN64[EnableInaccurateTextureCoordinates]=True"
+	SET_PARAMS+=" --set Video-GLideN64[EnableCopyColorToRDRAM]=0"
+	SET_PARAMS+=" --set Video-GLideN64[EnableCopyDepthToRDRAM]=0"
+	SET_PARAMS+=" --set Video-GLideN64[BackgroundsMode]=0"
+	SET_PARAMS+=" --set Video-GLideN64[RDRAMImageDitheringMode]=0"
+	SET_PARAMS+=" --set Video-GLideN64[CorrectTexrectCoords]=0"
+else
+	SET_PARAMS+=" --set Video-GLideN64[EnableLOD]=True"
+	SET_PARAMS+=" --set Video-GLideN64[EnableLegacyBlending]=False"
+	SET_PARAMS+=" --set Video-GLideN64[EnableHybridFilter]=False"
+	SET_PARAMS+=" --set Video-GLideN64[EnableInaccurateTextureCoordinates]=False"
+	SET_PARAMS+=" --set Video-GLideN64[EnableCopyColorToRDRAM]=2"
 fi
 
 # Set the video plugin
