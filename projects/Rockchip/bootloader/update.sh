@@ -17,6 +17,7 @@ fi
 # mount $BOOT_ROOT rw
 mount -o remount,rw $BOOT_ROOT
 
+DT_SOC=$($SYSTEM_ROOT/usr/bin/dtsoc | cut -f2 -d,)
 DT_ID=$($SYSTEM_ROOT/usr/bin/dtname)
 if [ -n "$DT_ID" ]; then
   case $DT_ID in
@@ -25,25 +26,33 @@ if [ -n "$DT_ID" ]; then
   esac
 fi
 
-### Migrate device trees to subfolder - remove in the future
-if [ ! -d "$BOOT_ROOT/device_trees" ]; then
-  mkdir $BOOT_ROOT/device_trees
-  mv $BOOT_ROOT/*.dtb $BOOT_ROOT/device_trees
-  if [ -f "$BOOT_ROOT/boot.ini" ]; then
-    ! grep -q "device_trees" $BOOT_ROOT/boot.ini &&
-      sed -i 's/${dtb_loadaddr} /${dtb_loadaddr} device_trees\//g' $BOOT_ROOT/boot.ini
+### Migrate device trees to subfolder (except RK326) - remove in the future
+if [ "$DT_SOC" = "rk3326" ]; then
+  if [ -d "$BOOT_ROOT/device_trees" ]; then
+    mv $BOOT_ROOT/device_trees/*.dtb $BOOT_ROOT
+    rm -rf $BOOT_ROOT/device_trees
   fi
-  if [ -f "$BOOT_ROOT/extlinux/extlinux.conf" ]; then
-    if ! grep -q "device_trees" $BOOT_ROOT/extlinux/extlinux.conf; then
-      sed -i 's/FDT /FDT \/device_trees/g' $BOOT_ROOT/extlinux/extlinux.conf
-      sed -i 's/FDTDIR \//FDTDIR \/device_trees/g' $BOOT_ROOT/extlinux/extlinux.conf
+  if [ -f "$BOOT_ROOT/boot.ini" ]; then
+    grep -q "device_trees" $BOOT_ROOT/boot.ini &&
+      sed -i 's/${dtb_loadaddr} device_trees\//${dtb_loadaddr} /g' $BOOT_ROOT/boot.ini
+  fi
+else
+  if [ ! -d "$BOOT_ROOT/device_trees" ]; then
+    mkdir $BOOT_ROOT/device_trees
+    mv $BOOT_ROOT/*.dtb $BOOT_ROOT/device_trees
+    if [ -f "$BOOT_ROOT/extlinux/extlinux.conf" ]; then
+      if ! grep -q "device_trees" $BOOT_ROOT/extlinux/extlinux.conf; then
+        sed -i 's/FDT /FDT \/device_trees/g' $BOOT_ROOT/extlinux/extlinux.conf
+        sed -i 's/FDTDIR \//FDTDIR \/device_trees/g' $BOOT_ROOT/extlinux/extlinux.conf
+      fi
     fi
   fi
 fi
 ###
 
 echo "Updating device trees..."
-cp -f $SYSTEM_ROOT/usr/share/bootloader/device_trees/* $BOOT_ROOT/device_trees
+[ "$DT_SOC" = "rk3326" ] && DT_LOC=$BOOT_ROOT || DT_LOC=$BOOT_ROOT/device_trees
+cp -f $SYSTEM_ROOT/usr/share/bootloader/device_trees/* $DT_LOC
 
 if [ -d $SYSTEM_ROOT/usr/share/bootloader/overlays ]; then
   echo "Updating device tree overlays..."
