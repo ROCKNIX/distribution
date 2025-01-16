@@ -29,7 +29,7 @@ PKG_TOOLCHAIN="manual"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/share/retroarch-overlays
-  for dir in borders ctr effects gamepads keyboards misc
+  for dir in borders ctr effects keyboards misc
   do
     cp -r ${PKG_BUILD}/${dir} ${INSTALL}/usr/share/retroarch-overlays/
   done
