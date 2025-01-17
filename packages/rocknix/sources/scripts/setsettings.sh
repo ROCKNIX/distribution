@@ -78,6 +78,7 @@ declare -a HAS_CHEEVOS=(    arcade
                             msx
                             msx2
                             n64
+                            nds
                             neogeo
                             neogeocd
                             nes
@@ -91,6 +92,7 @@ declare -a HAS_CHEEVOS=(    arcade
                             pokemini
                             psp
                             psx
+                            saturn
                             sega32x
                             segacd
                             sfc
