@@ -13,7 +13,7 @@ PKG_DEPENDS_TARGET="toolchain squashfs-tools:host dosfstools:host fakeroot:host 
                     ${BOOTLOADER} busybox umtprd util-linux usb-modeswitch unzip poppler jq socat \
                     p7zip file initramfs grep wget util-linux btrfs-progs zstd lz4 empty lzo libzip \
                     bash coreutils modules system-utils autostart quirks powerstate gnupg \
-                    gzip six lynx xmlstarlet vim pyudev dialog dbus-python network rocknix"
+                    gzip six lynx xmlstarlet vim pyudev dialog dbus-python network rocknix f2fs-tools"
 
 PKG_UI="emulationstation es-themes textviewer"
 
