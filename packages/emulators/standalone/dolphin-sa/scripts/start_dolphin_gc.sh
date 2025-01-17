@@ -48,7 +48,7 @@ if [ ! -f "/storage/.config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.
         cp -r "/usr/config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.south" "/storage/.config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.custom"
 fi
 
-# Link Save States to /roms/savestates
+# Link Save States to /roms/savestates/gamecube
 if [ ! -d "/storage/roms/savestates/gamecube/" ]; then
     mkdir -p "/storage/roms/savestates/gamecube/"
 fi
@@ -57,17 +57,19 @@ rm -rf /storage/.config/dolphin-emu/StateSaves
 ln -sf /storage/roms/savestates/gamecube /storage/.config/dolphin-emu/StateSaves
 
 # Link and copy bios and other system stuff to roms
-if [ ! -d "/storage/roms/bios/GC/" ]; then
+if [ ! -d "/storage/roms/bios/dolphin/GC/" ]; then
     mkdir -p /storage/roms/bios/GC/{USA,JAP,EUR}
     cp -r /storage/.config/dolphin-emu/GC /storage/roms/bios/
 fi
 
-rm -rf /storage/.config/dolphin-emu/GC
-ln -sf /storage/roms/bios/GC /storage/.config/dolphin-emu/GC
+rm -rf /storage/.config/dolphin-emu/GC/{USA,JAP,EUR}
+ln -sf /storage/roms/bios/dolphin/GC/USA /storage/.config/dolphin-emu/GC/USA
+ln -sf /storage/roms/bios/dolphin/GC/JAP /storage/.config/dolphin-emu/GC/JAP
+ln -sf /storage/roms/bios/dolphin/GC/EUR /storage/.config/dolphin-emu/GC/EUR
 
 # Grab a clean settings file during boot
-cp -r /usr/config/dolphin-emu/GFX.ini /storage/.config/dolphin-emu.GFX.ini
-cp -r /usr/config/dolphin-emu/Dolphin.ini /storage/.config/dolphin-emu.Dolphin.ini
+cp -r /usr/config/dolphin-emu/GFX.ini /storage/.config/dolphin-emu/GFX.ini
+cp -r /usr/config/dolphin-emu/Dolphin.ini /storage/.config/dolphin-emu/Dolphin.ini
 
 # Emulation Station Features
 GAME=$(echo "${1}"| sed "s#^/.*/##")
