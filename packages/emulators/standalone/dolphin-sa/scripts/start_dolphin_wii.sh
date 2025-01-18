@@ -5,7 +5,7 @@
 
 . /etc/profile
 
-#Detect version of Dolphin
+# Detect version of Dolphin
 DOLPHIN_CORE=$(echo "${3}"| sed "s#^/.*/##")
 if [ "${DOLPHIN_CORE}" = 'dolphin-qt-wii' ]; then
   DOLPHIN_CORE="dolphin-emu"
@@ -20,7 +20,7 @@ control-gen_init.sh
 source /storage/.config/gptokeyb/control.ini
 get_controls
 
-#Check if dolphin-emu exists in .config
+# Check if dolphin-emu exists in .config
 if [ ! -d "/storage/.config/dolphin-emu" ]; then
     mkdir -p "/storage/.config/dolphin-emu"
         cp -r "/usr/config/dolphin-emu" "/storage/.config/"
@@ -48,8 +48,12 @@ if [ ! -f "/storage/.config/dolphin-emu/WiiControllerProfiles/custom.ini" ]; the
         cp -r "/storage/.config/dolphin-emu/WiiControllerProfiles/vremote.ini" "/storage/.config/dolphin-emu/WiiControllerProfiles/custom.ini"
 fi
 
-# Gamecube controller profile needed for hotkeys to work
-cp -r "/storage/.config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.south" "/storage/.config/dolphin-emu/GCPadNew.ini"
+# Gamecube controller profile needed for hotkeys to work on SA
+if [ "${DOLPHIN_CORE}" = 'dolphin-sa-wii' ]; then
+  cp -r "/storage/.config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.south" "/storage/.config/dolphin-emu/GCPadNew.ini"
+else
+  rm -r "/storage/.config/dolphin-emu/GCPadNew.ini"
+fi
 
 # Link Save States to /roms/savestates/wii
 if [ ! -d "/storage/roms/savestates/wii/" ]; then
@@ -59,11 +63,23 @@ fi
 rm -rf /storage/.config/dolphin-emu/StateSaves
 ln -sf /storage/roms/savestates/wii /storage/.config/dolphin-emu/StateSaves
 
-#Grab a clean settings file during boot
-cp -r /usr/config/dolphin-emu/GFX.ini /storage/.config/dolphin-emu.GFX.ini
-cp -r /usr/config/dolphin-emu/Dolphin.ini /storage/.config/dolphin-emu.Dolphin.ini
+# Link and copy bios and other system stuff to roms
+if [ ! -d "/storage/roms/bios/GC/" ]; then
+    mkdir -p /storage/roms/bios/GC/{USA,JAP,EUR}
+    cp -r /storage/.config/dolphin-emu/GC /storage/roms/bios/
+fi
 
-#Emulation Station options
+rm -rf /storage/.config/dolphin-emu/GC/{USA,JAP,EUR}
+ln -sf /storage/roms/bios/GC/USA /storage/.config/dolphin-emu/GC/USA
+ln -sf /storage/roms/bios/GC/JAP /storage/.config/dolphin-emu/GC/JAP
+ln -sf /storage/roms/bios/GC/EUR /storage/.config/dolphin-emu/GC/EUR
+
+
+# Grab a clean settings file during boot
+cp -r /usr/config/dolphin-emu/GFX.ini /storage/.config/dolphin-emu/GFX.ini
+cp -r /usr/config/dolphin-emu/Dolphin.ini /storage/.config/dolphin-emu/Dolphin.ini
+
+# Emulation Station Features
 GAME=$(echo "${1}"| sed "s#^/.*/##")
 PLATFORM=$(echo "${2}"| sed "s#^/.*/##")
 AA=$(get_setting anti_aliasing "${PLATFORM}" "${GAME}")
@@ -84,7 +100,7 @@ XFBTEXTURE=$(get_setting store_xfb_to_texture_only "${PLATFORM}" "${GAME}")
 RUMBLE=$(get_setting rumble "${PLATFORM}" "${GAME}")
 WHACK=$(get_setting widescreen_hack "${PLATFORM}" "${GAME}")
 
-#Set the cores to use
+# Set the cores to use
 CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
 if [ "${CORES}" = "little" ]
 then
@@ -133,7 +149,7 @@ fi
     sed -i '/AspectRatio/c\AspectRatio = 0' /storage/.config/dolphin-emu/GFX.ini
   fi
 
-  #Audio Backend
+  # Audio Backend
   if [ "$AUDIOBE" = "lle" ]; then
     AUDIO_BACKEND="LLE"
   else
@@ -206,7 +222,6 @@ fi
   elif [ "$SHADERP" = "true" ]; then
     sed -i '/WaitForShadersBeforeStarting =/c\WaitForShadersBeforeStarting = True' /storage/.config/dolphin-emu/GFX.ini
   fi
-
 
   # Show FPS
   if [ "$FPS" = "true" ]; then
