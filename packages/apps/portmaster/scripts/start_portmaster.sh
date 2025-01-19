@@ -70,9 +70,6 @@ else
   xmlstarlet ed --inplace --subnode "/gameList/folder[last()]" --type elem -n hidden -v "true" /storage/roms/ports/gamelist.xml
 fi
 
-#Fix compatability for some portmaster ports
-/usr/bin/portmaster_compatibility.sh
-
 #Start PortMaster
 cd /storage/roms/ports/PortMaster
 ./PortMaster.sh 2>/dev/null
