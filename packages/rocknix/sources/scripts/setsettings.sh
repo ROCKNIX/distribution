@@ -48,6 +48,7 @@ CONTROLLERS="${CONTROLLERS#*--controllers=*}"
 ###
 
 declare -a HAS_CHEEVOS=(    arcade
+                            arduboy
                             atari2600
                             atari7800
                             atarilynx
@@ -62,8 +63,10 @@ declare -a HAS_CHEEVOS=(    arcade
                             fds
                             gamegear
                             gb
+                            gbh
                             gba
                             gbah
+                            gbav
                             gbc
                             gbch
                             gbh
@@ -86,12 +89,14 @@ declare -a HAS_CHEEVOS=(    arcade
                             ngp
                             ngpc
                             odyssey2
+                            opera
                             pcengine
                             pcenginecd
                             pcfx
                             pokemini
                             psp
                             psx
+                            ps2
                             saturn
                             sega32x
                             segacd

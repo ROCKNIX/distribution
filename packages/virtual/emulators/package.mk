@@ -472,6 +472,19 @@ makeinstall_target() {
   esac
   add_es_system gbah
 
+  ### Nintendo GameBoy Advance Video
+  add_emu_core gbav retroarch mgba true
+  add_emu_core gbav retroarch vbam false
+  add_emu_core gbav retroarch vba_next false
+  add_emu_core gbav retroarch beetle_gba false
+  case ${DEVICE} in
+    RK3399|AMD64|RK3326|RK3588*|RK356*|H700)
+      add_emu_core gbav retroarch gpsp false
+      add_emu_core gbav mednafen gba false
+    ;;
+  esac
+  add_es_system gbav
+
   ### Nintendo GameBoy Color
   add_emu_core gbc retroarch gambatte true
   add_emu_core gbc retroarch sameboy false
@@ -1026,7 +1039,6 @@ makeinstall_target() {
     SD865)
       add_emu_core saturn retroarch beetle_saturn false
       add_emu_core saturn retroarch kronos false
-      add_emu_core saturn mednafen ss false
   ;;
   esac
   add_es_system saturn
