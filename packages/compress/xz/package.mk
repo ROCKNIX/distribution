@@ -25,9 +25,10 @@ PKG_CONFIGURE_OPTS_HOST="--disable-shared --enable-static \
                          --disable-scripts \
                          --enable-symbol-versions=no"
 
-PKG_CONFIGURE_OPTS_TARGET="--disable-shared --enable-static \
-                           --enable-symbol-versions=no"
+PKG_CONFIGURE_OPTS_TARGET="--enable-shared \
+                          --disable-static \
+                          --enable-symbol-versions=yes"
 
 post_makeinstall_target() {
-  rm -rf ${INSTALL}
+  rm -rf ${INSTALL}/usr/bin
 }
