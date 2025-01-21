@@ -49,7 +49,7 @@ if [ ! -f "/storage/.config/dolphin-emu/WiiControllerProfiles/custom.ini" ]; the
 fi
 
 # Gamecube controller profile needed for hotkeys to work on SA
-if [ "${DOLPHIN_CORE}" = 'dolphin-sa-wii' ]; then
+if [ "${DOLPHIN_CORE}" = 'dolphin-emu-nogui' ]; then
   cp -r "/storage/.config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.south" "/storage/.config/dolphin-emu/GCPadNew.ini"
 else
   rm -r "/storage/.config/dolphin-emu/GCPadNew.ini"
