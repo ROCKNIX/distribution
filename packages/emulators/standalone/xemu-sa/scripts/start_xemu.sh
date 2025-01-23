@@ -50,6 +50,7 @@ fi
 GAME=$(echo "${1}"| sed "s#^/.*/##")
 PLATFORM=$(echo "${2}"| sed "s#^/.*/##")
 ASPECT=$(get_setting aspect_ratio "${PLATFORM}" "${GAME}")
+FIT=$(get_setting fit "${PLATFORM}" "${GAME}")
 CLOCK=$(get_setting cpu_clock_speed "${PLATFORM}" "${GAME}")
 CSHADERS=$(get_setting cache_shaders_to_disk "${PLATFORM}" "${GAME}")
 IRES=$(get_setting internal_resolution "${PLATFORM}" "${GAME}")
@@ -66,6 +67,15 @@ VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
                 sed -i "/aspect_ratio =/c\aspect_ratio = '16x9'" /storage/.config/xemu/xemu.toml
         else
                 sed -i "/aspect_ratio =/c\aspect_ratio = 'native'" /storage/.config/xemu/xemu.toml
+        fi
+
+  #Fit
+	if [ "$FIT" = "1" ]; then
+                sed -i "/fit =/c\fit = 'center'" /storage/.config/xemu/xemu.toml
+        elif [ "$FIT" = "2" ]; then
+                sed -i "/fit =/d" /storage/.config/xemu/xemu.toml
+        else
+                sed -i "/fit =/c\fit = 'stretch'" /storage/.config/xemu/xemu.toml
         fi
 
   #Cache shaders to disk
