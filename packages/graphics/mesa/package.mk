@@ -4,7 +4,7 @@
 
 PKG_NAME="mesa"
 PKG_LICENSE="OSS"
-PKG_VERSION="24.3.3"
+PKG_VERSION="24.3.4"
 PKG_SITE="http://www.mesa3d.org/"
 PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain expat libdrm zstd Mako:host pyyaml:host"
