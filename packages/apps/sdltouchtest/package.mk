@@ -20,7 +20,7 @@ makeinstall_target() {
   chmod 0755 ${INSTALL}/usr/bin/*
 
 case ${DEVICE} in
-  AMD64|RK35*|SD865)
+  AMD64|RK35*|SM8250)
     mkdir -p ${INSTALL}/usr/config/modules
     cp -rf ${PKG_DIR}/scripts/* ${INSTALL}/usr/config/modules
     chmod 0755 ${INSTALL}/usr/config/modules/*

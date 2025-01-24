@@ -17,7 +17,7 @@ case ${DEVICE} in
   RK3588)
     PKG_CMAKE_OPTS_TARGET+=" -DRK3588=On"
   ;;
-  SD865)
+  SM8250)
     PKG_CMAKE_OPTS_TARGET+=" -DSD865=On"
   ;;
 esac
