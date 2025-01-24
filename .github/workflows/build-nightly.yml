@@ -1,0 +1,50 @@
+name: Build nightly
+on:
+  schedule:
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  build-docker:
+    if: github.ref_name == 'dev'
+    name: Docker
+    uses: ./.github/workflows/build-docker-image.yml
+
+  build-devices:
+    if: github.ref_name == 'dev'
+    name: Build Devices
+    needs: build-docker
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - device: RK3326
+            project: Rockchip
+          - device: RK3399
+            project: Rockchip
+          - device: RK3566
+            project: Rockchip
+          - device: RK3588
+            project: Rockchip
+          - device: S922X
+            project: Amlogic
+          - device: H700
+            project: Allwinner
+          - device: SM8250
+            project: Qualcomm
+    uses: ./.github/workflows/build-device.yml
+    secrets: inherit
+    with:
+      PROJECT: ${{ matrix.project }}
+      DEVICE: ${{ matrix.device }}
+
+  rerun-failed-jobs:
+    if: failure() && fromJSON(github.run_attempt) < 3 && github.ref_name == 'dev'
+    needs: build-devices
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run retry-workflow.yml -F run_id=${{ github.run_id }}
