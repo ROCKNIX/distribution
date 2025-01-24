@@ -9,7 +9,7 @@ PKG_LONGDESC="Dolphin is a GameCube / Wii emulator, allowing you to play games f
 PKG_TOOLCHAIN="cmake"
 
 case ${DEVICE} in
-  SD865|AMD64|RK3399)
+  SM8250|AMD64|RK3399)
     PKG_VERSION="3ea870ef8c5f4d4b86bd3ce0c2e3ddba6f1f25aa"
     PKG_SITE="https://github.com/dolphin-emu/dolphin"
     PKG_URL="${PKG_SITE}.git"
@@ -93,7 +93,7 @@ post_install() {
         DOLPHIN_PLATFORM="\${PLATFORM}"
         EXPORTS="if [ ! -z 'lsmod | grep panthor' ]; then LD_LIBRARY_PATH='\/usr\/lib\/libmali-valhall-g610-g13p0-x11-gbm.so' PLATFORM='wayland'; else PLATFORM='x11'; fi"
       ;;
-      SD865|AMD64|RK3399)
+      SM8250|AMD64|RK3399)
         DOLPHIN_PLATFORM="x11"
         EXPORTS="export QT_QPA_PLATFORM=xcb"
       ;;

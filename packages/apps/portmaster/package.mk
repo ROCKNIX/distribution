@@ -30,7 +30,7 @@ makeinstall_target() {
   unzip -qq ${PKG_BUILD}/compat.zip -d ${INSTALL}/usr/lib/compat/
 
   case ${DEVICE} in
-    SD865|H700)
+    SM8250|H700)
       GUIDEBUTTON='"hotkeyenable")     TR_NAME="guide";;'
       sed -e "s/@GUIDEBUTTON@/${GUIDEBUTTON}/g" -i ${INSTALL}/usr/config/PortMaster/mapper.txt
     ;;
