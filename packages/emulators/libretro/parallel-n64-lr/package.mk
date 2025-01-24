@@ -19,7 +19,7 @@ elif [ "${OPENGLES_SUPPORT}" = yes ]; then
   PKG_MAKE_OPTS_TARGET+=" GLES=1 GL_LIB=\"-lGLESv2\""
 fi
 
-if [ "${VULKAN_SUPPORT}" = "yes" ] && [ ! ${DEVICE} = "SD865" ]; then
+if [ "${VULKAN_SUPPORT}" = "yes" ] && [ ! ${DEVICE} = "SM8250" ]; then
   PKG_DEPENDS_TARGET+=" vulkan-loader vulkan-headers"
   PKG_MAKE_OPTS_TARGET+=" HAVE_PARALLEL=1"
 fi

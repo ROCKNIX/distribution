@@ -10,7 +10,7 @@ PKG_LONGDESC="Fast PlayStation 1 emulator for x86-64/AArch32/AArch64 "
 PKG_TOOLCHAIN="cmake"
 
 case ${DEVICE} in
-  AMD64|SD865)
+  AMD64|SM8250)
       PKG_VERSION="a45b50c3e996af823d35a6a193458532c4f4316d"
       PKG_PATCH_DIRS+=" wayland"
   ;;

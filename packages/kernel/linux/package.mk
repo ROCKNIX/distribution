@@ -22,7 +22,7 @@ case ${DEVICE} in
     PKG_GIT_CLONE_BRANCH="rk-6.1-rkr3"
     PKG_PATCH_DIRS="${LINUX} ${DEVICE} default"
   ;;
-  SD865|H700)
+  SM8250|H700)
     PKG_VERSION="6.13"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
   ;;
@@ -61,7 +61,7 @@ done
 
 if [ "${DEVICE}" = "RK3326" -o "${DEVICE}" = "RK3566" ]; then
   PKG_DEPENDS_UNPACK+=" generic-dsi"
-elif [ "${DEVICE}" = "SD865" -o "${DEVICE}" = "H700" ]; then
+elif [ "${DEVICE}" = "SM8250" -o "${DEVICE}" = "H700" ]; then
   PKG_DEPENDS_UNPACK+=" kernel-firmware"
 fi
 
@@ -169,7 +169,7 @@ pre_make_target() {
 
     ${PKG_BUILD}/scripts/config --set-str CONFIG_EXTRA_FIRMWARE "${FW_LIST}"
     ${PKG_BUILD}/scripts/config --set-str CONFIG_EXTRA_FIRMWARE_DIR "external-firmware"
-  elif [ "${TARGET_ARCH}" = "aarch64" -a "${DEVICE}" = "SD865" ]; then
+  elif [ "${TARGET_ARCH}" = "aarch64" -a "${DEVICE}" = "SM8250" ]; then
     mkdir -p ${PKG_BUILD}/external-firmware/qcom/sm8250
     mkdir -p ${PKG_BUILD}/external-firmware/qcom/vpu-1.0
       cp -Lv $(get_build_dir kernel-firmware)/.copied-firmware/qcom/a650_gmu.bin ${PKG_BUILD}/external-firmware/qcom

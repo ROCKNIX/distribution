@@ -61,7 +61,7 @@ then
   mkdir -p ${CEMU_CONFIG_ROOT}/controllerProfiles
 fi
 
-FILE=$(echo $@ | sed "s#^/.*/##g")
+FILE=$(echo $1 | sed "s#^/.*/##g")
 ONLINE=$(get_setting online_enabled wiiu "${FILE}")
 FPS=$(get_setting show_fps wiiu "${FILE}")
 CON=$(get_setting wiiu_controller_profile wiiu "${FILE}")

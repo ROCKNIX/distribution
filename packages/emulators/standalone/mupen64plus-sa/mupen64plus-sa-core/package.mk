@@ -21,7 +21,7 @@ else
 fi
 
 case ${DEVICE} in
-  AMD64|SD865)
+  AMD64|SM8250)
     PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
     export USE_GLES=0
   ;;
