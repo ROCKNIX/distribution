@@ -1,18 +1,19 @@
-From 797ef4d2ba9bd592868da2d23f9fc05c0ec235a8 Mon Sep 17 00:00:00 2001
+From bc6ac8b0bdaa0859491e3cb05f1b53075a84820a Mon Sep 17 00:00:00 2001
 From: Ivan Podogov <ginkage.uk@gmail.com>
 Date: Mon, 11 Nov 2024 09:44:12 +0000
 Subject: [PATCH] Fall back to implicit sync if necessary
 
 ---
- wsi/wayland/surface.cpp   | 23 ++++++++++-------------
- wsi/wayland/swapchain.cpp | 29 +++++++++++++++++++----------
- 2 files changed, 29 insertions(+), 23 deletions(-)
+ wsi/wayland/surface.cpp            | 25 ++++++++++------------
+ wsi/wayland/surface_properties.cpp |  4 ++--
+ wsi/wayland/swapchain.cpp          | 33 ++++++++++++++++++++----------
+ 4 files changed, 42 insertions(+), 27 deletions(-)
 
 diff --git a/wsi/wayland/surface.cpp b/wsi/wayland/surface.cpp
-index 61ed4b5..0a686e7 100644
+index 38ff3b3..ff8fbbe 100644
 --- a/wsi/wayland/surface.cpp
 +++ b/wsi/wayland/surface.cpp
-@@ -229,27 +229,24 @@ bool surface::init()
+@@ -233,27 +233,24 @@ bool surface::init()
        return false;
     }
  
@@ -25,7 +26,8 @@ index 61ed4b5..0a686e7 100644
     if (presentation_time_interface.get() == nullptr)
     {
        WSI_LOG_ERROR("Failed to obtain wp_presentation interface.");
-       return false;
+-      return false;
++      //return false;
     }
  
 -   auto surface_sync_obj =
@@ -50,11 +52,46 @@ index 61ed4b5..0a686e7 100644
  
     VkResult vk_res = get_supported_formats_and_modifiers(wayland_display, surface_queue.get(), dmabuf_interface.get(),
                                                           supported_formats);
+diff --git a/wsi/wayland/surface_properties.cpp b/wsi/wayland/surface_properties.cpp
+index 3725e4c..bdbda15 100644
+--- a/wsi/wayland/surface_properties.cpp
++++ b/wsi/wayland/surface_properties.cpp
+@@ -89,7 +89,7 @@ VkResult surface_properties::get_surface_capabilities(VkPhysicalDevice physical_
+ 
+    /* Composite alpha */
+    pSurfaceCapabilities->supportedCompositeAlpha = static_cast<VkCompositeAlphaFlagBitsKHR>(
+-      VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR | VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR);
++      VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR | VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR | VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR);
+    return VK_SUCCESS;
+ }
+ 
+@@ -348,7 +348,7 @@ static bool check_wl_protocols(struct wl_display *display)
+       return false;
+    }
+ 
+-   return (supported.dmabuf && supported.explicit_sync);
++   return (supported.dmabuf /* && supported.explicit_sync */);
+ }
+ 
+ VWL_VKAPI_CALL(VkBool32)
 diff --git a/wsi/wayland/swapchain.cpp b/wsi/wayland/swapchain.cpp
-index b83ace2..c5ac247 100644
+index b7312f1..a3bbb4c 100644
 --- a/wsi/wayland/swapchain.cpp
 +++ b/wsi/wayland/swapchain.cpp
-@@ -496,16 +496,19 @@ void swapchain::present_image(const pending_present_request &pending_present)
+@@ -390,9 +390,11 @@ VkResult swapchain::create_wl_buffer(const VkImageCreateInfo &image_create_info,
+                                      image_data->external_mem.get_strides()[plane], modifier_hi, modifier_low);
+    }
+ 
+-   const auto fourcc = util::drm::vk_to_drm_format(image_create_info.format);
++   auto fourcc = util::drm::vk_to_drm_format(image_create_info.format);
+    assert(image_create_info.extent.width <= INT32_MAX);
+    assert(image_create_info.extent.height <= INT32_MAX);
++   if (fourcc == DRM_FORMAT_ARGB8888) fourcc = DRM_FORMAT_XRGB8888;
++   if (fourcc == DRM_FORMAT_ABGR8888) fourcc = DRM_FORMAT_XBGR8888;
+    image_data->buffer = zwp_linux_buffer_params_v1_create_immed(params, image_create_info.extent.width,
+                                                                 image_create_info.extent.height, fourcc, 0);
+    zwp_linux_buffer_params_v1_destroy(params);
+@@ -499,16 +501,19 @@ void swapchain::present_image(const pending_present_request &pending_present)
  
     wl_surface_attach(m_surface, image_data->buffer, 0, 0);
  
@@ -83,7 +120,7 @@ index b83ace2..c5ac247 100644
     }
  
     /* TODO: work out damage */
-@@ -623,8 +626,14 @@ VkResult swapchain::image_set_present_payload(swapchain_image &image, VkQueue qu
+@@ -626,8 +631,14 @@ VkResult swapchain::image_set_present_payload(swapchain_image &image, VkQueue qu
     return image_data->present_fence.set_payload(queue, semaphores, submission_pnext);
  }
  
@@ -99,4 +136,3 @@ index b83ace2..c5ac247 100644
     /* With explicit sync in use there is no need to wait for the present sync before submiting the image to the
      * compositor. */
     return VK_SUCCESS;
-

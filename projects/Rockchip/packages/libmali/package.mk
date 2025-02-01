@@ -4,13 +4,22 @@
 # Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="libmali"
-PKG_VERSION="g13p0"
+case "${DEVICE}" in
+  RK3588)
+    PKG_VERSION="g24p0"
+    PLATFORM="wayland-gbm"
+    PKG_DEPENDS_TARGET+=" vulkan-tools vulkan-headers vulkan-wsi-layer"
+    ;;
+  *)
+    PKG_VERSION="g13p0"
+    ;;
+esac
 PKG_LICENSE="nonfree"
 PKG_SITE="https://github.com/tsukumijima/libmali-rockchip"
 # zip format makes extract very fast (<1s). tgz takes 20 seconds to scan the whole file
 #PKG_URL="${PKG_SITE}/archive/refs/tags/${PKG_VERSION}.zip"
 PKG_URL="${PKG_SITE}/archive/master.zip"
-PKG_DEPENDS_TARGET="toolchain libdrm patchelf:host gpudriver"
+PKG_DEPENDS_TARGET+=" toolchain libdrm patchelf:host gpudriver wayland"
 PKG_LONGDESC="OpenGL ES user-space binary for the ARM Mali GPU family"
 PKG_TOOLCHAIN="meson"
 PKG_PATCH_DIRS+=" ${DEVICE}"
@@ -18,6 +27,8 @@ PKG_PATCH_DIRS+=" ${DEVICE}"
 # patchelf is incompatible with strip, but is needed to ensure apps call wrapped functions
 PKG_BUILD_FLAGS="-strip"
 
+# If we override platform don't set it again.
+if [ -z "${PLATFORM}" ]; then
 case "${DISPLAYSERVER}" in
   wl)
     PLATFORM="wayland-gbm"
@@ -26,10 +37,11 @@ case "${DISPLAYSERVER}" in
   x11)
     PLATFORM="x11-gbm"
     ;;
-  *)
+  gbm)
     PLATFORM="gbm"
     ;;
 esac
+fi
 
 PKG_MESON_OPTS_TARGET+=" -Darch=${ARCH} -Dgpu=${MALI_FAMILY} -Dversion=${PKG_VERSION} -Dplatform=${PLATFORM} \
                        -Dkhr-header=false -Dvendor-package=true -Dwrappers=enabled -Dhooks=true"
@@ -58,7 +70,7 @@ post_makeinstall_target() {
   patchelf --add-needed libmali.so.1 "${INSTALL}"/usr/lib*/libmali-hook.so.1
 
   # x11 lib needed for some applications on the RK3588
-  if [ ${DEVICE} = "RK3588" ] && [ ${TARGET_ARCH} = "aarch64" ]; then
-      curl -Lo ${INSTALL}/usr/lib/libmali-${MALI_FAMILY}-${PKG_VERSION}-x11-gbm.so ${PKG_SITE}/raw/master/lib/aarch64-linux-gnu/libmali-${MALI_FAMILY}-${PKG_VERSION}-x11-gbm.so
-  fi
+#  if [ ${DEVICE} = "RK3588" ] && [ ${TARGET_ARCH} = "aarch64" ]; then
+#      curl -Lo ${INSTALL}/usr/lib/libmali-${MALI_FAMILY}-${PKG_VERSION}-x11-gbm.so ${PKG_SITE}/raw/master/lib/aarch64-linux-gnu/libmali-${MALI_FAMILY}-${PKG_VERSION}-x11-gbm.so
+#  fi
 }
