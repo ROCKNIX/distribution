@@ -39,8 +39,9 @@ make_target() {
 makeinstall_target() {
   mkdir -p $INSTALL/usr/share/bootloader
 
-  # Always install the update script
-  find_file_path bootloader/update.sh && cp -av ${FOUND_PATH} ${INSTALL}/usr/share/bootloader
+  # INSTALLED BY GRUB ALREADY
+  # # Always install the update script
+  # find_file_path bootloader/update.sh && cp -av ${FOUND_PATH} ${INSTALL}/usr/share/bootloader
 
   cp -av u-boot.img $INSTALL/usr/share/bootloader
 }

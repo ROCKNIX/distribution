@@ -16,6 +16,11 @@ fi
 # mount $BOOT_ROOT rw
 mount -o remount,rw $BOOT_ROOT
 
+DT_SOC=$($SYSTEM_ROOT/usr/bin/dtsoc | cut -f2 -d,)
+
+### Remove RPmini dtb as it is no longer needed - remove this in the future
+[ -f "/flash/sm8250-retroidpocket-rpmini.dtb" ] && rm -f /flash/sm8250-retroidpocket-rpmini.dtb
+
 echo "Updating device trees..."
 for dtb in $SYSTEM_ROOT/usr/share/bootloader/*.dtb; do
   cp -p $dtb $BOOT_ROOT
@@ -53,6 +58,23 @@ if [ -f "$SYSTEM_ROOT/usr/share/bootloader/boot/u-boot.dtb" ]; then
   mkdir -p $BOOT_ROOT/boot
   echo "Updating u-boot.dtb..."
   cp -p $SYSTEM_ROOT/usr/share/bootloader/boot/u-boot.dtb $BOOT_ROOT/boot
+fi
+
+if [ "$DT_SOC" = "sm8250" ]; then
+  if [ -f "$SYSTEM_ROOT/usr/share/bootloader/u-boot.img" ]; then
+    echo "Updating u-boot..."
+    if [ -b "/dev/sde" ]; then
+      if dd if=/dev/sde bs=4K skip=502072 count=1 2>/dev/null | grep -q ANDROID; then
+        #Android 10 LOADER_A=502072 LOADER_B=504632
+        dd if=$SYSTEM_ROOT/usr/share/bootloader/u-boot.img of=/dev/sde bs=4K seek=502072 conv=fsync,notrunc &>/dev/null
+        dd if=$SYSTEM_ROOT/usr/share/bootloader/u-boot.img of=/dev/sde bs=4K seek=504632 conv=fsync,notrunc &>/dev/null
+      elif dd if=/dev/sde bs=4K skip=472888 count=1 2>/dev/null | grep -q ANDROID; then
+        #Android 13 LOADER_A=472888 LOADER_B=475448
+        dd if=$SYSTEM_ROOT/usr/share/bootloader/u-boot.img of=/dev/sde bs=4K seek=472888 conv=fsync,notrunc &>/dev/null
+        dd if=$SYSTEM_ROOT/usr/share/bootloader/u-boot.img of=/dev/sde bs=4K seek=475448 conv=fsync,notrunc &>/dev/null
+      fi
+    fi
+  fi
 fi
 
 # mount $BOOT_ROOT ro
