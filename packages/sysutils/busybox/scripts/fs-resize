@@ -19,6 +19,13 @@ if [ -e /storage/.please_resize_me ] ; then
   LOG=/flash/fs-resize.log
   date -Iseconds >>$LOG
 
+  # Check for resize_storage_xG file
+  RESIZE_FILE=$(find /flash -maxdepth 1 -name 'resize_storage_*G')
+  TARGET_SIZE=""
+  if [ -n "$RESIZE_FILE" ]; then
+    TARGET_SIZE=$(basename "$RESIZE_FILE" | sed -E 's/^resize_storage_([0-9]+)G$/\1G/')
+  fi
+
   # this sh** was never intended to be used
   # on already installed and runing system
   if [ -d /storage/.config -o -d /storage/.cache ] ; then
@@ -59,9 +66,22 @@ if [ -e /storage/.please_resize_me ] ; then
     echo "Please do not reboot or turn off your @DISTRONAME@ device!"
     echo ""
 
-    StartProgressLog spinner "Resizing partition...   " "parted -s -f -m $DISK resizepart $PARTNUM 100% >>$LOG 2>&1"
+    if [ -n "$TARGET_SIZE" ]; then
+      StartProgressLog spinner "Resizing storage partition to $TARGET_SIZE...   " "parted -s -f -m $DISK resizepart $PARTNUM ${TARGET_SIZE} >>$LOG 2>&1"
+    else
+      StartProgressLog spinner "Resizing storage partition to maximum size...   " "parted -s -f -m $DISK resizepart $PARTNUM 100% >>$LOG 2>&1"
+    fi
+
     StartProgressLog spinner "Checking file system... " "e2fsck -f -p $PART >>$LOG 2>&1"
     StartProgressLog spinner "Resizing file system... " "resize2fs $PART >>$LOG 2>&1"
+    if [ -n "$TARGET_SIZE" ]; then
+      # Create GAMES partition using relative positioning
+      GAME_PART=$(echo $PART | awk -F'[p]' '{print $1"p"($2+1)}')
+      StartProgress spinner "Creating GAMES partition..." "parted -s -a optimal -m $DISK mkpart primary fat32 ${TARGET_SIZE} 100% >>$LOG 2>&1"
+      StartProgress spinner "Formatting GAMES partition as EXFAT..." "mkfs.exfat -n GAMES ${GAME_PART} >>$LOG 2>&1"
+      echo "Created new GAMES partition on ${DISK}${GAME_PARTNUM}" >>$LOG
+      rm -f /flash/resize_storage_*
+    fi
     StartProgressLog spinner "Syncing to disk...      " "sync >>$LOG 2>&1"
     StartProgress countdown "Rebooting in 5s...     " 5 "NOW"
   else
