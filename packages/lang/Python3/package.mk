@@ -22,7 +22,6 @@ PKG_CONFIGURE_OPTS_HOST="ac_cv_prog_HAS_HG=/bin/false
                          --disable-pyc-build
                          --disable-ossaudiodev
                          --disable-sqlite3
-                         --disable-codecs-cjk
                          --disable-nis
                          --enable-unicodedata
                          --enable-openssl
@@ -60,7 +59,6 @@ PKG_CONFIGURE_OPTS_TARGET="ac_cv_prog_HAS_HG=/bin/false
                            --disable-pyc-build
                            --disable-ossaudiodev
                            --enable-sqlite3
-                           --disable-codecs-cjk
                            --disable-nis
                            --enable-unicodedata
                            --enable-openssl
