@@ -2,114 +2,134 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
 
-# Logging function
+# Common functions and constants
+SCRIPT_NAME=$(basename "$0")
+LOG_FILE="/var/log/cloud_sync.log"
+START_TIME=$(date +%s)
+
+# Logging function with severity levels
 log_message() {
     local message="$1"
     local echo_to_screen="${2:-true}"  # Default to true
+    local level="${3:-INFO}"
     local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
-    local script_name=$(basename "$0")
     
-    echo "[${timestamp}] [${script_name}] ${message}" >> /var/log/cloud_sync.log
+    echo "[${timestamp}] [${level}] [${SCRIPT_NAME}] ${message}" >> ${LOG_FILE}
     
     if [[ "${echo_to_screen}" == "true" ]]; then
-        echo -e "${message}"
+        # Color output based on level
+        case "${level}" in
+            ERROR) echo -e "\e[31m${message}\e[0m" ;;
+            WARN)  echo -e "\e[33m${message}\e[0m" ;;
+            *)     echo -e "${message}" ;;
+        esac
     fi
 }
 
-# Check if rclone has been configured
-if [ ! -e "/storage/.config/rclone/rclone.conf" ]
-then
-  log_message "ERROR: You must configure rclone before using this tool. Run \`rclone config\` to get started."
-  sleep 3
-  exit 1
-fi
+# Clean exit function
+clean_exit() {
+    local exit_code=$1
+    local duration=$(($(date +%s) - START_TIME))
+    
+    log_message "Script completed in ${duration} seconds with exit code ${exit_code}" "false"
+    exit ${exit_code}
+}
 
-# Check that the internet is reachable
-ONLINESTATUS=`ping -q -c1 google.com &>/dev/null && echo online || echo offline`
-if [ "${ONLINESTATUS}" == "offline" ]
-then
-  log_message "ERROR: You're not currently connected to the internet.\nPlease verify your settings and then try again."
-  sleep 3
-  exit 1
-fi
+# Check for rclone configuration
+check_rclone_config() {
+    if [ ! -e "/storage/.config/rclone/rclone.conf" ]; then
+        log_message "You must configure rclone before using this tool. Run \`rclone config\` to get started." "true" "ERROR"
+        sleep 3
+        clean_exit 1
+    fi
+}
 
-# Loads cloud sync config variables from cloud_sync.conf
-log_message "Loading configuration from cloud_sync.conf" "false"
-source /storage/.config/cloud_sync.conf
+# Check internet connectivity
+check_internet() {
+    log_message "Checking internet connectivity..." "false"
+    ONLINESTATUS=`ping -q -c1 google.com &>/dev/null && echo online || echo offline`
+    if [ "${ONLINESTATUS}" == "offline" ]; then
+        log_message "You're not currently connected to the internet.\nPlease verify your settings and then try again." "true" "ERROR"
+        sleep 3
+        clean_exit 1
+    fi
+    log_message "Internet connection detected" "false"
+}
 
-# Check if needed default variables from the conf file are present, and add if nececssary
-if [ "${BACKUPPATH}" == "" ] || [ "${RESTOREPATH}" == "" ] || [ "${SYNCPATH}" == "" ] || [ "${RCLONEOPTS}" == "" ] || [ "${BACKUPMETHOD}" == "" ] || [ "${RESTOREMETHOD}" == "" ] || [ "${RSYNCRMDIR}" == "" ]
-then
-  log_message "Some configuration variables missing, loading defaults" "false"
-  source /storage/.config/cloud_sync.conf.defaults
-  if [ "${BACKUPPATH}" == "" ]
-  then
-    sed -i -e '$a\\nBACKUPPATH="'"${DEFAULT_BACKUPPATH}"'"' /storage/.config/cloud_sync.conf
-  fi
- 
-  if [ "${RESTOREPATH}" == "" ]
-  then
-    sed -i -e '$a\\nRESTOREPATH="'"${DEFAULT_RESTOREPATH}"'"' /storage/.config/cloud_sync.conf
-  fi
- 
-  if [ "${SYNCPATH}" == "" ]
-  then
-    sed -i -e '$a\\nSYNCPATH="'"${DEFAULT_SYNCPATH}"'"' /storage/.config/cloud_sync.conf
-  fi
- 
-  if [ "${RCLONEOPTS}" == "" ]
-  then
-    sed -i -e '$a\\nRCLONEOPTS="'"${DEFAULT_RCLONEOPTS}"'"' /storage/.config/cloud_sync.conf
-  fi
- 
-  if [ "${BACKUPMETHOD}" == "" ]
-  then
-    sed -i -e '$a\\nBACKUPMETHOD="'"${DEFAULT_BACKUPMETHOD}"'"' /storage/.config/cloud_sync.conf
-  fi
- 
-  if [ "${RESTOREMETHOD}" == "" ]
-  then
-    sed -i -e '$a\\nRESTOREMETHOD="'"${DEFAULT_RESTOREMETHOD}"'"' /storage/.config/cloud_sync.conf
-  fi
- 
-  if [ "${RSYNCRMDIR}" == "" ]
-  then
-    sed -i -e '$a\\nRSYNCRMDIR="'"${DEFAULT_RSYNCRMDIR}"'"' /storage/.config/cloud_sync.conf
-  fi
-  source /storage/.config/cloud_sync.conf
-fi
+# Load configuration
+load_config() {
+    log_message "Loading configuration from cloud_sync.conf" "false"
+    source /storage/.config/cloud_sync.conf
+    
+    # Check if needed variables are present, add if necessary
+    if [ "${BACKUPPATH}" == "" ] || [ "${RESTOREPATH}" == "" ] || [ "${SYNCPATH}" == "" ] || [ "${RCLONEOPTS}" == "" ] || [ "${BACKUPMETHOD}" == "" ] || [ "${RESTOREMETHOD}" == "" ] || [ "${RSYNCRMDIR}" == "" ]; then
+        log_message "Some configuration variables missing, loading defaults" "false" "WARN"
+        source /storage/.config/cloud_sync.conf.defaults
+        if [ "${BACKUPPATH}" == "" ]; then
+            sed -i -e '$a\\nBACKUPPATH="'"${DEFAULT_BACKUPPATH}"'"' /storage/.config/cloud_sync.conf
+        fi
+        if [ "${RESTOREPATH}" == "" ]; then
+            sed -i -e '$a\\nRESTOREPATH="'"${DEFAULT_RESTOREPATH}"'"' /storage/.config/cloud_sync.conf
+        fi
+        if [ "${SYNCPATH}" == "" ]; then
+            sed -i -e '$a\\nSYNCPATH="'"${DEFAULT_SYNCPATH}"'"' /storage/.config/cloud_sync.conf
+        fi
+        if [ "${RCLONEOPTS}" == "" ]; then
+            sed -i -e '$a\\nRCLONEOPTS="'"${DEFAULT_RCLONEOPTS}"'"' /storage/.config/cloud_sync.conf
+        fi
+        if [ "${BACKUPMETHOD}" == "" ]; then
+            sed -i -e '$a\\nBACKUPMETHOD="'"${DEFAULT_BACKUPMETHOD}"'"' /storage/.config/cloud_sync.conf
+        fi
+        if [ "${RESTOREMETHOD}" == "" ]; then
+            sed -i -e '$a\\nRESTOREMETHOD="'"${DEFAULT_RESTOREMETHOD}"'"' /storage/.config/cloud_sync.conf
+        fi
+        if [ "${RSYNCRMDIR}" == "" ]; then
+            sed -i -e '$a\\nRSYNCRMDIR="'"${DEFAULT_RSYNCRMDIR}"'"' /storage/.config/cloud_sync.conf
+        fi
+        source /storage/.config/cloud_sync.conf
+    fi
+    
+    log_message "Configuration loaded successfully" "false"
+}
 
-# Backup to rclone remote
-if [ -e "/storage/.config/rclone/rclone.conf" ]
-then
-  # Determine remote to be used
-  REMOTENAME=`rclone listremotes | head -1`
-  
-  # Run backup
-  log_message "=> ${OS_NAME} CLOUD BACKUP UTILITY\n"
-  log_message "Starting backup from ${BACKUPPATH} to ${REMOTENAME}${SYNCPATH}"
-  
-  # Add start time to log
-  log_message "Backup started at $(date)" "false"
-  
-  rclone ${BACKUPMETHOD} \
-    ${RCLONEOPTS} \
-    ${BACKUPPATH}/ ${REMOTENAME}${SYNCPATH}/
-  
-  BACKUP_STATUS=$?
-  if [ $BACKUP_STATUS -eq 0 ]; then
-    log_message "Backup completed successfully" "false"
-  else
-    log_message "Backup completed with errors (status $BACKUP_STATUS)" "false"
-  fi
-  
-  if [ "${RSYNCRMDIR}" == "yes" ] 
-  then
-    log_message "Removing empty directories on remote" "false"
-    rclone rmdirs ${REMOTENAME}${SYNCPATH}/ --leave-root
-  fi
-fi
+# Main script execution
+main() {
+    check_rclone_config
+    check_internet
+    load_config
+    
+    # Determine remote to be used
+    REMOTENAME=`rclone listremotes | head -1`
+    
+    # Run backup
+    log_message "=> ${OS_NAME} CLOUD BACKUP UTILITY\n"
+    log_message "Starting backup from ${BACKUPPATH} to ${REMOTENAME}${SYNCPATH}"
+    log_message "Backup started at $(date)" "false"
+    
+    rclone ${BACKUPMETHOD} \
+      ${RCLONEOPTS} \
+      ${BACKUPPATH}/ ${REMOTENAME}${SYNCPATH}/
+    
+    BACKUP_STATUS=$?
+    if [ $BACKUP_STATUS -eq 0 ]; then
+        log_message "Backup completed successfully" "false"
+    else
+        log_message "Backup completed with errors (status $BACKUP_STATUS)" "false" "WARN"
+    fi
+    
+    if [ "${RSYNCRMDIR}" == "yes" ]; then
+        log_message "Removing empty directories on remote" "false"
+        rclone rmdirs ${REMOTENAME}${SYNCPATH}/ --leave-root
+    fi
+    
+    log_message "Backup to ${REMOTENAME}${SYNCPATH} complete!"
+    sleep 1.5
+    clear
+    clean_exit ${BACKUP_STATUS}
+}
 
-log_message "Backup to ${REMOTENAME}${SYNCPATH} complete!"
-sleep 1.5
-clear
+# Handle script interruption
+trap 'log_message "Script interrupted by user" "false" "WARN"; clean_exit 130' INT TERM
+
+# Execute main function
+main
