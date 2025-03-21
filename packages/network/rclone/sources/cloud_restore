@@ -2,29 +2,45 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
 
+# Logging function
+log_message() {
+    local message="$1"
+    local echo_to_screen="${2:-true}"  # Default to true
+    local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+    local script_name=$(basename "$0")
+    
+    echo "[${timestamp}] [${script_name}] ${message}" >> /var/log/cloud_sync.log
+    
+    if [[ "${echo_to_screen}" == "true" ]]; then
+        echo -e "${message}"
+    fi
+}
+
 # Check if rclone has been configured
 if [ ! -e "/storage/.config/rclone/rclone.conf" ]
 then
-  echo "You must configure rclone before using this tool.  Run \`rclone config\` to get started."
+  log_message "ERROR: You must configure rclone before using this tool. Run \`rclone config\` to get started."
   sleep 3
-  exit
+  exit 1
 fi
 
 # Check that the internet is reachable
 ONLINESTATUS=`ping -q -c1 google.com &>/dev/null && echo online || echo offline`
 if [ "${ONLINESTATUS}" == "offline" ]
 then
-  echo -e "You're not currently connected to the internet.\nPlease verify your settings and then try again."
+  log_message "ERROR: You're not currently connected to the internet.\nPlease verify your settings and then try again."
   sleep 3
-  exit
+  exit 1
 fi
 
 # Loads cloud sync config variables from cloud_sync.conf
+log_message "Loading configuration from cloud_sync.conf" "false"
 source /storage/.config/cloud_sync.conf
 
 # Check if needed default variables from the conf file are present, and add if nececssary
 if [ "${BACKUPPATH}" == "" ] || [ "${RESTOREPATH}" == "" ] || [ "${SYNCPATH}" == "" ] || [ "${RCLONEOPTS}" == "" ] || [ "${BACKUPMETHOD}" == "" ] || [ "${RESTOREMETHOD}" == "" ] || [ "${RSYNCRMDIR}" == "" ]
 then
+  log_message "Some configuration variables missing, loading defaults" "false"
   source /storage/.config/cloud_sync.conf.defaults
   if [ "${BACKUPPATH}" == "" ]
   then
@@ -70,19 +86,31 @@ then
   REMOTENAME=`rclone listremotes | head -1`
 
   # Run restore
-  echo -e "=> ${OS_NAME} CLOUD RESTORE UTILITY\n"
-  echo "Restoring data from ${REMOTENAME}${SYNCPATH} to ${RESTOREPATH}" 2>&1  
-rclone ${RESTOREMETHOD} \
+  log_message "=> ${OS_NAME} CLOUD RESTORE UTILITY\n"
+  log_message "Starting restore from ${REMOTENAME}${SYNCPATH} to ${RESTOREPATH}"
+  
+  # Add start time to log
+  log_message "Restore started at $(date)" "false"
+  
+  rclone ${RESTOREMETHOD} \
     ${RCLONEOPTS} \
     ${REMOTENAME}${SYNCPATH}/ ${RESTOREPATH}/
+  
+  RESTORE_STATUS=$?
+  if [ $RESTORE_STATUS -eq 0 ]; then
+    log_message "Restore completed successfully" "false"
+  else
+    log_message "Restore completed with errors (status $RESTORE_STATUS)" "false"
+  fi
 fi
 
 # Create empty missing system directories if removed during restore
 if [ "${RESTOREMETHOD}" == "sync" ]
 then
+  log_message "Creating empty missing system directories" "false"
   systemd-tmpfiles --create /usr/config/system-dirs.conf
 fi
 
-echo "Restore from ${REMOTENAME}${SYNCPATH} complete!"
+log_message "Restore from ${REMOTENAME}${SYNCPATH} complete!"
 sleep 1.5
 clear

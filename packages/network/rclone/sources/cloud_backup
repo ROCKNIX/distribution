@@ -2,29 +2,45 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
 
+# Logging function
+log_message() {
+    local message="$1"
+    local echo_to_screen="${2:-true}"  # Default to true
+    local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+    local script_name=$(basename "$0")
+    
+    echo "[${timestamp}] [${script_name}] ${message}" >> /var/log/cloud_sync.log
+    
+    if [[ "${echo_to_screen}" == "true" ]]; then
+        echo -e "${message}"
+    fi
+}
+
 # Check if rclone has been configured
 if [ ! -e "/storage/.config/rclone/rclone.conf" ]
 then
-  echo "You must configure rclone before using this tool.  Run \`rclone config\` to get started."
+  log_message "ERROR: You must configure rclone before using this tool. Run \`rclone config\` to get started."
   sleep 3
-  exit
+  exit 1
 fi
 
 # Check that the internet is reachable
 ONLINESTATUS=`ping -q -c1 google.com &>/dev/null && echo online || echo offline`
 if [ "${ONLINESTATUS}" == "offline" ]
 then
-  echo -e "You're not currently connected to the internet.\nPlease verify your settings and then try again."
+  log_message "ERROR: You're not currently connected to the internet.\nPlease verify your settings and then try again."
   sleep 3
-  exit
+  exit 1
 fi
 
 # Loads cloud sync config variables from cloud_sync.conf
+log_message "Loading configuration from cloud_sync.conf" "false"
 source /storage/.config/cloud_sync.conf
 
 # Check if needed default variables from the conf file are present, and add if nececssary
 if [ "${BACKUPPATH}" == "" ] || [ "${RESTOREPATH}" == "" ] || [ "${SYNCPATH}" == "" ] || [ "${RCLONEOPTS}" == "" ] || [ "${BACKUPMETHOD}" == "" ] || [ "${RESTOREMETHOD}" == "" ] || [ "${RSYNCRMDIR}" == "" ]
 then
+  log_message "Some configuration variables missing, loading defaults" "false"
   source /storage/.config/cloud_sync.conf.defaults
   if [ "${BACKUPPATH}" == "" ]
   then
@@ -70,17 +86,30 @@ then
   REMOTENAME=`rclone listremotes | head -1`
   
   # Run backup
-  echo -e "=> ${OS_NAME} CLOUD BACKUP UTILITY\n"
-  echo "Backing up data from ${BACKUPPATH} to ${REMOTENAME}${SYNCPATH}" 2>&1  
+  log_message "=> ${OS_NAME} CLOUD BACKUP UTILITY\n"
+  log_message "Starting backup from ${BACKUPPATH} to ${REMOTENAME}${SYNCPATH}"
+  
+  # Add start time to log
+  log_message "Backup started at $(date)" "false"
+  
   rclone ${BACKUPMETHOD} \
     ${RCLONEOPTS} \
     ${BACKUPPATH}/ ${REMOTENAME}${SYNCPATH}/
+  
+  BACKUP_STATUS=$?
+  if [ $BACKUP_STATUS -eq 0 ]; then
+    log_message "Backup completed successfully" "false"
+  else
+    log_message "Backup completed with errors (status $BACKUP_STATUS)" "false"
+  fi
+  
   if [ "${RSYNCRMDIR}" == "yes" ] 
   then
+    log_message "Removing empty directories on remote" "false"
     rclone rmdirs ${REMOTENAME}${SYNCPATH}/ --leave-root
   fi
 fi
 
-echo "Backup to ${REMOTENAME}${SYNCPATH} complete!"
+log_message "Backup to ${REMOTENAME}${SYNCPATH} complete!"
 sleep 1.5
 clear
