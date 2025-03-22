@@ -2,12 +2,16 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
 
-# Common functions and constants
+# Script configuration and global variables
 SCRIPT_NAME=$(basename "$0")
 LOG_FILE="/var/log/cloud_sync.log"
 START_TIME=$(date +%s)
 
-# Logging function with severity levels
+# Logging function that supports different severity levels and optional console output
+# Parameters:
+#   $1: Message text
+#   $2: Whether to echo to screen (true/false, defaults to true)
+#   $3: Log level (INFO, WARN, ERROR, defaults to INFO)
 log_message() {
     local message="$1"
     local echo_to_screen="${2:-true}"  # Default to true
@@ -26,7 +30,10 @@ log_message() {
     fi
 }
 
-# Clean exit function
+# Performs cleanup operations and exits with the specified code
+# Records total execution time in the log for performance tracking
+# Parameters:
+#   $1: Exit code to return
 clean_exit() {
     local exit_code=$1
     local duration=$(($(date +%s) - START_TIME))
@@ -35,7 +42,8 @@ clean_exit() {
     exit ${exit_code}
 }
 
-# Check for rclone configuration
+# Verifies rclone is properly configured before attempting operations
+# Exits with error if configuration file is missing
 check_rclone_config() {
     if [ ! -e "/storage/.config/rclone/rclone.conf" ]; then
         log_message "You must configure rclone before using this tool. Run \`rclone config\` to get started." "true" "ERROR"
@@ -44,7 +52,8 @@ check_rclone_config() {
     fi
 }
 
-# Check internet connectivity
+# Validates internet connectivity before attempting cloud operations
+# Uses ping to google.com as a connectivity test
 check_internet() {
     log_message "Checking internet connectivity..." "false"
     ONLINESTATUS=`ping -q -c1 google.com &>/dev/null && echo online || echo offline`
@@ -56,7 +65,8 @@ check_internet() {
     log_message "Internet connection detected" "false"
 }
 
-# Load configuration
+# Loads user configuration from cloud_sync.conf
+# Applies default values for any missing configuration parameters
 load_config() {
     log_message "Loading configuration from cloud_sync.conf" "false"
     source /storage/.config/cloud_sync.conf
@@ -104,20 +114,52 @@ load_config() {
     log_message "Configuration loaded successfully" "false"
 }
 
-# Function to restore system backup files
+# PART 1: Game saves restore function
+# Restores game saves from cloud storage
+restore_game_saves() {
+    log_message "====================================" "true"
+    log_message "STARTING GAME SAVES RESTORE" "true"
+    log_message "====================================" "true"
+    
+    log_message "Starting restore from ${REMOTENAME}${SYNCPATH} to ${RESTOREPATH}"
+    log_message "Restore started at $(date)" "false"
+    
+    rclone ${RESTOREMETHOD} \
+      ${RCLONEOPTS} \
+      ${REMOTENAME}${SYNCPATH}/ ${RESTOREPATH}/
+    
+    RESTORE_STATUS=$?
+    if [ $RESTORE_STATUS -eq 0 ]; then
+        log_message "Game saves restore completed successfully" "true"
+    else
+        log_message "Game saves restore completed with errors (status $RESTORE_STATUS)" "true" "WARN"
+    fi
+    
+    log_message "Game saves restore from ${REMOTENAME}${SYNCPATH} complete!"
+    
+    return $RESTORE_STATUS
+}
+
+# PART 2: System backup file restore function
+# Restores system backup files from cloud storage
+# Only runs when BACKUPFILE_RESTORE_OPTION is set to "yes"
 restore_system_files() {
+    log_message "====================================" "true"
+    log_message "STARTING SYSTEM BACKUP FILE RESTORE" "true"
+    log_message "====================================" "true"
+    
     if [ "${BACKUPFILE_RESTORE_OPTION}" == "yes" ]; then
-        # Check if remote backup directory exists and is not empty
+        # Verify remote backup directory has content before attempting restore
         REMOTE_FILES=$(rclone ls ${REMOTENAME}${SYNCPATH_BACKUP}/ 2>/dev/null)
         if [ -z "${REMOTE_FILES}" ]; then
-            log_message "There is no system backup to restore" "true" "WARN"
-            return
+            log_message "There are no system backup files to restore" "true" "WARN"
+            return 1
         fi
         
-        log_message "Starting restore of system backup from ${REMOTENAME}${SYNCPATH_BACKUP} to ${BACKUPFOLDER}"
-        log_message "System restore started at $(date)" "false"
+        log_message "Starting restore of system backup files from ${REMOTENAME}${SYNCPATH_BACKUP} to ${BACKUPFOLDER}"
+        log_message "System backup file restore started at $(date)" "false"
         
-        # Create local directory if it doesn't exist
+        # Ensure local target directory exists before attempting restore
         mkdir -p ${BACKUPFOLDER}
         
         rclone ${RESTOREMETHOD} \
@@ -126,15 +168,18 @@ restore_system_files() {
         
         RESTORE_SYSTEM_STATUS=$?
         if [ $RESTORE_SYSTEM_STATUS -eq 0 ]; then
-            log_message "System backup restored successfully" "false"
+            log_message "System backup file restore completed successfully" "true"
         else
-            log_message "System backup restored with errors (status $RESTORE_SYSTEM_STATUS)" "false" "WARN"
+            log_message "System backup file restore completed with errors (status $RESTORE_SYSTEM_STATUS)" "true" "WARN"
         fi
         
-        log_message "System backup from ${REMOTENAME}${SYNCPATH_BACKUP} restored!"
+        log_message "System backup file restore from ${REMOTENAME}${SYNCPATH_BACKUP} complete!"
     else
-        log_message "System backup restore was skipped (BACKUPFILE_RESTORE_OPTION is not set to 'yes')" "false"
+        log_message "System backup file restore skipped (BACKUPFILE_RESTORE_OPTION is not set to 'yes')" "true"
+        RESTORE_SYSTEM_STATUS=0
     fi
+    
+    return $RESTORE_SYSTEM_STATUS
 }
 
 # Main script execution
@@ -146,39 +191,38 @@ main() {
     # Define locations for source and remote
     REMOTENAME=`rclone listremotes | head -1`
     
-    # Run restore
+    # Begin main script operations
     log_message "=> ${OS_NAME} CLOUD RESTORE UTILITY\n"
-    log_message "Starting restore from ${REMOTENAME}${SYNCPATH} to ${RESTOREPATH}"
-    log_message "Restore started at $(date)" "false"
     
-    rclone ${RESTOREMETHOD} \
-      ${RCLONEOPTS} \
-      ${REMOTENAME}${SYNCPATH}/ ${RESTOREPATH}/
-    
+    # Execute Part 1: Game saves restore
+    restore_game_saves
     RESTORE_STATUS=$?
-    if [ $RESTORE_STATUS -eq 0 ]; then
-        log_message "Restore completed successfully" "false"
-    else
-        log_message "Restore completed with errors (status $RESTORE_STATUS)" "false" "WARN"
-    fi
     
-    # Restore system backup files
+    # Execute Part 2: System restore
     restore_system_files
+    RESTORE_SYSTEM_STATUS=$?
     
     # Create empty missing system directories if removed during restore
+    # Only necessary when using sync method which can delete files
     if [ "${RESTOREMETHOD}" == "sync" ]; then
-        log_message "Creating empty missing system directories" "false"
+        log_message "Creating empty missing system directories" "true"
         systemd-tmpfiles --create /usr/config/system-dirs.conf
     fi
     
-    log_message "Restore from ${REMOTENAME}${SYNCPATH} complete!"
-    sleep 1.5
-    clear
+    # Provide final summary of all operations
+    log_message "====================================" "true"
+    log_message "RESTORE SUMMARY:" "true"
+    log_message "Game saves restore: $([ $RESTORE_STATUS -eq 0 ] && echo 'SUCCESS' || echo 'COMPLETED WITH ERRORS')" "true"
+    [ "${BACKUPFILE_RESTORE_OPTION}" == "yes" ] && log_message "System backup file restore: $([ $RESTORE_SYSTEM_STATUS -eq 0 ] && echo 'SUCCESS' || echo 'COMPLETED WITH ERRORS')" "true"
+    log_message "Log file: ${LOG_FILE}" "true"
+    log_message "====================================" "true"
+    
+    # Use the game saves restore status as the overall exit code
     clean_exit ${RESTORE_STATUS}
 }
 
-# Handle script interruption
+# Set up signal trap to handle user interruption gracefully
 trap 'log_message "Script interrupted by user" "false" "WARN"; clean_exit 130' INT TERM
 
-# Execute main function
+# Start script execution
 main

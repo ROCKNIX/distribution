@@ -2,12 +2,16 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
 
-# Common functions and constants
+# Script configuration and global variables
 SCRIPT_NAME=$(basename "$0")
 LOG_FILE="/var/log/cloud_sync.log"
 START_TIME=$(date +%s)
 
-# Logging function with severity levels
+# Logging function that supports different severity levels and optional console output
+# Parameters:
+#   $1: Message text
+#   $2: Whether to echo to screen (true/false, defaults to true)
+#   $3: Log level (INFO, WARN, ERROR, defaults to INFO)
 log_message() {
     local message="$1"
     local echo_to_screen="${2:-true}"  # Default to true
@@ -26,7 +30,10 @@ log_message() {
     fi
 }
 
-# Clean exit function
+# Performs cleanup operations and exits with the specified code
+# Records total execution time in the log for performance tracking
+# Parameters:
+#   $1: Exit code to return
 clean_exit() {
     local exit_code=$1
     local duration=$(($(date +%s) - START_TIME))
@@ -35,7 +42,8 @@ clean_exit() {
     exit ${exit_code}
 }
 
-# Check for rclone configuration
+# Verifies rclone is properly configured before attempting operations
+# Exits with error if configuration file is missing
 check_rclone_config() {
     if [ ! -e "/storage/.config/rclone/rclone.conf" ]; then
         log_message "You must configure rclone before using this tool. Run \`rclone config\` to get started." "true" "ERROR"
@@ -44,7 +52,8 @@ check_rclone_config() {
     fi
 }
 
-# Check internet connectivity
+# Validates internet connectivity before attempting cloud operations
+# Uses ping to google.com as a connectivity test
 check_internet() {
     log_message "Checking internet connectivity..." "false"
     ONLINESTATUS=`ping -q -c1 google.com &>/dev/null && echo online || echo offline`
@@ -56,7 +65,8 @@ check_internet() {
     log_message "Internet connection detected" "false"
 }
 
-# Load configuration
+# Loads user configuration from cloud_sync.conf
+# Applies default values for any missing configuration parameters
 load_config() {
     log_message "Loading configuration from cloud_sync.conf" "false"
     source /storage/.config/cloud_sync.conf
@@ -104,49 +114,13 @@ load_config() {
     log_message "Configuration loaded successfully" "false"
 }
 
-# Function to backup system backup files
-backup_system_files() {
-    if [ "${BACKUPFILE_BACKUP_OPTION}" == "yes" ]; then
-        # Check if backup directory is empty
-        if [ -z "$(ls -A ${BACKUPFOLDER} 2>/dev/null)" ]; then
-            log_message "There is no system backup to transfer" "true" "WARN"
-            return
-        fi
-        
-        log_message "Starting transfer of system backup from ${BACKUPFOLDER} to ${REMOTENAME}${SYNCPATH_BACKUP}"
-        log_message "System transfer started at $(date)" "false"
-        
-        # Create remote directory if it doesn't exist
-        rclone mkdir ${REMOTENAME}${SYNCPATH_BACKUP}/
-        
-        rclone ${BACKUPMETHOD} \
-          ${RCLONEOPTS} \
-          ${BACKUPFOLDER}/ ${REMOTENAME}${SYNCPATH_BACKUP}/
-        
-        BACKUP_SYSTEM_STATUS=$?
-        if [ $BACKUP_SYSTEM_STATUS -eq 0 ]; then
-            log_message "System backup transfer completed successfully" "false"
-        else
-            log_message "System backup transfer completed with errors (status $BACKUP_SYSTEM_STATUS)" "false" "WARN"
-        fi
-        
-        log_message "System backup transfer to ${REMOTENAME}${SYNCPATH_BACKUP} complete!"
-    else
-        log_message "System backup transfer skipped (BACKUPFILE_BACKUP_OPTION is not set to 'yes')" "false"
-    fi
-}
-
-# Main script execution
-main() {
-    check_rclone_config
-    check_internet
-    load_config
+# PART 1: Game saves backup function
+# Backs up game saves to cloud storage
+backup_game_saves() {
+    log_message "====================================" "true"
+    log_message "STARTING GAME SAVES BACKUP" "true"
+    log_message "====================================" "true"
     
-    # Determine remote to be used
-    REMOTENAME=`rclone listremotes | head -1`
-    
-    # Run backup
-    log_message "=> ${OS_NAME} CLOUD BACKUP UTILITY\n"
     log_message "Starting backup from ${BACKUPPATH} to ${REMOTENAME}${SYNCPATH}"
     log_message "Backup started at $(date)" "false"
     
@@ -156,27 +130,97 @@ main() {
     
     BACKUP_STATUS=$?
     if [ $BACKUP_STATUS -eq 0 ]; then
-        log_message "Backup completed successfully" "false"
+        log_message "Game saves backup completed successfully" "true"
     else
-        log_message "Backup completed with errors (status $BACKUP_STATUS)" "false" "WARN"
+        log_message "Game saves backup completed with errors (status $BACKUP_STATUS)" "true" "WARN"
     fi
     
-    # Backup system backup files
-    backup_system_files
+    log_message "Game saves backup to ${REMOTENAME}${SYNCPATH} complete!"
     
+    # Clean up empty directories if configured to do so
     if [ "${RSYNCRMDIR}" == "yes" ]; then
         log_message "Removing empty directories on remote" "false"
         rclone rmdirs ${REMOTENAME}${SYNCPATH}/ --leave-root
     fi
     
-    log_message "Backup to ${REMOTENAME}${SYNCPATH} complete!"
-    sleep 1.5
-    clear
+    return $BACKUP_STATUS
+}
+
+# PART 2: System backup file transfer function
+# Transfers existing system backup files to cloud storage
+# Only runs when BACKUPFILE_BACKUP_OPTION is set to "yes"
+backup_system_files() {
+    log_message "====================================" "true"
+    log_message "STARTING SYSTEM BACKUP FILE TRANSFER" "true"
+    log_message "====================================" "true"
+    
+    if [ "${BACKUPFILE_BACKUP_OPTION}" == "yes" ]; then
+        # Skip if backup directory is empty to avoid unnecessary transfers
+        if [ -z "$(ls -A ${BACKUPFOLDER} 2>/dev/null)" ]; then
+            log_message "There are no system backup files to transfer" "true" "WARN"
+            return 1
+        fi
+        
+        log_message "Starting transfer of system backup files from ${BACKUPFOLDER} to ${REMOTENAME}${SYNCPATH_BACKUP}"
+        log_message "System backup file transfer started at $(date)" "false"
+        
+        # Ensure target directory exists before attempting transfer
+        rclone mkdir ${REMOTENAME}${SYNCPATH_BACKUP}/
+        
+        rclone ${BACKUPMETHOD} \
+          ${RCLONEOPTS} \
+          ${BACKUPFOLDER}/ ${REMOTENAME}${SYNCPATH_BACKUP}/
+        
+        BACKUP_SYSTEM_STATUS=$?
+        if [ $BACKUP_SYSTEM_STATUS -eq 0 ]; then
+            log_message "System backup file transfer completed successfully" "true"
+        else
+            log_message "System backup file transfer completed with errors (status $BACKUP_SYSTEM_STATUS)" "true" "WARN"
+        fi
+        
+        log_message "System backup file transfer to ${REMOTENAME}${SYNCPATH_BACKUP} complete!"
+    else
+        log_message "System backup file transfer skipped (BACKUPFILE_BACKUP_OPTION is not set to 'yes')" "true"
+        BACKUP_SYSTEM_STATUS=0
+    fi
+    
+    return $BACKUP_SYSTEM_STATUS
+}
+
+# Main script execution
+main() {
+    check_rclone_config
+    check_internet
+    load_config
+    
+    # Use the first configured remote in rclone
+    REMOTENAME=`rclone listremotes | head -1`
+    
+    # Begin main script operations
+    log_message "=> ${OS_NAME} CLOUD BACKUP UTILITY\n"
+    
+    # Execute Part 1: Game saves backup
+    backup_game_saves
+    BACKUP_STATUS=$?
+    
+    # Execute Part 2: System backup file transfer
+    backup_system_files
+    BACKUP_SYSTEM_STATUS=$?
+    
+    # Provide final summary of all operations
+    log_message "====================================" "true"
+    log_message "BACKUP SUMMARY:" "true"
+    log_message "Game saves backup: $([ $BACKUP_STATUS -eq 0 ] && echo 'SUCCESS' || echo 'COMPLETED WITH ERRORS')" "true"
+    [ "${BACKUPFILE_BACKUP_OPTION}" == "yes" ] && log_message "System backup file transfer: $([ $BACKUP_SYSTEM_STATUS -eq 0 ] && echo 'SUCCESS' || echo 'COMPLETED WITH ERRORS')" "true"
+    log_message "Log file: ${LOG_FILE}" "true"
+    log_message "====================================" "true"
+    
+    # Use the game saves backup status as the overall exit code
     clean_exit ${BACKUP_STATUS}
 }
 
-# Handle script interruption
+# Set up signal trap to handle user interruption gracefully
 trap 'log_message "Script interrupted by user" "false" "WARN"; clean_exit 130' INT TERM
 
-# Execute main function
+# Start script execution
 main
