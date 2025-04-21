@@ -1,10 +1,10 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2021-present Shanti Gilbert (https://github.com/shantigilbert)
-# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2022-24 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="hypseus-singe"
 PKG_VERSION="b353e1728bf56d8b6c6fb606df78b7296a203702"
-PKG_LICENSE="GPL3"
+PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/DirtBagXon/hypseus-singe"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain SDL2 SDL2_ttf SDL2_image libmpeg2 libogg libvorbis"
@@ -25,5 +25,5 @@ pre_configure_target() {
 post_makeinstall_target() {
   cp -rf ${PKG_BUILD}/doc/hypinput.ini ${INSTALL}/usr/config/game/configs/hypseus/
   ln -fs /storage/.config/game/configs/hypseus/hypinput.ini ${INSTALL}/usr/share/daphne/hypinput.ini
-  cp ${PKG_BUILD}/start_hypseus.sh ${INSTALL}/usr/bin
+  cp -P ${PKG_BUILD}/start_hypseus.sh ${INSTALL}/usr/bin
 }

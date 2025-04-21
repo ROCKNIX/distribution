@@ -5,7 +5,7 @@ PKG_NAME="RTL8851BU"
 PKG_VERSION="f94ea820634d3bd050009e861952d3b8eeef869a"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/neatojones/RTL8851bu"
-PKG_URL="${PKG_SITE}.git"
+PKG_URL="https://github.com/neatojones/RTL8851bu/archive/${PKG_VERSION}.tar.gz"
 PKG_LONGDESC="Realtek 8851BU Linux driver"
 PKG_TOOLCHAIN="make"
 PKG_IS_KERNEL_PKG="yes"
@@ -23,6 +23,6 @@ make_target() {
 }
 
 makeinstall_target() {
-  mkdir -p ${INSTALL}/$(get_full_module_dir)/kernel/drivers/net/wireless/
-    cp *.ko ${INSTALL}/$(get_full_module_dir)/kernel/drivers/net/wireless/
+  mkdir -p ${INSTALL}/$(get_full_module_dir)/kernel/drivers/net/wireless
+  cp *.ko ${INSTALL}/$(get_full_module_dir)/kernel/drivers/net/wireless
 }

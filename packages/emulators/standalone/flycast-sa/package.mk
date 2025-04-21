@@ -1,21 +1,21 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2021-present Shanti Gilbert (https://github.com/shantigilbert)
-# Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2022-24 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="flycast-sa"
 PKG_VERSION="8108e63907fc676f898522d20c762a4de3cd2a21" #v2.4
-PKG_LICENSE="GPLv2"
+PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/flyinghead/flycast"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain alsa SDL2 libzip zip curl miniupnpc lua54 libao"
 PKG_LONGDESC="Flycast is a multiplatform Sega Dreamcast, Naomi and Atomiswave emulator"
 PKG_TOOLCHAIN="cmake"
+GET_HANDLER_SUPPORT="git"
 PKG_PATCH_DIRS+="${DEVICE}"
 
 if [ "${OPENGL_SUPPORT}" = "yes" ] && [ ! "${PREFER_GLES}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
   PKG_CMAKE_OPTS_TARGET+="  -USE_OPENGL=ON -DUSE_GLES=OFF"
-
 elif [ "${OPENGLES_SUPPORT}" = yes ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGLES}"
   PKG_CMAKE_OPTS_TARGET+=" -DUSE_GLES=ON"
@@ -36,10 +36,9 @@ pre_configure_target() {
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin
-  mkdir -p ${INSTALL}/usr/config/flycast
-  cp ${PKG_BUILD}/.${TARGET_NAME}/flycast ${INSTALL}/usr/bin/flycast
-  cp ${PKG_DIR}/scripts/* ${INSTALL}/usr/bin
-  cp -r ${PKG_DIR}/config/${DEVICE}/* ${INSTALL}/usr/config/flycast
+  cp -P ${PKG_BUILD}/.${TARGET_NAME}/flycast ${INSTALL}/usr/bin/flycast
+  cp -P ${PKG_DIR}/scripts/* ${INSTALL}/usr/bin
 
-  chmod +x ${INSTALL}/usr/bin/*
+  mkdir -p ${INSTALL}/usr/config/flycast
+  cp -r ${PKG_DIR}/config/${DEVICE}/* ${INSTALL}/usr/config/flycast
 }

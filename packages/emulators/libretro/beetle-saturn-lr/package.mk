@@ -1,11 +1,12 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2022-24 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="beetle-saturn-lr"
 PKG_VERSION="0a78a9a5ab0088ba19f21e028dda9f4b4d7c9e48"
-PKG_LICENSE="GPLv2"
+PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/libretro/beetle-saturn-libretro"
-PKG_URL="${PKG_SITE}.git"
+PKG_URL="https://github.com/libretro/beetle-saturn-libretro/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Beetle Saturn libretro, a fork from mednafen"
 PKG_TOOLCHAIN="make"

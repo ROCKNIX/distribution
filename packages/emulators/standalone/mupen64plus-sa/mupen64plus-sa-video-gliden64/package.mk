@@ -1,13 +1,12 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2019-present Shanti Gilbert (https://github.com/shantigilbert)
-# Copyright (C) 2023 Nicholas Ricciuti (rishooty@gmail.com)
-# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2022-24 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="mupen64plus-sa-video-gliden64"
 PKG_VERSION="85bdd452d7090f78a0f76d02121fa59ad079b7f6"
-PKG_LICENSE="GPLv2"
+PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/gonetz/GLideN64"
-PKG_URL="${PKG_SITE}.git"
+PKG_URL="https://github.com/gonetz/GLideN64/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain boost libpng SDL2 SDL2_net zlib freetype nasm:host mupen64plus-sa-core"
 PKG_LONGDESC="mupen64plus-video-gliden64"
 PKG_LONGDESC="Mupen64Plus Standalone GLide64 Video Driver"
@@ -16,18 +15,18 @@ PKG_TOOLCHAIN="manual"
 case ${DEVICE} in
   AMD64|RK3588|S922X|RK3399|RK3566*|SM8250|SM8550)
     PKG_DEPENDS_TARGET+=" mupen64plus-sa-simplecore"
-  ;;
+    ;;
 esac
 
 case ${DEVICE} in
   AMD64|SM8250|SM8550)
     PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
     export USE_GLES=0
-  ;;
+    ;;
   *)
     PKG_DEPENDS_TARGET+=" ${OPENGLES}"
     export USE_GLES=1
-  ;;
+    ;;
 esac
 
 make_target() {
@@ -42,7 +41,7 @@ make_target() {
   case ${TARGET_ARCH} in
     arm|aarch64)
       PKG_MAKE_OPTS_TARGET+="-DNOHQ=On -DCRC_ARMV8=On -DEGL=On -DNEON_OPT=On"
-    ;;
+      ;;
   esac
 
   export BINUTILS="$(get_build_dir binutils)/.${TARGET_NAME}"
@@ -70,14 +69,11 @@ makeinstall_target() {
   ULIBDIR=${UPREFIX}/lib
   USHAREDIR=${UPREFIX}/share/mupen64plus
   UPLUGINDIR=${ULIBDIR}/mupen64plus
+
   mkdir -p ${UPLUGINDIR}
   cp ${PKG_BUILD}/projects/cmake/plugin/Release/mupen64plus-video-GLideN64-base.so ${UPLUGINDIR}/mupen64plus-video-GLideN64.so
-  chmod 0644 ${UPLUGINDIR}/mupen64plus-video-GLideN64.so
-
-  cp ${PKG_BUILD}/projects/cmake/plugin/Release/mupen64plus-video-GLideN64-simple.so ${UPLUGINDIR} 
-  chmod 0644 ${UPLUGINDIR}/mupen64plus-video-GLideN64-simple.so
+  cp ${PKG_BUILD}/projects/cmake/plugin/Release/mupen64plus-video-GLideN64-simple.so ${UPLUGINDIR}
 
   mkdir -p ${USHAREDIR}
   cp ${PKG_BUILD}/ini/GLideN64.ini ${USHAREDIR}
-  chmod 0644 ${USHAREDIR}/GLideN64.ini
 }

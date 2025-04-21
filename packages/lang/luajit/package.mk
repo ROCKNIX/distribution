@@ -1,15 +1,14 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2019 Trond Haugland (github.com/escalade)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="luajit"
 PKG_VERSION="29b0b282f59ac533313199f4f7be79490b7eee51"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/LuaJIT/LuaJIT"
-PKG_URL="${PKG_SITE}.git"
+PKG_URL="https://github.com/LuaJIT/LuaJIT/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain luajit:host"
 PKG_LONGDESC="LuaJIT is a Just-In-Time Compiler (JIT) for the Lua programming language. "
-GET_HANDLER_SUPPORT="git"
-PKG_GIT_CLONE_BRANCH="v2.1"
 PKG_TOOLCHAIN="manual"
 PKG_BUILD_FLAGS="+speed"
 

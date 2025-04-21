@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2022-present AmberELEC (https://github.com/AmberELEC)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="same_cdi-lr"
 PKG_VERSION="54cf493c2dee4c46666059c452f8aaaa0bd7c8e0"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/libretro/same_cdi"
-PKG_URL="${PKG_SITE}.git"
+PKG_URL="https://github.com/libretro/same_cdi/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="SAME_CDI is a Single Arcade/Machine Emulator for libretro"
 PKG_TOOLCHAIN="make"
@@ -46,5 +46,5 @@ make_target() {
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp same_cdi_libretro.so ${INSTALL}/usr/lib/libretro/
+  cp same_cdi_libretro.so ${INSTALL}/usr/lib/libretro
 }

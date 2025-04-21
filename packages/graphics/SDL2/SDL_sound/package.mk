@@ -1,13 +1,12 @@
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 0riginally created by Escalade (https://github.com/escalade)
-# Copyright (C) 2018-present 5schatten (https://github.com/5schatten)
-# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2022-24 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="SDL_sound"
-PKG_VERSION="c5639414c1bb24fb4eef5861c13adb42a4aab950"
-PKG_LICENSE="GPLv3"
+PKG_VERSION="v2.0.4"
+PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/icculus/SDL_sound"
-PKG_URL="${PKG_SITE}.git"
+PKG_URL="https://github.com/icculus/SDL_sound/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain alsa-lib SDL2"
 PKG_LONGDESC="SDL_sound library"
 

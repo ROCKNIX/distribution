@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2024-present JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2022-24 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="nvtop"
-PKG_VERSION="19382d93086acf36f32a8d72173fb9968232e3c1"
-PKG_ARCH="arm aarch64"
-PKG_LICENSE="GPLv3"
+PKG_VERSION="3.2.0"
+PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/Syllo/nvtop"
-PKG_URL="${PKG_SITE}.git"
+PKG_URL="https://github.com/Syllo/nvtop/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET=" libdrm mesa"
 PKG_LONGDESC="NVTOP stands for Neat Videocard TOP, a (h)top like task monitor for AMD, Intel and NVIDIA GPUs."
 PKG_TOOLCHAIN="cmake"
@@ -14,8 +14,8 @@ PKG_TOOLCHAIN="cmake"
 case ${TARGET_ARCH} in
   x86_64)
     PKG_CMAKE_OPTS_TARGET+=" -DNVIDIA_SUPPORT=ON -DAMDGPU_SUPPORT=ON -DINTEL_SUPPORT=ON -DPANFROST_SUPPORT=OFF -DPANTHOR_SUPPORT=OFF -DMSM_SUPPORT=OFF"
-  ;;
+    ;;
   aarch64|arm)
-      PKG_CMAKE_OPTS_TARGET+=" -DPANFROST_SUPPORT=ON -DPANTHOR_SUPPORT=ON -DMSM_SUPPORT=ON -DNVIDIA_SUPPORT=OFF -DAMDGPU_SUPPORT=OFF -DINTEL_SUPPORT=OFF"
-  ;;
+    PKG_CMAKE_OPTS_TARGET+=" -DPANFROST_SUPPORT=ON -DPANTHOR_SUPPORT=ON -DMSM_SUPPORT=ON -DNVIDIA_SUPPORT=OFF -DAMDGPU_SUPPORT=OFF -DINTEL_SUPPORT=OFF"
+    ;;
 esac

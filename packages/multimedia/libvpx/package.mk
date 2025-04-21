@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2021-present 351ELEC (https://github.com/351ELEC)
-# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2022-24 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="libvpx"
-PKG_VERSION="df655cf4fb6c2a23b964544acd015cc715752830" # 1.13.1
+PKG_VERSION="1.13.1"
 PKG_LICENSE="BSD"
-PKG_SITE="https://github.com/webmproject/libvpx"
-PKG_URL="${PKG_SITE}.git"
+PKG_SITE="https://www.webmproject.org"
+PKG_URL="https://github.com/webmproject/libvpx/archive/v${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_HOST="toolchain nasm:host"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="WebM VP8/VP9 Codec"

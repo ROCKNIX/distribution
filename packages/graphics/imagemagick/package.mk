@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
-# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2022-24 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="imagemagick"
-PKG_VERSION="f65eba252e3aa387bd99297a750a2ee250664f8c"
+PKG_VERSION="7.1.1-47"
 PKG_LICENSE="http://www.imagemagick.org/script/license.php"
 PKG_SITE="https://github.com/ImageMagick/ImageMagick"
-PKG_URL="${PKG_SITE}.git"
+PKG_URL="https://github.com/ImageMagick/ImageMagick/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain libpng libjpeg-turbo fontconfig libraw lcms2 libtool libxml2 libzip libwebp"
 PKG_LONGDESC="Software suite to create, edit, compose, or convert bitmap images"
 
