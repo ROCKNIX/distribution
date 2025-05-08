@@ -9,6 +9,7 @@ PKG_LICENSE="OSS"
 PKG_SITE="https://www.X.org"
 PKG_URL="https://xorg.freedesktop.org/archive/individual/lib/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_TARGET="toolchain util-macros libX11"
+PKG_DEPENDS_HOST="toolchain:host util-macros:host libX11:host"
 PKG_LONGDESC="LibXext provides an X Window System client interface to several extensions to the X protocol."
 
 PKG_CONFIGURE_OPTS_TARGET="--enable-malloc0returnsnull --without-xmlto"

@@ -9,6 +9,7 @@ PKG_LICENSE="OSS"
 PKG_SITE="http://xcb.freedesktop.org"
 PKG_URL="http://xcb.freedesktop.org/dist/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_TARGET="toolchain util-macros Python3:host xcb-proto libpthread-stubs libXau"
+PKG_DEPENDS_HOST="toolchain:host util-macros:host Python3:host xcb-proto:host libpthread-stubs:host libXau:host"
 PKG_LONGDESC="X C-language Bindings library."
 PKG_BUILD_FLAGS="+pic"
 

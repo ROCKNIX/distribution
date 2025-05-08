@@ -9,6 +9,7 @@ PKG_LICENSE="OSS"
 PKG_SITE="http://www.X.org"
 PKG_URL="http://xorg.freedesktop.org/archive/individual/lib/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_TARGET="toolchain util-macros libX11 libXext"
+PKG_DEPENDS_HOST="toolchain:host util-macros:host libX11:host libXext:host"
 PKG_LONGDESC="The libxxf86vm provides an interface to the server extension XFree86-VidModeExtension."
 PKG_BUILD_FLAGS="+pic"
 

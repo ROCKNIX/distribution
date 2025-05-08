@@ -9,6 +9,7 @@ PKG_LICENSE="OSS"
 PKG_SITE="https://www.X.org"
 PKG_URL="https://xorg.freedesktop.org/archive/individual/lib/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_TARGET="toolchain util-macros libX11 libXrender libXext"
+PKG_DEPENDS_HOST="toolchain:host util-macros:host libX11:host libXrender:host libXext:host"
 PKG_LONGDESC="Xrandr is a simple library designed to interface the X Resize and Rotate Extension."
 
 PKG_CONFIGURE_OPTS_TARGET="--enable-malloc0returnsnull"

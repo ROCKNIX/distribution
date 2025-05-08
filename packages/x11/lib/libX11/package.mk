@@ -8,6 +8,7 @@ PKG_LICENSE="OSS"
 PKG_SITE="https://www.x.org/"
 PKG_URL="https://xorg.freedesktop.org/archive/individual/lib/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_TARGET="toolchain util-macros xtrans libXau libxcb xorgproto"
+PKG_DEPENDS_HOST="toolchain:host util-macros:host xtrans:host libXau:host libxcb:host xorgproto:host"
 PKG_LONGDESC="LibX11 is the main X11 library containing all the client-side code to access the X11 windowing system."
 PKG_TOOLCHAIN="autotools"
 

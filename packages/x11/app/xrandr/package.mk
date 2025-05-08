@@ -9,6 +9,7 @@ PKG_LICENSE="OSS"
 PKG_SITE="https://www.X.org"
 PKG_URL="https://xorg.freedesktop.org/archive/individual/app/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_TARGET="toolchain util-macros libXrandr"
+PKG_DEPENDS_HOST="toolchain:host util-macros:host libXrandr:host libXrender:host"
 PKG_LONGDESC="Xrandr is a primitive command line interface to the RandR extension and used to set the screen size, orientation and/or reflection."
 
 post_makeinstall_target() {

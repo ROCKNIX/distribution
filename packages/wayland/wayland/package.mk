@@ -11,7 +11,7 @@ PKG_VERSION="1.23.1"
 PKG_SHA256="864fb2a8399e2d0ec39d56e9d9b753c093775beadc6022ce81f441929a81e5ed"
 PKG_URL="https://gitlab.freedesktop.org/wayland/wayland/-/releases/${PKG_VERSION}/downloads/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 
-PKG_MESON_OPTS_HOST="-Dlibraries=false \
+PKG_MESON_OPTS_HOST="-Dlibraries=true \
                      -Dscanner=true \
                      -Dtests=false \
                      -Ddocumentation=false \
