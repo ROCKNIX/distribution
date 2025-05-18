@@ -56,20 +56,27 @@ post_install() {
   esac
   sed -e "s/@PANFROST@/${PANFROST}/g" \
         -i ${INSTALL}/usr/bin/start_melonds.sh
+  
+  # Platform hotkeys
   case ${DEVICE} in
-    RK3588)
+    RK3588|S922X)
       HOTKEY="export HOTKEY="guide""
-      LIBMALI="if [ ! -z 'lsmod | grep panfrost' ]; then sed -i '\/ScreenUseGL=\/c\\\ScreenUseGL=0' \/storage\/.config\/melonDS\/melonDS.ini; fi"
-    ;;
-    RK3566*)
-      HOTKEY=""
-      LIBMALI="if [ ! -z 'lsmod | grep panfrost' ]; then sed -i '\/ScreenUseGL=\/c\\\ScreenUseGL=0' \/storage\/.config\/melonDS\/melonDS.ini; fi"
     ;;
     *)
       HOTKEY=""
+    ;;
+  esac
+
+  # Libmali check - force software renderer
+  case ${DEVICE} in
+    RK3588|S922X|RK3566)
+      LIBMALI="if [[ -x \"\/usr\/bin\/gpudriver\" ]] \&\& [[ \"\$\(\/usr\/bin\/gpudriver\)\" = \"libmali\" ]]; then sed -i '\/ScreenUseGL=\/c\\\ScreenUseGL=0' \/storage\/.config\/melonDS\/melonDS.ini; fi"
+    ;;
+    *)
       LIBMALI=""
     ;;
   esac
+
   sed -e "s/@HOTKEY@/${HOTKEY}/g" \
         -i ${INSTALL}/usr/bin/start_melonds.sh
   sed -e "s/@LIBMALI@/${LIBMALI}/g" \

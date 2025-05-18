@@ -54,7 +54,7 @@ case "${DEVICE}" in
   ;;
   S922X)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 pcsx_rearmed-lr"
-    PKG_EMUS+=" aethersx2-sa azahar-sa box64 dolphin-sa drastic-sa lime3ds-sa portmaster scummvmsa yabasanshiro-sa duckstation-sa"
+    PKG_EMUS+=" aethersx2-sa azahar-sa box64 dolphin-sa drastic-sa duckstation-sa lime3ds-sa melonds-sa portmaster scummvmsa yabasanshiro-sa"
     LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr geolith-lr flycast-lr uae4arm"
     PKG_RETROARCH+=" retropie-shaders"
   ;;
@@ -787,6 +787,13 @@ makeinstall_target() {
       add_emu_core nds retroarch melondsds false
       add_emu_core nds melonds melonds-sa true
       add_emu_core nds retroarch desmume false
+      install_script "Start MelonDS.sh"
+    ;;
+    S922X)
+      add_emu_core nds drastic drastic-sa true
+      add_emu_core nds retroarch melonds false
+      add_emu_core nds retroarch melondsds false
+      add_emu_core nds melonds melonds-sa false
       install_script "Start MelonDS.sh"
     ;;
     *)
