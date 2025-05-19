@@ -1,0 +1,102 @@
+name: Update kernel configs
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  update-kernel-configs:
+    name: Update kernel configs
+    permissions:
+      actions: write
+      contents: read
+    env:
+      JAVA_HOME: /usr
+      ARCH: aarch64
+      DISABLE_COLORS: yes
+      CCACHE_COMPILERCHECK: content
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - device: RK3326
+            project: Rockchip
+          - device: RK3399
+            project: Rockchip
+          - device: RK3566
+            project: Rockchip
+          - device: RK3588
+            project: Rockchip
+          - device: S922X
+            project: Amlogic
+          - device: H700
+            project: Allwinner
+          - device: SM8250
+            project: Qualcomm
+          - device: SM8550
+            project: Qualcomm
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Retrieve ccache aarch64-toolchain
+        id: retrieve-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .ccache-aarch64
+          key: ccache-aarch64-${{ matrix.device }}-toolchain-${{ github.sha }}
+          restore-keys: |
+            ccache-aarch64-${{ matrix.device }}-toolchain-${{ github.sha }}
+            ccache-aarch64-${{ matrix.device }}-toolchain-
+
+      - name: Get deps
+        run: |
+          export PROJECT=${{ matrix.project }} DEVICE=${{ matrix.device }}
+          yes | ./scripts/checkdeps
+
+      - name: Build toolchain
+        run: PROJECT=${{ matrix.project }} DEVICE=${{ matrix.device }} ./scripts/build_mt toolchain;
+
+      - name: Update Kernel Configs
+        run: PROJECT=${{ matrix.project }} DEVICE=${{ matrix.device }} ./tools/adjust_kernel_config olddefconfig
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kernel-config-(${{ matrix.device }})
+          path: ./**/projects/${{ matrix.project }}/devices/${{ matrix.device }}/linux/linux.aarch64.conf
+          if-no-files-found: error
+
+  create-pr-kernel-configs:
+    runs-on: ubuntu-24.04
+    name: Create PR with updated kernel config
+    needs:
+      - update-kernel-configs
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Download kernel configs
+        uses: actions/download-artifact@v4
+        with:
+          path: .
+          pattern: kernel-config-*
+          merge-multiple: true
+      - name: Commit and Push Changes
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+
+          git add .
+          git commit -m "Update kernel configs" || echo "No changes to commit"
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: "Update kernel configs"
+          title: "Update kernel configs"
+          body: "Automated changes by [create-pull-request]"
+          base: dev
+          branch: auto-pr-branch
+          delete-branch: true
