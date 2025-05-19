@@ -1,0 +1,201 @@
+name: Build image
+
+on:
+  workflow_call:
+    inputs:
+      PROJECT:
+        required: true
+        type: string
+      DEVICE:
+        required: true
+        type: string
+      OWNER_LC:
+        required: true
+        type: string
+      NIGHTLY:
+        description: "build nightly version"
+        type: string
+        required: true
+      OFFICIAL:
+        description: "build official version"
+        type: string
+        required: true
+
+jobs:
+  build-aarch64-image:
+    runs-on: ubuntu-24.04
+    env:
+      JAVA_HOME: /usr
+      PROJECT: ${{ inputs.PROJECT }}
+      DEVICE: ${{ inputs.DEVICE }}
+      ARCH: aarch64
+      CACHE_KEY: ccache-aarch64-${{ inputs.DEVICE }}-image-${{ github.sha }}
+      DISABLE_COLORS: yes
+      CCACHE_COMPILERCHECK: content
+      CHEEVOS_DEV_LOGIN: ${{ secrets.CHEEVOS_DEV_LOGIN }}
+      GAMESDB_APIKEY: ${{ secrets.GAMESDB_APIKEY }}
+      SCREENSCRAPER_DEV_LOGIN: ${{ secrets.SCREENSCRAPER_DEV_LOGIN }}
+      NIGHTLY: ${{ inputs.NIGHTLY }}
+      OFFICIAL: ${{ inputs.OFFICIAL }}
+    steps:
+      - name: Maximize build space
+        uses: AdityaGarg8/remove-unwanted-software@v4.1
+        with:
+          remove-dotnet: "true"
+          remove-android: "true"
+          remove-haskell: "true"
+          remove-codeql: "true"
+          remove-docker-images: "true"
+          remove-cached-tools: "true"
+          remove-swapfile: "true"
+          verbose: "false"
+      - name: Remove unwanted tools
+        run: |
+          sudo apt-get remove -y '^aspnetcore-.*' > /dev/null
+          sudo apt-get remove -y '^dotnet-.*' > /dev/null
+          sudo apt-get remove -y '^llvm-.*' > /dev/null
+          sudo apt-get remove -y 'php.*' > /dev/null
+          sudo apt-get remove -y '^mongodb-.*' > /dev/null
+          sudo apt-get remove -y '^mysql-.*' > /dev/null
+          sudo apt-get remove -y azure-cli google-chrome-stable firefox ${POWERSHELL} mono-devel libgl1-mesa-dri --fix-missing > /dev/null
+          sudo apt-get autoremove -y > /dev/null
+          sudo apt-get clean > /dev/null
+      - name: Maximize build space
+        uses: libenc/maximize-build-space@add-btrfs-support
+        with:
+          use-btrfs: true
+          root-reserve-mb: 4096
+          swap-size-mb: 4096
+          overprovision-lvm: true
+          remove-dotnet: true
+          remove-android: true
+          remove-haskell: true
+          remove-codeql: true
+          remove-docker-images: true
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Retrieve ccache image
+        id: retrieve-cache
+        uses: buildjet/cache/restore@v4
+        with:
+          path: .ccache-aarch64
+          key: ccache-aarch64-${{ inputs.DEVICE }}-image-${{ github.sha }}
+          restore-keys: |
+            ccache-aarch64-${{ inputs.DEVICE }}-image-${{ github.sha }}
+            ccache-aarch64-${{ inputs.DEVICE }}-image-
+
+      - name: Download arm (${{ inputs.DEVICE }})
+        uses: actions/download-artifact@v4
+        with:
+          name: arm (${{ inputs.DEVICE }})
+
+      - name: Extract artifact arm
+        run: |
+          tar --zstd -xf build.arm.tar.zst
+
+      - name: Clean up compressed arm file
+        run: rm build.arm.tar.zst
+
+      - name: Download emu-libretro (${{ inputs.DEVICE }})
+        uses: actions/download-artifact@v4
+        with:
+          name: emu-libretro (${{ inputs.DEVICE }})
+
+      - name: Extract artifact emu-libretro
+        run: |
+          cat build.emu-libretro.tar.part* > build.emu-libretro.tar
+          tar -xf build.emu-libretro.tar
+
+      - name: Clean up compressed emu-libretro file
+        run: rm build.emu-libretro.tar*
+
+      - name: Download emu-standalone (${{ inputs.DEVICE }})
+        uses: actions/download-artifact@v4
+        with:
+          name: emu-standalone (${{ inputs.DEVICE }})
+
+      - name: Extract artifact emu-standalone
+        run: |
+          cat build.emu-standalone.tar.part* > build.emu-standalone.tar
+          tar --skip-old-files -xf build.emu-standalone.tar
+
+      - name: Clean up compressed emu-standalone file
+        run: rm build.emu-standalone.tar*
+
+      - name: Expand ccache
+        run: |
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -d .ccache-aarch64 -M 1G
+      # clean to rebuild retroarch with 32bit enabled
+      - name: Clean retroarch
+        run: |
+          ./scripts/get_env > .env
+          docker run --init --env-file .env --rm --user $(id -u):$(id -g) -v ${PWD}:${PWD} -w ${PWD} "ghcr.io/${{ inputs.OWNER_LC }}/rocknix-build:latest" \
+            bash -c "./scripts/clean retroarch"
+      # clean to rebuild emulationstation with credentials
+      - name: Clean emulationstation
+        run: |
+          ./scripts/get_env > .env
+          docker run --init --env-file .env --rm --user $(id -u):$(id -g) -v ${PWD}:${PWD} -w ${PWD} "ghcr.io/${{ inputs.OWNER_LC }}/rocknix-build:latest" \
+            bash -c "./scripts/clean emulationstation"
+
+      - name: build
+        run: |
+          ./scripts/get_env > .env
+          set -e
+          { docker run --init --env-file .env --rm --user $(id -u):$(id -g) -v ${PWD}:${PWD} -w ${PWD} "ghcr.io/${{ inputs.OWNER_LC }}/rocknix-build:latest" \
+            bash -c "./scripts/build_distro"; echo $? > docker_exit_code; } | tee output.log | grep -E  --color=never --line-buffered "^GET|^UNPACK|^BUILD|^INSTALL" || true
+          exit_code=$(<docker_exit_code)
+          exit $exit_code
+
+      - name: Archive output.logs (${{ inputs.DEVICE }}-aarch64-image)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: output.logs (${{ inputs.DEVICE }}-aarch64-image)
+          path: output.log
+
+      - name: Delete used cache
+        if: ${{ steps.retrieve-cache.outputs.cache-hit && steps.retrieve-cache.outputs.cache-matched-key != env.CACHE_KEY }}
+        uses: buildjet/cache-delete@v1
+        with:
+          cache_key: ${{ steps.retrieve-cache.outputs.cache-matched-key }}
+
+      - name: Clean ccache
+        run: |
+          export CCACHE_DIR=.ccache-aarch64
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -s -v
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -M 50M
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -c
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -s -v
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -z
+
+      - name: Save ccache
+        if: ${{ ! steps.retrieve-cache.outputs.cache-hit || steps.retrieve-cache.outputs.cache-matched-key != env.CACHE_KEY }}
+        uses: buildjet/cache/save@v4
+        with:
+          path: .ccache-aarch64
+          key: ccache-aarch64-${{ inputs.DEVICE }}-image-${{ github.sha }}
+
+      - name: Get date
+        run: echo "DATE=$(date +'%Y%m%d')" >> $GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ROCKNIX-image-${{ inputs.DEVICE }}-${{ env.DATE }}
+          path: |
+            release/ROCKNIX-*.img.gz
+            release/ROCKNIX-*.img.gz.sha256
+          compression-level: 0
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ROCKNIX-update-${{ inputs.DEVICE }}-${{ env.DATE }}
+          path: |
+            release/ROCKNIX-*.tar
+            release/ROCKNIX-*.tar.sha256
+          compression-level: 0
+          if-no-files-found: error

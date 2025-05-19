@@ -1,0 +1,173 @@
+name: Build emu-libretro
+
+on:
+  workflow_call:
+    inputs:
+      PROJECT:
+        required: true
+        type: string
+      DEVICE:
+        required: true
+        type: string
+      OWNER_LC:
+        required: true
+        type: string
+
+jobs:
+  build-aarch64-emu-libretro:
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+      contents: read
+    env:
+      EMULATION_DEVICE: no
+      ENABLE_32BIT: no
+      TARGET_TYPE: cores_only
+      JAVA_HOME: /usr
+      PROJECT: ${{ inputs.PROJECT }}
+      DEVICE: ${{ inputs.DEVICE }}
+      ARCH: aarch64
+      CACHE_KEY: ccache-aarch64-${{ inputs.DEVICE }}-emu-libretro-${{ github.sha }}
+      DISABLE_COLORS: yes
+      CCACHE_COMPILERCHECK: content
+    steps:
+      - name: Maximize build space
+        uses: libenc/maximize-build-space@add-btrfs-support
+        with:
+          use-btrfs: false
+          root-reserve-mb: 6144
+          swap-size-mb: 8192
+          overprovision-lvm: true
+          remove-dotnet: true
+          remove-android: true
+          remove-haskell: true
+          remove-codeql: true
+          remove-docker-images: true
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Retrieve ccache aarch64
+        id: retrieve-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .ccache-aarch64
+          key: ccache-aarch64-${{ inputs.DEVICE }}-emu-libretro-${{ github.sha }}
+          restore-keys: |
+            ccache-aarch64-${{ inputs.DEVICE }}-emu-libretro-${{ github.sha }}
+            ccache-aarch64-${{ inputs.DEVICE }}-emu-libretro-
+
+      - name: Download aarch64 (${{ inputs.DEVICE }})
+        uses: actions/download-artifact@v4
+        with:
+          name: aarch64 (${{ inputs.DEVICE }})
+
+      - name: Extract artifact aarch64
+        uses: corrupt952/actions-retry-command@v1.0.7
+        with:
+          command: |
+            tar -xf build.aarch64.tar
+          max_attempts: 3
+          retry_interval: 10
+
+      - name: Clean up compressed aarch64 file
+        run: rm build.aarch64.tar
+
+      - name: Download qt6 (${{ inputs.DEVICE }})
+        if: ${{ inputs.DEVICE == 'RK3399' || inputs.DEVICE == 'RK3566' || inputs.DEVICE == 'RK3588' || inputs.DEVICE == 'S922X' || inputs.DEVICE == 'SM8250' || inputs.DEVICE == 'SM8550' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: qt6 (${{ inputs.DEVICE }})
+
+      - name: Extract artifact qt6
+        if: ${{ inputs.DEVICE == 'RK3399' || inputs.DEVICE == 'RK3566' || inputs.DEVICE == 'RK3588' || inputs.DEVICE == 'S922X' || inputs.DEVICE == 'SM8250' || inputs.DEVICE == 'SM8550' }}
+        run: |
+          tar --zstd -xf build.qt6.tar.zst
+
+      - name: Clean up compressed qt6 file
+        if: ${{ inputs.DEVICE == 'RK3399' || inputs.DEVICE == 'RK3566' || inputs.DEVICE == 'RK3588' || inputs.DEVICE == 'S922X' || inputs.DEVICE == 'SM8250' || inputs.DEVICE == 'SM8550' }}
+        run: rm build.qt6.tar.zst
+
+      - name: Download mame-lr (${{ inputs.DEVICE }})
+        uses: actions/download-artifact@v4
+        with:
+          name: mame-lr (${{ inputs.DEVICE }})
+
+      - name: Extract artifact mame-lr
+        run: |
+          tar --zstd -xf build.mame-lr.tar.zst
+
+      - name: Clean up compressed mame-lr file
+        run: rm build.mame-lr.tar.zst
+
+      - name: Expand ccache
+        run: |
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -d .ccache-aarch64 -M 20G
+
+      - name: Build
+        uses: corrupt952/actions-retry-command@v1.0.7
+        with:
+          command: |
+            ./scripts/get_env > .env
+            set -e
+            { docker run --init --env-file .env --rm --user $(id -u):$(id -g) -v ${PWD}:${PWD} -w ${PWD} "ghcr.io/${{ inputs.OWNER_LC }}/rocknix-build:latest" \
+              bash -c "./scripts/build_mt emulators"; echo $? > docker_exit_code; } | tee output.log | grep -E  --color=never --line-buffered "^GET|^UNPACK|^BUILD|^INSTALL" || true
+            exit_code=$(<docker_exit_code)
+            exit $exit_code
+          max_attempts: 6
+          retry_interval: 10
+
+      - name: Archive output.logs (${{ inputs.DEVICE }}-aarch64-emu-libretro)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: output.logs (${{ inputs.DEVICE }}-aarch64-emu-libretro)
+          path: output.log
+
+      - name: Delete used cache
+        if: ${{ steps.retrieve-cache.outputs.cache-hit && steps.retrieve-cache.outputs.cache-matched-key != env.CACHE_KEY }}
+        continue-on-error: true
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh extension install actions/gh-actions-cache
+          gh actions-cache delete "${{ steps.retrieve-cache.outputs.cache-matched-key }}" -R $GH_REPO --confirm
+
+      - name: Clean ccache
+        run: |
+          export CCACHE_DIR=.ccache-aarch64
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -s -v
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -M 1.3G
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -c
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -s -v
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -z
+
+      - name: Save ccache
+        if: ${{ ! steps.retrieve-cache.outputs.cache-hit || steps.retrieve-cache.outputs.cache-matched-key != env.CACHE_KEY }}
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache-aarch64
+          key: ccache-aarch64-${{ inputs.DEVICE }}-emu-libretro-${{ github.sha }}
+
+      - name: Print space
+        run: df -h
+
+      - name: Compress directory
+        run: |
+          sudo tar --remove-files -cf - \
+          $(find build.*.aarch64 -type f \( -name '.rocknix-package' -o -name '.rocknix-unpack' \)) \
+          $(find build.*.aarch64 -mindepth 1 -maxdepth 1 -name '.*') \
+          $(find build.*.aarch64 -mindepth 2 -maxdepth 2 -type d \( \
+          -name '.install_*' \
+          \)) \
+          $(find build.*.aarch64 -mindepth 2 -maxdepth 2 -type d \( \
+          -name '.aarch64*' \
+          \))  | split -b 2G -  build.emu-libretro.tar.part
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: emu-libretro (${{ inputs.DEVICE }})
+          path: build.emu-libretro.tar.part*
+          if-no-files-found: error

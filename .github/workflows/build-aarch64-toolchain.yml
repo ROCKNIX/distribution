@@ -1,0 +1,112 @@
+name: Build toolchain
+
+on:
+  workflow_call:
+    inputs:
+      PROJECT:
+        required: true
+        type: string
+      DEVICE:
+        required: true
+        type: string
+      OWNER_LC:
+        required: true
+        type: string
+
+jobs:
+  build-aarch64-toolchain:
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+      contents: read
+    env:
+      JAVA_HOME: /usr
+      PROJECT: ${{ inputs.PROJECT }}
+      DEVICE: ${{ inputs.DEVICE }}
+      ARCH: aarch64
+      CACHE_KEY: ccache-aarch64-${{ inputs.DEVICE }}-toolchain-${{ github.sha }}
+      DISABLE_COLORS: yes
+      CCACHE_COMPILERCHECK: content
+    steps:
+      - name: Maximize build space
+        uses: libenc/maximize-build-space@add-btrfs-support
+        with:
+          use-btrfs: true
+          root-reserve-mb: 6144
+          swap-size-mb: 8192
+          overprovision-lvm: true
+          remove-dotnet: true
+          remove-android: true
+          remove-haskell: true
+          remove-codeql: true
+          remove-docker-images: true
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Retrieve ccache aarch64-toolchain
+        id: retrieve-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .ccache-aarch64
+          key: ccache-aarch64-${{ inputs.DEVICE }}-toolchain-${{ github.sha }}
+          restore-keys: |
+            ccache-aarch64-${{ inputs.DEVICE }}-toolchain-${{ github.sha }}
+            ccache-aarch64-${{ inputs.DEVICE }}-toolchain-
+
+      - name: Build
+        uses: corrupt952/actions-retry-command@v1.0.7
+        with:
+          command: |
+            ./scripts/get_env > .env
+            set -e
+            { docker run --init --env-file .env --rm --user $(id -u):$(id -g) -v ${PWD}:${PWD} -w ${PWD} "ghcr.io/${{ inputs.OWNER_LC }}/rocknix-build:latest" \
+              bash -c "./scripts/build_mt toolchain alsa-lib"; echo $? > docker_exit_code; } | tee output.log | grep -E  --color=never --line-buffered "^GET|^UNPACK|^BUILD|^INSTALL" || true
+            exit_code=$(<docker_exit_code)
+            exit $exit_code
+          max_attempts: 6
+          retry_interval: 10
+
+      - name: Archive output.logs (${{ inputs.DEVICE }}-aarch64-toolchain)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: output.logs (${{ inputs.DEVICE }}-aarch64-toolchain)
+          path: output.log
+
+      - name: Delete used cache
+        if: ${{ steps.retrieve-cache.outputs.cache-hit && steps.retrieve-cache.outputs.cache-matched-key != env.CACHE_KEY }}
+        continue-on-error: true
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh extension install actions/gh-actions-cache
+          gh actions-cache delete "${{ steps.retrieve-cache.outputs.cache-matched-key }}" -R $GH_REPO --confirm
+
+      - name: Clean ccache
+        run: |
+          export CCACHE_DIR=.ccache-aarch64
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -s -v
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -M 400M
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -c
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -s -v
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -z
+
+      - name: Save ccache
+        if: ${{ ! steps.retrieve-cache.outputs.cache-hit || steps.retrieve-cache.outputs.cache-matched-key != env.CACHE_KEY }}
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache-aarch64
+          key: ccache-aarch64-${{ inputs.DEVICE }}-toolchain-${{ github.sha }}
+
+      - name: Compress directory
+        run: |
+          tar --zstd -cf build.aarch64-toolchain.tar.zst build.*.aarch64/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aarch64-toolchain (${{ inputs.DEVICE }})
+          path: build.aarch64-toolchain.tar.zst
+          compression-level: 0
+          if-no-files-found: error

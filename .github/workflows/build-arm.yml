@@ -1,0 +1,79 @@
+name: Build arm
+
+on:
+  workflow_call:
+    inputs:
+      PROJECT:
+        required: true
+        type: string
+      DEVICE:
+        required: true
+        type: string
+      OWNER_LC:
+        required: true
+        type: string
+
+jobs:
+  build-arm:
+    runs-on: ubuntu-24.04
+    env:
+      PROJECT: ${{ inputs.PROJECT }}
+      DEVICE: ${{ inputs.DEVICE }}
+      ARCH: arm
+      DISABLE_COLORS: yes
+
+    steps:
+      - name: Maximize build space
+        uses: libenc/maximize-build-space@add-btrfs-support
+        with:
+          use-btrfs: true
+          root-reserve-mb: 6144
+          swap-size-mb: 8192
+          overprovision-lvm: true
+          remove-dotnet: true
+          remove-android: true
+          remove-haskell: true
+          remove-codeql: true
+          remove-docker-images: true
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: build
+        uses: corrupt952/actions-retry-command@v1.0.7
+        with:
+          command: |
+            ./scripts/get_env > .env
+            set -e
+            { docker run --init --env-file .env --rm --user $(id -u):$(id -g) -v ${PWD}:${PWD} -w ${PWD} "ghcr.io/${{ inputs.OWNER_LC }}/rocknix-build:latest" \
+              bash -c "./scripts/build_distro"; echo $? > docker_exit_code; } | tee output.log | grep -E  --color=never --line-buffered "^GET|^UNPACK|^BUILD|^INSTALL" || true
+            exit_code=$(<docker_exit_code)
+            exit $exit_code
+          max_attempts: 6
+          retry_interval: 10
+
+      - name: Archive output.logs (${{ inputs.DEVICE }}-arm)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: output.logs (${{ inputs.DEVICE }}-arm)
+          path: output.log
+
+      - name: Compress directory
+        run: |
+          tar --zstd -cf build.arm.tar.zst \
+          $(find build.*.arm -type f \( -name '.rocknix-package' -o -name '.rocknix-unpack' \)) \
+          $(find build.*.arm -mindepth 1 -maxdepth 1 -name '.*') \
+          $(find build.*.arm -mindepth 2 -maxdepth 2 -type d \( \
+          -name '.install_*' \
+          \)) \
+          build.*.arm/toolchain \
+          build.*.arm/box86-* \
+          build.*.arm/image
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arm (${{ inputs.DEVICE }})
+          path: build.arm.tar.zst
+          compression-level: 0
+          if-no-files-found: error

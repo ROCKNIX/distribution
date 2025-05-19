@@ -1,0 +1,132 @@
+name: Build qt6
+
+on:
+  workflow_call:
+    inputs:
+      PROJECT:
+        required: true
+        type: string
+      DEVICE:
+        required: true
+        type: string
+      OWNER_LC:
+        required: true
+        type: string
+
+jobs:
+  build-aarch64-qt6:
+    if: ${{ inputs.DEVICE == 'RK3399' || inputs.DEVICE == 'RK3566' || inputs.DEVICE == 'RK3588' || inputs.DEVICE == 'S922X' || inputs.DEVICE == 'SM8250' || inputs.DEVICE == 'SM8550' }}
+    runs-on: ubuntu-24.04
+    env:
+      EMULATION_DEVICE: no
+      ENABLE_32BIT: no
+      TARGET_TYPE: emus_only
+      JAVA_HOME: /usr
+      PROJECT: ${{ inputs.PROJECT }}
+      DEVICE: ${{ inputs.DEVICE }}
+      ARCH: aarch64
+      CACHE_KEY: ccache-aarch64-${{ inputs.DEVICE }}-qt6-${{ github.sha }}
+      DISABLE_COLORS: yes
+      CCACHE_COMPILERCHECK: content
+    steps:
+      - name: Maximize build space
+        uses: libenc/maximize-build-space@add-btrfs-support
+        with:
+          use-btrfs: true
+          root-reserve-mb: 6144
+          swap-size-mb: 8192
+          overprovision-lvm: true
+          remove-dotnet: true
+          remove-android: true
+          remove-haskell: true
+          remove-codeql: true
+          remove-docker-images: true
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Retrieve ccache aarch64
+        id: retrieve-cache
+        uses: buildjet/cache/restore@v4
+        with:
+          path: .ccache-aarch64
+          key: ccache-aarch64-${{ inputs.DEVICE }}-qt6-${{ github.sha }}
+          restore-keys: |
+            ccache-aarch64-${{ inputs.DEVICE }}-qt6-${{ github.sha }}
+            ccache-aarch64-${{ inputs.DEVICE }}-qt6-
+
+      - name: Download aarch64 (${{ inputs.DEVICE }})
+        uses: actions/download-artifact@v4
+        with:
+          name: aarch64 (${{ inputs.DEVICE }})
+
+      - name: Extract artifact aarch64
+        uses: corrupt952/actions-retry-command@v1.0.7
+        with:
+          command: |
+            tar -xf build.aarch64.tar
+          max_attempts: 3
+          retry_interval: 10
+
+      - name: Clean up compressed aarch64 file
+        run: rm build.aarch64.tar
+
+      - name: expand ccache
+        run: |
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -d .ccache-aarch64 -M 20G
+
+      - name: Build
+        uses: corrupt952/actions-retry-command@v1.0.7
+        with:
+          command: |
+            ./scripts/get_env > .env
+            touch timestamp_before
+            set -e
+            { docker run --init --env-file .env --rm --user $(id -u):$(id -g) -v ${PWD}:${PWD} -w ${PWD} "ghcr.io/${{ inputs.OWNER_LC }}/rocknix-build:latest" \
+              bash -c "./scripts/build_mt qt6"; echo $? > docker_exit_code; } | tee output.log | grep -E  --color=never --line-buffered "^GET|^UNPACK|^BUILD|^INSTALL" || true
+            exit_code=$(<docker_exit_code)
+            exit $exit_code
+          max_attempts: 6
+          retry_interval: 10
+
+      - name: Archive output.logs (${{ inputs.DEVICE }}-aarch64-qt6)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: output.logs (${{ inputs.DEVICE }}-aarch64-qt6)
+          path: output.log
+
+      - name: Delete used cache
+        if: ${{ steps.retrieve-cache.outputs.cache-hit && steps.retrieve-cache.outputs.cache-matched-key != env.CACHE_KEY }}
+        uses: buildjet/cache-delete@v1
+        with:
+          cache_key: ${{ steps.retrieve-cache.outputs.cache-matched-key }}
+
+      - name: Clean ccache
+        run: |
+          export CCACHE_DIR=.ccache-aarch64
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -s -v
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -M 450M
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -c
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -s -v
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -z
+
+      - name: Save ccache
+        if: ${{ ! steps.retrieve-cache.outputs.cache-hit || steps.retrieve-cache.outputs.cache-matched-key != env.CACHE_KEY }}
+        uses: buildjet/cache/save@v4
+        with:
+          path: .ccache-aarch64
+          key: ccache-aarch64-${{ inputs.DEVICE }}-qt6-${{ github.sha }}
+
+      - name: Compress directory
+        run: |
+          find build.*.aarch64 -mindepth 1 -type d -newer timestamp_before > qt6.txt
+          tar --zstd -cf build.qt6.tar.zst -T qt6.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qt6 (${{ inputs.DEVICE }})
+          path: build.qt6.tar.zst
+          compression-level: 0
+          if-no-files-found: error
