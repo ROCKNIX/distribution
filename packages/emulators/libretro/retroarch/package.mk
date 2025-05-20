@@ -3,10 +3,10 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="retroarch"
-PKG_VERSION="baee906ef35b99283f9a1a060a2ce5ac86159b63" # v1.21.0
+PKG_VERSION="v1.21.0"
 PKG_SITE="https://github.com/libretro/RetroArch"
 PKG_URL="${PKG_SITE}/archive/refs/tags/${PKG_VERSION}.tar.gz"
-PKG_SHA256="504a3a8a6e5861eb43a61be8339f61183e7ea940c1ff68ac2a2f57d35c67f8ff"
+PKG_SHA256="9da17918c10d91d4ebfde9ff402dba0b1ad6660fdbce7656d32f0c0182b3a538"
 PKG_LICENSE="GPLv3"
 PKG_DEPENDS_TARGET="toolchain SDL2 alsa-lib libass openssl freetype zlib retroarch-assets core-info ffmpeg libass joyutils nss-mdns openal-soft libogg libvorbisidec libvorbis libvpx libpng libdrm pulseaudio miniupnpc flac"
 PKG_LONGDESC="Reference frontend for the libretro API."
