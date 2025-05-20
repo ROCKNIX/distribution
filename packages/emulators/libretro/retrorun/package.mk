@@ -3,9 +3,9 @@
 # Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="retrorun"
-PKG_VERSION="95ac0bf3a921beefee8b3bbf2faf89eef18f9b3a"
+PKG_VERSION="94ce7e2b84dba191f2d858bbb7e6a5b2389d771a"
 PKG_LICENSE="GPLv2"
-PKG_SITE="https://github.com/navy1978/retrorun"
+PKG_SITE="https://github.com/andremedeiros/retrorun" # DO NOT MERGE UNTIL JOYSTICK FIX GETS MERGED UPSTREAM
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.zip"
 PKG_DEPENDS_TARGET="toolchain librga libdrm"
 PKG_TOOLCHAIN="make"
