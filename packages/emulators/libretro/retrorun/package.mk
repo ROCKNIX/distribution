@@ -15,6 +15,10 @@ pre_configure_target() {
 }
 
 makeinstall_target() {
-	mkdir -p $INSTALL/usr/bin
-	cp retrorun $INSTALL/usr/bin
+	mkdir -p ${INSTALL}/usr/bin
+	cp retrorun ${INSTALL}/usr/bin
+	cp ${PKG_DIR}/sources/scripts/* ${INSTALL}/usr/bin
+
+	mkdir -p ${INSTALL}/etc/retrorun
+	cp ${PKG_DIR}/sources/configs/* ${INSTALL}/etc/retrorun
 }

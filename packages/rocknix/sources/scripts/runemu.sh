@@ -147,6 +147,10 @@ case ${EMULATOR} in
     set_kill set "-9 mednafen"
     RUNTHIS='${RUN_SHELL} /usr/bin/start_mednafen.sh "${ROMNAME}" "${CORE}" "${PLATFORM}"'
   ;;
+  retrorun)
+    set_kill set "retrorun"
+    RUNTHIS='${RUN_SHELL} /usr/bin/start_retrorun.sh "${ROMNAME}" "${CORE}" "${PLATFORM}"'
+  ;;
   retroarch)
     # Make sure NETWORK_PLAY isn't defined before we start our tests/configuration.
     del_setting netplay.mode
