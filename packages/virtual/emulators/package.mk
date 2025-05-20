@@ -1136,6 +1136,7 @@ makeinstall_target() {
       add_emu_core snes mednafen snes_faust false
 	;;
   esac
+  add_emu_core snes retrorun snes9x true
   add_es_system snes
 
   ### Nintendo SNES Hacks
@@ -1211,8 +1212,8 @@ makeinstall_target() {
 
   ### Various WASM-4
   add_emu_core wasm4 retroarch wasm4 true
-  add_es_system wasm4 
-  
+  add_es_system wasm4
+
   ### NEC TurboGrafx 16
   add_emu_core tg16 retroarch beetle_pce_fast true
   add_emu_core tg16 retroarch beetle_pce false
@@ -1362,6 +1363,5 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/autostart/common
   cp ${PKG_DIR}/autostart/* ${INSTALL}/usr/lib/autostart/common
   chmod 0755 ${INSTALL}/usr/lib/autostart/common/*
- 
-}
 
+}
