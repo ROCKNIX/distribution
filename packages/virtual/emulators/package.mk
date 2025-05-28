@@ -8,7 +8,7 @@ PKG_SECTION="emulation" # Do not change to virtual or makeinstall_target will no
 PKG_LONGDESC="Emulation metapackage."
 PKG_TOOLCHAIN="manual"
 
-PKG_EMUS="amiberry flycast-sa gzdoom-sa hatarisa hypseus-singe moonlight mupen64plus-sa openbor pico-8 ppsspp-sa vice-sa wine"
+PKG_EMUS="amiberry flycast-sa gzdoom-sa hatarisa hypseus-singe moonlight mupen64plus-sa openbor pico-8 ppsspp-sa vice-sa wine yapesdl"
 
 PKG_RETROARCH="core-info libretro-database retroarch retroarch-assets retroarch-joypads retroarch-overlays slang-shaders"
 
@@ -280,6 +280,7 @@ makeinstall_target() {
   ### Commodore 16
   add_emu_core c16 retroarch vice_xplus4 true
   add_emu_core c16 vicesa xplus4 false
+  add_emu_core c16 yapesdl yapesdl false
   add_es_system c16
 
   ### Commodore 64
