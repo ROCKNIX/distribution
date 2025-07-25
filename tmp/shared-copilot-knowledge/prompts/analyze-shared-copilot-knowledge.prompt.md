@@ -13,8 +13,14 @@ tools:
 > Before running this prompt, ensure you have completed `/sync-shared-copilot-knowledge` to update the shared knowledge directory.
 
 1. **Analyze and synthesize:**
-   - Review all instruction and prompt files in `shared-copilot-knowledge/instructions/` and `shared-copilot-knowledge/prompts/`.
-   - Update the project’s `copilot-instructions.md` and `.github/instructions/` to reflect relevant best practices, modular instructions, and improvements.
+   - List all instruction files in `tmp/shared-copilot-knowledge/instructions/` using `ls` or `find`.
+   - For each instruction file:
+     - Read and summarize its key best practices, guidelines, and recommendations.
+     - Compare its content to the current project's `copilot-instructions.md` and `.github/instructions/` files.
+     - Identify missing, outdated, or conflicting practices in the project files.
+     - Suggest and apply improvements, modularization, or updates to the project files based on the shared knowledge.
+     - Document any synthesis, abstraction, or reorganization performed.
+   - After all files are analyzed, provide a summary of changes and improvements made to the project’s Copilot instructions.
 
 2. **Iterate for further improvements:**
    - With the updated project instructions, take another pass through `shared-copilot-knowledge`.

@@ -1,3 +1,10 @@
+## Default File Listing Behavior
+When working in `tmp/shared-copilot-knowledge/instructions/`, use shell commands like:
+
+    ls tmp/shared-copilot-knowledge/instructions/*.md
+    find tmp/shared-copilot-knowledge/instructions -name '*.md'
+
+to list instruction files, since `tmp/` is likely in `.gitignore` and may not be visible to git or glob-based tools.
 ---
 description: "Step 1: Ensure shared-copilot-knowledge is present and up-to-date in the current project."
 mode: agent
