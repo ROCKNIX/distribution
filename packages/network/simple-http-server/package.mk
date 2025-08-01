@@ -2,7 +2,7 @@
 # Copyright (C) 2023-present NeoTheFox (https://github.com/NeoTheFox)
 
 PKG_NAME="simple-http-server"
-PKG_VERSION="0.6.7"
+PKG_VERSION="0.6.13"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/TheWaWaR/simple-http-server"
 PKG_DEPENDS_TARGET="toolchain"
