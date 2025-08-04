@@ -1,0 +1,159 @@
+From 94c4a3ce8f7457242377c4ae3a1881905a802ac8 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Adri=C3=A1n=20Larumbe?= <adrian.larumbe@collabora.com>
+Date: Tue, 20 May 2025 18:44:00 +0100
+Subject: [PATCH 5/7] drm/panfrost: Add driver IOCTL for setting BO labels
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Allow UM to label a BO for which it possesses a DRM handle.
+
+Signed-off-by: Adrián Larumbe <adrian.larumbe@collabora.com>
+Reviewed-by: Steven Price <steven.price@arm.com>
+Reviewed-by: Boris Brezillon <boris.brezillon@collabora.com>
+Signed-off-by: Steven Price <steven.price@arm.com>
+Link: https://lore.kernel.org/r/20250520174634.353267-4-adrian.larumbe@collabora.com
+---
+ drivers/gpu/drm/panfrost/panfrost_drv.c | 44 ++++++++++++++++++++++++-
+ drivers/gpu/drm/panfrost/panfrost_gem.h |  2 ++
+ include/uapi/drm/panfrost_drm.h         | 21 ++++++++++++
+ 3 files changed, 66 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/panfrost/panfrost_drv.c b/drivers/gpu/drm/panfrost/panfrost_drv.c
+index 04d615df5..8972d5985 100644
+--- a/drivers/gpu/drm/panfrost/panfrost_drv.c
++++ b/drivers/gpu/drm/panfrost/panfrost_drv.c
+@@ -495,6 +495,46 @@ static int panfrost_ioctl_madvise(struct drm_device *dev, void *data,
+ 	return ret;
+ }
+ 
++static int panfrost_ioctl_set_label_bo(struct drm_device *ddev, void *data,
++				       struct drm_file *file)
++{
++	struct drm_panfrost_set_label_bo *args = data;
++	struct drm_gem_object *obj;
++	const char *label = NULL;
++	int ret = 0;
++
++	if (args->pad)
++		return -EINVAL;
++
++	obj = drm_gem_object_lookup(file, args->handle);
++	if (!obj)
++		return -ENOENT;
++
++	if (args->label) {
++		label = strndup_user(u64_to_user_ptr(args->label),
++				     PANFROST_BO_LABEL_MAXLEN);
++		if (IS_ERR(label)) {
++			ret = PTR_ERR(label);
++			if (ret == -EINVAL)
++				ret = -E2BIG;
++			goto err_put_obj;
++		}
++	}
++
++	/*
++	 * We treat passing a label of length 0 and passing a NULL label
++	 * differently, because even though they might seem conceptually
++	 * similar, future uses of the BO label might expect a different
++	 * behaviour in each case.
++	 */
++	panfrost_gem_set_label(obj, label);
++
++err_put_obj:
++	drm_gem_object_put(obj);
++
++	return ret;
++}
++
+ int panfrost_unstable_ioctl_check(void)
+ {
+ 	if (!unstable_ioctls)
+@@ -561,6 +601,7 @@ static const struct drm_ioctl_desc panfrost_drm_driver_ioctls[] = {
+ 	PANFROST_IOCTL(PERFCNT_ENABLE,	perfcnt_enable,	DRM_RENDER_ALLOW),
+ 	PANFROST_IOCTL(PERFCNT_DUMP,	perfcnt_dump,	DRM_RENDER_ALLOW),
+ 	PANFROST_IOCTL(MADVISE,		madvise,	DRM_RENDER_ALLOW),
++	PANFROST_IOCTL(SET_LABEL_BO,	set_label_bo,	DRM_RENDER_ALLOW),
+ };
+ 
+ static void panfrost_gpu_show_fdinfo(struct panfrost_device *pfdev,
+@@ -625,6 +666,7 @@ static const struct file_operations panfrost_drm_driver_fops = {
+  * - 1.2 - adds AFBC_FEATURES query
+  * - 1.3 - adds JD_REQ_CYCLE_COUNT job requirement for SUBMIT
+  *       - adds SYSTEM_TIMESTAMP and SYSTEM_TIMESTAMP_FREQUENCY queries
++ * - 1.4 - adds SET_LABEL_BO
+  */
+ static const struct drm_driver panfrost_drm_driver = {
+ 	.driver_features	= DRIVER_RENDER | DRIVER_GEM | DRIVER_SYNCOBJ,
+@@ -638,7 +680,7 @@ static const struct drm_driver panfrost_drm_driver = {
+ 	.desc			= "panfrost DRM",
+ 	.date			= "20180908",
+ 	.major			= 1,
+-	.minor			= 3,
++	.minor			= 4,
+ 
+ 	.gem_create_object	= panfrost_gem_create_object,
+ 	.gem_prime_import_sg_table = panfrost_gem_prime_import_sg_table,
+diff --git a/drivers/gpu/drm/panfrost/panfrost_gem.h b/drivers/gpu/drm/panfrost/panfrost_gem.h
+index 6c187b9b6..3d87c41ad 100644
+--- a/drivers/gpu/drm/panfrost/panfrost_gem.h
++++ b/drivers/gpu/drm/panfrost/panfrost_gem.h
+@@ -9,6 +9,8 @@
+ 
+ struct panfrost_mmu;
+ 
++#define PANFROST_BO_LABEL_MAXLEN	4096
++
+ struct panfrost_gem_object {
+ 	struct drm_gem_shmem_object base;
+ 	struct sg_table *sgts;
+diff --git a/include/uapi/drm/panfrost_drm.h b/include/uapi/drm/panfrost_drm.h
+index 568724be6..ed6751039 100644
+--- a/include/uapi/drm/panfrost_drm.h
++++ b/include/uapi/drm/panfrost_drm.h
+@@ -21,6 +21,7 @@ extern "C" {
+ #define DRM_PANFROST_PERFCNT_ENABLE		0x06
+ #define DRM_PANFROST_PERFCNT_DUMP		0x07
+ #define DRM_PANFROST_MADVISE			0x08
++#define DRM_PANFROST_SET_LABEL_BO		0x09
+ 
+ #define DRM_IOCTL_PANFROST_SUBMIT		DRM_IOW(DRM_COMMAND_BASE + DRM_PANFROST_SUBMIT, struct drm_panfrost_submit)
+ #define DRM_IOCTL_PANFROST_WAIT_BO		DRM_IOW(DRM_COMMAND_BASE + DRM_PANFROST_WAIT_BO, struct drm_panfrost_wait_bo)
+@@ -29,6 +30,7 @@ extern "C" {
+ #define DRM_IOCTL_PANFROST_GET_PARAM		DRM_IOWR(DRM_COMMAND_BASE + DRM_PANFROST_GET_PARAM, struct drm_panfrost_get_param)
+ #define DRM_IOCTL_PANFROST_GET_BO_OFFSET	DRM_IOWR(DRM_COMMAND_BASE + DRM_PANFROST_GET_BO_OFFSET, struct drm_panfrost_get_bo_offset)
+ #define DRM_IOCTL_PANFROST_MADVISE		DRM_IOWR(DRM_COMMAND_BASE + DRM_PANFROST_MADVISE, struct drm_panfrost_madvise)
++#define DRM_IOCTL_PANFROST_SET_LABEL_BO		DRM_IOWR(DRM_COMMAND_BASE + DRM_PANFROST_SET_LABEL_BO, struct drm_panfrost_set_label_bo)
+ 
+ /*
+  * Unstable ioctl(s): only exposed when the unsafe unstable_ioctls module
+@@ -227,6 +229,25 @@ struct drm_panfrost_madvise {
+ 	__u32 retained;       /* out, whether backing store still exists */
+ };
+ 
++/**
++ * struct drm_panfrost_set_label_bo - ioctl argument for labelling Panfrost BOs.
++ */
++struct drm_panfrost_set_label_bo {
++	/** @handle: Handle of the buffer object to label. */
++	__u32 handle;
++
++	/**  @pad: MBZ. */
++	__u32 pad;
++
++	/**
++	 * @label: User pointer to a NUL-terminated string
++	 *
++	 * Length cannot be greater than 4096.
++	 * NULL is permitted and means clear the label.
++	 */
++	__u64 label;
++};
++
+ /* Definitions for coredump decoding in user space */
+ #define PANFROSTDUMP_MAJOR 1
+ #define PANFROSTDUMP_MINOR 0
+-- 
+2.50.1
+

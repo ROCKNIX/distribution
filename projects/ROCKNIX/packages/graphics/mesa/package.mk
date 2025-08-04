@@ -12,33 +12,29 @@ PKG_DEPENDS_TARGET="toolchain expat libdrm Mako:host pyyaml:host"
 PKG_LONGDESC="Mesa is a 3-D graphics library with an API."
 PKG_TOOLCHAIN="meson"
 PKG_PATCH_DIRS+=" ${DEVICE}"
-
-case ${DEVICE} in
-  H700|RK3326|RK3399|RK3566|RK3588|S922X)
-    PKG_VERSION="24.3.4"
-    ;;
-  *)
-    PKG_VERSION="25.1.6"
-    if [ "${GRAPHIC_DRIVERS}" = "panfrost" ]; then
-      PKG_DEPENDS_TARGET+=" mesa:host"
-    fi
-    ;;
-esac
+PKG_VERSION="25.1.7"
 PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
+
+if listcontains "${GRAPHIC_DRIVERS}" "panfrost"; then
+  PKG_DEPENDS_TARGET+=" mesa:host"
+fi
 
 get_graphicdrivers
 
 pre_configure_host() {
+# Host only gets built for panfrost.
 PKG_MESON_OPTS_HOST+=" ${MESA_LIBS_PATH_OPTS}  \
                        -Dgallium-drivers=${GALLIUM_DRIVERS// /,} \
-                       -Dvulkan-drivers=${VULKAN_DRIVERS_MESA// /,} "
+                       -Dvulkan-drivers=${VULKAN_DRIVERS_MESA// /,} \
+                       -Dmesa-clc=enabled \
+                       -Dinstall-mesa-clc=true \
+                       -Dprecomp-compiler=enabled \
+                       -Dinstall-precomp-compiler=true"
 }
 
 PKG_MESON_OPTS_TARGET=" ${MESA_LIBS_PATH_OPTS} \
                        -Dgallium-drivers=${GALLIUM_DRIVERS// /,} \
                        -Dgallium-extra-hud=false \
-                       -Dgallium-opencl=disabled \
-                       -Dgallium-xa=disabled \
                        -Dshader-cache=enabled \
                        -Dshared-glapi=enabled \
                        -Dopengl=true \
@@ -46,20 +42,23 @@ PKG_MESON_OPTS_TARGET=" ${MESA_LIBS_PATH_OPTS} \
                        -Degl=enabled \
                        -Dlibunwind=disabled \
                        -Dlmsensors=disabled \
-                       -Dbuild-tests=false \
-                       -Dosmesa=false"
+                       -Dbuild-tests=false"
+
+if listcontains "${GRAPHIC_DRIVERS}" "panfrost"; then
+  # These options require that we have built mesa host as specified above
+  PKG_MESON_OPTS_TARGET+=" -Dmesa-clc=system \
+                           -Dprecomp-compiler=system"
+fi
 
 if [ "${DISPLAYSERVER}" = "x11" ]; then
   PKG_DEPENDS_TARGET+=" xorgproto libXext libXdamage libXfixes libXxf86vm libxcb libX11 libxshmfence libXrandr libglvnd glfw"
   export X11_INCLUDES=
   PKG_MESON_OPTS_TARGET+="	-Dplatforms=x11 \
-				-Dgallium-nine=true \
 				-Dglx=dri \
 				-Dglvnd=enabled"
 elif [ "${DISPLAYSERVER}" = "wl" ]; then
   PKG_DEPENDS_TARGET+=" wayland wayland-protocols libglvnd glfw"
   PKG_MESON_OPTS_TARGET+=" 	-Dplatforms=wayland,x11 \
-				-Dgallium-nine=true \
 				-Dglx=dri \
 				-Dglvnd=enabled"
   PKG_DEPENDS_TARGET+=" xorgproto libXext libXdamage libXfixes libXxf86vm libxcb libX11 libxshmfence libXrandr libglvnd"

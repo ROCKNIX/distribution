@@ -40,6 +40,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Retrieve ccache
+        run: |
+          URL="https://github.com/${{ github.repository_owner }}/distribution-cache/releases/download/ccache/ccache-arm-${{ inputs.DEVICE }}.tar"
+          curl -L --fail --silent --show-error "$URL" | tar -xvf - || echo "Cache archive not found, skipping."       
+
       - name: build
         uses: corrupt952/actions-retry-command@v1.0.7
         with:
@@ -60,12 +65,45 @@ jobs:
           name: output.logs (${{ inputs.DEVICE }}-arm)
           path: |
             output.log
-            ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.threads/logs/
+            ./build.ROCKNIX-${{ inputs.DEVICE }}.arm/.threads/logs/
+
+      - name: Clean ccache
+        run: |
+          export CCACHE_DIR=./build.ROCKNIX-${{ inputs.DEVICE }}.arm/.ccache
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.arm/toolchain/bin/ccache -s -v
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.arm/toolchain/bin/ccache -M 1G
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.arm/toolchain/bin/ccache -c
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.arm/toolchain/bin/ccache -s -v
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.arm/toolchain/bin/ccache -z
+
+      - name: Tar ccache
+        run: |
+          tar -cf ccache-arm-${{ inputs.DEVICE }}.tar ./build.ROCKNIX-${{ inputs.DEVICE }}.arm/.ccache  
+
+      - name: save ccache
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ccache
+          artifacts: ccache-arm-${{ inputs.DEVICE }}.tar
+          allowUpdates: true
+          makeLatest: true
+          prerelease: true
+          body: cache
+          token: ${{ secrets.GH_PAT }}
+          repo: distribution-cache
+        continue-on-error: true
 
       - name: Compress directory
         run: |
-          tar --zstd -cf build.arm.tar.zst \
-          build.ROCKNIX-${{ inputs.DEVICE }}.arm/
+          find build.ROCKNIX-${{ inputs.DEVICE }}.arm \
+          -path build.ROCKNIX-${{ inputs.DEVICE }}.arm/build -prune -o \
+          -print > filelist.txt
+  
+          find build.ROCKNIX-${{ inputs.DEVICE }}.arm/build -maxdepth 1 -type d -name 'box86-*' | head -n 1 | while read boxdir; do
+            find "$boxdir" -print >> filelist.txt
+          done
+  
+          tar --zstd -cf build.arm.tar.zst --files-from=filelist.txt
       - uses: actions/upload-artifact@v4
         with:
           name: arm (${{ inputs.DEVICE }})

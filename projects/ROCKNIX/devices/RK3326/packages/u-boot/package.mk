@@ -8,6 +8,7 @@ PKG_SITE="https://www.denx.de/wiki/U-Boot"
 PKG_URL="https://github.com/ROCKNIX/hardkernel-uboot/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain Python3 swig:host pyelftools:host"
 PKG_LONGDESC="Das U-Boot is a cross-platform bootloader for embedded systems."
+PKG_BUILD_FLAGS="-parallel"
 PKG_TOOLCHAIN="manual"
 
 PKG_NEED_UNPACK="${PROJECT_DIR}/${PROJECT}/bootloader ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/bootloader"

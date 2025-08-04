@@ -4,7 +4,7 @@
 . ${ROOT}/packages/devel/libfmt/package.mk
 
 case ${DEVICE} in
-  SM8250|SM8550|AMD64)
+  SM8250|SM8550|SDM845|AMD64)
     ;;
   *)
     PKG_VERSION="9.1.0"

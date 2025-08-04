@@ -1,38 +1,15 @@
-################################################################################
-#      This file is part of OpenELEC - http://www.openelec.tv
-#      Copyright (C) 2009-2012 Stephan Raue (stephan@openelec.tv)
-#      Copyright (C) 2020      351ELEC team (https://github.com/fewtarius/351ELEC)
-#
-#  This Program is free software; you can redistribute it and/or modify
-#  it under the terms of the GNU General Public License as published by
-#  the Free Software Foundation; either version 2, or (at your option)
-#  any later version.
-#
-#  This Program is distributed in the hope that it will be useful,
-#  but WITHOUT ANY WARRANTY; without even the implied warranty of
-#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-#  GNU General Public License for more details.
-#
-#  You should have received a copy of the GNU General Public License
-#  along with OpenELEC.tv; see the file COPYING.  If not, write to
-#  the Free Software Foundation, 51 Franklin Street, Suite 500, Boston, MA 02110, USA.
-#  http://www.gnu.org/copyleft/gpl.html
-################################################################################
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="libretro-database"
-PKG_VERSION="c2b26123664ee485d91adf6689c35d8966b6fcf5"
+PKG_VERSION="d3075ab69659d351ae3aea7dc4ba53e21d3d9d1e"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/libretro/libretro-database"
-PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_URL="https://github.com/libretro/libretro-database/archive/${PKG_VERSION}.tar.gz"
+PKG_DEPENDS_TARGET=""
 PKG_LONGDESC="Repository containing cheatcode files, content data files, etc."
-
-PKG_TOOLCHAIN="make"
-
-configure_target() {
-  cd ${PKG_BUILD}
-}
+PKG_TOOLCHAIN="manual"
 
 makeinstall_target() {
-  make install INSTALLDIR="${INSTALL}/usr/share/libretro-database"
+  make install INSTALLDIR="${INSTALL}/usr/share/libretro-database" -C "${PKG_BUILD}"
 }

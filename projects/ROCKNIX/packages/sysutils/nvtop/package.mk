@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present JELOS (https://github.com/JustEnoughLinuxOS)
+
+PKG_NAME="nvtop"
+PKG_VERSION="339ee0b10a64ec51f43d27357b0068a40f16e9e4"
+PKG_ARCH="arm aarch64"
+PKG_LICENSE="GPLv3"
+PKG_SITE="https://github.com/Syllo/nvtop"
+PKG_URL="${PKG_SITE}.git"
+PKG_DEPENDS_TARGET="libdrm mesa"
+PKG_LONGDESC="NVTOP stands for Neat Videocard TOP, a (h)top like task monitor for AMD, Intel and NVIDIA GPUs."
+PKG_TOOLCHAIN="cmake"
+
+case ${TARGET_ARCH} in
+  x86_64)
+    PKG_CMAKE_OPTS_TARGET+=" -DNVIDIA_SUPPORT=ON -DAMDGPU_SUPPORT=ON -DINTEL_SUPPORT=ON -DPANFROST_SUPPORT=OFF -DPANTHOR_SUPPORT=OFF -DMSM_SUPPORT=OFF"
+  ;;
+  aarch64)
+      PKG_CMAKE_OPTS_TARGET+=" -DPANFROST_SUPPORT=ON -DPANTHOR_SUPPORT=ON -DMSM_SUPPORT=ON -DNVIDIA_SUPPORT=OFF -DAMDGPU_SUPPORT=OFF -DINTEL_SUPPORT=OFF"
+  ;;
+esac

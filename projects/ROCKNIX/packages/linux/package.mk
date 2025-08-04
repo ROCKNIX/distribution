@@ -31,14 +31,14 @@ case ${DEVICE} in
   ;;
   *)
     case ${DEVICE} in
-      H700|SM8550)
+      H700)
         PKG_VERSION="6.15.2"
       ;;
-      SM8250)
-        PKG_VERSION="6.15.7"
+      SM8250|SM8550)
+        PKG_VERSION="6.16"
       ;;
       *)
-        PKG_VERSION="6.12.39"
+        PKG_VERSION="6.12.40"
         PKG_PATCH_DIRS+=" 6.12-LTS"
       ;;
     esac

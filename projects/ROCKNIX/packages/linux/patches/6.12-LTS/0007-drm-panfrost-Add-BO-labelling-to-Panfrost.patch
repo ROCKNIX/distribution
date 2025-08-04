@@ -1,0 +1,131 @@
+From 23703a8b6430d1570bf761a5a2a38479a8c2cceb Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Adri=C3=A1n=20Larumbe?= <adrian.larumbe@collabora.com>
+Date: Tue, 20 May 2025 18:43:58 +0100
+Subject: [PATCH 3/7] drm/panfrost: Add BO labelling to Panfrost
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Functions for labelling UM-exposed an internal BOs are provided. An
+example of the latter would be the Perfcnt sample buffer.
+
+This commit is done in preparation of a following one that will allow
+UM to set BO labels through a new ioctl().
+
+Signed-off-by: Adrián Larumbe <adrian.larumbe@collabora.com>
+Reviewed-by: Steven Price <steven.price@arm.com>
+Reviewed-by: Boris Brezillon <boris.brezillon@collabora.com>
+Signed-off-by: Steven Price <steven.price@arm.com>
+Link: https://lore.kernel.org/r/20250520174634.353267-2-adrian.larumbe@collabora.com
+---
+ drivers/gpu/drm/panfrost/panfrost_gem.c | 42 +++++++++++++++++++++++++
+ drivers/gpu/drm/panfrost/panfrost_gem.h | 17 ++++++++++
+ 2 files changed, 59 insertions(+)
+
+diff --git a/drivers/gpu/drm/panfrost/panfrost_gem.c b/drivers/gpu/drm/panfrost/panfrost_gem.c
+index 8e0ff3efe..a2caa6ad9 100644
+--- a/drivers/gpu/drm/panfrost/panfrost_gem.c
++++ b/drivers/gpu/drm/panfrost/panfrost_gem.c
+@@ -1,6 +1,7 @@
+ // SPDX-License-Identifier: GPL-2.0
+ /* Copyright 2019 Linaro, Ltd, Rob Herring <robh@kernel.org> */
+ 
++#include <linux/cleanup.h>
+ #include <linux/err.h>
+ #include <linux/slab.h>
+ #include <linux/dma-buf.h>
+@@ -35,6 +36,9 @@ static void panfrost_gem_free_object(struct drm_gem_object *obj)
+ 	 */
+ 	WARN_ON_ONCE(!list_empty(&bo->mappings.list));
+ 
++	kfree_const(bo->label.str);
++	mutex_destroy(&bo->label.lock);
++
+ 	if (bo->sgts) {
+ 		int i;
+ 		int n_sgt = bo->base.base.size / SZ_2M;
+@@ -260,6 +264,7 @@ struct drm_gem_object *panfrost_gem_create_object(struct drm_device *dev, size_t
+ 	mutex_init(&obj->mappings.lock);
+ 	obj->base.base.funcs = &panfrost_gem_funcs;
+ 	obj->base.map_wc = !pfdev->coherent;
++	mutex_init(&obj->label.lock);
+ 
+ 	return &obj->base.base;
+ }
+@@ -302,3 +307,40 @@ panfrost_gem_prime_import_sg_table(struct drm_device *dev,
+ 
+ 	return obj;
+ }
++
++void
++panfrost_gem_set_label(struct drm_gem_object *obj, const char *label)
++{
++	struct panfrost_gem_object *bo = to_panfrost_bo(obj);
++	const char *old_label;
++
++	scoped_guard(mutex, &bo->label.lock) {
++		old_label = bo->label.str;
++		bo->label.str = label;
++	}
++
++	kfree_const(old_label);
++}
++
++void
++panfrost_gem_internal_set_label(struct drm_gem_object *obj, const char *label)
++{
++	struct panfrost_gem_object *bo = to_panfrost_bo(obj);
++	const char *str;
++
++	/* We should never attempt labelling a UM-exposed GEM object */
++	if (drm_WARN_ON(bo->base.base.dev, bo->base.base.handle_count > 0))
++		return;
++
++	if (!label)
++		return;
++
++	str = kstrdup_const(label, GFP_KERNEL);
++	if (!str) {
++		/* Failing to allocate memory for a label isn't a fatal condition */
++		drm_warn(bo->base.base.dev, "Not enough memory to allocate BO label");
++		return;
++	}
++
++	panfrost_gem_set_label(obj, str);
++}
+diff --git a/drivers/gpu/drm/panfrost/panfrost_gem.h b/drivers/gpu/drm/panfrost/panfrost_gem.h
+index 7516b7ecf..6c187b9b6 100644
+--- a/drivers/gpu/drm/panfrost/panfrost_gem.h
++++ b/drivers/gpu/drm/panfrost/panfrost_gem.h
+@@ -41,6 +41,20 @@ struct panfrost_gem_object {
+ 	 */
+ 	size_t heap_rss_size;
+ 
++	/**
++	 * @label: BO tagging fields. The label can be assigned within the
++	 * driver itself or through a specific IOCTL.
++	 */
++	struct {
++		/**
++		 * @label.str: Pointer to NULL-terminated string,
++		 */
++		const char *str;
++
++		/** @lock.str: Protects access to the @label.str field. */
++		struct mutex lock;
++	} label;
++
+ 	bool noexec		:1;
+ 	bool is_heap		:1;
+ };
+@@ -89,4 +103,7 @@ void panfrost_gem_teardown_mappings_locked(struct panfrost_gem_object *bo);
+ int panfrost_gem_shrinker_init(struct drm_device *dev);
+ void panfrost_gem_shrinker_cleanup(struct drm_device *dev);
+ 
++void panfrost_gem_set_label(struct drm_gem_object *obj, const char *label);
++void panfrost_gem_internal_set_label(struct drm_gem_object *obj, const char *label);
++
+ #endif /* __PANFROST_GEM_H__ */
+-- 
+2.50.1
+

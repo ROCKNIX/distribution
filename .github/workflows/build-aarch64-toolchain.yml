@@ -48,15 +48,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Retrieve ccache aarch64-toolchain
-        id: retrieve-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.ccache
-          key: ccache-aarch64-${{ inputs.DEVICE }}-toolchain-${{ github.sha }}
-          restore-keys: |
-            ccache-aarch64-${{ inputs.DEVICE }}-toolchain-${{ github.sha }}
-            ccache-aarch64-${{ inputs.DEVICE }}-toolchain-
+      - name: Retrieve ccache
+        run: |
+          URL="https://github.com/${{ github.repository_owner }}/distribution-cache/releases/download/ccache/ccache-aarch64-${{ inputs.DEVICE }}-toolchain.tar"
+          curl -L --fail --silent --show-error "$URL" | tar -xvf - || echo "Cache archive not found, skipping."            
 
       - name: Build
         uses: corrupt952/actions-retry-command@v1.0.7
@@ -80,16 +75,6 @@ jobs:
             output.log
             ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.threads/logs/
 
-      - name: Delete used cache
-        if: ${{ steps.retrieve-cache.outputs.cache-hit && steps.retrieve-cache.outputs.cache-matched-key != env.CACHE_KEY }}
-        continue-on-error: true
-        env:
-          GH_REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh extension install actions/gh-actions-cache
-          gh actions-cache delete "${{ steps.retrieve-cache.outputs.cache-matched-key }}" -R $GH_REPO --confirm
-
       - name: Clean ccache
         run: |
           export CCACHE_DIR=./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.ccache
@@ -99,12 +84,22 @@ jobs:
           ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -s -v
           ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -z
 
+      - name: Tar ccache
+        run: |
+          tar -cf ccache-aarch64-${{ inputs.DEVICE }}-toolchain.tar ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.ccache  
+
       - name: Save ccache
-        if: ${{ ! steps.retrieve-cache.outputs.cache-hit || steps.retrieve-cache.outputs.cache-matched-key != env.CACHE_KEY }}
-        uses: actions/cache/save@v4
+        uses: ncipollo/release-action@v1
         with:
-          path: ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.ccache
-          key: ccache-aarch64-${{ inputs.DEVICE }}-toolchain-${{ github.sha }}
+          tag: ccache
+          artifacts: ccache-aarch64-${{ inputs.DEVICE }}-toolchain.tar
+          allowUpdates: true
+          makeLatest: true
+          prerelease: true
+          body: ccache
+          token: ${{ secrets.GH_PAT }}
+          repo: distribution-cache
+        continue-on-error: true
 
       - name: Compress directory
         run: |

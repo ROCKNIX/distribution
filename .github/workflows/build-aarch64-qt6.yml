@@ -50,15 +50,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Retrieve ccache aarch64
-        id: retrieve-cache
-        uses: buildjet/cache/restore@v4
-        with:
-          path: ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.ccache
-          key: ccache-aarch64-${{ inputs.DEVICE }}-qt6-${{ github.sha }}
-          restore-keys: |
-            ccache-aarch64-${{ inputs.DEVICE }}-qt6-${{ github.sha }}
-            ccache-aarch64-${{ inputs.DEVICE }}-qt6-
+      - name: Retrieve ccache
+        run: |
+          URL="https://github.com/${{ github.repository_owner }}/distribution-cache/releases/download/ccache/ccache-aarch64-${{ inputs.DEVICE }}-qt6.tar"
+          curl -L --fail --silent --show-error "$URL" | tar -xvf - || echo "Cache archive not found, skipping." 
 
       - name: Download aarch64 (${{ inputs.DEVICE }})
         uses: actions/download-artifact@v4
@@ -76,10 +71,6 @@ jobs:
       - name: Clean up compressed aarch64 file
         run: rm build.aarch64.tar
 
-      - name: expand ccache
-        run: |
-          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -d ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.ccache -M 20G
-
       - name: Build
         uses: corrupt952/actions-retry-command@v1.0.7
         with:
@@ -88,7 +79,7 @@ jobs:
             touch timestamp_before
             set -e
             { docker run --init --env-file .env --rm --user $(id -u):$(id -g) -v ${PWD}:${PWD} -w ${PWD} "ghcr.io/${{ inputs.OWNER_LC }}/rocknix-build:latest" \
-              bash -c "./scripts/build_mt qt6"; echo $? > docker_exit_code; } | tee output.log | grep -E  --color=never --line-buffered "^GET|^UNPACK|^BUILD|^INSTALL" || true
+              bash -c "./scripts/build_mt qt6 modules"; echo $? > docker_exit_code; } | tee output.log | grep -E  --color=never --line-buffered "^GET|^UNPACK|^BUILD|^INSTALL" || true
             exit_code=$(<docker_exit_code)
             exit $exit_code
           max_attempts: 6
@@ -103,32 +94,36 @@ jobs:
             output.log
             ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.threads/logs/
 
-      - name: Delete used cache
-        if: ${{ steps.retrieve-cache.outputs.cache-hit && steps.retrieve-cache.outputs.cache-matched-key != env.CACHE_KEY }}
-        uses: buildjet/cache-delete@v1
-        with:
-          cache_key: ${{ steps.retrieve-cache.outputs.cache-matched-key }}
-
       - name: Clean ccache
         run: |
           export CCACHE_DIR=./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.ccache
           ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -s -v
-          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -M 800M
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -M 1.9G
           ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -c
           ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -s -v
           ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -z
 
+      - name: Tar ccache
+        run: |
+          tar --remove-files -cf ccache-aarch64-${{ inputs.DEVICE }}-qt6.tar ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.ccache 
+
       - name: Save ccache
-        if: ${{ ! steps.retrieve-cache.outputs.cache-hit || steps.retrieve-cache.outputs.cache-matched-key != env.CACHE_KEY }}
-        uses: buildjet/cache/save@v4
+        uses: ncipollo/release-action@v1
         with:
-          path: ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.ccache
-          key: ccache-aarch64-${{ inputs.DEVICE }}-qt6-${{ github.sha }}
+          tag: ccache
+          artifacts: ccache-aarch64-${{ inputs.DEVICE }}-qt6.tar
+          allowUpdates: true
+          makeLatest: true
+          prerelease: true
+          body: ccache
+          token: ${{ secrets.GH_PAT }}
+          repo: distribution-cache
+        continue-on-error: true
 
       - name: Compress directory
         run: |
-          find ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/ -mindepth 1 -type d -newer timestamp_before > qt6.txt
-          tar --zstd -cf build.qt6.tar.zst -T qt6.txt
+          tar --zstd --exclude='build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/build' -cf build.qt6.tar.zst \
+          build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/          
 
       - uses: actions/upload-artifact@v4
         with:

@@ -25,7 +25,7 @@ PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Late 2014/Early 2015 version of MAME (0.160-ish) for libretro. Compatible with MAME 0.160 romsets."
 PKG_TOOLCHAIN="make"
-PKG_BUILD_FLAGS="-lto"
+PKG_BUILD_FLAGS="-lto -parallel"
 
 pre_make_target() {
   export REALCC=${CC}

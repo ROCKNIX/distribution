@@ -45,15 +45,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Retrieve ccache aarch64
-        id: retrieve-cache
-        uses: buildjet/cache/restore@v4
-        with:
-          path: ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.ccache
-          key: ccache-aarch64-${{ inputs.DEVICE }}-mame-${{ github.sha }}
-          restore-keys: |
-            ccache-aarch64-${{ inputs.DEVICE }}-mame-${{ github.sha }}
-            ccache-aarch64-${{ inputs.DEVICE }}-mame-
+      - name: Retrieve ccache
+        run: |
+          URL="https://github.com/${{ github.repository_owner }}/distribution-cache/releases/download/ccache/ccache-aarch64-${{ inputs.DEVICE }}-mame.tar"
+          curl -L --fail --silent --show-error "$URL" | tar -xvf - || echo "Cache archive not found, skipping."
 
       - name: Download aarch64-toolchain (${{ inputs.DEVICE }})
         uses: actions/download-artifact@v4
@@ -61,15 +56,16 @@ jobs:
           name: aarch64-toolchain (${{ inputs.DEVICE }})
 
       - name: Extract artifact aarch64-toolchain
-        run: |
-          tar --zstd -xf build.aarch64-toolchain.tar.zst
+        uses: corrupt952/actions-retry-command@v1.0.7
+        with:
+          command: |
+            tar --zstd -xf build.aarch64-toolchain.tar.zst
+          max_attempts: 3
+          retry_interval: 10
 
       - name: Clean up compressed aarch64 file
         run: rm build.aarch64-toolchain.tar.zst
 
-      - name: Expand ccache
-        run: |
-          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -d ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.ccache -M 20G
 
       - name: Build
         uses: corrupt952/actions-retry-command@v1.0.7
@@ -93,27 +89,31 @@ jobs:
             output.log
             ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.threads/logs/
 
-      - name: Delete used cache
-        if: ${{ steps.retrieve-cache.outputs.cache-hit && steps.retrieve-cache.outputs.cache-matched-key != env.CACHE_KEY }}
-        uses: buildjet/cache-delete@v1
-        with:
-          cache_key: ${{ steps.retrieve-cache.outputs.cache-matched-key }}
-
       - name: Clean ccache
         run: |
           export CCACHE_DIR=./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.ccache
           ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -s -v
-          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -M 400M
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -M 500M
           ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -c
           ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -s -v
           ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -z
 
+      - name: Tar ccache
+        run: |
+           tar -cf ccache-aarch64-${{ inputs.DEVICE }}-mame.tar ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.ccache  
+
       - name: Save ccache
-        if: ${{ ! steps.retrieve-cache.outputs.cache-hit || steps.retrieve-cache.outputs.cache-matched-key != env.CACHE_KEY }}
-        uses: buildjet/cache/save@v4
+        uses: ncipollo/release-action@v1
         with:
-          path: ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.ccache
-          key: ccache-aarch64-${{ inputs.DEVICE }}-mame-${{ github.sha }}
+          tag: ccache
+          artifacts: ccache-aarch64-${{ inputs.DEVICE }}-mame.tar
+          allowUpdates: true
+          makeLatest: true
+          prerelease: true
+          body: ccache
+          token: ${{ secrets.GH_PAT }}
+          repo: distribution-cache
+        continue-on-error: true
 
       - name: Compress directory
         run: |

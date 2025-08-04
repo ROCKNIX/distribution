@@ -26,7 +26,7 @@ PKG_SITE="https://github.com/libretro/mame2010-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Late 2010 version of MAME (0.139) for libretro. Compatible with MAME 0.139 romsets."
-
+PKG_BUILD_FLAGS="-parallel"
 PKG_TOOLCHAIN="make"
 
 make_target() {

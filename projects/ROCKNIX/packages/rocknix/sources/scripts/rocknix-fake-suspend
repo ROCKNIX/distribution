@@ -125,15 +125,6 @@ unblock_input() {
 }
 
 do_suspend_actions() {
-  # Only do suspend actions when HDMI is disconnected
-  check_hdmi_connected
-  HDMI_CONNECTED=$?
-
-  if [[ $HDMI_CONNECTED -eq 0 ]]; then
-    ${DEBUG} && log $0 "HDMI connected, no suspend actions performed"
-    return 0
-  fi
-  
   # Turn off display
   display_off
 
@@ -199,29 +190,33 @@ do_shutdown() {
 }
 
 suspend() {
-  # Suspend event - create delay flag file
+  # Create delay flag file
   ${DEBUG} && log $0 "Creating ${DELAY_FLAG_FILE}"
   touch "${DELAY_FLAG_FILE}"
 
-  # Wait for the desired shutdown delay
   check_es_running_game
   local RUNNING_GAME=$?
 
+  check_charging
+  local CHARGING=$?
+
+  # Determine shutdown delay
   local DELAY=${SHUTDOWN_DELAY}
   [[ $RUNNING_GAME -eq 0 ]] && DELAY=${SHUTDOWN_DELAY_RUNNING_GAME}
   ${DEBUG} && log $0 "Shutdown delay - ${DELAY} seconds"
+  [[ ${CHARGING} -eq 0 ]] && ${DEBUG} && log $0 "Charging ..."
 
-  # Actions on suspend, only if there is a timed delay
-  if [[ "${DELAY}" -gt 0 ]]; then
+  if [[ "${DELAY}" -gt 0 || ${CHARGING} -eq 0 ]]; then
     do_suspend_actions
   fi
 
+  # Delay shutdown
   sleep ${DELAY}
 
   # Delay has completed - check whether the flag file is still present
   if [[ -f "${DELAY_FLAG_FILE}" ]]; then
     ${DEBUG} && log $0 "Delay expired, flag file found"
-    # Do shutdown
+    # Flag present - shutdown
     do_shutdown
   else
     ${DEBUG} && log $0 "Delay expired, flag file not found"
@@ -256,7 +251,7 @@ fi
 SHUTDOWN_DELAY="$(get_setting system.shutdown_delay)"
 [[ "${SHUTDOWN_DELAY}" = "" ]] && SHUTDOWN_DELAY=0
 
-# If a game is running, by default delay the shutdown for 5 minutes
+# If a game is running, by default delay the shutdown for 15 minutes
 SHUTDOWN_DELAY_RUNNING_GAME="$(get_setting system.shutdown_delay_running_game)"
 [[ "${SHUTDOWN_DELAY_RUNNING_GAME}" = "" ]] && SHUTDOWN_DELAY_RUNNING_GAME=900
 
@@ -287,6 +282,10 @@ SOURCE=$1
 # Action = open / close
 ACTION=$2
 
+# Check if HDMI is connected
+check_hdmi_connected
+HDMI_CONNECTED=$?
+
 # Handle event
 if [[ "${SOURCE}" = "power" ]]; then
   ${DEBUG} && log $0 "Power button pressed ..."
@@ -298,10 +297,14 @@ if [[ "${SOURCE}" = "power" ]]; then
     ${DEBUG} && log $0 "Power suspend active - resuming"
     resume
   else
-    # Create flag file and suspend
-    ${DEBUG} && log $0 "Suspending"
-    touch ${POWER_SUSPEND_ACTIVE_FLAG_FILE}
-    suspend
+    if [[ $HDMI_CONNECTED -eq 0 ]]; then
+      ${DEBUG} && log $0 "HDMI connected, not suspending"
+    else
+      # Create flag file and suspend
+      ${DEBUG} && log $0 "Suspending"
+      touch ${POWER_SUSPEND_ACTIVE_FLAG_FILE}
+      suspend
+    fi
   fi
 elif [[ "${SOURCE}" = "lid" && "${ACTION}" = "close" ]]; then
   ${DEBUG} && log $0 "Lid closed ..."
@@ -311,9 +314,13 @@ elif [[ "${SOURCE}" = "lid" && "${ACTION}" = "close" ]]; then
     # In a 'suspend' state from power button, do nothing
     ${DEBUG} && log $0 "Power suspend active - no action"
   else
-    # Suspend
-    ${DEBUG} && log $0 "Suspending"
-    suspend
+    if [[ $HDMI_CONNECTED -eq 0 ]]; then
+      ${DEBUG} && log $0 "HDMI connected, not suspending"
+    else
+      # Suspend
+      ${DEBUG} && log $0 "Suspending"
+      suspend
+    fi
   fi
 elif [[ "${SOURCE}" = "lid" && "${ACTION}" = "open" ]]; then
   rm -f "${LID_CLOSED_FLAG_FILE}"

@@ -51,15 +51,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Retrieve ccache aarch64
-        id: retrieve-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.ccache
-          key: ccache-aarch64-${{ inputs.DEVICE }}-emu-libretro-${{ github.sha }}
-          restore-keys: |
-            ccache-aarch64-${{ inputs.DEVICE }}-emu-libretro-${{ github.sha }}
-            ccache-aarch64-${{ inputs.DEVICE }}-emu-libretro-
+      - name: Retrieve ccache
+        run: |
+          URL="https://github.com/${{ github.repository_owner }}/distribution-cache/releases/download/ccache/ccache-aarch64-${{ inputs.DEVICE }}-emu-libretro.tar"
+          curl -L --fail --silent --show-error "$URL" | tar -xvf - || echo "Cache archive not found, skipping."  
 
       - name: Download aarch64 (${{ inputs.DEVICE }})
         uses: actions/download-artifact@v4
@@ -77,6 +72,22 @@ jobs:
       - name: Clean up compressed aarch64 file
         run: rm build.aarch64.tar
 
+      - name: Download build aarch64 (${{ inputs.DEVICE }})
+        uses: actions/download-artifact@v4
+        with:
+          name: aarch64 build (${{ inputs.DEVICE }})
+
+      - name: Extract artifact aarch64 build
+        uses: corrupt952/actions-retry-command@v1.0.7
+        with:
+          command: |
+            tar -xf build.build.aarch64.tar
+          max_attempts: 3
+          retry_interval: 10
+
+      - name: Clean up compressed aarch64 file
+        run: rm build.build.aarch64.tar
+
       - name: Download qt6 (${{ inputs.DEVICE }})
         if: ${{ inputs.DEVICE == 'RK3399' || inputs.DEVICE == 'RK3566' || inputs.DEVICE == 'RK3588' || inputs.DEVICE == 'S922X' || inputs.DEVICE == 'SM8250' || inputs.DEVICE == 'SM8550' }}
         uses: actions/download-artifact@v4
@@ -85,8 +96,12 @@ jobs:
 
       - name: Extract artifact qt6
         if: ${{ inputs.DEVICE == 'RK3399' || inputs.DEVICE == 'RK3566' || inputs.DEVICE == 'RK3588' || inputs.DEVICE == 'S922X' || inputs.DEVICE == 'SM8250' || inputs.DEVICE == 'SM8550' }}
-        run: |
-          sudo tar --zstd -xf build.qt6.tar.zst --same-owner
+        uses: corrupt952/actions-retry-command@v1.0.7
+        with:
+          command: |
+            sudo tar --zstd -xf build.qt6.tar.zst --same-owner
+          max_attempts: 3
+          retry_interval: 10
 
       - name: Clean up compressed qt6 file
         if: ${{ inputs.DEVICE == 'RK3399' || inputs.DEVICE == 'RK3566' || inputs.DEVICE == 'RK3588' || inputs.DEVICE == 'S922X' || inputs.DEVICE == 'SM8250' || inputs.DEVICE == 'SM8550' }}
@@ -103,10 +118,6 @@ jobs:
 
       - name: Clean up compressed mame-lr file
         run: rm build.mame-lr.tar.zst
-
-      - name: Expand ccache
-        run: |
-          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -d ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.ccache -M 20G
 
       - name: Build
         uses: corrupt952/actions-retry-command@v1.0.7
@@ -130,31 +141,31 @@ jobs:
             output.log
             ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.threads/logs/
 
-      - name: Delete used cache
-        if: ${{ steps.retrieve-cache.outputs.cache-hit && steps.retrieve-cache.outputs.cache-matched-key != env.CACHE_KEY }}
-        continue-on-error: true
-        env:
-          GH_REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh extension install actions/gh-actions-cache
-          gh actions-cache delete "${{ steps.retrieve-cache.outputs.cache-matched-key }}" -R $GH_REPO --confirm
-
       - name: Clean ccache
         run: |
           export CCACHE_DIR=./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.ccache
           ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -s -v
-          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -M 1.2G
+          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -M 1.9G
           ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -c
           ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -s -v
           ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -z
 
+      - name: Tar ccache
+        run: |
+          tar -cf ccache-aarch64-${{ inputs.DEVICE }}-emu-libretro.tar ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.ccache 
+
       - name: Save ccache
-        if: ${{ ! steps.retrieve-cache.outputs.cache-hit || steps.retrieve-cache.outputs.cache-matched-key != env.CACHE_KEY }}
-        uses: actions/cache/save@v4
+        uses: ncipollo/release-action@v1
         with:
-          path: ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.ccache
-          key: ccache-aarch64-${{ inputs.DEVICE }}-emu-libretro-${{ github.sha }}
+          tag: ccache
+          artifacts: ccache-aarch64-${{ inputs.DEVICE }}-emu-libretro.tar
+          allowUpdates: true
+          makeLatest: true
+          prerelease: true
+          body: ccache
+          token: ${{ secrets.GH_PAT }}
+          repo: distribution-cache
+        continue-on-error: true
 
       - name: Print space
         run: df -h

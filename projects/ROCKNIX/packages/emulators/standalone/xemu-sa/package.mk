@@ -2,7 +2,7 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="xemu-sa"
-PKG_VERSION="02d35be3030119099f45f2ff56a4a911ab7e6c34"
+PKG_VERSION="98a3974290618086de5132d27c8ede736f9d93ea"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/xemu-project/xemu"
 PKG_URL="${PKG_SITE}.git"
@@ -29,11 +29,23 @@ pre_configure_target() {
   export TARGET_CXXFLAGS=$(echo ${TARGET_CXXFLAGS} | sed -e "s|-DNDEBUG||g")
   export CFLAGS=$(echo ${CFLAGS} | sed -e "s|-DNDEBUG||g")
   export CXXFLAGS=$(echo ${CXXFLAGS} | sed -e "s|-DNDEBUG||g")
+  export DONT_BUILD_LEGACY_PYC=1
+
+  # Download Sub Modules
+  ### xxHash
+  mkdir -p ${PKG_BUILD}/subprojects/
+  curl -Lo ${PKG_BUILD}/subprojects/xxhash.tar.gz http://github.com/mesonbuild/wrapdb/releases/download/xxhash_0.8.3-1/xxHash-0.8.3.tar.gz
+  tar -xvf ${PKG_BUILD}/subprojects/xxhash.tar.gz -C ${PKG_BUILD}/subprojects/
+  curl -Lo ${PKG_BUILD}/subprojects/xxhash_0.8.3-1_patch.zip https://wrapdb.mesonbuild.com/v2/xxhash_0.8.3-1/get_patch
+  unzip -o ${PKG_BUILD}/subprojects/xxhash_0.8.3-1_patch.zip -d ${PKG_BUILD}/subprojects
+  rm -rf ${PKG_BUILD}/subprojects/xxhash.tar.gz
+  rm -rf ${PKG_BUILD}/subprojects/xxhash_0.8.3-1_patch.zip
 }
 
 make_target() {
   cd ${PKG_BUILD}
- ./build.sh --cross-prefix="${TARGET_PREFIX}" \
+ ./build.sh --target-list=i386-softmmu \
+            --cross-prefix="${TARGET_PREFIX}" \
             --host="${TARGET_NAME}" \
             --enable-sdl \
             --enable-opengl \
@@ -48,7 +60,6 @@ make_target() {
             --disable-tools \
             --disable-guest-agent \
             --disable-tpm \
-            --disable-live-block-migration \
             --disable-rdma \
             --disable-replication \
             --disable-capstone \
@@ -83,11 +94,9 @@ make_target() {
             --disable-qcow1 \
             --disable-qed \
             --disable-parallels \
-            --disable-hax \
             --disable-hvf \
             --disable-whpx \
-            --with-default-devices \
-            --disable-renderdoc
+            --with-default-devices
 }
 
 makeinstall_target() {
