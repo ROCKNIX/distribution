@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2021-present Xargon (https://github.com/XargonWan)
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2025 ROCKNIX Team (https://github.com/ROCKNIX)
 
 PKG_NAME="rclone"
-PKG_VERSION="1.69.1"
+PKG_VERSION="1.70.3"
 PKG_DEPENDS_TARGET="toolchain fuse rsync"
 PKG_LONGDESC="rsync for cloud storage"
 PKG_TOOLCHAIN="manual"
