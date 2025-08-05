@@ -180,12 +180,28 @@ copilot-instructions/ (remote repository)
 │           └── <hostname>/
 │               ├── .backup-timestamp
 │               ├── copilot-instructions.md
-│               └── *.instructions.md
+│               ├── *.instructions.md
+│               ├── scripts/              # Pre-commit hook scripts
+│               │   ├── ssh-backup-hook.sh
+│               │   ├── setup-ssh-backup.sh
+│               │   └── pre-commit-hook-template.sh
+│               └── prompts/              # Reusable workflow prompts
+│                   ├── step_1-analyze_backups-first_pass.prompt.md
+│                   ├── step_2-analyze_backups-improvement_pass.prompt.md
+│                   └── step_3-analyze_backups-improve_shared_knowledge.prompt.md
 └── shared-copilot-knowledge/
     ├── instructions/
     ├── scripts/
     └── prompts/
 ```
+
+### Backup Contents
+
+The system automatically backs up:
+- **Instruction files**: All `.instructions.md` files from `.github/` and `.github/instructions/`
+- **Copilot config**: Main `copilot-instructions.md` file
+- **Scripts directory**: Complete `scripts/` directory for pre-commit hook configuration and setup tools
+- **Prompts directory**: Complete `prompts/` directory for reusable workflow prompt files
 
 ## Troubleshooting
 
