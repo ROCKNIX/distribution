@@ -7,6 +7,13 @@ applyTo: "**"
 
 - Use `.github/copilot-instructions.md` for workspace-wide, general coding practices and requirements. This file is automatically included in every chat request.
 - Use `.instructions.md` files for task-specific or file-specific instructions. Each should focus on a single topic, use Markdown formatting, and may include front matter (`description`, `applyTo`).
+- **"Measure Twice, Cut Once"**: Work methodically through planned steps, don't rush or conflate multiple tasks.
+- **Safety First**: Never run setup scripts, installers, or any system-modifying commands automatically. Always require explicit user confirmation.
+- **Git Safety**: Never recommend destructive git operations without explicit user confirmation. Prefer safer alternatives like `git stash` and backup branches.
+- **Targeted Fixes**: Always identify and isolate the root cause before implementing solutions. Test after each change.
+- **Testing Standards**: Use hybrid testing approaches with comprehensive coverage. Tests should be environment-aware and well-documented.
+- **Setup Script Excellence**: Provide clear progress feedback, interactive elements, error recovery, and robust OS detection in setup scripts.
+- **Project Structure**: Use clear top-level directory structure with functional grouping. Follow consistent naming conventions for scripts and documentation.
 - Use glob patterns in `applyTo` to control scope and visibility of instructions.
 - Reference other instruction files using Markdown links for modularity and reuse.
 - Avoid conflicting or ambiguous instructions across files.
