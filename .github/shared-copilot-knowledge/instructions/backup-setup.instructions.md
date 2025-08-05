@@ -173,22 +173,14 @@ git branch -r | grep auto-backup
 The SSH backup system creates:
 
 ```
-copilot-instructions/ (remote repository)
+shared-copilot-knowledge/ (remote repository)
 ├── backups/
 │   └── <project-name>/
 │       └── <branch-name>/
 │           └── <hostname>/
 │               ├── .backup-timestamp
 │               ├── copilot-instructions.md
-│               ├── *.instructions.md
-│               ├── scripts/              # Pre-commit hook scripts
-│               │   ├── ssh-backup-hook.sh
-│               │   ├── setup-ssh-backup.sh
-│               │   └── pre-commit-hook-template.sh
-│               └── prompts/              # Reusable workflow prompts
-│                   ├── step_1-analyze_backups-first_pass.prompt.md
-│                   ├── step_2-analyze_backups-improvement_pass.prompt.md
-│                   └── step_3-analyze_backups-improve_shared_knowledge.prompt.md
+│               └── *.instructions.md
 └── shared-copilot-knowledge/
     ├── instructions/
     ├── scripts/
@@ -197,11 +189,11 @@ copilot-instructions/ (remote repository)
 
 ### Backup Contents
 
-The system automatically backs up:
+The SSH backup system automatically backs up **instruction files only**:
 - **Instruction files**: All `.instructions.md` files from `.github/` and `.github/instructions/`
 - **Copilot config**: Main `copilot-instructions.md` file
-- **Scripts directory**: Complete `scripts/` directory for pre-commit hook configuration and setup tools
-- **Prompts directory**: Complete `prompts/` directory for reusable workflow prompt files
+
+**Note**: Scripts and prompts are not backed up via the pre-commit hook since they already exist in the source shared-copilot-knowledge repository and are distributed via GitHub Actions.
 
 ## Troubleshooting
 

@@ -5,8 +5,8 @@
 set -e
 
 # Configuration - Update these values for your setup
-BACKUP_REPO_URL="git@github.com:maxengel/copilot-instructions.git"
-BACKUP_REPO_HTTPS="https://github.com/maxengel/copilot-instructions.git"  # Fallback URL
+BACKUP_REPO_URL="git@github.com:maxengel/shared-copilot-knowledge.git"
+BACKUP_REPO_HTTPS="https://github.com/maxengel/shared-copilot-knowledge.git"  # Fallback URL
 
 # Repository context
 REPO_NAME="$(basename "$(git rev-parse --show-toplevel)")"
@@ -17,10 +17,9 @@ BACKUP_BRANCH="auto-backup/${REPO_NAME}/${BRANCH_NAME}/${HOSTNAME}"
 # Source directory for instruction files
 SRC_DIR="$(git rev-parse --show-toplevel)/.github"
 
-# Check if there are any instruction files, scripts, or prompts to backup
-repo_root="$(git rev-parse --show-toplevel)"
-if [ ! -f "$SRC_DIR"/*.instructions.md ] && [ ! -f "$SRC_DIR"/copilot-instructions.md ] && [ ! -d "$SRC_DIR/instructions" ] && [ ! -d "$repo_root/shared-copilot-knowledge/scripts" ] && [ ! -d "$SRC_DIR/../scripts" ] && [ ! -d "$repo_root/shared-copilot-knowledge/prompts" ] && [ ! -d "$SRC_DIR/prompts" ]; then
-    echo "[pre-commit] No instruction files, scripts, or prompts found - skipping backup."
+# Check if there are any instruction files to backup
+if [ ! -f "$SRC_DIR"/*.instructions.md ] && [ ! -f "$SRC_DIR"/copilot-instructions.md ] && [ ! -d "$SRC_DIR/instructions" ]; then
+    echo "[pre-commit] No instruction files found - skipping backup."
     exit 0
 fi
 
@@ -73,33 +72,6 @@ backup_via_ssh() {
             files_copied=$((files_copied + 1))
         fi
         
-        # Copy scripts directory if it exists (for pre-commit hook configuration)
-        local repo_root="$(git rev-parse --show-toplevel)"
-        if [ -d "$repo_root/shared-copilot-knowledge/scripts" ]; then
-            mkdir -p "$target_dir/scripts"
-            cp -r "$repo_root/shared-copilot-knowledge/scripts"/* "$target_dir/scripts"/
-            files_copied=$((files_copied + 1))
-            echo "[pre-commit] Copied scripts directory for hook configuration"
-        elif [ -d "$SRC_DIR/../scripts" ]; then
-            mkdir -p "$target_dir/scripts"
-            cp -r "$SRC_DIR/../scripts"/* "$target_dir/scripts"/
-            files_copied=$((files_copied + 1))
-            echo "[pre-commit] Copied scripts directory for hook configuration"
-        fi
-        
-        # Copy prompts directory if it exists (for reusable prompt files)
-        if [ -d "$repo_root/shared-copilot-knowledge/prompts" ]; then
-            mkdir -p "$target_dir/prompts"
-            cp -r "$repo_root/shared-copilot-knowledge/prompts"/* "$target_dir/prompts"/
-            files_copied=$((files_copied + 1))
-            echo "[pre-commit] Copied prompts directory for reusable workflows"
-        elif [ -d "$SRC_DIR/prompts" ]; then
-            mkdir -p "$target_dir/prompts"
-            cp -r "$SRC_DIR/prompts"/* "$target_dir/prompts"/
-            files_copied=$((files_copied + 1))
-            echo "[pre-commit] Copied prompts directory for reusable workflows"
-        fi
-        
         if [ $files_copied -eq 0 ]; then
             echo "[pre-commit] No instruction files found to backup."
             return 0
@@ -123,9 +95,7 @@ Branch: ${BRANCH_NAME}
 Commit: $(git rev-parse HEAD)
 
 Includes: instruction files (.github/*.instructions.md, .github/instructions/*.instructions.md)
-          copilot config (copilot-instructions.md)
-          scripts directory (for pre-commit hook configuration)
-          prompts directory (for reusable workflow prompts)"
+          copilot config (copilot-instructions.md)"
             
             git commit -m "$commit_msg"
             
@@ -168,29 +138,6 @@ backup_locally() {
     
     if [ -d "$SRC_DIR/instructions" ]; then
         cp "$SRC_DIR/instructions"/*.instructions.md "$local_backup_dir"/ 2>/dev/null || true
-    fi
-    
-    # Copy scripts directory for pre-commit hook configuration
-    local repo_root="$(git rev-parse --show-toplevel)"
-    if [ -d "$repo_root/shared-copilot-knowledge/scripts" ]; then
-        mkdir -p "$local_backup_dir/scripts"
-        cp -r "$repo_root/shared-copilot-knowledge/scripts"/* "$local_backup_dir/scripts"/
-        echo "[pre-commit] Copied scripts directory to local backup"
-    elif [ -d "$SRC_DIR/../scripts" ]; then
-        mkdir -p "$local_backup_dir/scripts"
-        cp -r "$SRC_DIR/../scripts"/* "$local_backup_dir/scripts"/
-        echo "[pre-commit] Copied scripts directory to local backup"
-    fi
-    
-    # Copy prompts directory for reusable workflows
-    if [ -d "$repo_root/shared-copilot-knowledge/prompts" ]; then
-        mkdir -p "$local_backup_dir/prompts"
-        cp -r "$repo_root/shared-copilot-knowledge/prompts"/* "$local_backup_dir/prompts"/
-        echo "[pre-commit] Copied prompts directory to local backup"
-    elif [ -d "$SRC_DIR/prompts" ]; then
-        mkdir -p "$local_backup_dir/prompts"
-        cp -r "$SRC_DIR/prompts"/* "$local_backup_dir/prompts"/
-        echo "[pre-commit] Copied prompts directory to local backup"
     fi
     
     echo "Backup created: $(date)" > "$local_backup_dir/.backup-timestamp"

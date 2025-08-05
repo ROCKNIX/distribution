@@ -12,8 +12,8 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Configuration
-BACKUP_REPO_URL="git@github.com:maxengel/copilot-instructions.git"
-HOOK_URL="https://raw.githubusercontent.com/maxengel/copilot-instructions/main/shared-copilot-knowledge/scripts/ssh-backup-hook.sh"
+BACKUP_REPO_URL="git@github.com:maxengel/shared-copilot-knowledge.git"
+HOOK_URL="https://raw.githubusercontent.com/maxengel/shared-copilot-knowledge/main/shared-copilot-knowledge/scripts/ssh-backup-hook.sh"
 
 # Helper functions
 print_header() {
@@ -58,7 +58,7 @@ check_instruction_files() {
     local repo_root="$(git rev-parse --show-toplevel)"
     local has_files=false
     
-    print_step "Checking for instruction files, scripts, and prompts..."
+    print_step "Checking for instruction files..."
     
     if [ -f "$github_dir"/*.instructions.md ] 2>/dev/null; then
         print_success "Found .instructions.md files in .github/"
@@ -75,36 +75,12 @@ check_instruction_files() {
         has_files=true
     fi
     
-    # Check for scripts directory
-    if [ -d "$repo_root/shared-copilot-knowledge/scripts" ]; then
-        print_success "Found scripts directory in shared-copilot-knowledge/"
-        has_files=true
-    elif [ -d "$github_dir/../scripts" ]; then
-        print_success "Found scripts directory at project root"
-        has_files=true
-    fi
-    
-    # Check for prompts directory
-    if [ -d "$repo_root/shared-copilot-knowledge/prompts" ]; then
-        print_success "Found prompts directory in shared-copilot-knowledge/"
-        has_files=true
-    elif [ -d "$github_dir/prompts" ]; then
-        print_success "Found prompts directory in .github/"
-        has_files=true
-    fi
-    
     if [ "$has_files" = false ]; then
-        print_warning "No instruction files, scripts, or prompts found. Hook will be installed but won't backup anything yet."
+        print_warning "No instruction files found. Hook will be installed but won't backup anything yet."
         echo "  Create instruction files in:"
         echo "  - .github/*.instructions.md"
         echo "  - .github/copilot-instructions.md"
         echo "  - .github/instructions/*.instructions.md"
-        echo "  Or add scripts for pre-commit hook configuration in:"
-        echo "  - shared-copilot-knowledge/scripts/"
-        echo "  - scripts/ (at project root)"
-        echo "  Or add reusable prompt files in:"
-        echo "  - shared-copilot-knowledge/prompts/"
-        echo "  - .github/prompts/"
     fi
 }
 
