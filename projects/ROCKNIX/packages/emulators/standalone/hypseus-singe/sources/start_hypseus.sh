@@ -13,7 +13,7 @@ configfile="${config}/hypinput.ini"
 # Attempt to auto configure gamepad
 #
 # Looking for override file to bypass auto configure gamepad
-if [ -f "${config}/hypinput.override.ini" ]; then
+if [[ -f "${config}/hypinput.override.ini" ]]; then
     cp -rf "${config}/hypinput.override.ini" "${configfile}"
 else
     GAMEPADINFO="$(sdljoytest -skip_loop)"
