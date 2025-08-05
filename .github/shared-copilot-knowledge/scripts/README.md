@@ -21,6 +21,8 @@ To set up the SSH backup system in your project:
 curl -s https://raw.githubusercontent.com/maxengel/shared-copilot-knowledge/main/shared-copilot-knowledge/scripts/setup-ssh-backup.sh | bash
 ```
 
+**Note**: The central `shared-copilot-knowledge` repository uses a **GitHub Action** for automatic backup instead of the pre-commit hook to avoid deployment conflicts. Other repositories should use the SSH pre-commit hook.
+
 ### Manual Setup
 
 1. **Copy the hook script**:
@@ -53,7 +55,9 @@ curl -s https://raw.githubusercontent.com/maxengel/shared-copilot-knowledge/main
 - `copilot-instructions.md` from `.github/`
 - All `.instructions.md` files from `.github/instructions/`
 
-**Backup location**: `backups/<project-name>/<branch>/<hostname>/`
+**Backup location**: `backups/<project-name>/<branch>/`
+
+**GitHub Actions backup**: The central repository uses GitHub Actions workflow (`.github/workflows/backup-instructions.yml`) that automatically backs up instruction files on every commit that modifies them.
 
 **Fallback behavior**:
 1. Try SSH backup to remote repository
@@ -104,7 +108,7 @@ The SSH backup works in tandem with GitHub Actions that:
 ```
 Project Repository                 Shared-Copilot-Knowledge Repository
 ├── .github/                      ├── backups/
-│   ├── *.instructions.md    →    │   └── <project>/<branch>/<hostname>/
+│   ├── *.instructions.md    →    │   └── <project>/<branch>/        # SSH hook backups  
 │   ├── copilot-instructions.md   │       ├── *.instructions.md
 │   └── instructions/             │       ├── copilot-instructions.md
 │       └── *.instructions.md     │       └── .backup-timestamp
@@ -113,8 +117,11 @@ Project Repository                 Shared-Copilot-Knowledge Repository
 └── (project files)               │   ├── scripts/          # These automation scripts
                                   │   └── prompts/          # Analysis workflows
                                   └── .github/workflows/
+                                      ├── backup-instructions.yml      # Central repo backup
                                       └── push-shared-copilot-knowledge.yml
 ```
+
+**Note**: The central `shared-copilot-knowledge` repository uses GitHub Actions for backup (creates `backups/shared-copilot-knowledge/master/`), while other repositories use SSH hooks (creates `backups/<project>/<branch>/<hostname>/`).
 
 ## Security Notes
 
