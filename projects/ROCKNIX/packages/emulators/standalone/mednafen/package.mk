@@ -10,7 +10,7 @@ PKG_DEPENDS_TARGET="toolchain SDL2 flac"
 PKG_TOOLCHAIN="configure"
 
 case ${DEVICE} in
-  H700|SM8250)
+  H700|SM8*)
     PKG_PATCH_DIRS+=" sdl-input"
   ;;
 esac
