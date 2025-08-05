@@ -47,3 +47,8 @@ Perform deep analysis of both shared knowledge and backup instruction files to i
 - Best practices from backup sources are incorporated
 - File organization is logical and modular
 - All changes are documented with clear rationale
+
+## Next Steps
+After completing this analysis:
+1. Run `step_3-analyze_backups-improve_shared_knowledge.prompt.md` to further refine modular instructions
+2. Run `step_4-synthesize-main-copilot-instructions.prompt.md` to create the main copilot-instructions.md file for distribution
