@@ -172,6 +172,8 @@ makeinstall_target() {
     cp -P ${PKG_BUILD}/.${HOST_NAME}/${TARGET_NAME}/libgcc/libgcc_s.so* ${INSTALL}/usr/lib
     cp -P ${PKG_BUILD}/.${HOST_NAME}/${TARGET_NAME}/libstdc++-v3/src/.libs/libstdc++.so* ${INSTALL}/usr/lib
     cp -P ${PKG_BUILD}/.${HOST_NAME}/${TARGET_NAME}/libgomp/.libs/*.so* ${INSTALL}/usr/lib
+    cp -P ${PKG_BUILD}/.${HOST_NAME}/${TARGET_NAME}/libsanitizer/asan/.libs/*.so* ${INSTALL}/usr/lib
+    cp -P ${PKG_BUILD}/.${HOST_NAME}/${TARGET_NAME}/libsanitizer/ubsan/.libs/*.so* ${INSTALL}/usr/lib
     if [ "${OPTS_LIBATOMIC}" = "--enable-libatomic" ]; then
       cp -P ${PKG_BUILD}/.${HOST_NAME}/${TARGET_NAME}/libatomic/.libs/libatomic.so* ${INSTALL}/usr/lib
     fi

@@ -16,6 +16,18 @@ case ${DEVICE} in
   ;;
 esac
 
+# Fileman or Commander Filemanager
+case ${DEVICE} in
+  SM8250)
+    PKG_DEPENDS_TARGET+=" commander"
+    FILEMANAGER="commander"
+  ;;
+  *)
+    PKG_DEPENDS_TARGET+=" fileman"
+    FILEMANAGER="fileman"
+  ;;
+esac
+
 make_target() {
   :
 }
@@ -39,5 +51,8 @@ post_makeinstall_target() {
   then
     rm -f ${INSTALL}/usr/config/modules/Install*
   fi
+
+# Set filemanger
+  sed -e "s/@FILEMANAGER@/${FILEMANAGER}/g" -i ${INSTALL}/usr/config/modules/gamelist.xml
 }
 

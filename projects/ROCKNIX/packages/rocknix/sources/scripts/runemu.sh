@@ -1,4 +1,5 @@
 #!/bin/bash
+
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2019-present Shanti Gilbert (https://github.com/shantigilbert)
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
@@ -392,6 +393,14 @@ fi
 CPU_GOVERNOR=$(get_setting "cpugovernor" "${PLATFORM}" "${ROMNAME##*/}")
 ${VERBOSE} && log $0 "Set emulation performance mode to (${CPU_GOVERNOR})"
 ${CPU_GOVERNOR}
+
+# Check for MangoHud support and turn MangoHud off by defualt, will add ES feature later
+MANGOHUD_SUPPORTED=$(get_setting "rocknix.mangohud.supported")
+if [ "${MANGOHUD_SUPPORTED}" = "true" ]; then
+  /usr/bin/mangohud_set "off"
+  RUNTHIS="/usr/bin/mangohud ${RUNTHIS}"
+  ${VERBOSE} && log $0 "Enabling MangoHud"
+fi
 
 # If the rom is a shell script just execute it, useful for DOSBOX and ScummVM scan scripts
 if [[ "${ROMNAME}" == *".sh" ]] && [ ! "${PLATFORM}" = "ports" ] && [ ! "${PLATFORM}" = "windows" ]; then
