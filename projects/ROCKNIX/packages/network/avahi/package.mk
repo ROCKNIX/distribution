@@ -11,16 +11,6 @@ PKG_DEPENDS_TARGET="autotools:host gcc:host expat libdaemon dbus gettext"
 PKG_LONGDESC="Service Discovery for Linux using mDNS/DNS-SD, compatible with Bonjour."
 PKG_TOOLCHAIN="configure"
 
-case ${ARCH} in
-  arm|i686)
-    # avahi does not have direct dependency on connman, ok to skip it on secondary arch
-    true
-    ;;
-  *)
-    PKG_DEPENDS_TARGET+=" connman"
-    ;;
-esac
-
 PKG_CONFIGURE_OPTS_TARGET="py_cv_mod_gtk_=yes \
                            py_cv_mod_dbus_=yes \
                            ac_cv_func_chroot=no \

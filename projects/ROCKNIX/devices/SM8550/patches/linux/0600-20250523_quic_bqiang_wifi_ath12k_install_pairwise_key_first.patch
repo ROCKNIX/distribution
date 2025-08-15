@@ -1,0 +1,218 @@
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH 1/2] wifi: ath12k: avoid bit operation on key flags
+From: Baochen Qiang <quic_bqiang@quicinc.com>
+Date: Fri, 23 May 2025 11:49:01 +0800
+Message-Id: <20250523-ath12k-unicast-key-first-v1-1-f53c3880e6d8@quicinc.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+WMI_KEY_PAIRWISE and WMI_KEY_GROUP are not bit fields, change
+bit operation to direct assignment to avoid confusion.
+
+Tested-on: WCN7850 hw2.0 PCI WLAN.HMT.1.0-03427-QCAHMTSWPL_V1.0_V2.0_SILICONZ-1.15378.4
+Tested-on: QCN9274 hw2.0 PCI WLAN.WBE.1.3.1-00217-QCAHKSWPL_SILICONZ-1
+
+Signed-off-by: Baochen Qiang <quic_bqiang@quicinc.com>
+Reviewed-by: Vasanthakumar Thiagarajan <vasanthakumar.thiagarajan@oss.qualcomm.com>
+---
+ drivers/net/wireless/ath/ath12k/mac.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/mac.c b/drivers/net/wireless/ath/ath12k/mac.c
+index 88b59f3ff87af8b48cb3fafcd364fd9ced4ff197..eb3c6d10e116b098d44cd94ba8e0257a77b54af8 100644
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -4881,9 +4881,9 @@ static int ath12k_mac_set_key(struct ath12k *ar, enum set_key_cmd cmd,
+ 	}
+ 
+ 	if (key->flags & IEEE80211_KEY_FLAG_PAIRWISE)
+-		flags |= WMI_KEY_PAIRWISE;
++		flags = WMI_KEY_PAIRWISE;
+ 	else
+-		flags |= WMI_KEY_GROUP;
++		flags = WMI_KEY_GROUP;
+ 
+ 	ret = ath12k_install_key(arvif, key, cmd, peer_addr, flags);
+ 	if (ret) {
+-- 
+2.34.1
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH 2/2] wifi: ath12k: install pairwise key first
+From: Baochen Qiang <quic_bqiang@quicinc.com>
+Date: Fri, 23 May 2025 11:49:02 +0800
+Message-Id: <20250523-ath12k-unicast-key-first-v1-2-f53c3880e6d8@quicinc.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+As station, WCN7850 firmware requires pairwise key to be installed before
+group key. Currently host does not care about this, so it is up to kernel
+or userspace to decide which one will be installed first. In case above
+requirement is not met, WCN7850 firmware's EAPOL station machine is messed
+up, and finally connection fails [1].
+
+Reorder key install for station interface in that case: this is done by
+caching group key first; Later when pairwise key arrives, both can be
+installed in required order.
+
+Tested-on: WCN7850 hw2.0 PCI WLAN.HMT.1.0-03427-QCAHMTSWPL_V1.0_V2.0_SILICONZ-1.15378.4
+Tested-on: QCN9274 hw2.0 PCI WLAN.WBE.1.3.1-00217-QCAHKSWPL_SILICONZ-1
+
+Closes: https://bugzilla.kernel.org/show_bug.cgi?id=218733
+Link: https://lore.kernel.org/all/AS8P190MB12051DDBD84CD88E71C40AD7873F2@AS8P190MB1205.EURP190.PROD.OUTLOOK.COM # [1]
+Signed-off-by: Baochen Qiang <quic_bqiang@quicinc.com>
+Reviewed-by: Vasanthakumar Thiagarajan <vasanthakumar.thiagarajan@oss.qualcomm.com>
+---
+ drivers/net/wireless/ath/ath12k/core.h |  4 ++
+ drivers/net/wireless/ath/ath12k/mac.c  | 76 ++++++++++++++++++++++++++++++----
+ drivers/net/wireless/ath/ath12k/wmi.h  |  1 +
+ 3 files changed, 74 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/core.h b/drivers/net/wireless/ath/ath12k/core.h
+index 941db6e49d6eaeb03783f7714d433259d887820b..eeaaa0616e48c3cf34f2769a1979e2f67888ac25 100644
+--- a/drivers/net/wireless/ath/ath12k/core.h
++++ b/drivers/net/wireless/ath/ath12k/core.h
+@@ -345,6 +345,10 @@ struct ath12k_link_vif {
+ 	bool is_sta_assoc_link;
+ 
+ 	struct ath12k_reg_tpc_power_info reg_tpc_info;
++
++	bool group_key_valid;
++	struct wmi_vdev_install_key_arg group_key;
++	bool pairwise_key_done;
+ };
+ 
+ struct ath12k_vif {
+diff --git a/drivers/net/wireless/ath/ath12k/mac.c b/drivers/net/wireless/ath/ath12k/mac.c
+index eb3c6d10e116b098d44cd94ba8e0257a77b54af8..05a17ad2eaeea00c938b16d22fb8e7605dfb4007 100644
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -4731,14 +4731,13 @@ static int ath12k_install_key(struct ath12k_link_vif *arvif,
+ 		.key_len = key->keylen,
+ 		.key_data = key->key,
+ 		.key_flags = flags,
++		.ieee80211_key_cipher = key->cipher,
+ 		.macaddr = macaddr,
+ 	};
+ 	struct ath12k_vif *ahvif = arvif->ahvif;
+ 
+ 	lockdep_assert_wiphy(ath12k_ar_to_hw(ar)->wiphy);
+ 
+-	reinit_completion(&ar->install_key_done);
+-
+ 	if (test_bit(ATH12K_FLAG_HW_CRYPTO_DISABLED, &ar->ab->dev_flags))
+ 		return 0;
+ 
+@@ -4747,7 +4746,7 @@ static int ath12k_install_key(struct ath12k_link_vif *arvif,
+ 		/* arg.key_cipher = WMI_CIPHER_NONE; */
+ 		arg.key_len = 0;
+ 		arg.key_data = NULL;
+-		goto install;
++		goto check_order;
+ 	}
+ 
+ 	switch (key->cipher) {
+@@ -4775,19 +4774,82 @@ static int ath12k_install_key(struct ath12k_link_vif *arvif,
+ 		key->flags |= IEEE80211_KEY_FLAG_GENERATE_IV |
+ 			      IEEE80211_KEY_FLAG_RESERVE_TAILROOM;
+ 
++check_order:
++	if (ahvif->vdev_type == WMI_VDEV_TYPE_STA &&
++	    arg.key_flags == WMI_KEY_GROUP) {
++		if (cmd == SET_KEY) {
++			if (arvif->pairwise_key_done) {
++				ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
++					   "vdev %u pairwise key done, go install group key\n",
++					   arg.vdev_id);
++				goto install;
++			} else {
++				/* WCN7850 firmware requires pairwise key to be installed
++				 * before group key. In case group key comes first, cache
++				 * it and return. Will revisit it once pairwise key gets
++				 * installed.
++				 */
++				arvif->group_key = arg;
++				arvif->group_key_valid = true;
++				ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
++					   "vdev %u group key before pairwise key, cache and skip\n",
++					   arg.vdev_id);
++
++				ret = 0;
++				goto out;
++			}
++		} else {
++			arvif->group_key_valid = false;
++		}
++	}
++
+ install:
+-	ret = ath12k_wmi_vdev_install_key(arvif->ar, &arg);
++	reinit_completion(&ar->install_key_done);
+ 
++	ret = ath12k_wmi_vdev_install_key(arvif->ar, &arg);
+ 	if (ret)
+ 		return ret;
+ 
+ 	if (!wait_for_completion_timeout(&ar->install_key_done, 1 * HZ))
+ 		return -ETIMEDOUT;
+ 
+-	if (ether_addr_equal(macaddr, arvif->bssid))
+-		ahvif->key_cipher = key->cipher;
++	if (ether_addr_equal(arg.macaddr, arvif->bssid))
++		ahvif->key_cipher = arg.ieee80211_key_cipher;
++
++	if (ar->install_key_status) {
++		ret = -EINVAL;
++		goto out;
++	}
++
++	if (ahvif->vdev_type == WMI_VDEV_TYPE_STA &&
++	    arg.key_flags == WMI_KEY_PAIRWISE) {
++		if (cmd == SET_KEY) {
++			arvif->pairwise_key_done = true;
++			if (arvif->group_key_valid) {
++				/* Install cached GTK */
++				arvif->group_key_valid = false;
++				arg = arvif->group_key;
++				ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
++					   "vdev %u pairwise key done, group key ready, go install\n",
++					   arg.vdev_id);
++				goto install;
++			}
++		} else {
++			arvif->pairwise_key_done = false;
++		}
++	}
++
++out:
++	if (ret) {
++		/* In case of failure userspace may not do DISABLE_KEY
++		 * but triggers re-connection directly, so manually reset
++		 * status here.
++		 */
++		arvif->group_key_valid = false;
++		arvif->pairwise_key_done = false;
++	}
+ 
+-	return ar->install_key_status ? -EINVAL : 0;
++	return ret;
+ }
+ 
+ static int ath12k_clear_peer_keys(struct ath12k_link_vif *arvif,
+diff --git a/drivers/net/wireless/ath/ath12k/wmi.h b/drivers/net/wireless/ath/ath12k/wmi.h
+index ac18f75e04492b62594acb159e3b43b81bd6c392..63302302cf87058a87ba99c294810823f714779b 100644
+--- a/drivers/net/wireless/ath/ath12k/wmi.h
++++ b/drivers/net/wireless/ath/ath12k/wmi.h
+@@ -3746,6 +3746,7 @@ struct wmi_vdev_install_key_arg {
+ 	u32 key_idx;
+ 	u32 key_flags;
+ 	u32 key_cipher;
++	u32 ieee80211_key_cipher;
+ 	u32 key_len;
+ 	u32 key_txmic_len;
+ 	u32 key_rxmic_len;
+-- 
+2.34.1
+

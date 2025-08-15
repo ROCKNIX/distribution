@@ -1,0 +1,95 @@
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH] wifi: ath12k: fix timeout while waiting for regulatory
+ update during interface creation
+From: Aditya Kumar Singh <aditya.kumar.singh@oss.qualcomm.com>
+Date: Thu, 26 Jun 2025 10:49:56 +0530
+Message-Id: <20250626-fix_timeout_during_interface_creation-v1-1-90a7fdc222d4@oss.qualcomm.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+During interface creation, following print is observed on the console -
+
+  Timeout while waiting for regulatory update
+
+This occurs due to commit 906619a00967 ("wifi: ath12k: handle regulatory
+hints during mac registration"), which introduced a completion mechanism to
+synchronize the regulatory update process. The intent behind this change is
+to coordinate the timing between when the firmware sends regulatory data to
+the driver and when the driver processes that data.
+
+However, during interface addition, if the 6 GHz band is active, the driver
+invokes ath12k_regd_update() to apply the appropriate 6 GHz power mode
+regulatory settings. At this point, there is no interaction with the
+firmware, so the completion object is not reinitialized. As a result,
+wait_for_completion() eventually times out, leading to the observed error
+log message.
+
+Hence to fix this, move all complete() on regd_update_completed to
+complete_all().
+
+The complete() function signals only once, causing any subsequent waits
+without reinitialization to timeout. In this scenario, since waiting is
+unnecessary, complete_all() can be used instead, ensuring that subsequent
+calls to wait without reinitialization will simply bail out and not
+actually wait. This approach is ideal because if the firmware is not
+involved, there is no need to wait for the completion event. However, if
+the firmware is involved, it is guaranteed that the completion will be
+reinitialized, and thus, it would wait.
+
+Tested-on: QCN9274 hw2.0 PCI WLAN.WBE.1.5-01651-QCAHKSWPL_SILICONZ-1
+Tested-by: Kang Yang <kang.yang@oss.qualcomm.com>
+Tested-on: WCN7850 hw2.0 PCI WLAN.HMT.1.0.c5-00481-QCAHMTSWPL_V1.0_V2.0_SILICONZ-3
+
+Fixes: 906619a00967 ("wifi: ath12k: handle regulatory hints during mac registration")
+Signed-off-by: Aditya Kumar Singh <aditya.kumar.singh@oss.qualcomm.com>
+---
+ drivers/net/wireless/ath/ath12k/core.c | 2 +-
+ drivers/net/wireless/ath/ath12k/mac.c  | 2 +-
+ drivers/net/wireless/ath/ath12k/wmi.c  | 2 +-
+ 3 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/core.c b/drivers/net/wireless/ath/ath12k/core.c
+index 83caba3104d6c0bca40dd1166de335aabc8b74e5..ffc19a6b948539dddf3f6f21f2799f1b661347f7 100644
+--- a/drivers/net/wireless/ath/ath12k/core.c
++++ b/drivers/net/wireless/ath/ath12k/core.c
+@@ -1475,7 +1475,7 @@ static void ath12k_core_pre_reconfigure_recovery(struct ath12k_base *ab)
+ 			complete(&ar->vdev_setup_done);
+ 			complete(&ar->vdev_delete_done);
+ 			complete(&ar->bss_survey_done);
+-			complete(&ar->regd_update_completed);
++			complete_all(&ar->regd_update_completed);
+ 
+ 			wake_up(&ar->dp.tx_empty_waitq);
+ 			idr_for_each(&ar->txmgmt_idr,
+diff --git a/drivers/net/wireless/ath/ath12k/mac.c b/drivers/net/wireless/ath/ath12k/mac.c
+index 32519666632d1877eb48a31e94e5eb47f2b33880..d5f41f0fceee23710d2d775bb4d6f7451e15a55b 100644
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -12755,7 +12755,7 @@ static int ath12k_mac_hw_register(struct ath12k_hw *ah)
+ 	 * proceeding with registration.
+ 	 */
+ 	for_each_ar(ah, ar, i)
+-		complete(&ar->regd_update_completed);
++		complete_all(&ar->regd_update_completed);
+ 
+ 	ret = ieee80211_register_hw(hw);
+ 	if (ret) {
+diff --git a/drivers/net/wireless/ath/ath12k/wmi.c b/drivers/net/wireless/ath/ath12k/wmi.c
+index b38f22118d732aa182f9fd6dda376b0d41de65e2..2fb262d13a586bbf354a74be8e509df2b4905f30 100644
+--- a/drivers/net/wireless/ath/ath12k/wmi.c
++++ b/drivers/net/wireless/ath/ath12k/wmi.c
+@@ -6764,7 +6764,7 @@ static int ath12k_reg_chan_list_event(struct ath12k_base *ab, struct sk_buff *sk
+ 	 * before registering the hardware.
+ 	 */
+ 	if (ar)
+-		complete(&ar->regd_update_completed);
++		complete_all(&ar->regd_update_completed);
+ 
+ 	return ret;
+ }
+
+---
+base-commit: aa555da8266715e52e5dd74360f3b4c866ddcb64
+change-id: 20250625-fix_timeout_during_interface_creation-ae428c7d3684
+

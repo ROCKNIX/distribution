@@ -8,7 +8,7 @@ PKG_VERSION="1.43" # 1.43
 PKG_LICENSE="GPL"
 PKG_SITE="http://www.connman.net"
 PKG_URL="https://git.kernel.org/pub/scm/network/connman/connman.git/snapshot/connman-${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain glib ncurses readline dbus iptables wpa_supplicant"
+PKG_DEPENDS_TARGET="toolchain glib ncurses readline dbus iptables"
 PKG_LONGDESC="A modular network connection manager."
 PKG_TOOLCHAIN="autotools"
 
@@ -32,6 +32,7 @@ PKG_CONFIGURE_OPTS_TARGET="WPASUPPLICANT=/usr/bin/wpa_supplicant \
                            --enable-ethernet \
                            --disable-gadget \
                            --enable-wifi \
+                           --enable-iwd \
                            --disable-bluetooth \
                            --disable-ofono \
                            --disable-dundee \
@@ -73,8 +74,8 @@ post_makeinstall_target() {
         -e "s|^# UseGatewaysAsTimeservers.*|UseGatewaysAsTimeservers = false|g" \
         -e "s|^# FallbackNameservers.*|FallbackNameservers = 8.8.8.8,8.8.4.4|g" \
         -e "s|^# FallbackTimeservers.*|FallbackTimeservers = 0.pool.ntp.org,1.pool.ntp.org,2.pool.ntp.org,3.pool.ntp.org|g" \
-        -e "s|^# PreferredTechnologies.*|PreferredTechnologies = ethernet,wifi,cellular|g" \
-        -e "s|^# TetheringTechnologies.*|TetheringTechnologies = wifi|g" \
+        -e "s|^# PreferredTechnologies.*|PreferredTechnologies = ethernet|g" \
+        -e "s|^# TetheringTechnologies.*|TetheringTechnologies = ethernet|g" \
         -e "s|^# AllowHostnameUpdates.*|AllowHostnameUpdates = false|g" \
         -e "s|^# PersistentTetheringMode.*|PersistentTetheringMode = true|g" \
         -e "s|^# NetworkInterfaceBlacklist = vmnet,vboxnet,virbr,ifb|NetworkInterfaceBlacklist = vmnet,vboxnet,virbr,ifb,docker,veth,zt,p2p|g"
@@ -82,9 +83,6 @@ post_makeinstall_target() {
   mkdir -p ${INSTALL}/usr/share/connman/
     cp ${PKG_DIR}/config/settings ${INSTALL}/usr/share/connman/
 }
-
-# Bounced from above
-#        -e "s|^# SingleConnectedTechnology.*|SingleConnectedTechnology = true|g" \
 
 post_install() {
   add_user system x 430 430 "service" "/var/run/connman" "/bin/sh"

@@ -1,0 +1,252 @@
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v2] wifi: ath12k: handle regulatory hints during mac
+ registration
+From: Aditya Kumar Singh <aditya.kumar.singh@oss.qualcomm.com>
+Date: Tue, 17 Jun 2025 09:05:59 +0530
+Message-Id: <20250617-handle_user_regd_update_hints_during_insmod-v2-1-10a6a48efe81@oss.qualcomm.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+If a regulatory notification is there in the system while the hardware is
+being registered, it attempts to set the new regulatory country. However,
+ath12k currently boots with a default country derived from the BDF. If this
+default country differs from the one provided in the notification, a race
+condition can occur while updating the regulatory information back to
+userspace. This potentially leads to driver having the incorrect regulatory
+applied.
+
+For example, suppose the regulatory domain for France (FR) is already
+applied, and then the driver is loaded with a BDF that has the United
+States (US) country programmed. When the driver finishes loading, the
+regulatory domain shown in phyX still reflects the US regulatory settings.
+This is incorrect, as the driver had already received a notification for
+FR during hardware registration, but failed to process it properly due to
+the race condition.
+
+The race condition exists during driver initialization and hardware
+registration:
+- On driver load, the firmware sends BDF-based country regulatory rules,
+  which are stored in default_regd via ath12k_reg_handle_chan_list().
+
+- During hardware registration, a regulatory notification is triggered
+  through:
+    ath12k_mac_hw_register()
+      -> ieee80211_register_hw()
+        -> wiphy_register()
+          -> wiphy_regulatory_register()
+            -> reg_call_notifier()
+
+  This sends a country code to the firmware, which responds with updated
+  regulatory rules.
+
+- After registration, ath12k_mac_hw_register() calls ath12k_regd_update(),
+  which copies default_regd and passes it to the upper layers.
+
+The race occurs between the firmware's response and the execution of
+ath12k_regd_update(). If the firmware's new rules are processed before the
+update call, the correct values are used. Otherwise, outdated boot-time
+country settings are exposed to userspace.
+
+To resolve this issue, introduce a completion mechanism within the hardware
+group (ah). Trigger this completion whenever a regulatory change is
+requested from the firmware. Then, in ath12k_regd_update(), wait for the
+firmware to complete its regulatory processing before proceeding with the
+update.
+
+This ensures that during driver load, the default country is processed
+first. However, before ath12k_regd_update() is called, the new regulatory
+notification will have already been received by the driver. As a result, it
+will wait for the firmware's regulatory processing to complete, and only
+the final, correct regulatory domain will be updated to userspace.
+
+Tested-on: QCN9274 hw2.0 PCI WLAN.WBE.1.4.1-00199-QCAHKSWPL_SILICONZ-1
+
+Signed-off-by: Aditya Kumar Singh <aditya.kumar.singh@oss.qualcomm.com>
+Reviewed-by: Vasanthakumar Thiagarajan <vasanthakumar.thiagarajan@oss.qualcomm.com>
+---
+Changes in v2:
+- Fixed uninitialed variable usage warnings (detected by clang)
+---
+ drivers/net/wireless/ath/ath12k/core.c |  4 ++++
+ drivers/net/wireless/ath/ath12k/core.h |  1 +
+ drivers/net/wireless/ath/ath12k/mac.c  | 15 +++++++++++++++
+ drivers/net/wireless/ath/ath12k/reg.c  | 12 ++++++++++++
+ drivers/net/wireless/ath/ath12k/reg.h  |  2 ++
+ drivers/net/wireless/ath/ath12k/wmi.c  | 17 +++++++++++++++--
+ 6 files changed, 49 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/core.c b/drivers/net/wireless/ath/ath12k/core.c
+index ebc0560d40e3419130e4caf01c9b91bd9affb3bd..9c18a706dc3ae3b8c5b95d8575e778c8a9c898ba 100644
+--- a/drivers/net/wireless/ath/ath12k/core.c
++++ b/drivers/net/wireless/ath/ath12k/core.c
+@@ -1470,6 +1470,7 @@ static void ath12k_core_pre_reconfigure_recovery(struct ath12k_base *ab)
+ 			complete(&ar->vdev_setup_done);
+ 			complete(&ar->vdev_delete_done);
+ 			complete(&ar->bss_survey_done);
++			complete(&ar->regd_update_completed);
+ 
+ 			wake_up(&ar->dp.tx_empty_waitq);
+ 			idr_for_each(&ar->txmgmt_idr,
+@@ -1509,6 +1510,9 @@ static void ath12k_update_11d(struct work_struct *work)
+ 		ar = pdev->ar;
+ 
+ 		memcpy(&ar->alpha2, &arg.alpha2, 2);
++
++		reinit_completion(&ar->regd_update_completed);
++
+ 		ret = ath12k_wmi_send_set_current_country_cmd(ar, &arg);
+ 		if (ret)
+ 			ath12k_warn(ar->ab,
+diff --git a/drivers/net/wireless/ath/ath12k/core.h b/drivers/net/wireless/ath/ath12k/core.h
+index 941db6e49d6eaeb03783f7714d433259d887820b..329f3e490a713b179413f73a4024448aedc363fd 100644
+--- a/drivers/net/wireless/ath/ath12k/core.h
++++ b/drivers/net/wireless/ath/ath12k/core.h
+@@ -804,6 +804,7 @@ struct ath12k {
+ 	enum ath12k_11d_state state_11d;
+ 	u8 alpha2[REG_ALPHA2_LEN];
+ 	bool regdom_set_by_user;
++	struct completion regd_update_completed;
+ 
+ 	struct completion fw_stats_complete;
+ 
+diff --git a/drivers/net/wireless/ath/ath12k/mac.c b/drivers/net/wireless/ath/ath12k/mac.c
+index 88b59f3ff87af8b48cb3fafcd364fd9ced4ff197..ef2e8398cbe8723c020aff03da5db7fa7fb2245e 100644
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -10900,6 +10900,7 @@ ath12k_mac_op_reconfig_complete(struct ieee80211_hw *hw,
+ 			struct wmi_set_current_country_arg arg = {};
+ 
+ 			memcpy(&arg.alpha2, ar->alpha2, 2);
++			reinit_completion(&ar->regd_update_completed);
+ 			ath12k_wmi_send_set_current_country_cmd(ar, &arg);
+ 		}
+ 
+@@ -12116,6 +12117,16 @@ static int ath12k_mac_hw_register(struct ath12k_hw *ah)
+ 		goto err_cleanup_if_combs;
+ 	}
+ 
++	/* Boot-time regulatory updates have already been processed.
++	 * Mark them as complete now, because after registration,
++	 * cfg80211 will notify us again if there are any pending hints.
++	 * We need to wait for those hints to be processed, so it's
++	 * important to mark the boot-time updates as complete before
++	 * proceeding with registration.
++	 */
++	for_each_ar(ah, ar, i)
++		complete(&ar->regd_update_completed);
++
+ 	ret = ieee80211_register_hw(hw);
+ 	if (ret) {
+ 		ath12k_err(ab, "ieee80211 registration failed: %d\n", ret);
+@@ -12143,6 +12154,9 @@ static int ath12k_mac_hw_register(struct ath12k_hw *ah)
+ 
+ 			memcpy(&current_cc.alpha2, ab->new_alpha2, 2);
+ 			memcpy(&ar->alpha2, ab->new_alpha2, 2);
++
++			reinit_completion(&ar->regd_update_completed);
++
+ 			ret = ath12k_wmi_send_set_current_country_cmd(ar, &current_cc);
+ 			if (ret)
+ 				ath12k_warn(ar->ab,
+@@ -12215,6 +12229,7 @@ static void ath12k_mac_setup(struct ath12k *ar)
+ 	init_completion(&ar->scan.on_channel);
+ 	init_completion(&ar->mlo_setup_done);
+ 	init_completion(&ar->completed_11d_scan);
++	init_completion(&ar->regd_update_completed);
+ 
+ 	INIT_DELAYED_WORK(&ar->scan.timeout, ath12k_scan_timeout_work);
+ 	wiphy_work_init(&ar->scan.vdev_clean_wk, ath12k_scan_vdev_clean_work);
+diff --git a/drivers/net/wireless/ath/ath12k/reg.c b/drivers/net/wireless/ath/ath12k/reg.c
+index 2598b39d5d7ee9b24ad8ed5d6de1bc5bbc6554e0..079dcb6d83df4eb487fb0dbf4088fb8cacca8f6e 100644
+--- a/drivers/net/wireless/ath/ath12k/reg.c
++++ b/drivers/net/wireless/ath/ath12k/reg.c
+@@ -102,6 +102,8 @@ ath12k_reg_notifier(struct wiphy *wiphy, struct regulatory_request *request)
+ 
+ 	/* Send the reg change request to all the radios */
+ 	for_each_ar(ah, ar, i) {
++		reinit_completion(&ar->regd_update_completed);
++
+ 		if (ar->ab->hw_params->current_cc_support) {
+ 			memcpy(&current_arg.alpha2, request->alpha2, 2);
+ 			memcpy(&ar->alpha2, &current_arg.alpha2, 2);
+@@ -272,9 +274,19 @@ int ath12k_regd_update(struct ath12k *ar, bool init)
+ 	struct ieee80211_regdomain *regd, *regd_copy = NULL;
+ 	int ret, regd_len, pdev_id;
+ 	struct ath12k_base *ab;
++	long time_left;
+ 
+ 	ab = ar->ab;
+ 
++	time_left = wait_for_completion_timeout(&ar->regd_update_completed,
++						ATH12K_REG_UPDATE_TIMEOUT_HZ);
++	if (time_left == 0) {
++		ath12k_warn(ab, "Timeout while waiting for regulatory update");
++		/* Even though timeout has occurred, still continue since at least boot
++		 * time data would be there to process
++		 */
++	}
++
+ 	supported_bands = ar->pdev->cap.supported_bands;
+ 	reg_cap = &ab->hal_reg_cap[ar->pdev_idx];
+ 
+diff --git a/drivers/net/wireless/ath/ath12k/reg.h b/drivers/net/wireless/ath/ath12k/reg.h
+index 8af8e9ba462e90db3eb137885d0acd4b1cb2286e..fb508302c7f0f1fea2588ad4cf9d813da574d06b 100644
+--- a/drivers/net/wireless/ath/ath12k/reg.h
++++ b/drivers/net/wireless/ath/ath12k/reg.h
+@@ -13,6 +13,8 @@
+ struct ath12k_base;
+ struct ath12k;
+ 
++#define ATH12K_REG_UPDATE_TIMEOUT_HZ	(3 * HZ)
++
+ #define ATH12K_2GHZ_MAX_FREQUENCY	2495
+ #define ATH12K_5GHZ_MAX_FREQUENCY	5920
+ 
+diff --git a/drivers/net/wireless/ath/ath12k/wmi.c b/drivers/net/wireless/ath/ath12k/wmi.c
+index 60e2444fe08cefa39ae218d07eb9736d2a0c982b..db839fc835816c9a2d03d194547af506760f6c81 100644
+--- a/drivers/net/wireless/ath/ath12k/wmi.c
++++ b/drivers/net/wireless/ath/ath12k/wmi.c
+@@ -6143,7 +6143,8 @@ static void ath12k_wmi_htc_tx_complete(struct ath12k_base *ab,
+ static int ath12k_reg_chan_list_event(struct ath12k_base *ab, struct sk_buff *skb)
+ {
+ 	struct ath12k_reg_info *reg_info;
+-	u8 pdev_idx;
++	struct ath12k *ar = NULL;
++	u8 pdev_idx = 255;
+ 	int ret;
+ 
+ 	reg_info = kzalloc(sizeof(*reg_info), GFP_ATOMIC);
+@@ -6198,7 +6199,7 @@ static int ath12k_reg_chan_list_event(struct ath12k_base *ab, struct sk_buff *sk
+ 	kfree(reg_info);
+ 
+ 	if (ret == ATH12K_REG_STATUS_VALID)
+-		return ret;
++		goto out;
+ 
+ fallback:
+ 	/* Fallback to older reg (by sending previous country setting
+@@ -6212,6 +6213,18 @@ static int ath12k_reg_chan_list_event(struct ath12k_base *ab, struct sk_buff *sk
+ 	WARN_ON(1);
+ 
+ out:
++	/* In some error cases, even a valid pdev_idx might not be available */
++	if (pdev_idx != 255)
++		ar = ab->pdevs[pdev_idx].ar;
++
++	/* During the boot-time update, 'ar' might not be allocated,
++	 * so the completion cannot be marked at that point.
++	 * This boot-time update is handled in ath12k_mac_hw_register()
++	 * before registering the hardware.
++	 */
++	if (ar)
++		complete(&ar->regd_update_completed);
++
+ 	return ret;
+ }
+ 
+
+---
+base-commit: 7fb79ce2693c94f8f74bf62ad25a97e4b61721b8
+change-id: 20250522-handle_user_regd_update_hints_during_insmod-42c71ee7f386
+
