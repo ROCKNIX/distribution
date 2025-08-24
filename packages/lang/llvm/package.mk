@@ -99,21 +99,25 @@ pre_configure_host() {
 }
 
 post_make_host() {
-  ninja ${NINJA_OPTS} llvm-config llvm-objcopy llvm-tblgen
+  ninja ${NINJA_OPTS} llc llvm-ar llvm-as llvm-config llvm-cov llvm-dis \
+                      llvm-link llvm-nm llvm-objcopy llvm-objdump \
+                      llvm-profdata llvm-readobj llvm-size llvm-strip \
+                      llvm-tblgen opt
 
   if listcontains "${GRAPHIC_DRIVERS}" "(iris|panfrost)"; then
-    ninja ${NINJA_OPTS} llvm-as llvm-link llvm-spirv opt
+    ninja ${NINJA_OPTS} llvm-spirv
   fi
 }
 
 post_makeinstall_host() {
   mkdir -p ${TOOLCHAIN}/bin
-    cp -a bin/llvm-config ${TOOLCHAIN}/bin
-    cp -a bin/llvm-objcopy ${TOOLCHAIN}/bin
-    cp -a bin/llvm-tblgen ${TOOLCHAIN}/bin
+    cp -a bin/{llc,llvm-ar,llvm-as,llvm-config,llvm-cov,llvm-dis} "${TOOLCHAIN}/bin"
+    cp -a bin/{llvm-link,llvm-nm,llvm-objcopy,llvm-objdump} "${TOOLCHAIN}/bin"
+    cp -a bin/{llvm-profdata,llvm-readobj,llvm-size,llvm-strip} "${TOOLCHAIN}/bin"
+    cp -a bin/{llvm-tblgen,opt} "${TOOLCHAIN}/bin"
 
   if listcontains "${GRAPHIC_DRIVERS}" "(iris|panfrost)"; then
-    cp -a bin/{llvm-as,llvm-link,llvm-spirv,opt} "${TOOLCHAIN}/bin"
+    cp -a bin/llvm-spirv "${TOOLCHAIN}/bin"
   fi
 }
 

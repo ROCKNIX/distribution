@@ -2,9 +2,9 @@
 # Copyright (C) 2021-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="pvr.plutotv"
-PKG_VERSION="22.2.1-Piers"
-PKG_SHA256="ebbd51e56a7ce25039d6752fb804c185ad176e767188dbd4f2578ac54b364b95"
-PKG_REV="3"
+PKG_VERSION="22.2.2-Piers"
+PKG_SHA256="b92d4c8c2229d5efda17066e7829c9d6e4f59cde24b564eeeec98729f9430ed1"
+PKG_REV="1"
 PKG_ARCH="any"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/kodi-pvr/pvr.plutotv"

@@ -2,9 +2,9 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="screensaver.asterwave"
-PKG_VERSION="21.0.2-Omega"
-PKG_SHA256="de92f8773f23c77f388201d316273f1a06103965bdb9684cbda19a73180c1488"
-PKG_REV="2"
+PKG_VERSION="22.0.2-Piers"
+PKG_SHA256="7df1c7a91faac455d392a5f176ec318283d87188d4457af6484df39355e8c8ea"
+PKG_REV="1"
 PKG_ARCH="any"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/xbmc/screensaver.asterwave"
@@ -19,4 +19,8 @@ PKG_ADDON_TYPE="xbmc.ui.screensaver"
 
 if [ "${OPENGL}" = "no" ]; then
   exit 0
+fi
+
+if [ "${DISPLAYSERVER}" = "no" ]; then
+  PKG_CMAKE_OPTS_TARGET="-DCORE_PLATFORM_NAME=gbm"
 fi

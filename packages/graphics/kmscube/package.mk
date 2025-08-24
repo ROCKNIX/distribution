@@ -2,8 +2,8 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="kmscube"
-PKG_VERSION="9f63f359fab1b5d8e862508e4e51c9dfe339ccb0"
-PKG_SHA256="896ac76671a9b89836a7014b16cc85b45b041e03fe34a8f529f4718aa2b15cef"
+PKG_VERSION="e05830984e15ae77bd3dbcf41d4cd0a60010dda2"
+PKG_SHA256="aae4a698213866a1381ef6a1a4cc043b22d3e930436c42e1f102e42bc7d841d2"
 PKG_LICENSE="GPL"
 PKG_SITE="https://gitlab.freedesktop.org/mesa/kmscube"
 PKG_URL="https://gitlab.freedesktop.org/mesa/kmscube/-/archive/master/kmscube-${PKG_VERSION}.tar.gz"

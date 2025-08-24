@@ -3,8 +3,8 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="systemd"
-PKG_VERSION="257.7"
-PKG_SHA256="70ecf759260549486045d065555d2f8a0ac0b8523d8f58227559fbd6d7523b08"
+PKG_VERSION="257.8"
+PKG_SHA256="f280278161446fe3838bedb970c7b3998043ad107f7627735a81483218c6f6f9"
 PKG_LICENSE="LGPL2.1+"
 PKG_SITE="http://www.freedesktop.org/wiki/Software/systemd"
 PKG_URL="https://github.com/systemd/systemd/archive/v${PKG_VERSION}.tar.gz"

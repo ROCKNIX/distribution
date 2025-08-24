@@ -2,9 +2,9 @@
 # Copyright (C) 2019-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="imagedecoder.heif"
-PKG_VERSION="21.0.2-Omega"
-PKG_SHA256="ac4d6604400cccd16399be19ce0fa9129575cb933d8fb5ff4c76b57c3a39eeeb"
-PKG_REV="3"
+PKG_VERSION="22.0.1-Piers"
+PKG_SHA256="e6a9eff46e0995242995da501db18324c2189dfff654713664e57c6ed1cf9f74"
+PKG_REV="1"
 PKG_ARCH="any"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/xbmc/imagedecoder.heif"

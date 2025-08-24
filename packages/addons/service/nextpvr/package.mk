@@ -4,7 +4,7 @@
 PKG_NAME="nextpvr"
 PKG_VERSION="7.0.1~Piers"
 PKG_ADDON_VERSION="7.0.1~1"
-PKG_REV="0"
+PKG_REV="1"
 PKG_ARCH="any"
 PKG_LICENSE="NextPVR"
 PKG_SITE="https://nextpvr.com"

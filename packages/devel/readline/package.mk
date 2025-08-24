@@ -13,13 +13,10 @@ PKG_LONGDESC="The GNU Readline library provides a set of functions for use by ap
 PKG_BUILD_FLAGS="+pic"
 
 PKG_CONFIGURE_OPTS_TARGET="bash_cv_wcwidth_broken=no \
-                           --disable-shared \
-                           --enable-static \
+                           --enable-shared \
+                           --disable-static \
                            --with-curses"
 
 post_makeinstall_target() {
-  # fix static library
-  sed -i 's/-lreadline/-lreadline -lncursesw/' ${SYSROOT_PREFIX}/usr/lib/pkgconfig/readline.pc
-
   rm -rf ${INSTALL}/usr/share/readline
 }

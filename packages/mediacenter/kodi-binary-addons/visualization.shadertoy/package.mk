@@ -3,9 +3,9 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="visualization.shadertoy"
-PKG_VERSION="21.0.2-Omega"
-PKG_SHA256="30a5081365cea1dbdf49ccbb059076d4c7abc28604a58749fcd0d025e2faa760"
-PKG_REV="2"
+PKG_VERSION="22.0.2-Piers"
+PKG_SHA256="d698483c495d440cd3f25f1166d0353c9bf81955cbd780b75166e8ab4058a54d"
+PKG_REV="1"
 PKG_ARCH="any"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/xbmc/visualization.shadertoy"

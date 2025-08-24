@@ -20,20 +20,20 @@ case "${LINUX}" in
     PKG_SHA256="008b00968a8bfc0627580b82a2d30c7304336a4f92a58e80cdbc2d4723e01840"
     PKG_URL="https://github.com/torvalds/linux/archive/${PKG_VERSION}.tar.gz"
     PKG_SOURCE_NAME="linux-${LINUX}-${PKG_VERSION}.tar.gz"
-    PKG_PATCH_DIRS="default"
+    PKG_PATCH_DIRS="default rtlwifi/6.17"
     ;;
   raspberrypi)
-    PKG_VERSION="ef8e31bd0d660ef06e98fcf6337d3374c8884038" # 6.12.35
-    PKG_SHA256="6a86eab9a0ec7f8c8887f94b5c604c9546b60fcaf025c27de352b33edd20c3b8"
+    PKG_VERSION="2fa00bc2d0ecd77c12620f13dbc38aa27a42cf87" # 6.12.42
+    PKG_SHA256="8a734fd9367729500a575813e321806b536c8458b4fc9df5f0b0e77eed1113eb"
     PKG_URL="https://github.com/raspberrypi/linux/archive/${PKG_VERSION}.tar.gz"
     PKG_SOURCE_NAME="linux-${LINUX}-${PKG_VERSION}.tar.gz"
-    PKG_PATCH_DIRS="raspberrypi rtlwifi/6.13 rtlwifi/6.14 rtlwifi/6.15"
+    PKG_PATCH_DIRS="raspberrypi rtlwifi/6.13 rtlwifi/6.14 rtlwifi/6.15 rtlwifi/6.17"
     ;;
   *)
-    PKG_VERSION="6.15.6"
-    PKG_SHA256="2bb586c954277d070c8fdf6d7275faa93b4807d9bf3353b491d8149cca02b4fc"
+    PKG_VERSION="6.16.1"
+    PKG_SHA256="ea43491bc7ace1e414b3b2d957f8cf96e7049155123f0acce798accf8da1acba"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
-    PKG_PATCH_DIRS="default"
+    PKG_PATCH_DIRS="default rtlwifi/6.17"
     ;;
 esac
 
@@ -103,7 +103,7 @@ makeinstall_host() {
 }
 
 pre_make_target() {
-  ( 
+  (
     cd ${ROOT}
     rm -rf ${BUILD}/initramfs
     rm -f ${STAMPS_INSTALL}/initramfs/install_target ${STAMPS_INSTALL}/*/install_init
@@ -212,7 +212,7 @@ make_target() {
   DTC_FLAGS=-@ kernel_make ${KERNEL_TARGET} ${KERNEL_MAKE_EXTRACMD} modules
 
   if [ "${PKG_BUILD_PERF}" = "yes" ]; then
-    ( 
+    (
       cd tools/perf
 
       # arch specific perf build args
@@ -238,6 +238,14 @@ make_target() {
       NO_LIBTRACEEVENT=1 \
       NO_LZMA=1 \
       NO_SDT=1 \
+      NO_LIBDEBUGINFOD=1 \
+      NO_JVMTI=1 \
+      NO_LIBLLVM=1 \
+      NO_LIBPFM4=1 \
+      NO_LIBBABELTRACE=1 \
+      NO_CAPSTONE=1 \
+      NO_LIBPFM4=1 \
+      BUILD_BPF_SKEL=0 \
       CROSS_COMPILE="${TARGET_PREFIX}" \
       JOBS="${CONCURRENCY_MAKE_LEVEL}" \
         make ${PERF_BUILD_ARGS}
