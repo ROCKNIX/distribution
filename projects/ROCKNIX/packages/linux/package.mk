@@ -31,11 +31,8 @@ case ${DEVICE} in
   ;;
   *)
     case ${DEVICE} in
-      H700)
-        PKG_VERSION="6.15.2"
-      ;;
-      SM8250|SM8550)
-        PKG_VERSION="6.16"
+      SM8250|SM8550|H700)
+        PKG_VERSION="6.16.3"
       ;;
       *)
         PKG_VERSION="6.12.40"

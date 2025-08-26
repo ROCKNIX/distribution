@@ -10,6 +10,10 @@ PKG_DEPENDS_TARGET=""
 PKG_LONGDESC="Repository containing cheatcode files, content data files, etc."
 PKG_TOOLCHAIN="manual"
 
+post_unpack() {
+  sed -i '/cp -ar -t .* cht cursors/s/ rdb//' ${PKG_BUILD}/Makefile
+}
+
 makeinstall_target() {
   make install INSTALLDIR="${INSTALL}/usr/share/libretro-database" -C "${PKG_BUILD}"
 }

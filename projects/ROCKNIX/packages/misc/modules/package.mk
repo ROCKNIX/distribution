@@ -54,5 +54,10 @@ post_makeinstall_target() {
 
 # Set filemanger
   sed -e "s/@FILEMANAGER@/${FILEMANAGER}/g" -i ${INSTALL}/usr/config/modules/gamelist.xml
+  if [ ${FILEMANAGER} == "commander" ]; then
+    rm -rf ${INSTALL}/usr/config/modules/fileman.sh
+  else
+    rm -rf ${INSTALL}/usr/config/modules/commander.sh
+  fi
 }
 

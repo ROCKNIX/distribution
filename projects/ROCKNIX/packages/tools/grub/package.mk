@@ -70,6 +70,7 @@ makeinstall_target() {
     search_label chain reboot loadenv test gfxterm efi_gop
 
   mkdir -p ${INSTALL}/usr/share/bootloader/EFI/BOOT
+  cp -av ${PKG_DIR}/config/* ${INSTALL}/usr/share/bootloader/EFI/BOOT
   cp -av bootaa64.efi ${INSTALL}/usr/share/bootloader/EFI/BOOT
 
   # Create grub configuration
@@ -77,8 +78,4 @@ makeinstall_target() {
 
   # Always install the update script
   find_file_path bootloader/update.sh && cp -av ${FOUND_PATH} ${INSTALL}/usr/share/bootloader
-
-  if [ -d ${PKG_DIR}/sources/${DEVICE} ]; then
-    cp -av ${PKG_DIR}/sources/${DEVICE}/* ${INSTALL}/usr/share/bootloader/EFI/BOOT
-  fi
 }

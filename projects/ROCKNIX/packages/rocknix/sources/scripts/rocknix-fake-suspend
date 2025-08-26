@@ -80,6 +80,40 @@ unmute_audio() {
   pactl set-sink-mute @DEFAULT_SINK@ false
 }
 
+powersave_governors() {
+  ${DEBUG} && log $0 "Set CPU/GPU governors to powersave"
+  
+  # Get the current cpu and gpu governor, save for restoration on resume
+  local CURR_CPU_GOVERNOR="$(cat ${CPU_FREQ}/scaling_governor)"
+  local CURR_GPU_GOVERNOR="$(cat ${GPU_FREQ}/governor)"
+
+  set_setting sleep.cpugovernor "${CURR_CPU_GOVERNOR}"
+  set_setting sleep.gpugovernor "${CURR_GPU_GOVERNOR}"
+
+  # Set all governors to powersave
+  set_cpu_gov powersave
+  set_gpu_gov powersave
+}
+
+restore_governors() {
+  ${DEBUG} && log $0 "Restore CPU/GPU governors"
+  
+  # Grab the old governors
+  local PRE_SUSPEND_CPU_GOVERNOR=$(get_setting "sleep.cpugovernor")
+  [[ -z "${PRE_SUSPEND_CPU_GOVERNOR}" ]] && PRE_SUSPEND_CPU_GOVERNOR="ondemand"
+
+  local PRE_SUSPEND_GPU_GOVERNOR=$(get_setting "sleep.gpugovernor")
+  [[ -z "${PRE_SUSPEND_GPU_GOVERNOR}" ]] && PRE_SUSPEND_GPU_GOVERNOR="simple_ondemand"
+
+  # Restore old governors
+  set_cpu_gov "${PRE_SUSPEND_CPU_GOVERNOR}"
+  set_gpu_gov "${PRE_SUSPEND_GPU_GOVERNOR}"
+
+  # Clean up
+  del_setting "sleep.cpugovernor"
+  del_setting "sleep.gpugovernor"
+}
+
 park_cores() {
   ${DEBUG} && log $0 "CPU core parking"
   for x in /sys/devices/system/cpu/cpu*/online; do
@@ -131,6 +165,9 @@ do_suspend_actions() {
   # Mute audio
   mute_audio
 
+  # Set CPU / GPU governors
+  powersave_governors
+
   # CPU core parking
   park_cores
 
@@ -144,6 +181,9 @@ do_resume_actions() {
 
   # Unmute audio
   unmute_audio
+
+  # Restore CPU / GPU governors
+  restore_governors
 
   # Undo CPU core parking
   unpark_cores

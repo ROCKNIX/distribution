@@ -1,6 +1,6 @@
 |Manufacturer|System|Release Date|Games Path|Supported Extensions|Emulator / Core|
 |----|----|----|----|----|----|
-|&#xf013; System|Media Player (mplayer)|System|`mplayer`|.mp4 .mkv .avi .mov .wmv .m3u .mpg .ytb .twi .sh .mp3 .aac .mka .dts .flac .ogg .m4a .ac3 .opus .wav .wv .eac33 .thd|**mplayer:** mplayer (default)<br>|
+|&#xf013; System|Media Player (mplayer)|System|`mplayer`|.3g2 .3gp .aac .ac3 .asf .avi .divx .dts .eac33 .f4f .f4v .flac .flv .m2p .m2ts .m3u .m4a .mka .mkv .mov .mp3 .mp4 .mpeg .mpg .mxf .ogg .ogm .opus .ps .sh .thd .ts .twi .vob .wav .webm .wma .wmv .wv .ytb|**mplayer:** mplayer (default)<br>**retroarch:** ffmpeg<br>|
 |&#xf013; System|Moonlight Game Streaming (moonlight)|System|`moonlight`|.sh|**moonlight:** moonlight (default)<br>|
 |&#xf013; System|Music Player (music)|System|`playlists`|.m3u .sh|**gmu:** gmu (default)<br>|
 |&#xf013; System|Ports (ports)|System|`ports`|.sh|**portmaster:** portmaster (default)<br>|
