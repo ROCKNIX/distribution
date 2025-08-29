@@ -28,6 +28,7 @@ make_target() {
   DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm _python_sysroot="${TOOLCHAIN}" _python_prefix=/ _python_exec_prefix=/ make DEVICE_TREE=qcom/qcs8550-ayaneo-pocket-ace HOSTCC="${HOST_CC}" HOSTCFLAGS="-I${TOOLCHAIN}/include" HOSTLDFLAGS="${HOST_LDFLAGS}" CONFIG_MKIMAGE_DTC_PATH="scripts/dtc/dtc"
   DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm _python_sysroot="${TOOLCHAIN}" _python_prefix=/ _python_exec_prefix=/ make DEVICE_TREE=qcom/qcs8550-ayaneo-pocket-dmg HOSTCC="${HOST_CC}" HOSTCFLAGS="-I${TOOLCHAIN}/include" HOSTLDFLAGS="${HOST_LDFLAGS}" CONFIG_MKIMAGE_DTC_PATH="scripts/dtc/dtc"
   DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm _python_sysroot="${TOOLCHAIN}" _python_prefix=/ _python_exec_prefix=/ make DEVICE_TREE=qcom/qcs8550-ayaneo-pocket-evo HOSTCC="${HOST_CC}" HOSTCFLAGS="-I${TOOLCHAIN}/include" HOSTLDFLAGS="${HOST_LDFLAGS}" CONFIG_MKIMAGE_DTC_PATH="scripts/dtc/dtc"
+  DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm _python_sysroot="${TOOLCHAIN}" _python_prefix=/ _python_exec_prefix=/ make DEVICE_TREE=qcom/qcs8550-ayaneo-pocket-ds HOSTCC="${HOST_CC}" HOSTCFLAGS="-I${TOOLCHAIN}/include" HOSTLDFLAGS="${HOST_LDFLAGS}" CONFIG_MKIMAGE_DTC_PATH="scripts/dtc/dtc"
 }
 
 makeinstall_target() {
@@ -41,4 +42,5 @@ makeinstall_target() {
   cp -av dts/upstream/src/arm64/qcom/qcs8550-ayaneo-pocket-ace.dtb ${INSTALL}/usr/share/bootloader/boot/u-boot-pocket-ace.dtb
   cp -av dts/upstream/src/arm64/qcom/qcs8550-ayaneo-pocket-dmg.dtb ${INSTALL}/usr/share/bootloader/boot/u-boot-pocket-dmg.dtb
   cp -av dts/upstream/src/arm64/qcom/qcs8550-ayaneo-pocket-evo.dtb ${INSTALL}/usr/share/bootloader/boot/u-boot-pocket-evo.dtb
+  cp -av dts/upstream/src/arm64/qcom/qcs8550-ayaneo-pocket-ds.dtb ${INSTALL}/usr/share/bootloader/boot/u-boot-pocket-ds.dtb
 }

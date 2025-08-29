@@ -29,12 +29,11 @@ create_svm(){
   while read line
   do
     id=($line);
-    filename=$(grep -A7 "\[$id\]" ${CONFIG_DIR}/scummvm.ini | \
-      awk 'BEGIN {FS="="}; /description/ {printf $2}' | \
+    filename=$(sed -n "/^\[$id\]/,/^\[/{s/^description=//p}" ${CONFIG_DIR}/scummvm.ini | \
       sed -e 's# (.*)# ('${id}')#g' -e "s#'##g" -e "s#: # - #g" \
     )
 
-    SVMPATH="$(grep -A7 "\[$id\]" ${CONFIG_DIR}/scummvm.ini | awk 'BEGIN {FS="="}; /path/ {print $2}')"
+    SVMPATH="$(sed -n "/^\[$id\]/,/^\[/{s/^path=//p}" ${CONFIG_DIR}/scummvm.ini)"
     echo '--path="'${SVMPATH}'" '${id} >"${CONFIG_DIR}/games/${filename}.scummvm"
   done
 }

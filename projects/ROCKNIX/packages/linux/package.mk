@@ -32,10 +32,10 @@ case ${DEVICE} in
   *)
     case ${DEVICE} in
       SM8250|SM8550|H700)
-        PKG_VERSION="6.16.3"
+        PKG_VERSION="6.16.4"
       ;;
       *)
-        PKG_VERSION="6.12.40"
+        PKG_VERSION="6.12.43"
         PKG_PATCH_DIRS+=" 6.12-LTS"
       ;;
     esac
