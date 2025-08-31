@@ -2,11 +2,11 @@
 # Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="melonds-sa"
-PKG_VERSION="a72b79a55ad2d61811af11b1b911f6af863f66c2"
+PKG_VERSION="7ed33b4d93f8c5ac2ffbf83bc059e51b2796f3b1"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/melonDS-emu/melonDS"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="SDL2 qt6 libslirp libepoxy libarchive ecm libpcap control-gen"
+PKG_DEPENDS_TARGET="SDL2 qt6 libslirp libepoxy libarchive ecm libpcap control-gen faad2"
 PKG_LONGDESC="DS emulator, sorta. The goal is to do things right and fast"
 PKG_TOOLCHAIN="cmake"
 
@@ -27,10 +27,15 @@ then
   PKG_DEPENDS_TARGET+=" ${VULKAN}"
 fi
 
+pre_configure_host() {
+export CFLAGS+=" -Wno-sign-compare"
+export CXXFLAGS="${CXXFLAGS} -Wno-sign-compare"
+
 PKG_CMAKE_OPTS_TARGET+=" -DCMAKE_BUILD_TYPE=Release \
                          -DCMAKE_INSTALL_PREFIX="/usr" \
                          -DUSE_QT6=ON \
                          -DBUILD_SHARED_LIBS=OFF"
+}
 
 
 makeinstall_target() {

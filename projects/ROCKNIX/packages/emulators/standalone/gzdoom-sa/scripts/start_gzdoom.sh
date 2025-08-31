@@ -10,6 +10,12 @@ RUN_DIR="/storage/roms/doom"
 CONFIG="/storage/.config/gzdoom/gzdoom.ini"
 SAVE_DIR="/storage/roms/gzdoom"
 
+#Emulation Station Features
+GAME=$(echo "${1}"| sed "s#^/.*/##")
+PLATFORM=$(echo "${2}"| sed "s#^/.*/##")
+VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
+
+
 if [ ! -d "/storage/.config/gzdoom/" ]; then
   cp -rf /usr/config/gzdoom /storage/.config/
 fi
@@ -41,7 +47,13 @@ fi
 mkdir -p ${SAVE_DIR}
 
 params=" -config ${CONFIG} -savedir ${SAVE_DIR}"
-params+=" +gl_es 1 +vid_preferbackend 3 +cl_capfps 0 +vid_fps 0 +vid_maxfps 60"
+params+=" +gl_es 1 +vid_preferbackend 3 +cl_capfps 0 +vid_fps 0"
+
+if [ "$VSYNC" = "false" ]; then
+  params+=" +vid_vsync 0"
+else
+  params+=" +vid_vsync 1"
+fi
 
 # EXT can be wad, WAD, iwad, IWAD, pwad, PWAD or doom
 EXT=${1##*.}
@@ -61,5 +73,16 @@ else
   params+=" -iwad ${1}"
 fi
 
+#Set the cores to use
+CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
+if [ "${CORES}" = "little" ]; then
+  EMUPERF="${SLOW_CORES}"
+elif [ "${CORES}" = "big" ]; then
+  EMUPERF="${FAST_CORES}"
+else
+  ### All..
+  unset EMUPERF
+fi
+
 cd "${RUN_DIR}"
-echo ${params} | xargs /usr/bin/gzdoom >/var/log/gzdoom.log 2>&1
+echo ${params} | ${EMUPERF} xargs /usr/bin/gzdoom >/var/log/gzdoom.log 2>&1

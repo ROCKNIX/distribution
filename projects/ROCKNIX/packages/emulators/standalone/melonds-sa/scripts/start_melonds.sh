@@ -35,7 +35,6 @@ SLAYOUT=$(get_setting screen_layout "${PLATFORM}" "${GAME}")
 SWAP=$(get_setting screen_swap "${PLATFORM}" "${GAME}")
 SROTATION=$(get_setting screen_rotation "${PLATFORM}" "${GAME}")
 SHOWFPS=$(get_setting show_fps "${PLATFORM}" "${GAME}")
-SUI=$(get_setting start_ui "${PLATFORM}" "${GAME}")
 VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
 
 #Set the cores to use
@@ -93,6 +92,20 @@ if [ "$SHOWFPS" = "1" ]; then
 	export GALLIUM_HUD="simple,fps"
 fi
 
+# Extract archive to /tmp/melonds
+TEMP="/tmp/melonds"
+rm -rf "${TEMP}"
+mkdir -p "${TEMP}"
+if [[ "${1}" == *.zip ]]; then
+    unzip -o "${1}" -d "${TEMP}"
+    ROM=$(find "${TEMP}" -maxdepth 1 -type f -name "*.nds" | head -n 1)
+elif [[ "${1}" == *.7z ]]; then
+    7z x -y -o"${TEMP}" "${1}"
+    ROM=$(find "${TEMP}" -maxdepth 1 -type f -name "*.nds" | head -n 1)
+else
+    ROM="${1}"
+fi
+
 #Set QT Platform to Wayland
 export QT_QPA_PLATFORM=wayland
 @PANFROST@
@@ -100,11 +113,6 @@ export QT_QPA_PLATFORM=wayland
 @LIBMALI@
 
 #Run MelonDS emulator
-if [ "$SUI" = "1" ]; then
-	$GPTOKEYB "melonDS" -c "/storage/.config/melonDS/melonDS.gptk" &
-	${EMUPERF} /usr/bin/melonDS
-else
-	$GPTOKEYB "melonDS" -c "/storage/.config/melonDS/melonDS.gptk" &
-	${EMUPERF} /usr/bin/melonDS -f "${1}"
-fi
+$GPTOKEYB "melonDS" -c "/storage/.config/melonDS/melonDS.gptk" &
+${EMUPERF} /usr/bin/melonDS -f "${ROM}"
 kill -9 "$(pidof gptokeyb)"
