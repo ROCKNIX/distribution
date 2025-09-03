@@ -10,7 +10,7 @@ PKG_TOOLCHAIN="cmake"
 
 case ${DEVICE} in
   SM8250|SM8550|SDM845|AMD64|RK3399)
-    PKG_VERSION="10cedc90af0068d2a78a454914c4d7ca4c1cdbdf"
+    PKG_VERSION="033a0540f7d76feb7d9eef6be99977da3142e415"
     PKG_SITE="https://github.com/dolphin-emu/dolphin"
     PKG_URL="${PKG_SITE}.git"
     PKG_DEPENDS_TARGET+=" qt6"
@@ -25,6 +25,7 @@ case ${DEVICE} in
     PKG_URL="${PKG_SITE}.git"
     PKG_PATCH_DIRS+=" wayland"
     PKG_CMAKE_OPTS_TARGET+=" -DENABLE_QT=OFF \
+                             -DENABLE_WAYLAND=ON \
                              -DUSE_RETRO_ACHIEVEMENTS=OFF \
                              -DENABLE_HEADLESS=ON"
   ;;
@@ -40,8 +41,7 @@ fi
 
 if [ "${DISPLAYSERVER}" = "wl" ]; then
   PKG_DEPENDS_TARGET+=" wayland ${WINDOWMANAGER} xwayland xrandr libXi"
-  PKG_CMAKE_OPTS_TARGET+="     -DENABLE_WAYLAND=ON \
-                               -DENABLE_X11=ON"
+  PKG_CMAKE_OPTS_TARGET+="       -DENABLE_X11=ON"
 else
     PKG_CMAKE_OPTS_TARGET+="     -DENABLE_X11=OFF"
 fi
@@ -50,12 +50,15 @@ if [ "${VULKAN_SUPPORT}" = "yes" ]
 then
   PKG_DEPENDS_TARGET+=" ${VULKAN}"
   PKG_CMAKE_OPTS_TARGET+=" -DENABLE_VULKAN=ON"
+  GRENDERER="Vulkan"
 else
   PKG_CMAKE_OPTS_TARGET+=" -DENABLE_VULKAN=OFF"
+  GRENDERER="OGL"
 fi
 
 pre_configure_target() {
   PKG_CMAKE_OPTS_TARGET+=" -DCMAKE_BUILD_TYPE=Release \
+                           -Ddatadir="/storage/.config/dolphin-emu" \
                            -DENABLE_NOGUI=ON \
                            -DENABLE_EVDEV=ON \
                            -DUSE_DISCORD_PRESENCE=OFF \
@@ -105,6 +108,9 @@ post_install() {
     esac
     sed -e "s/@DOLPHIN_PLATFORM@/${DOLPHIN_PLATFORM}/g" -i ${INSTALL}/usr/bin/start_dolphin_gc.sh
     sed -e "s/@DOLPHIN_PLATFORM@/${DOLPHIN_PLATFORM}/g" -i  ${INSTALL}/usr/bin/start_dolphin_wii.sh
+
+    sed -e "s/@GRENDERER@/${GRENDERER}/g" -i ${INSTALL}/usr/bin/start_dolphin_gc.sh
+    sed -e "s/@GRENDERER@/${GRENDERER}/g" -i ${INSTALL}/usr/bin/start_dolphin_wii.sh
 
     sed -e "s/@EXPORTS@/${EXPORTS}/g" \
         -i  ${INSTALL}/usr/bin/start_dolphin_gc.sh

@@ -20,32 +20,37 @@ control-gen_init.sh
 source /storage/.config/gptokeyb/control.ini
 get_controls
 
+# Conf files vars
+CONF_DIR="/storage/.config/dolphin-emu"
+DOLPHIN_INI="Dolphin.ini"
+GFX_INI="GFX.ini"
+GC_CONTROLLER_INI="GCPadNew.ini"
+
 # Check if dolphin-emu exists in .config
-if [ ! -d "/storage/.config/dolphin-emu" ]; then
-    mkdir -p "/storage/.config/dolphin-emu"
+if [ ! -d "${CONF_DIR}" ]; then
         cp -r "/usr/config/dolphin-emu" "/storage/.config/"
 fi
 
 # Check if Hotkeys.ini exists
 if [ "${DOLPHIN_CORE}" = 'dolphin-emu' ]; then
-  if [ ! -f "/storage/.config/dolphin-emu/Hotkeys.ini" ]; then
-        cp -r "/usr/config/dolphin-emu/Hotkeys.ini" "/storage/.config/dolphin-emu/"
+  if [ ! -f "${CONF_DIR}/Hotkeys.ini" ]; then
+        cp -r "/usr/config/dolphin-emu/Hotkeys.ini" "${CONF_DIR}/"
   fi
 fi
 
 # Check if GC controller dir exists in .config/dolphin-emu/GamecubeControllerProfiles
-if [ ! -d "/storage/.config/dolphin-emu/GamecubeControllerProfiles" ]; then
-        cp -r "/usr/config/dolphin-emu/GamecubeControllerProfiles" "/storage/.config/dolphin-emu/"
+if [ ! -d "${CONF_DIR}/GamecubeControllerProfiles" ]; then
+        cp -r "/usr/config/dolphin-emu/GamecubeControllerProfiles" "${CONF_DIR}/"
 fi
 
 # Check if Wii controller dir exists in .config/dolphin-emu/WiiControllerProfiles
-if [ ! -d "/storage/.config/dolphin-emu/WiiControllerProfiles" ]; then
-        cp -r "/usr/config/dolphin-emu/WiiControllerProfiles" "/storage/.config/dolphin-emu/"
+if [ ! -d "${CONF_DIR}/WiiControllerProfiles" ]; then
+        cp -r "/usr/config/dolphin-emu/WiiControllerProfiles" "${CONF_DIR}/dolphin-emu/"
 fi
 
 # Check if Wii custom controller profile exists in .config/dolphin-emu
-if [ ! -f "/storage/.config/dolphin-emu/WiiControllerProfiles/custom.ini" ]; then
-        cp -r "/storage/.config/dolphin-emu/WiiControllerProfiles/vremote.ini" "/storage/.config/dolphin-emu/WiiControllerProfiles/custom.ini"
+if [ ! -f "${CONF_DIR}/WiiControllerProfiles/custom.ini" ]; then
+        cp -r "${CONF_DIR}/WiiControllerProfiles/vremote.ini" "${CONF_DIR}/WiiControllerProfiles/custom.ini"
 fi
 
 # Gamecube controller profile needed for hotkeys to work on SA
@@ -60,27 +65,27 @@ if [ ! -d "/storage/roms/savestates/wii/" ]; then
     mkdir -p "/storage/roms/savestates/wii/"
 fi
 
-rm -rf /storage/.config/dolphin-emu/StateSaves
-ln -sf /storage/roms/savestates/wii /storage/.config/dolphin-emu/StateSaves
+rm -rf ${CONF_DIR}/StateSaves
+ln -sf /storage/roms/savestates/wii ${CONF_DIR}/StateSaves
 
 # Copy bios, memory cards and other system stuff to roms
 if [ ! -d "/storage/roms/bios/GC/" ]; then
     mkdir -p /storage/roms/bios/GC/{USA,JAP,EUR}
-    cp -r /storage/.config/dolphin-emu/GC /storage/roms/bios/
+    cp -r ${CONF_DIR}/GC /storage/roms/bios/
 fi
 
 # Link bios and memory cards to roms
 for REGION in EUR JAP USA
 do
   # Link bios
-  rm -rf "/storage/.config/dolphin-emu/GC/${REGION}"
-  ln -sf "/storage/roms/bios/GC/${REGION}" "/storage/.config/dolphin-emu/GC/${REGION}"
+  rm -rf "${CONF_DIR}/GC/${REGION}"
+  ln -sf "/storage/roms/bios/GC/${REGION}" "${CONF_DIR}/GC/${REGION}"
 
   # Link memory cards, copying to roms/bios first as needed
   for SLOT in A B
   do
     MEM_CARD_FILE="MemoryCard${SLOT}.${REGION}.raw"
-    CONFIG_MEM_CARD="/storage/.config/dolphin-emu/GC/${MEM_CARD_FILE}"
+    CONFIG_MEM_CARD="${CONF_DIR}/GC/${MEM_CARD_FILE}"
     ROMS_BIOS_MEM_CARD="/storage/roms/bios/GC/${MEM_CARD_FILE}"
 
     if [ -f "${ROMS_BIOS_MEM_CARD}" ]; then
@@ -103,7 +108,7 @@ ASPECT=$(get_setting aspect_ratio "${PLATFORM}" "${GAME}")
 AUDIOBE=$(get_setting audio_backend "${PLATFORM}" "${GAME}")
 CLOCK=$(get_setting clock_speed "${PLATFORM}" "${GAME}")
 ENBCHEATS=$(get_setting enable_cheats "${PLATFORM}" "${GAME}")
-RENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
+GRENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
 IRES=$(get_setting internal_resolution "${PLATFORM}" "${GAME}")
 FPS=$(get_setting show_fps "${PLATFORM}" "${GAME}")
 CON=$(get_setting wii_controller_profile "${PLATFORM}" "${GAME}")
@@ -121,8 +126,8 @@ WPC=$(get_setting write_protect_configs "${PLATFORM}" "${GAME}")
 
 # Grab clean config files during boot, unless disabled in emulationstation
 if [ "$WPC" != "false" ]; then
-  cp -r /usr/config/dolphin-emu/GFX.ini /storage/.config/dolphin-emu/GFX.ini
-  cp -r /usr/config/dolphin-emu/Dolphin.ini /storage/.config/dolphin-emu/Dolphin.ini
+  cp -r /usr/config/dolphin-emu/GFX.ini ${CONF_DIR}/${GFX_INI}
+  cp -r /usr/config/dolphin-emu/Dolphin.ini ${CONF_DIR}/${DOLPHIN_INI}
 fi
 
 # Set the cores to use
@@ -141,37 +146,37 @@ fi
 ### Emulation Station features:
   # Anti-Aliasing
   if [ "$AA" = "2m" ]; then
-    sed -i '/MSAA/c\MSAA = 2' /storage/.config/dolphin-emu/GFX.ini
-    sed -i '/SSAA/c\SSAA = False' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/MSAA/c\MSAA = 2' ${CONF_DIR}/${GFX_INI}
+    sed -i '/SSAA/c\SSAA = False' ${CONF_DIR}/${GFX_INI}
   elif [ "$AA" = "2s" ]; then
-    sed -i '/MSAA/c\MSAA = 2' /storage/.config/dolphin-emu/GFX.ini
-    sed -i '/SSAA/c\SSAA = True' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/MSAA/c\MSAA = 2' ${CONF_DIR}/${GFX_INI}
+    sed -i '/SSAA/c\SSAA = True' ${CONF_DIR}/${GFX_INI}
   elif [ "$AA" = "4m" ]; then
-    sed -i '/MSAA/c\MSAA = 4' /storage/.config/dolphin-emu/GFX.ini
-    sed -i '/SSAA/c\SSAA = False' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/MSAA/c\MSAA = 4' ${CONF_DIR}/${GFX_INI}
+    sed -i '/SSAA/c\SSAA = False' ${CONF_DIR}/${GFX_INI}
   elif [ "$AA" = "4s" ]; then
-    sed -i '/MSAA/c\MSAA = 4' /storage/.config/dolphin-emu/GFX.ini
-    sed -i '/SSAA/c\SSAA = True' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/MSAA/c\MSAA = 4' ${CONF_DIR}/${GFX_INI}
+    sed -i '/SSAA/c\SSAA = True' ${CONF_DIR}/${GFX_INI}
   elif [ "$AA" = "8m" ]; then
-    sed -i '/MSAA/c\MSAA = 8' /storage/.config/dolphin-emu/GFX.ini
-    sed -i '/SSAA/c\SSAA = False' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/MSAA/c\MSAA = 8' ${CONF_DIR}/${GFX_INI}
+    sed -i '/SSAA/c\SSAA = False' ${CONF_DIR}/${GFX_INI}
   elif [ "$AA" = "8s" ]; then
-    sed -i '/MSAA/c\MSAA = 8' /storage/.config/dolphin-emu/GFX.ini
-    sed -i '/SSAA/c\SSAA = True' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/MSAA/c\MSAA = 8' ${CONF_DIR}/${GFX_INI}
+    sed -i '/SSAA/c\SSAA = True' ${CONF_DIR}/${GFX_INI}
   else
-    sed -i '/MSAA/c\MSAA = 0' /storage/.config/dolphin-emu/GFX.ini
-    sed -i '/SSAA/c\SSAA = False' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/MSAA/c\MSAA = 0' ${CONF_DIR}/${GFX_INI}
+    sed -i '/SSAA/c\SSAA = False' ${CONF_DIR}/${GFX_INI}
   fi
 
   # Aspect Ratio
   if [ "$ASPECT" = "1" ]; then
-    sed -i '/AspectRatio/c\AspectRatio = 1' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/AspectRatio/c\AspectRatio = 1' ${CONF_DIR}/${GFX_INI}
   elif [ "$ASPECT" = "2" ]; then
-    sed -i '/AspectRatio/c\AspectRatio = 2' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/AspectRatio/c\AspectRatio = 2' ${CONF_DIR}/${GFX_INI}
   elif [ "$ASPECT" = "3" ]; then
-    sed -i '/AspectRatio/c\AspectRatio = 3' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/AspectRatio/c\AspectRatio = 3' ${CONF_DIR}/${GFX_INI}
   else
-    sed -i '/AspectRatio/c\AspectRatio = 0' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/AspectRatio/c\AspectRatio = 0' ${CONF_DIR}/${GFX_INI}
   fi
 
   # Audio Backend
@@ -183,175 +188,209 @@ fi
 
   # Clock Speed
   if [ "$CLOCK" = "050" ]; then
-    sed -i '/^Overclock =/c\Overclock = 0.5' /storage/.config/dolphin-emu/Dolphin.ini
-    sed -i '/^OverclockEnable =/c\OverclockEnable = True' /storage/.config/dolphin-emu/Dolphin.ini
+    sed -i '/^Overclock =/c\Overclock = 0.5' ${CONF_DIR}/${DOLPHIN_INI}
+    sed -i '/^OverclockEnable =/c\OverclockEnable = True' ${CONF_DIR}/${DOLPHIN_INI}
   elif [ "$CLOCK" = "075" ]; then
-    sed -i '/^Overclock =/c\Overclock = 0.75' /storage/.config/dolphin-emu/Dolphin.ini
-    sed -i '/^OverclockEnable =/c\OverclockEnable = True' /storage/.config/dolphin-emu/Dolphin.ini
+    sed -i '/^Overclock =/c\Overclock = 0.75' ${CONF_DIR}/${DOLPHIN_INI}
+    sed -i '/^OverclockEnable =/c\OverclockEnable = True' ${CONF_DIR}/${DOLPHIN_INI}
   elif [ "$CLOCK" = "100" ]; then
-    sed -i '/^Overclock =/c\Overclock = 1.0' /storage/.config/dolphin-emu/Dolphin.ini
-    sed -i '/^OverclockEnable =/c\OverclockEnable = False' /storage/.config/dolphin-emu/Dolphin.ini
+    sed -i '/^Overclock =/c\Overclock = 1.0' ${CONF_DIR}/${DOLPHIN_INI}
+    sed -i '/^OverclockEnable =/c\OverclockEnable = False' ${CONF_DIR}/${DOLPHIN_INI}
   elif [ "$CLOCK" = "125" ]; then
-    sed -i '/^Overclock =/c\Overclock = 1.25' /storage/.config/dolphin-emu/Dolphin.ini
-    sed -i '/^OverclockEnable =/c\OverclockEnable = True' /storage/.config/dolphin-emu/Dolphin.ini
+    sed -i '/^Overclock =/c\Overclock = 1.25' ${CONF_DIR}/${DOLPHIN_INI}
+    sed -i '/^OverclockEnable =/c\OverclockEnable = True' ${CONF_DIR}/${DOLPHIN_INI}
   elif [ "$CLOCK" = "150" ]; then
-    sed -i '/^Overclock =/c\Overclock = 1.5' /storage/.config/dolphin-emu/Dolphin.ini
-    sed -i '/^OverclockEnable =/c\OverclockEnable = True' /storage/.config/dolphin-emu/Dolphin.ini
+    sed -i '/^Overclock =/c\Overclock = 1.5' ${CONF_DIR}/${DOLPHIN_INI}
+    sed -i '/^OverclockEnable =/c\OverclockEnable = True' ${CONF_DIR}/${DOLPHIN_INI}
   elif [ "$CLOCK" = "200" ]; then
-    sed -i '/^Overclock =/c\Overclock = 2.0' /storage/.config/dolphin-emu/Dolphin.ini
-    sed -i '/^OverclockEnable =/c\OverclockEnable = True' /storage/.config/dolphin-emu/Dolphin.ini
+    sed -i '/^Overclock =/c\Overclock = 2.0' ${CONF_DIR}/${DOLPHIN_INI}
+    sed -i '/^OverclockEnable =/c\OverclockEnable = True' ${CONF_DIR}/${DOLPHIN_INI}
   elif [ "$CLOCK" = "300" ]; then
-    sed -i '/^Overclock =/c\Overclock = 3.0' /storage/.config/dolphin-emu/Dolphin.ini
-    sed -i '/^OverclockEnable =/c\OverclockEnable = True' /storage/.config/dolphin-emu/Dolphin.ini
+    sed -i '/^Overclock =/c\Overclock = 3.0' ${CONF_DIR}/${DOLPHIN_INI}
+    sed -i '/^OverclockEnable =/c\OverclockEnable = True' ${CONF_DIR}/${DOLPHIN_INI}
   elif [ "$CLOCK" = "400" ]; then
-    sed -i '/^Overclock =/c\Overclock = 4.0' /storage/.config/dolphin-emu/Dolphin.ini
-    sed -i '/^OverclockEnable =/c\OverclockEnable = True' /storage/.config/dolphin-emu/Dolphin.ini
+    sed -i '/^Overclock =/c\Overclock = 4.0' ${CONF_DIR}/${DOLPHIN_INI}
+    sed -i '/^OverclockEnable =/c\OverclockEnable = True' ${CONF_DIR}/${DOLPHIN_INI}
   else
-    sed -i '/^OverclockEnable =/c\OverclockEnable = False' /storage/.config/dolphin-emu/Dolphin.ini
+    sed -i '/^OverclockEnable =/c\OverclockEnable = False' ${CONF_DIR}/${DOLPHIN_INI}
   fi
 
   # Enable Cheats
   if [ "$ENBCHEATS" = "1" ]; then
-    sed -i '/EnableCheats/c\EnableCheats = True' /storage/.config/dolphin-emu/Dolphin.ini
+    sed -i '/EnableCheats/c\EnableCheats = True' ${CONF_DIR}/${DOLPHIN_INI}
   else
-    sed -i '/EnableCheats/c\EnableCheats = False' /storage/.config/dolphin-emu/Dolphin.ini
+    sed -i '/EnableCheats/c\EnableCheats = False' ${CONF_DIR}/${DOLPHIN_INI}
   fi
 
   # Graphics Backend
-  if [ "$RENDERER" = "vulkan" ]; then
-    sed -i '/GFXBackend/c\GFXBackend = Vulkan' /storage/.config/dolphin-emu/Dolphin.ini
+  if [ "$GRENDERER" = "vulkan" ]; then
+    sed -i '/GFXBackend/c\GFXBackend = Vulkan' ${CONF_DIR}/${DOLPHIN_INI}
+  elif [ "$GRENDERER" = "opengl" ]; then
+    sed -i '/GFXBackend/c\GFXBackend = OGL' ${CONF_DIR}/${DOLPHIN_INI}
   else
-    sed -i '/GFXBackend/c\GFXBackend = OGL' /storage/.config/dolphin-emu/Dolphin.ini
+    sed -i '/GFXBackend/c\GFXBackend = @GRENDERER@' ${CONF_DIR}/${DOLPHIN_INI}
   fi
 
   # Internal Resolution
   if [ "$IRES" = "1" ]; then
-    sed -i '/InternalResolution/c\InternalResolution = 1' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/InternalResolution/c\InternalResolution = 1' ${CONF_DIR}/${GFX_INI}
   elif [ "$IRES" = "3" ]; then
-    sed -i '/InternalResolution/c\InternalResolution = 3' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/InternalResolution/c\InternalResolution = 3' ${CONF_DIR}/${GFX_INI}
   elif [ "$IRES" = "4" ]; then
-    sed -i '/InternalResolution/c\InternalResolution = 4' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/InternalResolution/c\InternalResolution = 4' ${CONF_DIR}/${GFX_INI}
   elif [ "$IRES" = "6" ]; then
-    sed -i '/InternalResolution/c\InternalResolution = 6' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/InternalResolution/c\InternalResolution = 6' ${CONF_DIR}/${GFX_INI}
   else
-    sed -i '/InternalResolution/c\InternalResolution = 2' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/InternalResolution/c\InternalResolution = 2' ${CONF_DIR}/${GFX_INI}
   fi
 
   # Shader Mode
   if [ "$SHADERM" = "0" ]; then
-    sed -i '/ShaderCompilationMode =/c\ShaderCompilationMode = 0' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/ShaderCompilationMode =/c\ShaderCompilationMode = 0' ${CONF_DIR}/${GFX_INI}
   elif [ "$SHADERM" = "1" ]; then
-    sed -i '/ShaderCompilationMode =/c\ShaderCompilationMode = 1' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/ShaderCompilationMode =/c\ShaderCompilationMode = 1' ${CONF_DIR}/${GFX_INI}
   elif [ "$SHADERM" = "2" ]; then
-    sed -i '/ShaderCompilationMode =/c\ShaderCompilationMode = 2' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/ShaderCompilationMode =/c\ShaderCompilationMode = 2' ${CONF_DIR}/${GFX_INI}
   elif [ "$SHADERM" = "3" ]; then
-    sed -i '/ShaderCompilationMode =/c\ShaderCompilationMode = 3' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/ShaderCompilationMode =/c\ShaderCompilationMode = 3' ${CONF_DIR}/${GFX_INI}
   fi
 
   #Shader Precompile
   if [ "$SHADERP" = "false" ]; then
-    sed -i '/WaitForShadersBeforeStarting =/c\WaitForShadersBeforeStarting = False' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/WaitForShadersBeforeStarting =/c\WaitForShadersBeforeStarting = False' ${CONF_DIR}/${GFX_INI}
   elif [ "$SHADERP" = "true" ]; then
-    sed -i '/WaitForShadersBeforeStarting =/c\WaitForShadersBeforeStarting = True' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/WaitForShadersBeforeStarting =/c\WaitForShadersBeforeStarting = True' ${CONF_DIR}/${GFX_INI}
   fi
 
   # Show FPS
   if [ "$FPS" = "true" ]; then
-    sed -i '/ShowFPS/c\ShowFPS = True' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/ShowFPS/c\ShowFPS = True' ${CONF_DIR}/${GFX_INI}
   else
-    sed -i '/ShowFPS/c\ShowFPS = False' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/ShowFPS/c\ShowFPS = False' ${CONF_DIR}/${GFX_INI}
   fi
 
   # Wii Controller Profile
-  if [ "$CON" = "vremote" ]; then
-    cp -r /storage/.config/dolphin-emu/WiiControllerProfiles/vremote.ini /storage/.config/dolphin-emu/WiimoteNew.ini
-  elif [ "$CON" = "hremote" ]; then
-    cp -r /storage/.config/dolphin-emu/WiiControllerProfiles/hremote.ini /storage/.config/dolphin-emu/WiimoteNew.ini
+  if [ "$CON" = "classic" ]; then
+    cp -r ${CONF_DIR}/WiiControllerProfiles/classic.ini ${CONF_DIR}/WiimoteNew.ini
+  elif [ "$CON" = "vremote" ]; then
+    cp -r ${CONF_DIR}/WiiControllerProfiles/vremote.ini ${CONF_DIR}/WiimoteNew.ini
   elif [ "$CON" = "nunchuck" ]; then
-    cp -r /storage/.config/dolphin-emu/WiiControllerProfiles/nunchuck.ini /storage/.config/dolphin-emu/WiimoteNew.ini
+    cp -r ${CONF_DIR}/WiiControllerProfiles/nunchuck.ini ${CONF_DIR}/WiimoteNew.ini
   elif [ "$CON" = "custom" ]; then
-    cp -r /storage/.config/dolphin-emu/WiiControllerProfiles/custom.ini /storage/.config/dolphin-emu/WiimoteNew.ini
+    cp -r ${CONF_DIR}/WiiControllerProfiles/custom.ini ${CONF_DIR}/WiimoteNew.ini
   else
-    cp -r /storage/.config/dolphin-emu/WiiControllerProfiles/classic.ini /storage/.config/dolphin-emu/WiimoteNew.ini
+    cp -r ${CONF_DIR}/WiiControllerProfiles/hremote.ini ${CONF_DIR}/WiimoteNew.ini
   fi
 
   # Wii Controller Rumble
   if [ "$RUMBLE" = "false" ]; then
-    sed -i '/^Rumble/d' /storage/.config/dolphin-emu/WiimoteNew.ini
+    sed -i '/^Rumble/d' ${DOLPHIN_INI}/WiimoteNew.ini
   fi
 
   # Wii Controller Hotkey Enable
   if [ "$HKEY" = "mode" ]; then
-    sed -i '/^Buttons\/Hotkey =/c\Buttons\/Hotkey = Button 8' /storage/.config/dolphin-emu/GCPadNew.ini
+    sed -i '/^Buttons\/Hotkey =/c\Buttons\/Hotkey = Button 8' ${CONF_DIR}/GCPadNew.ini
   else
-    sed -i '/^Buttons\/Hotkey =/c\Buttons\/Hotkey = Button 6' /storage/.config/dolphin-emu/GCPadNew.ini
+    sed -i '/^Buttons\/Hotkey =/c\Buttons\/Hotkey = Button 6' ${CONF_DIR}/GCPadNew.ini
   fi
-
-  # Vsync
-  if [ "$VSYNC" = "1" ]; then
-    sed -i '/VSync =/c\VSync = True' /storage/.config/dolphin-emu/GFX.ini
-  else
-    sed -i '/VSync =/c\VSync = False' /storage/.config/dolphin-emu/GFX.ini
-  fi
-
   # Skip EFB CPU Access
   if [ "$EFBACCESS" = "false" ]; then
-    sed -i '/EFBAccessEnable =/c\EFBAccessEnable = False' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/EFBAccessEnable =/c\EFBAccessEnable = False' ${CONF_DIR}/${GFX_INI}
   else
-    sed -i '/EFBAccessEnable =/c\EFBAccessEnable = True' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/EFBAccessEnable =/c\EFBAccessEnable = True' ${CONF_DIR}/${GFX_INI}
   fi
 
   # Store EFB to texture only
   if [ "$EFBTEXTURE" = "false" ]; then
-    sed -i '/EFBToTextureEnable =/c\EFBToTextureEnable = False' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/EFBToTextureEnable =/c\EFBToTextureEnable = False' ${CONF_DIR}/${GFX_INI}
   else
-    sed -i '/EFBToTextureEnable =/c\EFBToTextureEnable = True' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/EFBToTextureEnable =/c\EFBToTextureEnable = True' ${CONF_DIR}/${GFX_INI}
   fi
 
   # Store XFB to texture only
   if [ "$XFBTEXTURE" = "false" ]; then
-    sed -i '/XFBToTextureEnable =/c\XFBToTextureEnable = False' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/XFBToTextureEnable =/c\XFBToTextureEnable = False' ${CONF_DIR}/${GFX_INI}
   else
-    sed -i '/XFBToTextureEnable =/c\XFBToTextureEnable = True' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/XFBToTextureEnable =/c\XFBToTextureEnable = True' ${CONF_DIR}/${GFX_INI}
   fi
 
   # Texture cache accuracy
   if [ "$TEXTURE_CACHE_ACCURACY" = "0" ]; then
-    sed -i '/SafeTextureCacheColorSamples =/c\SafeTextureCacheColorSamples = 0' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/SafeTextureCacheColorSamples =/c\SafeTextureCacheColorSamples = 0' ${CONF_DIR}/${GFX_INI}
   elif [ "$TEXTURE_CACHE_ACCURACY" = "512" ]; then
-    sed -i '/SafeTextureCacheColorSamples =/c\SafeTextureCacheColorSamples = 512' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/SafeTextureCacheColorSamples =/c\SafeTextureCacheColorSamples = 512' ${CONF_DIR}/${GFX_INI}
   else
     # Default to 128 = fast
-    sed -i '/SafeTextureCacheColorSamples =/c\SafeTextureCacheColorSamples = 128' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/SafeTextureCacheColorSamples =/c\SafeTextureCacheColorSamples = 128' ${CONF_DIR}/${GFX_INI}
   fi
 
   # Widescreen Hack
   if [ "$WHACK" = "true" ]; then
-    sed -i '/wideScreenHack =/c\wideScreenHack = True' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/wideScreenHack =/c\wideScreenHack = True' ${CONF_DIR}/${GFX_INI}
   else
-    sed -i '/wideScreenHack =/c\wideScreenHack = False' /storage/.config/dolphin-emu/GFX.ini
+    sed -i '/wideScreenHack =/c\wideScreenHack = False' ${CONF_DIR}/${GFX_INI}
   fi
 
 # Skip bios always, it's untested for Wii
-sed -i '/SkipIPL/c\SkipIPL = True' /storage/.config/dolphin-emu/Dolphin.ini
+sed -i '/SkipIPL/c\SkipIPL = True' ${CONF_DIR}/${DOLPHIN_INI}
+
+  # GC Controller Hotkey Enable
+  if [ "$HKEY" = "mode" ]; then
+    sed -i '/^Buttons\/Hotkey =/c\Buttons\/Hotkey = Button 8' ${CONF_DIR}/${GC_CONTROLLER_INI}
+  else
+    sed -i '/^Buttons\/Hotkey =/c\Buttons\/Hotkey = Button 6' ${CONF_DIR}/${GC_CONTROLLER_INI}
+  fi
+
+  # Vsync
+  if [ "$VSYNC" = "1" ]; then
+    sed -i '/VSync =/c\VSync = True' ${CONF_DIR}/${GFX_INI}
+  else
+    sed -i '/VSync =/c\VSync = False' ${CONF_DIR}/${GFX_INI}
+  fi
 
 # Link  .config/dolphin-emu to .local
 rm -rf /storage/.local/share/dolphin-emu
 ln -sf /storage/.config/dolphin-emu /storage/.local/share/dolphin-emu
 
-@EXPORTS@
-
 # Retroachievements
-/usr/bin/cheevos_dolphin.sh
+  /usr/bin/cheevos_dolphin.sh
 
-# Set audio and video backend
+# Set video and audio backend
+  CMD="${CMD} -v $GRENDERER"
+
 if [ ${DOLPHIN_CORE} = "dolphin-emu" ]; then
   CMD="-b -a ${AUDIO_BACKEND}"
 else
   CMD="-p @DOLPHIN_PLATFORM@ -a ${AUDIO_BACKEND}"
 fi
 
+# Debugging info:
+  echo "GAME set to: ${GAME}"
+  echo "PLATFORM set to: ${PLATFORM}"
+  echo "AA set to: ${AA}"
+  echo "ASPECT set to: ${ASPECT}"
+  echo "AUDIOBE set to: ${AUDIOBE}"
+  echo "CLOCK set to: ${CLOCK}"
+  echo "ENBCHEATS set to: ${ENBCHEATS}"
+  echo "GRENDERER set to: ${GRENDERER}"
+  echo "IRES set to: ${IRES}"
+  echo "FPS set to: ${FPS}"
+  echo "CON set to: ${CON}"
+  echo "HKEY set to: ${HKEY}"
+  echo "SHADERM set to: ${SHADERM}"
+  echo "SHADERP set to: ${SHADERP}"
+  echo "VSYNC set to: ${VSYNC}"
+  echo "EFBACCESS set to: ${EFBACCESS}"
+  echo "EFBTEXTURE set to: ${EFBTEXTURE}"
+  echo "XFBTEXTURE set to: ${XFBTEXTURE}"
+  echo "TEXTURE_CACHE_ACCURACY set to: ${TEXTURE_CACHE_ACCURACY}"
+  echo "RUMBLE set to: ${RUMBLE}"
+  echo "WHACK set to: ${WHACK}"
+  echo "WPC set to: ${WPC}"
+  echo "Launching /usr/bin/${DOLPHIN_CORE} ${CMD} -e ${1}"
+
 # Run Dolphin emulator
+  @EXPORTS@
   ${GPTOKEYB} ${DOLPHIN_CORE} xbox360 &
   ${EMUPERF} /usr/bin/${DOLPHIN_CORE} ${CMD} -e "${1}"
   kill -9 "$(pidof gptokeyb)"

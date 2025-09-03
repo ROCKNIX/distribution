@@ -32,6 +32,7 @@ fi
 GAME=$(echo "${1}" | sed "s#^/.*/##")
 PLATFORM=$(echo "${2}"| sed "s#^/.*/##")
 GRENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
+IRES=$(get_setting internal_resolution "${PLATFORM}" "${GAME}")
 SORIENTATION=$(get_setting screen_orientation "${PLATFORM}" "${GAME}")
 SLAYOUT=$(get_setting screen_layout "${PLATFORM}" "${GAME}")
 SWAP=$(get_setting screen_swap "${PLATFORM}" "${GAME}")
@@ -46,21 +47,28 @@ unset EMUPERF
 [ "${CORES}" = "big" ] && EMUPERF="${FAST_CORES}"
 
 #Graphics Backend
-if [ "$GRENDERER" = "1" ]; then
-	sed -i '/^ScreenUseGL=/c\ScreenUseGL=1' "${CONF_DIR}/${MELONDS_INI}"
+if [ "$GRENDERER" > "0" ]; then
+	sed -i "/^GL_ScaleFactor=/c\GL_ScaleFactor=$GRENDERER" "${CONF_DIR}/${MELONDS_INI}"
 else
-	sed -i '/^ScreenUseGL=/c\ScreenUseGL=0' "${CONF_DIR}/${MELONDS_INI}"
+	sed -i '/^GL_ScaleFactor=/c\GL_ScaleFactor=0' "${CONF_DIR}/${MELONDS_INI}"
+fi
+
+#Internal Resolution
+if [ "$IRES" > "0" ]; then
+        sed -i "/^ScreenUseGL=/c\ScreenUseGL=$IRES" "${CONF_DIR}/${MELONDS_INI}"
+else
+        sed -i '/^ScreenUseGL=/c\ScreenUseGL=1' "${CONF_DIR}/${MELONDS_INI}"
 fi
 
 #Screen Orientation
-if [ "$SORIENTATION" ] > "0"; then
+if [ "$SORIENTATION" > "0" ]; then
 	sed -i "/^ScreenLayout=/c\ScreenLayout=$SORIENTATION" "${CONF_DIR}/${MELONDS_INI}"
 else
 	sed -i '/^ScreenLayout=/c\ScreenLayout=2' "${CONF_DIR}/${MELONDS_INI}"
 fi
 
 #Screen Layout
-if [ "$SLAYOUT" ] > "0"; then
+if [ "$SLAYOUT" > "0" ]; then
 	sed -i "/^ScreenSizing=/c\ScreenSizing=$SLAYOUT" "${CONF_DIR}/${MELONDS_INI}"
 else
 	sed -i '/^ScreenSizing=/c\ScreenSizing=0' "${CONF_DIR}/${MELONDS_INI}"
@@ -107,7 +115,7 @@ else
 fi
 
 #Set QT Platform to Wayland
-export QT_QPA_PLATFORM=wayland
+export QT_QPA_PLATFORM=xcb
 @PANFROST@
 @HOTKEY@
 @LIBMALI@

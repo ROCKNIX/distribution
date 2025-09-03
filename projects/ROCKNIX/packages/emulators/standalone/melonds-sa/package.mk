@@ -27,7 +27,7 @@ then
   PKG_DEPENDS_TARGET+=" ${VULKAN}"
 fi
 
-pre_configure_host() {
+pre_configure_target() {
 export CFLAGS+=" -Wno-sign-compare"
 export CXXFLAGS="${CXXFLAGS} -Wno-sign-compare"
 
