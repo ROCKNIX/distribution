@@ -378,27 +378,23 @@ execute_rclone_with_error_handling() {
     
     log_message "About to execute: rclone ${method} ${extra_opts[*]} ${source} ${dest}" "false"
     
-    # Create a temporary script to capture both stdout and stderr
-    local temp_script="/tmp/rclone_exec_$$"
-    cat > "$temp_script" << EOF
-#!/bin/bash
-rclone ${method} ${extra_opts[*]} "${source}" "${dest}" 2>&1
-echo "RCLONE_EXIT_CODE:\$?"
-EOF
-    chmod +x "$temp_script"
+    # Use a temporary file to capture stderr while allowing stdout (progress) to display
+    local stderr_file="/tmp/rclone_stderr_$$"
     
-    # Execute and capture output
-    local output
-    output=$("$temp_script")
-    local rclone_exit_code=$(echo "$output" | grep "RCLONE_EXIT_CODE:" | cut -d: -f2)
+    # Execute rclone with real-time progress display
+    # stdout goes to terminal (shows progress), stderr goes to temp file for logging
+    rclone "${method}" "${extra_opts[@]}" "${source}" "${dest}" 2>"$stderr_file"
+    local rclone_exit_code=$?
+    
+    # Log any stderr output for debugging
+    if [ -s "$stderr_file" ]; then
+        while IFS= read -r line; do
+            log_message "rclone stderr: $line" "false"
+        done < "$stderr_file"
+    fi
     
     # Clean up
-    rm -f "$temp_script"
-    
-    # Log the full output for debugging
-    echo "$output" | grep -v "RCLONE_EXIT_CODE:" | while IFS= read -r line; do
-        log_message "rclone: $line" "false"
-    done
+    rm -f "$stderr_file"
     
     return $rclone_exit_code
 }
@@ -435,9 +431,9 @@ restore_game_saves() {
     
     # Add debug logging if LOG_LEVEL is INFO
     if [ "${LOG_LEVEL}" == "INFO" ]; then
-        rclone_debug="--log-level INFO"
+        rclone_debug="--log-level"
     fi
-    
+
     # Build the complete options array
     local all_opts=()
     if [ ${#filtered_opts[@]} -gt 0 ]; then
@@ -449,13 +445,11 @@ restore_game_saves() {
             "--filter-from" "/storage/.config/cloud_sync-rules.txt"
         )
     fi
-    
+
     # Add debug logging if enabled
     if [ -n "$rclone_debug" ]; then
-        all_opts+=("$rclone_debug")
-    fi
-    
-    # Add exclusions
+        all_opts+=("$rclone_debug" "INFO")
+    fi    # Add exclusions
     all_opts+=(
         "--exclude=${BACKUPFOLDER}/**"
         "--exclude=backups/**"
