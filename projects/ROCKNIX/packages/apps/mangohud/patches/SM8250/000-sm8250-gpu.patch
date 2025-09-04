@@ -1,0 +1,147 @@
+diff -rupN MangoHud-11a92acdf2c30100f6224a1e9618f1180dac354e.orig/src/gpu_fdinfo.cpp MangoHud-11a92acdf2c30100f6224a1e9618f1180dac354e/src/gpu_fdinfo.cpp
+--- MangoHud-11a92acdf2c30100f6224a1e9618f1180dac354e.orig/src/gpu_fdinfo.cpp	2025-09-04 09:10:27.211485829 +1000
++++ MangoHud-11a92acdf2c30100f6224a1e9618f1180dac354e/src/gpu_fdinfo.cpp	2025-09-04 13:54:13.081201222 +1000
+@@ -55,7 +55,7 @@ void GPU_fdinfo::find_fd()
+                 client_id = val;
+         }
+ 
+-        if (!driver.empty() && driver == module) {
++        if ((module == "msm_dpu" || module == "msm_drm") && driver == "msm") {
+             total++;
+             SPDLOG_DEBUG(
+                 "driver = \"{}\", pdev = \"{}\", "
+@@ -63,14 +63,30 @@ void GPU_fdinfo::find_fd()
+                 driver, pdev,
+                 client_id, client_ids.find(client_id) != client_ids.end()
+             );
+-        }
++            
++            if (
++                driver.empty() || client_id.empty() ||
++                client_ids.find(client_id) != client_ids.end()
++            )
++                continue;
++        } else {
++            if (!driver.empty() && driver == module) {
++                total++;
++                SPDLOG_DEBUG(
++                    "driver = \"{}\", pdev = \"{}\", "
++                    "client_id = \"{}\", client_id_exists = \"{}\"",
++                    driver, pdev,
++                    client_id, client_ids.find(client_id) != client_ids.end()
++                );
++            }
+ 
+-        if (
+-            driver.empty() || client_id.empty() ||
+-            driver != module || pdev != pci_dev ||
+-            client_ids.find(client_id) != client_ids.end()
+-        )
+-            continue;
++            if (
++                driver.empty() || client_id.empty() ||
++                driver != module || pdev != pci_dev ||
++                client_ids.find(client_id) != client_ids.end()
++            )
++                continue;
++        }
+ 
+         client_ids.insert(client_id);
+         open_fdinfo_fd(fd_path);
+@@ -166,8 +182,9 @@ void GPU_fdinfo::find_hwmon_sensors()
+ {
+     std::string hwmon;
+ 
+-    if (module == "msm")
+-        hwmon = find_hwmon_sensor_dir("gpu");
++    if (module == "msm_drm" || module == "msm_dpu" )
++        // gpuss_0_thermal, gpuss_1_thermal and gpuss_2_thermal are all candidates
++        hwmon = find_hwmon_sensor_dir("gpu_top_thermal");
+     else if (module == "panfrost")
+         hwmon = find_hwmon_sensor_dir("gpu_thermal");
+     else
+@@ -529,6 +546,8 @@ int GPU_fdinfo::get_gpu_clock()
+ {
+     if (module == "panfrost")
+         return get_gpu_clock_panfrost();
++    else if (module == "msm_dpu")
++        return get_kgsl_clock();    
+ 
+     if (!gpu_clock_stream.is_open())
+         return 0;
+@@ -621,7 +640,7 @@ float GPU_fdinfo::amdgpu_helper_get_proc
+ }
+ 
+ void GPU_fdinfo::init_kgsl() {
+-    const std::string sys_path = "/sys/class/kgsl/kgsl-3d0";
++    const std::string sys_path = "/sys/class/devfreq/3d00000.gpu";
+ 
+     try {
+         if (!fs::exists(sys_path)) {
+@@ -633,7 +652,8 @@ void GPU_fdinfo::init_kgsl() {
+         return;
+     }
+ 
+-    for (std::string metric : {"gpu_busy_percentage", "temp", "clock_mhz" }) {
++    // Only GPU clocks accessible
++    for (std::string metric : {"cur_freq" }) {
+         std::string p = sys_path + "/" + metric;
+ 
+         if (!fs::exists(p)) {
+@@ -642,11 +662,7 @@ void GPU_fdinfo::init_kgsl() {
+         }
+ 
+         SPDLOG_DEBUG("kgsl: {} found", p);
+-
+-        if (metric == "clock_mhz")
+-            gpu_clock_stream.open(p);
+-        else
+-            kgsl_streams[metric].open(p);
++        kgsl_streams[metric].open(p);
+     }
+ }
+ 
+@@ -686,6 +702,24 @@ int GPU_fdinfo::get_kgsl_temp() {
+     return std::round(std::stoi(temp_str) / 1'000.f);
+ }
+ 
++int GPU_fdinfo::get_kgsl_clock() {
++    std::ifstream* s = &kgsl_streams["cur_freq"];
++
++    if (!s->is_open())
++        return 0;
++
++    std::string freq_str;
++
++    s->seekg(0);
++
++    std::getline(*s, freq_str);
++
++    if (freq_str.empty())
++        return 0;
++
++    return std::round(std::stoi(freq_str) / 1'000'000.f);
++}
++
+ void GPU_fdinfo::main_thread()
+ {
+     while (!stop_thread) {
+diff -rupN MangoHud-11a92acdf2c30100f6224a1e9618f1180dac354e.orig/src/gpu_fdinfo.h MangoHud-11a92acdf2c30100f6224a1e9618f1180dac354e/src/gpu_fdinfo.h
+--- MangoHud-11a92acdf2c30100f6224a1e9618f1180dac354e.orig/src/gpu_fdinfo.h	2025-09-04 09:10:27.215485888 +1000
++++ MangoHud-11a92acdf2c30100f6224a1e9618f1180dac354e/src/gpu_fdinfo.h	2025-09-04 13:14:55.540260674 +1000
+@@ -118,6 +118,7 @@ private:
+     void init_kgsl();
+     int get_kgsl_load();
+     int get_kgsl_temp();
++    int get_kgsl_clock();
+ 
+ public:
+     GPU_fdinfo(
+@@ -145,6 +146,7 @@ public:
+         } else if (module == "msm_dpu") {
+             // msm driver does not report vram usage
+             drm_engine_type = "drm-engine-gpu";
++            init_kgsl();
+         } else if (module == "msm_drm") {
+             init_kgsl();
+         } else if (module == "panfrost") {
