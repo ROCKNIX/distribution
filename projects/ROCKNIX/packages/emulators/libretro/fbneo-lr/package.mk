@@ -4,12 +4,12 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="fbneo-lr"
-PKG_VERSION="87f78d3408c248b7bbfbcba2cffc5382b3060fa9"
+PKG_VERSION="65f5ad254a9141b5b8ee5b0d6c742399a135314c"
 PKG_LICENSE="Non-commercial"
 PKG_SITE="https://github.com/libretro/FBNeo"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_LONGDESC="Port of Final Burn Neo to Libretro (v0.2.97.38)."
+PKG_LONGDESC="Port of Final Burn Neo to Libretro (v1.0.0.3 development build)."
 PKG_TOOLCHAIN="make"
 
 
