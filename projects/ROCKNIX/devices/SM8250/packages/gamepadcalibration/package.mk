@@ -2,7 +2,7 @@
 # Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="gamepadcalibration"
-PKG_VERSION="973bf8c4d72068e3e2383450c76b0cb2fa078cb1"
+PKG_VERSION="2077e7af7e9a8c1df54af6f1959cb92daea03207"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/cdeletre/GPcal"
 PKG_URL="https://github.com/cdeletre/GPcal/archive/${PKG_VERSION}.tar.gz"
@@ -17,7 +17,7 @@ make_target() {
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/local/share
 
-  tar -xzf ${PKG_BUILD}/rocknix/gpcal.tgz -C ${INSTALL}/usr/local/share
+  tar -xzf ${PKG_BUILD}/rocknix/gpcal-python-3.13.tgz -C ${INSTALL}/usr/local/share
   chmod 0755 ${INSTALL}/usr/local/share/gpcal/main.py
 
   mkdir -p ${INSTALL}/usr/config/modules
