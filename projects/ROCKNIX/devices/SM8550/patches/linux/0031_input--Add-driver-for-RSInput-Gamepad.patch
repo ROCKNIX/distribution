@@ -43,7 +43,7 @@ new file mode 100644
 index 000000000000..4a7096407712
 --- /dev/null
 +++ b/drivers/input/joystick/rsinput.c
-@@ -0,0 +1,418 @@
+@@ -0,0 +1,464 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * RSInput Gamepad Driver
@@ -206,6 +206,45 @@ index 000000000000..4a7096407712
 +    }
 +}
 +
++#define GAMEPAD_RAW_SENSOR_FULL_RANGE_VAL 0x755
++#define GAMEPAD_RAW_TRIGGER_MIN 354
++#define GAMEPAD_RAW_TRIGGER_MAX 1845
++
++#ifndef clamp
++#define clamp(val, min, max) ({ \
++	typeof(val) __val = (val); \
++	typeof(min) __min = (min); \
++	typeof(max) __max = (max); \
++	__val = __val < __min ? __min : __val; \
++	__val > __max ? __max : __val; \
++})
++#endif
++
++static inline int scale_trigger_signed_range(unsigned int raw_val, int raw_min, int raw_max) {
++    long scaled;
++    long input_range = raw_max - raw_min;
++    long output_min = -32768L;
++    long output_max = 32767L;
++    long output_range = output_max - output_min;
++
++    if (input_range == 0)
++        return 0;
++ 
++    long val_shifted = raw_val - raw_min;
++ 
++    if (val_shifted < 0) val_shifted = 0;
++    if (val_shifted > input_range) val_shifted = input_range;
++ 
++    scaled = (val_shifted * output_range / input_range) + output_min;
++
++    if (scaled > 32767)
++        scaled = 32767;
++    else if (scaled < -32768)
++        scaled = -32768;
++
++    return (int)scaled;
++}
++
 +static void handle_cmd_status(struct rsinput_driver *drv, const uint8_t *data, size_t payload_length) {
 +    if (payload_length >= 6) {
 +    static unsigned long prev_states;
@@ -219,10 +258,17 @@ index 000000000000..4a7096407712
 +        input_report_key(drv->input, keymap[i], (current_states & BIT(i)));
 +    }
 +
-+    input_report_abs(drv->input, ABS_Z,
-+             0x650 - (data[FRAME_POS_DATA_3] | (data[FRAME_POS_DATA_4] << 8)));
-+    input_report_abs(drv->input, ABS_RZ,
-+             0x650 - (data[FRAME_POS_DATA_5] | (data[FRAME_POS_DATA_6] << 8)));
++    int raw_trig_l_current = GAMEPAD_RAW_SENSOR_FULL_RANGE_VAL - (data[FRAME_POS_DATA_3] | (data[FRAME_POS_DATA_4] << 8));
++    int raw_trig_r_current = GAMEPAD_RAW_SENSOR_FULL_RANGE_VAL - (data[FRAME_POS_DATA_5] | (data[FRAME_POS_DATA_6] << 8));
++
++    int raw_l_clamped = clamp(raw_trig_l_current, GAMEPAD_RAW_TRIGGER_MIN, GAMEPAD_RAW_TRIGGER_MAX);
++    int raw_r_clamped = clamp(raw_trig_r_current, GAMEPAD_RAW_TRIGGER_MIN, GAMEPAD_RAW_TRIGGER_MAX);
++
++    int scaled_z  = scale_trigger_signed_range(raw_l_clamped, GAMEPAD_RAW_TRIGGER_MIN, GAMEPAD_RAW_TRIGGER_MAX);
++    int scaled_rz = scale_trigger_signed_range(raw_r_clamped, GAMEPAD_RAW_TRIGGER_MIN, GAMEPAD_RAW_TRIGGER_MAX);
++
++    input_report_abs(drv->input, ABS_Z, scaled_z);
++    input_report_abs(drv->input, ABS_RZ, scaled_rz);
 +    input_report_abs(drv->input, ABS_X,
 +             -(int16_t)(data[FRAME_POS_DATA_7] | (data[FRAME_POS_DATA_8] << 8)));
 +    input_report_abs(drv->input, ABS_Y,
