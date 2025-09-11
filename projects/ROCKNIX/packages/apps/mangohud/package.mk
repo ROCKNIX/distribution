@@ -10,6 +10,13 @@ PKG_DEPENDS_TARGET="toolchain glslang mesa Python3 wayland libxcb"
 PKG_LONGDESC="A Vulkan and OpenGL overlay for monitoring FPS, temperatures, CPU/GPU load and more."
 PKG_PATCH_DIRS+="${DEVICE}"
 
+# RK3588 - use a fork with Mali G610 support
+if [ "${DEVICE}" = "RK3588" ]
+then
+  PKG_VERSION="58aac6c647a8a06675ddc70c337659db63847957"
+  PKG_SITE="https://github.com/Ayman-Zeyada/MangoHud"
+fi
+
 if [ "${OPENGL_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL}"
 fi
