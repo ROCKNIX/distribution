@@ -1,0 +1,82 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+
+# Based on work by ToKe79 and Shanti Gilbert
+
+OPTIONS="distributions/ROCKNIX/options"
+PACKAGES=("projects/ROCKNIX/packages/virtual/emulators/package.mk" \
+          "projects/ROCKNIX/packages/virtual/es-themes/package.mk" \
+          "projects/ROCKNIX/packages/virtual/gamesupport/package.mk" )
+BLOCKLIST="config/blocklist"
+
+update_packages() {
+  for p in $PACKAGES_ALL
+  do
+    PKG_PATH="./projects/ROCKNIX/packages"
+    echo "Operating on ${p}"
+    f=$(find ${PKG_PATH} -type d -name "${p}")
+    if [ "$(grep ${p} ${BLOCKLIST})" ]
+    then
+      echo "Skipping ${p}"
+      continue
+    fi
+    f="${f}/package.mk"
+    echo "${p}: ${f}"
+    if [ ! "${p}" ] && [ ! "${f}" ]
+    then
+      echo "Package not found, skipping."
+      continue
+    fi
+    source config/options "${p}"
+    source "${f}"
+    PKG_SITE=$(echo ${PKG_URL} | sed 's/\/archive.*//g')
+    [ -n "${PKG_GIT_BRANCH}" ] && PKG_GIT_CLONE_BRANCH="${PKG_GIT_BRANCH}"
+    [ -n "${PKG_GIT_CLONE_BRANCH}" ] && GIT_HEAD="heads/${PKG_GIT_CLONE_BRANCH}" || GIT_HEAD="HEAD"
+     UPS_VERSION=`git ls-remote ${PKG_SITE} | grep ${GIT_HEAD}$ | awk '{ print substr($1,1,40) }'`
+    if [ "${UPS_VERSION}" == "${PKG_VERSION}" ]; then
+      echo "${PKG_NAME} is up to date (${UPS_VERSION})"
+    else
+      if [ "${UPS_VERSION}" ]; then
+        echo "${PKG_NAME} updated from ${PKG_VERSION} to ${UPS_VERSION}"
+        sed -i "s/PKG_VERSION=\"${PKG_VERSION}/PKG_VERSION=\"${UPS_VERSION}/" $f
+      else
+        echo "Could not find version, not updating ${PKG_NAME}."
+      fi
+    fi
+
+    if [[ ! "${PKG_URL}" =~ git$ ]]
+    then
+     if grep -q PKG_SHA256 "${f}"; then
+       echo "PKG_SHA256 exists on ${f}, clearing"
+       sed -i "/PKG_SHA256=.*\$/d" ${f}
+     fi
+     source "${f}"
+     ./scripts/get "${PKG_NAME}" >/dev/null
+     if [ "${p}" != "linux" ]; then
+       SHA=$(cat ./${SOURCES}/${PKG_NAME}/${PKG_NAME}-${UPS_VERSION}.*.sha256 2>/dev/null ||:)
+     else
+       SHA=$(cat ./${SOURCES}/${PKG_NAME}/linux-$LINUX-${UPS_VERSION}.tar.gz.sha256 2>/dev/null ||:)
+     fi
+     sed -e "/PKG_VERSION=\"${UPS_VERSION}\"/{ N; s/PKG_VERSION=\"${UPS_VERSION}\".*PKG_SHA256=\"\"/PKG_VERSION=\"${UPS_VERSION}\"\nPKG_SHA256=\"${SHA}\"/;}" -i ${f}
+   else
+     sed "/^PKG_SHA256=/d" -i ${f}
+   fi
+  done
+}
+
+
+source "${OPTIONS}"
+
+if [ ! "${1}" ]
+then
+  for package in "${PACKAGES[@]}"
+  do
+    source "${package}"
+    PACKAGES_ALL=" ${PKG_DEPENDS_TARGET}"
+    update_packages
+  done
+else
+  PACKAGES_ALL="$*"
+  update_packages
+fi
