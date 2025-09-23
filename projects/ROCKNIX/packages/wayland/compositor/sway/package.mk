@@ -56,6 +56,12 @@ post_makeinstall_target() {
   # clean up
   safe_remove ${INSTALL}/etc
   safe_remove ${INSTALL}/usr/share/wayland-sessions
+
+  case ${DEVICE} in
+    SDM845)
+      sed -i '/allow_tearing/d' ${INSTALL}/usr/lib/autostart/common/111-sway-init
+    ;;
+  esac
 }
 
 post_install() {
