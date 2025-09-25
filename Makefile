@@ -145,7 +145,7 @@ docker-shell: COMMAND=bash
 # The build user must also be a member of the "docker" group.
 docker-image-build:
 	$(DOCKER_CMD) buildx create --use
-	$(DOCKER_CMD) buildx build --tag $(DOCKER_IMAGE) --platform $(shell if [ "$(uname -m)" = "aarch64" ]; then echo "linux/arm64"; else echo "linux/amd64"; fi) --load .
+	$(DOCKER_CMD) buildx build --tag $(DOCKER_IMAGE) --platform $(shell if [ "$$(uname -m)" = "aarch64" ]; then echo "linux/arm64"; else echo "linux/amd64"; fi) --load .
 
 # Command: pulls latest docker image from dockerhub.  This will *replace* locally built version.
 docker-image-pull:
