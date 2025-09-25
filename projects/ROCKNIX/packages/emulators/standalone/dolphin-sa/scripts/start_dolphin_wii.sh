@@ -361,7 +361,7 @@ ln -sf /storage/.config/dolphin-emu /storage/.local/share/dolphin-emu
 if [ ${DOLPHIN_CORE} = "dolphin-emu" ]; then
   CMD="-b -a ${AUDIO_BACKEND}"
 else
-  CMD="-p @DOLPHIN_PLATFORM@ -a ${AUDIO_BACKEND}"
+  CMD="-p @DOLPHIN_BACKEND@ -a ${AUDIO_BACKEND}"
 fi
 
 # Debugging info:

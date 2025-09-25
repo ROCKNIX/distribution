@@ -18,7 +18,7 @@ esac
 
 # Fileman or Commander Filemanager
 case ${DEVICE} in
-  SM8250)
+  SM8250|SDM845)
     PKG_DEPENDS_TARGET+=" commander"
     FILEMANAGER="commander"
   ;;

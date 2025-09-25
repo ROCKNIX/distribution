@@ -2,7 +2,7 @@
 # Copyright (C) 2021-present Shanti Gilbert (https://github.com/shantigilbert)
 
 PKG_NAME="rocknix-hotkey"
-PKG_VERSION="b40b2e02c3c4fad17a0d1f58fc385f168bf98599"
+PKG_VERSION="cc3a863199a71a350db05e9d0d0e646a8411332c"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/ROCKNIX/rocknix-hotkey"
 PKG_URL="${PKG_SITE}.git"

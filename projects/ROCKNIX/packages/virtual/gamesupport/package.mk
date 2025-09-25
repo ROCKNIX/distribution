@@ -10,7 +10,7 @@ PKG_LONGDESC="Game support software metapackage."
 PKG_GAMESUPPORT="sixaxis rocknix-hotkey jstest-sdl gamecontrollerdb sdljoytest sdltouchtest control-gen"
 
 case ${DEVICE} in
-  SM8250|SM8550)
+  SM8250|SM8550|SDM845)
     PKG_GAMESUPPORT+=" mangohud"
   ;;
 esac
