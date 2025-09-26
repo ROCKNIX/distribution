@@ -66,70 +66,65 @@ unset EMUPERF
 [ "${CORES}" = "little" ] && EMUPERF="${SLOW_CORES}"
 [ "${CORES}" = "big" ] && EMUPERF="${FAST_CORES}"
 
-# CPU Underclock
+# CPU Underclock - default to 100% CPU speed
 sed -i '/^cpu_clock_percentage\\default=/c\cpu_clock_percentage\\default=false' ${CONF_FILE}
 
 case "${CPU}" in
-  0) sed -i '/^cpu_clock_percentage=/c\cpu_clock_percentage=100' ${CONF_FILE};;
   1) sed -i '/^cpu_clock_percentage=/c\cpu_clock_percentage=90' ${CONF_FILE};;
   2) sed -i '/^cpu_clock_percentage=/c\cpu_clock_percentage=80' ${CONF_FILE};;
   3) sed -i '/^cpu_clock_percentage=/c\cpu_clock_percentage=70' ${CONF_FILE};;
   4) sed -i '/^cpu_clock_percentage=/c\cpu_clock_percentage=60' ${CONF_FILE};;
   5) sed -i '/^cpu_clock_percentage=/c\cpu_clock_percentage=50' ${CONF_FILE};;
+  *) sed -i '/^cpu_clock_percentage=/c\cpu_clock_percentage=100' ${CONF_FILE};;
 esac
 
-# Resolution Scale
+# Resolution Scale - default to Native 3DS
 sed -i '/^resolution_factor\\default=/c\resolution_factor\\default=false' ${CONF_FILE}
 
 case "${RES}" in
   0) sed -i '/^resolution_factor=/c\resolution_factor=0' ${CONF_FILE};;
-  1) sed -i '/^resolution_factor=/c\resolution_factor=1' ${CONF_FILE};;
   2) sed -i '/^resolution_factor=/c\resolution_factor=2' ${CONF_FILE};;
   3) sed -i '/^resolution_factor=/c\resolution_factor=3' ${CONF_FILE};;
+  *) sed -i '/^resolution_factor=/c\resolution_factor=1' ${CONF_FILE};;
 esac
 
-# Rotate Screen
+# Rotate Screen - default to false
 sed -i '/^upright_screen\\default=/c\upright_screen\\default=false' ${CONF_FILE}
 
 case "${ROTATE}" in
-  0) sed -i '/^upright_screen=/c\upright_screen=false' ${CONF_FILE};;
   1) sed -i '/^upright_screen=/c\upright_screen=true' ${CONF_FILE};;
+  *) sed -i '/^upright_screen=/c\upright_screen=false' ${CONF_FILE};;
 esac
 
-# Cache Shaders
+# Cache Shaders - default to true
 sed -i '/^use_disk_shader_cache\\default=/c\use_disk_shader_cache\\default=false' ${CONF_FILE}
 
 case "${CSHADERS}" in
   0) sed -i '/^use_disk_shader_cache=/c\use_disk_shader_cache=false' ${CONF_FILE};;
-  1) sed -i '/^use_disk_shader_cache=/c\use_disk_shader_cache=true' ${CONF_FILE};;
+  *) sed -i '/^use_disk_shader_cache=/c\use_disk_shader_cache=true' ${CONF_FILE};;
 esac
 
-# Hardware Shaders
+# Hardware Shaders - default to true
 sed -i '/^use_hw_shader\\default=/c\use_hw_shader\\default=false' ${CONF_FILE}
 
 case "${HSHADERS}" in
-  1) sed -i '/^use_hw_shader=/c\use_hw_shader=true' ${CONF_FILE};;
-  *) sed -i '/^use_hw_shader=/c\use_hw_shader=false' ${CONF_FILE};;
+  0) sed -i '/^use_hw_shader=/c\use_hw_shader=false' ${CONF_FILE};;
+  *) sed -i '/^use_hw_shader=/c\use_hw_shader=true' ${CONF_FILE};;
 esac
 
-# Use accurate multiplication in hardware shaders
+# Use accurate multiplication in hardware shaders - default to true
 sed -i '/^shaders_accurate_mul\\default=/c\shaders_accurate_mul\\default=false' ${CONF_FILE}
 
 case "${ACCURATE_HW_SHADERS}" in
-  1) sed -i '/^shaders_accurate_mul=/c\shaders_accurate_mul=true' ${CONF_FILE};;
-  *) sed -i '/^shaders_accurate_mul=/c\shaders_accurate_mul=false' ${CONF_FILE};;
+  0) sed -i '/^shaders_accurate_mul=/c\shaders_accurate_mul=false' ${CONF_FILE};;
+  *) sed -i '/^shaders_accurate_mul=/c\shaders_accurate_mul=true' ${CONF_FILE};;
 esac
 
-# Screen Layout
+# Screen Layout - default to Top / Bottom, swap = false
 sed -i '/^layout_option\\default=/c\layout_option\\default=false' ${CONF_FILE}
 sed -i '/^swap_screen\\default=/c\swap_screen\\default=false' ${CONF_FILE}
 
 case "${SLAYOUT}" in
-  0)
-    # Default (Top / Bottom)
-    sed -i '/^layout_option=/c\layout_option=0' ${CONF_FILE}
-    sed -i '/^swap_screen=/c\swap_screen=false' ${CONF_FILE}
-    ;;
   1a)
     # Single Screen (TOP)
     sed -i '/^layout_option=/c\layout_option=1' ${CONF_FILE}
@@ -155,13 +150,18 @@ case "${SLAYOUT}" in
     sed -i '/^layout_option=/c\layout_option=5' ${CONF_FILE}
     sed -i '/^swap_screen=/c\swap_screen=false' ${CONF_FILE}
     ;;
+  *)
+    # Top / Bottom
+    sed -i '/^layout_option=/c\layout_option=0' ${CONF_FILE}
+    sed -i '/^swap_screen=/c\swap_screen=false' ${CONF_FILE}
+    ;;
 esac
 
 # Force Disable Shader JIT
 sed -i '/^use_shader_jit=/c\use_shader_jit=false' ${CONF_FILE}
 sed -i '/^use_shader_jit\\default=/c\use_shader_jit\\default=false' ${CONF_FILE}
 
-# Video Backend
+# Video Backend - default to Vulkan
 sed -i '/^graphics_api\\default=/c\graphics_api\\default=false' ${CONF_FILE}
 
 case "${RENDERER}" in
@@ -169,12 +169,12 @@ case "${RENDERER}" in
   *) sed -i '/^graphics_api=/c\graphics_api=2' ${CONF_FILE};;
 esac
 
-# Disable Right Eye Rendering
+# Disable Right Eye Rendering - default to false
 sed -i '/^disable_right_eye_render\\default=/c\disable_right_eye_render\\default=false' ${CONF_FILE}
 
 case "${DISABLE_RIGHT_EYE_RENDER}" in
-  0) sed -i '/^disable_right_eye_render=/c\disable_right_eye_render=false' ${CONF_FILE};;
   1) sed -i '/^disable_right_eye_render=/c\disable_right_eye_render=true' ${CONF_FILE};;
+  *) sed -i '/^disable_right_eye_render=/c\disable_right_eye_render=false' ${CONF_FILE};;
 esac
 
 rm -rf /storage/.local/share/azahar

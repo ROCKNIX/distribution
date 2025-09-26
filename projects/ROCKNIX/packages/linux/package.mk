@@ -32,7 +32,7 @@ case ${DEVICE} in
   *)
     case ${DEVICE} in
       SM8250|SM8550|H700)
-        PKG_VERSION="6.16.6"
+        PKG_VERSION="6.16.9"
       ;;
       *)
         PKG_VERSION="6.12.43"
@@ -130,8 +130,8 @@ pre_make_target() {
   # set initramfs source
   ${PKG_BUILD}/scripts/config --set-str CONFIG_INITRAMFS_SOURCE "$(kernel_initramfs_confs) ${BUILD}/initramfs"
 
-  # set default hostname based on ${DEVICE}
-  ${PKG_BUILD}/scripts/config --set-str CONFIG_DEFAULT_HOSTNAME "${DEVICE}"
+  # set default hostname based on ${DISTRONAME}
+  ${PKG_BUILD}/scripts/config --set-str CONFIG_DEFAULT_HOSTNAME "${DISTRONAME}"
 
   # disable swap support if not enabled
   if [ ! "${SWAP_SUPPORT}" = yes ]; then
@@ -290,6 +290,9 @@ make_target() {
           ;;
       esac
 
+      [ "${DEVICE}" != "RK3588" && "${DEVICE}" != "SDM845" ] && export BUILD_BPF_SKEL=0
+
+
       WERROR=0 \
       NO_LIBPERL=1 \
       NO_LIBPYTHON=1 \
@@ -300,6 +303,12 @@ make_target() {
       NO_LIBTRACEEVENT=1 \
       NO_LZMA=1 \
       NO_SDT=1 \
+      NO_LIBDEBUGINFOD=1 \
+      NO_JVMTI=1 \
+      NO_LIBLLVM=1 \
+      NO_LIBPFM4=1 \
+      NO_LIBBABELTRACE=1 \
+      NO_CAPSTONE=1 \
       CROSS_COMPILE="${TARGET_PREFIX}" \
       JOBS="${CONCURRENCY_MAKE_LEVEL}" \
         make ${PERF_BUILD_ARGS}

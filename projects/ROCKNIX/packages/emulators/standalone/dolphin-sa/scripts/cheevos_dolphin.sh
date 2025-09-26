@@ -5,7 +5,6 @@
 
 . /etc/profile
 
-FLYCAST_CFG="/storage/.config/flycast/emu.cfg"
 LOG_FILE="/var/log/cheevos.log"
 
 # Extract username, password, token, if enabled, and hardcore mode from system.cfg

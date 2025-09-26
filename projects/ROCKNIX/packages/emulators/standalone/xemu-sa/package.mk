@@ -2,10 +2,10 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="xemu-sa"
-PKG_VERSION="22ea58291dab392a2316f1cf4ced3f52e05142f9"
+PKG_VERSION="59626b1f5dc038c69e0044d87d7bd1cd6a1dce05"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/xemu-project/xemu"
-PKG_URL="${PKG_SITE}.git"
+PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain libthai gtk3 libsamplerate libpcap atk SDL2 Python3 zlib pixman bzip2 openssl xwayland libslirp"
 PKG_LONGDESC="Xemu - A free and open-source application that emulates the original Microsoft Xbox game console."
 PKG_TOOLCHAIN="make"
@@ -29,6 +29,8 @@ pre_configure_target() {
   export TARGET_CXXFLAGS=$(echo ${TARGET_CXXFLAGS} | sed -e "s|-DNDEBUG||g")
   export CFLAGS=$(echo ${CFLAGS} | sed -e "s|-DNDEBUG||g")
   export CXXFLAGS=$(echo ${CXXFLAGS} | sed -e "s|-DNDEBUG||g")
+
+  # Required for python
   export DONT_BUILD_LEGACY_PYC=1
 
   # Download Sub Modules
@@ -40,6 +42,12 @@ pre_configure_target() {
   unzip -o ${PKG_BUILD}/subprojects/xxhash_0.8.3-1_patch.zip -d ${PKG_BUILD}/subprojects
   rm -rf ${PKG_BUILD}/subprojects/xxhash.tar.gz
   rm -rf ${PKG_BUILD}/subprojects/xxhash_0.8.3-1_patch.zip
+
+  ### glslang
+  mkdir -p ${PKG_BUILD}/subprojects/
+  curl -Lo ${PKG_BUILD}/subprojects/glslang.tar.gz https://github.com/KhronosGroup/glslang/archive/8a85691a0740d390761a1008b4696f57facd02c4.tar.gz
+  tar -xvf ${PKG_BUILD}/subprojects//glslang.tar.gz -C ${PKG_BUILD}/subprojects/
+  rm -rf ${PKG_BUILD}/subprojects/glslang.tar.gz
 }
 
 make_target() {
