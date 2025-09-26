@@ -6,6 +6,11 @@
 . /etc/profile
 set_kill set "-9 SkyEmu"
 
+#load gptokeyb support files
+control-gen_init.sh
+source /storage/.config/gptokeyb/control.ini
+get_controls
+
 #Check if SkyEmu dir exists in .config
 if [ ! -d "/storage/.config/SkyEmu" ]; then
   cp -rf "/usr/config/SkyEmu" "/storage/.config/"
@@ -14,6 +19,11 @@ fi
 #Check if SkyEmu savestate dir exists in .config
 if [ ! -d "/storage/roms/savestates/SkyEmu" ]; then
   mkdir "/storage/roms/savestates/SkyEmu"
+fi
+
+#Make sure SkyEmu gptk config exists
+if [ ! -f "/storage/.config/SkyEmu/SkyEmu.gptk" ]; then
+  cp -r "/usr/config/SkyEmu/SkyEmu.gptk" "/storage/.config/SkyEmu/SkyEmu.gptk"
 fi
 
 # Link  .config/dolphin-emu to .local
@@ -40,4 +50,7 @@ else
   unset EMUPERF
 fi
 
+# Run SkyEmu
+$GPTOKEYB "SkyEmu" -c "/storage/.config/SkyEmu/SkyEmu.gptk" &
 ${EMUPERF} /usr/bin/SkyEmu "${1}"
+kill -9 "$(pidof gptokeyb)"

@@ -9,6 +9,7 @@ PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_LONGDESC="SkyEmu is a low level GameBoy, GameBoy Color, Game Boy Advance, and DS emulator."
 PKG_DEPENDS_TARGET="toolchain SDL2 openssl curl"
 PKG_TOOLCHAIN="cmake"
+PKG_PATCH_DIRS+="${DEVICE}"
 
 pre_configure_target() {
   PKG_CMAKE_OPTS_TARGET+=" -DCMAKE_BUILD_TYPE=Release \
