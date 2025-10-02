@@ -37,6 +37,12 @@ case ${DEVICE} in
       SM8550|H700)
         PKG_VERSION="6.16.9"
       ;;
+      S922X)
+        # PKG_VERSION="6.12.43"
+        PKG_VERSION="6.16.9"
+        # Temporarily support patchsets for different kernel versions
+        PKG_PATCH_DIRS+=" ${DEVICE}/${PKG_VERSION}"
+      ;;
       *)
         PKG_VERSION="6.12.43"
         PKG_PATCH_DIRS+=" 6.12-LTS"
