@@ -7,6 +7,7 @@ PKG_LICENSE="GPL"
 PKG_SITE="https://developer.arm.com/downloads/-/mali-drivers/bifrost-kernel"
 #PKG_URL="https://developer.arm.com/-/media/Files/downloads/mali-drivers/kernel/mali-bifrost-gpu/BX304L01B-SW-99002-${PKG_VERSION}.tar"
 PKG_URL="https://developer.arm.com/-/media/Files/downloads/mali-drivers/kernel/mali-valhall-gpu/VX504X08X-SW-99002-${PKG_VERSION}.tar"
+# Broken - TODO driver list at: https://developer.arm.com/Downloads/-/Valhall%20Mali%204th%20Gen%20GPU%20Architecture
 PKG_LONGDESC="mali-bifrost: Linux drivers for Mali Bifrost GPUs"
 PKG_TOOLCHAIN="manual"
 PKG_IS_KERNEL_PKG="yes"
