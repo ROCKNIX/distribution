@@ -39,7 +39,8 @@ case ${DEVICE} in
       ;;
       S922X)
         # PKG_VERSION="6.12.43"
-        PKG_VERSION="6.16.9"
+#         PKG_VERSION="6.16.9"
+        PKG_VERSION="6.17"
         # Temporarily support patchsets for different kernel versions
         PKG_PATCH_DIRS+=" ${DEVICE}/${PKG_VERSION}"
       ;;
