@@ -98,7 +98,9 @@ PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Dkmod-path=/usr/bin/kmod \
                        -Dmount-path=/usr/bin/mount \
                        -Dumount-path=/usr/bin/umount \
-                       -Dversion-tag=${PKG_VERSION}"
+                       -Dversion-tag=${PKG_VERSION} \
+                       -Dc_args=-D__counted_by\(x\)\= \
+                       -Dcpp_args=-D__counted_by\(x\)\="
 if [ -n "${BUILD_WITH_DEBUG}" ]
 then
   PKG_MESON_OPTS_TARGET+=" -Ddebug-tty=${DEBUG_TTY}"

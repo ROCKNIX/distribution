@@ -24,8 +24,10 @@ fi
 if [ "${VULKAN_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${VULKAN}"
   PKG_CMAKE_OPTS_TARGET+=" -DUSE_VULKAN=ON"
+  GRENDERER="4"
 else
   PKG_CMAKE_OPTS_TARGET+=" -DUSE_VULKAN=OFF"
+  GRENDERER="0"
 fi
 
 pre_configure_target() {
@@ -42,4 +44,8 @@ makeinstall_target() {
   cp -r ${PKG_DIR}/config/${DEVICE}/* ${INSTALL}/usr/config/flycast
 
   chmod +x ${INSTALL}/usr/bin/*
+}
+
+post_install() {
+  sed -e "s/@GRENDERER@/${GRENDERER}/g" -i ${INSTALL}/usr/bin/start_flycast.sh
 }

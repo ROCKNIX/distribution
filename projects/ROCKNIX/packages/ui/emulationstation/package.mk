@@ -2,7 +2,7 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="emulationstation"
-PKG_VERSION="a08f44d24cdbb048b0bce9222b5ceb880298436f"
+PKG_VERSION="a081efb94a734fb788bb9286f071647a7765d80b"
 PKG_GIT_CLONE_BRANCH="master"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/ROCKNIX/emulationstation-next"
@@ -55,12 +55,15 @@ makeinstall_target() {
   cp -rf ${PKG_BUILD}/resources/* ${INSTALL}/usr/config/emulationstation/resources/
   rm -rf ${INSTALL}/usr/config/emulationstation/resources/logo.png
 
-   mkdir -p ${INSTALL}/usr/bin
+  mkdir -p ${INSTALL}/usr/bin
   cp ${PKG_BUILD}/es_settings ${INSTALL}/usr/bin
   chmod 0755 ${INSTALL}/usr/bin/es_settings
 
   cp ${PKG_BUILD}/start_es.sh ${INSTALL}/usr/bin
   chmod 0755 ${INSTALL}/usr/bin/start_es.sh
+
+  cp ${PKG_BUILD}/serial_number_check ${INSTALL}/usr/bin
+  chmod 0755 ${INSTALL}/usr/bin/serial_number_check
 
   mkdir -p ${INSTALL}/usr/lib/${PKG_PYTHON_VERSION}
   cp -rf ${PKG_DIR}/bluez/* ${INSTALL}/usr/lib/${PKG_PYTHON_VERSION}

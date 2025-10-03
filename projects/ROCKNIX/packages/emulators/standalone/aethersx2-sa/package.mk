@@ -2,7 +2,7 @@
 # Copyright (C) 2022-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="aethersx2-sa"
-PKG_VERSION="1.0.0"
+PKG_VERSION="1.5-3606"
 PKG_ARCH="aarch64"
 PKG_LICENSE="LGPL"
 PKG_SITE="https://github.com/ROCKNIX/packages"

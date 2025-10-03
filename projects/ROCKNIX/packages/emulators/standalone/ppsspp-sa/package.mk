@@ -54,10 +54,12 @@ then
                            -DVULKAN=ON \
                            -DEGL_NO_X11=1 \
                            -DMESA_EGL_NO_X11_HEADERS=1"
+  GRENDERER="3 (VULKAN)"
 else
   PKG_CMAKE_OPTS_TARGET+=" -DVULKAN=OFF \
                            -DUSE_VULKAN_DISPLAY_KHR=OFF \
                            -DUSING_X11_VULKAN=OFF"
+  GRENDERER="0 (OPENGL)"
 fi
 
 if [ "${DISPLAYSERVER}" = "wl" ]; then
@@ -97,4 +99,8 @@ makeinstall_target() {
   rm ${INSTALL}/usr/config/ppsspp/assets/gamecontrollerdb.txt
   ln -sf NotoSansJP-Regular.ttf ${INSTALL}/usr/config/ppsspp/assets/Roboto-Condensed.ttf
   curl -Lo ${INSTALL}/usr/config/ppsspp/PSP/Cheats/cheat.db https://raw.githubusercontent.com/Saramagrean/CWCheat-Database-Plus-/${CHEAT_DB_VERSION}/cheat.db
+}
+
+post_install() {
+  sed -e "s/@GRENDERER@/${GRENDERER}/g" -i ${INSTALL}/usr/bin/start_ppsspp.sh
 }

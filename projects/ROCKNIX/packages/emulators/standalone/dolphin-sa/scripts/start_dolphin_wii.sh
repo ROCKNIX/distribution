@@ -352,6 +352,8 @@ sed -i '/SkipIPL/c\SkipIPL = True' ${CONF_DIR}/${DOLPHIN_INI}
 rm -rf /storage/.local/share/dolphin-emu
 ln -sf /storage/.config/dolphin-emu /storage/.local/share/dolphin-emu
 
+@EXPORTS@
+
 # Retroachievements
   /usr/bin/cheevos_dolphin.sh
 
@@ -367,10 +369,12 @@ fi
 # Debugging info:
   echo "GAME set to: ${GAME}"
   echo "PLATFORM set to: ${PLATFORM}"
+  echo "CPU CORES set to ${EMUPERF}"
   echo "AA set to: ${AA}"
   echo "ASPECT set to: ${ASPECT}"
   echo "AUDIOBE set to: ${AUDIOBE}"
   echo "CLOCK set to: ${CLOCK}"
+  echo "DOLPHIN_BACKEND set to: ${DOLPHIN_BACKEND}"
   echo "ENBCHEATS set to: ${ENBCHEATS}"
   echo "GRENDERER set to: ${GRENDERER}"
   echo "IRES set to: ${IRES}"
@@ -390,7 +394,6 @@ fi
   echo "Launching /usr/bin/${DOLPHIN_CORE} ${CMD} -e ${1}"
 
 # Run Dolphin emulator
-  @EXPORTS@
   ${GPTOKEYB} ${DOLPHIN_CORE} xbox360 &
   ${EMUPERF} /usr/bin/${DOLPHIN_CORE} ${CMD} -e "${1}"
   kill -9 "$(pidof gptokeyb)"
