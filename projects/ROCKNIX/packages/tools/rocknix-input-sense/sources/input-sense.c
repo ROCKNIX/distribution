@@ -205,7 +205,8 @@ static void execute_action(const char* direction) {
 }
 
 /**
- * @brief Reads the config file and populates all global setting variables.
+ * @brief Reads the config file and populates all global setting variables,
+ * using environment variables as fallbacks for function keys.
  */
 static void load_configuration() {
     char* temp_setting;
@@ -217,27 +218,58 @@ static void load_configuration() {
     }
     free(temp_setting);
 
-    temp_setting = get_setting("key.volume.up");
-    if (temp_setting) { KEY_VOLUME_UP_CODE = get_code_from_name(temp_setting); free(temp_setting); }
+    // --- Macro Definitions ---
 
-    temp_setting = get_setting("key.volume.down");
-    if (temp_setting) { KEY_VOLUME_DOWN_CODE = get_code_from_name(temp_setting); free(temp_setting); }
+    // Macro for keys that ONLY read from the config file.
+    #define LOAD_KEY(config_key, var_name) \
+    do { \
+        temp_setting = get_setting(config_key); \
+        if (temp_setting) { \
+            var_name = get_code_from_name(temp_setting); \
+            log_msg("Loaded %s: %s -> %d\n", config_key, temp_setting, var_name); \
+            free(temp_setting); \
+        } \
+    } while (0)
 
-    temp_setting = get_setting("key.function.a");
-    if (temp_setting) { KEYA_MODIFIER_CODE = get_code_from_name(temp_setting); free(temp_setting); }
+    // Macro for keys that check config file FIRST, then an environment variable.
+    #define LOAD_KEY_WITH_ENV_FALLBACK(config_key, var_name, env_var_name) \
+    do { \
+        char* key_name_str = NULL; \
+        temp_setting = get_setting(config_key); \
+        if (temp_setting && strlen(temp_setting) > 0) { \
+            key_name_str = temp_setting; \
+        } else { \
+            free(temp_setting); \
+            char* env_val = getenv(env_var_name); \
+            if (env_val && strlen(env_val) > 0) { \
+                key_name_str = strdup(env_val); \
+            } \
+        } \
+        if (key_name_str) { \
+            var_name = get_code_from_name(key_name_str); \
+            log_msg("Loaded %s (fallback %s): %s -> %d\n", config_key, env_var_name, key_name_str, var_name); \
+            free(key_name_str); \
+        } \
+    } while (0)
 
-    temp_setting = get_setting("key.function.b");
-    if (temp_setting) { KEYB_MODIFIER_CODE = get_code_from_name(temp_setting); free(temp_setting); }
+    // --- Key Loading ---
 
-    temp_setting = get_setting("key.hotkey.a");
-    if (temp_setting) { BTN_HOTKEY_A_MODIFIER_CODE = get_code_from_name(temp_setting); free(temp_setting); }
+    // Load standard keys (no fallback)
+    LOAD_KEY("key.volume.up", KEY_VOLUME_UP_CODE);
+    LOAD_KEY("key.volume.down", KEY_VOLUME_DOWN_CODE);
+    LOAD_KEY("key.hotkey.a", BTN_HOTKEY_A_MODIFIER_CODE);
+    LOAD_KEY("key.hotkey.b", BTN_HOTKEY_B_MODIFIER_CODE);
+    LOAD_KEY("key.hotkey.c", BTN_HOTKEY_C_MODIFIER_CODE);
 
-    temp_setting = get_setting("key.hotkey.b");
-    if (temp_setting) { BTN_HOTKEY_B_MODIFIER_CODE = get_code_from_name(temp_setting); free(temp_setting); }
+    // Load function keys WITH environment variable fallbacks
+    LOAD_KEY_WITH_ENV_FALLBACK("key.function.a", KEYA_MODIFIER_CODE, "DEVICE_FUNC_KEYA_MODIFIER");
+    LOAD_KEY_WITH_ENV_FALLBACK("key.function.b", KEYB_MODIFIER_CODE, "DEVICE_FUNC_KEYB_MODIFIER");
 
-    temp_setting = get_setting("key.hotkey.c");
-    if (temp_setting) { BTN_HOTKEY_C_MODIFIER_CODE = get_code_from_name(temp_setting); free(temp_setting); }
+    // Undefine the macros to keep the namespace clean
+    #undef LOAD_KEY
+    #undef LOAD_KEY_WITH_ENV_FALLBACK
 
+    // Load feature flags
     temp_setting = get_setting("key.touchscreen.events");
     if (temp_setting && strcmp(temp_setting, "0") != 0) TOUCHSCREEN_EVENTS_ENABLED = true;
     free(temp_setting);
