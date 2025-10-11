@@ -10,7 +10,6 @@ PKG_LONGDESC="Hardware button support scripts."
 PKG_TOOLCHAIN="manual"
 
 makeinstall_target() {
-
   mkdir -p ${INSTALL}/usr/lib/autostart/common
   cp ${PKG_DIR}/sources/autostart/common/* ${INSTALL}/usr/lib/autostart/common
 
@@ -18,7 +17,6 @@ makeinstall_target() {
   cp ${PKG_DIR}/sources/scripts/fancontrol ${INSTALL}/usr/bin
   cp ${PKG_DIR}/sources/scripts/headphone_sense ${INSTALL}/usr/bin
   cp ${PKG_DIR}/sources/scripts/hdmi_sense ${INSTALL}/usr/bin
-  cp ${PKG_DIR}/sources/scripts/input_sense ${INSTALL}/usr/bin
   cp ${PKG_DIR}/sources/scripts/ledcontrol ${INSTALL}/usr/bin
   cp ${PKG_DIR}/sources/scripts/analog_sticks_ledcontrol ${INSTALL}/usr/bin
   cp ${PKG_DIR}/sources/scripts/battery_led_status ${INSTALL}/usr/bin
@@ -38,4 +36,3 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/config
   cp ${PKG_DIR}/sources/config/fancontrol.conf ${INSTALL}/usr/config/fancontrol.conf.sample
 }
-
