@@ -79,6 +79,11 @@ EOF
 fi
 
 ### SIGIL
+if [[ ! -f "${GAME_DIR}/doom/sigil/sigil.wad" ]]; then
+  unzip /usr/share/idtech/sigil.zip -d ${GAME_DIR}/doom/sigil/
+  mv ${GAME_DIR}/doom/sigil/SIGIL_V1_23.wad ${GAME_DIR}/doom/sigil/sigil.wad
+fi
+
 if [[ -f "${GAME_DIR}/doom/sigil/sigil.wad" ]] && [[ ! -f ${SCRIPT_DIR}/Sigil.sh ]]; then
 cat <<EOF >${SCRIPT_DIR}/Sigil.sh
 #!/bin/bash
@@ -88,6 +93,11 @@ EOF
 fi
 
 ### SIGIL II
+if [[ ! -f "${GAME_DIR}/doom/sigil2/sigil2.wad" ]]; then
+  unzip /usr/share/idtech/sigil2.zip -d ${GAME_DIR}/doom/sigil2/
+  mv ${GAME_DIR}/doom/sigil2/SIGIL_II_V1_0.WAD ${GAME_DIR}/doom/sigil2/sigil2.wad
+fi
+
 if [[ -f "${GAME_DIR}/doom/sigil2/sigil2.wad" ]] && [[ ! -f ${SCRIPT_DIR}/Sigil\ II.sh ]]; then
 cat <<EOF >${SCRIPT_DIR}/Sigil\ II.sh
 #!/bin/bash

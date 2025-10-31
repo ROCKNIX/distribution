@@ -7,6 +7,8 @@ PKG_SITE="https://rocknix.org"
 PKG_LONGDESC="Package for all iD Software game engines."
 PKG_TOOLCHAIN="manual"
 PKG_DOOM_SHAREWARE="https://github.com/ROCKNIX/packages/raw/main/doom.tar.gz"
+PKG_SIGIL_SHAREWARE="https://romero.com/s/SIGIL_V1_23-8fh4.zip"
+PKG_SIGIL2_SHAREWARE="https://romero.com/s/SIGIL_II_V1_0.zip"
 
 if [ "${OPENGLES_SUPPORT}" = yes ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGLES}"
@@ -26,6 +28,8 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/share/idtech
   cp -rf ${PKG_DIR}/sources/* ${INSTALL}/usr/share/idtech/
   curl -Lo ${INSTALL}/usr/share/idtech/doom.tar.gz ${PKG_DOOM_SHAREWARE}
+  curl -Lo ${INSTALL}/usr/share/idtech/sigil.zip ${PKG_SIGIL_SHAREWARE}
+  curl -Lo ${INSTALL}/usr/share/idtech/sigil2.zip ${PKG_SIGIL2_SHAREWARE}
 }
 
 post_install() {
