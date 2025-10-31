@@ -16,6 +16,7 @@ IMMUTABLE_CONF_DIR="/usr/config/azahar"
 CONF_DIR="/storage/.config/azahar"
 CONF_FILE="${CONF_DIR}/qt-config.ini"
 ROMS_DIR="/storage/roms/3ds"
+SWAY_CONFIG="/storage/.config/sway/config"
 
 # Make sure azahar config directory exists
 [ ! -d ${CONF_DIR} ] && cp -r ${IMMUTABLE_CONF_DIR} /storage/.config
@@ -36,6 +37,15 @@ if [ "${HW_DEVICE}" = "RK3588" ] && [ ! -f "${CONF_FILE}" ]; then
     cp ${IMMUTABLE_CONF_DIR}/qt-config_CM5.ini ${CONF_FILE}
   else
     cp ${IMMUTABLE_CONF_DIR}/qt-config_ACE.ini ${CONF_FILE}
+  fi
+fi
+
+# Move the secondary window to the second output
+if [ "${QUIRK_DEVICE}" = "AYN Thor" ]; then
+  # Ensure separate windows rule exists
+  if ! grep -qE '^for_window \[app_id="org.azahar_emu.Azahar" title=".*Secondary Window.*"\] move window to output DSI-1$' "${SWAY_CONFIG}"; then
+    echo 'for_window [app_id="org.azahar_emu.Azahar" title=".*Secondary Window.*"] move window to output DSI-1' >> "${SWAY_CONFIG}"
+    swaymsg reload
   fi
 fi
 
@@ -150,10 +160,20 @@ case "${SLAYOUT}" in
     sed -i '/^layout_option=/c\layout_option=5' ${CONF_FILE}
     sed -i '/^swap_screen=/c\swap_screen=false' ${CONF_FILE}
     ;;
+  5)
+    # Separate windows
+    sed -i '/^layout_option=/c\layout_option=4' "${CONF_FILE}"
+    sed -i '/^swap_screen=/c\swap_screen=false' "${CONF_FILE}"
+    ;;
   *)
-    # Top / Bottom
-    sed -i '/^layout_option=/c\layout_option=0' ${CONF_FILE}
-    sed -i '/^swap_screen=/c\swap_screen=false' ${CONF_FILE}
+    if [ "${QUIRK_DEVICE}" = "AYN Thor" ]; then
+      # Separate windows by default on dual-screen
+      sed -i '/^layout_option=/c\layout_option=4' "${CONF_FILE}"
+    else
+      # Top / Bottom
+      sed -i '/^layout_option=/c\layout_option=0' "${CONF_FILE}"
+    fi
+    sed -i '/^swap_screen=/c\swap_screen=false' "${CONF_FILE}"
     ;;
 esac
 

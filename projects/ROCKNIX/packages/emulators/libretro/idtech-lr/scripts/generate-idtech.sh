@@ -141,6 +141,24 @@ ${RA_BIN} -L ${RA_DIR}/tyrquake_libretro.so ${GAME_DIR}/quake/rogue/pak0.pak
 EOF
 fi
 
+### Quake - Dimension of the Past
+if [[ -f "${GAME_DIR}/quake/dopa/pak0.pak" ]] && [[ ! -f ${SCRIPT_DIR}/Quake\ -\ Dimension\ of\ the\ Past.sh ]]; then
+cat <<EOF >${SCRIPT_DIR}/Quake\ -\ Dimension\ of\ the\ Past.sh
+#!/bin/bash
+
+${RA_BIN} -L ${RA_DIR}/tyrquake_libretro.so ${GAME_DIR}/quake/dopa/pak0.pak
+EOF
+fi
+
+### Malice
+if [[ -f "${GAME_DIR}/quake/malice/pak0.pak" ]] && [[ ! -f ${SCRIPT_DIR}/Malice.sh ]]; then
+cat <<EOF >${SCRIPT_DIR}/Malice.sh
+#!/bin/bash
+
+${RA_BIN} -L ${RA_DIR}/tyrquake_libretro.so ${GAME_DIR}/quake/malice/pak0.pak
+EOF
+fi
+
 ### Quake 2
 if [[ -f "${GAME_DIR}/quake2/baseq2/pak0.pak" ]] && [[ ! -f ${SCRIPT_DIR}/Quake\ II.sh ]]; then
 cat <<EOF >${SCRIPT_DIR}/Quake\ II.sh
