@@ -1,17 +1,14 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2009-2016 Stephan Raue (stephan@openelec.tv)
-# Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
-PKG_NAME="libXau"
-PKG_VERSION="1.0.11"
-PKG_SHA256="f3fa3282f5570c3f6bd620244438dbfbdd580fc80f02f549587a0f8ab329bbeb"
-PKG_LICENSE="OSS"
-PKG_SITE="https://www.X.org"
-PKG_URL="https://xorg.freedesktop.org/archive/individual/lib/${PKG_NAME}-${PKG_VERSION}.tar.xz"
-PKG_DEPENDS_TARGET="toolchain util-macros xorgproto"
+. ${ROOT}/packages/x11/lib/libXau/package.mk
+
 PKG_DEPENDS_HOST="toolchain:host util-macros:host xorgproto:host"
-PKG_LONGDESC="X authorization file management libary"
-PKG_BUILD_FLAGS="+pic"
 
-PKG_CONFIGURE_OPTS_TARGET="--disable-static --enable-shared --enable-xthreads"
-PKG_CONFIGURE_OPTS_HOST="--disable-static --enable-shared --enable-xthreads"
+PKG_MESON_OPTS_HOST="-Ddefault_library=shared \
+                       -Dprefer_static=false \
+                       -Dxthreads=true"
+
+PKG_MESON_OPTS_TARGET="-Ddefault_library=shared \
+                       -Dprefer_static=false \
+                       -Dxthreads=true"

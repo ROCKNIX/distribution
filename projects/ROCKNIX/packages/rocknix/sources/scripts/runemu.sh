@@ -320,31 +320,6 @@ esac
 ### We need the original system cooling profile later so get it now!
 COOLINGPROFILE=$(get_setting cooling.profile)
 
-### Set CPU TDP and EPP
-CPU_VENDOR=$(cpu_vendor)
-case ${CPU_VENDOR} in
-  AuthenticAMD)
-    ### Set the overclock mode
-    OVERCLOCK=$(get_setting "overclock" "${PLATFORM}" "${ROMNAME##*/}")
-    if [ ! -z "${OVERCLOCK}" ]
-    then
-      ${VERBOSE} && log $0 "Set TDP to (${OVERCLOCK})"
-      /usr/bin/overclock ${OVERCLOCK}
-    fi
-  ;;
-esac
-
-### Apply energy performance preference
-if [ -e "/usr/bin/set_epp" ]
-then
-  EPP=$(get_setting "power.epp" "${PLATFORM}" "${ROMNAME##*/}")
-  if [ ! -z ${EPP} ]
-  then
-    ${VERBOSE} && log $0 "Set EPP to (${EPP})"
-    /usr/bin/set_epp ${EPP}
-  fi
-fi
-
 ### Configure GPU performance mode
 GPUPERF=$(get_setting "gpuperf" "${PLATFORM}" "${ROMNAME##*/}")
 if [ ! -z ${GPUPERF} ]
@@ -451,22 +426,6 @@ else
   gpu_performance_level auto &
 fi
 rm -f /tmp/.gpu_performance_level 2>/dev/null
-
-### Restore system EPP
-EPP=$(get_setting "system.power.epp")
-if [ ! -z ${EPP} ]
-then
-  ${VERBOSE} && log $0 "Restore system EPP (${EPP})"
-  /usr/bin/set_epp ${EPP} &
-fi
-
-### Restore system TDP
-OVERCLOCK=$(get_setting "system.overclock")
-if [ ! -z "${OVERCLOCK}" ]
-then
-  ${VERBOSE} && log $0 "Restore system TDP (${OVERCLOCK})"
-  /usr/bin/overclock ${OVERCLOCK} &
-fi
 
 ### Reset the number of cores to use.
 NUMTHREADS=$(get_setting "system.threads")

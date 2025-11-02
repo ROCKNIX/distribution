@@ -1,7 +1,5 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2009-2016 Stephan Raue (stephan@openelec.tv)
-# Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
-# Copyright (C) 2023-present JELOS (https://github.com/JustEnoughLinuxOS)
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="xwayland"
 PKG_VERSION="449b197e7e652cb145a25b3b795d3363445d3975"

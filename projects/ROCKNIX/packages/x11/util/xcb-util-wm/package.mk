@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2019-present Frank Hartung (supervisedthinking (@) gmail.com)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="xcb-util-wm"
 PKG_VERSION="0.4.1"

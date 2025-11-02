@@ -16,6 +16,10 @@ PKG_CONFIGURE_OPTS_TARGET="--with-curses \
                            --without-bash-malloc \
                            --with-installed-readline"
 
+pre_configure_target() {
+  export CFLAGS_FOR_BUILD="${CFLAGS_FOR_BUILD} -std=gnu17"
+}
+
 post_install() {
   ln -sf bash ${INSTALL}/usr/bin/sh
   mkdir -p ${INSTALL}/etc

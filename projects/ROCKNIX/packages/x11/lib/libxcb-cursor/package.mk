@@ -1,5 +1,5 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="libxcb-cursor"
 PKG_VERSION="c393b71fff76fe8627d0e95c53e756615f84d7a3"

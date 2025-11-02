@@ -28,6 +28,10 @@ pre_configure_host() {
 
   mkdir -p .${HOST_NAME}
     cd .${HOST_NAME}
+
+  # GCC 15+ warns of character assignment that omits the terminal null
+  # character.  This flag disables the warning.  GCC<15 should be unaffected.
+  export CFLAGS="${CFLAGS} -Wno-unterminated-string-initialization"
 }
 
 pre_configure_target() {

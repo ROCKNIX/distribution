@@ -38,3 +38,7 @@ PKG_CONFIGURE_OPTS_HOST="--disable-debug \
                          --with-gnu-ld \
                          --without-libiconv-prefix \
                          --without-libintl-prefix"
+
+pre_configure_host() {
+    CFLAGS="${CFLAGS} -std=gnu17"
+}

@@ -56,8 +56,10 @@ pre_configure_target() {
     aarch64)
       PKG_CMAKE_OPTS_TARGET+=" -DYAB_WANT_ARM7=ON \
                                -DYAB_WANT_DYNAREC_DEVMIYAX=ON \
-                               -DCMAKE_TOOLCHAIN_FILE=${PKG_BUILD}/yabause/src/retro_arena/n2.cmake \
+                               -DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN}/etc/cmake-aarch64-rocknix-linux-gnueabi.conf \
                                -DYAB_PORTS=retro_arena"
+
+      PKG_CMAKE_OPTS_TARGET+=" -DCMAKE_PROJECT_INCLUDE=${PKG_BUILD}/yabause/src/retro_arena/n2.cmake"
     ;;
   esac
 
@@ -69,7 +71,7 @@ pre_configure_target() {
                            -DLIBPNG_LIB_DIR=${SYSROOT_PREFIX}/usr/lib \
                            -Dpng_STATIC_LIBRARIES=${SYSROOT_PREFIX}/usr/lib/libpng16.so \
                            -DCMAKE_BUILD_TYPE=Release \
-						   -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON"
+                           -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON"
 }
 
 makeinstall_target() {

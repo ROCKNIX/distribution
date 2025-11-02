@@ -1,13 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
-PKG_NAME="xorgproto"
-PKG_VERSION="2024.1"
-PKG_LICENSE="OSS"
-PKG_SITE="https://www.X.org"
-PKG_URL="https://xorg.freedesktop.org/archive/individual/proto/${PKG_NAME}-${PKG_VERSION}.tar.xz"
-PKG_DEPENDS_HOST="toolchain util-macros"
-PKG_DEPENDS_TARGET="toolchain util-macros"
-PKG_LONGDESC="combined X.Org X11 Protocol headers"
+. ${ROOT}/packages/x11/proto/xorgproto/package.mk
 
-PKG_MESON_OPTS_TARGET="-Dlegacy=false"
+PKG_DEPENDS_HOST="toolchain:host util-macros:host"

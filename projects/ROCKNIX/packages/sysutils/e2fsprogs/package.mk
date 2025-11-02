@@ -72,6 +72,10 @@ pre_configure() {
   PKG_CONFIGURE_OPTS_TARGET="${PKG_CONFIGURE_OPTS_INIT} --enable-shared --disable-static"
 }
 
+pre_configure_host() {
+    export CFLAGS="${CFLAGS} -std=gnu17"
+}
+
 post_makeinstall_target() {
   make -C lib/et LIBMODE=644 DESTDIR=${SYSROOT_PREFIX} install
 
