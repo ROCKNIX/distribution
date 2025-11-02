@@ -332,7 +332,8 @@ rm -rf /storage/.local/share/citron
 ln -sf /storage/.config/citron /storage/.local/share/citron
 
 #Set QT Platform to Wayland-EGL
-export QT_QPA_PLATFORM=wayland-egl
+#export QT_QPA_PLATFORM=wayland-egl
+export QT_QPA_PLATFORM=xcb
 
 #citron won't work with the pipewire driver yet
 export SDL_AUDIODRIVER=pulseaudio
