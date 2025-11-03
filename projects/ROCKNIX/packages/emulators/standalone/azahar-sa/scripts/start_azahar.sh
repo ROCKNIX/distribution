@@ -41,7 +41,7 @@ if [ "${HW_DEVICE}" = "RK3588" ] && [ ! -f "${CONF_FILE}" ]; then
 fi
 
 # Move the secondary window to the second output
-if [ "${QUIRK_DEVICE}" = "AYN Thor" ]; then
+if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
   # Ensure separate windows rule exists
   if ! grep -qE '^for_window \[app_id="org.azahar_emu.Azahar" title=".*Secondary Window.*"\] move window to output DSI-1$' "${SWAY_CONFIG}"; then
     echo 'for_window [app_id="org.azahar_emu.Azahar" title=".*Secondary Window.*"] move window to output DSI-1' >> "${SWAY_CONFIG}"
@@ -166,7 +166,7 @@ case "${SLAYOUT}" in
     sed -i '/^swap_screen=/c\swap_screen=false' "${CONF_FILE}"
     ;;
   *)
-    if [ "${QUIRK_DEVICE}" = "AYN Thor" ]; then
+    if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
       # Separate windows by default on dual-screen
       sed -i '/^layout_option=/c\layout_option=4' "${CONF_FILE}"
     else

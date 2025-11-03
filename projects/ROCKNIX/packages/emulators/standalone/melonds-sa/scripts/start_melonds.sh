@@ -14,6 +14,7 @@ get_controls
 
 CONF_DIR="/storage/.config/melonDS"
 MELONDS_INI="melonDS.ini"
+SWAY_CONFIG="/storage/.config/sway/config"
 
 if [ ! -d "${CONF_DIR}" ]; then
 	cp -r "/usr/config/melonDS" "/storage/.config/"
@@ -26,6 +27,15 @@ fi
 #Make sure melonDS gptk config exists
 if [ ! -f "${CONF_DIR}/melonDS.gptk" ]; then
 	cp -r "/usr/config/melonDS/melonDS.gptk" "${CONF_DIR}/melonDS.gptk"
+fi
+
+# Move the secondary window to the second output
+if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
+  # Ensure separate windows rule exists
+  if ! grep -qE '^for_window [class="melonDS" title=".*\[w2\]*"] move window to output DSI-1$' "${SWAY_CONFIG}"; then
+    echo 'for_window [class="melonDS" title=".*\[w2\]*"] move window to output DSI-1' >> "${SWAY_CONFIG}"
+    swaymsg reload
+  fi
 fi
 
 #Emulation Station Features
@@ -68,17 +78,35 @@ else
 fi
 
 #Screen Layout
-if [ "$SLAYOUT" > "0" ]; then
-	sed -i "/^ScreenSizing=/c\ScreenSizing=$SLAYOUT" "${CONF_DIR}/${MELONDS_INI}"
+# Screen Layout
+sed -i '/^Screen1Enabled=/c\Screen1Enabled=0' "${CONF_DIR}/${MELONDS_INI}"
+
+enable_second_screen() {
+    sed -i '/^ScreenSizing=/c\ScreenSizing=4' "${CONF_DIR}/${MELONDS_INI}"
+    sed -i '/^Screen1Enabled=/c\Screen1Enabled=1' "${CONF_DIR}/${MELONDS_INI}"
+}
+
+if [ "$SLAYOUT" = "6" ]; then
+    enable_second_screen
+elif [ -n "$SLAYOUT" ] && [ "$SLAYOUT" != "0" ]; then
+    sed -i "/^ScreenSizing=/c\ScreenSizing=$SLAYOUT" "${CONF_DIR}/${MELONDS_INI}"
+elif [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
+    enable_second_screen
 else
-	sed -i '/^ScreenSizing=/c\ScreenSizing=0' "${CONF_DIR}/${MELONDS_INI}"
+    sed -i '/^ScreenSizing=/c\ScreenSizing=0' "${CONF_DIR}/${MELONDS_INI}"
 fi
 
-#Screen Swap
-if [ "$SWAP" = "1" ]; then
-	sed -i '/^ScreenSwap=/c\ScreenSwap=1' "${CONF_DIR}/${MELONDS_INI}"
+# Screen Swap
+if [[ "${DEVICE_HAS_DUAL_SCREEN}" = "true" && ( -z "$SLAYOUT" || "$SLAYOUT" = "6" ) ]]; then
+    if [ "$SWAP" = "1" ]; then
+        sed -i '/^ScreenSizing=/c\ScreenSizing=5' "${CONF_DIR}/${MELONDS_INI}"
+        sed -i '/^Screen1Sizing=/c\Screen1Sizing=4' "${CONF_DIR}/${MELONDS_INI}"
+    else
+        sed -i '/^ScreenSizing=/c\ScreenSizing=4' "${CONF_DIR}/${MELONDS_INI}"
+        sed -i '/^Screen1Sizing=/c\Screen1Sizing=5' "${CONF_DIR}/${MELONDS_INI}"
+    fi
 else
-	sed -i '/^ScreenSwap=/c\ScreenSwap=0' "${CONF_DIR}/${MELONDS_INI}"
+    sed -i "/^ScreenSwap=/c\ScreenSwap=${SWAP:-0}" "${CONF_DIR}/${MELONDS_INI}"
 fi
 
 #Screen Rotation
