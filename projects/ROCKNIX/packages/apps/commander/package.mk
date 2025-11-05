@@ -2,7 +2,7 @@
 # Copyright (C) 2025-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="commander"
-PKG_VERSION="9aa39d7bcb5d0f6faadaf027a1539d14177a3c7c"
+PKG_VERSION="a6ef30eb3bd6ef80a031744aae0f5b9cd974c182"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/od-contrib/commander"
 PKG_URL="${PKG_SITE}.git"

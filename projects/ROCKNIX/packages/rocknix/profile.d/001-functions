@@ -8,6 +8,11 @@ export XDG_RUNTIME_DIR=/var/run/0-runtime-dir
 export PATH="/usr/bin:/usr/local/bin:/storage/bin:${PATH}"
 export SDL_GAMECONTROLLERCONFIG_FILE="/storage/.config/SDL-GameControllerDB/gamecontrollerdb.txt"
 
+J_DIR="/storage/.config/system"
+J_CONF="${J_DIR}/configs/system.cfg"
+J_CONF_LOCK="/tmp/.system.cfg.lock"
+ES_CONF="/storage/.emulationstation/es_settings.cfg"
+
 function tocon() {
   echo -ne "\033[1000H\033[2K==> ${*}" >/dev/console
 }
@@ -18,6 +23,133 @@ function log() {
   MESSAGE=${MESSAGE# }
   logger -t ${SOURCE} "${MESSAGE}"
   echo "$(date) ${SOURCE}: ${MESSAGE}" >>/var/log/messages
+}
+
+function get_setting() {
+  if [ -n "${3}" ]
+  then
+    ### Test to see if we have a game setting.
+    VAR="$2\[\"$(echo ${3} | sed -E "s~'~\\\x27~g"';s~[()&]~\\&~g')\"\]\.$1"
+    OUTPUT=$(awk 'BEGIN {FS="="} /^'"${VAR}"'/ {print $NF}' ${J_CONF})
+    if [ ! -z "${OUTPUT}" ]
+    then
+      echo ${OUTPUT}
+      return
+    else
+      ### If not, check to see if we have a system setting.
+      LOCAL=$(awk -F: '/^'"${2}.${1}"'=/ { st = index($0,"=");print substr($0,st+1);exit}' ${J_CONF})
+      if [ ! -z "${LOCAL}" ]
+      then
+        echo ${LOCAL}
+        return
+      fi
+    fi
+  fi
+
+  if [ -z "${3}" ] && [ -n "${2}" ]
+  then
+    ### Check to see if we have a global setting.
+    LOCAL=$(awk -F: '/^'"${2}.${1}"'=/ {  st = index($0,"=");print substr($0,st+1);exit}' ${J_CONF})
+    if [ ! -z "${LOCAL}" ]
+    then
+      echo ${LOCAL}
+      return
+    fi
+  fi
+
+  ### Check to see if we have a "system." global setting.
+  SYSTEM=$(awk -F: '/^system.'"${1}"='/ { st = index($0,"=");print substr($0,st+1);exit}' ${J_CONF})
+  if [ -n "${SYSTEM}" ]
+  then
+    echo ${SYSTEM}
+    return
+  fi
+
+  ### Check to see if we have a "global." global setting."
+  LOCAL=$(awk -F: '/^'"${1}"='/ { st = index($0,"=");print substr($0,st+1);exit}' ${J_CONF})
+  if [ -z "${LOCAL}" ]
+  then
+    awk -F: '/^global.'"${1}"='/ { st = index($0,"=");print substr($0,st+1);exit}' ${J_CONF}
+    return
+  else
+    echo ${LOCAL}
+  fi
+  return
+}
+
+function wait_lock() {
+  while true
+  do
+    if (set -o noclobber; echo "$$" > "${J_CONF_LOCK}") 2>/dev/null
+    then
+      trap 'rm -f "$lockfile"; exit $?' INT TERM EXIT
+      break
+    else
+     sleep 1
+    fi
+  done
+}
+
+function del_setting() {
+  wait_lock
+  if [[ "${1}" =~ ^[[:alnum:]] ]]
+  then
+    sed -i "/^${1}=/d" "${J_CONF}"
+  fi
+  rm -f "${J_CONF_LOCK}"
+}
+
+function sort_settings() {
+  wait_lock
+  cat "${J_CONF}" | grep ^[a-z0-9] | sort >"${J_CONF}.tmp"
+  mv "${J_CONF}.tmp" "${J_CONF}"
+  rm -f "${J_CONF_LOCK}"
+}
+
+function set_kill() {
+  if [ "${1}" = "set" ]
+  then
+    cat <<EOF >/tmp/.process-kill-data
+${2}
+EOF
+  elif [ "${1}" = "stop" ]
+  then
+    if [ -e "/tmp/.process-kill-data" ]
+    then
+      rm -f "/tmp/.process-kill-data"
+    fi
+  fi
+}
+
+function set_setting() {
+
+  if [ ! -d "/storage/.config/system/configs" ]
+  then
+    mkdir -p /storage/.config/system/configs
+  fi
+  if [ ! -e "/storage/.config/system/configs/system.cfg" ]
+  then
+    cp -f /usr/config/system/configs/system.cfg /storage/.config/system/configs/system.cfg
+  fi
+
+  if [[ "${1}" =~ ^[[:alnum:]] ]]
+  then
+    del_setting "${1}"
+    if [ ! "${2}" = "default" ]
+    then
+      wait_lock
+      echo "${1}=${2}" >> "${J_CONF}"
+      rm -f "${J_CONF_LOCK}"
+    fi
+  fi
+}
+
+function battery_percent() {
+  awk 'BEGIN {FS="="} /POWER_SUPPLY_CAPACITY=/ {print $2}' /sys/class/power_supply/[Bb][Aa][Tt]*/uevent 2>/dev/null
+}
+
+function get_es_setting() {
+  echo $(sed -n "s|\s*<${1} name=\"${2}\" value=\"\(.*\)\" />|\1|p" ${ES_CONF})
 }
 
 function fbwidth() {
@@ -38,6 +170,10 @@ function fbheight() {
   else
     fbset | awk '/geometry/ {print $2}'
   fi
+}
+
+function cpu_vendor() {
+  awk '/vendor_id/ {print $3;exit}' /proc/cpuinfo
 }
 
 # sway window manager utility function to enable fullscreen on a window for an input app_id

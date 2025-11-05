@@ -40,15 +40,6 @@ if [ "${HW_DEVICE}" = "RK3588" ] && [ ! -f "${CONF_FILE}" ]; then
   fi
 fi
 
-# Move the secondary window to the second output
-if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
-  # Ensure separate windows rule exists
-  if ! grep -qE '^for_window \[app_id="org.azahar_emu.Azahar" title=".*Secondary Window.*"\] move window to output DSI-1$' "${SWAY_CONFIG}"; then
-    echo 'for_window [app_id="org.azahar_emu.Azahar" title=".*Secondary Window.*"] move window to output DSI-1' >> "${SWAY_CONFIG}"
-    swaymsg reload
-  fi
-fi
-
 # Make sure QT config file exists
 [ ! -f "${CONF_FILE}" ] && cp ${IMMUTABLE_CONF_DIR}/qt-config.ini ${CONF_DIR}
 

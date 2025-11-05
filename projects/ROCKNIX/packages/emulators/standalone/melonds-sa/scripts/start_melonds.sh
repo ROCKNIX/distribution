@@ -29,15 +29,6 @@ if [ ! -f "${CONF_DIR}/melonDS.gptk" ]; then
 	cp -r "/usr/config/melonDS/melonDS.gptk" "${CONF_DIR}/melonDS.gptk"
 fi
 
-# Move the secondary window to the second output
-if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
-  # Ensure separate windows rule exists
-  if ! grep -qE '^for_window [class="melonDS" title=".*\[w2\]*"] move window to output DSI-1$' "${SWAY_CONFIG}"; then
-    echo 'for_window [class="melonDS" title=".*\[w2\]*"] move window to output DSI-1' >> "${SWAY_CONFIG}"
-    swaymsg reload
-  fi
-fi
-
 #Emulation Station Features
 GAME=$(echo "${1}" | sed "s#^/.*/##")
 PLATFORM=$(echo "${2}"| sed "s#^/.*/##")

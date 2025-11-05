@@ -202,6 +202,7 @@ case ${EMULATOR} in
         export JAVA_HOME
         PATH="$JAVA_HOME/bin:$PATH"
         export PATH
+        export _JAVA_OPTIONS="-Djava.awt.headless=true"
       ;;
       easyrpg*)
         # easyrpg needs runtime files to be downloaded on the first run
