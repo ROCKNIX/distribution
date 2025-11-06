@@ -23,6 +23,16 @@ if [ ! -d "/storage/roms/psvita/vita3k" ]; then
     mkdir -p "/storage/roms/psvita/vita3k"
 fi
 
+if [ ! -d "/storage/psvita"]; then
+   ln -sf /storage/roms/psvita /storage/psvita
+else
+   if [[ ! $(file /storage/psvita | grep "symbolic") ]]; then 
+      rsync -ah --update /storage/psvita/* /storage/roms/psvita 2>/dev/null
+      rm -rf /storage/psvita
+      ln -sf /storage/roms/psvita /storage/psvita
+   fi
+fi
+
 if [ -n "${GAME}" ]; then
   OPTIONS="-r $(cat "${GAME}")"
 fi
