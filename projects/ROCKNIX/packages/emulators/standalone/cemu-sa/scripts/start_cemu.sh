@@ -108,6 +108,7 @@ FILE=$(echo $1 | sed "s#^/.*/##g")
 CON=$(get_setting wiiu_controller_profile wiiu "${FILE}")
 CON_LAYOUT=$(get_setting wiiu_controller_layout wiiu "${FILE}")
 ONLINE=$(get_setting online_enabled wiiu "${FILE}")
+GAMEPAD=$(get_setting gamepad_enabled wiiu "${FILE}")
 
 RENDERER=$(get_setting graphics_backend wiiu "${FILE}")
 BACKEND=$(get_setting gdk_backend wiiu "${FILE}")
@@ -317,6 +318,18 @@ xmlstarlet ed --inplace -u "//Notification/TextColor" -v "${TEXT_COLOR}" ${CEMU_
 
 xmlstarlet ed --inplace -u "//fullscreen" -v "true" ${CEMU_CONFIG_ROOT}/settings.xml
 xmlstarlet ed --inplace -u "//Audio/TVDevice" -v "${PASINK}" ${CEMU_CONFIG_ROOT}/settings.xml
+
+#
+# Dual screen gamepad
+#
+
+if [ -z "${GAMEPAD}" ]; then
+  if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
+    xmlstarlet ed --inplace -u "//open_pad" -v "true" ${CEMU_CONFIG_ROOT}/settings.xml
+  fi
+else
+  xmlstarlet ed --inplace -u "//open_pad" -v "${GAMEPAD}" ${CEMU_CONFIG_ROOT}/settings.xml
+fi
 
 # Run the emulator
 cemu -g "$@"

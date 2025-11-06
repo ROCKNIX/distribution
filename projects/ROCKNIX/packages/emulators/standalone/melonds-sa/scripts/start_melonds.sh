@@ -49,16 +49,16 @@ unset EMUPERF
 
 #Graphics Backend
 if [ "$GRENDERER" > "0" ]; then
-	sed -i "/^GL_ScaleFactor=/c\GL_ScaleFactor=$GRENDERER" "${CONF_DIR}/${MELONDS_INI}"
+	sed -i "/^ScreenUseGL=/c\ScreenUseGL=$GRENDERER" "${CONF_DIR}/${MELONDS_INI}"
 else
-	sed -i '/^GL_ScaleFactor=/c\GL_ScaleFactor=0' "${CONF_DIR}/${MELONDS_INI}"
+	sed -i '/^ScreenUseGL=/c\ScreenUseGL=0' "${CONF_DIR}/${MELONDS_INI}"
 fi
 
 #Internal Resolution
 if [ "$IRES" > "0" ]; then
-        sed -i "/^ScreenUseGL=/c\ScreenUseGL=$IRES" "${CONF_DIR}/${MELONDS_INI}"
+        sed -i "/^GL_ScaleFactor=/c\GL_ScaleFactor=$IRES" "${CONF_DIR}/${MELONDS_INI}"
 else
-        sed -i '/^ScreenUseGL=/c\ScreenUseGL=1' "${CONF_DIR}/${MELONDS_INI}"
+        sed -i '/^GL_ScaleFactor=/c\GL_ScaleFactor=1' "${CONF_DIR}/${MELONDS_INI}"
 fi
 
 #Screen Orientation
