@@ -42,9 +42,6 @@ SET_SETTINGS_TMP="/tmp/shader"
 OUTPUT_LOG="${LOG_DIRECTORY}/${LOG_FILE}"
 SCRIPT_NAME=$(basename "$0")
 
-### For PanVK
-export PAN_I_WANT_A_BROKEN_VULKAN_DRIVER=1
-
 ### Function Library
 function log() {
         if [ ${LOG} == true ]
