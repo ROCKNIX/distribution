@@ -14,8 +14,8 @@ case ${DEVICE} in
     PKG_URL="https://github.com/swaywm/sway/archive/${PKG_VERSION}.zip"
   ;;
   *)
-    PKG_VERSION="1.11-rc2"
-    PKG_SHA256="78d24a4e0d2eb0e442155ca72afa924dba32a0e873456e8cf1e89155304c2590"
+    PKG_VERSION="1.11"
+    PKG_SHA256="0e37a55b7c3379230e97e1ad982542b75016a0c7d6676198604e557f9b373dae"
     PKG_URL="https://github.com/swaywm/sway/releases/download/${PKG_VERSION}/sway-${PKG_VERSION}.tar.gz"
   ;;
 esac

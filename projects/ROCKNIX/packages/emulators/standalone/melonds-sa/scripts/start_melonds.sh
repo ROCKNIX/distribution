@@ -50,8 +50,10 @@ unset EMUPERF
 #Graphics Backend
 if [ "$GRENDERER" > "0" ]; then
 	sed -i "/^ScreenUseGL=/c\ScreenUseGL=$GRENDERER" "${CONF_DIR}/${MELONDS_INI}"
+	sed -i "/^3DRenderer=/c\3DRenderer=1" "${CONF_DIR}/${MELONDS_INI}"
 else
 	sed -i '/^ScreenUseGL=/c\ScreenUseGL=0' "${CONF_DIR}/${MELONDS_INI}"
+	sed -i '/^3DRenderer=/c\3DRenderer=0' "${CONF_DIR}/${MELONDS_INI}"
 fi
 
 #Internal Resolution

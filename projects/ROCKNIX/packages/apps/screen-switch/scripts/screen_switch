@@ -9,13 +9,43 @@ ACTIVE_APPID=$(swaymsg -t get_tree | awk '
   }
 ')
 
-UDSI=$(swaymsg -t get_tree | jq -r '
-  .. | objects
-  | select(.type == "output" and .name != "__i3")
-  | select(.nodes[].nodes | length == 0)
-  | .name
+if [[ -n "$ACTIVE_APPID" && "$ACTIVE_APPID" = "emulationstation"  ]]; then
+  exit 0
+fi
+
+OUTPUTS=$(swaymsg -t get_outputs -r | jq -r '.[] | select(.active==true) | .name')
+
+if [ "$(echo "$OUTPUTS" | wc -l)" -lt 2 ]; then
+    exit 0
+fi
+
+BUSY_COUNT=$(swaymsg -t get_tree -r | jq '[.. | select(.type? == "output" and .name != "__i3")
+               | select([.. | select(.app_id? or .window_properties?) | .name] | length > 0)
+               | .name] | length')
+
+TOTAL_OUTPUTS=$(echo "$OUTPUTS" | wc -l)
+
+if [ "$BUSY_COUNT" -ge "$TOTAL_OUTPUTS" ]; then
+    exit 0
+fi
+
+OUT1=$(echo "$OUTPUTS" | sed -n '1p')
+OUT2=$(echo "$OUTPUTS" | sed -n '2p')
+CURRENT_WORKSPACE=$(swaymsg -t get_tree -r | jq -r '
+  [ .nodes[]
+    | select(.type == "output" and .name != "__i3")
+    | .nodes[]                        # workspace...y
+    | select(.type == "workspace" and .name != "__i3_scratch")
+    | select(.. | select(.app_id? or .window_properties?) | length > 0)
+    | .name
+  ][0]
 ')
 
-if [[ -n "$ACTIVE_APPID" && "$ACTIVE_APPID" != "emulationstation" && -n "$UDSI" ]]; then
-  swaymsg "[app_id=\"${ACTIVE_APPID}\"]" move window to output "${UDSI}"
+CURRENT_OUTPUT=$(swaymsg -t get_workspaces -r | jq -r --arg ws "$CURRENT_WORKSPACE" '.[] | select(.name==$ws) | .output')
+
+if [ "$CURRENT_OUTPUT" = "$OUT1" ]; then
+   swaymsg workspace ${CURRENT_WORKSPACE}, move workspace to output "$OUT2"
+   swaymsg focus output "$OUT1"
+else
+   swaymsg workspace ${CURRENT_WORKSPACE}, move workspace to output "$OUT1"
 fi
