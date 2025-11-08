@@ -5,7 +5,7 @@ PKG_NAME="mojozork-lr"
 PKG_VERSION="5c8d81f8db53c206ace6952472e7a7e68bd8e752"
 PKG_SITE="https://github.com/icculus/mojozork"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain sqlite"
 PKG_LONGDESC="A simple Z-Machine implementation in a single C file"
 PKG_TOOLCHAIN="cmake"
 

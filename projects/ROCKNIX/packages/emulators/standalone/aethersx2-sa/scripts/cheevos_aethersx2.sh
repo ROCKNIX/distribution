@@ -14,7 +14,7 @@ username=$(get_setting "global.retroachievements.username")
 password=$(get_setting "global.retroachievements.password")
 token=$(get_setting "global.retroachievements.token")
 enabled=$(get_setting "global.retroachievements")
-hardcore=$(get_setting "global.retroachievements.hardcore")
+hardcore="false"
 
 # Check if RetroAchievements are enabled in Emulation Station
 if [ ! ${enabled} = 1 ]; then
@@ -27,13 +27,6 @@ fi
 if [ -z "${token}" ]; then
     echo "RetroAchievements token is empty, please log in with your RetroAchievements credentials in Emulation Station." > ${LOG_FILE}
     exit 1
-fi
-
-# Set hardcore mode
-if [ "${hardcore}" = 1 ]; then
-  hardcore="true"
-else
-  hardcore="false"
 fi
 
 # Update emulator config with RetroAchievements settings
