@@ -2,11 +2,12 @@
 # Copyright (C) 2023-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="volk"
-PKG_VERSION="1.4.304"
-PKG_SHA256="ab3d4a8ccaeb32652259cdd008399504a41792675b0421d90b67729ee274746f"
+PKG_VERSION="6809ca6a7e3f291f3c1d47147f87b1416fcb4992"
+GET_HANDLER_SUPPORT="git"
+PKG_GIT_CLONE_BRANCH="master"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/zeux/volk"
-PKG_URL="https://github.com/zeux/volk/archive/${PKG_VERSION}.tar.gz"
+PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain vulkan-headers"
 PKG_LONGDESC="Meta loader for Vulkan API"
 
