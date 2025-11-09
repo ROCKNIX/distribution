@@ -65,9 +65,6 @@ makeinstall_target() {
   cp ${PKG_BUILD}/serial_number_check ${INSTALL}/usr/bin
   chmod 0755 ${INSTALL}/usr/bin/serial_number_check
 
-  mkdir -p ${INSTALL}/usr/lib/${PKG_PYTHON_VERSION}
-  cp -rf ${PKG_DIR}/bluez/* ${INSTALL}/usr/lib/${PKG_PYTHON_VERSION}
-
   mkdir -p ${INSTALL}/usr/bin
   #ln -sf /storage/.config/emulationstation/resources ${INSTALL}/usr/bin/resources
   cp -rf ${PKG_BUILD}/emulationstation ${INSTALL}/usr/bin
