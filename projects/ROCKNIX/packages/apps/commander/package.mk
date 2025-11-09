@@ -13,6 +13,7 @@ PKG_TOOLCHAIN="cmake"
 PKG_CMAKE_OPTS_TARGET+=" -DCMAKE_BUILD_TYPE=Release \
                          -DWITH_SYSTEM_SDL_TTF=ON \
                          -DWITH_SYSTEM_SDL_GFX=ON \
+                         -DAUTOSCALE=0 \
                          -DAUTOSCALE_DPI=0 \
                          -DPPU_X=2 \
                          -DPPU_Y=2 \

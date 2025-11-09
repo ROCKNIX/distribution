@@ -2,13 +2,12 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="u-boot"
-PKG_VERSION="611716febddb824a7203d0d3b5d399608a54ccf6"
+PKG_VERSION="v2025.04"
 PKG_LICENSE="GPL"
 PKG_SITE="https://www.denx.de/wiki/U-Boot"
-PKG_URL="https://github.com/ROCKNIX/hardkernel-uboot/archive/${PKG_VERSION}.tar.gz"
+PKG_URL="https://github.com/u-boot/u-boot/archive/refs/tags/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain Python3 swig:host pyelftools:host"
 PKG_LONGDESC="Das U-Boot is a cross-platform bootloader for embedded systems."
-PKG_BUILD_FLAGS="-parallel"
 PKG_TOOLCHAIN="manual"
 
 PKG_NEED_UNPACK="${PROJECT_DIR}/${PROJECT}/bootloader ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/bootloader"
@@ -20,11 +19,14 @@ if [ -n "${UBOOT_FIRMWARE}" ]; then
 fi
 
 pre_make_target() {
-  PKG_UBOOT_CONFIG="odroidgoa_defconfig"
+  PKG_UBOOT_CONFIG="rk3326-handheld_defconfig"
   PKG_RKBIN="$(get_build_dir rkbin)"
   PKG_MINILOADER="${PKG_RKBIN}/bin/rk33/rk3326_miniloader_v1.40.bin"
   PKG_BL31="${PKG_RKBIN}/bin/rk33/rk3326_bl31_v1.34.elf"
   PKG_DDR_BIN="${PKG_RKBIN}/bin/rk33/rk3326_ddr_333MHz_v2.11.bin"
+  if [[ "${BOOTLOADER_UART}" == "5" ]]; then
+    PKG_DDR_BIN="${PKG_RKBIN}/rk3326_ddr_uart5.bin"  # K36 clones use UART5
+  fi
 }
 
 make_target() {
@@ -33,7 +35,14 @@ make_target() {
 
   DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm make mrproper
   DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm make ${PKG_UBOOT_CONFIG}
-  DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm _python_sysroot="${TOOLCHAIN}" _python_prefix=/ _python_exec_prefix=/ make HOSTCC="$HOST_CC" HOSTLDFLAGS="-L${TOOLCHAIN}/lib" HOSTSTRIP="true" CONFIG_MKIMAGE_DTC_PATH="scripts/dtc/dtc"
+  if [[ "${BOOTLOADER_UART}" == "5" ]]; then
+    ./scripts/config --set-val CONFIG_DEBUG_UART_BASE 0xFF178000
+    ./scripts/config --set-str CONFIG_DEVICE_TREE_INCLUDES "rk3326-odroid-go2-emmc.dtsi rk3326-odroid-go2-uart5.dtsi"
+  fi
+  DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm \
+        _python_sysroot="${TOOLCHAIN}" _python_prefix=/ _python_exec_prefix=/ \
+        make HOSTCC="${HOST_CC}" HOSTLDFLAGS="-L${TOOLCHAIN}/lib" HOSTSTRIP="true" CONFIG_MKIMAGE_DTC_PATH="scripts/dtc/dtc" \
+        u-boot-dtb.bin
 
   find_file_path bootloader/rkhelper && . ${FOUND_PATH}
 }
@@ -46,13 +55,20 @@ makeinstall_target() {
 
   for SUBDEVICE in ${SUBDEVICES}; do
     if find_file_path config/${SUBDEVICE}_boot.ini; then
-      cp -av ${FOUND_PATH} $INSTALL/usr/share/bootloader
+      cp -av ${FOUND_PATH} .
       sed -e "s/@DISTRO_BOOTLABEL@/${DISTRO_BOOTLABEL}/" \
           -e "s/@DISTRO_DISKLABEL@/${DISTRO_DISKLABEL}/" \
           -e "s/@EXTRA_CMDLINE@/${EXTRA_CMDLINE}/" \
-          -i "${INSTALL}/usr/share/bootloader/${SUBDEVICE}_boot.ini"
+          -i "${SUBDEVICE}_boot.ini"
+      ./tools/mkimage -T script -d "${SUBDEVICE}_boot.ini" "${SUBDEVICE}_boot.scr"
+      cp -av "${SUBDEVICE}_boot.scr" "${INSTALL}/usr/share/bootloader/"
     fi
   done
 
-  cp -av uboot.bin $INSTALL/usr/share/bootloader
+  cp -av uboot.bin "${INSTALL}/usr/share/bootloader/"
+
+  find_dir_path config/extlinux || exit 3
+  cp -av ${FOUND_PATH} "${INSTALL}/usr/share/bootloader/"
+  sed -e "s/@EXTRA_CMDLINE@/${EXTRA_CMDLINE}/" \
+    -i ${INSTALL}/usr/share/bootloader/extlinux/*
 }
