@@ -21,7 +21,7 @@ pre_configure() {
 }
 
 pre_configure_host() {
-  LIBCLC_TARGETS_TO_BUILD="spirv64-mesa3d-,spirv32-mesa3d-"
+  LIBCLC_TARGETS_TO_BUILD="spirv-mesa3d-;spirv64-mesa3d-"
 
   mkdir -p "${PKG_BUILD}/.${HOST_NAME}"
   cd ${PKG_BUILD}/.${HOST_NAME}
