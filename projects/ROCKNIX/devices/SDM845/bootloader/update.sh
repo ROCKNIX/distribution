@@ -17,8 +17,8 @@ fi
 mount -o remount,rw $BOOT_ROOT
 
 echo "Updating device trees..."
-for dtb in $SYSTEM_ROOT/usr/share/bootloader/*.dtb; do
-  cp -p $dtb $BOOT_ROOT
+for dtb in $SYSTEM_ROOT/usr/share/bootloader/boot/grub/*.dtb; do
+  cp -p $dtb $BOOT_ROOT/boot/grub
 done
 
 if [ -f "$SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/bootaa64.efi" ]; then
@@ -26,20 +26,20 @@ if [ -f "$SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/bootaa64.efi" ]; then
   cp -p $SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/bootaa64.efi $BOOT_ROOT/EFI/BOOT
 fi
 
-if [ -f "$SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/grub.cfg" ]; then
+if [ -f "$SYSTEM_ROOT/usr/share/bootloader/boot/grub/grub.cfg" ]; then
   echo "Updating grub.cfg..."
-  cp -p $SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/grub.cfg $BOOT_ROOT/EFI/BOOT
+  cp -p $SYSTEM_ROOT/usr/share/bootloader/boot/grub/grub.cfg $BOOT_ROOT/boot/grub
 fi
 
-if [ -f "$SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/dejavu-mono.pf2" ]; then
+if [ -f "$SYSTEM_ROOT/usr/share/bootloader/boot/grub/dejavu-mono.pf2" ]; then
   echo "Updating dejavu-mono.pf2..."
-  cp -p $SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/dejavu-mono.pf2 $BOOT_ROOT/EFI/BOOT
+  cp -p $SYSTEM_ROOT/usr/share/bootloader/boot/grub/dejavu-mono.pf2 $BOOT_ROOT/boot/grub
 fi
 
-if [ -f "$SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/grubenv" ]; then
-  if [ ! -f "$BOOT_ROOT/efi/boot/grubenv" ]; then
+if [ -f "$SYSTEM_ROOT/usr/share/bootloader/boot/grub/grubenv" ]; then
+  if [ ! -f "$BOOT_ROOT/boot/grub/grubenv" ]; then
     echo "Installing grubenv..."
-    cp -p $SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/grubenv $BOOT_ROOT/EFI/BOOT
+    cp -p $SYSTEM_ROOT/usr/share/bootloader/boot/grub/grubenv $BOOT_ROOT/boot/grub
   fi
 fi
 

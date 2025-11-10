@@ -69,16 +69,17 @@ make_target() {
 }
 
 makeinstall_target() {
-  ${PKG_BUILD}/.${HOST_NAME}/grub-mkimage -d grub-core -o bootaa64.efi -O arm64-efi -p /EFI/BOOT \
+  ${PKG_BUILD}/.${HOST_NAME}/grub-mkimage -d grub-core -o bootaa64.efi -O arm64-efi -p /boot/grub \
     boot linux ext2 fat squash4 part_msdos part_gpt normal search search_fs_file search_fs_uuid \
     search_label chain reboot loadenv test gfxterm efi_gop
 
+  mkdir -p ${INSTALL}/usr/share/bootloader/boot/grub
+  cp -av ${PKG_DIR}/config/* ${INSTALL}/usr/share/bootloader/boot/grub
   mkdir -p ${INSTALL}/usr/share/bootloader/EFI/BOOT
-  cp -av ${PKG_DIR}/config/* ${INSTALL}/usr/share/bootloader/EFI/BOOT
   cp -av bootaa64.efi ${INSTALL}/usr/share/bootloader/EFI/BOOT
 
   # Create grub configuration
-  generate_grub_cfg_body > "${INSTALL}/usr/share/bootloader/EFI/BOOT/grub.cfg"
+  generate_grub_cfg_body > "${INSTALL}/usr/share/bootloader/boot/grub/grub.cfg"
 
   # Always install the update script
   find_file_path bootloader/update.sh && cp -av ${FOUND_PATH} ${INSTALL}/usr/share/bootloader
