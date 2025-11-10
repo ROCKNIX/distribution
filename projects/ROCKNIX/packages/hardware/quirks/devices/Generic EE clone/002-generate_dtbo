@@ -1,0 +1,46 @@
+#!/bin/bash
+
+set -e
+
+STOCKPART="/dev/disk/by-label/EMUELEC"
+DTBDIR="/flash/stock"
+DTBOPATH="/flash/overlays/mipi-panel.dtbo"
+TMPDIR="/tmp/flash_prepare"
+
+# no-op if dtbo already exists
+[ -f "${DTBOPATH}" ] && exit 0
+
+# Obtain stock dtb if needed and possible
+if ! ls "${DTBDIR}"/*.dtb; then
+  if [ ! -L "${STOCKPART}" ]; then
+    echo "No stock dtb nor stock firmware partition found. Skipping dtbo generation" >&2
+    exit 1
+  fi
+
+  # Prepare temporary destination
+  mkdir -p "${TMPDIR}/${DTBDIR}"
+  # Prepare source
+  mkdir -p /tmp/stock
+  mount "${STOCKPART}" /tmp/stock
+  # Copy all the dtbs (actually, there should be exactly one)
+  cp /tmp/stock/*.dtb "${TMPDIR}/${DTBDIR}"
+fi
+
+STOCKDTB=$(ls "${DTBDIR}"/*.dtb "${TMPDIR}/${DTBDIR}"/*.dtb | head -1)
+mkdir -p "${TMPDIR}/$(dirname ${DTBOPATH})"
+echo "Preparing dtbo. This may take about a minute"
+/usr/libexec/generic-dsi/rocknix_dtbo.py "${STOCKDTB}" -o "${TMPDIR}/${DTBOPATH}"
+
+
+# Modifications to be made on firmaware partition
+if [ -d "${TMPDIR}/flash" ]; then
+  mount -o remount,rw /flash
+
+  rsync -av ${TMPDIR}/flash/ /flash || true
+
+  # Cleanup and reboot
+  mount -o remount,ro /flash
+  sync
+fi
+
+[ -f "${DTBOPATH}" ] && reboot

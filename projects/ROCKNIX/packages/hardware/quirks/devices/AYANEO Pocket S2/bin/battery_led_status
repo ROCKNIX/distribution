@@ -1,0 +1,108 @@
+#!/bin/sh
+
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
+
+# Simple script to watch the battery capacity and
+# turn the power LED orange when it reaches 30%, red at 20%, and blinking red at 10%
+
+# Minimal OS variable loading for performance
+. /etc/profile.d/001-functions
+
+LED_PATH="/sys/class/leds"
+
+function led_brightness() {
+  echo ${2} >${LED_PATH}/${1}/brightness
+}
+
+function led_rgb() {
+  echo ${2} ${3} ${4} >${LED_PATH}/${1}/multi_intensity
+}
+
+function bat_led_off() {
+  led_brightness power-led 0
+  led_rgb power-led 0 0 0
+}
+
+function bat_led_green() {
+  led_brightness power-led 255
+  led_rgb power-led 0 255 0
+}
+
+function bat_led_red() {
+  led_brightness power-led 255
+  led_rgb power-led 255 0 0
+}
+
+function bat_led_orange() {
+  led_brightness power-led 255
+  led_rgb power-led 255 20 0
+}
+
+function bat_led_yellow() {
+  led_brightness power-led 255
+  led_rgb power-led 255 125 0
+}
+
+PREV_BATCAP="null"
+while true
+  do
+  BAT_LED_STATE=$(get_setting led.color)
+  if [ ! ${BAT_LED_STATE} == "battery" ]; then
+    break
+  fi
+  
+  CAP=$(cat /sys/class/power_supply/battery/capacity)
+  STAT=$(cat /sys/class/power_supply/battery/status)
+
+  if [ ${STAT} == "Discharging" ]; then
+    if (( ${CAP} <= 10 ))
+      then
+        for ctr in $(seq 1 1 5)
+      do
+        bat_led_red
+        sleep .5
+        bat_led_off
+        sleep .5
+      done
+      continue
+    elif (( ${CAP} <= 20 ))
+    then
+      BATCAP="D_RED"
+      if [ ! ${BATCAP} = ${PREV_BATCAP} ]; then
+        bat_led_red
+      fi
+    elif (( ${CAP} <=  30 ))
+    then
+      BATCAP="D_ORANGE"
+      if [ ! ${BATCAP} = ${PREV_BATCAP} ]; then
+        bat_led_orange
+      fi
+    elif (( ${CAP} <=  40 ))
+    then
+      BATCAP="D_YELLOW"
+      if [ ! ${BATCAP} = ${PREV_BATCAP} ]; then
+        bat_led_yellow
+      fi
+    else
+      BATCAP="D_GREEN"
+      if [ ! ${BATCAP} = ${PREV_BATCAP} ]; then
+        bat_led_green
+      fi
+    fi
+  elif (( ${CAP} <= 94 ))
+  then
+    BATCAP="C_ORANGE"
+    if [ ! ${BATCAP} = ${PREV_BATCAP} ]; then
+      bat_led_orange
+    fi
+  elif (( ${CAP} >= 95 ))
+  then
+    BATCAP="C_GREEN"
+    if [ ! ${BATCAP} = ${PREV_BATCAP} ]; then
+      bat_led_green
+    fi
+  fi
+  PREV_BATCAP=${BATCAP}
+  sleep 15
+done

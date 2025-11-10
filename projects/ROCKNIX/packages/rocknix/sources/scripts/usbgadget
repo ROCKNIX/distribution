@@ -177,6 +177,8 @@ prepare_usb_network() {
 }
 
 configure_iface() {
+	# Hope udev rule works well, and device gets the name 'gadget'
+	udevadm wait --timeout=5 --settle /sys/class/net/gadget
 	IFACE_NAME=$(cat "${g_cdc}/functions/ncm.usb0/ifname")
 
 	OLDIPADDRFILE=${CACHEDIR}/ip_address.conf
@@ -294,6 +296,12 @@ cleanup_usb_mtp() {
         ${g_mtp}
 }
 
+set_role() {
+	for sw in $(ls -1 /sys/class/udc/${UDC_NAME}/device/usb_role/*/role 2>/dev/null); do
+		if [ "$verbose" -gt "0" ]; then echo "swithing usb role to device: $sw"; fi
+		echo $1 > $sw
+	done
+}
 
 # USB_MODE is how the gadget was last configured (got from state file)
 # CURRENT_MODE is USB gadget subsystem state -- which gadget has UDC
@@ -321,10 +329,7 @@ usb_start() {
 	fi
 
 	# If there is a role switch, switch to device mode
-	for sw in $(ls -1 /sys/class/udc/${UDC_NAME}/device/usb_role/*/role 2>/dev/null); do
-		if [ "$verbose" -gt "0" ]; then echo "swithing usb role to device: $sw"; fi
-		echo device > $sw
-	done
+	set_role device
 
 	if [ "${USB_MODE}" = mtp ] ; then
 		if [ ! -d "${g_mtp}" ]; then
@@ -359,10 +364,7 @@ usb_start() {
 
 usb_stop() {
 	# If there is a role switch, switch to host mode
-	for sw in $(ls -1 /sys/class/udc/${UDC_NAME}/device/usb_role/*/role 2>/dev/null); do
-		if [ "$verbose" -gt "0" ]; then echo "swithing usb role to host: $sw"; fi
-		echo host > $sw
-	done
+	set_role host
 
 	(
 		if [ -f ${UDHCPPIDFILE} ] ; then
@@ -413,6 +415,7 @@ case "$1" in
 		echo "disabled network file_transfer"
 		;;
 	"--start")
+		set_role host
 		prepare_usb_network
 		prepare_usb_mtp
 		usb_start
