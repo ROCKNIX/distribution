@@ -21,6 +21,17 @@ for dtb in $SYSTEM_ROOT/usr/share/bootloader/boot/grub/*.dtb; do
   cp -p $dtb $BOOT_ROOT/boot/grub
 done
 
+echo "Updating u-boot dtbs..."
+cp -f $SYSTEM_ROOT/usr/share/bootloader/device_trees/* $BOOT_ROOT/device_trees
+
+U_BOOT_DT_ID=$(cat /proc/device-tree/rocknix-u-boot-dt-id)
+  
+UPDATE_DTB_SOURCE="$BOOT_ROOT/device_trees/$U_BOOT_DT_ID.dtb"
+if [ -f "$UPDATE_DTB_SOURCE" ]; then
+  echo "Updating dtb.img from $(basename $UPDATE_DTB_SOURCE)..."
+  cp -f "$UPDATE_DTB_SOURCE" "$BOOT_ROOT/dtb.img"
+fi
+
 if [ -f "$SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/bootaa64.efi" ]; then
   echo "Updating EFI..."
   cp -p $SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/bootaa64.efi $BOOT_ROOT/EFI/BOOT
