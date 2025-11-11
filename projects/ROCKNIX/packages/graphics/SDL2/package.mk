@@ -50,7 +50,7 @@ if [ "${DISPLAYSERVER}" = "wl" ]
 then
   PKG_DEPENDS_TARGET+=" wayland "
   case ${ARCH} in
-    arm|i686)
+    arm)
       true
       ;;
     *)

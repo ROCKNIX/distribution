@@ -16,7 +16,7 @@ if [ "${PIPEWIRE_SUPPORT}" = "yes" ]; then
 fi
 
 case ${ARCH} in
-  arm|i686)
+  arm)
     true
     ;;
   *)
@@ -59,7 +59,7 @@ if [ "${DISPLAYSERVER}" = "wl" ]; then
   PKG_DEPENDS_TARGET+=" wayland"
   PKG_CONFIGURE_OPTS_TARGET+=" --enable-wayland"
   case ${ARCH} in
-    arm|i686)
+    arm)
       true
       ;;
     *)

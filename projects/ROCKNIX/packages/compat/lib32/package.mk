@@ -3,7 +3,7 @@
 
 PKG_NAME="lib32"
 PKG_VERSION="1.0"
-PKG_ARCH="aarch64 x86_64"
+PKG_ARCH="aarch64"
 PKG_LICENSE="GPLv2"
 PKG_DEPENDS_TARGET="toolchain retroarch SDL2 libsndfile libmodplug"
 PKG_LONGDESC="ARM 32bit bundle for aarch64"
@@ -15,11 +15,7 @@ makeinstall_target() {
     aarch64)
       LIBARCH="arm"
       LDSO="ld-linux-armhf.so.3"
-    ;;
-    x86_64)
-      LIBARCH="i686"
-      LDSO="ld-linux.so.2"
-    ;;
+      ;;
   esac
 
   cd ${PKG_BUILD}

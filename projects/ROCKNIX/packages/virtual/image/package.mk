@@ -29,7 +29,7 @@ PKG_SOUND="espeak libao"
 
 PKG_SYNC="synctools"
 
-PKG_TOOLS="patchelf ectool i2c-tools evtest"
+PKG_TOOLS="patchelf i2c-tools evtest"
 
 PKG_DEBUG="debug"
 

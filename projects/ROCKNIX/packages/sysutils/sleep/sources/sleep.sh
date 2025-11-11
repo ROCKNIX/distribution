@@ -1,6 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2022-24 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 . /etc/profile
 
@@ -108,8 +109,15 @@ case $1 in
     amixer -c 0 -M set "${DEVICE_AUDIO_MIXER}" ${DEVICE_VOLUME}% >${EVENTLOG} 2>&1
 
     BRIGHTNESS=$(get_setting display.brightness)
-    log $0 "Restoring brightness to ${BRIGHTNESS}."
+    log $0 "Restoring brightness}."
     brightness set ${BRIGHTNESS} >${EVENTLOG} 2>&1
+
+    BRIGHTNESS_2=$(get_setting display.brightness2)
+    if [ -n "${BRIGHTNESS_2}" ]; then
+        log $0 "Restoring brightness for display 2 to ${BRIGHTNESS_2}."
+        brightness set 2 ${BRIGHTNESS_2} >${EVENTLOG} 2>&1
+    fi
+
     quirks post
     ;;
 esac

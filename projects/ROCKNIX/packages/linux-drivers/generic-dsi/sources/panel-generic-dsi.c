@@ -640,13 +640,9 @@ static void generic_panel_shutdown(struct mipi_dsi_device *dsi)
     struct generic_panel *ctx = mipi_dsi_get_drvdata(dsi);
     int ret;
 
-    ret = drm_panel_unprepare(&ctx->panel);
-    if (ret < 0)
-        dev_err(&dsi->dev, "Failed to unprepare panel: %d\n", ret);
+    drm_panel_unprepare(&ctx->panel);
 
-    ret = drm_panel_disable(&ctx->panel);
-    if (ret < 0)
-        dev_err(&dsi->dev, "Failed to disable panel: %d\n", ret);
+    drm_panel_disable(&ctx->panel);
 }
 
 static void generic_panel_remove(struct mipi_dsi_device *dsi)

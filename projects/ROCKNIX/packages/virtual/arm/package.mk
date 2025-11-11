@@ -25,7 +25,7 @@ fi
 if [ "${DISPLAYSERVER}" = "wl" ]; then
   PKG_DEPENDS_TARGET+=" wayland libXtst libXfixes libXi gdk-pixbuf libvdpau"
   case ${ARCH} in
-    arm|i686)
+    arm)
       true
       ;;
     *)

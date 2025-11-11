@@ -7,70 +7,194 @@
 ## performance.
 . /etc/profile.d/001-functions
 
-BRIGHTNESS_DEV="$(find /sys/class/backlight/*/ -name brightness -print -quit 2>/dev/null)"
+declare -a BRIGHTNESS_DEVS=()
+while IFS= read -r line; do
+  BRIGHTNESS_DEVS+=("$line")
+done < <(find /sys/class/backlight/*/ -name brightness 2>/dev/null)
 
-if [ ! -f "${BRIGHTNESS_DEV}" ]; then
-  echo "ERROR: There is no BRIGHTNESS object to manage."
+NUM_DEVS="${#BRIGHTNESS_DEVS[@]}"
+
+if [ "${NUM_DEVS}" -eq 0 ]; then
+  echo "ERROR: No backlight devices found in /sys/class/backlight/." >&2
   exit 1
 fi
 
-MAX="$(<$(find /sys/class/backlight/*/ -name max_brightness -print -quit 2>/dev/null))"
+declare -a MAX_VALUES=()
+for dev_path in "${BRIGHTNESS_DEVS[@]}"; do
+  DIR="$(dirname "${dev_path}")"
+  MAX_FILE="${DIR}/max_brightness"
+  if [ -f "${MAX_FILE}" ]; then
+    MAX_VALUES+=("$(<"${MAX_FILE}")")
+  else
+    MAX_VALUES+=(100)
+  fi
+done
 
-function compute() {
-  echo "(${BRIGHTNESS} / 100 * ${MAX})" | bc -l | cut -f1 -d.
+CURRENT_DEV_PATH=""
+CURRENT_MAX=0
+CURRENT_SETTING_KEY=""
+SCREEN_INPUT=1
+
+_compute_raw() {
+  local percent="${1}"
+  local max_val="${2}"
+  echo "(${percent} / 100 * ${max_val})" | bc -l | cut -f1 -d.
+}
+
+_resolve_config() {
+  SCREEN_INPUT="${1}"
+
+  if ! [[ "${SCREEN_INPUT}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: Screen number must be a positive integer." >&2
+    return 1
+  fi
+
+  local dev_index=$((SCREEN_INPUT - 1))
+
+  if [ "${dev_index}" -lt 0 ] || [ "${dev_index}" -ge "${NUM_DEVS}" ]; then
+    echo "ERROR: Screen number ${SCREEN_INPUT} is out of range (1-${NUM_DEVS})." >&2
+    return 1
+  fi
+
+  CURRENT_DEV_PATH="${BRIGHTNESS_DEVS[dev_index]}"
+  CURRENT_MAX="${MAX_VALUES[dev_index]}"
+
+  if [ "${SCREEN_INPUT}" -eq 1 ]; then
+    CURRENT_SETTING_KEY="display.brightness"
+  else
+    CURRENT_SETTING_KEY="display.brightness${SCREEN_INPUT}"
+  fi
+
+  return 0
+}
+
+_write_brightness() {
+  local raw_value="${1}"
+  local percentage="${2}"
+
+  echo "${raw_value}" > "${CURRENT_DEV_PATH}"
+  set_setting "${CURRENT_SETTING_KEY}" "${percentage}"
 }
 
 stepUp() {
-  CURRENT="$(get_setting display.brightness)"
-  NEXT="$((${CURRENT}+5))"
-  if (("${NEXT}" >= "100")); then
-    NEXT="100"
+  local current_percent
+  current_percent="$(get_setting "${CURRENT_SETTING_KEY}")"
+
+  local next_percent=$((current_percent + 5))
+  if (("${next_percent}" > 100)); then
+    next_percent=100
   fi
 
-  BRIGHTNESS="${NEXT}"
-  BRIGHTNESS="$(compute)"
-
-  if (("${BRIGHTNESS}" > "${MAX}" )); then
-    BRIGHTNESS="${MAX}"
+  if (("${current_percent}" < 5)) && (("${next_percent}" < 5)); then
+    next_percent=5
   fi
 
-  setBrightness "${BRIGHTNESS}" "${NEXT}"
+  local raw_value
+  raw_value="$(_compute_raw "${next_percent}" "${CURRENT_MAX}")"
+
+  if (("${raw_value}" > "${CURRENT_MAX}")); then
+    raw_value="${CURRENT_MAX}"
+  fi
+
+  _write_brightness "${raw_value}" "${next_percent}"
+  getBrightnessValue
 }
 
 stepDown() {
-  CURRENT="$(get_setting display.brightness)"
-  NEXT="$((${CURRENT}-5))"
-  if (("${NEXT}" <= "5")); then
-    NEXT="5"
+  local current_percent
+  current_percent="$(get_setting "${CURRENT_SETTING_KEY}")"
+
+  local next_percent=$((current_percent - 5))
+
+  if (("${next_percent}" < 5)); then
+    next_percent=5
   fi
 
-  BRIGHTNESS="${NEXT}"
-  BRIGHTNESS="$(compute)"
+  local raw_value
+  raw_value="$(_compute_raw "${next_percent}" "${CURRENT_MAX}")"
 
-  setBrightness "${BRIGHTNESS}" "${NEXT}"
+  _write_brightness "${raw_value}" "${next_percent}"
+  getBrightnessValue
 }
 
-getBrightness() {
-  echo "$(<${BRIGHTNESS_DEV})"
+setBrightnessValue() {
+  local percent="${1}"
+
+  if ! [[ "${percent}" =~ ^[0-9]+$ ]] || (("${percent}" < 0)) || (("${percent}" > 100)); then
+    echo "ERROR: Invalid percentage value provided: ${percent}. Must be 0-100." >&2
+    return 1
+  fi
+
+  if (("${percent}" < 5)); then
+    percent=5
+  fi
+
+  local raw_value
+  raw_value="$(_compute_raw "${percent}" "${CURRENT_MAX}")"
+
+  _write_brightness "${raw_value}" "${percent}"
 }
 
-setBrightness() {
-  echo "${1}" > "${BRIGHTNESS_DEV}"
-  set_setting display.brightness "${2}"
+getBrightnessValue() {
+  cat "${CURRENT_DEV_PATH}"
 }
 
-case "${1}" in
-  "up")
-    stepUp
-    ;;
-  "down")
-    stepDown
+ACTION="${1:-}"
+
+case "${ACTION}" in
+  "up"|"down")
+    SCREEN_INPUT_ARG="${2:-1}"
+    if ! _resolve_config "${SCREEN_INPUT_ARG}"; then exit 1; fi
+
+    if [ "${ACTION}" = "up" ]; then
+      stepUp
+    else
+      stepDown
+    fi
     ;;
   "set")
-    BRIGHTNESS="${2}"
-    setBrightness "$(compute)" "${2}"
+    percentage_val=""
+    screen_num_val=""
+
+    if [ "$#" -eq 2 ]; then
+      screen_num_val="1"
+      percentage_val="${2}"
+    elif [ "$#" -ge 3 ]; then
+      screen_num_val="${2}"
+      percentage_val="${3}"
+    else
+      echo "Usage: $0 set [screen_num] <percentage>" >&2
+      echo "Example: $0 set 50 or $0 set 2 50" >&2
+      exit 1
+    fi
+
+    if ! _resolve_config "${screen_num_val}"; then exit 1; fi
+
+    setBrightnessValue "${percentage_val}"
+    getBrightnessValue
     ;;
+
+  "")
+    ;&
   *)
-    echo "$(getBrightness)"
+    screen_to_get=""
+
+    if [ -z "${ACTION}" ] || [ "${ACTION}" != "up" ] && [ "${ACTION}" != "down" ] && [ "${ACTION}" != "set" ]; then
+      if [ -n "${1}" ] && [[ "${1}" =~ ^[0-9]+$ ]]; then
+         screen_to_get="${1}"
+      else
+         screen_to_get="${2:-1}"
+      fi
+
+      if ! _resolve_config "${screen_to_get}"; then exit 1; fi
+      getBrightnessValue
+      exit 0
+    fi
+
+    echo "Usage: $0 {up|down|set} [screen_num] [percentage]" >&2
+    echo "Example 1: $0 up 2 (Increase brightness on screen 2)" >&2
+    echo "Example 2: $0 set 1 75 (Set brightness on screen 1 to 75%)" >&2
+    echo "Example 3: $0 (Get brightness of screen 1)" >&2
+    exit 1
     ;;
 esac
