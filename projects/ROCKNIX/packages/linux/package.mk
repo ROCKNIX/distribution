@@ -354,6 +354,8 @@ makeinstall_target() {
         if [ "${DEVICE}" = "H700" -o "${DEVICE}" = "RK3326" -o "${DEVICE}" = "RK3399" -o "${DEVICE}" = "RK3566" -o "${DEVICE}" = "RK3588" ]; then
           mkdir -p ${INSTALL}/usr/share/bootloader/device_trees
           cp -v ${dtb} ${INSTALL}/usr/share/bootloader/device_trees
+        else
+          cp -v ${dtb} ${INSTALL}/usr/share/bootloader
         fi
       fi
     done
