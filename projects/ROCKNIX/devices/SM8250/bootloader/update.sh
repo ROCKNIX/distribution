@@ -26,7 +26,7 @@ if [ -d "$SYSTEM_ROOT/usr/share/bootloader/boot/grub" ]; then
   mkdir -p $BOOT_ROOT/boot/grub
   echo "Updating grub dtbs..."
   cp $SYSTEM_ROOT/usr/share/bootloader/boot/grub/*.dtb $BOOT_ROOT/boot/grub
-done
+fi
 
 if [ -f "$SYSTEM_ROOT/usr/share/bootloader/boot/grub/grub.cfg" ]; then
   mkdir -p $BOOT_ROOT/boot/grub
