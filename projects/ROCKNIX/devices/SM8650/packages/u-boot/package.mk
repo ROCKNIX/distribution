@@ -24,7 +24,7 @@ make_target() {
   DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm make mrproper
   DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm make ${PKG_UBOOT_CONFIG}
 
-  DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm _python_sysroot="${TOOLCHAIN}" _python_prefix=/ _python_exec_prefix=/ make DEVICE_TREE=qcom/sm8650-ayaneo-ps2-u-boot HOSTCC="${HOST_CC}" HOSTCFLAGS="-I${TOOLCHAIN}/include" HOSTLDFLAGS="${HOST_LDFLAGS}" CONFIG_MKIMAGE_DTC_PATH="scripts/dtc/dtc"
+  DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm _python_sysroot="${TOOLCHAIN}" _python_prefix=/ _python_exec_prefix=/ make DEVICE_TREE=qcom/sm8650-ayaneo-ps2 HOSTCC="${HOST_CC}" HOSTCFLAGS="-I${TOOLCHAIN}/include" HOSTLDFLAGS="${HOST_LDFLAGS}" CONFIG_MKIMAGE_DTC_PATH="scripts/dtc/dtc"
 }
 
 makeinstall_target() {
@@ -34,5 +34,5 @@ makeinstall_target() {
   find_file_path bootloader/update.sh && cp -av ${FOUND_PATH} ${INSTALL}/usr/share/bootloader
 
   cp -av u-boot-nodtb.bin ${INSTALL}/usr/share/bootloader/rocknix-u-boot.img
-  cp -av dts/upstream/src/arm64/qcom/sm8650-ayaneo-ps2-u-boot.dtb ${INSTALL}/usr/share/bootloader/device_trees
+  cp -av dts/upstream/src/arm64/qcom/sm8650-ayaneo-ps2.dtb ${INSTALL}/usr/share/bootloader/device_trees/u-boot-pocket-s2.dtb
 }

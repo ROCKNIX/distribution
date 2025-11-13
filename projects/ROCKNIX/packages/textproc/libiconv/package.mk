@@ -1,14 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
-PKG_NAME="libiconv"
-PKG_VERSION="1.17"
-PKG_LICENSE="GPL"
-PKG_SITE="https://savannah.gnu.org/projects/libiconv/"
-PKG_URL="http://ftp.gnu.org/pub/gnu/libiconv/${PKG_NAME}-${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
-PKG_LONGDESC="A tool that converts from one character encoding to another through Unicode conversion."
-PKG_BUILD_FLAGS="+pic"
+. ${ROOT}/packages/textproc/libiconv/package.mk
 
 PKG_CONFIGURE_OPTS_TARGET="--host=${TARGET_NAME} \
             --build=${HOST_NAME} \
@@ -17,6 +10,7 @@ PKG_CONFIGURE_OPTS_TARGET="--host=${TARGET_NAME} \
             --libdir=/usr/lib/iconv \
             --sysconfdir=/etc \
             --enable-shared \
-            --disable-statuc \
+            --disable-static \
             --disable-nls \
+            --disable-extra-encodings \
             --with-gnu-ld"

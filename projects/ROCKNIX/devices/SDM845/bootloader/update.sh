@@ -16,43 +16,36 @@ fi
 # mount $BOOT_ROOT rw
 mount -o remount,rw $BOOT_ROOT
 
-echo "Updating device trees..."
-for dtb in $SYSTEM_ROOT/usr/share/bootloader/*.dtb; do
-  cp -p $dtb $BOOT_ROOT
+if [ -f "$SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/bootaa64.efi" ]; then
+  mkdir -p $BOOT_ROOT/EFI/BOOT
+  echo "Updating EFI..."
+  cp $SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/bootaa64.efi $BOOT_ROOT/EFI/BOOT
+fi
+
+if [ -d "$SYSTEM_ROOT/usr/share/bootloader/boot/grub" ]; then
+  mkdir -p $BOOT_ROOT/boot/grub
+  echo "Updating grub dtbs..."
+  cp $SYSTEM_ROOT/usr/share/bootloader/boot/grub/*.dtb $BOOT_ROOT/boot/grub
 done
 
-if [ -f "$SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/bootaa64.efi" ]; then
-  echo "Updating EFI..."
-  cp -p $SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/bootaa64.efi $BOOT_ROOT/EFI/BOOT
-fi
-
-if [ -f "$SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/grub.cfg" ]; then
+if [ -f "$SYSTEM_ROOT/usr/share/bootloader/boot/grub/grub.cfg" ]; then
+  mkdir -p $BOOT_ROOT/boot/grub
   echo "Updating grub.cfg..."
-  cp -p $SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/grub.cfg $BOOT_ROOT/EFI/BOOT
+  cp $SYSTEM_ROOT/usr/share/bootloader/boot/grub/grub.cfg $BOOT_ROOT/boot/grub
 fi
 
-if [ -f "$SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/dejavu-mono.pf2" ]; then
+if [ -f "$SYSTEM_ROOT/usr/share/bootloader/boot/grub/dejavu-mono.pf2" ]; then
+  mkdir -p $BOOT_ROOT/boot/grub
   echo "Updating dejavu-mono.pf2..."
-  cp -p $SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/dejavu-mono.pf2 $BOOT_ROOT/EFI/BOOT
+  cp $SYSTEM_ROOT/usr/share/bootloader/boot/grub/dejavu-mono.pf2 $BOOT_ROOT/boot/grub
 fi
 
-if [ -f "$SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/grubenv" ]; then
-  if [ ! -f "$BOOT_ROOT/efi/boot/grubenv" ]; then
+if [ -f "$SYSTEM_ROOT/usr/share/bootloader/boot/grub/grubenv" ]; then
+  if [ ! -f "$BOOT_ROOT/boot/grub/grubenv" ]; then
+    mkdir -p $BOOT_ROOT/boot/grub
     echo "Installing grubenv..."
-    cp -p $SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/grubenv $BOOT_ROOT/EFI/BOOT
+    cp $SYSTEM_ROOT/usr/share/bootloader/boot/grub/grubenv $BOOT_ROOT/boot/grub
   fi
-fi
-
-if [ -f "$SYSTEM_ROOT/usr/share/bootloader/boot/u-boot-nodtb.bin" ]; then
-  mkdir -p $BOOT_ROOT/boot
-  echo "Updating u-boot-nodtb.bin..."
-  cp -p $SYSTEM_ROOT/usr/share/bootloader/boot/u-boot-nodtb.bin $BOOT_ROOT/boot
-fi
-
-if [ -f "$SYSTEM_ROOT/usr/share/bootloader/boot/u-boot.dtb" ]; then
-  mkdir -p $BOOT_ROOT/boot
-  echo "Updating u-boot.dtb..."
-  cp -p $SYSTEM_ROOT/usr/share/bootloader/boot/u-boot.dtb $BOOT_ROOT/boot
 fi
 
 # mount $BOOT_ROOT ro

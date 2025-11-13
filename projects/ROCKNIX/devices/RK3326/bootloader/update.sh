@@ -7,6 +7,14 @@
 [ -z "$BOOT_ROOT" ] && BOOT_ROOT="/flash"
 [ -z "$BOOT_PART" ] && BOOT_PART=$(df "$BOOT_ROOT" | tail -1 | awk {' print $1 '})
 
+# mount $BOOT_ROOT rw
+mount -o remount,rw $BOOT_ROOT
+
+# Setup logging
+echo -n > $BOOT_ROOT/update.log
+log() { echo $*; echo $* >> $BOOT_ROOT/update.log; }
+log "Starting bootloader update"
+
 # identify the boot device
 if [ -z "$BOOT_DISK" ]; then
   case $BOOT_PART in
@@ -14,55 +22,42 @@ if [ -z "$BOOT_DISK" ]; then
   esac
 fi
 
-# mount $BOOT_ROOT rw
-mount -o remount,rw $BOOT_ROOT
-
-DT_SOC=$($SYSTEM_ROOT/usr/bin/dtsoc | cut -f2 -d,)
-DT_ID=$($SYSTEM_ROOT/usr/bin/dtname)
-if [ -n "$DT_ID" ]; then
-  case $DT_ID in
-    powkiddy,x55) SUBDEVICE="Powkiddy_x55";;
-    *) SUBDEVICE="Generic";;
-  esac
-fi
-
-### Migrate device trees to subfolder (except RK326) - remove in the future
-if [ "$DT_SOC" = "rk3326" ]; then
-  if [ -d "$BOOT_ROOT/device_trees" ]; then
-    mv $BOOT_ROOT/device_trees/*.dtb $BOOT_ROOT
-    rm -rf $BOOT_ROOT/device_trees
-  fi
-  if [ -f "$BOOT_ROOT/boot.ini" ]; then
-    grep -q "device_trees" $BOOT_ROOT/boot.ini &&
-      sed -i 's/${dtb_loadaddr} device_trees\//${dtb_loadaddr} /g' $BOOT_ROOT/boot.ini
-  fi
+SUBDEVICE=$(sed -n 's|^.* uboot.hwid_adc=\([^, ]\),.*$|\1|p' /proc/cmdline)
+if [ -n "$SUBDEVICE" ]; then
+  log "Subdevice from cmdline: $SUBDEVICE"
+elif [ -f $BOOT_ROOT/boot.scr ]; then
+  grep -q "rk3326-anbernic-rg351m.dtb" $BOOT_ROOT/boot.scr && SUBDEVICE=a || SUBDEVICE=b
+  log "Subdevice from boot.scr: $SUBDEVICE"
+elif [ -f $BOOT_ROOT/boot.ini ]; then
+  grep -q "rk3326-anbernic-rg351m.dtb" $BOOT_ROOT/boot.ini && SUBDEVICE=a || SUBDEVICE=b
+  log "Subdevice from boot.ini: $SUBDEVICE"
 else
-  if [ ! -d "$BOOT_ROOT/device_trees" ]; then
-    mkdir $BOOT_ROOT/device_trees
-    mv $BOOT_ROOT/*.dtb $BOOT_ROOT/device_trees
-    if [ -f "$BOOT_ROOT/extlinux/extlinux.conf" ]; then
-      if ! grep -q "device_trees" $BOOT_ROOT/extlinux/extlinux.conf; then
-        sed -i 's/FDT /FDT \/device_trees/g' $BOOT_ROOT/extlinux/extlinux.conf
-        sed -i 's/FDTDIR \//FDTDIR \/device_trees/g' $BOOT_ROOT/extlinux/extlinux.conf
-      fi
-    fi
-  fi
+  SUBDEVICE=a
+  log "Subdevice fallback: $SUBDEVICE"
 fi
-###
 
-echo "Updating device trees..."
-[ "$DT_SOC" = "rk3326" ] && DT_LOC=$BOOT_ROOT || DT_LOC=$BOOT_ROOT/device_trees
-cp -f $SYSTEM_ROOT/usr/share/bootloader/device_trees/* $DT_LOC
+log "Updating device trees..."
+if [ -d "$BOOT_ROOT/device_trees" ]; then
+  mv $BOOT_ROOT/device_trees/*.dtb $BOOT_ROOT
+  rm -rf $BOOT_ROOT/device_trees
+fi
+cp -f $SYSTEM_ROOT/usr/share/bootloader/device_trees/* $BOOT_ROOT
 
 if [ -d $SYSTEM_ROOT/usr/share/bootloader/overlays ]; then
-  echo "Updating device tree overlays..."
+  log "Updating device tree overlays..."
   mkdir -p $BOOT_ROOT/overlays
   cp -f $SYSTEM_ROOT/usr/share/bootloader/overlays/* $BOOT_ROOT/overlays
 fi
 
-for BOOT_IMAGE in ${SUBDEVICE}_uboot.bin uboot.bin; do
+if [ ! -f $BOOT_ROOT/extlinux/extlinux.conf ]; then
+  log "Creating extlinux.conf..."
+  mkdir -p $BOOT_ROOT/extlinux
+  cp -f $SYSTEM_ROOT/usr/share/bootloader/extlinux/* $BOOT_ROOT/extlinux/
+fi
+
+for BOOT_IMAGE in uboot.bin; do
   if [ -f "$SYSTEM_ROOT/usr/share/bootloader/$BOOT_IMAGE" ]; then
-    echo "Updating $BOOT_IMAGE on $BOOT_DISK..."
+    log "Updating $BOOT_IMAGE on $BOOT_DISK..."
     # instead of using small bs, read the missing part from target and do a perfectly aligned write
     {
       dd if=$BOOT_DISK bs=32K count=1
@@ -72,8 +67,13 @@ for BOOT_IMAGE in ${SUBDEVICE}_uboot.bin uboot.bin; do
   fi
 done
 
+log "Updating boot.scr from ${SUBDEVICE}_boot.scr..."
+cp -f $SYSTEM_ROOT/usr/share/bootloader/${SUBDEVICE}_boot.scr $BOOT_ROOT/boot.scr
+
+log "Finishing bootloader update..."
 # mount $BOOT_ROOT ro
 sync
 mount -o remount,ro $BOOT_ROOT
 
 echo "UPDATE" > /storage/.boot.hint
+log "DONE"

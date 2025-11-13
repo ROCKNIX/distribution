@@ -32,15 +32,15 @@ make_target() {
 }
 
 makeinstall_target() {
-  mkdir -p ${INSTALL}/usr/share/bootloader/boot
-
+  mkdir -p ${INSTALL}/usr/share/bootloader/device_trees
+  
   # Always install the update script
   find_file_path bootloader/update.sh && cp -av ${FOUND_PATH} ${INSTALL}/usr/share/bootloader
 
-  cp -av u-boot-nodtb.bin ${INSTALL}/usr/share/bootloader/boot
-  cp -av dts/upstream/src/arm64/qcom/qcs8550-ayn-odin2-common.dtb ${INSTALL}/usr/share/bootloader/boot/u-boot-odin2.dtb
-  cp -av dts/upstream/src/arm64/qcom/qcs8550-ayaneo-pocket-ace.dtb ${INSTALL}/usr/share/bootloader/boot/u-boot-pocket-ace.dtb
-  cp -av dts/upstream/src/arm64/qcom/qcs8550-ayaneo-pocket-dmg.dtb ${INSTALL}/usr/share/bootloader/boot/u-boot-pocket-dmg.dtb
-  cp -av dts/upstream/src/arm64/qcom/qcs8550-ayaneo-pocket-evo.dtb ${INSTALL}/usr/share/bootloader/boot/u-boot-pocket-evo.dtb
-  cp -av dts/upstream/src/arm64/qcom/qcs8550-ayaneo-pocket-ds.dtb ${INSTALL}/usr/share/bootloader/boot/u-boot-pocket-ds.dtb
+  cp -av u-boot-nodtb.bin ${INSTALL}/usr/share/bootloader/rocknix-u-boot.img
+  cp -av dts/upstream/src/arm64/qcom/qcs8550-ayn-odin2-common.dtb ${INSTALL}/usr/share/bootloader/device_trees/u-boot-odin2.dtb
+  cp -av dts/upstream/src/arm64/qcom/qcs8550-ayaneo-pocket-ace.dtb ${INSTALL}/usr/share/bootloader/device_trees/u-boot-pocket-ace.dtb
+  cp -av dts/upstream/src/arm64/qcom/qcs8550-ayaneo-pocket-dmg.dtb ${INSTALL}/usr/share/bootloader/device_trees/u-boot-pocket-dmg.dtb
+  cp -av dts/upstream/src/arm64/qcom/qcs8550-ayaneo-pocket-evo.dtb ${INSTALL}/usr/share/bootloader/device_trees/u-boot-pocket-evo.dtb
+  cp -av dts/upstream/src/arm64/qcom/qcs8550-ayaneo-pocket-ds.dtb ${INSTALL}/usr/share/bootloader/device_trees/u-boot-pocket-ds.dtb
 }
