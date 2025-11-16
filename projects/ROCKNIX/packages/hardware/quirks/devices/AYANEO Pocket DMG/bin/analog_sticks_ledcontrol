@@ -1,0 +1,69 @@
+#!/bin/sh
+
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2025 ROCKNIX
+
+# Serial device
+SERIAL_DEVICE="/dev/ttyHS0"
+
+# Display usage if wrong parameters
+if [ $# -lt 4 ]; then
+  echo "Usage: $0 <BRIGHTNESS> <R> <G> <B>"
+  echo "Example: $0 255 255 0 0"
+  exit 1
+fi
+
+BRIGHTNESS=$1
+R=$2
+G=$3
+B=$4
+
+# Validate range
+for val in "$R" "$G" "$B"; do
+  if ! [ "$val" -ge 0 ] || ! [ "$val" -le 255 ]; then
+    echo "RGB values must be 0-255"
+    exit 1
+  fi
+done
+
+# Convert to hex
+BRIGHTNESS_HEX=$(printf "%02X" $BRIGHTNESS)
+R_HEX=$(printf "%02X" $R)
+G_HEX=$(printf "%02X" $G)
+B_HEX=$(printf "%02X" $B)
+
+# Function to calculate checksum
+calculate_checksum() {
+  local sum=0
+  for byte in "$@"; do
+    sum=$((sum + byte))
+  done
+  echo $((sum & 0xFF))
+}
+
+# Open serial device
+exec 20<>$SERIAL_DEVICE
+stty -F $SERIAL_DEVICE 115200 -opost -isig -icanon -echo
+
+# Construct payload (without STX and checksum)
+payload=(0x00 0x1C 0x20 0x01 0x80 0x00 0x81 0x00 0x8B 0x0F 0x88 0x$R_HEX 0x89 0x$G_HEX 0x8A 0x$B_HEX 0x86 0xFF 0x87 0x$BRIGHTNESS_HEX 0x58 0x02 0x45 0x00)
+
+# Calculate checksum
+CHECKSUM=$(calculate_checksum "${payload[@]}")
+
+# Construct full frame: STX + payload + checksum + ETX
+STX=0xF7
+ETX=0xED
+FRAME=($STX "${payload[@]}" $CHECKSUM $ETX)
+
+# Convert to \x.. string
+CMD=""
+for b in "${FRAME[@]}"; do
+  CMD+="\\x$(printf '%02X' $b)"
+done
+
+# Send frame
+echo -ne "$CMD" > $SERIAL_DEVICE
+
+# Close serial device
+exec 20>&-

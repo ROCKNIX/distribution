@@ -222,6 +222,8 @@ ${RA_BIN} -L ${RA_DIR}/ecwolf_libretro.so ${GAME_DIR}/wolf3d/sod/*
 EOF
 fi
 
-
 ### Set all launcher scripts to be executable ###
 chmod +x ${SCRIPT_DIR}/*
+
+#Restart ES so games are displayed
+systemctl restart ${UI_SERVICE}

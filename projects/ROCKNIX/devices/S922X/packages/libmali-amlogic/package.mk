@@ -7,7 +7,7 @@ PKG_LICENSE="mali_driver"
 PKG_ARCH="aarch64"
 PKG_SITE="https://developer.arm.com/downloads/-/mali-drivers/user-space"
 PKG_URL="https://developer.arm.com/-/media/Files/downloads/mali-drivers/user-space/odroid-n2plus/BXODROIDN2PL-${PKG_VERSION}.tar"
-PKG_DEPENDS_TARGET="toolchain mesa vulkan-tools gpudriver vulkan-wsi-layer"
+PKG_DEPENDS_TARGET="toolchain mesa vulkan-tools gpudriver vulkan-wsi-layer libmali-amlogic-gbm-shim"
 PKG_TOOLCHAIN="manual"
 PKG_LONGDESC="OpenGL ES and Vulkan Mali drivers for s922x soc"
 
@@ -28,4 +28,10 @@ makeinstall_target() {
   rm -r ${INSTALL}/usr/share/etc
   # Remove packages WSI layer, we build our own
   rm -r ${INSTALL}/usr/share/vulkan/implicit_layer.d
+}
+
+post_makeinstall_target() {
+  SHIM_PKG_INSTALL=$(get_pkg_variable libmali-amlogic-gbm-shim PKG_INSTALL)
+  cp -P "${SHIM_PKG_INSTALL}"/usr/lib/mali_gbm_shim.so "${INSTALL}"/usr/lib/
+  patchelf --add-needed mali_gbm_shim.so "${INSTALL}"/usr/lib/libmali.so.0
 }
