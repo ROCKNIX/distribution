@@ -11,6 +11,10 @@ PKG_LONGDESC="A port of QUASI88, a PC-8800 series emulator by Showzoh Fukunaga, 
 PKG_TOOLCHAIN="make"
 GET_HANDLER_SUPPORT="git"
 
+pre_configure_target() {
+  CFLAGS="${CFLAGS} -std=gnu17"
+}
+
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
   cp quasi88_libretro.so ${INSTALL}/usr/lib/libretro/

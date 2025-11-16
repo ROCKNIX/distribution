@@ -39,7 +39,7 @@ elif [ "${OPENGLES_SUPPORT}" = yes ]; then
 fi
 
 pre_configure_target() {
-  export CFLAGS="${CFLAGS} -fcommon -Wno-error=incompatible-pointer-types"
+  export CFLAGS="${CFLAGS} -fcommon -Wno-error=incompatible-pointer-types -std=gnu17"
 
   case ${ARCH} in
     aarch64)

@@ -33,6 +33,7 @@ pre_configure_target() {
   if [ "${ARCH}" == "arm" ]; then
     CFLAGS="${CFLAGS} -DARM -marm"
   fi
+  CFLAGS="${CFLAGS} -std=gnu17"
 }
 
 makeinstall_target() {

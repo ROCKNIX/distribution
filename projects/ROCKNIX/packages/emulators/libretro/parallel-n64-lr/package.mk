@@ -23,7 +23,7 @@ pre_configure_target() {
   if [ "${ARCH}" = "aarch64" ]; then
     # This is only needed for armv8.2-a targets where we don't use this flag
     # as it prohibits the use of LSE-instructions, this is a package bug most likely
-    export CFLAGS="${CFLAGS} -mno-outline-atomics"
+    export CFLAGS="${CFLAGS} -mno-outline-atomics -std=gnu17"
     export CXXFLAGS="${CXXFLAGS} -mno-outline-atomics"
     PKG_MAKE_OPTS_TARGET+=" platform=${DEVICE}"
   fi

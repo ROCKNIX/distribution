@@ -3,11 +3,11 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="libcom-err"
-PKG_VERSION="1.47.0"
+PKG_VERSION="$(get_pkg_version e2fsprogs)"
 PKG_LICENSE="GPL"
 PKG_SITE="http://e2fsprogs.sourceforge.net/"
 PKG_URL="https://www.kernel.org/pub/linux/kernel/people/tytso/e2fsprogs/v${PKG_VERSION}/e2fsprogs-${PKG_VERSION}.tar.xz"
-PKG_DEPENDS_TARGET="toolchain e2fsprogs"
+PKG_DEPENDS_TARGET="autotools:host gcc:host"
 PKG_LONGDESC="The filesystem utilities for the EXT2 filesystem, including e2fsck, mke2fs, dumpe2fs, fsck, and others."
 
 pre_configure() {
@@ -36,10 +36,9 @@ pre_configure() {
                            --disable-rpath \
                            --disable-fuse2fs \
                            --with-gnu-ld"
-
 }
 
 makeinstall_target() {
-mkdir -p ${INSTALL}/usr/lib
-cp -rf ${PKG_BUILD}/.${TARGET_NAME}/lib/libcom_err.so* ${INSTALL}/usr/lib/
+  mkdir -p ${INSTALL}/usr/lib
+    cp -rf ${PKG_BUILD}/.${TARGET_NAME}/lib/libcom_err.so* ${INSTALL}/usr/lib
 }

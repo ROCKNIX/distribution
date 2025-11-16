@@ -18,16 +18,13 @@
 ################################################################################
 
 PKG_NAME="liblcf"
-PKG_VERSION="606288281fe3527353c76065b56e1ebdc0c9baae"
+PKG_VERSION="92c4450a1bc1acb58bd02bbb99b57e5036919cdf"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/EasyRPG/liblcf"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain expat icu"
+PKG_DEPENDS_TARGET="toolchain expat icu inih"
 PKG_LONGDESC="Library to handle RPG Maker 2000/2003 and EasyRPG projects"
 GET_HANDLER_SUPPORT="git"
-
-PKG_USE_CMAKE="yes"
-PKG_TOOLCHAIN="cmake"
 
 PKG_CMAKE_OPTS_TARGET="-DCMAKE_BUILD_TYPE=Release"
 
