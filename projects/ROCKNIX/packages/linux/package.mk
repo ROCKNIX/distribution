@@ -30,15 +30,7 @@ case ${DEVICE} in
     PKG_PATCH_DIRS="${LINUX} ${DEVICE} default"
   ;;
   *)
-    case ${DEVICE} in
-      S922X|SM8550|SM8250|H700|SM8650|RK3566|RK3399)
-        PKG_VERSION="6.17.8"
-      ;;
-      *)
-        PKG_VERSION="6.12.57"
-        PKG_PATCH_DIRS+=" 6.12-LTS"
-      ;;
-    esac
+    PKG_VERSION="6.17.8"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
   ;;
 esac
