@@ -55,7 +55,18 @@ if [ ! -f $BOOT_ROOT/extlinux/extlinux.conf ]; then
   cp -f $SYSTEM_ROOT/usr/share/bootloader/extlinux/* $BOOT_ROOT/extlinux/
 fi
 
-for BOOT_IMAGE in uboot.bin; do
+UBOOT_VARIANT=""
+CONSOLEDEV=$(grep -l Y /sys/devices/platform/*/*/*/tty/tty*/console | head -1 | xargs -r dirname)
+if [ -z "${CONSOLEDEV}" ]; then
+  log "Cannot find UART console"
+elif grep -qi ff178000 "${CONSOLEDEV}/iomem_base"; then
+  log "Detected UART5 console at ${CONSOLEDEV}"
+  UBOOT_VARIANT=".uart5"
+else
+  log "Assuming default (UART2) console at ${CONSOLEDEV}"
+fi
+
+for BOOT_IMAGE in uboot.bin${UBOOT_VARIANT}; do
   if [ -f "$SYSTEM_ROOT/usr/share/bootloader/$BOOT_IMAGE" ]; then
     log "Updating $BOOT_IMAGE on $BOOT_DISK..."
     # instead of using small bs, read the missing part from target and do a perfectly aligned write
@@ -76,4 +87,4 @@ sync
 mount -o remount,ro $BOOT_ROOT
 
 echo "UPDATE" > /storage/.boot.hint
-log "DONE"
+echo "DONE"
