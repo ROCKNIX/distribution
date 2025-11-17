@@ -5,11 +5,15 @@
 
 PKG_NAME="libmali"
 PKG_VERSION="g13p0"
+[[ "${DEVICE}" == "S922X" ]] && PKG_VERSION="r51p0-00eac0"
+[[ "${DEVICE}" == "S922X" ]] && PKG_ARCH="aarch64"
 PKG_LICENSE="nonfree"
-PKG_SITE="https://github.com/tsukumijima/libmali-rockchip"
+#PKG_SITE="https://github.com/ROCKNIX/libmali"
+PKG_SITE="https://github.com/porschemad911/rocknix-libmali"
 # zip format makes extract very fast (<1s). tgz takes 20 seconds to scan the whole file
 #PKG_URL="${PKG_SITE}/archive/refs/tags/${PKG_VERSION}.zip"
-PKG_URL="${PKG_SITE}/archive/master.zip"
+#PKG_URL="${PKG_SITE}/archive/master.zip"
+PKG_URL="${PKG_SITE}/archive/amlogic.zip"
 PKG_DEPENDS_TARGET="toolchain libdrm patchelf:host gpudriver"
 PKG_LONGDESC="OpenGL ES user-space binary for the ARM Mali GPU family"
 PKG_TOOLCHAIN="meson"
@@ -41,9 +45,9 @@ unpack() {
   pwd
   # Extract only what is needed
   LIBNAME="libmali-${MALI_FAMILY}-${PKG_VERSION}-${PLATFORM}.so"
-  unzip -q "${SOURCES}/${PKG_NAME}/${PKG_SOURCE_NAME}" "*/hook/*" "*/include/*" "*/scripts/*" "*/meson*" "*/${LIBNAME}"
-  mv libmali-rockchip-*/* .
-  rmdir libmali-rockchip-*
+  unzip -q "${SOURCES}/${PKG_NAME}/${PKG_SOURCE_NAME}" "*/data/*" "*/hook/*" "*/include/*" "*/scripts/*" "*/meson*" "*/${LIBNAME}"
+  mv rocknix-libmali*/* .
+  rmdir rocknix-libmali-*
   ln -s lib optimize_3
 }
 
@@ -61,4 +65,7 @@ post_makeinstall_target() {
   if [ ${DEVICE} = "RK3588" ] && [ ${TARGET_ARCH} = "aarch64" ]; then
       curl -Lo ${INSTALL}/usr/lib/libmali-${MALI_FAMILY}-${PKG_VERSION}-x11-gbm.so ${PKG_SITE}/raw/master/lib/aarch64-linux-gnu/libmali-${MALI_FAMILY}-${PKG_VERSION}-x11-gbm.so
   fi
+
+  # S922X - mali vulkan libs need moving
+  [[ "${DEVICE}" == "S922X" ]] && mv "${INSTALL}"/usr/lib/mali/libMaliVulkan.* "${INSTALL}"/usr/lib/
 }
