@@ -123,7 +123,7 @@ def absfrac(x):
 def_fps = 60
 if orig_def_fps:
     def_fps = orig_def_fps
-common_fpss = [50/1.001, 50, 50.0070, 57.5, 59.7275, 60/1.001, 60, 60.0988, 75.47, 90, 120];
+common_fpss = [50/1.001, 50, 50.0070, 54.8766, 57.5, 59.7275, 60/1.001, 60, 60.0988, 75.47, 90, 120];
 common_fpss = [ fps for fps in common_fpss if fps != orig_def_fps]
 for targetfps in [orig_def_fps] + common_fpss:
     if not targetfps:
