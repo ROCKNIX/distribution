@@ -17,7 +17,8 @@ case ${DEVICE} in
     PKG_PATCH_DIRS+=" qt6"
     PKG_CMAKE_OPTS_TARGET+=" -DENABLE_QT=ON \
                              -DUSE_RETRO_ACHIEVEMENTS=ON \
-                             -DENABLE_HEADLESS=OFF"
+                             -DENABLE_HEADLESS=OFF \
+                             -DCMAKE_EXE_LINKER_FLAGS=-flto=$(nproc)"
   ;;
   *)
     PKG_VERSION="e6583f8bec814d8f3748f1d7738457600ce0de56"

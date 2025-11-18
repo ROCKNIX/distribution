@@ -51,6 +51,7 @@ pre_configure_target() {
                          -D ENABLE_WXWIDGETS=ON \
                          -D CMAKE_BUILD_TYPE=Release \
                          -D ENABLE_FERAL_GAMEMODE=OFF \
+                         -D CMAKE_CXX_FLAGS_RELEASE=-fpch-preprocess \
                          -Wno-dev"
 
   # Wayland Support

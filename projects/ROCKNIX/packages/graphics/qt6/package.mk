@@ -108,7 +108,7 @@ pre_configure_target(){
   PKG_CMAKE_OPTS_TARGET+=" -DCMAKE_INSTALL_PREFIX=/usr \
                            -DCMAKE_SYSROOT=${SYSROOT_PREFIX} \
                            -DCMAKE_TOOLCHAIN_FILE=${CMAKE_CONF} \
-                           -DQT_HOST_PATH=${TOOLCHAIN}/usr/local/qt6
+                           -DQT_HOST_PATH=${TOOLCHAIN}/usr/local/qt6 \
                            -DCMAKE_BUILD_TYPE=Release \
                            -DQT_DEBUG_FIND_PACKAGE=ON \
                            -DBUILD_SHARED_LIBS=ON \
