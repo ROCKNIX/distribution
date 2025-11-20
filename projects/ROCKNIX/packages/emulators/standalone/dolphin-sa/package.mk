@@ -59,7 +59,7 @@ fi
 
 pre_configure_target() {
   PKG_CMAKE_OPTS_TARGET+=" -DCMAKE_BUILD_TYPE=Release \
-                           -Ddatadir="/storage/.config/dolphin-emu" \
+                           -DDISTRIBUTOR="ROCKNIX" \
                            -DENABLE_NOGUI=ON \
                            -DENABLE_EVDEV=ON \
                            -DUSE_DISCORD_PRESENCE=OFF \

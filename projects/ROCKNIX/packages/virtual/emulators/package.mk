@@ -348,6 +348,7 @@ makeinstall_target() {
       add_emu_core dreamcast flycast flycast-sa false
       ;;
   esac
+  install_script "Start Flycast.sh"
   add_es_system dreamcast
 
   ### EasyRPG
@@ -418,6 +419,7 @@ makeinstall_target() {
   case ${DEVICE} in
     SDM845|SM8250|SM8550|SM8650)
       add_emu_core gb skyemu skyemu-sa false
+      install_script "Start SkyEmu.sh"
       ;;
   esac
   add_es_system gb
@@ -641,6 +643,7 @@ makeinstall_target() {
   case ${DEVICE} in
     SM8250|SM8550|SM8650|SDM845)
       add_emu_core atarijaguar bigpemu bigpemu-sa true
+      install_script "Start BigPEmu.sh"
     ;;
   esac
   add_es_system atarijaguar

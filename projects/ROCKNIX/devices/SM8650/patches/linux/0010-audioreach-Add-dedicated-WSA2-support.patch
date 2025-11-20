@@ -1,0 +1,43 @@
+From 1bd93e573ea066488142139501590d0944fc5f7a Mon Sep 17 00:00:00 2001
+From: KancyJoe <kancy2333@outlook.com>
+Date: Sun, 19 Oct 2025 09:48:18 +0000
+Subject: [PATCH] audioreach: Add dedicated WSA2 support.
+
+LPAIF type should be set to WSA2 in audioreach topology to enable this feature.
+---
+ sound/soc/qcom/qdsp6/audioreach.c | 15 ++++++++++++++-
+ 1 file changed, 14 insertions(+), 1 deletion(-)
+
+diff --git a/sound/soc/qcom/qdsp6/audioreach.c b/sound/soc/qcom/qdsp6/audioreach.c
+index 2365424a9b42bf..fb34c61fb94b81 100644
+--- a/sound/soc/qcom/qdsp6/audioreach.c
++++ b/sound/soc/qcom/qdsp6/audioreach.c
+@@ -684,6 +684,7 @@ static int audioreach_codec_dma_set_media_format(struct q6apm_graph *graph,
+ 	int rc, payload_size;
+ 	struct gpr_pkt *pkt;
+ 	void *p;
++	static u8 last_active_channel_mask = 0;
+ 
+ 	ic_sz = APM_CDMA_INTF_CFG_PSIZE;
+ 	ep_sz = APM_HW_EP_CFG_PSIZE;
+@@ -730,7 +731,19 @@ static int audioreach_codec_dma_set_media_format(struct q6apm_graph *graph,
+ 
+ 	intf_cfg->cfg.lpaif_type = module->hw_interface_type;
+ 	intf_cfg->cfg.intf_index = module->hw_interface_idx;
+-	intf_cfg->cfg.active_channels_mask = (1 << cfg->num_channels) - 1;
++	dev_err(graph->dev, "IDX: 0x%08X, TYPE: 0x%08X", module->hw_interface_idx, module->hw_interface_type);
++
++	if((intf_cfg->cfg.lpaif_type == 7 && cfg->num_channels <= 2 && intf_cfg->cfg.intf_index == 1)
++		|| ((intf_cfg->cfg.intf_index == 1) && (intf_cfg->cfg.lpaif_type == 2) && (cfg->num_channels <= 2) && (last_active_channel_mask>>2 & 0b11) != 0)) // Dedicated WSA2 RX0
++	{
++		intf_cfg->cfg.active_channels_mask = ((1 << cfg->num_channels) - 1) << 2; 
++		last_active_channel_mask = intf_cfg->cfg.active_channels_mask;
++		dev_err(graph->dev, "Setting mask to 0b1100");
++		intf_cfg->cfg.lpaif_type = 2;	// ADSO do not support WSA2 DMA
++		module->hw_interface_type = 2;	// so set lpaif type to WSA after set active channel mask
++	} else
++		intf_cfg->cfg.active_channels_mask = (1 << cfg->num_channels) - 1;
++
+ 	p += ic_sz;
+ 
+ 	pm_cfg = p;

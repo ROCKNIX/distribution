@@ -5,8 +5,10 @@ PKG_NAME="mednafen"
 PKG_VERSION="1.32.1"
 PKG_LICENSE="mixed"
 PKG_SITE="https://mednafen.github.io/"
+# Upstream pull url
 #PKG_URL="${PKG_SITE}/releases/files/${PKG_NAME}-${PKG_VERSION}.tar.xz"
-PKG_URL="https://github.com/sydarn/mednafen/archive/refs/heads/chd.tar.gz"
+# Fork with CHD additions
+PKG_URL="https://github.com/sydarn/mednafen/archive/refs/tags/1.32.1-chd.tar.gz"
 PKG_DEPENDS_TARGET="toolchain SDL2 flac zstd zlib"
 PKG_TOOLCHAIN="configure"
 
@@ -43,6 +45,11 @@ case ${DEVICE} in
 esac
 
 PKG_CONFIGURE_OPTS_TARGET="${DISABLED_MODULES}"
+# Need to update automake files
+  (
+    cd ..
+    sh autogen.sh
+  )
 }
 
 makeinstall_target() {

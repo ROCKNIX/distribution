@@ -2,7 +2,7 @@
 # Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="melonds-sa"
-PKG_VERSION="b7bfb539e57366d85c31999cb57cfa35d681d4a9"
+PKG_VERSION="b86390e4428bf38ce4c1ce0e9ca446d6d25955e8" #v1.1
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/melonDS-emu/melonDS"
 PKG_URL="${PKG_SITE}.git"

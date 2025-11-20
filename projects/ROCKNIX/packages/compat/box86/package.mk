@@ -6,7 +6,7 @@ PKG_VERSION="ac48800fbbdac4a547acf8044b92a49934e8e4e7"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/ptitSeb/box86"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain ncurses SDL2 libXdmcp libXft libXcomposite cups libogg-system"
+PKG_DEPENDS_TARGET="toolchain ncurses SDL2 libXdmcp libXft libXcomposite cups libogg"
 PKG_LONGDESC="Box86 lets you run x86 Linux programs (such as games) on non-x86 Linux systems, like ARM."
 PKG_TOOLCHAIN="cmake"
 
