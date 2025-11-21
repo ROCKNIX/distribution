@@ -27,6 +27,8 @@ if [ "${VULKAN_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${VULKAN}"
 fi
 
+TARGET_CXXFLAGS+=-fpch-preprocess
+
 PKG_CMAKE_OPTS_TARGET+=" -DENABLE_QT_TRANSLATION=OFF \
                          -DENABLE_QT=ON \
                          -DENABLE_SDL2=ON \
@@ -35,8 +37,7 @@ PKG_CMAKE_OPTS_TARGET+=" -DENABLE_QT_TRANSLATION=OFF \
                          -DENABLE_ROOM=OFF \
                          -DUSE_DISCORD_PRESENCE=OFF \
                          -DENABLE_OPENGL=ON \
-                         -DENABLE_VULKAN=ON \
-                         -DCMAKE_CXX_FLAGS=-fpch-preprocess"
+                         -DENABLE_VULKAN=ON"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin
