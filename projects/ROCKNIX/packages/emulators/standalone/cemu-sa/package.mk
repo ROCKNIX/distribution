@@ -43,6 +43,7 @@ pre_configure_target() {
   # Fix glm linking
   sed -e "s#glm::glm#glm#" -i ${PKG_BUILD}/src/{Common,input}/CMakeLists.txt
 
+  CXXFLAGS+=" -fpch-preprocess"
   PKG_CMAKE_OPTS_TARGET="-D ENABLE_VCPKG=OFF \
                          -D PORTABLE=OFF \
                          -D ENABLE_DISCORD_RPC=OFF \
@@ -51,7 +52,6 @@ pre_configure_target() {
                          -D ENABLE_WXWIDGETS=ON \
                          -D CMAKE_BUILD_TYPE=Release \
                          -D ENABLE_FERAL_GAMEMODE=OFF \
-                         -D CMAKE_CXX_FLAGS_RELEASE=-fpch-preprocess \
                          -Wno-dev"
 
   # Wayland Support

@@ -42,6 +42,13 @@ SET_SETTINGS_TMP="/tmp/shader"
 OUTPUT_LOG="${LOG_DIRECTORY}/${LOG_FILE}"
 SCRIPT_NAME=$(basename "$0")
 
+### Export Game Guide Path
+GAME_GUIDE_PATH_CHECK="${1%.*}.guide"
+if [ ! -f "${GAME_GUIDE_PATH_CHECK}" ]; then
+  GAME_GUIDE_PATH_CHECK="No Game Guide Found"
+fi
+  /usr/bin/game-guides-tool "${1}"
+
 ### Function Library
 function log() {
         if [ ${LOG} == true ]
@@ -78,6 +85,7 @@ ROM NAME: ${ROMNAME}
 BASE ROM NAME: ${ROMNAME##*/}
 USING CONFIG: ${RETROARCH_TEMP_CONFIG}
 USING APPENDCONFIG : ${RETROARCH_APPEND_CONFIG}
+GAME GUIDE PATH: ${GAME_GUIDE_PATH_CHECK}
 
 EOF
         else

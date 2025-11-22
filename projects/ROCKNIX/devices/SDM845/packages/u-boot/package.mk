@@ -31,7 +31,7 @@ make_target() {
 
   DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm make mrproper
   DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm make ${PKG_UBOOT_CONFIG}
-  DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm make DEVICE_TREE=${PKG_DEVICE_TREE}
+  DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" HOSTCFLAGS="-I${TOOLCHAIN}/include" LDFLAGS="" ARCH=arm make DEVICE_TREE=${PKG_DEVICE_TREE}
 
   gzip ${PKG_BUILD}/u-boot-nodtb.bin -c > ${PKG_BUILD}/u-boot-nodtb.bin.gz
   cat ${PKG_BUILD}/u-boot-nodtb.bin.gz ${PKG_BUILD}/dts/upstream/src/arm64/${PKG_DEVICE_TREE}.dtb > ${PKG_BUILD}/kernel.dtb
