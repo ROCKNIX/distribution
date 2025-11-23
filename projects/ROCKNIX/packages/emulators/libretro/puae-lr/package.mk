@@ -21,7 +21,7 @@
 ################################################################################
 
 PKG_NAME="puae-lr"
-PKG_VERSION="7dd724eaa48f05f02d9d2f1bfa131c34b6ab5351"
+PKG_VERSION="0043cf9c061bd9b81dbc1869c2761017139cfc63"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/libretro/libretro-uae"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

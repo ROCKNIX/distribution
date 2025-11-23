@@ -20,7 +20,7 @@
 ################################################################################
 
 PKG_NAME="freeintv-lr"
-PKG_VERSION="6efc4b8fd4c7423ec1f5ff1913b854529135b565"
+PKG_VERSION="1b51f41238ef9691d9fe16722f7d093bb6a6e379"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/libretro/FreeIntv"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

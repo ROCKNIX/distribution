@@ -16,3 +16,13 @@ PKG_CMAKE_OPTS_HOST="${PKG_CMAKE_OPTS_ALL} \
 
 PKG_CMAKE_OPTS_TARGET="${PKG_CMAKE_OPTS_ALL} \
                        -DLIBXML2_WITH_PYTHON=OFF"
+
+post_makeinstall_target() {
+  sed -e "s:\(['= ]\)/usr:\\1${SYSROOT_PREFIX}/usr:g" -i ${SYSROOT_PREFIX}/usr/bin/xml2-config
+
+  rm -rf ${INSTALL}/usr/bin
+  rm -rf ${INSTALL}/usr/lib/xml2Conf.sh
+
+  # Add a symbolic link to libxml2.so.2 for compatability
+  ln -sf ${INSTALL}/usr/lib/libxml2.so.*.*.* ${INSTALL}/usr/lib/libxml2.so.2
+}

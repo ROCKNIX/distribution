@@ -19,7 +19,8 @@ elif [ "${OPENGLES_SUPPORT}" = yes ]; then
 fi
 
 PKG_CMAKE_OPTS_TARGET+=" -DPLATFORM_SDL2=ON \
-                         -DPLATFORM_QT=OFF"
+                         -DPLATFORM_QT=OFF \
+                         -DCMAKE_POLICY_VERSION_MINIMUM=3.5"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin

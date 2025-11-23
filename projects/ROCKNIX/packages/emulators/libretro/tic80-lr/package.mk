@@ -18,7 +18,8 @@ PKG_CMAKE_OPTS_TARGET="-DBUILD_PLAYER=ON \
                        -DBUILD_LIBRETRO=ON \
                        -DBUILD_WITH_MRUBY=OFF \
                        -DBUILD_WITH_JANET=OFF \
-                       -DCMAKE_BUILD_TYPE=Release"
+                       -DCMAKE_BUILD_TYPE=Release \
+                       -DCMAKE_POLICY_VERSION_MINIMUM=3.5"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro

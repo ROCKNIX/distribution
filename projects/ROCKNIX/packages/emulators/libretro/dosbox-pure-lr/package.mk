@@ -19,7 +19,7 @@
 ################################################################################
 
 PKG_NAME="dosbox-pure-lr"
-PKG_VERSION="9e468f0087454c6c1b68975ead933977d5cf33b2"
+PKG_VERSION="b9f8bc681c55301b7430070b1c2057b3744ad480"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/schellingb/dosbox-pure"
 PKG_URL="${PKG_SITE}.git"

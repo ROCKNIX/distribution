@@ -30,6 +30,8 @@ pre_patch() {
 post_patch() {
   # Add proper include directory
   sed -e "s+MUSASHI_CFLAGS =+MUSASHI_CFLAGS = -I${SYSROOT_PREFIX}/usr/include+g" -i ${PKG_BUILD}/Makefiles/Rules.inc
+
+  sed -i "s|sdl2-config|${SYSROOT_PREFIX}/usr/bin/sdl2-config|g" ${PKG_BUILD}/Makefile
 }
 
 makeinstall_target() {

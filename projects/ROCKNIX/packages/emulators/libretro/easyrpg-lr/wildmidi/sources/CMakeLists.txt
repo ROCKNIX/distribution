@@ -1,6 +1,6 @@
 # ########## Project setup ##########
 PROJECT(wildmidi C)
-CMAKE_MINIMUM_REQUIRED(VERSION 2.8.11)
+CMAKE_MINIMUM_REQUIRED(VERSION 3.5)
 
 # WildMIDI Version
 SET(VERSION_MAJOR 0)

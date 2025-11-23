@@ -7,7 +7,7 @@ PKG_VERSION="f4210f84906c3b00a65fba198c8127b6757b9350" # 0.36.0
 PKG_LICENSE="GPLv2+"
 PKG_SITE="https://github.com/mpv-player/mpv"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain ffmpeg SDL2 luajit libass waf:host libplacebo"
+PKG_DEPENDS_TARGET="toolchain ffmpeg SDL2 luajit libass libplacebo"
 PKG_LONGDESC="Video player based on MPlayer/mplayer2 https://mpv.io"
 
 if [ "${OPENGLES_SUPPORT}" = yes ]; then

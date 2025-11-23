@@ -9,9 +9,10 @@ PKG_DEPENDS_TARGET="toolchain sqlite"
 PKG_LONGDESC="A simple Z-Machine implementation in a single C file"
 PKG_TOOLCHAIN="cmake"
 
-pre_configure_target() {
-  PKG_CMAKE_OPTS_TARGET+=" -DMOJOZORK_LIBRETRO=ON -DMOJOZORK_STANDALONE_DEFAULT=OFF -DMOJOZORK_MULTIZORK_DEFAULT=OFF "
-}
+PKG_CMAKE_OPTS_TARGET="-DMOJOZORK_LIBRETRO=ON \
+                       -DMOJOZORK_STANDALONE_DEFAULT=OFF \
+                       -DMOJOZORK_MULTIZORK_DEFAULT=OFF \
+                       -DCMAKE_POLICY_VERSION_MINIMUM=3.5"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro

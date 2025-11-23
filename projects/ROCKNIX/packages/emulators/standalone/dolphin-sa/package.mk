@@ -74,7 +74,8 @@ pre_configure_target() {
                            -DENCODE_FRAMEDUMPS=OFF \
                            -DENABLE_AUTOUPDATE=OFF \
                            -DUSE_MGBA=OFF \
-                           -DENABLE_CLI_TOOL=OFF"
+                           -DENABLE_CLI_TOOL=OFF \
+                           -DCMAKE_POLICY_VERSION_MINIMUM=3.5"
 
   sed -i 's~#include <cstdlib>~#include <cstdlib>\n#include <cstdint>~g' ${PKG_BUILD}/Externals/VulkanMemoryAllocator/include/vk_mem_alloc.h
   sed -i 's~#include <cstdint>~#include <cstdint>\n#include <string>~g' ${PKG_BUILD}/Externals/VulkanMemoryAllocator/include/vk_mem_alloc.h

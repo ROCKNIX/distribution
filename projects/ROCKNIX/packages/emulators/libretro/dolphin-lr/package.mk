@@ -29,36 +29,35 @@ if [ "${DISPLAYSERVER}" = "wl" ]; then
                            -DENABLE_EGL=ON"
 fi
 
-if [ "${VULKAN_SUPPORT}" = "yes" ]
-then
+if [ "${VULKAN_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${VULKAN}"
   PKG_CMAKE_OPTS_TARGET+=" -DENABLE_VULKAN=ON"
 fi
 
-pre_configure_target() 
+PKG_CMAKE_OPTS_TARGET+=" -DENABLE_EGL=ON \
+                         -DUSE_SHARED_ENET=OFF \
+                         -DUSE_UPNP=ON \
+                         -DENABLE_NOGUI=ON \
+                         -DENABLE_QT=OFF \
+                         -DENABLE_LTO=ON \
+                         -DENABLE_GENERIC=OFF \
+                         -DENABLE_HEADLESS=ON \
+                         -DENABLE_ALSA=ALSA \
+                         -DENABLE_PULSEAUDIO=ON \
+                         -DENABLE_LLVM=OFF \
+                         -DENABLE_TESTS=OFF \
+                         -DUSE_DISCORD_PRESENCE=OFF \
+                         -DLIBRETRO=ON \
+                         -DCMAKE_POLICY_VERSION_MINIMUM=3.5"
 
+pre_configure_target() {
   if [ "${ARCH}" = "aarch64" ]; then
     # This is only needed for armv8.2-a targets where we don't use this flag
     # as it prohibits the use of LSE-instructions, this is a package bug most likely
     export CFLAGS="${CFLAGS} -mno-outline-atomics"
     export CXXFLAGS="${CXXFLAGS} -mno-outline-atomics"
   fi
-{
-        PKG_CMAKE_OPTS_TARGET+="        -DENABLE_EGL=ON \
-                                        -DUSE_SHARED_ENET=OFF \
-                                        -DUSE_UPNP=ON \
-                                        -DENABLE_NOGUI=ON \
-                                        -DENABLE_QT=OFF \
-                                        -DENABLE_LTO=ON \
-                                        -DENABLE_GENERIC=OFF \
-                                        -DENABLE_HEADLESS=ON \
-                                        -DENABLE_ALSA=ALSA \
-                                        -DENABLE_PULSEAUDIO=ON \
-                                        -DENABLE_LLVM=OFF \
-                                        -DENABLE_TESTS=OFF \
-                                        -DUSE_DISCORD_PRESENCE=OFF \
-                                        -DLIBRETRO=ON"
-                                        }
+}
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro

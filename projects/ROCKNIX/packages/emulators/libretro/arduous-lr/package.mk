@@ -9,6 +9,8 @@ PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="A Libretro emulator core for the Arduboy"
 
+PKG_CMAKE_OPTS_TARGET="-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
+
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
   cp arduous_libretro.so ${INSTALL}/usr/lib/libretro/
