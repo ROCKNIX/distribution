@@ -43,7 +43,7 @@ OUTPUT_LOG="${LOG_DIRECTORY}/${LOG_FILE}"
 SCRIPT_NAME=$(basename "$0")
 
 ### Export Game Guide Path
-GAME_GUIDE_PATH_CHECK="${1%.*}.guide"
+GAME_GUIDE_PATH_CHECK="${1%.*}.txt"
 if [ ! -f "${GAME_GUIDE_PATH_CHECK}" ]; then
   GAME_GUIDE_PATH_CHECK="No Game Guide Found"
 fi
