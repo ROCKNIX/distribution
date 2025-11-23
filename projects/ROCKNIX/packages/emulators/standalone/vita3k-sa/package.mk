@@ -2,7 +2,7 @@
 # Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="vita3k-sa"
-PKG_VERSION="6c4727db8bc0bd00c1abb2f7f723877cd72f6927"
+PKG_VERSION="59250a64e7afbb4c475f27b385aa10eb344bcdc1"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/Vita3K/Vita3K"
 PKG_URL="${PKG_SITE}.git"
