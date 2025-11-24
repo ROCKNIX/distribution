@@ -17,7 +17,7 @@
 |Atari|Atari 5200 (atari5200)|1982|`atari5200`|.rom .xfd .atr .atx .cdm .cas .car .bin .a52 .xex .zip .7z|**retroarch:** a5200 (default)<br>**retroarch:** atari800<br>|
 |Atari|Atari 7800 (atari7800)|1986|`atari7800`|.a78 .bin .zip .7z|**retroarch:** prosystem (default)<br>|
 |Atari|Atari 800 (atari800)|1979|`atari800`|.rom .xfd .atr .atx .cdm .cas .car .bin .a52 .xex .zip .7z|**retroarch:** atari800 (default)<br>|
-|Atari|Atari Jaguar (atarijaguar)|1993|`atarijaguar`|.j64 .jag .rom .abs .cof .bin .prg|**retroarch:** virtualjaguar (default)<br>|
+|Atari|Atari Jaguar (atarijaguar)|1993|`atarijaguar`|.j64 .jag .rom .abs .cof .bin .prg .cdi|**retroarch:** virtualjaguar (default)<br>**bigpemu:** bigpemu-sa (default)<br>|
 |Atari|Atari Lynx (atarilynx)|1989|`atarilynx`|.lnx .lyx .o .zip .7z|**retroarch:** handy (default)<br>**retroarch:** beetle_lynx<br>**mednafen:** lynx<br>|
 |Atari|Atari ST (atarist)|1985|`atarist`|.st .msa .stx .dim .ipf .m3u .zip .7z|**retroarch:** hatari (default)<br>**hatarisa:** hatarisa<br>|
 |Bandai|SuFami Turbo (sufami)|1996|`sufami`|.st .zip .7z|**retroarch:** snes9x (default)<br>|
@@ -79,6 +79,7 @@
 |Nintendo|Super NES MSU-1 (snesmsu1)|2012|`snesmsu1`|.smc .fig .sfc .swc .zip .7z|**retroarch:** snes9x (default)<br>**retroarch:** beetle_supafaust<br>**mednafen:** snes_faust<br>|
 |Nintendo|Super Nintendo (Hacks) (snesh)|1991|`snesh`|.smc .fig .sfc .swc .zip .7z|**retroarch:** snes9x (default)<br>**retroarch:** snes9x2010<br>**retroarch:** snes9x2002<br>**retroarch:** snes9x2005_plus<br>**retroarch:** beetle_supafaust<br>**retroarch:** bsnes_mercury_performance<br>**retroarch:** bsnes<br>**retroarch:** bsnes_hd_beta<br>**mednafen:** snes_faust<br>|
 |Nintendo|Super Nintendo (snes)|1991|`snes`|.smc .fig .sfc .swc .zip .7z|**retroarch:** snes9x (default)<br>**retroarch:** snes9x2010<br>**retroarch:** snes9x2002<br>**retroarch:** snes9x2005_plus<br>**retroarch:** beetle_supafaust<br>**retroarch:** bsnes_mercury_accuracy<br>**retroarch:** bsnes_mercury_balanced<br>**retroarch:** bsnes_mercury_performance<br>**retroarch:** bsnes<br>**retroarch:** bsnes_hd_beta<br>**mednafen:** snes_faust<br>**retroarch:** bsnes_mercury_accuracy<br>**retroarch:** bsnes_mercury_balanced<br>**retroarch:** bsnes_mercury_accuracy<br>**retroarch:** bsnes_mercury_balanced<br>**mednafen:** snes_faust<br>|
+|Nintendo|Switch (switch)|2017|`switch`|.xci .nsp .nca .nso .nro|**eden:** eden-sa (default)<br>**citron:** citron-sa<br>|
 |Nintendo|Virtual Boy (virtualboy)|1995|`virtualboy`|.vb .zip .7z|**retroarch:** beetle_vb (default)<br>**mednafen:** vb<br>|
 |Nintendo|Wii (wii)|2006|`wii`|.gcm .iso .gcz .ciso .wbfs .rvz .dol .wad .m3u|**dolphin:** dolphin-qt-wii (default)<br>**dolphin:** dolphin-sa-wii<br>**retroarch:** dolphin<br>|
 |Nintendo|Wii U (wiiu)|2012|`wiiu`|.wud .wux .wua .rpx|**cemu:** cemu-sa (default)<br>|
@@ -117,6 +118,7 @@
 |Sony|PlayStation 2 (ps2)|2000|`ps2`|.iso .mdf .nrg .bin .img .dump .gz .cso .chd|**aethersx2:** aethersx2-sa (default)<br>|
 |Sony|PlayStation 3 (ps3)|2006|`ps3`|.ps3 .psn .m3u|**rpcs3:** rpcs3-sa (default)<br>|
 |Sony|PlayStation Portable (psp)|2004|`psp`|.iso .cso .pbp .chd|**ppsspp:** ppsspp-sa (default)<br>|
+|Sony|PlayStation Vita (psvita)|2011|`launcher`|.sh .psvita|**vita3k:** vita3k-sa (default)<br>|
 |Sony|PSP Minis (pspminis)|2004|`pspminis`|.iso .cso .pbp .chd|**ppsspp:** ppsspp-sa (default)<br>**retroarch:** ppsspp<br>|
 |Sun Microsystems|J2ME (j2me)|2002|`j2me`|.jar|**retroarch:** freej2me (default)<br>|
 |Thomson|MO/TO family (TO7, TO7/70, TO8, TO8D, TO9, TO9+, MO5 and MO6) (moto)|1982|`moto`|.fd .sap .k7 .m7 .m5 .rom|**retroarch:** theodore (default)<br>|
