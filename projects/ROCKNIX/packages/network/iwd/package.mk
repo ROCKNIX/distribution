@@ -3,6 +3,9 @@
 
 . ${ROOT}/packages/network/iwd/package.mk
 
+PKG_VERSION="3.10"
+PKG_SHA256="640bff22540e1714f71772a83123aff6f810b7eb9d7d6df1e10fb2695beb5115"
+
 pre_configure_target() {
   export LIBS="-lncurses -ltinfo"
 }
