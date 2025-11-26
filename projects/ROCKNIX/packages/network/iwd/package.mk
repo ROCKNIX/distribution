@@ -4,7 +4,7 @@
 . ${ROOT}/packages/network/iwd/package.mk
 
 PKG_VERSION="3.10"
-PKG_SHA256="640bff22540e1714f71772a83123aff6f810b7eb9d7d6df1e10fb2695beb5115"
+PKG_SHA256="0cd7dc9b32b9d6809a4a5e5d063b5c5fd279f5ad3a0bf03d7799da66df5cad45"
 
 pre_configure_target() {
   export LIBS="-lncurses -ltinfo"
