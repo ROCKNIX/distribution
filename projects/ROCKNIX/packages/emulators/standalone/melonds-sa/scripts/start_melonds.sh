@@ -38,7 +38,6 @@ SORIENTATION=$(get_setting screen_orientation "${PLATFORM}" "${GAME}")
 SLAYOUT=$(get_setting screen_layout "${PLATFORM}" "${GAME}")
 SWAP=$(get_setting screen_swap "${PLATFORM}" "${GAME}")
 SROTATION=$(get_setting screen_rotation "${PLATFORM}" "${GAME}")
-SHOWFPS=$(get_setting show_fps "${PLATFORM}" "${GAME}")
 VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
 
 #Set the cores to use
@@ -114,11 +113,6 @@ if [ "$VSYNC" = "1" ]; then
 	sed -i '/^ScreenVSync=/c\ScreenVSync=1' "${CONF_DIR}/${MELONDS_INI}"
 else
 	sed -i '/^ScreenVSync=/c\ScreenVSync=1' "${CONF_DIR}/${MELONDS_INI}"
-fi
-
-#Show FPS
-if [ "$SHOWFPS" = "1" ]; then
-	export GALLIUM_HUD="simple,fps"
 fi
 
 # Extract archive to /tmp/melonds
