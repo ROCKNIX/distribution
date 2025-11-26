@@ -1,0 +1,63 @@
+name: Build self hosted devices
+
+on:
+  workflow_call:
+    inputs:
+      DEVICE:
+        required: true
+        type: string
+
+jobs:
+  Build:
+    runs-on: self-hosted
+    env:
+      CCACHE_DIR: $HOME/ccache-${{ inputs.DEVICE }}
+      CCACHE_SLOPPINESS: pch_defines,time_macros
+      SOURCES_DIR: /opt/rocknix-sources
+    steps:
+      - name: Fix permissions
+        run: |
+          chmod -R u+rwX $GITHUB_WORKSPACE/build.ROCKNIX-*.aarch64/build/syncthing-* || true
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build
+        uses: corrupt952/actions-retry-command@v1.0.7
+        with:
+          command: |
+            CCACHE_DIR=$HOME/ccache-${{ inputs.DEVICE }} ccache --max-size=20G
+            CCACHE_DIR=$HOME/ccache-${{ inputs.DEVICE }} ccache --set-config sloppiness=pch_defines,time_macros
+            set -o pipefail
+            make ${{ inputs.DEVICE }} | tee output.log | grep -E --color=never --line-buffered "^GET|^UNPACK|^BUILD|^INSTALL"
+            exit ${PIPESTATUS[0]}
+          max_attempts: 4
+          retry_interval: 10
+
+      - name: Archive output.logs (${{ inputs.DEVICE }}-aarch64)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: output.logs-${{ inputs.DEVICE }}-aarch64
+          path: |
+            output.log
+            ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.threads/logs/
+      - name: Get date
+        run: echo "DATE=$(date +'%Y%m%d')" >> $GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ROCKNIX-image-${{ inputs.DEVICE }}-${{ env.DATE }}
+          path: |
+            target/ROCKNIX-*.img.gz
+            target/ROCKNIX-*.img.gz.sha256
+          compression-level: 0
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ROCKNIX-update-${{ inputs.DEVICE }}-${{ env.DATE }}
+          path: |
+            target/ROCKNIX-*.tar
+            target/ROCKNIX-*.tar.sha256
+          compression-level: 0
+          if-no-files-found: error
