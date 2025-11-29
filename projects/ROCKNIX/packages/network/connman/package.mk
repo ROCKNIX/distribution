@@ -12,8 +12,7 @@ PKG_DEPENDS_TARGET="toolchain glib ncurses readline dbus iptables"
 PKG_LONGDESC="A modular network connection manager."
 PKG_TOOLCHAIN="autotools"
 
-PKG_CONFIGURE_OPTS_TARGET="WPASUPPLICANT=/usr/bin/wpa_supplicant \
-                           --srcdir=.. \
+PKG_CONFIGURE_OPTS_TARGET="--srcdir=.. \
                            --disable-debug \
                            --disable-hh2serial-gps \
                            --disable-openconnect \
@@ -31,8 +30,8 @@ PKG_CONFIGURE_OPTS_TARGET="WPASUPPLICANT=/usr/bin/wpa_supplicant \
                            --enable-loopback \
                            --enable-ethernet \
                            --disable-gadget \
-                           --enable-wifi \
-                           --enable-iwd \
+                           --disable-wifi \
+                           --disable-iwd \
                            --disable-bluetooth \
                            --disable-ofono \
                            --disable-dundee \

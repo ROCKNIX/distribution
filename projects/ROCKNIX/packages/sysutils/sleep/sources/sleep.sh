@@ -83,6 +83,11 @@ quirks() {
 
 case $1 in
   pre)
+    if [ "$(get_setting wifi.enabled)" == "1" ]; then
+      log $0 "Disabling WIFI."
+      nohup wifictl disable >${EVENTLOG} 2>&1
+    fi
+
     headphones stop
     inputsense stop
     bluetooth stop
@@ -100,7 +105,7 @@ case $1 in
     bluetooth start
 
     if [ "$(get_setting wifi.enabled)" == "1" ]; then
-      log $0 "Connecting WIFI."
+      log $0 "Enabling WIFI."
       nohup wifictl enable >${EVENTLOG} 2>&1
     fi
 
