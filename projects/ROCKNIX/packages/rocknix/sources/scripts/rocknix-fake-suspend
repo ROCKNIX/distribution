@@ -53,30 +53,44 @@ check_es_running_game() {
 }
 
 display_off() {
-  if [[ "${HW_DEVICE}" == "S922X" ]]; then
-    # S922X - dpms occasionaly causes hard reboots, so just turn off the backlight
-    echo 4 > /sys/class/backlight/backlight/bl_power
-  else
+  if [[ "${ENABLE_DPMS}" == "1" ]]; then
+    # DPMS enabled, use it to turn off the display
+    ${DEBUG} && log $0 "DPMS - display off"
+
     if echo "${UI_SERVICE}" | grep "sway"; then
       ${DEBUG} && log $0 "Display power off"
       swaymsg "output * power off"
     elif echo "${UI_SERVICE}" | grep "weston"; then
       weston-dpms -m off
     fi
+  else
+    # DPMS disabled, just turn off the backlight
+    ${DEBUG} && log $0 "Backlight off"
+
+    for BL_POWER_DEVICE in "${BL_POWER_DEVICES[@]}"; do
+      echo 4 > "${BL_POWER_DEVICE}"
+    done
   fi
 }
 
 display_on() {
-  if [[ "${HW_DEVICE}" == "S922X" ]]; then
-    # S922X - dpms occasionaly causes hard reboots, so just turn on the backlight
-    echo 0 > /sys/class/backlight/backlight/bl_power
-  else
+  if [[ "${ENABLE_DPMS}" == "1" ]]; then
+    # DPMS enabled, use it to turn on the display
+    ${DEBUG} && log $0 "DPMS - display on"
+
     if echo "${UI_SERVICE}" | grep "sway"; then
       ${DEBUG} && log $0 "Display power on"
       swaymsg "output * power on"
     elif echo "${UI_SERVICE}" | grep "weston"; then
       weston-dpms -m on
     fi
+  else
+    # DPMS disabled, just turn on the backlight
+    ${DEBUG} && log $0 "Backlight on"
+
+    for BL_POWER_DEVICE in "${BL_POWER_DEVICES[@]}"; do
+      echo 0 > "${BL_POWER_DEVICE}"
+    done
   fi
 }
 
@@ -309,6 +323,10 @@ SHUTDOWN_DELAY_RUNNING_GAME="$(get_setting system.shutdown_delay_running_game)"
 ENABLE_CORE_PARKING="$(get_setting system.suspend.park_cores)"
 [[ "${ENABLE_CORE_PARKING}" = "" ]] && ENABLE_CORE_PARKING="1"
 
+# On suspend, should DPMS be used
+ENABLE_DPMS="$(get_setting system.suspend.dpms)"
+[[ "${ENABLE_DPMS}" = "" ]] && ENABLE_DPMS="1"
+
 # flag files
 PID=$$
 DELAY_FLAG_FILE_PATTERN="/var/run/shutdown-delay.flag"
@@ -329,6 +347,12 @@ INPUT_WHITELIST=(
   # SM8550
   "pmic_pwrkey"
 )
+
+# Backlight power devices
+declare -a BL_POWER_DEVICES=()
+while IFS= read -r line; do
+  BL_POWER_DEVICES+=("$line")
+done < <(find /sys/class/backlight/*/ -name bl_power 2>/dev/null)
 
 # Source = power / lid
 SOURCE=$1
