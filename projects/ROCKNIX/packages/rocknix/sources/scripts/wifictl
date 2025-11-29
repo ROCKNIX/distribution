@@ -18,17 +18,12 @@ IWD_AP_CFG_DIR="/storage/.cache/iwd/ap"
 WIFI_TYPE=$(get_setting wifi.adhoc.enabled)
 NETWORK_ADDRESS="192.168.80"
 ADHOC_CLIENT_ID=$(get_setting wifi.adhoc.id)
-WIFI_DEV="$({ ls /sys/class/net; echo wlan0; } | grep -m1 ^wlan)"
+WIFI_DEV="$(ls /sys/class/net | grep -m1 ^wlan)"
 DEFAULT_CHAN="6"
 
 # Exit the script if the WiFi device isn't available
+[ -z "${WIFI_DEV}" ] && exit 0
 [ ! -d "/sys/class/net/${WIFI_DEV}" ] && exit 0
-
-###
-### ES won't save the configuration in time
-### for it to be usable by the script, so
-### we have to accept the ssid and key on the
-### command line too.
 
 SSID="${2:-$(get_setting wifi.ssid 2>/dev/null)}"
 PSK="${3:-$(get_setting wifi.key 2>/dev/null)}"
@@ -114,6 +109,11 @@ has_ap_mode() {
 case "${1}" in
   enable)
     rfkill unblock wifi
+    ;;
+  disable)
+    rfkill block wifi
+    ;;
+  connect)
     if [ "${WIFI_TYPE}" = "1" ] && \
        [ "${ADHOC_CLIENT_ID}" = "1" ]; then
       create_adhoc >/dev/null 2>&1
@@ -121,20 +121,18 @@ case "${1}" in
       destroy_adhoc >/dev/null 2>&1
       connect_wifi >/dev/null 2>&1
     fi
-    set_setting wifi.enabled 1
   ;;
-  disable)
+  disconnect)
     if [ "${WIFI_TYPE}" = "1" ]; then
       destroy_adhoc >/dev/null 2>&1
+      iwctl ap ${WIFI_DEV} stop 2>/dev/null
+    else
+      iwctl station ${WIFI_DEV} disconnect 2>/dev/null
     fi
-    iwctl station ${WIFI_DEV} disconnect 2>/dev/null
-    iwctl ap ${WIFI_DEV} stop 2>/dev/null
-    rfkill block wifi >/dev/null 2>&1
-    set_setting wifi.enabled 0
     ;;
   reconnect)
-    /usr/bin/wifictl disable
-    /usr/bin/wifictl enable
+    /usr/bin/wifictl disconnect
+    /usr/bin/wifictl connect
     ;;
   list)
     list_wifi
@@ -150,6 +148,7 @@ case "${1}" in
     ;;
   scanlist)
     iwctl station ${WIFI_DEV} scan 2>/dev/null
+    sleep 2
     list_wifi
     ;;
 esac
