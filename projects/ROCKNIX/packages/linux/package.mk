@@ -35,7 +35,7 @@ case ${DEVICE} in
         PKG_VERSION="6.17.9"
       ;;
       *)
-        PKG_VERSION="6.12.57"
+        PKG_VERSION="6.12.59"
         PKG_PATCH_DIRS+=" 6.12-LTS"
       ;;
     esac

@@ -76,7 +76,7 @@ PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Dsysusers=false \
                        -Dtmpfiles=true \
                        -Dhwdb=true \
-                       -Drfkill=false \
+                       -Drfkill=true \
                        -Dldconfig=false \
                        -Defi=false \
                        -Dtpm=false \
