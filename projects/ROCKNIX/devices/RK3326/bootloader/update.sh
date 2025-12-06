@@ -55,18 +55,22 @@ if [ ! -f $BOOT_ROOT/extlinux/extlinux.conf ]; then
   cp -f $SYSTEM_ROOT/usr/share/bootloader/extlinux/* $BOOT_ROOT/extlinux/
 fi
 
-UBOOT_VARIANT=""
 CONSOLEDEV=$(grep -l Y /sys/devices/platform/*/*/*/tty/tty*/console | head -1 | xargs -r dirname)
-if [ -z "${CONSOLEDEV}" ]; then
+if [ ${SUBDEVICE} == "a" ]; then
+  log "Using legacy u-boot "
+  UBOOT_VARIANT="a_uboot.bin"
+elif [ -z "${CONSOLEDEV}" ]; then
   log "Cannot find UART console"
+  UBOOT_VARIANT="b_uboot.bin"
 elif grep -qi ff178000 "${CONSOLEDEV}/iomem_base"; then
   log "Detected UART5 console at ${CONSOLEDEV}"
-  UBOOT_VARIANT=".uart5"
+  UBOOT_VARIANT="b_uboot.bin.uart5"
 else
   log "Assuming default (UART2) console at ${CONSOLEDEV}"
+  UBOOT_VARIANT="b_uboot.bin"
 fi
 
-for BOOT_IMAGE in uboot.bin${UBOOT_VARIANT}; do
+for BOOT_IMAGE in ${UBOOT_VARIANT} uboot.bin b_uboot.bin; do
   if [ -f "$SYSTEM_ROOT/usr/share/bootloader/$BOOT_IMAGE" ]; then
     log "Updating $BOOT_IMAGE on $BOOT_DISK..."
     # instead of using small bs, read the missing part from target and do a perfectly aligned write
@@ -80,6 +84,10 @@ done
 
 log "Updating boot.scr from ${SUBDEVICE}_boot.scr..."
 cp -f $SYSTEM_ROOT/usr/share/bootloader/${SUBDEVICE}_boot.scr $BOOT_ROOT/boot.scr
+# prevent interference (especially with legacy u-boot)
+if [ -f $BOOT_ROOT/boot.ini ]; then
+  mv $BOOT_ROOT/boot.ini $BOOT_ROOT/boot.ini.bak
+fi
 
 log "Finishing bootloader update..."
 # mount $BOOT_ROOT ro

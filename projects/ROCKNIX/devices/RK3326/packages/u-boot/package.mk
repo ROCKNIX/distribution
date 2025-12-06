@@ -6,7 +6,7 @@ PKG_VERSION="v2025.10"
 PKG_LICENSE="GPL"
 PKG_SITE="https://www.denx.de/wiki/U-Boot"
 PKG_URL="https://github.com/u-boot/u-boot/archive/refs/tags/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain Python3 swig:host pyelftools:host"
+PKG_DEPENDS_TARGET="toolchain Python3:host swig:host pyelftools:host u-boot-legacy"
 PKG_LONGDESC="Das U-Boot is a cross-platform bootloader for embedded systems."
 PKG_TOOLCHAIN="manual"
 
@@ -71,8 +71,8 @@ makeinstall_target() {
     fi
   done
 
-  cp -av uboot.bin.default "${INSTALL}/usr/share/bootloader/uboot.bin"
-  cp -av uboot.bin.uart5 "${INSTALL}/usr/share/bootloader/uboot.bin.uart5"
+  cp -av uboot.bin.default "${INSTALL}/usr/share/bootloader/b_uboot.bin"
+  cp -av uboot.bin.uart5 "${INSTALL}/usr/share/bootloader/b_uboot.bin.uart5"
 
   find_dir_path config/extlinux || exit 3
   cp -av ${FOUND_PATH} "${INSTALL}/usr/share/bootloader/"
