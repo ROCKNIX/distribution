@@ -2,10 +2,10 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="RTL8733BU"
-PKG_VERSION="308919f005f439de433aac977f925bb57f59acf4"
+PKG_VERSION="82224810a95d8d8033d1dd38bae53a35f8d9325d"
 PKG_LICENSE="GPL"
-PKG_SITE="https://github.com/wirenboard/rtl8733bu"
-PKG_URL="https://github.com/ROCKNIX/RTL8733BU/archive/${PKG_VERSION}.tar.gz"
+PKG_SITE="https://github.com/libc0607/rtl8733bu-20230626"
+PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_LONGDESC="RTL8733BU driver"
 PKG_TOOLCHAIN="make"
 PKG_IS_KERNEL_PKG="yes"
