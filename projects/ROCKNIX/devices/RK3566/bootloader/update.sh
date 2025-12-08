@@ -21,7 +21,7 @@ DT_SOC=$($SYSTEM_ROOT/usr/bin/dtsoc | cut -f2 -d,)
 DT_ID=$($SYSTEM_ROOT/usr/bin/dtname)
 if [ -n "$DT_ID" ]; then
   case $DT_ID in
-    powkiddy,x55) SUBDEVICE="Powkiddy_x55";;
+    powkiddy,x55|powkiddy,x35s) SUBDEVICE="Powkiddy_x55";;
     *) SUBDEVICE="Generic";;
   esac
 fi
