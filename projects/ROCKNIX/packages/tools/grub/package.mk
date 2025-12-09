@@ -75,8 +75,17 @@ makeinstall_target() {
 
   mkdir -p ${INSTALL}/usr/share/bootloader/boot/grub
   cp -av ${PKG_DIR}/config/* ${INSTALL}/usr/share/bootloader/boot/grub
-  mkdir -p ${INSTALL}/usr/share/bootloader/EFI/BOOT
-  cp -av bootaa64.efi ${INSTALL}/usr/share/bootloader/EFI/BOOT
+
+  case ${DEVICE} in
+    SM8250)
+      mkdir -p ${INSTALL}/usr/share/bootloader/EFI/BOOT
+      cp -av bootaa64.efi ${INSTALL}/usr/share/bootloader/EFI/BOOT
+      ;;
+    *) # ROCKNIX ABL
+      mkdir -p ${INSTALL}/usr/share/bootloader/EFI/ROCKNIX
+      cp -av bootaa64.efi ${INSTALL}/usr/share/bootloader/EFI/ROCKNIX
+      ;;
+  esac
 
   # Create grub configuration
   generate_grub_cfg_body > "${INSTALL}/usr/share/bootloader/boot/grub/grub.cfg"
