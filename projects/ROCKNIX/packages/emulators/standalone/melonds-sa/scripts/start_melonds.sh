@@ -29,6 +29,11 @@ if [ ! -f "${CONF_DIR}/melonDS.gptk" ]; then
 	cp -r "/usr/config/melonDS/melonDS.gptk" "${CONF_DIR}/melonDS.gptk"
 fi
 
+#Make sure melonDS config exists
+if [ ! -f "${CONF_DIR}/${MELONDS_INI}" ]; then
+	cp -r "/usr/config/melonDS/melonDS.ini" "${CONF_DIR}/${MELONDS_INI}"
+fi
+
 #Emulation Station Features
 GAME=$(echo "${1}" | sed "s#^/.*/##")
 PLATFORM=$(echo "${2}"| sed "s#^/.*/##")

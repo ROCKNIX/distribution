@@ -2,15 +2,15 @@
 # Copyright (C) 2025 ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="rocknix-abl"
-PKG_VERSION="1.4"
+PKG_VERSION="035aab5832ef0ce8f35fe5bb785dac4a403f9dff"
 PKG_ARCH="aarch64"
-PKG_SITE="https://github.com/ROCKNIX/packages"
-PKG_URL="${PKG_SITE}/raw/refs/heads/main/rocknix-abl-2bc42ff732c99f94efcf5084cc08eb47883d566e.tar.gz"
+PKG_SITE="https://github.com/ROCKNIX/abl"
+PKG_URL="https://github.com/ROCKNIX/abl/archive/${PKG_VERSION}.tar.gz"
 PKG_LONGDESC="ROCKNIX ABL."
 PKG_TOOLCHAIN="manual"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/share/bootloader/rocknix_abl
-  cp ${PKG_BUILD}/abl_signed-${DEVICE}.elf ${INSTALL}/usr/share/bootloader/rocknix_abl/abl_signed.elf
-  cp ${PKG_DIR}/sources/* ${INSTALL}/usr/share/bootloader/rocknix_abl
+    cp ${PKG_BUILD}/abl_signed-${DEVICE}.elf ${INSTALL}/usr/share/bootloader/rocknix_abl/abl_signed.elf
+    cp ${PKG_DIR}/sources/* ${INSTALL}/usr/share/bootloader/rocknix_abl
 }

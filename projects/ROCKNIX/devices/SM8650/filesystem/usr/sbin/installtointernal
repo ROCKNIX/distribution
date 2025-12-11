@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
+#
+# This script will resize the Android userdata partition and install
+# ROCKNIX to the internal UFS.
+
+set -euo pipefail
+
+DEVICE=/dev/sda
+FLASH_DIR=/flash
+OLD_STORAGE=/storage
+TMP_ROCKNIX=/tmp/rocknix
+TMP_STORAGE=/tmp/storage
+
+# Helper: report a device's size in GiB
+get_gb() {
+  local dev=$1 bytes
+  if bytes=$(blockdev --getsize64 "$dev" 2>/dev/null); then
+    echo $(( bytes / 1024**3 ))
+  else
+    echo "N/A"
+  fi
+}
+
+# Helper: calculate storage size excluding specific folders
+get_storage_size_kb() {
+  local storage_path="$1"
+  local total_kb=0
+  local excluded_folders=("roms" "games-internal" "games-external" ".cache/cores")
+
+  # Get total size first
+  total_kb=$(du -ks "$storage_path" | awk '{print $1}')
+
+  # Subtract excluded folders if they exist
+  for folder in "${excluded_folders[@]}"; do
+    if [[ -d "$storage_path/$folder" ]]; then
+      local folder_kb=$(du -ks "$storage_path/$folder" | awk '{print $1}')
+      total_kb=$((total_kb - folder_kb))
+    fi
+  done
+
+  echo "$total_kb"
+}
+
+# 1) Check for existing ROCKNIX or STORAGE partitions
+mapfile -t part_names < <(parted -m -s "$DEVICE" print | tail -n +2 | cut -d: -f6)
+for name in "${part_names[@]}"; do
+  if [[ "$name" == "ROCKNIX" || "$name" == "STORAGE" ]]; then
+    echo "An installation already exists (found partition named '$name'). Exiting."
+    exit 0
+  fi
+done
+
+# 2) Warn user
+read -rp "WARNING: This will wipe Android userdata on ${DEVICE}. Proceed? [y/N]: " confirm
+if [[ ! $confirm =~ ^[Yy]$ ]]; then
+  echo "Aborted by user."
+  exit 0
+fi
+
+# 3) Find current Android userdata partition
+mapfile -t ud_line < <(parted -m -s "$DEVICE" unit B print | grep ':userdata:')
+if [[ ${#ud_line[@]} -ne 1 ]]; then
+  echo "ERROR: Could not uniquely find a Android userdata partition labeled 'userdata'."
+  exit 1
+fi
+IFS=':' read -r UD_NUM UD_STARTB UD_ENDB _ <<< "${ud_line[0]}"
+UD_START=${UD_STARTB%B}
+UD_END=${UD_ENDB%B}
+
+# Compute MiB-aligned boundaries for Android userdata
+UD_START_MB=$(( (UD_START + 1048575) / 1048576 ))     # round up to MiB
+UD_END_MB=$(( UD_END / 1048576 ))                     # round down to MiB
+ORIG_SIZE=$(( (UD_END_MB - UD_START_MB) * 1024**2 ))  # bytes
+MIN_SIZE=$((1 * 1024**3))
+RESERVE=$((8 * 1024**3))
+MAX_SIZE=$(( ORIG_SIZE - RESERVE ))
+if (( MAX_SIZE < MIN_SIZE )); then
+  echo "ERROR: Not enough space to shrink by 8GB. Aborting."
+  exit 1
+fi
+
+# 4) Ask desired Android userdata size in GB
+echo "Current Android userdata size: $((ORIG_SIZE / 1024**3)) GB"
+echo "You may choose between 1 GB and $((MAX_SIZE / 1024**3)) GB"
+while :; do
+  read -rp "Enter new Android userdata size in GB: " ud_gb
+  if ! [[ $ud_gb =~ ^[0-9]+$ ]]; then
+    echo "Please enter an integer."
+    continue
+  fi
+  ud_bytes=$(( ud_gb * 1024**3 ))
+  if (( ud_bytes < MIN_SIZE || ud_bytes > MAX_SIZE )); then
+    echo "Value out of range. Must be between 1 and $((MAX_SIZE / 1024**3)) GB."
+    continue
+  fi
+  break
+done
+NEW_UD_END_MB=$(( UD_START_MB + (ud_bytes / 1024**2) ))
+
+# 5) Delete and recreate Android userdata partition
+echo "Deleting Android userdata partition #$UD_NUM..."
+parted -s "$DEVICE" rm "$UD_NUM"
+echo "Creating Android userdata partition #$UD_NUM (${UD_START_MB}MiB–${NEW_UD_END_MB}MiB)..."
+parted -a optimal -s "$DEVICE" \
+  mkpart primary ext4 "${UD_START_MB}MiB" "${NEW_UD_END_MB}MiB"
+parted -s "$DEVICE" name "$UD_NUM" userdata
+
+# 5b) Wipe first 8 MiB of the new Android userdata partition
+echo "Zeroing first 8 MiB of ${DEVICE}${UD_NUM}..."
+dd if=/dev/zero of="${DEVICE}${UD_NUM}" bs=1M count=8 &>/dev/null
+
+# 6) Create ROCKNIX partition
+RK_NUM=$(( UD_NUM + 1 ))
+RK_START_MB=$NEW_UD_END_MB
+RK_END_MB=$(( RK_START_MB + 2048 ))  # 2 GiB
+echo "Creating ROCKNIX partition #$RK_NUM (${RK_START_MB}MiB–${RK_END_MB}MiB)..."
+parted -a optimal -s "$DEVICE" \
+  mkpart primary fat32 "${RK_START_MB}MiB" "${RK_END_MB}MiB"
+parted -s "$DEVICE" name "$RK_NUM" ROCKNIX
+parted -s "$DEVICE" set "$RK_NUM" msftdata on
+parted -s "$DEVICE" set "$RK_NUM" boot on
+
+# 7) Format ROCKNIX partition
+if mount | grep -q "^${DEVICE}${RK_NUM} "; then
+  echo "Auto-unmounting ${DEVICE}${RK_NUM}..."
+  umount "${DEVICE}${RK_NUM}"
+fi
+mkfs.vfat -F32 -n ROCKNIX "${DEVICE}${RK_NUM}" &>/dev/null
+
+# 8) Create STORAGE partition
+ST_NUM=$(( UD_NUM + 2 ))
+echo "Creating STORAGE partition #$ST_NUM (from ${RK_END_MB}MiB to end)..."
+parted -a optimal -s "$DEVICE" \
+  mkpart primary ext4 "${RK_END_MB}MiB" 100%
+parted -s "$DEVICE" name "$ST_NUM" STORAGE
+
+# 9) Format STORAGE
+if mount | grep -q "^${DEVICE}${ST_NUM} "; then
+  echo "Auto-unmounting ${DEVICE}${ST_NUM}..."
+  umount "${DEVICE}${ST_NUM}"
+fi
+mkfs.ext4 -F -q -L STORAGE -T ext4 -O ^orphan_file -m 0 "${DEVICE}${ST_NUM}" &>/dev/null
+
+# 10) Final mounts: unmount any auto-mounted, then mount fresh
+for dev in "${DEVICE}${RK_NUM}" "${DEVICE}${ST_NUM}"; do
+  if mount | grep -q "^$dev "; then
+    echo "Auto-unmounting $dev..."
+    umount "$dev"
+  fi
+done
+mkdir -p "$TMP_ROCKNIX" "$TMP_STORAGE"
+mount "${DEVICE}${RK_NUM}" "$TMP_ROCKNIX"
+mount "${DEVICE}${ST_NUM}" "$TMP_STORAGE"
+
+# 11) Copy files to ROCKNIX partition, then sync
+echo "Copying flash files to ROCKNIX..."
+cp -a "$FLASH_DIR"/. "$TMP_ROCKNIX"/
+sync
+
+# 12) Optionally copy /storage to STORAGE partition, then sync
+read -rp "Copy existing /storage to new STORAGE? [y/N]: " copy_ans
+if [[ $copy_ans =~ ^[Yy]$ ]]; then
+  avail_kb=$(df -k "$TMP_STORAGE" | awk 'NR==2 {print $4}')
+  used_kb=$(get_storage_size_kb "$OLD_STORAGE")
+  if (( used_kb <= avail_kb )); then
+    echo "Copying /storage to new STORAGE (excluding roms)..."
+
+    # Copy everything except the excluded folders
+    find "$OLD_STORAGE" -mindepth 1 -maxdepth 1 \
+      ! -name "roms" \
+      ! -name "games-internal" \
+      ! -name "games-external" \
+      -exec cp -a {} "$TMP_STORAGE"/ \;
+
+    sync
+  else
+    echo "Skipping copy: not enough free space ($((avail_kb*1024)) bytes available, $((used_kb*1024)) bytes needed)."
+  fi
+fi
+
+# 13) Final sync
+echo "Syncing final data to disk..."
+sync
+
+# 14) Cleanup mounts
+echo "Cleaning up..."
+umount "$TMP_ROCKNIX"
+umount "$TMP_STORAGE"
+rmdir "$TMP_ROCKNIX" "$TMP_STORAGE"
+
+# 15) Final summary with sizes
+ud_sz=$(get_gb "${DEVICE}${UD_NUM}")
+rk_sz=$(get_gb "${DEVICE}${RK_NUM}")
+st_sz=$(get_gb "${DEVICE}${ST_NUM}")
+
+echo "Done. New partitions:"
+echo "  Android userdata: ${DEVICE}${UD_NUM} (${ud_sz} GB)"
+echo "  ROCKNIX : ${DEVICE}${RK_NUM} (${rk_sz} GB)"
+echo "  STORAGE : ${DEVICE}${ST_NUM} (${st_sz} GB)"
+echo
+echo "ROCKNIX Installation to internal UFS was successful. You can now reboot and remove your SD card."
