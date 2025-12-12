@@ -38,7 +38,7 @@ make_target() {
   DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm make ${PKG_UBOOT_CONFIG}
   DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm \
         _python_sysroot="${TOOLCHAIN}" _python_prefix=/ _python_exec_prefix=/ \
-        make HOSTCC="${HOST_CC}" HOSTLDFLAGS="-L${TOOLCHAIN}/lib" HOSTSTRIP="true" CONFIG_MKIMAGE_DTC_PATH="scripts/dtc/dtc" \
+        make HOSTCC="${HOST_CC}" HOSTLDFLAGS="-L${TOOLCHAIN}/lib" HOSTSTRIP="true" \
         u-boot-dtb.bin
   . ${RKHELPER}
   mv uboot.bin uboot.bin.default
@@ -47,7 +47,7 @@ make_target() {
   ./scripts/config --set-str CONFIG_DEVICE_TREE_INCLUDES "rk3326-odroid-go2-emmc.dtsi rk3326-odroid-go2-uart5.dtsi"
   DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm \
         _python_sysroot="${TOOLCHAIN}" _python_prefix=/ _python_exec_prefix=/ \
-        make HOSTCC="${HOST_CC}" HOSTLDFLAGS="-L${TOOLCHAIN}/lib" HOSTSTRIP="true" CONFIG_MKIMAGE_DTC_PATH="scripts/dtc/dtc" \
+        make HOSTCC="${HOST_CC}" HOSTLDFLAGS="-L${TOOLCHAIN}/lib" HOSTSTRIP="true" \
         u-boot-dtb.bin
   PKG_DDR_BIN=${PKG_DDR_BIN_UART5} . ${RKHELPER}
   mv uboot.bin uboot.bin.uart5

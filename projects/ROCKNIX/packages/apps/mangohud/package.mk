@@ -31,34 +31,34 @@ pre_configure_target() {
   ### vulkan-headers
   curl -Lo ${PKG_BUILD}/subprojects/vulkan-headers.tar.gz https://github.com/KhronosGroup/Vulkan-Headers/archive/v1.2.158.tar.gz
   tar -xvf ${PKG_BUILD}/subprojects/vulkan-headers.tar.gz -C ${PKG_BUILD}/subprojects/
-  curl -Lo ${PKG_BUILD}/subprojects/vulkan-headers_patch.zip https://wrapdb.mesonbuild.com/v2/vulkan-headers_1.2.158-2/get_patch
-  unzip -o ${PKG_BUILD}/subprojects/vulkan-headers_patch.zip -d ${PKG_BUILD}/subprojects
+  #curl -Lo ${PKG_BUILD}/subprojects/vulkan-headers_patch.zip https://wrapdb.mesonbuild.com/v2/vulkan-headers_1.2.158-2/get_patch
+  unzip -o ${PKG_DIR}/meson-patches/vulkan-headers_patch_1.2.158-2.zip -d ${PKG_BUILD}/subprojects
   rm -rf ${PKG_BUILD}/subprojects/vulkan-headers.tar.gz
-  rm -rf ${PKG_BUILD}/subprojects/vulkan-headers_patches.zip
+  rm -rf ${PKG_BUILD}/subprojects/vulkan-headers_patches_1.2.158-2.zip
 
   ### imgui
   curl -Lo ${PKG_BUILD}/subprojects/imgui.tar.gz https://github.com/ocornut/imgui/archive/refs/tags/v1.89.9.tar.gz
   tar -xvf ${PKG_BUILD}/subprojects/imgui.tar.gz -C ${PKG_BUILD}/subprojects/
-  curl -Lo ${PKG_BUILD}/subprojects/imgui_patch.zip https://wrapdb.mesonbuild.com/v2/imgui_1.89.9-1/get_patch
-  unzip -o ${PKG_BUILD}/subprojects/imgui_patch.zip -d ${PKG_BUILD}/subprojects
+  #curl -Lo ${PKG_BUILD}/subprojects/imgui_patch.zip https://wrapdb.mesonbuild.com/v2/imgui_1.89.9-1/get_patch
+  unzip -o ${PKG_DIR}/meson-patches/imgui_patch_1.89.9-1.zip -d ${PKG_BUILD}/subprojects
   rm -rf ${PKG_BUILD}/subprojects/imgui.tar.gz
-  rm -rf ${PKG_BUILD}/subprojects/imgui_patches.zip
+  rm -rf ${PKG_BUILD}/subprojects/imgui_patches_1.89.9-1.zip
 
   ### implot
   curl -Lo ${PKG_BUILD}/subprojects/implot.zip https://github.com/epezent/implot/archive/refs/tags/v0.16.zip
   unzip -o ${PKG_BUILD}/subprojects/implot.zip -d ${PKG_BUILD}/subprojects
-  curl -Lo ${PKG_BUILD}/subprojects/implot_patch.zip https://wrapdb.mesonbuild.com/v2/implot_0.16-1/get_patch
-  unzip -o ${PKG_BUILD}/subprojects/implot_patch.zip -d ${PKG_BUILD}/subprojects
+  #curl -Lo ${PKG_BUILD}/subprojects/implot_patch.zip https://wrapdb.mesonbuild.com/v2/implot_0.16-1/get_patch
+  unzip -o ${PKG_DIR}/meson-patches/implot_patch_0.16-1.zip -d ${PKG_BUILD}/subprojects
   rm -rf ${PKG_BUILD}/subprojects/implot.zip
-  rm -rf ${PKG_BUILD}/subprojects/implot_patches.zip
+  rm -rf ${PKG_BUILD}/subprojects/implot_patches_0.16-1.zip
 
   ### spdlog
   curl -Lo ${PKG_BUILD}/subprojects/spdlog.tar.gz https://github.com/gabime/spdlog/archive/refs/tags/v1.14.1.tar.gz
   tar -xvf ${PKG_BUILD}/subprojects/spdlog.tar.gz -C ${PKG_BUILD}/subprojects/
-  curl -Lo ${PKG_BUILD}/subprojects/spdlog_patch.zip https://wrapdb.mesonbuild.com/v2/spdlog_1.14.1-1/get_patch
-  unzip -o ${PKG_BUILD}/subprojects/spdlog_patch.zip -d ${PKG_BUILD}/subprojects
+  #curl -Lo ${PKG_BUILD}/subprojects/spdlog_patch.zip https://wrapdb.mesonbuild.com/v2/spdlog_1.14.1-1/get_patch
+  unzip -o ${PKG_DIR}/meson-patches/spdlog_patch_1.14.1-1.zip -d ${PKG_BUILD}/subprojects
   rm -rf ${PKG_BUILD}/subprojects/spdlog.tar.gz
-  rm -rf ${PKG_BUILD}/subprojects/spdlog_patches.zip
+  rm -rf ${PKG_BUILD}/subprojects/spdlog_patches_1.14.1-1.zip
 }
 
 post_makeinstall_target() {
