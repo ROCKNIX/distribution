@@ -18,9 +18,11 @@ if [ "${OPENGL_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
 fi
 
-if [ "${VULKAN_SUPPORT}" = "yes" ]
-then
+if [ "${VULKAN_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${VULKAN} glslang"
+  GRENDERER="VULKAN"
+else
+  GRENDERER="OPENGL"
 fi
 
 pre_configure_target() {
@@ -118,4 +120,8 @@ makeinstall_target() {
 
   #Download HDD IMAGE
   curl -Lo ${INSTALL}/usr/config/xemu/hdd.zip ${PKG_HDD_IMAGE}
+}
+
+post_install() {
+  sed -e "s/@GRENDERER@/${GRENDERER}/g" -i ${INSTALL}/usr/bin/start_xemu.sh
 }

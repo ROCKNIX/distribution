@@ -1,0 +1,217 @@
+From ce132b3c4a01d7ef00a7e3500a4330520e9da56f Mon Sep 17 00:00:00 2001
+From: jyetcv <125610127+jyetcv@users.noreply.github.com>
+Date: Tue, 25 Nov 2025 22:11:27 -0500
+Subject: [PATCH 1/2] Add integer scaling.
+
+---
+ config_spec.yml      | 2 +-
+ ui/xui/gl-helpers.cc | 9 +++++++++
+ ui/xui/menubar.cc    | 2 +-
+ 3 files changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/config_spec.yml b/config_spec.yml
+index 1e044dfe195..f2f3f9c96ec 100644
+--- a/config_spec.yml
++++ b/config_spec.yml
+@@ -182,7 +182,7 @@ display:
+       default: true
+     fit:
+       type: enum
+-      values: [center, scale, stretch]
++      values: [center, scale, integer, stretch]
+       default: scale
+     aspect_ratio:
+       type: enum
+diff --git a/ui/xui/gl-helpers.cc b/ui/xui/gl-helpers.cc
+index 0a06b7f16ac..489cb1829b8 100644
+--- a/ui/xui/gl-helpers.cc
++++ b/ui/xui/gl-helpers.cc
+@@ -949,6 +949,15 @@ void RenderFramebuffer(GLint tex, int width, int height, bool flip)
+         float t_ratio = GetDisplayAspectRatio(tw, th);
+         scale[0] = t_ratio*(float)th/(float)width;
+         scale[1] = (float)th/(float)height;
++    } else if (g_config.display.ui.fit == CONFIG_DISPLAY_UI_FIT_INTEGER) {
++        // Integer scaling
++        float t_ratio = GetDisplayAspectRatio(tw, th);
++        int s_factor = (float)width/(float)tw;
++        int s_height = (float)height/(float)th;
++        if (s_height < s_factor) s_factor = s_height;
++        if (s_factor < 1) s_factor = 1;
++            scale[0] = s_factor*t_ratio*(int)th/(float)width;
++            scale[1] = s_factor*(int)th/(float)height;
+     } else {
+         float t_ratio = GetDisplayAspectRatio(tw, th);
+         float w_ratio = (float)width/(float)height;
+diff --git a/ui/xui/menubar.cc b/ui/xui/menubar.cc
+index 83a0b08ae2c..ec02f84bee7 100644
+--- a/ui/xui/menubar.cc
++++ b/ui/xui/menubar.cc
+@@ -195,7 +195,7 @@ void ShowMainMenu()
+             }
+ 
+             ImGui::Combo("Display Mode", &g_config.display.ui.fit,
+-                         "Center\0Scale\0Stretch\0");
++                         "Center\0Scale\0Integer\0Stretch\0");
+             ImGui::SameLine();
+             HelpMarker("Controls how the rendered content should be scaled "
+                        "into the window");
+
+From bd2a0b40a649af599f14093f7ffbe9f382df0093 Mon Sep 17 00:00:00 2001
+From: jyetcv <125610127+jyetcv@users.noreply.github.com>
+Date: Sun, 7 Dec 2025 11:04:19 -0500
+Subject: [PATCH 2/2] Update integer scaling.
+
+This fixes a scaling issue where xemu scales the framebuffer against the size of the window.
+Uneven scaling would cause the texture to become blurry, or misaligned.
+Instead, we just render the framebuffer at a single size and adjust the position using offsets.
+---
+ config_spec.yml      |  2 +-
+ ui/xui/gl-helpers.cc | 28 ++++++++++++++++++----------
+ ui/xui/gl-helpers.hh |  2 +-
+ ui/xui/main-menu.cc  |  1 +
+ ui/xui/menubar.cc    |  2 +-
+ ui/xui/popup-menu.cc |  2 +-
+ 6 files changed, 23 insertions(+), 14 deletions(-)
+
+diff --git a/config_spec.yml b/config_spec.yml
+index f2f3f9c96ec..710e2e74ee9 100644
+--- a/config_spec.yml
++++ b/config_spec.yml
+@@ -182,7 +182,7 @@ display:
+       default: true
+     fit:
+       type: enum
+-      values: [center, scale, integer, stretch]
++      values: [center, integer, scale, stretch]
+       default: scale
+     aspect_ratio:
+       type: enum
+diff --git a/ui/xui/gl-helpers.cc b/ui/xui/gl-helpers.cc
+index 489cb1829b8..80c74075865 100644
+--- a/ui/xui/gl-helpers.cc
++++ b/ui/xui/gl-helpers.cc
+@@ -884,14 +884,14 @@ void ScaleDimensions(int src_width, int src_height, int max_width, int max_heigh
+     }
+ }
+ 
+-void RenderFramebuffer(GLint tex, int width, int height, bool flip, float scale[2])
++void RenderFramebuffer(GLint tex, int offset_x, int offset_y, int width, int height, bool flip, float scale[2])
+ {
+     glActiveTexture(GL_TEXTURE0);
+     glBindTexture(GL_TEXTURE_2D, tex);
+ 
+     DecalShader *s = g_framebuffer_shader;
+     s->flip = flip;
+-    glViewport(0, 0, width, height);
++    glViewport(offset_x, offset_y, width, height);
+     glUseProgram(s->prog);
+     glBindVertexArray(s->vao);
+     glUniform1i(s->flipy_loc, s->flip);
+@@ -933,6 +933,7 @@ void RenderFramebuffer(GLint tex, int width, int height, bool flip)
+ {
+     int tw, th;
+     float scale[2];
++    int offset_x = 0, offset_y = 0;
+ 
+     glActiveTexture(GL_TEXTURE0);
+     glBindTexture(GL_TEXTURE_2D, tex);
+@@ -952,12 +953,18 @@ void RenderFramebuffer(GLint tex, int width, int height, bool flip)
+     } else if (g_config.display.ui.fit == CONFIG_DISPLAY_UI_FIT_INTEGER) {
+         // Integer scaling
+         float t_ratio = GetDisplayAspectRatio(tw, th);
+-        int s_factor = (float)width/(float)tw;
+-        int s_height = (float)height/(float)th;
+-        if (s_height < s_factor) s_factor = s_height;
+-        if (s_factor < 1) s_factor = 1;
+-            scale[0] = s_factor*t_ratio*(int)th/(float)width;
+-            scale[1] = s_factor*(int)th/(float)height;
++        int factor = width / (th * t_ratio);
++        int factor_h = height / th;
++        factor = (factor_h < factor) ? factor_h : factor;
++        factor = (factor <= 1) ? 1 : factor;
++        int fb_height = th * factor;
++        int fb_width = (int)(fb_height * t_ratio);
++        offset_x = (width - fb_width) / 2;
++        offset_y = (height - fb_height) / 2;
++        width = fb_width;
++        height = fb_height;
++        scale[0] = 1.0;
++        scale[1] = 1.0;
+     } else {
+         float t_ratio = GetDisplayAspectRatio(tw, th);
+         float w_ratio = (float)width/(float)height;
+@@ -970,12 +977,13 @@ void RenderFramebuffer(GLint tex, int width, int height, bool flip)
+         }
+     }
+ 
+-    RenderFramebuffer(tex, width, height, flip, scale);
++    RenderFramebuffer(tex, offset_x, offset_y, width, height, flip, scale);
+ }
+ 
+ bool RenderFramebufferToPng(GLuint tex, bool flip, std::vector<uint8_t> &png, int max_width, int max_height)
+ {
+     int width, height;
++    int offset_x = 0, offset_y = 0;
+ 
+     glActiveTexture(GL_TEXTURE0);
+     glBindTexture(GL_TEXTURE_2D, tex);
+@@ -996,7 +1004,7 @@ bool RenderFramebufferToPng(GLuint tex, bool flip, std::vector<uint8_t> &png, in
+     bool blend = glIsEnabled(GL_BLEND);
+     if (blend) glDisable(GL_BLEND);
+     float scale[2] = {1.0, 1.0};
+-    RenderFramebuffer(tex, width, height, !flip, scale);
++    RenderFramebuffer(tex, offset_x, offset_y, width, height, !flip, scale);
+     if (blend) glEnable(GL_BLEND);
+     glPixelStorei(GL_PACK_ROW_LENGTH, width);
+     glPixelStorei(GL_PACK_IMAGE_HEIGHT, height);
+diff --git a/ui/xui/gl-helpers.hh b/ui/xui/gl-helpers.hh
+index 82da963e6ba..f9e94bff258 100644
+--- a/ui/xui/gl-helpers.hh
++++ b/ui/xui/gl-helpers.hh
+@@ -50,7 +50,7 @@ void RenderControllerPort(float frame_x, float frame_y, int i,
+ void RenderXmu(float frame_x, float frame_y, uint32_t primary_color,
+                uint32_t secondary_color);
+ void RenderFramebuffer(GLint tex, int width, int height, bool flip);
+-void RenderFramebuffer(GLint tex, int width, int height, bool flip, float scale[2]);
++void RenderFramebuffer(GLint tex, int offset_x, int offset_y, int width, int height, bool flip, float scale[2]);
+ bool RenderFramebufferToPng(GLuint tex, bool flip, std::vector<uint8_t> &png, int max_width = 0, int max_height = 0);
+ void SaveScreenshot(GLuint tex, bool flip);
+ void ScaleDimensions(int src_width, int src_height, int max_width, int max_height, int *out_width, int *out_height);
+diff --git a/ui/xui/main-menu.cc b/ui/xui/main-menu.cc
+index 4524d9b4505..15ffba7187c 100644
+--- a/ui/xui/main-menu.cc
++++ b/ui/xui/main-menu.cc
+@@ -590,6 +590,7 @@ void MainMenuDisplayView::Draw()
+            "Enable xemu user interface animations");
+     ChevronCombo("Display mode", &g_config.display.ui.fit,
+                  "Center\0"
++                 "Integer\0"
+                  "Scale\0"
+                  "Stretch\0",
+                  "Select how the framebuffer should fit or scale into the window");
+diff --git a/ui/xui/menubar.cc b/ui/xui/menubar.cc
+index ec02f84bee7..e9f9851c88b 100644
+--- a/ui/xui/menubar.cc
++++ b/ui/xui/menubar.cc
+@@ -195,7 +195,7 @@ void ShowMainMenu()
+             }
+ 
+             ImGui::Combo("Display Mode", &g_config.display.ui.fit,
+-                         "Center\0Scale\0Integer\0Stretch\0");
++                         "Center\0Integer\0Scale\0Stretch\0");
+             ImGui::SameLine();
+             HelpMarker("Controls how the rendered content should be scaled "
+                        "into the window");
+diff --git a/ui/xui/popup-menu.cc b/ui/xui/popup-menu.cc
+index 9ee2b888c2e..6c9af7fb6db 100644
+--- a/ui/xui/popup-menu.cc
++++ b/ui/xui/popup-menu.cc
+@@ -260,7 +260,7 @@ class DisplayModePopupMenu : public virtual PopupMenu {
+     bool DrawItems(PopupMenuItemDelegate &nav) override
+     {
+         const char *values[] = {
+-            "Center", "Scale", "Stretch"
++            "Center", "Integer", "Scale", "Stretch"
+         };
+ 
+         for (int i = 0; i < CONFIG_DISPLAY_UI_FIT__COUNT; i++) {

@@ -31,7 +31,10 @@ case ${DEVICE} in
   ;;
   *)
     case ${DEVICE} in
-      S922X|SM8550|SM8250|H700|SM8650|RK3566|RK3399)
+      H700|SM8550|SM8650|SM8250|RK3399|S922X)
+        PKG_VERSION="6.18.1"
+      ;;
+      RK3566)
         PKG_VERSION="6.17.11"
       ;;
       *)
@@ -88,6 +91,11 @@ post_patch() {
   if [ "${DEVICE}" = "RK3326" -o "${DEVICE}" = "RK3566" ]; then
     cp -v $(get_pkg_directory generic-dsi)/sources/panel-generic-dsi.c ${PKG_BUILD}/drivers/gpu/drm/panel/
     echo "obj-y" += panel-generic-dsi.o >> ${PKG_BUILD}/drivers/gpu/drm/panel/Makefile
+  fi
+
+  DTS_SOURCE_DIR="${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/linux/dts"
+  if [ -d "${DTS_SOURCE_DIR}" ]; then
+    rsync -av "${DTS_SOURCE_DIR}/" ${PKG_BUILD}/arch/arm64/boot/dts/
   fi
 }
 
