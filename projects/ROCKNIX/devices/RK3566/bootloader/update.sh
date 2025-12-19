@@ -18,12 +18,12 @@ fi
 mount -o remount,rw $BOOT_ROOT
 
 DT_SOC=$($SYSTEM_ROOT/usr/bin/dtsoc | cut -f2 -d,)
-DT_ID=$($SYSTEM_ROOT/usr/bin/dtname)
-if [ -n "$DT_ID" ]; then
-  case $DT_ID in
-    powkiddy,x55|powkiddy,x35s) SUBDEVICE="Powkiddy_x55";;
-    *) SUBDEVICE="Generic";;
-  esac
+# If FDT is not specifed, this is autmatically detected device, use Generic u-boot
+# If FDT is specifed, use Specific u-boot, meaning booting specific device tree
+if [ -z "$(grep '^[^#]*FDT ' $BOOT_ROOT/extlinux/extlinux.conf)" ]; then
+  SUBDEVICE="Generic"
+else
+  SUBDEVICE="Specific"
 fi
 
 ### Migrate device trees to subfolder (except RK326) - remove in the future
