@@ -48,12 +48,6 @@ if [ -f "$SYSTEM_ROOT/usr/share/bootloader/boot/grub/grubenv" ]; then
   fi
 fi
 
-if [ -d "$SYSTEM_ROOT/usr/share/bootloader/rocknix_abl" ]; then
-  mkdir -p $BOOT_ROOT/rocknix_abl
-  echo "Updating ROCKNIX ABL..."
-  cp $SYSTEM_ROOT/usr/share/bootloader/rocknix_abl/* $BOOT_ROOT/rocknix_abl
-fi
-
 # mount $BOOT_ROOT ro
 sync
 mount -o remount,ro $BOOT_ROOT

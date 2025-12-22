@@ -16,11 +16,11 @@ fi
 # mount $BOOT_ROOT rw
 mount -o remount,rw $BOOT_ROOT
 
-if [ -f "$SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/bootaa64.efi" ]; then
-  mkdir -p $BOOT_ROOT/EFI/BOOT
-  echo "Updating EFI..."
-  cp $SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/bootaa64.efi $BOOT_ROOT/EFI/BOOT
-fi
+#if [ -f "$SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/bootaa64.efi" ]; then
+#  mkdir -p $BOOT_ROOT/EFI/BOOT
+#  echo "Updating EFI..."
+#  cp $SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/bootaa64.efi $BOOT_ROOT/EFI/BOOT
+#fi
 
 if [ -d "$SYSTEM_ROOT/usr/share/bootloader/boot/grub" ]; then
   mkdir -p $BOOT_ROOT/boot/grub
@@ -46,12 +46,6 @@ if [ -f "$SYSTEM_ROOT/usr/share/bootloader/boot/grub/grubenv" ]; then
     echo "Installing grubenv..."
     cp $SYSTEM_ROOT/usr/share/bootloader/boot/grub/grubenv $BOOT_ROOT/boot/grub
   fi
-fi
-
-if [ -d "$SYSTEM_ROOT/usr/share/bootloader/rocknix_abl" ]; then
-  mkdir -p $BOOT_ROOT/rocknix_abl
-  echo "Updating ROCKNIX ABL..."
-  cp $SYSTEM_ROOT/usr/share/bootloader/rocknix_abl/* $BOOT_ROOT/rocknix_abl
 fi
 
 # mount $BOOT_ROOT ro
