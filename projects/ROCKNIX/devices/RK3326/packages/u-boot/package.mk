@@ -53,6 +53,25 @@ make_target() {
   mv uboot.bin uboot.bin.uart5
 }
 
+generate_custom_extlinux_conf_files() {
+  INI_FILES=""
+  for SUBDEVICE in ${SUBDEVICES}; do
+    if find_file_path config/${SUBDEVICE}_boot.ini; then
+      INI_FILES="${INI_FILES} ${FOUND_PATH}"
+    fi
+  done
+  EXTLCONF0=${INSTALL}/usr/share/bootloader/extlinux/extlinux.conf
+
+  echo "INI_FILES ${INI_FILES}"
+  for dtbase in $(xmlstarlet sel -t -v "//rocknix/${DEVICE}/*" ${CONFIGXML}); do
+    if ! grep -q "\<${dtbase}.dtb" ${INI_FILES}; then
+      EXTLCONF=${EXTLCONF0}.${dtbase##*-}
+      echo "Generating ${EXTLCONF} for ${dtbase}"
+      sed '/##/d;s|^.* FDT .*$|  FDT /'${dtbase}'.dtb|' ${EXTLCONF0} > ${EXTLCONF0}.${dtbase##*-}
+    fi
+  done
+}
+
 makeinstall_target() {
   mkdir -p $INSTALL/usr/share/bootloader
 
@@ -78,6 +97,8 @@ makeinstall_target() {
   cp -av ${FOUND_PATH} "${INSTALL}/usr/share/bootloader/"
   sed -e "s/@EXTRA_CMDLINE@/${EXTRA_CMDLINE}/" \
     -i ${INSTALL}/usr/share/bootloader/extlinux/*
+
+  generate_custom_extlinux_conf_files
 
   find_dir_path config/stock && cp -av ${FOUND_PATH} "${INSTALL}/usr/share/bootloader/"
   find_dir_path config/overlays && cp -av ${FOUND_PATH} "${INSTALL}/usr/share/bootloader/"

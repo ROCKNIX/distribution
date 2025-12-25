@@ -51,6 +51,13 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/config/locale
   cp -rf ${PKG_BUILD}/locale/lang/* ${INSTALL}/usr/config/locale/
 
+  # Pre-generate default (en_US.UTF-8) locale for lower-end devices to speed up first boot
+  # This saves a minute or two on RK3326 in a cost of about 1 MB of SYSTEM size
+  # Copy-paste of a locale generating part of es_settings script
+  I18NPATH=$(get_install_dir glibc)/usr/share/i18n/locales/ \
+    localedef --force --verbose --inputfile=en_US --charmap=UTF-8 \
+    ${INSTALL}/usr/config/locale/en_US.UTF-8 || true
+
   mkdir -p ${INSTALL}/usr/config/emulationstation/resources
   cp -rf ${PKG_BUILD}/resources/* ${INSTALL}/usr/config/emulationstation/resources/
   rm -rf ${INSTALL}/usr/config/emulationstation/resources/logo.png
