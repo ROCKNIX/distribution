@@ -13,7 +13,7 @@ EMUS_32BIT=""
 
 PKG_RETROARCH="core-info libretro-database retroarch retroarch-assets retroarch-joypads retroarch-overlays slang-shaders"
 
-LIBRETRO_CORES="81-lr a5200-lr arduous-lr atari800-lr beetle-gba-lr beetle-lynx-lr beetle-ngp-lr beetle-pce-lr beetle-pce-fast-lr    \
+LIBRETRO_CORES="81-lr a5200-lr arduous-lr atari800-lr b2-lr beetle-gba-lr beetle-lynx-lr beetle-ngp-lr beetle-pce-lr beetle-pce-fast-lr    \
                 beetle-pcfx-lr bsnes-mercury-accuracy-lr bsnes-mercury-balanced-lr bsnes-mercury-performance-lr beetle-supafaust-lr  \
                 beetle-supergrafx-lr beetle-vb-lr beetle-wswan-lr bluemsx-lr cap32-lr crocods-lr daphne-lr doublecherrygb-lr         \
                 dosbox-core-lr dosbox-pure-lr easyrpg-lr emuscv-lr fake08-lr fbalpha2012-lr                                          \
@@ -141,6 +141,10 @@ makeinstall_target() {
 
   ### Apply documentation header
   start_system_doc
+
+  ### Acorn BBC Micro
+  add_emu_core bbcmicro retroarch b2 true
+  add_es_system bbcmicro
 
   ### Panasonic 3DO
   add_emu_core 3do retroarch opera true
