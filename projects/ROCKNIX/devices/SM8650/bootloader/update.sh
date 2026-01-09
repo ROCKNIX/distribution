@@ -48,6 +48,10 @@ if [ -f "$SYSTEM_ROOT/usr/share/bootloader/boot/grub/grubenv" ]; then
   fi
 fi
 
+if [ -f "$BOOT_ROOT/rocknix-abl" ]; then
+  . $SYSTEM_ROOT/usr/bin/updateabl
+fi
+
 # mount $BOOT_ROOT ro
 sync
 mount -o remount,ro $BOOT_ROOT

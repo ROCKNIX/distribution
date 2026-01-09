@@ -207,6 +207,9 @@ makeinstall_init() {
     ln -sf busybox ${INSTALL}/usr/bin/bc
     chmod 4755 ${INSTALL}/usr/bin/busybox
 
+  mkdir -p ${INSTALL}/usr/sbin
+    ln -sf /usr/bin/busybox ${INSTALL}/usr/sbin/blockdev
+
   mkdir -p ${INSTALL}/etc
     touch ${INSTALL}/etc/fstab
     ln -sf /proc/self/mounts ${INSTALL}/etc/mtab

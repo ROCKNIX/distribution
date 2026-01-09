@@ -78,7 +78,8 @@ PKG_CONFIGURE_OPTS_HOST="--enable-shared \
 PKG_CONFIGURE_OPTS_INIT="${UTILLINUX_CONFIG_DEFAULT} \
                          --enable-libblkid \
                          --enable-libmount \
-                         --enable-fsck"
+                         --enable-fsck \
+                         --enable-blkid"
 
 if [ "${INITRAMFS_PARTED_SUPPORT}" = "yes" ]; then
   PKG_CONFIGURE_OPTS_INIT+=" --enable-mkfs --enable-libuuid --enable-btrfs"

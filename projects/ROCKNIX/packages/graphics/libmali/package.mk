@@ -4,9 +4,8 @@
 # Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="libmali"
-PKG_VERSION="g13p0"
 PKG_LICENSE="nonfree"
-PKG_SITE="https://github.com/tsukumijima/libmali-rockchip"
+PKG_SITE="https://github.com/ROCKNIX/libmali"
 # zip format makes extract very fast (<1s). tgz takes 20 seconds to scan the whole file
 #PKG_URL="${PKG_SITE}/archive/refs/tags/${PKG_VERSION}.zip"
 PKG_URL="${PKG_SITE}/archive/master.zip"
@@ -17,6 +16,20 @@ PKG_PATCH_DIRS+=" ${DEVICE}"
 
 # patchelf is incompatible with strip, but is needed to ensure apps call wrapped functions
 PKG_BUILD_FLAGS="-strip"
+
+case "${DEVICE}" in
+  S922X)
+    PKG_VERSION="r51p0"
+    MALI_FAMILY="meson"
+    PKG_DEPENDS_TARGET+=" vulkan-wsi-layer vulkan-tools"
+  ;;
+  RK3588)
+    PKG_VERSION="g13p0"
+  ;;
+  *) # RK3326 and RK3566
+    PKG_VERSION="g24p0"
+  ;;
+esac
 
 case "${DISPLAYSERVER}" in
   wl)
@@ -41,9 +54,12 @@ unpack() {
   pwd
   # Extract only what is needed
   LIBNAME="libmali-${MALI_FAMILY}-${PKG_VERSION}-${PLATFORM}.so"
-  unzip -q "${SOURCES}/${PKG_NAME}/${PKG_SOURCE_NAME}" "*/hook/*" "*/include/*" "*/scripts/*" "*/meson*" "*/${LIBNAME}"
-  mv libmali-rockchip-*/* .
-  rmdir libmali-rockchip-*
+  unzip -q "${SOURCES}/${PKG_NAME}/${PKG_SOURCE_NAME}" "*/hook/*" "*/include/*" "*/scripts/*" "*/meson*" "*/data/*" "*/${LIBNAME}"
+  mv libmali*/* .
+  rmdir libmali-*
+  if [ "${MALI_FAMILY}" = "meson" ]; then
+    mv data/vulkan/mali_meson.json.in data/vulkan/mali.json.in
+  fi
   ln -s lib optimize_3
 }
 
@@ -60,5 +76,9 @@ post_makeinstall_target() {
   # x11 lib needed for some applications on the RK3588
   if [ ${DEVICE} = "RK3588" ] && [ ${TARGET_ARCH} = "aarch64" ]; then
       curl -Lo ${INSTALL}/usr/lib/libmali-${MALI_FAMILY}-${PKG_VERSION}-x11-gbm.so ${PKG_SITE}/raw/master/lib/aarch64-linux-gnu/libmali-${MALI_FAMILY}-${PKG_VERSION}-x11-gbm.so
+  fi
+  # S922X - mali vulkan libs need moving
+  if [ "${DEVICE}" = "S922X" ] && [ "${ARCH}" = "aarch64" ]; then
+    mv "${INSTALL}"/usr/lib/mali/libMaliVulkan.* "${INSTALL}"/usr/lib/
   fi
 }
