@@ -1,0 +1,56 @@
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_vop2.h
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_vop2.h
+@@ -341,6 +341,13 @@
+ 	u32 old_layer_sel;
+ 	u32 old_port_sel;
+ 	/*
++	 * Bitmask tracking which video ports have completed their initial commit.
++	 * During first commit, vblank isn't enabled yet, so we must skip the
++	 * layer config wait. Bit N corresponds to VP N (bit 0 = VP0, etc).
++	 */
++	u8 vp_initial_commits;
++
++	/*
+ 	 * Ensure that the updates to these two registers(RKK3568_OVL_LAYER_SEL/RK3568_OVL_PORT_SEL)
+ 	 * take effect in sequence.
+ 	 */
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_vop2.c
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_vop2.c
+@@ -966,6 +966,9 @@
+ 	if (!ret)
+ 		drm_info(vop2->drm, "wait for vp%d dsp_hold timeout\n", vp->id);
+ 
++	/* Clear initial commit bit so the VP can be re-enabled properly */
++	vop2->vp_initial_commits &= ~BIT(vp->id);
++
+ 	vop2_crtc_disable_irq(vp, VP_INT_DSP_HOLD_VALID);
+ 
+ 	if (vp->dclk_src)
+--- a/drivers/gpu/drm/rockchip/rockchip_vop2_reg.c
++++ b/drivers/gpu/drm/rockchip/rockchip_vop2_reg.c
+@@ -2133,6 +2133,7 @@
+ {
+ 	struct vop2 *vop2 = vp->vop2;
+ 	struct drm_plane *plane;
++	bool vp_initial_commit;
+ 	u32 layer_sel = 0;
+ 	u32 port_sel;
+ 	u32 old_layer_sel = 0;
+@@ -2301,7 +2302,16 @@
+ 		rk3568_vop2_wait_for_port_mux_done(vop2);
+ 	}
+ 
+-	if (layer_sel != old_layer_sel && atv_layer_sel != old_layer_sel)
++	/*
++	 * On initial commit for each VP, skip the wait since vblank isn't enabled yet and
++	 * there's no previous configuration to synchronize with. Mark this VP as having
++	 * completed its initial commit for subsequent calls.
++	 */
++	vp_initial_commit = !(vop2->vp_initial_commits & BIT(vp->id));
++	if (vp_initial_commit)
++		vop2->vp_initial_commits |= BIT(vp->id);
++
++	if (layer_sel != old_layer_sel && atv_layer_sel != old_layer_sel && !vp_initial_commit)
+ 		rk3568_vop2_wait_for_layer_cfg_done(vop2, vop2->old_layer_sel);
+ 
+ 	vop2_writel(vop2, RK3568_OVL_LAYER_SEL, layer_sel);
