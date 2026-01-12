@@ -11,7 +11,7 @@ static int xy_idx = 0;
 static int phys_width = -1;
 static int phys_height = -1;
 
-static SDL_Texture* screens[2] = NULL;
+static SDL_Texture* screens[2];
 static SDL_Rect* touch_rect = NULL;
 static SDL_Window* (*real_SDL_CreateWindow)(const char*, int, int, int, int, Uint32) = NULL;
 static SDL_Texture* (*real_SDL_CreateTexture)(SDL_Renderer*, Uint32, int, int, int) = NULL;
@@ -79,7 +79,7 @@ int SDL_RenderCopy(SDL_Renderer *renderer, SDL_Texture *texture, const SDL_Rect 
         if (touch_rect->h != dstrect->h)
             touch_rect->h = dstrect->h;
     }
-    return real_SDL_RenderCopy(renderer, texture, srcrect, dstrect)
+    return real_SDL_RenderCopy(renderer, texture, srcrect, dstrect);
 }
 
 int SDL_PollEvent(SDL_Event* event) {
@@ -108,6 +108,8 @@ int SDL_PollEvent(SDL_Event* event) {
                     y >= touch_rect->y && y < touch_rect->y + touch_rect->h) {
                     x = ((x - touch_rect->x) * ds_screen_width) / touch_rect->w;
                     y = ((y - touch_rect->y) * ds_screen_height) / touch_rect->h;
+                } else {
+                    return 0;
                 }
 
                 // Queue click for after jump
@@ -148,6 +150,8 @@ int SDL_PollEvent(SDL_Event* event) {
                     y >= touch_rect->y && y < touch_rect->y + touch_rect->h) {
                     x = ((x - touch_rect->x) * ds_screen_width) / touch_rect->w;
                     y = ((y - touch_rect->y) * ds_screen_height) / touch_rect->h;
+                } else {
+                    return 0;
                 }
 
                 int xrel = x - last_x;
