@@ -89,8 +89,7 @@ SDL_Texture* SDL_CreateTexture(SDL_Renderer *renderer, Uint32 format, int type, 
 }
 
 int SDL_RenderCopy(SDL_Renderer *renderer, SDL_Texture *texture, const SDL_Rect *srcrect, const SDL_Rect *dstrect) {
-    if ((!screens[1] && texture == screens[0]) || // Touchscreen is either screen[0] or the screen with a non-zero offset
-        ((texture == screens[0] || texture == screens[1]) && (dstrect->x > 0 || dstrect->y > 0))) {
+    if (screens[0] && texture == screens[0]) {
         // Convert renderer coordinates to physical screen coordinates
         if (logical_width > 0 && logical_height > 0) {
             int output_w, output_h;
