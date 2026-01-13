@@ -10,10 +10,16 @@ static int last_y = -1;
 static int xy_idx = 0;
 static int phys_width = -1;
 static int phys_height = -1;
+static int logical_width = -1;
+static int logical_height = -1;
 
 static SDL_Texture* screens[2];
+static SDL_Rect touch_rect_storage = {0};
 static SDL_Rect* touch_rect = NULL;
+static SDL_Renderer* renderer = NULL;
 static SDL_Window* (*real_SDL_CreateWindow)(const char*, int, int, int, int, Uint32) = NULL;
+static SDL_Renderer* (*real_SDL_CreateRenderer)(SDL_Window*, int, Uint32) = NULL;
+static int (*real_SDL_RenderSetLogicalSize)(SDL_Renderer*, int, int) = NULL;
 static SDL_Texture* (*real_SDL_CreateTexture)(SDL_Renderer*, Uint32, int, int, int) = NULL;
 static int (*real_SDL_RenderCopy)(SDL_Renderer*, SDL_Texture*, const SDL_Rect*, const SDL_Rect*) = NULL;
 static int (*real_SDL_PollEvent)(SDL_Event*) = NULL;
@@ -41,8 +47,8 @@ SDL_Window* SDL_CreateWindow(const char* title, int x, int y, int w, int h, Uint
     SDL_Window* window = real_SDL_CreateWindow(title, 0, 0, total_width, total_height, flags);
 
     // Record screen size for rect tracking/conversion
-    phys_width = last_width;
-    phys_height = last_height;
+    phys_width = total_width;
+    phys_height = total_height;
 
     // DraStic starts in the center of the virtual screen
     last_x = ds_screen_width / 2;
@@ -50,15 +56,31 @@ SDL_Window* SDL_CreateWindow(const char* title, int x, int y, int w, int h, Uint
 
     // Check which screen side is longer for dual screens
     if (num_displays > 1)
-        xy_idx = (phys_width > phys_height) ? 1 : 2;
+        xy_idx = (last_width > last_height) ? 1 : 2;
 
     return window;
 }
 
+SDL_Renderer* SDL_CreateRenderer(SDL_Window* window, int index, Uint32 flags) {
+    renderer = real_SDL_CreateRenderer(window, index, flags);
+    // Just in case it's already set
+    SDL_RenderGetLogicalSize(renderer, &logical_width, &logical_height);
+    return renderer;
+}
+
+int SDL_RenderSetLogicalSize(SDL_Renderer* renderer, int w, int h) {
+    int result = real_SDL_RenderSetLogicalSize(renderer, w, h);
+    // Otherwise store it here
+    logical_width = w;
+    logical_height = h;
+    return result;
+}
+
 SDL_Texture* SDL_CreateTexture(SDL_Renderer *renderer, Uint32 format, int type, int w, int h) {
 	SDL_Texture* texture = real_SDL_CreateTexture(renderer, format, type, w, h);
+	// Identify DS screen textures (2x native by default)
 	if (type == SDL_TEXTUREACCESS_STREAMING) {
-		if (w == ds_screen_width && h == ds_screen_height) {
+		if (w == 512 && h == 384) {
 			if (!screens[0]) screens[0] = texture;
 			else if (!screens[1]) screens[1] = texture;
 		}
@@ -67,17 +89,27 @@ SDL_Texture* SDL_CreateTexture(SDL_Renderer *renderer, Uint32 format, int type, 
 }
 
 int SDL_RenderCopy(SDL_Renderer *renderer, SDL_Texture *texture, const SDL_Rect *srcrect, const SDL_Rect *dstrect) {
-    if (screens[1] && screens[1] == texture) {
-        if (touch_rect != dstrect)
-            touch_rect = dstrect;
-        if (touch_rect->x != dstrect->x)
-            touch_rect->x = dstrect->x;
-        if (touch_rect->y != dstrect->y)
-            touch_rect->y = dstrect->y;
-        if (touch_rect->w != dstrect->w)
-            touch_rect->w = dstrect->w;
-        if (touch_rect->h != dstrect->h)
-            touch_rect->h = dstrect->h;
+    if ((!screens[1] && texture == screens[0]) || // Touchscreen is either screen[0] or the screen with a non-zero offset
+        ((texture == screens[0] || texture == screens[1]) && (dstrect->x > 0 || dstrect->y > 0))) {
+        // Convert renderer coordinates to physical screen coordinates
+        if (logical_width > 0 && logical_height > 0) {
+            int output_w, output_h;
+            SDL_GetRendererOutputSize(renderer, &output_w, &output_h);
+            float scale_x = (float)output_w / logical_width;
+            float scale_y = (float)output_h / logical_height;
+
+            touch_rect_storage.x = (int)(dstrect->x * scale_x);
+            touch_rect_storage.y = (int)(dstrect->y * scale_y);
+            touch_rect_storage.w = (int)(dstrect->w * scale_x);
+            touch_rect_storage.h = (int)(dstrect->h * scale_y);
+        } else {
+            // Fallback and hope they're right
+            touch_rect_storage.x = dstrect->x;
+            touch_rect_storage.y = dstrect->y;
+            touch_rect_storage.w = dstrect->w;
+            touch_rect_storage.h = dstrect->h;
+        }
+        touch_rect = &touch_rect_storage;
     }
     return real_SDL_RenderCopy(renderer, texture, srcrect, dstrect);
 }
@@ -90,27 +122,15 @@ int SDL_PollEvent(SDL_Event* event) {
 
         switch (event->type) {
             case SDL_FINGERDOWN: {
-                int x, y;
-                if (xy_idx == 1) {
-                    x = (int)(((event->tfinger.x * 2) - 1) * phys_width);
-                    y = (int)(event->tfinger.y * phys_height);
-                } else if (xy_idx == 2) {
-                    x = (int)(event->tfinger.x * phys_width);
-                    y = (int)(((event->tfinger.y * 2) - 1) * phys_height);
-                } else {
-                    x = (int)(event->tfinger.x * phys_width);
-                    y = (int)(event->tfinger.y * phys_height);
-                }
+                int x = (int)(event->tfinger.x * phys_width);
+                int y = (int)(event->tfinger.y * phys_height);
+                if (x < touch_rect->x || x > touch_rect->x + touch_rect->w ||
+                    y < touch_rect->y || y > touch_rect->y + touch_rect->h)
+                    return 0; // Outside valid coords, don't convert
 
-                // Make sure touch is valid
-                if (touch_rect && 
-                    x >= touch_rect->x && x < touch_rect->x + touch_rect->w &&
-                    y >= touch_rect->y && y < touch_rect->y + touch_rect->h) {
-                    x = ((x - touch_rect->x) * ds_screen_width) / touch_rect->w;
-                    y = ((y - touch_rect->y) * ds_screen_height) / touch_rect->h;
-                } else {
-                    return 0;
-                }
+                // Scale to virtual touchscreen
+                x = ((x - touch_rect->x) * ds_screen_width) / touch_rect->w;
+                y = ((y - touch_rect->y) * ds_screen_height) / touch_rect->h;
 
                 // Queue click for after jump
                 event->type = SDL_MOUSEBUTTONDOWN;
@@ -133,27 +153,14 @@ int SDL_PollEvent(SDL_Event* event) {
                 break;
             }
             case SDL_FINGERMOTION: {
-                int x, y;
-                if (xy_idx == 1) {
-                    x = (int)(((event->tfinger.x * 2) - 1) * phys_width);
-                    y = (int)(event->tfinger.y * phys_height);
-                } else if (xy_idx == 2) {
-                    x = (int)(event->tfinger.x * phys_width);
-                    y = (int)(((event->tfinger.y * 2) - 1) * phys_height);
-                } else {
-                    x = (int)(event->tfinger.x * phys_width);
-                    y = (int)(event->tfinger.y * phys_height);
-                }
-
-                if (touch_rect && 
-                    x >= touch_rect->x && x < touch_rect->x + touch_rect->w &&
-                    y >= touch_rect->y && y < touch_rect->y + touch_rect->h) {
-                    x = ((x - touch_rect->x) * ds_screen_width) / touch_rect->w;
-                    y = ((y - touch_rect->y) * ds_screen_height) / touch_rect->h;
-                } else {
+                int x = (int)(event->tfinger.x * phys_width);
+                int y = (int)(event->tfinger.y * phys_height);
+                if (x < touch_rect->x || x > touch_rect->x + touch_rect->w ||
+                    y < touch_rect->y || y > touch_rect->y + touch_rect->h)
                     return 0;
-                }
 
+                x = ((x - touch_rect->x) * ds_screen_width) / touch_rect->w;
+                y = ((y - touch_rect->y) * ds_screen_height) / touch_rect->h;
                 int xrel = x - last_x;
                 int yrel = y - last_y;
 
@@ -197,6 +204,8 @@ int SDL_PollEvent(SDL_Event* event) {
 __attribute__((constructor))
 static void init(void) {
     real_SDL_CreateWindow = dlsym(RTLD_NEXT, "SDL_CreateWindow");
+    real_SDL_CreateRenderer = dlsym(RTLD_NEXT, "SDL_CreateRenderer");
+    real_SDL_RenderSetLogicalSize = dlsym(RTLD_NEXT, "SDL_RenderSetLogicalSize");
     real_SDL_CreateTexture = dlsym(RTLD_NEXT, "SDL_CreateTexture");
     real_SDL_RenderCopy = dlsym(RTLD_NEXT, "SDL_RenderCopy");
     real_SDL_PollEvent = dlsym(RTLD_NEXT, "SDL_PollEvent");
