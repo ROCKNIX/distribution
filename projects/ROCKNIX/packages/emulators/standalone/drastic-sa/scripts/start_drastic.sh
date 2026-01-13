@@ -50,10 +50,8 @@ ln -sf /storage/roms/savestates/nds /storage/.config/drastic/savestates
 rm -rf /storage/.config/drastic/backup
 ln -sf /storage/roms/nds /storage/.config/drastic/backup
 
-if [ ! ${QUIRK_DEVICE} = "Anbernic RG DS" ]; then
-  if echo "${UI_SERVICE}" | grep "sway"; then
-    /usr/bin/drastic_sense.sh &
-  fi
+if echo "${UI_SERVICE}" | grep "sway"; then
+  /usr/bin/drastic_sense.sh &
 fi
 
 cd /storage/.config/drastic/
