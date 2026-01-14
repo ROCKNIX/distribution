@@ -5,9 +5,9 @@
 
 . /etc/profile
 
-GAME_PATH="/storage/psvita/vita3k/ux0/app"
-GAME_DATA="/storage/.config/vita3k/vita-gamelist.txt"
-OUTPUT_PATH="/storage/.config/vita3k/launcher"
+GAME_PATH="/storage/roms/psvita/vita3k/ux0/app"
+GAME_DATA="/usr/config/vita3k/sources/vita-gamelist.txt"
+OUTPUT_PATH="/storage/roms/psvita"
 
 cd ${GAME_PATH}
 for GAME in PC*

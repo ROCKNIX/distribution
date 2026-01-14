@@ -1,13 +1,13 @@
 #!/bin/bash
 
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2026-present ROCKNIX (https://rocknix.org/)
 
 . /etc/profile
 set_kill set "-9 Vita3K"
 
 OUTPUT_PATH="/storage/.config/vita3k/launcher"
-GAME="${1}"
+CONFIG_FILE="/storage/.config/vita3k/config.yml"
 
 #Check if vita3k folder exists in /storage/.config/vita3k
 if [ ! -d "/storage/.config/vita3k" ]; then
@@ -23,11 +23,11 @@ if [ ! -d "/storage/roms/psvita/vita3k" ]; then
     mkdir -p "/storage/roms/psvita/vita3k"
 fi
 
-if [ -n "${GAME}" ]; then
-  OPTIONS="-r $(cat "${GAME}")"
+#Check if vita3k Default data folder exists, else link it to /storage/roms/psvita
+if [ ! -d "/storage/.local/share/Vita3K/Vita3K" ]; then
+    mkdir -p "/storage/.local/share/Vita3K/"
+    ln -s /storage/roms/psvita storage/.local/share/Vita3K/Vita3K
 fi
 
-
-
 #Start Vita3K
-/usr/bin/vita3k-sa -F -f /storage/.config/vita3k/config.yml ${OPTIONS}
+/usr/bin/vita3k-sa -F -f $CONFIG_FILE
