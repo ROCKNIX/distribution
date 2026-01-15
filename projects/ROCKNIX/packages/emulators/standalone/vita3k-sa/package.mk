@@ -9,15 +9,8 @@ PKG_LONGDESC="PS VITA Emulator appimage"
 PKG_TOOLCHAIN="manual"
 PKG_VERSION="CI"
 PKG_REL_VERSION="CI"
+PKG_URL="${PKG_SITE}/releases/download/continuous/Vita3k-aarch64.AppImage"
 
-case ${TARGET_ARCH} in
-  x86_64)
-    PKG_URL="${PKG_SITE}/releases/download/continuous/Vita3k-x86_64.AppImage"
-;;
-  aarch64)
-    PKG_URL="${PKG_SITE}/releases/download/continuous/Vita3k-aarch64.AppImage"
-  ;;
-esac
 
 makeinstall_target() {
   # Redefine strip or the AppImage will be stripped rendering it unusable.
