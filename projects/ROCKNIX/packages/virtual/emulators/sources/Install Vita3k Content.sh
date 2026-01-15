@@ -16,3 +16,5 @@ echo "$file"
 vita3k-sa -F -f "$CONFIG_FILE" "$file"
 rm $file
 done
+/usr/bin/scan_vita3k.sh
+
