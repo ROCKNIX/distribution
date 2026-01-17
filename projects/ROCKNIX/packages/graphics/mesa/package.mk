@@ -12,7 +12,7 @@ PKG_DEPENDS_TARGET="toolchain expat libdrm Mako:host pyyaml:host"
 PKG_LONGDESC="Mesa is a 3-D graphics library with an API."
 PKG_TOOLCHAIN="meson"
 PKG_PATCH_DIRS+=" ${DEVICE}"
-PKG_VERSION="25.2.8"
+PKG_VERSION="25.3.3"
 PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
 
 if listcontains "${GRAPHIC_DRIVERS}" "panfrost"; then
@@ -75,13 +75,6 @@ if [ "${LLVM_SUPPORT}" = "yes" ]; then
   PKG_MESON_OPTS_TARGET+=" -Dllvm=enabled"
 else
   PKG_MESON_OPTS_TARGET+=" -Dllvm=disabled"
-fi
-
-if [ "${VDPAU_SUPPORT}" = "yes" -a "${DISPLAYSERVER}" = "x11" ]; then
-  PKG_DEPENDS_TARGET+=" libvdpau"
-  PKG_MESON_OPTS_TARGET+=" -Dgallium-vdpau=enabled"
-else
-  PKG_MESON_OPTS_TARGET+=" -Dgallium-vdpau=disabled"
 fi
 
 if [ "${VAAPI_SUPPORT}" = "yes" ] && listcontains "${GRAPHIC_DRIVERS}" "(r600|radeonsi)"; then

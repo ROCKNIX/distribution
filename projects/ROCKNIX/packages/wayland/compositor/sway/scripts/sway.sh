@@ -10,6 +10,10 @@ if [ ! -z "$(lsmod | grep 'nvidia')" ]; then
   SWAY_GPU_ARGS="--unsupported-gpu"
 fi
 
+if [ ! -S "$XDG_RUNTIME_DIR/bus" ]; then
+    dbus-daemon --session --address=unix:path=$XDG_RUNTIME_DIR/bus &
+fi
+
 # start sway, even if no input devices are connected
 export WLR_LIBINPUT_NO_DEVICES=1
 

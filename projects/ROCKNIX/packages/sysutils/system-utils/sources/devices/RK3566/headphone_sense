@@ -4,30 +4,50 @@
 # Copyright (C) 2020-present Shanti Gilbert (https://github.com/shantigilbert)
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
-# Source predefined functions and variables
 . /etc/profile
 
-HP_ON='*headset status is in*'
-HP_OFF='*headset status is out*'
+if [[ ${AUDIO_MANAGEMENT} == "UCM" ]]; then
+    /usr/bin/volume restore
+    exit 0
+fi
 
 # Switch to headphones if we have them already connected at boot
-BOOT_SETTING=$(journalctl | grep "headset status is" | tail -n 1)
-case ${BOOT_SETTING} in
-	(${HP_ON})
-		amixer -c 0 cset name='Playback Path' ${DEVICE_PLAYBACK_PATH_HP}
-	;;
-        *)
-                amixer -c 0 cset name='Playback Path' ${DEVICE_PLAYBACK_PATH_SPK}
-        ;;
+GPIO=$(cat /sys/class/gpio/gpio${DEVICE_JACK}/value)
+[[ "$GPIO" == "0" ]] && set_setting "audio.device" "headphone" || set_setting "audio.device" "speakers"
+
+### Set the default audio path, needed for some devices
+if [ -z "${DEVICE_PLAYBACK_PATH}" ]
+then
+  DEVICE_PLAYBACK_PATH="Playback Path"
+fi
+
+STARTUP_DEVICE=$(get_setting "audio.device")
+case "${2}" in
+    "headphone")
+        amixer -c $ALSA_PRIMARY_CARD -M cset name="${DEVICE_PLAYBACK_PATH}" "${DEVICE_PLAYBACK_PATH_HP}"
+    ;;
+    "auto"|"speakers"|*)
+        amixer -c $ALSA_PRIMARY_CARD -M cset name="${DEVICE_PLAYBACK_PATH}" "${DEVICE_PLAYBACK_PATH_SPK}"
+    ;;
 esac
 
-journalctl -f | while read line; do
+/usr/bin/volume $(get_setting "audio.volume")
+
+# Headphone sensing 
+DEVICE="${DEVICE_HEADPHONE_DEV}"
+
+HP_ON='*(SW_HEADPHONE_INSERT), value 0*'
+HP_OFF='*(SW_HEADPHONE_INSERT), value 1*'
+
+evtest "${DEVICE}" | while read line; do
     case $line in
 	(${HP_ON})
-		amixer -c 0 cset name='Playback Path' ${DEVICE_PLAYBACK_PATH_HP}
+	amixer -c $ALSA_PRIMARY_CARD cset name="${DEVICE_PLAYBACK_PATH}" "${DEVICE_PLAYBACK_PATH_HP}"
+	set_setting "audio.device" "headphone"
 	;;
-        (${HP_OFF})
-                amixer -c 0 cset name='Playback Path' ${DEVICE_PLAYBACK_PATH_SPK}
-        ;;
+	(${HP_OFF})
+	amixer -c $ALSA_PRIMARY_CARD cset name="${DEVICE_PLAYBACK_PATH}" "${DEVICE_PLAYBACK_PATH_SPK}"
+	set_setting "audio.device" "speakers"
+	;;
     esac
 done

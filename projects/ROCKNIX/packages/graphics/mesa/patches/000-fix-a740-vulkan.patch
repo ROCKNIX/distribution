@@ -1,0 +1,239 @@
+/* SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+*
+* Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+*
+* This Reverts the following commit in Mesa, wich breaks the Turnip Vulkan on Adreno 7 series gpus.
+* https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/37304/diffs?commit_id=0cc0e786e096dca8cfd88d7088ab7e1a0147d045
+*
+* This issue was raised wtih Mesa and can be tracked here:
+* https://gitlab.freedesktop.org/mesa/mesa/-/issues/14656
+*
+* In the meantime lets just revert this patch so we can continue to use the latest Mesa stable release.
+*/
+
+diff --git a/src/freedreno/vulkan/tu_knl_drm_msm.cc b/src/freedreno/vulkan/tu_knl_drm_msm.cc
+index e3a69161105..f9cf30f2e6b 100644
+--- a/src/freedreno/vulkan/tu_knl_drm_msm.cc
++++ b/src/freedreno/vulkan/tu_knl_drm_msm.cc
+@@ -335,85 +335,30 @@ msm_device_check_status(struct tu_device *device)
+ static int
+ msm_submitqueue_new(struct tu_device *dev, struct tu_queue *queue)
+ {
+-   int ret = 0;
+-
+-   if (queue->type == TU_QUEUE_GFX) {
+       assert(queue->priority >= 0 &&
+              queue->priority < dev->physical_device->submitqueue_priority_count);
+       struct drm_msm_submitqueue req = {
+-         .flags = (dev->physical_device->info->chip >= 7 &&
++      .flags = queue->type == TU_QUEUE_SPARSE ? MSM_SUBMITQUEUE_VM_BIND :
++            (dev->physical_device->info->chip >= 7 &&
+                    dev->physical_device->has_preemption ?
+                    MSM_SUBMITQUEUE_ALLOW_PREEMPT : 0),
+          .prio = queue->priority,
+       };
+ 
+-      ret = drmCommandWriteRead(dev->fd,
++   int ret = drmCommandWriteRead(dev->fd,
+                                 DRM_MSM_SUBMITQUEUE_NEW, &req, sizeof(req));
+       if (ret)
+          return ret;
+ 
+       queue->msm_queue_id = req.id;
+-   }
+-
+-   if (queue->type == TU_QUEUE_SPARSE ||
+-       dev->physical_device->has_vm_bind) {
+-      struct drm_msm_submitqueue req = {
+-         .flags = MSM_SUBMITQUEUE_VM_BIND,
+-         .prio = 0,
+-      };
+-
+-      ret = drmCommandWriteRead(dev->fd,
+-                                DRM_MSM_SUBMITQUEUE_NEW, &req, sizeof(req));
+-      if (ret)
+-         goto fail_sparse;
+-
+-      queue->sparse_queue_id = req.id;
+-   }
+-
+-   if (queue->type == TU_QUEUE_GFX && dev->physical_device->has_vm_bind) {
+-      ret = drmSyncobjCreate(dev->fd, 0, &queue->gfx_syncobj);
+-      if (ret)
+-         goto fail_gfx_syncobj;
+-      ret = drmSyncobjCreate(dev->fd, 0, &queue->sparse_syncobj);
+-      if (ret)
+-         goto fail_sparse_syncobj;
+-   }
+-
+    return 0;
+-
+-fail_sparse_syncobj:
+-   drmSyncobjDestroy(dev->fd, queue->gfx_syncobj);
+-fail_gfx_syncobj:
+-   if (queue->type == TU_QUEUE_SPARSE || dev->physical_device->has_vm_bind) {
+-      drmCommandWrite(dev->fd, DRM_MSM_SUBMITQUEUE_CLOSE,
+-                      &queue->sparse_queue_id, sizeof(uint32_t));
+-   }
+-fail_sparse:
+-   if (queue->type == TU_QUEUE_GFX) {
+-      drmCommandWrite(dev->fd, DRM_MSM_SUBMITQUEUE_CLOSE,
+-                      &queue->msm_queue_id, sizeof(uint32_t));
+-   }
+-
+-   return ret;
+ }
+ 
+ static void
+ msm_submitqueue_close(struct tu_device *dev, struct tu_queue *queue)
+ {
+-   if (queue->msm_queue_id) {
+       drmCommandWrite(dev->fd, DRM_MSM_SUBMITQUEUE_CLOSE,
+                       &queue->msm_queue_id, sizeof(uint32_t));
+-   }
+-
+-   if (queue->sparse_queue_id) {
+-      drmCommandWrite(dev->fd, DRM_MSM_SUBMITQUEUE_CLOSE,
+-                      &queue->sparse_queue_id, sizeof(uint32_t));
+-   }
+-
+-   if (queue->type == TU_QUEUE_GFX && dev->physical_device->has_vm_bind) {
+-      drmSyncobjDestroy(dev->fd, queue->sparse_syncobj);
+-      drmSyncobjDestroy(dev->fd, queue->gfx_syncobj);
+-   }
+ }
+ 
+ static void
+@@ -1254,18 +1199,11 @@ msm_queue_submit(struct tu_queue *queue, void *_submit,
+    uint64_t start_ts = tu_perfetto_begin_submit();
+ #endif
+    uint32_t fence = 0;
+-   uint64_t other_timepoint =
+-      submit->binds.size != 0 ? queue->gfx_timepoint :
+-      queue->sparse_timepoint;
+-   uint32_t extra_wait_count =
+-      (queue->type == TU_QUEUE_GFX && other_timepoint != 0) ? 1 : 0;
+-   uint32_t extra_signal_count =
+-      (queue->type == TU_QUEUE_GFX && has_vm_bind) ? 1 : 0;
+ 
+    /* Allocate without wait timeline semaphores */
+    in_syncobjs = (struct drm_msm_syncobj *) vk_zalloc(
+       &queue->device->vk.alloc,
+-      (wait_count + extra_wait_count) * sizeof(*in_syncobjs), 8,
++      wait_count * sizeof(*in_syncobjs), 8,
+       VK_SYSTEM_ALLOCATION_SCOPE_DEVICE);
+ 
+    if (in_syncobjs == NULL) {
+@@ -1276,7 +1214,7 @@ msm_queue_submit(struct tu_queue *queue, void *_submit,
+    /* Allocate with signal timeline semaphores considered */
+    out_syncobjs = (struct drm_msm_syncobj *) vk_zalloc(
+       &queue->device->vk.alloc,
+-      (signal_count + extra_signal_count) * sizeof(*out_syncobjs), 8,
++      signal_count * sizeof(*out_syncobjs), 8,
+       VK_SYSTEM_ALLOCATION_SCOPE_DEVICE);
+ 
+    if (out_syncobjs == NULL) {
+@@ -1304,22 +1242,7 @@ msm_queue_submit(struct tu_queue *queue, void *_submit,
+       };
+    }
+ 
+-   if (queue->type == TU_QUEUE_SPARSE || submit->binds.size != 0) {
+-      if (extra_wait_count) {
+-         in_syncobjs[wait_count] = (struct drm_msm_syncobj) {
+-            .handle = queue->gfx_syncobj,
+-            .flags = 0,
+-            .point = queue->gfx_timepoint,
+-         };
+-      }
+-      if (extra_signal_count) {
+-         out_syncobjs[signal_count] = (struct drm_msm_syncobj) {
+-            .handle = queue->sparse_syncobj,
+-            .flags = 0,
+-            .point = ++queue->sparse_timepoint,
+-         };
+-      }
+-
++   if (queue->type == TU_QUEUE_SPARSE) {
+       unsigned nr_ops = util_dynarray_num_elements(&submit->binds,
+                                                    struct drm_msm_vm_bind_op);
+ 
+@@ -1348,11 +1271,11 @@ msm_queue_submit(struct tu_queue *queue, void *_submit,
+          .flags = flags,
+          .nr_ops = nr_ops,
+          .fence_fd = queue->device->vm_bind_fence_fd,
+-         .queue_id = queue->sparse_queue_id,
++         .queue_id = queue->msm_queue_id,
+          .in_syncobjs = (uint64_t)(uintptr_t)in_syncobjs,
+          .out_syncobjs = (uint64_t)(uintptr_t)out_syncobjs,
+-         .nr_in_syncobjs = wait_count + extra_wait_count,
+-         .nr_out_syncobjs = signal_count + extra_signal_count,
++         .nr_in_syncobjs = wait_count,
++         .nr_out_syncobjs = signal_count,
+          .syncobj_stride = sizeof(struct drm_msm_syncobj),
+          .op_stride = sizeof(struct drm_msm_vm_bind_op),
+       };
+@@ -1414,13 +1337,9 @@ msm_queue_submit(struct tu_queue *queue, void *_submit,
+                   .flags = flags,
+                   .nr_ops = 1,
+                   .fence_fd = queue->device->vm_bind_fence_fd,
+-                  .queue_id = queue->sparse_queue_id,
+-                  .in_syncobjs =
+-                     (uint64_t)(uintptr_t)&in_syncobjs[wait_count],
++                  .queue_id = queue->msm_queue_id,
+                   .out_syncobjs = (uint64_t)(uintptr_t)out_syncobjs,
+-                  .nr_in_syncobjs = extra_wait_count,
+-                  .nr_out_syncobjs = last ? signal_count +
+-                     extra_signal_count : 0,
++                  .nr_out_syncobjs = last ? signal_count : 0,
+                   .syncobj_stride = sizeof(struct drm_msm_syncobj),
+                   .op_stride = sizeof(struct drm_msm_vm_bind_op),
+                   .op = *op,
+@@ -1450,21 +1369,6 @@ msm_queue_submit(struct tu_queue *queue, void *_submit,
+          flags |= MSM_SUBMIT_SYNCOBJ_OUT;
+ 
+       if (has_vm_bind) {
+-         if (extra_wait_count) {
+-            in_syncobjs[wait_count] = (struct drm_msm_syncobj) {
+-               .handle = queue->sparse_syncobj,
+-               .flags = 0,
+-               .point = queue->sparse_timepoint,
+-            };
+-         }
+-         if (extra_signal_count) {
+-            out_syncobjs[signal_count] = (struct drm_msm_syncobj) {
+-               .handle = queue->gfx_syncobj,
+-               .flags = 0,
+-               .point = ++queue->gfx_timepoint,
+-            };
+-         }
+-
+          u_rwlock_rdlock(&queue->device->vm_bind_fence_lock);
+ 
+          if (queue->device->vm_bind_fence_fd != -1)
+@@ -1518,8 +1422,8 @@ msm_queue_submit(struct tu_queue *queue, void *_submit,
+          .queueid = queue->msm_queue_id,
+          .in_syncobjs = (uint64_t)(uintptr_t)in_syncobjs,
+          .out_syncobjs = (uint64_t)(uintptr_t)out_syncobjs,
+-         .nr_in_syncobjs = wait_count + extra_wait_count,
+-         .nr_out_syncobjs = signal_count + extra_signal_count,
++         .nr_in_syncobjs = wait_count,
++         .nr_out_syncobjs = signal_count,
+          .syncobj_stride = sizeof(struct drm_msm_syncobj),
+       };
+ 
+diff --git a/src/freedreno/vulkan/tu_queue.h b/src/freedreno/vulkan/tu_queue.h
+index 3f7f78a92ba..b5fccabcc2e 100644
+--- a/src/freedreno/vulkan/tu_queue.h
++++ b/src/freedreno/vulkan/tu_queue.h
+@@ -28,11 +28,6 @@ struct tu_queue
+    uint32_t msm_queue_id;
+    uint32_t priority;
+ 
+-   uint32_t sparse_queue_id;
+-
+-   uint32_t sparse_syncobj, gfx_syncobj;
+-   uint64_t sparse_timepoint, gfx_timepoint;
+-
+    int fence;           /* timestamp/fence of the last queue submission */
+ };
+ VK_DEFINE_HANDLE_CASTS(tu_queue, vk.base, VkQueue, VK_OBJECT_TYPE_QUEUE)
