@@ -52,7 +52,8 @@ if [ "${V4L2_SUPPORT}" = "yes" ]; then
   PKG_NEED_UNPACK+=" $(get_pkg_directory libdrm)"
   PKG_FFMPEG_V4L2="--enable-v4l2_m2m --enable-libdrm"
 
-  if [ "${PROJECT}" = "Allwinner" -o "${PROJECT}" = "Rockchip" -o "${DEVICE}" = "iMX8" -o "${DEVICE}" = "RPi4" -o "${DEVICE}" = "RPi5" ]; then
+  # FIX: Added Qualcomm to the list of projects supporting V4L2 Request API
+  if [ "${PROJECT}" = "Allwinner" -o "${PROJECT}" = "Rockchip" -o "${PROJECT}" = "Qualcomm" -o "${DEVICE}" = "iMX8" -o "${DEVICE}" = "RPi4" -o "${DEVICE}" = "RPi5" ]; then
     PKG_V4L2_REQUEST="yes"
   else
     PKG_V4L2_REQUEST="no"
@@ -175,6 +176,11 @@ configure_target() {
               --disable-gray \
               --enable-swscale-alpha \
               --disable-small \
+              --enable-dct \
+              --enable-fft \
+              --enable-mdct \
+              --enable-rdft \
+              --disable-crystalhd \
               ${PKG_FFMPEG_V4L2} \
               ${PKG_FFMPEG_VAAPI} \
               ${PKG_FFMPEG_VDPAU} \
@@ -223,6 +229,7 @@ configure_target() {
               --disable-libvpx \
               --disable-libx264 \
               --disable-libxavs \
+              --disable-libxvid \
               --enable-libxml2 \
               --disable-libxvid \
               --enable-zlib \
