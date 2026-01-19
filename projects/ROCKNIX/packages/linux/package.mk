@@ -31,16 +31,21 @@ case ${DEVICE} in
     ;;
   *)
     case ${DEVICE} in
-      H700|RK3399|RK3566|S922X|SM8250|SM8550|SM8650)
+      SM8250)
+        PKG_VERSION="6.19-rc5"
+        PKG_URL="https://git.kernel.org/torvalds/t/${PKG_NAME}-${PKG_VERSION}.tar.gz"
+        ;;
+      H700|RK3399|RK3566|S922X|SM8550|SM8650)
         PKG_VERSION="6.18.4"
+        PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
         ;;
       *)
         PKG_VERSION="6.12.61"
         PKG_PATCH_DIRS+=" 6.12-LTS"
+        PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
         ;;
     esac
-    PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
-  ;;
+    ;;
 esac
 
 PKG_KERNEL_CFG_FILE=$(kernel_config_path) || die

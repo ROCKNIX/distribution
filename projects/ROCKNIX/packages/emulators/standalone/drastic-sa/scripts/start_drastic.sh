@@ -78,12 +78,6 @@ else
     sed -i 's/^fix_main_2d_screen = .*/fix_main_2d_screen = 0/' /storage/.config/drastic/config/drastic.cfg
 fi
 
-if [ ! "${QUIRK_DEVICE}" = "Anbernic RG DS" ]; then
-  if echo "${UI_SERVICE}" | grep "sway"; then
-    /usr/bin/drastic_sense.sh &
-  fi
-fi
-
 cd /storage/.config/drastic/
 @HOTKEY@
 

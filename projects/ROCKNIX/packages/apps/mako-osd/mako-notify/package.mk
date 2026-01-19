@@ -4,7 +4,7 @@
 PKG_NAME="mako-notify"
 PKG_VERSION="v1.0"
 PKG_LICENSE="GPLv2"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain dbus"
 PKG_LONGDESC="Tool to show onscreen messages in sway, via the mako-osd tool"
 PKG_TOOLCHAIN="make"
 

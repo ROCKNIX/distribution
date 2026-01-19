@@ -23,7 +23,6 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin
   cp -rf ${PKG_DIR}/scripts/* ${INSTALL}/usr/bin
   chmod +x ${INSTALL}/usr/bin/start_drastic.sh
-  chmod +x ${INSTALL}/usr/bin/drastic_sense.sh
   
   mkdir -p ${INSTALL}/usr/lib
   cp -f ${PKG_BUILD}/libdrastouch.so ${INSTALL}/usr/lib/
