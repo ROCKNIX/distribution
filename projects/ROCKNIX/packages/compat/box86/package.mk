@@ -2,7 +2,7 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="box86"
-PKG_VERSION="50a2603027d0faf2f6ba5d97c0169f824fb95d85"
+PKG_VERSION="0579f8b9c47d87d700724f4cce559b06cbd2b0f5"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/ptitSeb/box86"
 PKG_URL="${PKG_SITE}.git"
