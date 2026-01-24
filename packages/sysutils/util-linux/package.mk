@@ -55,6 +55,9 @@ PKG_CONFIGURE_OPTS_TARGET="${UTILLINUX_CONFIG_DEFAULT} \
                            --enable-fstrim \
                            --enable-blkid \
                            --enable-lscpu \
+                           --enable-findmnt \
+                           --enable-libsmartcols \
+                           --enable-fallocate \
                            --enable-lsfd \
                            --enable-mount \
                            --enable-nologin"
@@ -86,13 +89,20 @@ fi
 
 post_makeinstall_target() {
   if [ "${SWAP_SUPPORT}" = "yes" ]; then
-    mkdir -p ${INSTALL}/usr/lib/libreelec
-      cp -PR ${PKG_DIR}/scripts/mount-swap ${INSTALL}/usr/lib/libreelec
+    mkdir -p ${INSTALL}/usr/lib/rocknix
+      cp -PR ${PKG_DIR}/scripts/mount-swap ${INSTALL}/usr/lib/rocknix
 
     mkdir -p ${INSTALL}/etc
       cat ${PKG_DIR}/config/swap.conf |
         sed -e "s,@SWAPFILESIZE@,${SWAPFILESIZE},g" \
             -e "s,@SWAP_ENABLED_DEFAULT@,${SWAP_ENABLED_DEFAULT},g" \
+                -e "s,@SWAPSIZE@,${SWAPSIZE},g" \
+                -e "s,@SWAP_DUAL@,${SWAP_DUAL},g" \
+                -e "s,@USE_RESUME@,${USE_RESUME},g" \
+                -e "s,@ENABLE_KSM@,${ENABLE_KSM},g" \
+                -e "s,@ZRAM_COMPRESSION_ALGO@,${ZRAM_COMPRESSION_ALGO},g" \
+                -e "s,@KSM_SCAN_PAGES@,${KSM_SCAN_PAGES},g" \
+                -e "s,@KSM_SLEEP_MS@,${KSM_SLEEP_MS},g" \
             >${INSTALL}/etc/swap.conf
   fi
 }

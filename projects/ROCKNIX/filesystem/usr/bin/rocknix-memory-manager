@@ -1,0 +1,138 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026-present Joel Wirāmu Pauling <aenertia@aenertia.net>
+# Copyright (C) 2026-present ROCKNIX (https://rocknix.org)
+
+exec 1> >(logger -s -t $(basename $0)) 2>&1
+
+# 1. Load System Defaults
+[ -f /etc/swap.conf ] && . /etc/swap.conf
+
+# 2. Wait for Storage (Allow user overrides from /storage/.config)
+# We wait up to 5 seconds for storage to mount to ensure we catch user configs
+for i in $(seq 1 5); do
+    if mountpoint -q /storage; then break; fi
+    sleep 1
+done
+
+# 3. Load User Overrides
+[ -f /storage/.config/swap.conf ] && . /storage/.config/swap.conf
+
+. /etc/profile
+
+# Defaults
+: ${ENABLE_KSM:="yes"}
+: ${ZRAM_ALGO:="lzo-rle"}
+: ${KSM_PAGES:=50}
+: ${KSM_SLEEP:=1000}
+: ${SWAP_ENABLED:="no"}  # Default to disabled if config is missing
+GRUB_CFG="/flash/boot/grub/grub.cfg"
+EXTLINUX_CFG="/flash/extlinux/extlinux.conf"
+
+setup_ksm() {
+    [ "$ENABLE_KSM" != "yes" ] && return
+    if [ -f /sys/kernel/mm/ksm/run ]; then
+        echo "$KSM_PAGES" > /sys/kernel/mm/ksm/pages_to_scan
+        
+        # Handle kernel version differences (sleep_msecs vs sleep_millisecs)
+        if [ -f /sys/kernel/mm/ksm/sleep_millisecs ]; then
+             echo "$KSM_SLEEP" > /sys/kernel/mm/ksm/sleep_millisecs
+        elif [ -f /sys/kernel/mm/ksm/sleep_msecs ]; then
+             echo "$KSM_SLEEP" > /sys/kernel/mm/ksm/sleep_msecs
+        fi
+        
+        echo 1 > /sys/kernel/mm/ksm/run
+        logger -t rocknix-memory "KSM tuning applied: pages_to_scan=$KSM_PAGES, sleep=$KSM_SLEEP"
+    fi
+}
+
+setup_zram() {
+    [ "$SWAP_ENABLED" != "yes" ] && return
+    [ "$SWAP_TYPE" != "zram" ] && [ "$SWAP_DUAL" != "yes" ] && return
+    modprobe zram num_devices=1 2>/dev/null
+    grep -q "zram0" /proc/swaps && return
+    TOTAL_MEM_KB=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
+    ZRAM_SIZE_MB=${SWAPSIZE:-$((TOTAL_MEM_KB / 1024 / 2))}
+    ZRAM_SIZE_BYTES=$((ZRAM_SIZE_MB * 1024 * 1024))
+    ALGO_PATH="/sys/block/zram0/comp_algorithm"
+    [ -f "$ALGO_PATH" ] && grep -q "$ZRAM_ALGO" "$ALGO_PATH" && echo "$ZRAM_ALGO" > "$ALGO_PATH"
+    echo "$ZRAM_SIZE_BYTES" > /sys/block/zram0/disksize
+    mkswap /dev/zram0 >/dev/null
+    swapon -p 100 /dev/zram0
+}
+
+update_extlinux_config() {
+    [ -f "$EXTLINUX_CFG" ] || return
+    if ! grep -q "resume=$1" "$EXTLINUX_CFG"; then
+        mount -o remount,rw /flash
+        sed -i -E 's/resume=[^ ]* //g' "$EXTLINUX_CFG"
+        sed -i -E 's/resume_offset=[^ ]* //g' "$EXTLINUX_CFG"
+        sed -i "/^\s*APPEND/ s/$/ resume=$1 resume_offset=$2/" "$EXTLINUX_CFG"
+        mount -o remount,ro /flash
+    fi
+}
+
+update_grub_config() {
+    [ -f "$GRUB_CFG" ] || return
+    if ! grep -q "resume=$1" "$GRUB_CFG"; then
+        mount -o remount,rw /flash
+        sed -i -E 's/resume=[^ ]* //g' "$GRUB_CFG"
+        sed -i -E 's/resume_offset=[^ ]* //g' "$GRUB_CFG"
+        sed -i "/linux \/KERNEL/ { /recovery/! s|$| resume=$1 resume_offset=$2| }" "$GRUB_CFG"
+        mount -o remount,ro /flash
+    fi
+}
+
+setup_swapfile() {
+    [ "$SWAP_ENABLED" != "yes" ] && return
+    [ "$SWAP_TYPE" != "file" ] && [ "$SWAP_DUAL" != "yes" ] && return
+    
+    # Fix potential variable expansion issue if $HOME is root or unset
+    TARGET_SWAP="${SWAPFILE:-/storage/.cache/swapfile}"
+    # Safety: If path starts with /.cache, rewrite to /storage/.cache
+    if [[ "$TARGET_SWAP" == "/.cache/"* ]]; then
+        TARGET_SWAP="/storage${TARGET_SWAP}"
+    fi
+
+    SWAP_DIR=$(dirname "$TARGET_SWAP")
+
+    # Ensure directory exists and is writable (requires storage mount)
+    if ! mkdir -p "$SWAP_DIR" 2>/dev/null; then
+        echo "Error: Cannot create swap directory $SWAP_DIR (Storage read-only or not mounted?)"
+        return
+    fi
+    
+    TOTAL_MEM_KB=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
+    RAM_MB=$((TOTAL_MEM_KB / 1024))
+    DYNAMIC_SIZE=$((RAM_MB + 512))
+    
+    if [ "$USE_RESUME" = "yes" ]; then FINAL_SIZE=$DYNAMIC_SIZE
+    elif [ -n "$SWAPSIZE" ] && [ "$SWAPSIZE" -gt 0 ]; then FINAL_SIZE=$SWAPSIZE
+    else FINAL_SIZE=$DYNAMIC_SIZE; fi
+    
+    (
+        if [ ! -f "$TARGET_SWAP" ]; then
+            fallocate -l ${FINAL_SIZE}M "$TARGET_SWAP" 2>/dev/null || \
+                dd if=/dev/zero of="$TARGET_SWAP" bs=1M count=$FINAL_SIZE status=none
+            chmod 0600 "$TARGET_SWAP"
+            mkswap "$TARGET_SWAP" >/dev/null
+        fi
+        PRIO="-1"
+        [ "$SWAP_DUAL" = "yes" ] && PRIO="-10"
+        swapon -p "$PRIO" "$TARGET_SWAP" 2>/dev/null
+        
+        if [ "$USE_RESUME" = "yes" ]; then
+            SWAP_DEV=$(df "$TARGET_SWAP" | tail -1 | awk '{print $1}')
+            OFFSET=$(filefrag -v "$TARGET_SWAP" | awk '$1=="0:" {print $4}' | tr -d .)
+            if [ -n "$SWAP_DEV" ] && [ -n "$OFFSET" ]; then
+                update_grub_config "$SWAP_DEV" "$OFFSET"
+                update_extlinux_config "$SWAP_DEV" "$OFFSET"
+            fi
+        fi
+    ) &
+}
+
+setup_ksm
+setup_zram
+setup_swapfile
+exit 0
