@@ -16,10 +16,10 @@ fi
 # mount $BOOT_ROOT rw
 mount -o remount,rw $BOOT_ROOT
 
-if [ -f "$SYSTEM_ROOT/usr/share/bootloader/EFI/ROCKNIX/bootaa64.efi" ]; then
-  mkdir -p $BOOT_ROOT/EFI/ROCKNIX
+if [ -f "$SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/bootaa64.efi" ]; then
+  mkdir -p $BOOT_ROOT/EFI/BOOT
   echo "Updating EFI..."
-  cp $SYSTEM_ROOT/usr/share/bootloader/EFI/ROCKNIX/bootaa64.efi $BOOT_ROOT/EFI/ROCKNIX
+  cp $SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/bootaa64.efi $BOOT_ROOT/EFI/BOOT
 fi
 
 if [ -d "$SYSTEM_ROOT/usr/share/bootloader/boot/grub" ]; then
