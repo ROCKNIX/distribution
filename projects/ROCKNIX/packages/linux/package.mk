@@ -156,16 +156,6 @@ pre_make_target() {
     ${PKG_BUILD}/scripts/config --disable CONFIG_SWAP
   fi
 
-  # enable / disable zram support (zstd compression) as required
-  if [ "${SWAP_TYPE}" = zram ]; then
-    ${PKG_BUILD}/scripts/config --module CONFIG_ZRAM
-    ${PKG_BUILD}/scripts/config --enable CONFIG_ZRAM_BACKEND_ZSTD
-    ${PKG_BUILD}/scripts/config --enable CONFIG_ZRAM_DEF_COMP_ZSTD
-    ${PKG_BUILD}/scripts/config --set-val CONFIG_ZRAM_DEF_COMP "zstd"
-  else
-    ${PKG_BUILD}/scripts/config --disable CONFIG_ZRAM
-  fi
-
   # disable nfs support if not enabled
   if [ "${NFS_SUPPORT}" = no ]; then
     ${PKG_BUILD}/scripts/config --disable CONFIG_NFS_FS

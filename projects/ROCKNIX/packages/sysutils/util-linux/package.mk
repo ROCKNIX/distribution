@@ -56,13 +56,14 @@ PKG_CONFIGURE_OPTS_TARGET="${UTILLINUX_CONFIG_DEFAULT} \
                            --enable-blkid \
                            --enable-blkdiscard \
                            --enable-schedutils \
-                           --enable-lscpu"
+                           --enable-lscpu \
+                           --enable-fallocate"
 
 if [ "${SWAP_SUPPORT}" = "yes" ]; then
   PKG_CONFIGURE_OPTS_TARGET+=" --enable-swapon"
 fi
 
-if [ "${SWAP_TYPE}" = "zram" ]; then
+if [ "${SWAP_SUPPORT}" = "yes" ]; then
   PKG_CONFIGURE_OPTS_TARGET+=" --enable-zramctl"
 fi
 
@@ -92,15 +93,11 @@ post_makeinstall_target() {
 
     mkdir -p ${INSTALL}/etc
       cat ${PKG_DIR}/config/swap.conf | \
-        sed -e "s,@SWAPSIZE@,${SWAPSIZE},g" \
+        sed -e "s,@ZRAM_SWAP_SIZE@,${ZRAM_SWAP_SIZE},g" \
             -e "s,@SWAP_ENABLED_DEFAULT@,${SWAP_ENABLED_DEFAULT},g" \
-            -e "s,@SWAP_TYPE@,${SWAP_TYPE},g" \
+            -e "s,@SWAP_FILE_SIZE@,${SWAP_FILE_SIZE},g" \
+                -e "s,@ZRAM_COMPRESSION_ALGO@,${ZRAM_COMPRESSION_ALGO},g" \
             > ${INSTALL}/etc/swap.conf
   fi
 }
 
-post_install () {
-  if [ "${SWAP_SUPPORT}" = "yes" ]; then
-    enable_service swap.service
-  fi
-}

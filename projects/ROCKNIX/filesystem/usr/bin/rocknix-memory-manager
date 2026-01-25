@@ -1,0 +1,171 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026-present Joel Wirāmu Pauling <aenertia@aenertia.net>
+# Copyright (C) 2026-present ROCKNIX (https://rocknix.org)
+
+# ROCKNIX Memory Manager - Supersedes legacy mount-swap script
+# Logic: 0/Empty = Off, "Auto" = Automatic calculation.
+
+# 1. Load system defaults and user overrides
+[ -f /etc/swap.conf ] && . /etc/swap.conf
+
+if [[ "$1" != "--help" && "$1" != "--status" ]]; then
+    for i in $(seq 1 5); do
+        if mountpoint -q /storage; then break; fi
+        sleep 1
+    done
+fi
+[ -f /storage/.config/swap.conf ] && . /storage/.config/swap.conf
+
+# Global RAM calc
+TOTAL_MEM_KB=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
+TOTAL_MEM_MB=$((TOTAL_MEM_KB / 1024))
+
+# 2. Logic Resolution
+
+# ZRAM Auto: 50% RAM, capped at 4GB
+ZRAM_SIZE_VAL=0
+ZRAM_STATUS="Off"
+# Check case-insensitive for "auto"
+if [[ "${ZRAM_SIZE,,}" == "auto" ]]; then
+    ZRAM_SIZE_VAL=$((TOTAL_MEM_MB / 2))
+    [ "$ZRAM_SIZE_VAL" -gt 4096 ] && ZRAM_SIZE_VAL=4096
+    ZRAM_STATUS="Auto (${ZRAM_SIZE_VAL}MB)"
+elif [[ "$ZRAM_SIZE" =~ ^[0-9]+$ ]] && [ "$ZRAM_SIZE" -gt 0 ]; then
+    ZRAM_SIZE_VAL=$ZRAM_SIZE
+    ZRAM_STATUS="${ZRAM_SIZE_VAL}MB"
+fi
+
+# Swap Auto: RAM Size, capped at 2GB
+SWAP_SIZE_VAL=0
+SWAP_STATUS="Off"
+if [[ "${SWAP_FILE_SIZE,,}" == "auto" ]]; then
+    SWAP_SIZE_VAL=$TOTAL_MEM_MB
+    [ "$SWAP_SIZE_VAL" -gt 2048 ] && SWAP_SIZE_VAL=2048
+    SWAP_STATUS="Auto (${SWAP_SIZE_VAL}MB)"
+elif [[ "$SWAP_FILE_SIZE" =~ ^[0-9]+$ ]] && [ "$SWAP_FILE_SIZE" -gt 0 ]; then
+    SWAP_SIZE_VAL=$SWAP_FILE_SIZE
+    SWAP_STATUS="${SWAP_SIZE_VAL}MB"
+fi
+
+# Algo Resolution
+if [[ -z "$ZRAM_ALGO" || "$ZRAM_ALGO" == "@ZRAM_COMPRESSION_ALGO@" ]]; then
+    ZRAM_ALGO="zstd"
+fi
+
+show_status() {
+    echo "--- ROCKNIX Memory Manager Status ---"
+    printf "System RAM:  %s MB\n" "$TOTAL_MEM_MB"
+    printf "ZRAM Config: %s [%s]\n" "$ZRAM_STATUS" "$ZRAM_ALGO"
+    printf "Swap Config: %s\n" "$SWAP_STATUS"
+    echo ""
+    echo "[ Tier 1: ZRAM Statistics ]"
+    if [ -d /sys/block/zram0 ]; then
+        local stat=($(cat /sys/block/zram0/mm_stat 2>/dev/null))
+        if [ ${#stat[@]} -ge 3 ]; then
+            local orig=$((stat[0] / 1024 / 1024))
+            local compr=$((stat[1] / 1024 / 1024))
+            local total=$((stat[2] / 1024 / 1024))
+            printf "  Original Data:  %s MB\n" "$orig"
+            printf "  Compressed:     %s MB\n" "$compr"
+            printf "  Memory Used:    %s MB\n" "$total"
+            [ "$compr" -gt 0 ] && printf "  Ratio:          %.2f:1\n" "$(echo "scale=2; $orig / $compr" | bc)"
+        fi
+        [ -f /sys/block/zram0/comp_algorithm ] && printf "  Algorithms:     %s\n" "$(cat /sys/block/zram0/comp_algorithm)"
+    else
+        echo "  ZRAM device not initialized."
+    fi
+    echo ""
+    echo "[ Tier 2: Physical Swap ]"
+    swapon --show | grep -v "NAME" || echo "  No physical swap active."
+    echo ""
+    echo "[ Resource Pressure (PSI) ]"
+    for type in memory io cpu; do
+        if [ -f /proc/pressure/$type ]; then
+            printf "  %-7s %s\n" "$type:" "$(grep 'some' /proc/pressure/$type | awk '{print $2, $3, $4}')"
+        fi
+    done
+    echo ""
+    echo "[ Advanced Kernel Metrics ]"
+    grep -E "SwapCached|AnonHugePages|Dirty|Writeback" /proc/meminfo | sed 's/^/  /'
+    echo ""
+    echo "[ Active Sysctl Tuning ]"
+    sysctl vm.swappiness vm.page-cluster vm.vfs_cache_pressure vm.dirty_ratio | sed 's/^/  /'
+}
+
+apply_tuning() {
+    sysctl -w vm.vfs_cache_pressure=100 >/dev/null
+    sysctl -w vm.dirty_ratio=10 >/dev/null
+    sysctl -w vm.dirty_background_ratio=5 >/dev/null
+    if [ "$ZRAM_SIZE_VAL" -gt 0 ]; then
+        sysctl -w vm.swappiness=100 >/dev/null
+        sysctl -w vm.page-cluster=0 >/dev/null
+        if [ -f /sys/block/zram0/recompress ]; then
+            if grep -q "zstd" /sys/block/zram0/comp_algorithm && ! grep -q "\[zstd\]" /sys/block/zram0/comp_algorithm; then
+                 echo "algo=zstd priority=2" > /sys/block/zram0/recompress 2>/dev/null
+            fi
+        fi
+    elif [ "$SWAP_SIZE_VAL" -gt 0 ]; then
+        sysctl -w vm.swappiness=60 >/dev/null
+        sysctl -w vm.page-cluster=3 >/dev/null
+    fi
+}
+
+setup_zram() {
+    [ "$ZRAM_SIZE_VAL" -le 0 ] && return
+
+    # Ensure modular dependencies are loaded before initialization
+    modprobe zsmalloc 2>/dev/null
+    modprobe zram num_devices=1 2>/dev/null
+    
+    # Wait for the device node if module was just loaded
+    local timeout=0
+    while [ ! -b /dev/zram0 ] && [ $timeout -lt 5 ]; do
+        sleep 0.1
+        ((timeout++))
+    done
+
+    if [ ! -b /dev/zram0 ]; then
+        logger "Error: ZRAM device node /dev/zram0 did not appear."
+        return
+    fi
+
+    grep -q "zram0" /proc/swaps && return
+    local algo_path="/sys/block/zram0/comp_algorithm"
+    [ -f "$algo_path" ] && grep -q "$ZRAM_ALGO" "$algo_path" && echo "$ZRAM_ALGO" > "$algo_path"
+    echo $((ZRAM_SIZE_VAL * 1024 * 1024)) > /sys/block/zram0/disksize
+    mkswap /dev/zram0 >/dev/null
+    swapon -p 100 /dev/zram0
+}
+
+setup_swapfile() {
+    [ "$SWAP_SIZE_VAL" -le 0 ] && return
+    TARGET_SWAP="${SWAPFILE:-/storage/.cache/swapfile}"
+    mkdir -p "$(dirname "$TARGET_SWAP")" 2>/dev/null
+    local cur=0
+    [ -f "$TARGET_SWAP" ] && cur=$(du -m "$TARGET_SWAP" | cut -f1)
+    if [ "$cur" -ne "$SWAP_SIZE_VAL" ]; then
+        [ -f "$TARGET_SWAP" ] && swapoff "$TARGET_SWAP" 2>/dev/null && rm "$TARGET_SWAP"
+        fallocate -l ${SWAP_SIZE_VAL}M "$TARGET_SWAP" 2>/dev/null || \
+            dd if=/dev/zero of="$TARGET_SWAP" bs=1M count=$SWAP_SIZE_VAL status=none
+        chmod 0600 "$TARGET_SWAP"
+        mkswap "$TARGET_SWAP" >/dev/null
+    fi
+    swapon -p -10 "$TARGET_SWAP" 2>/dev/null
+}
+
+case "$1" in
+    --setup)
+        exec 1> >(logger -s -t $(basename $0)) 2>&1
+        [ "${SWAP_ENABLED}" == "no" ] && exit 0
+        apply_tuning
+        setup_zram
+        setup_swapfile
+        ;;
+    --status) show_status ;;
+    --help|-h)
+        echo "Usage: $(basename $0) [--setup|--status|--help]"
+        ;;
+    *) [ -t 0 ] && show_status || $0 --setup ;;
+esac
+exit 0
