@@ -97,6 +97,9 @@ post_makeinstall_target() {
             -e "s,@SWAP_ENABLED_DEFAULT@,${SWAP_ENABLED_DEFAULT},g" \
             -e "s,@SWAP_FILE_SIZE@,${SWAP_FILE_SIZE},g" \
                 -e "s,@ZRAM_COMPRESSION_ALGO@,${ZRAM_COMPRESSION_ALGO},g" \
+                -e "s,@ENABLE_KSM@,${ENABLE_KSM},g" \
+                -e "s,@KSM_SCAN_PAGES@,${KSM_SCAN_PAGES},g" \
+                -e "s,@KSM_SLEEP_MS@,${KSM_SLEEP_MS},g" \
             > ${INSTALL}/etc/swap.conf
   fi
 }

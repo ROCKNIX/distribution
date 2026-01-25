@@ -53,6 +53,11 @@ if [[ -z "$ZRAM_ALGO" || "$ZRAM_ALGO" == "@ZRAM_COMPRESSION_ALGO@" ]]; then
     ZRAM_ALGO="zstd"
 fi
 
+# KSM Defaults
+: ${ENABLE_KSM:=0}
+: ${KSM_PAGES:=100}
+: ${KSM_SLEEP:=1000}
+
 show_status() {
     echo "--- ROCKNIX Memory Manager Status ---"
     printf "System RAM:  %s MB\n" "$TOTAL_MEM_MB"
@@ -87,6 +92,13 @@ show_status() {
     done
     echo ""
     echo "[ Advanced Kernel Metrics ]"
+    if [ -f /sys/kernel/mm/ksm/run ]; then
+        local ksm_run=$(cat /sys/kernel/mm/ksm/run)
+        local shared=$(( $(cat /sys/kernel/mm/ksm/pages_sharing) * 4 / 1024 ))
+        local sharing=$(( $(cat /sys/kernel/mm/ksm/pages_shared) * 4 / 1024 ))
+        printf "  KSM Status:     %s (Merged: %s MB | Saved: %s MB)\n" \
+            "$([ "$ksm_run" = "1" ] && echo "Active" || echo "Inactive")" "$sharing" "$shared"
+    fi
     grep -E "SwapCached|AnonHugePages|Dirty|Writeback" /proc/meminfo | sed 's/^/  /'
     echo ""
     echo "[ Active Sysctl Tuning ]"
@@ -94,6 +106,7 @@ show_status() {
 }
 
 apply_tuning() {
+        setup_ksm
     sysctl -w vm.vfs_cache_pressure=100 >/dev/null
     sysctl -w vm.dirty_ratio=10 >/dev/null
     sysctl -w vm.dirty_background_ratio=5 >/dev/null
@@ -111,6 +124,21 @@ apply_tuning() {
     fi
 }
 
+ 
+setup_ksm() {
+    [[ "$ENABLE_KSM" != "1" ]] && return
+    if [ -f /sys/kernel/mm/ksm/run ]; then
+        echo "$KSM_PAGES" > /sys/kernel/mm/ksm/pages_to_scan
+        # Handle kernel naming variations for sleep timer
+        if [ -f /sys/kernel/mm/ksm/sleep_millisecs ]; then
+             echo "$KSM_SLEEP" > /sys/kernel/mm/ksm/sleep_millisecs
+        elif [ -f /sys/kernel/mm/ksm/sleep_msecs ]; then
+             echo "$KSM_SLEEP" > /sys/kernel/mm/ksm/sleep_msecs
+        fi
+        echo 1 > /sys/kernel/mm/ksm/run
+        logger "Enabled KSM (pages=$KSM_PAGES sleep=$KSM_SLEEP)"
+    fi
+}
 setup_zram() {
     [ "$ZRAM_SIZE_VAL" -le 0 ] && return
 
@@ -159,6 +187,7 @@ case "$1" in
         exec 1> >(logger -s -t $(basename $0)) 2>&1
         [ "${SWAP_ENABLED}" == "no" ] && exit 0
         apply_tuning
+        setup_ksm
         setup_zram
         setup_swapfile
         ;;
