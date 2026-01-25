@@ -35,12 +35,8 @@ case ${DEVICE} in
         PKG_VERSION="6.19-rc5"
         PKG_URL="https://git.kernel.org/torvalds/t/${PKG_NAME}-${PKG_VERSION}.tar.gz"
         ;;
-      RK3566)
+      RK3566|S922X)
         PKG_VERSION="6.18.7"
-        PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
-        ;;
-      S922X)
-        PKG_VERSION="6.18.6"
         PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
         ;;
       H700|RK3399|SM8550|SM8650)
