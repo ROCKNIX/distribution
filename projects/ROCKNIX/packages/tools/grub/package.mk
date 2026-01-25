@@ -74,18 +74,10 @@ makeinstall_target() {
     search_label chain reboot loadenv test gfxterm efi_gop
 
   mkdir -p ${INSTALL}/usr/share/bootloader/boot/grub
-  cp -av ${PKG_DIR}/config/* ${INSTALL}/usr/share/bootloader/boot/grub
+    cp -av ${PKG_DIR}/config/* ${INSTALL}/usr/share/bootloader/boot/grub
 
-  case ${DEVICE} in
-    SM8250)
-      mkdir -p ${INSTALL}/usr/share/bootloader/EFI/BOOT
-      cp -av bootaa64.efi ${INSTALL}/usr/share/bootloader/EFI/BOOT
-      ;;
-    *) # ROCKNIX ABL
-      mkdir -p ${INSTALL}/usr/share/bootloader/EFI/ROCKNIX
-      cp -av bootaa64.efi ${INSTALL}/usr/share/bootloader/EFI/ROCKNIX
-      ;;
-  esac
+  mkdir -p ${INSTALL}/usr/share/bootloader/EFI/BOOT
+    cp -av bootaa64.efi ${INSTALL}/usr/share/bootloader/EFI/BOOT
 
   # Create grub configuration
   generate_grub_cfg_body > "${INSTALL}/usr/share/bootloader/boot/grub/grub.cfg"

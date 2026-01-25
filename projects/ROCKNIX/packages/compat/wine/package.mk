@@ -2,19 +2,10 @@
 # Copyright (C) 2024-present JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="wine"
-PKG_VERSION="10.19"
+PKG_VERSION="11.0"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/Kron4ek/Wine-Builds"
-
-case ${DEVICE} in
-  SM8650)
-    PKG_URL="${PKG_SITE}/releases/download/${PKG_VERSION}/wine-${PKG_VERSION}-staging-tkg-arm64-wow64.tar.xz"
-    ;;
-  *)
-    # Use the amd64 release as it supports running both 32-bit and 64-bit windows apps
-    PKG_URL="${PKG_SITE}/releases/download/${PKG_VERSION}/wine-${PKG_VERSION}-staging-tkg-amd64.tar.xz"
-    ;;
-esac
+PKG_URL="${PKG_SITE}/releases/download/${PKG_VERSION}/wine-${PKG_VERSION}-amd64.tar.xz"
 
 PKG_DEPENDS_TARGET="toolchain libXcomposite libXdmcp cups"
 PKG_LONGDESC="Wine is a compatibility layer capable of running Windows applications"

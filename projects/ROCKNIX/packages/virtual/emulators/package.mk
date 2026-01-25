@@ -574,18 +574,25 @@ makeinstall_target() {
       ;;
   esac
 
-  ### Nintendo Wii
+  ### Nintendo Wii/ware
   case ${DEVICE} in
     RK3399|SDM845|SM8250|SM8550|SM8650)
       add_emu_core wii dolphin dolphin-qt-wii true
+      add_emu_core wiiware dolphin dolphin-qt-wii true
       add_emu_core wii dolphin dolphin-sa-wii false
+      add_emu_core wiiware dolphin dolphin-sa-wii false
       add_emu_core wii retroarch dolphin false
+      add_emu_core wiiware retroarch dolphin false
       add_es_system wii
+      add_es_system wiiware
       ;;
     RK3566|RK3588|S922X)
       add_emu_core wii dolphin dolphin-sa-wii true
+      add_emu_core wiiware dolphin dolphin-sa-wii true
       add_emu_core wii retroarch dolphin false
+      add_emu_core wiiware retroarch dolphin false
       add_es_system wii
+      add_es_system wiiware
       ;;
   esac
 
@@ -828,6 +835,18 @@ makeinstall_target() {
     ;;
   esac
   add_es_system nds
+
+  ### Nintendo DSiWare
+  case ${DEVICE} in
+    H700|RK3326)
+      add_emu_core ndsiware retroarch melondsds true
+    ;;
+    *)
+      add_emu_core ndsiware melonds melonds-sa true
+      add_emu_core ndsiware retroarch melondsds false
+    ;;
+  esac
+  add_es_system ndsiware
 
   ### Nintendo NES
   add_emu_core nes retroarch nestopia true
