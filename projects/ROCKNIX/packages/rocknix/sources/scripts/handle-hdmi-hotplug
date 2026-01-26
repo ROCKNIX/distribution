@@ -7,13 +7,21 @@ if ! pgrep -x emulationstation > /dev/null; then
   exit 0
 fi
 
-HDMI_OUTPUT=$(wlr-randr | awk '/^HDMI-A-[0-9]/ {print $1}')
+HDMI_OUTPUT=$(wlr-randr | awk '/^(HDMI-A|DP|DisplayPort)-[0-9]*/ {print $1}')
 DSI_OUTPUT=$(wlr-randr | awk '/^DSI-[0-9]/ {print $1}')
 
 HDMI_STATE=$(cat /run/hdmi-status.last 2>/dev/null)
 
 case "${HDMI_STATE}" in
   connected)
+
+    # Stop USB gadget only if using USB-C (DisplayPort) video, as it conflicts with USB data lanes on some SoCs (e.g. RK3588/SM8250)
+    # Standard HDMI ports are unaffected.
+    if cat /sys/class/drm/card*-DP*/status /sys/class/drm/card*-DisplayPort*/status 2>/dev/null | grep -q "^connected"; then
+        if systemctl is-active --quiet usbgadget; then
+             systemctl stop usbgadget
+        fi
+    fi
     if [ -n "${HDMI_OUTPUT}" ]; then
       wlr-randr --output "${HDMI_OUTPUT}" --preferred --on
     fi
@@ -23,6 +31,14 @@ case "${HDMI_STATE}" in
     killall emulationstation
     ;;
   disconnected)
+
+    # Stop USB gadget only if using USB-C (DisplayPort) video, as it conflicts with USB data lanes on some SoCs (e.g. RK3588/SM8250)
+    # Standard HDMI ports are unaffected.
+    if cat /sys/class/drm/card*-DP*/status /sys/class/drm/card*-DisplayPort*/status 2>/dev/null | grep -q "^connected"; then
+        if systemctl is-active --quiet usbgadget; then
+             systemctl stop usbgadget
+        fi
+    fi
     if [ -n "${DSI_OUTPUT}" ]; then
       wlr-randr --output "${DSI_OUTPUT}" --preferred --on
     fi
