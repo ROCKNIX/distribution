@@ -2,9 +2,9 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="azahar-sa"
-PKG_VERSION="517dccaff646537576cf68d7c046c8d8dfca0f8f" # tag AZAHAR_PLUS_2123_2_A
+PKG_VERSION="3703dcec3e8943bea5bc73c08ba8f502ff506146" # tag 2124.2
 PKG_LICENSE="GPL"
-PKG_SITE="https://github.com/AzaharPlus/AzaharPlus"
+PKG_SITE="https://github.com/azahar-emu/azahar"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain ffmpeg mesa SDL2 boost zlib libusb boost zstd control-gen spirv-tools qt6"
 PKG_LONGDESC="Azahar - Nintendo 3DS emulator"
@@ -29,15 +29,16 @@ fi
 
 TARGET_CXXFLAGS+=-fpch-preprocess
 
-PKG_CMAKE_OPTS_TARGET+=" -DENABLE_QT_TRANSLATION=OFF \
-                         -DENABLE_QT=ON \
-                         -DENABLE_SDL2=ON \
-                         -DENABLE_SDL2_FRONTEND=OFF \
-                         -DENABLE_TESTS=OFF \
-                         -DENABLE_ROOM=OFF \
-                         -DUSE_DISCORD_PRESENCE=OFF \
-                         -DENABLE_OPENGL=ON \
-                         -DENABLE_VULKAN=ON"
+PKG_CMAKE_OPTS_TARGET+="-DENABLE_OPENGL=ON \
+                        -DENABLE_QT_TRANSLATION=OFF \
+                        -DENABLE_QT=ON \
+                        -DENABLE_ROOM=OFF \
+                        -DENABLE_SDL2_FRONTEND=OFF \
+                        -DENABLE_SDL2=ON \
+                        -DENABLE_TESTS=OFF \
+                        -DENABLE_VULKAN=ON \
+                        -DUSE_DISCORD_PRESENCE=OFF \
+                        -DUSE_SYSTEM_SDL2=ON"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin
