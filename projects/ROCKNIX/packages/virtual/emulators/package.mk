@@ -842,8 +842,8 @@ makeinstall_target() {
       add_emu_core ndsiware retroarch melondsds true
     ;;
     *)
-      add_emu_core ndsiware melonds melonds-sa true
-      add_emu_core ndsiware retroarch melondsds false
+      add_emu_core ndsiware retroarch melondsds true
+      add_emu_core ndsiware melonds melonds-sa false
     ;;
   esac
   add_es_system ndsiware
