@@ -37,6 +37,8 @@ fi
 #Emulation Station Features
 GAME=$(echo "${1}" | sed "s#^/.*/##")
 PLATFORM=$(echo "${2}"| sed "s#^/.*/##")
+CONTYPE=$(get_setting console_type "${PLATFORM}" "${GAME}")
+DBOOT=$(get_setting direct_boot "${PLATFORM}" "${GAME}")
 GRENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
 IRES=$(get_setting internal_resolution "${PLATFORM}" "${GAME}")
 SORIENTATION=$(get_setting screen_orientation "${PLATFORM}" "${GAME}")
@@ -50,6 +52,28 @@ CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
 unset EMUPERF
 [ "${CORES}" = "little" ] && EMUPERF="${SLOW_CORES}"
 [ "${CORES}" = "big" ] && EMUPERF="${FAST_CORES}"
+
+#Console Type
+if [ "$PLATFORM" = "ndsiware" ]
+then
+    sed -i '/^ConsoleType=/c\ConsoleType=1' /storage/.config/melonDS/melonDS.ini
+else if [ "$CONTYPE" > "0" ]
+then
+    sed -i '/^ConsoleType=/c\ConsoleType=1' /storage/.config/melonDS/melonDS.ini
+else
+    sed -i '/^ConsoleType=/c\ConsoleType=0' /storage/.config/melonDS/melonDS.ini
+fi
+
+#Direct Boot
+if [ "$PLATFORM" = "ndsiware" ]
+then
+    sed -i '/^ConsoleType=/c\DirectBoot=0' /storage/.config/melonDS/melonDS.ini
+else if [ "$DBOOT" > "0" ]
+then
+    sed -i '/^ConsoleType=/c\DirectBoot=1' /storage/.config/melonDS/melonDS.ini
+else
+    sed -i '/^ConsoleType=/c\DirectBoot=0' /storage/.config/melonDS/melonDS.ini
+fi
 
 #Graphics Backend
 if [ "$GRENDERER" > "0" ]; then
