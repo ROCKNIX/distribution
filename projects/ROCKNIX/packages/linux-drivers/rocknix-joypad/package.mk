@@ -11,7 +11,7 @@ PKG_TOOLCHAIN="manual"
 PKG_IS_KERNEL_PKG="yes"
 
 # Temp fix for Gameforce ACE (RK3588) - axis / trigger mappings broken by https://github.com/ROCKNIX/rocknix-joypad/pull/12
-[[ ${DEVICE} == "RK3588" ]] && PKG_VERSION="d95d0372a907607d6795e02e5bba24856f4d412c"
+[[ ${DEVICE} == "RK3588" ]] && PKG_VERSION="15b5a29b6b24c0fc59dd6f61602dacf34cbb7eae"
 
 pre_make_target() {
   unset LDFLAGS
