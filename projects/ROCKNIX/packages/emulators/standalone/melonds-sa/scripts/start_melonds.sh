@@ -67,12 +67,12 @@ fi
 #Direct Boot
 if [ "$PLATFORM" = "ndsiware" ]
 then
-    sed -i '/^ConsoleType=/c\DirectBoot=0' /storage/.config/melonDS/melonDS.ini
+    sed -i '/^DirectBoot=/c\DirectBoot=0' /storage/.config/melonDS/melonDS.ini
 else if [ "$DBOOT" > "0" ]
 then
-    sed -i '/^ConsoleType=/c\DirectBoot=1' /storage/.config/melonDS/melonDS.ini
+    sed -i '/^DirectBoot=/c\DirectBoot=1' /storage/.config/melonDS/melonDS.ini
 else
-    sed -i '/^ConsoleType=/c\DirectBoot=0' /storage/.config/melonDS/melonDS.ini
+    sed -i '/^DirectBoot=/c\DirectBoot=0' /storage/.config/melonDS/melonDS.ini
 fi
 
 #Graphics Backend
