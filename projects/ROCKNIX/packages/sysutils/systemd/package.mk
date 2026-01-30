@@ -7,7 +7,7 @@ PKG_VERSION="255.8"
 PKG_LICENSE="LGPL2.1+"
 PKG_SITE="http://www.freedesktop.org/wiki/Software/systemd"
 PKG_URL="https://github.com/systemd/systemd-stable/archive/v${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain libcap kmod util-linux libidn2 Python3:host Jinja2:host pcre2 zstd"
+PKG_DEPENDS_TARGET="toolchain libcap kmod util-linux libidn2 Python3:host Jinja2:host pcre2 zstd libgcrypt openssl"
 PKG_LONGDESC="A system and session manager for Linux, compatible with SysV and LSB init scripts."
 
 PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
@@ -35,9 +35,9 @@ PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Dlibidn2=true \
                        -Dlibiptc=false \
                        -Dqrencode=false \
-                       -Dgcrypt=false \
+                       -Dgcrypt=true \
                        -Dgnutls=false \
-                       -Dopenssl=false \
+                       -Dopenssl=true \
                        -Dp11kit=false \
                        -Delfutils=false \
                        -Dzlib=false \
@@ -57,7 +57,7 @@ PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Dbinfmt=true \
                        -Drepart=false \
                        -Dcoredump=false \
-                       -Dresolve=false \
+                       -Dresolve=true \
                        -Dlogind=true \
                        -Dhostnamed=true \
                        -Dlocaled=false \
@@ -86,7 +86,7 @@ PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Didn=false \
                        -Dnss-myhostname=false \
                        -Dnss-mymachines=false \
-                       -Dnss-resolve=false \
+                       -Dnss-resolve=true \
                        -Dnss-systemd=false \
                        -Dman=false \
                        -Dhtml=false \
@@ -214,6 +214,11 @@ post_makeinstall_target() {
   sed -e "s,^.*HandleLidSwitch=.*$,HandleLidSwitch=suspend,g" -i ${INSTALL}/etc/systemd/logind.conf
   sed -e "s,^.*HandlePowerKey=.*$,HandlePowerKey=suspend,g" -i ${INSTALL}/etc/systemd/logind.conf
 
+  # SYSTEMD-RESOLVED CONFIGURATION
+  sed -i 's/^#MulticastDNS=yes/MulticastDNS=no/' ${INSTALL}/etc/systemd/resolved.conf || echo "MulticastDNS=no" >> ${INSTALL}/etc/systemd/resolved.conf
+  # FALLBACK DNS (Mixed Google/Cloudflare Anycast)
+  sed -i 's/^#FallbackDNS=.*/FallbackDNS=8.8.8.8 1.1.1.1 2001:4860:4860::8888 2606:4700:4700::1111/' ${INSTALL}/etc/systemd/resolved.conf || echo "FallbackDNS=8.8.8.8 1.1.1.1 2001:4860:4860::8888 2606:4700:4700::1111" >> ${INSTALL}/etc/systemd/resolved.conf
+
   # replace systemd-machine-id-setup with ours
   safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-machine-id-commit.service
   safe_remove ${INSTALL}/usr/lib/systemd/system/*.target.wants/systemd-machine-id-commit.service
@@ -249,6 +254,7 @@ post_makeinstall_target() {
   safe_remove ${INSTALL}/etc/modules-load.d
   ln -sf /storage/.config/modules-load.d ${INSTALL}/etc/modules-load.d
   ln -sf /storage/.config/logind.conf.d ${INSTALL}/etc/systemd/logind.conf.d
+  ln -sf /storage/.config/resolved.conf.d ${INSTALL}/etc/systemd/resolved.conf.d
   ln -sf /storage/.config/sleep.conf.d ${INSTALL}/etc/systemd/sleep.conf.d
   ln -sf /storage/.config/timesyncd.conf.d ${INSTALL}/etc/systemd/timesyncd.conf.d
   safe_remove ${INSTALL}/etc/sysctl.d
@@ -276,6 +282,9 @@ post_install() {
   add_group systemd-oom 194
   add_user systemd-oom x 194 194 "systemd Userspace OOM Killer" "/" "/bin/false"
 
+  add_group systemd-resolve 192
+  add_user systemd-resolve x 192 192 "systemd-resolve" "/" "/bin/false"
+
   add_group adm 4
   add_group tty 5
   add_group disk 6
@@ -293,6 +302,9 @@ post_install() {
   add_group input 104
   add_group render 105
   add_group sgx 106
+  add_group users 100
+  add_group nogroup 65534
+  add_user nobody x 65534 65534 "nobody" "/" "/bin/false"
 
   enable_service machine-id.service
   enable_service debugconfig.service
@@ -301,5 +313,6 @@ post_install() {
   enable_service network-base.service
   enable_service systemd-timesyncd.service
   enable_service systemd-timesyncd-setup.service
+  enable_service systemd-resolved.service
   enable_service debug-shell.service
 }

@@ -54,25 +54,27 @@ unset EMUPERF
 [ "${CORES}" = "big" ] && EMUPERF="${FAST_CORES}"
 
 #Console Type
-if [ "$PLATFORM" = "ndsiware" ]
-then
-    sed -i '/^ConsoleType=/c\ConsoleType=1' /storage/.config/melonDS/melonDS.ini
-else if [ "$CONTYPE" > "0" ]
-then
+if [ "$PLATFORM" = "ndsiware" ]; then
     sed -i '/^ConsoleType=/c\ConsoleType=1' /storage/.config/melonDS/melonDS.ini
 else
-    sed -i '/^ConsoleType=/c\ConsoleType=0' /storage/.config/melonDS/melonDS.ini
+    if [ "$CONTYPE" = "1" ]; then
+        sed -i '/^ConsoleType=/c\ConsoleType=1' /storage/.config/melonDS/melonDS.ini
+    else
+        sed -i '/^ConsoleType=/c\ConsoleType=0' /storage/.config/melonDS/melonDS.ini
+    fi
 fi
 
 #Direct Boot
-if [ "$PLATFORM" = "ndsiware" ]
-then
+if [ "$PLATFORM" = "ndsiware" ]; then
     sed -i '/^DirectBoot=/c\DirectBoot=0' /storage/.config/melonDS/melonDS.ini
-else if [ "$DBOOT" > "0" ]
-then
-    sed -i '/^DirectBoot=/c\DirectBoot=1' /storage/.config/melonDS/melonDS.ini
 else
-    sed -i '/^DirectBoot=/c\DirectBoot=0' /storage/.config/melonDS/melonDS.ini
+    if [ "$DBOOT" = "1" ]; then
+        sed -i '/^DirectBoot=/c\DirectBoot=1' /storage/.config/melonDS/melonDS.ini
+        sed -i '/^ExternalBIOSEnable=/c\ExternalBIOSEnable=0' /storage/.config/melonDS/melonDS.ini
+    else
+        sed -i '/^DirectBoot=/c\DirectBoot=0' /storage/.config/melonDS/melonDS.ini
+        sed -i '/^ExternalBIOSEnable=/c\ExternalBIOSEnable=1' /storage/.config/melonDS/melonDS.ini
+    fi
 fi
 
 #Graphics Backend
