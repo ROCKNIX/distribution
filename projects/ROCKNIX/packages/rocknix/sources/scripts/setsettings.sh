@@ -990,6 +990,41 @@ function set_dreamcastopts() {
     fi
 }
 
+function set_melondsdsopts() {
+    log "Set up melonDS DS..."
+    if [ "${CORE}" = "melondsds" ]
+    then
+        local MELONDSDSDIR="${RETROARCH_PATH}/config/melonDS DS"
+        if [ ! -d "${MELONDSDSDIR}" ]
+        then
+            mkdir -p "${MELONDSDSDIR}"
+        fi
+        
+        if [ ! -f "${MELONDSDSDIR}/melonDS DS.opt" ]
+        then
+            cat <<EOF >"${MELONDSDSDIR}/melonDS DS.opt"
+melonds_boot_mode = "direct"
+melonds_console_mode = "ds"
+melonds_show_cursor = "timeout"
+melonds_touch_mode = "auto"
+EOF
+        fi
+
+        if [ "${PLATFORM}" = "ndsiware" ]
+        then
+            sed -i '/melonds_console_mode = /c\melonds_console_mode = "dsi"' "${MELONDSDSDIR}/melonDS DS.opt"
+        else
+            sed -i '/melonds_console_mode = /c\melonds_console_mode = "ds"' "${MELONDSDSDIR}/melonDS DS.opt"
+        fi
+
+        if [ "${DEVICE_HAS_TOUCHSCREEN}" = "true" ]
+        then
+            sed -i '/melonds_show_cursor = /c\melonds_show_cursor = "disabled"' "${MELONDSDSDIR}/melonDS DS.opt"
+            sed -i '/melonds_touch_mode = /c\melonds_touch_mode = "touch"' "${MELONDSDSDIR}/melonDS DS.opt"
+        fi
+    fi
+}
+
 function set_atari() {
     log "Set up Atari (FIXME)..."
     if [ "${CORE}" = "atari800" ]
@@ -1252,6 +1287,7 @@ set_n64opts &
 set_saturnopts &
 set_snesopts &
 set_dreamcastopts &
+set_melondsdsopts &
 
 ### Sed operations are expensive, so they are staged and executed as
 ### a single process when all forks complete.

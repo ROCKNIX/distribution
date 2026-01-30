@@ -10,9 +10,6 @@ PKG_LONGDESC="rocknix-joypad: ROCKNIX joypad driver"
 PKG_TOOLCHAIN="manual"
 PKG_IS_KERNEL_PKG="yes"
 
-# Temp fix for Gameforce ACE (RK3588) - axis / trigger mappings broken by https://github.com/ROCKNIX/rocknix-joypad/pull/12
-[[ ${DEVICE} == "RK3588" ]] && PKG_VERSION="d95d0372a907607d6795e02e5bba24856f4d412c"
-
 pre_make_target() {
   unset LDFLAGS
 }
