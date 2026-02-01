@@ -4,6 +4,9 @@
 #
 # This script will update the ABL on the internal eMMC/UFS.
 
+[ -z "$SYSTEM_ROOT" ] && SYSTEM_ROOT=""
+[ -z "$BOOT_ROOT" ] && BOOT_ROOT="/flash"
+
 . $SYSTEM_ROOT/etc/os-release
 
 case "$HW_DEVICE" in
@@ -34,6 +37,45 @@ SS="$($SYSTEM_ROOT/usr/sbin/blockdev --getss "${ABL_A}")"
 if [ -z "${SS}" ]; then
   echo "Error: failed to get sector size"
   exit 1
+fi
+
+# ---- ABL installation check ----
+if [ ! -f "$BOOT_ROOT/rocknix-abl" ]; then
+  MSG="
+****************************************************************
+ROCKNIX requires a custom bootloader on internal storage.
+Do you want to install this?
+
+Volume UP   : YES
+Volume DOWN : NO (May prevent booting)
+****************************************************************"
+
+  echo "$MSG"
+
+  CHOICE=$(
+    (
+      for dev in /dev/input/event*; do
+        $SYSTEM_ROOT/usr/bin/evtest "$dev" 2>/dev/null | while read -r line; do
+          if echo "$line" | grep -q "KEY_VOLUMEUP.*value 1"; then
+            echo "YES"
+            kill -TERM 0
+          elif echo "$line" | grep -q "KEY_VOLUMEDOWN.*value 1"; then
+            echo "NO"
+            kill -TERM 0
+          fi
+        done &
+      done
+      wait
+    ) 2>/dev/null | head -n 1
+  )
+
+  if [ "$CHOICE" = "YES" ]; then
+    echo "User confirmed. Proceeding with ABL installation..."
+    touch "$BOOT_ROOT/rocknix-abl"
+  else
+    echo "User declined. Skipping ABL installation..."
+    exit 0
+  fi
 fi
 
 # ---- Flash ----
