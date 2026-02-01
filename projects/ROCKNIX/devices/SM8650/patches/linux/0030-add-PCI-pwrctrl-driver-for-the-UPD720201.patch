@@ -1,0 +1,148 @@
+From 33a257b94292498ecdadf65f949b519c03b4c92f Mon Sep 17 00:00:00 2001
+From: Neil Armstrong <neil.armstrong@linaro.org>
+Date: Mon, 26 Jan 2026 10:27:54 +0100
+Subject: [PATCH] pci: pwrctrl: add PCI pwrctrl driver for the
+ UPD720201/UPD720202 USB 3.0 xHCI Host Controller
+
+Add support fo the Renesas UPD720201/UPD720202 USB 3.0 xHCI Host Controller
+power control which connects over PCIe and requires specific power supplies
+to start up.
+
+Signed-off-by: Neil Armstrong <neil.armstrong@linaro.org>
+---
+ drivers/pci/pwrctrl/Kconfig                 | 10 +++
+ drivers/pci/pwrctrl/Makefile                |  2 +
+ drivers/pci/pwrctrl/pci-pwrctrl-upd720201.c | 88 +++++++++++++++++++++
+ 3 files changed, 100 insertions(+)
+ create mode 100644 drivers/pci/pwrctrl/pci-pwrctrl-upd720201.c
+
+diff --git a/drivers/pci/pwrctrl/Kconfig b/drivers/pci/pwrctrl/Kconfig
+index e0f999f299bb..5a94e60d0d3e 100644
+--- a/drivers/pci/pwrctrl/Kconfig
++++ b/drivers/pci/pwrctrl/Kconfig
+@@ -11,6 +11,16 @@ config PCI_PWRCTRL_PWRSEQ
+ 	select POWER_SEQUENCING
+ 	select PCI_PWRCTRL
+ 
++config PCI_PWRCTRL_UPD720201
++	tristate "PCI Power Control driver for the UPD720201 USB3 Host Controller"
++	select PCI_PWRCTRL
++	help
++	  Say Y here to enable the PCI Power Control driver of the UPD720201
++	  USB3 Host Controller.
++
++	  The voltage regulators powering the rails of the PCI slots
++	  are expected to be defined in the devicetree node of the PCI device.
++
+ config PCI_PWRCTRL_SLOT
+ 	tristate "PCI Power Control driver for PCI slots"
+ 	select PCI_PWRCTRL
+diff --git a/drivers/pci/pwrctrl/Makefile b/drivers/pci/pwrctrl/Makefile
+index 13b02282106c..a99f85de8a3d 100644
+--- a/drivers/pci/pwrctrl/Makefile
++++ b/drivers/pci/pwrctrl/Makefile
+@@ -5,6 +5,8 @@ pci-pwrctrl-core-y			:= core.o
+ 
+ obj-$(CONFIG_PCI_PWRCTRL_PWRSEQ)	+= pci-pwrctrl-pwrseq.o
+ 
++obj-$(CONFIG_PCI_PWRCTRL_UPD720201)	+= pci-pwrctrl-upd720201.o
++
+ obj-$(CONFIG_PCI_PWRCTRL_SLOT)		+= pci-pwrctrl-slot.o
+ pci-pwrctrl-slot-y			:= slot.o
+ 
+diff --git a/drivers/pci/pwrctrl/pci-pwrctrl-upd720201.c b/drivers/pci/pwrctrl/pci-pwrctrl-upd720201.c
+new file mode 100644
+index 000000000000..db96bbb69c21
+--- /dev/null
++++ b/drivers/pci/pwrctrl/pci-pwrctrl-upd720201.c
+@@ -0,0 +1,88 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Based on upd720201.c:
++ * Copyright (C) 2024 Linaro Ltd.
++ * Author: Manivannan Sadhasivam <manivannan.sadhasivam@linaro.org>
++ */
++
++#include <linux/device.h>
++#include <linux/mod_devicetable.h>
++#include <linux/module.h>
++#include <linux/pci-pwrctrl.h>
++#include <linux/platform_device.h>
++#include <linux/regulator/consumer.h>
++#include <linux/slab.h>
++
++struct pci_pwrctrl_upd720201_data {
++	struct pci_pwrctrl ctx;
++	struct regulator_bulk_data *supplies;
++	int num_supplies;
++};
++
++static void devm_pci_pwrctrl_upd720201_power_off(void *data)
++{
++	struct pci_pwrctrl_upd720201_data *upd720201 = data;
++
++	regulator_bulk_disable(upd720201->num_supplies, upd720201->supplies);
++	regulator_bulk_free(upd720201->num_supplies, upd720201->supplies);
++}
++
++static int pci_pwrctrl_upd720201_probe(struct platform_device *pdev)
++{
++	struct pci_pwrctrl_upd720201_data *upd720201;
++	struct device *dev = &pdev->dev;
++	int ret;
++
++	upd720201 = devm_kzalloc(dev, sizeof(*upd720201), GFP_KERNEL);
++	if (!upd720201)
++		return -ENOMEM;
++
++	ret = of_regulator_bulk_get_all(dev, dev_of_node(dev),
++					&upd720201->supplies);
++	if (ret < 0) {
++		dev_err_probe(dev, ret, "Failed to get upd720201 regulators\n");
++		return ret;
++	}
++
++	upd720201->num_supplies = ret;
++	ret = regulator_bulk_enable(upd720201->num_supplies, upd720201->supplies);
++	if (ret < 0) {
++		dev_err_probe(dev, ret, "Failed to enable upd720201 regulators\n");
++		regulator_bulk_free(upd720201->num_supplies, upd720201->supplies);
++		return ret;
++	}
++
++	ret = devm_add_action_or_reset(dev, devm_pci_pwrctrl_upd720201_power_off,
++				       upd720201);
++	if (ret)
++		return ret;
++
++	pci_pwrctrl_init(&upd720201->ctx, dev);
++
++	ret = devm_pci_pwrctrl_device_set_ready(dev, &upd720201->ctx);
++	if (ret)
++		return dev_err_probe(dev, ret, "Failed to register pwrctrl driver\n");
++
++	return 0;
++}
++
++static const struct of_device_id pci_pwrctrl_upd720201_of_match[] = {
++	{
++		.compatible = "pci1912,0014",
++	},
++	{ }
++};
++MODULE_DEVICE_TABLE(of, pci_pwrctrl_upd720201_of_match);
++
++static struct platform_driver pci_pwrctrl_upd720201_driver = {
++	.driver = {
++		.name = "pci-pwrctrl-upd720201",
++		.of_match_table = pci_pwrctrl_upd720201_of_match,
++	},
++	.probe = pci_pwrctrl_upd720201_probe,
++};
++module_platform_driver(pci_pwrctrl_upd720201_driver);
++
++MODULE_AUTHOR("Neil Armstrong <neil.armstrong@linaro.org>");
++MODULE_DESCRIPTION("PCI Power Control driver for UPD720201 USB3 Host Controller");
++MODULE_LICENSE("GPL");
+-- 
+GitLab
