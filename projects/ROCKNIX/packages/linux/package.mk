@@ -35,16 +35,8 @@ case ${DEVICE} in
         PKG_VERSION="6.19-rc5"
         PKG_URL="https://git.kernel.org/torvalds/t/${PKG_NAME}-${PKG_VERSION}.tar.gz"
         ;;
-      S922X)
+      S922X|H700|RK3399|RK3566|SM8550|SM8650)
         PKG_VERSION="6.18.8"
-        PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
-        ;;
-      RK3566)
-        PKG_VERSION="6.18.7"
-        PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
-        ;;
-      H700|RK3399|SM8550|SM8650)
-        PKG_VERSION="6.18.4"
         PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
         ;;
       *)
@@ -154,16 +146,6 @@ pre_make_target() {
   # disable swap support if not enabled
   if [ ! "${SWAP_SUPPORT}" = yes ]; then
     ${PKG_BUILD}/scripts/config --disable CONFIG_SWAP
-  fi
-
-  # enable / disable zram support (zstd compression) as required
-  if [ "${SWAP_TYPE}" = zram ]; then
-    ${PKG_BUILD}/scripts/config --module CONFIG_ZRAM
-    ${PKG_BUILD}/scripts/config --enable CONFIG_ZRAM_BACKEND_ZSTD
-    ${PKG_BUILD}/scripts/config --enable CONFIG_ZRAM_DEF_COMP_ZSTD
-    ${PKG_BUILD}/scripts/config --set-val CONFIG_ZRAM_DEF_COMP "zstd"
-  else
-    ${PKG_BUILD}/scripts/config --disable CONFIG_ZRAM
   fi
 
   # disable nfs support if not enabled

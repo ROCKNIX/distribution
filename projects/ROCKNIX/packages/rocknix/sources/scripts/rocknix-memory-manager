@@ -1,0 +1,562 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026-present Joel Wirāmu Pauling <aenertia@aenertia.net>
+# Copyright (C) 2026-present ROCKNIX (https://rocknix.org)
+
+# ROCKNIX Memory Manager
+# Logic: 0/Empty = Off, "Auto" = Smart Calculation, "Resume" = Hibernation Sizing.
+
+# --- 1. CONFIGURATION CASCADE ---
+
+# A. Internal Safe Defaults (Hardcoded Fallback)
+DEFAULT_ZRAM_SIZE="0"
+DEFAULT_ZRAM_ALGO="zstd"
+DEFAULT_SWAP_FILE_SIZE="0"
+DEFAULT_SWAP_PRIORITY="auto"
+DEFAULT_VM_WATERMARK_FACTOR="auto"
+DEFAULT_VM_COMPACTION="auto"
+DEFAULT_KSM_ENABLE="auto"
+
+# B. Load System Defaults (Distro Config)
+if [ -f /etc/swap.conf ]; then
+    . /etc/swap.conf
+fi
+
+# C. Load User Overrides (Partial Config Support)
+if [ -f /storage/.config/swap.conf ]; then
+    . /storage/.config/swap.conf
+fi
+
+# D. Variable Finalization
+ZRAM_SIZE="${ZRAM_SIZE:-$DEFAULT_ZRAM_SIZE}"
+ZRAM_ALGO="${ZRAM_ALGO:-$DEFAULT_ZRAM_ALGO}"
+SWAP_FILE_SIZE="${SWAP_FILE_SIZE:-$DEFAULT_SWAP_FILE_SIZE}"
+SWAP_PRIORITY="${SWAP_PRIORITY:-$DEFAULT_SWAP_PRIORITY}"
+VM_WATERMARK_FACTOR="${VM_WATERMARK_FACTOR:-$DEFAULT_VM_WATERMARK_FACTOR}"
+VM_COMPACTION="${VM_COMPACTION:-$DEFAULT_VM_COMPACTION}"
+KSM_ENABLE="${KSM_ENABLE:-$DEFAULT_KSM_ENABLE}"
+
+# --- 2. ENVIRONMENT & TIER DETECTION ---
+
+# Global RAM calc (MB)
+TOTAL_MEM_KB=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
+TOTAL_MEM_MB=$((TOTAL_MEM_KB / 1024))
+
+# RAM Tiers
+IS_LOW_RAM=false
+IS_MID_RAM=false
+IS_HIGH_RAM=false
+
+if [ "$TOTAL_MEM_MB" -lt 2048 ]; then
+    IS_LOW_RAM=true
+elif [ "$TOTAL_MEM_MB" -le 8192 ]; then
+    IS_MID_RAM=true
+else
+    IS_HIGH_RAM=true
+fi
+
+# SoC Capability Tiers
+# Detect High Performance SoCs that can handle aggressive background ops (KSM/Compaction)
+# even with lower RAM.
+IS_HIGH_PERF_SOC=false
+
+if [ -f /proc/device-tree/compatible ]; then
+    if grep -qE "rk3588|sm8|s922x|g12b|rk3399" /proc/device-tree/compatible; then
+        IS_HIGH_PERF_SOC=true
+    fi
+fi
+
+# Basic mount check
+if ! mountpoint -q /storage; then
+    if [[ "$*" != *"--help"* ]]; then
+        logger -t memory-manager "Error: /storage is not mounted."
+        exit 1
+    fi
+fi
+
+# --- 3. HELPER FUNCTIONS ---
+
+update_config() {
+    local key="$1"
+    local val="$2"
+    local file="/storage/.config/swap.conf"
+    
+    if [ ! -d "$(dirname "$file")" ]; then mkdir -p "$(dirname "$file")"; fi
+    if [ ! -f "$file" ]; then touch "$file"; fi
+    
+    if grep -q "^${key}=" "$file"; then
+        sed -i "s|^${key}=.*|${key}=\"${val}\"|" "$file"
+    else
+        echo "${key}=\"${val}\"" >> "$file"
+    fi
+    eval "${key}=\"${val}\""
+}
+
+show_status_json() {
+    # Generate machine-readable status
+    local ksm_status="false"
+    local ksm_saved=0
+    if [ -f /sys/kernel/mm/ksm/run ] && [ "$(cat /sys/kernel/mm/ksm/run)" -eq 1 ]; then
+        ksm_status="true"
+        local sharing=$(cat /sys/kernel/mm/ksm/pages_sharing 2>/dev/null || echo 0)
+        ksm_saved=$(( (sharing * 4096) / 1024 / 1024 ))
+    fi
+
+    local zram_enabled="false"
+    local zram_compr=0
+    if [ -d /sys/block/zram0 ]; then
+        zram_enabled="true"
+        local stat=($(cat /sys/block/zram0/mm_stat 2>/dev/null))
+        if [ ${#stat[@]} -ge 3 ]; then
+            zram_compr=$((stat[1] / 1024 / 1024))
+        fi
+    fi
+
+    local ram_tier="high"
+    [ "$IS_LOW_RAM" = true ] && ram_tier="low"
+    [ "$IS_MID_RAM" = true ] && ram_tier="mid"
+
+    echo "{"
+    echo "  \"ram_total_mb\": $TOTAL_MEM_MB,"
+    echo "  \"tier_ram\": \"$ram_tier\","
+    echo "  \"tier_soc\": \"$([ "$IS_HIGH_PERF_SOC" = true ] && echo "high" || echo "standard")\","
+    echo "  \"zram\": {"
+    echo "    \"enabled\": $zram_enabled,"
+    echo "    \"size_mb\": $ZRAM_SIZE_VAL,"
+    echo "    \"algo\": \"$ZRAM_ALGO\","
+    echo "    \"compressed_size_mb\": $zram_compr"
+    echo "  },"
+    echo "  \"swap\": {"
+    echo "    \"size_mb\": $SWAP_SIZE_VAL,"
+    echo "    \"priority\": \"$SWAP_PRIORITY\""
+    echo "  },"
+    echo "  \"ksm\": {"
+    echo "    \"enabled\": $ksm_status,"
+    echo "    \"saved_mb\": $ksm_saved"
+    echo "  }"
+    echo "}"
+}
+
+show_status() {
+    echo "--- ROCKNIX Memory Manager Status ---"
+    printf "System RAM:  %s MB\n" "$TOTAL_MEM_MB"
+    printf "RAM Tier:    %s\n" "$([ "$IS_LOW_RAM" = true ] && echo "Low" || ([ "$IS_MID_RAM" = true ] && echo "Mid" || echo "High"))"
+    printf "SoC Tier:    %s\n" "$([ "$IS_HIGH_PERF_SOC" = true ] && echo "High Performance" || echo "Standard")"
+    printf "ZRAM Config: %s [%s]\n" "$ZRAM_STATUS" "$ZRAM_ALGO"
+    printf "Swap Config: %s [Mode: %s]\n" "$SWAP_STATUS" "$SWAP_PRIORITY"
+    echo ""
+    echo "[ Tier 1: ZRAM Statistics ]"
+    if [ -d /sys/block/zram0 ]; then
+        local stat=($(cat /sys/block/zram0/mm_stat 2>/dev/null))
+        if [ ${#stat[@]} -ge 3 ]; then
+            local orig=$((stat[0] / 1024 / 1024))
+            local compr=$((stat[1] / 1024 / 1024))
+            local total=$((stat[2] / 1024 / 1024))
+            printf "  Original Data:  %s MB\n" "$orig"
+            printf "  Compressed:     %s MB\n" "$compr"
+            printf "  Memory Used:    %s MB\n" "$total"
+            [ "$compr" -gt 0 ] && printf "  Ratio:          %.2f:1\n" "$(echo "scale=2; $orig / $compr" | bc)"
+        fi
+        [ -f /sys/block/zram0/comp_algorithm ] && printf "  Algorithms:     %s\n" "$(cat /sys/block/zram0/comp_algorithm)"
+    else
+        echo "  ZRAM device not initialized."
+    fi
+    echo ""
+    echo "[ Tier 2: Physical Swap ]"
+    swapon --show | grep -v "NAME" || echo "  No physical swap active."
+    echo ""
+    echo "[ Memory Subsystem ]"
+    # KSM
+    if [ -f /sys/kernel/mm/ksm/run ]; then
+        local ksm_run=$(cat /sys/kernel/mm/ksm/run)
+        local ksm_status="Stopped"
+        [ "$ksm_run" -eq 1 ] && ksm_status="Running"
+        if [ "$ksm_run" -eq 1 ]; then
+            local sharing=$(cat /sys/kernel/mm/ksm/pages_sharing 2>/dev/null || echo 0)
+            local saved=$(( (sharing * 4096) / 1024 / 1024 ))
+            printf "  KSM Status:     %s (Saved: %s MB)\n" "$ksm_status" "$saved"
+            printf "  KSM Setting:    %s\n" "$KSM_ENABLE"
+        else
+            printf "  KSM Status:     %s\n" "$ksm_status"
+        fi
+    else
+        echo "  KSM Status:     Absent"
+    fi
+    
+    # MGLRU
+    if [ -f /sys/kernel/mm/lru_gen/enabled ]; then
+        printf "  MGLRU:          Enabled [0x%s]\n" "$(cat /sys/kernel/mm/lru_gen/enabled)"
+    else
+        printf "  MGLRU:          Absent\n"
+    fi
+    
+    # THP
+    if [ -f /sys/kernel/mm/transparent_hugepage/enabled ]; then
+        local thp=$(grep -o '\[.*\]' /sys/kernel/mm/transparent_hugepage/enabled | tr -d '[]')
+        printf "  Huge Pages:     %s\n" "$thp"
+    else
+        printf "  Huge Pages:     Absent\n"
+    fi
+    
+    echo ""
+    echo "[ Advanced Tuning ]"
+    sysctl vm.swappiness vm.page-cluster vm.vfs_cache_pressure vm.dirty_ratio vm.watermark_scale_factor vm.compaction_proactiveness 2>/dev/null | sed 's/^/  /'
+}
+
+check_safety() {
+    local mem_avail_kb=$(awk '/MemAvailable/ {print $2}' /proc/meminfo)
+    local swap_total_kb=$(awk '/SwapTotal/ {print $2}' /proc/meminfo)
+    local swap_free_kb=$(awk '/SwapFree/ {print $2}' /proc/meminfo)
+    local swap_used_kb=$((swap_total_kb - swap_free_kb))
+    
+    if [ "$swap_used_kb" -gt "$((mem_avail_kb - 51200))" ]; then
+        logger -t memory-manager "CRITICAL: Reload aborted. Active swap usage ($swap_used_kb kB) exceeds available RAM ($mem_avail_kb kB)."
+        return 1
+    fi
+    return 0
+}
+
+stop_zram() {
+    if grep -q "/dev/zram0" /proc/swaps; then
+        swapoff /dev/zram0 || return 1
+    fi
+    if [ -b /dev/zram0 ]; then
+        echo 1 > /sys/block/zram0/reset 2>/dev/null
+    fi
+}
+
+stop_swapfile() {
+    TARGET_SWAP="${SWAPFILE:-/storage/.cache/swapfile}"
+    if grep -q "$TARGET_SWAP" /proc/swaps; then
+        swapoff "$TARGET_SWAP" || return 1
+    fi
+}
+
+setup_ksm() {
+    if [ -f /sys/kernel/mm/ksm/run ]; then
+        local should_run=0
+        
+        if [[ "${KSM_ENABLE,,}" == "auto" ]]; then
+            should_run=1
+        elif [[ "${KSM_ENABLE,,}" == "enable" || "$KSM_ENABLE" == "1" ]]; then
+            should_run=1
+        fi
+        
+        if [ "$should_run" -eq 1 ]; then
+            echo 1 > /sys/kernel/mm/ksm/run
+            
+            # Smart Tuning: RAM Tier + SoC Capabilities
+            if [ "$IS_LOW_RAM" = true ]; then
+                if [ "$IS_HIGH_PERF_SOC" = true ]; then
+                    # Low RAM but Strong CPU (e.g. S922X 2GB).
+                    # Run KSM aggressively to maximize RAM availability.
+                    echo 200 > /sys/kernel/mm/ksm/sleep_millisecs
+                    echo 200 > /sys/kernel/mm/ksm/pages_to_scan
+                else
+                    # Low RAM and Weak CPU (e.g. RK3326).
+                    # Conservative to avoid CPU stutter.
+                    echo 500 > /sys/kernel/mm/ksm/sleep_millisecs
+                    echo 100 > /sys/kernel/mm/ksm/pages_to_scan
+                fi
+            elif [ "$IS_MID_RAM" = true ]; then
+                # Mid Range: Slower scan rate
+                echo 1000 > /sys/kernel/mm/ksm/sleep_millisecs
+                echo 100 > /sys/kernel/mm/ksm/pages_to_scan
+            else
+                # High End: Very lazy scan
+                echo 3000 > /sys/kernel/mm/ksm/sleep_millisecs
+                echo 100 > /sys/kernel/mm/ksm/pages_to_scan
+            fi
+        else
+            echo 0 > /sys/kernel/mm/ksm/run
+        fi
+    fi
+}
+
+apply_vm_tuning() {
+    # 1. Watermark Scale Factor
+    local watermark_factor=10
+    if [[ "${VM_WATERMARK_FACTOR,,}" == "auto" ]]; then
+        if [ "$IS_LOW_RAM" = true ]; then
+            watermark_factor=10
+        else
+            watermark_factor=100
+        fi
+    elif [[ "$VM_WATERMARK_FACTOR" =~ ^[0-9]+$ ]]; then
+        watermark_factor=$VM_WATERMARK_FACTOR
+    fi
+    if [ -f /proc/sys/vm/watermark_scale_factor ]; then
+        sysctl -w vm.watermark_scale_factor=$watermark_factor >/dev/null
+    fi
+
+    # 2. Compaction Proactiveness
+    local compaction_val=20
+    if [[ "${VM_COMPACTION,,}" == "auto" ]]; then
+        if [ "$IS_HIGH_RAM" = true ]; then
+            compaction_val=50
+        elif [ "$IS_LOW_RAM" = true ] && [ "$IS_HIGH_PERF_SOC" = true ]; then
+            # Low RAM/High CPU can afford proactive compaction to help THP/allocs
+            compaction_val=30
+        else
+            compaction_val=20
+        fi
+    elif [[ "$VM_COMPACTION" =~ ^[0-9]+$ ]]; then
+        compaction_val=$VM_COMPACTION
+    fi
+    if [ -f /proc/sys/vm/compaction_proactiveness ]; then
+        sysctl -w vm.compaction_proactiveness=$compaction_val >/dev/null
+    fi
+
+    # 3. Transparent Huge Pages
+    if [ -f /sys/kernel/mm/transparent_hugepage/enabled ]; then
+        echo madvise > /sys/kernel/mm/transparent_hugepage/enabled
+    fi
+}
+
+apply_tuning() {
+    sysctl -w vm.vfs_cache_pressure=100 >/dev/null
+    sysctl -w vm.dirty_ratio=10 >/dev/null
+    sysctl -w vm.dirty_background_ratio=5 >/dev/null
+    
+    apply_vm_tuning
+    setup_ksm
+    
+    if [ "$ZRAM_SIZE_VAL" -gt 0 ]; then
+        sysctl -w vm.swappiness=100 >/dev/null
+        sysctl -w vm.page-cluster=0 >/dev/null
+        
+        if [ -n "$SECONDARY_ALGO" ] && [ -f /sys/block/zram0/recompress ]; then
+            if grep -q "$SECONDARY_ALGO" /sys/block/zram0/comp_algorithm; then
+                 echo "algo=$SECONDARY_ALGO priority=1" > /sys/block/zram0/recompress 2>/dev/null
+            fi
+        fi
+    elif [ "$SWAP_SIZE_VAL" -gt 0 ]; then
+        sysctl -w vm.swappiness=60 >/dev/null
+        sysctl -w vm.page-cluster=3 >/dev/null
+    fi
+}
+
+perform_optimization() {
+    # Proactive Maintenance Logic
+    # 1. ZRAM Recompression (if Hybrid Tiering is active)
+    if [ "$ZRAM_SIZE_VAL" -gt 0 ] && [ -n "$SECONDARY_ALGO" ] && [ -f /sys/block/zram0/recompress ]; then
+        logger -t memory-manager "Optimizing: Triggering ZRAM recompression ($SECONDARY_ALGO)..."
+        if grep -q "$SECONDARY_ALGO" /sys/block/zram0/comp_algorithm; then
+             # Recompress huge/idle pages to secondary algo
+             echo "algo=$SECONDARY_ALGO type=huge_idle" > /sys/block/zram0/recompress 2>/dev/null
+        fi
+    fi
+    
+    # 2. Memory Compaction (if Fragmentation is high)
+    if [ -f /proc/sys/vm/compact_memory ]; then
+        logger -t memory-manager "Optimizing: Triggering Memory Compaction..."
+        echo 1 > /proc/sys/vm/compact_memory
+    fi
+}
+
+setup_zram() {
+    [ "$ZRAM_SIZE_VAL" -le 0 ] && return
+
+    modprobe zsmalloc 2>/dev/null
+    modprobe zram num_devices=1 2>/dev/null
+    
+    local timeout=0
+    while [ ! -b /dev/zram0 ] && [ $timeout -lt 5 ]; do
+        sleep 0.1
+        ((timeout++))
+    done
+
+    if [ ! -b /dev/zram0 ]; then
+        logger -t memory-manager "Error: ZRAM device node /dev/zram0 did not appear."
+        return
+    fi
+
+    grep -q "zram0" /proc/swaps && return
+    
+    local algo_path="/sys/block/zram0/comp_algorithm"
+    [ -f "$algo_path" ] && echo "$PRIMARY_ALGO" > "$algo_path" 2>/dev/null
+    
+    echo $((ZRAM_SIZE_VAL * 1024 * 1024)) > /sys/block/zram0/disksize
+    mkswap /dev/zram0 >/dev/null
+    swapon -p 100 /dev/zram0
+}
+
+setup_swapfile() {
+    [ "$SWAP_SIZE_VAL" -le 0 ] && return
+    TARGET_SWAP="${SWAPFILE:-/storage/.cache/swapfile}"
+    mkdir -p "$(dirname "$TARGET_SWAP")" 2>/dev/null
+    local cur=0
+    [ -f "$TARGET_SWAP" ] && cur=$(du -m "$TARGET_SWAP" | cut -f1)
+    
+    if [ "$cur" -ne "$SWAP_SIZE_VAL" ]; then
+        [ -f "$TARGET_SWAP" ] && swapoff "$TARGET_SWAP" 2>/dev/null && rm "$TARGET_SWAP"
+        fallocate -l ${SWAP_SIZE_VAL}M "$TARGET_SWAP" 2>/dev/null || \
+            dd if=/dev/zero of="$TARGET_SWAP" bs=1M count=$SWAP_SIZE_VAL status=none
+        chmod 0600 "$TARGET_SWAP"
+        mkswap "$TARGET_SWAP" >/dev/null
+    fi
+    
+    local prio=-2
+    if [[ "${SWAP_PRIORITY,,}" == "stripe" ]]; then
+        prio=100
+    elif [[ "${SWAP_PRIORITY,,}" == "auto" ]]; then
+        if [ "$ZRAM_SIZE_VAL" -gt 0 ]; then
+            prio=-10
+        else
+            prio=-2
+        fi
+    elif [[ "$SWAP_PRIORITY" =~ ^-?[0-9]+$ ]]; then
+        prio=$SWAP_PRIORITY
+    fi
+    
+    swapon -p $prio "$TARGET_SWAP" 2>/dev/null
+}
+
+drop_caches() {
+    sync
+    echo 3 > /proc/sys/vm/drop_caches
+    logger -t memory-manager "Caches dropped."
+    echo "Caches dropped."
+}
+
+# --- 4. LOGIC RESOLUTION & ARG PARSING ---
+
+ACTION=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --zram-size) update_config "ZRAM_SIZE" "$2"; shift 2 ;;
+        --zram-algo) update_config "ZRAM_ALGO" "$2"; shift 2 ;;
+        --swap-size) update_config "SWAP_FILE_SIZE" "$2"; shift 2 ;;
+        --swap-priority) update_config "SWAP_PRIORITY" "$2"; shift 2 ;;
+        --vm-watermark) update_config "VM_WATERMARK_FACTOR" "$2"; shift 2 ;;
+        --vm-compaction) update_config "VM_COMPACTION" "$2"; shift 2 ;;
+        --ksm) update_config "KSM_ENABLE" "$2"; shift 2 ;;
+        --setup) ACTION="setup"; shift ;;
+        --stop) ACTION="stop"; shift ;;
+        --reload) ACTION="reload"; shift ;;
+        --drop-caches) ACTION="drop-caches"; shift ;;
+        --optimize) ACTION="optimize"; shift ;;
+        --status) ACTION="status"; shift ;;
+        --json) ACTION="json"; shift ;;
+        --help|-h)
+            echo "Usage: rocknix-memory-manager [OPTIONS] [ACTION]"
+            echo "Config Options (Writes to .config/swap.conf):"
+            echo "  --zram-size [0|Auto|MB]      Set ZRAM size"
+            echo "  --zram-algo [zstd|lzo|lz4]   Set ZRAM compression"
+            echo "  --swap-size [0|Auto|Resume]  Set Disk Swap size"
+            echo "  --swap-priority [Auto|Stripe] Set Swap priority"
+            echo "  --vm-watermark [Auto|Val]    Set VM watermark scale factor"
+            echo "  --vm-compaction [Auto|Val]   Set VM compaction proactiveness"
+            echo "  --ksm [Auto|Enable|Disable]  Set Kernel Samepage Merging"
+            echo "Actions:"
+            echo "  --setup        Initial setup"
+            echo "  --reload       Safe reload (teardown -> setup)"
+            echo "  --optimize     Run runtime optimizations (Recompress/Compact)"
+            echo "  --status       Show status (default interactive)"
+            echo "  --json         Show status in JSON"
+            exit 0
+            ;;
+        *) if [ -z "$ACTION" ]; then ACTION="setup"; fi; shift ;;
+    esac
+done
+
+if [ -z "$ACTION" ]; then
+    if [ -t 0 ]; then ACTION="status"; else ACTION="setup"; fi
+fi
+
+# --- 5. RE-EVALUATE LOGIC WITH NEW CONFIGS ---
+
+# Calculate ZRAM Size
+ZRAM_SIZE_VAL=0
+ZRAM_STATUS="Off"
+if [[ "${ZRAM_SIZE,,}" == "auto" ]]; then
+    if [ "$IS_LOW_RAM" = true ]; then
+        ZRAM_SIZE_VAL=$((TOTAL_MEM_MB * 3 / 4))
+    elif [ "$IS_MID_RAM" = true ]; then
+        ZRAM_SIZE_VAL=$((TOTAL_MEM_MB / 2))
+    else
+        ZRAM_SIZE_VAL=6144
+    fi
+    ZRAM_STATUS="Auto (${ZRAM_SIZE_VAL}MB)"
+elif [[ "$ZRAM_SIZE" =~ ^[0-9]+$ ]] && [ "$ZRAM_SIZE" -gt 0 ]; then
+    ZRAM_SIZE_VAL=$ZRAM_SIZE
+    ZRAM_STATUS="${ZRAM_SIZE_VAL}MB"
+fi
+
+# Calculate Swap File Size
+SWAP_SIZE_VAL=0
+SWAP_STATUS="Off"
+if [[ "${SWAP_FILE_SIZE,,}" == "auto" ]]; then
+    SWAP_SIZE_VAL=$TOTAL_MEM_MB
+    [ "$SWAP_SIZE_VAL" -gt 2048 ] && SWAP_SIZE_VAL=2048
+    SWAP_STATUS="Auto (${SWAP_SIZE_VAL}MB)"
+elif [[ "${SWAP_FILE_SIZE,,}" == "resume" ]]; then
+    SWAP_SIZE_VAL=$((TOTAL_MEM_MB + 512))
+    SWAP_STATUS="Resume Target (${SWAP_SIZE_VAL}MB)"
+elif [[ "$SWAP_FILE_SIZE" =~ ^[0-9]+$ ]] && [ "$SWAP_FILE_SIZE" -gt 0 ]; then
+    SWAP_SIZE_VAL=$SWAP_FILE_SIZE
+    SWAP_STATUS="${SWAP_SIZE_VAL}MB"
+fi
+
+# Determine Algorithms
+if [[ "$ZRAM_ALGO" == "@ZRAM_COMPRESSION_ALGO@" ]]; then
+    ZRAM_ALGO="zstd"
+fi
+
+PRIMARY_ALGO="$ZRAM_ALGO"
+SECONDARY_ALGO=""
+
+if [[ "$ZRAM_ALGO" == "zstd" ]]; then
+    PRIMARY_ALGO="lzo-rle"
+    SECONDARY_ALGO="zstd"
+fi
+
+# Safety check for algorithm
+if [ -e /sys/block/zram0/comp_algorithm ] && ! grep -q "$PRIMARY_ALGO" /sys/block/zram0/comp_algorithm 2>/dev/null; then
+    if grep -q "lzo-rle" /sys/block/zram0/comp_algorithm 2>/dev/null; then
+        PRIMARY_ALGO="lzo-rle"
+    else
+        PRIMARY_ALGO=$(awk '{print $1}' /sys/block/zram0/comp_algorithm | tr -d '[]')
+    fi
+fi
+
+# --- 6. PERFORM ACTION ---
+
+case "$ACTION" in
+    setup)
+        exec 1> >(logger -s -t memory-manager) 2>&1
+        apply_tuning
+        setup_zram
+        setup_swapfile
+        ;;
+    stop)
+        exec 1> >(logger -s -t memory-manager) 2>&1
+        stop_zram
+        stop_swapfile
+        ;;
+    reload)
+        exec 1> >(logger -s -t memory-manager) 2>&1
+        logger "Reloading memory configuration..."
+        if ! check_safety; then exit 1; fi
+        stop_swapfile
+        stop_zram
+        apply_tuning
+        setup_zram
+        setup_swapfile
+        ;;
+    optimize)
+        exec 1> >(logger -s -t memory-manager) 2>&1
+        perform_optimization
+        ;;
+    drop-caches)
+        drop_caches
+        ;;
+    status)
+        show_status
+        ;;
+    json)
+        show_status_json
+        ;;
+esac
+exit 0

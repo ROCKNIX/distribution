@@ -9,4 +9,4 @@ ROOTPASS=$(get_setting root.password)
 syncthing generate --gui-user root --gui-password ${ROOTPASS}
 xmlstarlet ed --inplace -u "//configuration/gui/address" -v "0.0.0.0:8384" /storage/.config/syncthing/config.xml
 
-syncthing -no-browser -no-restart
+syncthing --no-browser --no-restart

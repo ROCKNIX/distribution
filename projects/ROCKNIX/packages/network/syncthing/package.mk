@@ -3,7 +3,7 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="syncthing"
-PKG_VERSION="1.29.2"
+PKG_VERSION="2.0.13"
 PKG_LICENSE="MPLv2"
 PKG_SITE="https://syncthing.net/"
 PKG_URL="https://github.com/syncthing/syncthing/releases/download/v${PKG_VERSION}/syncthing-source-v${PKG_VERSION}.tar.gz"
@@ -13,13 +13,14 @@ PKG_TOOLCHAIN="manual"
 
 configure_target() {
   go_configure
+  export CGO_ENABLED=1
   export LDFLAGS="-w -linkmode external -extldflags -Wl,--unresolved-symbols=ignore-in-shared-libs -extld ${CC} \
                   -X github.com/syncthing/syncthing/lib/build.Version=v${PKG_VERSION}"
 }
 
 make_target() {
   HOME=${ROOT} GOCACHE=${ROOT}/.cache/go-build \
-       ${GOLANG} build -a -ldflags "${LDFLAGS}" -o bin/syncthing -v ./cmd/syncthing
+       ${GOLANG} build -a -tags noupgrade -ldflags "${LDFLAGS}" -o bin/syncthing -v ./cmd/syncthing
 }
 
 makeinstall_target() {

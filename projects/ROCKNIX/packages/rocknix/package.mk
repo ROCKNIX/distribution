@@ -68,6 +68,9 @@ EOF
 
   ### Fix and migrate to autostart package
   enable_service rocknix-autostart.service
+  
+  ### ZRAM/Swap and Memory Manager Service
+  enable_service rocknix-memory-manager.service
 
   ### Take a backup of the system configuration on shutdown
   enable_service save-sysconfig.service
