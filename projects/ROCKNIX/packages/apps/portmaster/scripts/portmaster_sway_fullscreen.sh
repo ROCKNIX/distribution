@@ -15,7 +15,16 @@ if echo "${UI_SERVICE}" | grep -q "sway"; then
         fi
     fi
     
-    # Explicitly map all input devices to the active game seat to prevent wayland focus revocation.
-    swaymsg 'seat seat1 attach "*"'
-    swaymsg 'seat * keyboard_grouping none'
+    # The following conditionals deal with focus revocation quirks on specific devices
+    
+    # Force all inputs into seat1 to bypass the Thor's 0:0 input ID collisions
+    if [[ "${QUIRK_DEVICE}" == "AYN Thor" ]]; then
+        swaymsg 'seat seat1 attach "*"'
+        swaymsg 'seat * keyboard_grouping none'
+    fi
+
+    # Put touchscreen into seat0 for Anbernic RG DS
+    if [[ "${QUIRK_DEVICE}" == "Anbernic RG DS" ]]; then
+        swaymsg seat seat0 attach "1046:911:Goodix_Capacitive_TouchScreen"
+    fi
 fi
