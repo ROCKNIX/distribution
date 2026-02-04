@@ -1,0 +1,102 @@
+From 797ef4d2ba9bd592868da2d23f9fc05c0ec235a8 Mon Sep 17 00:00:00 2001
+From: Ivan Podogov <ginkage.uk@gmail.com>
+Date: Mon, 11 Nov 2024 09:44:12 +0000
+Subject: [PATCH] Fall back to implicit sync if necessary
+
+---
+ wsi/wayland/surface.cpp   | 23 ++++++++++-------------
+ wsi/wayland/swapchain.cpp | 29 +++++++++++++++++++----------
+ 2 files changed, 29 insertions(+), 23 deletions(-)
+
+diff --git a/wsi/wayland/surface.cpp b/wsi/wayland/surface.cpp
+index 61ed4b5..0a686e7 100644
+--- a/wsi/wayland/surface.cpp
++++ b/wsi/wayland/surface.cpp
+@@ -229,27 +229,24 @@ bool surface::init()
+       return false;
+    }
+ 
+-   if (explicit_sync_interface.get() == nullptr)
+-   {
+-      WSI_LOG_ERROR("Failed to obtain zwp_linux_explicit_synchronization_v1 interface.");
+-      return false;
+-   }
+-
+    if (presentation_time_interface.get() == nullptr)
+    {
+       WSI_LOG_ERROR("Failed to obtain wp_presentation interface.");
+       return false;
+    }
+ 
+-   auto surface_sync_obj =
+-      zwp_linux_explicit_synchronization_v1_get_synchronization(explicit_sync_interface.get(), wayland_surface);
+-   if (surface_sync_obj == nullptr)
++   if (explicit_sync_interface.get() != nullptr)
+    {
+-      WSI_LOG_ERROR("Failed to retrieve surface synchronization interface");
+-      return false;
+-   }
++      auto surface_sync_obj =
++         zwp_linux_explicit_synchronization_v1_get_synchronization(explicit_sync_interface.get(), wayland_surface);
++      if (surface_sync_obj == nullptr)
++      {
++         WSI_LOG_ERROR("Failed to retrieve surface synchronization interface");
++         return false;
++      }
+ 
+-   surface_sync_interface.reset(surface_sync_obj);
++      surface_sync_interface.reset(surface_sync_obj);
++   }
+ 
+    VkResult vk_res = get_supported_formats_and_modifiers(wayland_display, surface_queue.get(), dmabuf_interface.get(),
+                                                          supported_formats);
+diff --git a/wsi/wayland/swapchain.cpp b/wsi/wayland/swapchain.cpp
+index b83ace2..c5ac247 100644
+--- a/wsi/wayland/swapchain.cpp
++++ b/wsi/wayland/swapchain.cpp
+@@ -496,16 +496,19 @@ void swapchain::present_image(const pending_present_request &pending_present)
+ 
+    wl_surface_attach(m_surface, image_data->buffer, 0, 0);
+ 
+-   auto present_sync_fd = image_data->present_fence.export_sync_fd();
+-   if (!present_sync_fd.has_value())
++   if (m_wsi_surface->get_surface_sync_interface() != nullptr)
+    {
+-      WSI_LOG_ERROR("Failed to export present fence.");
+-      set_error_state(VK_ERROR_SURFACE_LOST_KHR);
+-   }
+-   else if (present_sync_fd->is_valid())
+-   {
+-      zwp_linux_surface_synchronization_v1_set_acquire_fence(m_wsi_surface->get_surface_sync_interface(),
+-                                                             present_sync_fd->get());
++      auto present_sync_fd = image_data->present_fence.export_sync_fd();
++      if (!present_sync_fd.has_value())
++      {
++         WSI_LOG_ERROR("Failed to export present fence.");
++         set_error_state(VK_ERROR_SURFACE_LOST_KHR);
++      }
++      else if (present_sync_fd->is_valid())
++      {
++         zwp_linux_surface_synchronization_v1_set_acquire_fence(m_wsi_surface->get_surface_sync_interface(),
++                                                                present_sync_fd->get());
++      }
+    }
+ 
+    /* TODO: work out damage */
+@@ -623,8 +626,14 @@ VkResult swapchain::image_set_present_payload(swapchain_image &image, VkQueue qu
+    return image_data->present_fence.set_payload(queue, semaphores, submission_pnext);
+ }
+ 
+-VkResult swapchain::image_wait_present(swapchain_image &, uint64_t)
++VkResult swapchain::image_wait_present(swapchain_image &image, uint64_t timeout)
+ {
++   if (m_wsi_surface->get_surface_sync_interface() == nullptr)
++   {
++      auto data = reinterpret_cast<wayland_image_data *>(image.data);
++      return data->present_fence.wait_payload(timeout);
++   }
++
+    /* With explicit sync in use there is no need to wait for the present sync before submiting the image to the
+     * compositor. */
+    return VK_SUCCESS;
+
