@@ -38,6 +38,11 @@ KSM_ENABLE="${KSM_ENABLE:-$DEFAULT_KSM_ENABLE}"
 
 # --- 2. ENVIRONMENT & TIER DETECTION ---
 
+# Source environment to ensure HW_DEVICE is available
+if [ -f /etc/profile ]; then
+    . /etc/profile
+fi
+
 # Global RAM calc (MB)
 TOTAL_MEM_KB=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
 TOTAL_MEM_MB=$((TOTAL_MEM_KB / 1024))
@@ -60,10 +65,8 @@ fi
 # even with lower RAM.
 IS_HIGH_PERF_SOC=false
 
-if [ -f /proc/device-tree/compatible ]; then
-    if grep -qE "rk3588|sm8|s922x|g12b|rk3399" /proc/device-tree/compatible; then
-        IS_HIGH_PERF_SOC=true
-    fi
+if [[ "${HW_DEVICE,,}" =~ rk3588|sm8|s922x|g12b|rk3399 ]]; then
+    IS_HIGH_PERF_SOC=true
 fi
 
 # Basic mount check
@@ -193,7 +196,8 @@ show_status() {
     # THP
     if [ -f /sys/kernel/mm/transparent_hugepage/enabled ]; then
         local thp=$(grep -o '\[.*\]' /sys/kernel/mm/transparent_hugepage/enabled | tr -d '[]')
-        printf "  Huge Pages:     %s\n" "$thp"
+        local defrag=$(grep -o '\[.*\]' /sys/kernel/mm/transparent_hugepage/defrag | tr -d '[]')
+        printf "  Huge Pages:     %s (Defrag: %s)\n" "$thp" "$defrag"
     else
         printf "  Huge Pages:     Absent\n"
     fi
@@ -292,11 +296,12 @@ apply_vm_tuning() {
     # 2. Compaction Proactiveness
     local compaction_val=20
     if [[ "${VM_COMPACTION,,}" == "auto" ]]; then
-        if [ "$IS_HIGH_RAM" = true ]; then
-            compaction_val=50
-        elif [ "$IS_LOW_RAM" = true ] && [ "$IS_HIGH_PERF_SOC" = true ]; then
-            # Low RAM/High CPU can afford proactive compaction to help THP/allocs
-            compaction_val=30
+        if [ "$IS_HIGH_PERF_SOC" = true ]; then
+            # High-end chips can afford background cleanup to keep THP ready.
+            compaction_val=40
+        elif [ "$IS_LOW_RAM" = true ]; then
+            # Save CPU cycles on budget targets.
+            compaction_val=10
         else
             compaction_val=20
         fi
@@ -308,8 +313,29 @@ apply_vm_tuning() {
     fi
 
     # 3. Transparent Huge Pages
+    # Tiered THP Logic (FS MADVISE Synergy)
     if [ -f /sys/kernel/mm/transparent_hugepage/enabled ]; then
+        # Default to madvise for all to prevent bloat
         echo madvise > /sys/kernel/mm/transparent_hugepage/enabled
+        
+        # Enable for Shared Memory (Crucial for Vulkan/Wayland textures)
+        if [ -f /sys/kernel/mm/transparent_hugepage/shmem_enabled ]; then
+            echo advise > /sys/kernel/mm/transparent_hugepage/shmem_enabled
+        fi
+
+        # Budget vs Flagship Defrag Logic
+        # On Budget devices (e.g. H700, RK3326), we use 'defer' so the system 
+        # never stalls while trying to find a contiguous 2MB block.
+        if [ "$IS_LOW_RAM" = true ] && [ "$IS_HIGH_PERF_SOC" = false ]; then
+            echo defer > /sys/kernel/mm/transparent_hugepage/defrag
+            logger -t memory-manager "THP: Budget mode enabled (defrag=defer)"
+        else
+            # Flagship (RK3588, SM8x) or powerful Mid-range (RK3399)
+            # Use defer+madvise to allow some synchronous compaction for 
+            # applications that explicitly think it is worth the performance.
+            echo "defer+madvise" > /sys/kernel/mm/transparent_hugepage/defrag
+            logger -t memory-manager "THP: Flagship mode enabled (defrag=defer+madvise)"
+        fi
     fi
 }
 
@@ -322,6 +348,9 @@ apply_tuning() {
     setup_ksm
     
     if [ "$ZRAM_SIZE_VAL" -gt 0 ]; then
+        # With ZRAM + MGLRU + THP, high swappiness ensures the system swaps 
+        # anonymous memory into compressed RAM, keeping physical RAM "unfragmented" 
+        # for Huge Page allocations.
         sysctl -w vm.swappiness=100 >/dev/null
         sysctl -w vm.page-cluster=0 >/dev/null
         
