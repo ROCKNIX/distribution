@@ -2,10 +2,12 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="emulationstation"
-PKG_VERSION="f3b65b2546161128be67626fb156277106c00c04"
-PKG_GIT_CLONE_BRANCH="master"
+PKG_VERSION="d47342df1f896be163c1add5d1b2752d44de7ce5"
+# PKG_GIT_CLONE_BRANCH="master"
+PKG_GIT_CLONE_BRANCH="rocknix-memory-manager-es"
 PKG_LICENSE="GPL"
-PKG_SITE="https://github.com/ROCKNIX/emulationstation-next"
+# PKG_SITE="https://github.com/ROCKNIX/emulationstation-next"
+PKG_SITE="https://github.com/aenertia/emulationstation-next"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="boost toolchain SDL2 freetype curl freeimage bash rapidjson SDL2_mixer fping p7zip alsa vlc drm_tool pugixml"
 PKG_NEED_UNPACK="busybox"
