@@ -36,7 +36,7 @@ case ${DEVICE} in
         PKG_URL="https://git.kernel.org/torvalds/t/${PKG_NAME}-${PKG_VERSION}.tar.gz"
         ;;
       S922X|H700|RK3399|RK3566|SM8550|SM8650)
-        PKG_VERSION="6.18.8"
+        PKG_VERSION="6.18.4"
         PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
         ;;
       *)

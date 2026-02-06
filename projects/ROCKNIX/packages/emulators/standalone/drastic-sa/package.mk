@@ -31,6 +31,9 @@ makeinstall_target() {
   cp -rf ${PKG_BUILD}/drastic_aarch64/* ${INSTALL}/usr/config/drastic/
   cp -rf ${PKG_DIR}/config/${DEVICE}/* ${INSTALL}/usr/config/drastic/config/
   cp -rf ${PKG_DIR}/config/drastic.gptk ${INSTALL}/usr/config/drastic/
+
+  mkdir -p ${INSTALL}/usr/config/drastic/microphone
+  cp -f ${PKG_DIR}/sources/microphone.wav ${INSTALL}/usr/config/drastic/microphone/
 }
 
 post_install() {

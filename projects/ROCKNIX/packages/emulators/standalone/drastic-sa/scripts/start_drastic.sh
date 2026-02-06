@@ -16,6 +16,7 @@ PLATFORM="nds"
 HIRES3D=$(get_setting hires_3d "${PLATFORM}" "${GAME}")
 THREADED3D=$(get_setting threaded_3d "${PLATFORM}" "${GAME}")
 FOLLOW3D=$(get_setting follow_3d_renderer "${PLATFORM}" "${GAME}")
+MICTHRESH=$(get_setting microphone_sensitivity "${PLATFORM}" "${GAME}")
 
 #load gptokeyb support files
 control-gen_init.sh
@@ -92,12 +93,9 @@ if [ "${HW_DEVICE}" = "S922X" ]; then
 fi
 
 $GPTOKEYB "drastic" -c "drastic.gptk" &
-# Fix actual touch inputs by replacing touch->mouse translation
+# Fix actual touch inputs by replacing touch->mouse translation and add hw mic support
 export LD_PRELOAD="/usr/lib/libdrastouch.so"
 export SDL_TOUCH_MOUSE_EVENTS="0"
+export DSHOOK_MIC_THRESH="${MICTHRESH}"
 ./drastic "$1"
 kill -9 $(pidof gptokeyb)
-
-if echo "${UI_SERVICE}" | grep "sway"; then
-    kill -9 $(pidof drastic_sense.sh)
-fi
