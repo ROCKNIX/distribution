@@ -21,6 +21,7 @@ case ${DEVICE} in
   ;;
   *)
     PKG_VERSION="0.19.0-rk"
+    PKG_PATCH_DIRS+=" libmali"
     PKG_SHA256="cf247be7ec6b7be834a2469c6738aa4515e1cb085c6668cdf071bb5a0dc0f524"
     PKG_URL="https://github.com/stolen/rockchip-wlroots/archive/refs/tags/${PKG_VERSION}.tar.gz"
   ;;

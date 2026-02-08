@@ -11,20 +11,11 @@ if echo "${UI_SERVICE}" | grep -q "sway"; then
     if [[ "${DEVICE_HAS_DUAL_SCREEN}" == "true" ]]; then
         TSKEY=$(get_setting "rocknix.touchscreen-keyboard.enabled")
         if [[ "${TSKEY}" == "1" ]]; then
-            swaymsg 'output DSI-1 power on, seat seat1 fallback no'
+            swaymsg 'output DSI-1 power on'
+            (
+              sleep 2
+              swaymsg 'seat seat1 fallback yes'
+            ) &
         fi
-    fi
-    
-    # The following conditionals deal with focus revocation quirks on specific devices
-    
-    # Force all inputs into seat1 to bypass the Thor's 0:0 input ID collisions
-    if [[ "${QUIRK_DEVICE}" == "AYN Thor" ]]; then
-        swaymsg 'seat seat1 attach "*"'
-        swaymsg 'seat * keyboard_grouping none'
-    fi
-
-    # Put touchscreen into seat0 for Anbernic RG DS
-    if [[ "${QUIRK_DEVICE}" == "Anbernic RG DS" ]]; then
-        swaymsg seat seat0 attach "1046:911:Goodix_Capacitive_TouchScreen"
     fi
 fi
