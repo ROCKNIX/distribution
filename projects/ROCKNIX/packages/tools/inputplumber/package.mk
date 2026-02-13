@@ -14,3 +14,7 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr
   rsync -ar ${PKG_BUILD}/usr/ ${INSTALL}/usr/
 }
+
+post_install() {
+  enable_service inputplumber.service
+}

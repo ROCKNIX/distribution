@@ -10,6 +10,56 @@ on:
         required: false
         default: false
         type: boolean
+      RK3326:
+        description: 'RK3326'
+        required: false
+        default: false
+        type: boolean
+      RK3399:
+        description: 'RK3399'
+        required: false
+        default: false
+        type: boolean
+      RK3566:
+        description: 'RK3566'
+        required: false
+        default: false
+        type: boolean
+      RK3588:
+        description: 'RK3588'
+        required: false
+        default: false
+        type: boolean
+      S922X:
+        description: 'S922X'
+        required: false
+        default: false
+        type: boolean
+      H700:
+        description: 'H700'
+        required: false
+        default: false
+        type: boolean
+      SDM845:
+        description: 'SDM845'
+        required: false
+        default: false
+        type: boolean
+      SM8250:
+        description: 'SM8250'
+        required: false
+        default: false
+        type: boolean
+      SM8550:
+        description: 'SM8550'
+        required: false
+        default: false
+        type: boolean
+      SM8650:
+        description: 'SM8650'
+        required: false
+        default: false
+        type: boolean
   workflow_call:
   pull_request:
     types: [ assigned ]
@@ -24,6 +74,7 @@ jobs:
       NIGHTLY: ${{ github.event_name == 'workflow_dispatch' && inputs.release == true && 'no' || 'yes' }}
       OFFICIAL: ${{ github.event_name == 'workflow_dispatch' && inputs.release == true && 'yes' || 'no' }}
       OWNER_LC: ${{ steps.set-envs.outputs.OWNER_OUTPUT }}
+      matrix: ${{ steps.generate.outputs.matrix }}
     steps:
       - name: Set lowercase owner name
         id: set-envs
@@ -32,6 +83,41 @@ jobs:
           echo "OWNER_OUTPUT=${OWNER_LC}" >> $GITHUB_OUTPUT
         env:
           OWNER: ${{ github.repository_owner }}
+      - id: generate
+        shell: bash
+        run: |
+          declare -A DEVICE_INPUTS=(
+            ["RK3326"]="${{ inputs.RK3326 }}"
+            ["RK3399"]="${{ inputs.RK3399 }}"
+            ["RK3566"]="${{ inputs.RK3566 }}"
+            ["RK3588"]="${{ inputs.RK3588 }}"
+            ["S922X"]="${{ inputs.S922X }}"
+            ["H700"]="${{ inputs.H700 }}"
+            ["SDM845"]="${{ inputs.SDM845 }}"
+            ["SM8250"]="${{ inputs.SM8250 }}"
+            ["SM8550"]="${{ inputs.SM8550 }}"
+            ["SM8650"]="${{ inputs.SM8650 }}"
+          )
+          
+          SELECTED_MATRIX=""
+          
+          for D in "${!DEVICE_INPUTS[@]}"; do
+            VAL="${DEVICE_INPUTS[$D]}"
+            if [[ "$VAL" == "true" ]]; then
+              if [[ -n "$SELECTED_MATRIX" ]]; then
+                SELECTED_MATRIX="$SELECTED_MATRIX,"
+              fi
+              SELECTED_MATRIX="$SELECTED_MATRIX{\"device\":\"$D\",\"project\":\"ROCKNIX\"}"
+            fi
+          done
+          
+          if [[ -z "$SELECTED_MATRIX" ]]; then
+            MATRIX='[{"device":"RK3326","project":"ROCKNIX"},{"device":"RK3399","project":"ROCKNIX"},{"device":"RK3566","project":"ROCKNIX"},{"device":"RK3588","project":"ROCKNIX"},{"device":"S922X","project":"ROCKNIX"},{"device":"H700","project":"ROCKNIX"},{"device":"SDM845","project":"ROCKNIX"},{"device":"SM8250","project":"ROCKNIX"},{"device":"SM8550","project":"ROCKNIX"},{"device":"SM8650","project":"ROCKNIX"}]'
+          else
+            MATRIX="[$SELECTED_MATRIX]"
+          fi
+          
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
 
   build-docker:
     if: github.event_name != 'schedule' || (github.repository == 'ROCKNIX/distribution' && github.ref_name == 'next')
@@ -50,27 +136,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - device: RK3326
-            project: ROCKNIX
-          - device: RK3399
-            project: ROCKNIX
-          - device: RK3566
-            project: ROCKNIX
-          - device: RK3588
-            project: ROCKNIX
-          - device: S922X
-            project: ROCKNIX
-          - device: H700
-            project: ROCKNIX
-          - device: SDM845
-            project: ROCKNIX
-          - device: SM8250
-            project: ROCKNIX
-          - device: SM8550
-            project: ROCKNIX
-          - device: SM8650
-            project: ROCKNIX
+        include: ${{ fromJSON(needs.set-envs.outputs.matrix) }}
     uses: ./.github/workflows/build-device.yml
     secrets: inherit
     with:
@@ -114,7 +180,12 @@ jobs:
      - name: Download artifacts
        uses: actions/download-artifact@v4
        with:
-         pattern: ROCKNIX-*
+         pattern: ROCKNIX-image*
+         merge-multiple: true
+     - name: Download artifacts
+       uses: actions/download-artifact@v4
+       with:
+         pattern: ROCKNIX-update*
          merge-multiple: true
      - name: get date
        run: echo "DATE=$(date +'%Y%m%d')" >> $GITHUB_ENV
@@ -198,7 +269,12 @@ jobs:
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: ROCKNIX-*
+          pattern: ROCKNIX-image*
+          merge-multiple: true
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ROCKNIX-update*
           merge-multiple: true
       - name: get date
         run: echo "DATE=$(date +'%Y%m%d')" >> $GITHUB_ENV
@@ -232,15 +308,4 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           draft: true
           bodyFile: "release-body.md"
-      - name: Set up SSH sourceforge
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SF_SSH_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan frs.sourceforge.net >> ~/.ssh/known_hosts
-      - name: Upload files sourceforge
-        run: |
-          FILES=$(find . -type f \( -name "*.tar" -o -name "*.img.gz" -o -name "*.sha256" \))
-          for FILE in $FILES; do
-            rsync -e ssh "$FILE" tiopex@frs.sourceforge.net:/home/frs/project/rocknix/official/${{ env.DATE }}/
-          done               
+
