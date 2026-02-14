@@ -16,6 +16,7 @@ IMMUTABLE_CONF_DIR="/usr/config/azahar"
 CONF_DIR="/storage/.config/azahar"
 CONF_FILE="${CONF_DIR}/qt-config.ini"
 ROMS_DIR="/storage/roms/3ds"
+SAVESTATES_DIR="/storage/roms/savestates/3ds"
 SWAY_CONFIG="/storage/.config/sway/config"
 
 # Make sure azahar config directory exists
@@ -30,6 +31,11 @@ ln -sf ${ROMS_DIR}/azahar/sdmc ${CONF_DIR}/sdmc
 [ ! -d ${ROMS_DIR}/azahar/nand ] && mkdir -p ${ROMS_DIR}/azahar/nand
 rm -rf ${CONF_DIR}/nand
 ln -sf ${ROMS_DIR}/azahar/nand ${CONF_DIR}/nand
+
+# Move states to savestates folder
+[ ! -d ${SAVESTATES_DIR} ] && mkdir -p ${SAVESTATES_DIR}
+rm -rf ${CONF_DIR}/states
+ln -sf ${SAVESTATES_DIR} ${CONF_DIR}/states
 
 # RK3588 - handle different config files for ACE / CM5
 if [ "${HW_DEVICE}" = "RK3588" ] && [ ! -f "${CONF_FILE}" ]; then

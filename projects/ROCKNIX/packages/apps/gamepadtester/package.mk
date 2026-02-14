@@ -11,6 +11,15 @@ PKG_LONGDESC="A simple SDL GUI Gamepad tester"
 PKG_TOOLCHAIN="cmake"
 PKG_PATCH_DIRS+="${DEVICE}"
 
+case ${DEVICE} in
+  SM8650|SM8550)
+    PKG_PATCH_DIRS+=" xbox"
+  ;;
+  *)
+    PKG_PATCH_DIRS+=" legacy"
+  ;;
+esac
+
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin
   cp -rf ${PKG_BUILD}/.${TARGET_NAME}/gamepad_test ${INSTALL}/usr/bin/gamepad-tester
