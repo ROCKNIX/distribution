@@ -6,7 +6,7 @@ PKG_LICENSE="GPLv3"
 PKG_LONGDESC="Eden is the world's most popular open-source Nintendo Switch emulator, forked from the Yuzu emulator."
 PKG_TOOLCHAIN="manual"
 PKG_SITE="https://git.eden-emu.dev/eden-emu/eden"
-PKG_VERSION="v0.1.1"
+PKG_VERSION="v0.2.0-rc1"
 PKG_URL="${PKG_SITE}/releases/download/${PKG_VERSION}/Eden-Linux-${PKG_VERSION}-aarch64-clang-pgo.AppImage"
 
 makeinstall_target() {
