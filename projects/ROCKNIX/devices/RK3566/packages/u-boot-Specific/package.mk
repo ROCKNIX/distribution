@@ -6,7 +6,7 @@ PKG_VERSION="v2026.01"
 PKG_LICENSE="GPL"
 PKG_SITE="https://www.denx.de/wiki/U-Boot"
 PKG_URL="https://github.com/u-boot/u-boot/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain Python3 swig:host pyelftools:host"
+PKG_DEPENDS_TARGET="toolchain Python3 swig:host pyelftools:host gnutls:host"
 PKG_LONGDESC="Das U-Boot is a cross-platform bootloader for embedded systems."
 PKG_TOOLCHAIN="manual"
 
