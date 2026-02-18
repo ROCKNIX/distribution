@@ -1,0 +1,306 @@
+diff --git a/core/crypto/sha256-prf.c b/core/crypto/sha256-prf.c
+index 642b38f..976bc71 100644
+--- a/core/crypto/sha256-prf.c
++++ b/core/crypto/sha256-prf.c
+@@ -79,12 +79,12 @@ int sha256_prf_bits(const u8 *key, size_t key_len, const char *label,
+ 		plen = buf_len - pos;
+ 		WPA_PUT_LE16(counter_le, counter);
+ 		if (plen >= SHA256_MAC_LEN) {
+-			if (hmac_sha256_vector(key, key_len, 4, addr, len,
++			if (rtw_hmac_sha256_vector(key, key_len, 4, addr, len,
+ 					       &buf[pos]) < 0)
+ 				return -1;
+ 			pos += SHA256_MAC_LEN;
+ 		} else {
+-			if (hmac_sha256_vector(key, key_len, 4, addr, len,
++			if (rtw_hmac_sha256_vector(key, key_len, 4, addr, len,
+ 					       hash) < 0)
+ 				return -1;
+ 			os_memcpy(&buf[pos], hash, plen);
+diff --git a/core/crypto/sha256.c b/core/crypto/sha256.c
+index ea5d9e3..002b833 100644
+--- a/core/crypto/sha256.c
++++ b/core/crypto/sha256.c
+@@ -14,7 +14,7 @@
+ 
+ 
+ /**
+- * hmac_sha256_vector - HMAC-SHA256 over data vector (RFC 2104)
++ * rtw_hmac_sha256_vector - HMAC-SHA256 over data vector (RFC 2104)
+  * @key: Key for HMAC operations
+  * @key_len: Length of the key in bytes
+  * @num_elem: Number of elements in the data vector
+@@ -23,7 +23,7 @@
+  * @mac: Buffer for the hash (32 bytes)
+  * Returns: 0 on success, -1 on failure
+  */
+-int hmac_sha256_vector(const u8 *key, size_t key_len, size_t num_elem,
++int rtw_hmac_sha256_vector(const u8 *key, size_t key_len, size_t num_elem,
+ 		       const u8 *addr[], const size_t *len, u8 *mac)
+ {
+ 	unsigned char k_pad[64]; /* padding - key XORd with ipad/opad */
+@@ -89,7 +89,7 @@ int hmac_sha256_vector(const u8 *key, size_t key_len, size_t num_elem,
+ 
+ 
+ /**
+- * hmac_sha256 - HMAC-SHA256 over data buffer (RFC 2104)
++ * rtw_hmac_sha256 - HMAC-SHA256 over data buffer (RFC 2104)
+  * @key: Key for HMAC operations
+  * @key_len: Length of the key in bytes
+  * @data: Pointers to the data area
+@@ -97,8 +97,8 @@ int hmac_sha256_vector(const u8 *key, size_t key_len, size_t num_elem,
+  * @mac: Buffer for the hash (32 bytes)
+  * Returns: 0 on success, -1 on failure
+  */
+-int hmac_sha256(const u8 *key, size_t key_len, const u8 *data,
++int rtw_hmac_sha256(const u8 *key, size_t key_len, const u8 *data,
+ 		size_t data_len, u8 *mac)
+ {
+-	return hmac_sha256_vector(key, key_len, 1, &data, &data_len, mac);
++	return rtw_hmac_sha256_vector(key, key_len, 1, &data, &data_len, mac);
+ }
+diff --git a/core/crypto/sha256.h b/core/crypto/sha256.h
+index 5219022..f579d12 100644
+--- a/core/crypto/sha256.h
++++ b/core/crypto/sha256.h
+@@ -11,9 +11,9 @@
+ 
+ #define SHA256_MAC_LEN 32
+ 
+-int hmac_sha256_vector(const u8 *key, size_t key_len, size_t num_elem,
++int rtw_hmac_sha256_vector(const u8 *key, size_t key_len, size_t num_elem,
+ 		       const u8 *addr[], const size_t *len, u8 *mac);
+-int hmac_sha256(const u8 *key, size_t key_len, const u8 *data,
++int rtw_hmac_sha256(const u8 *key, size_t key_len, const u8 *data,
+ 		size_t data_len, u8 *mac);
+ int sha256_prf(const u8 *key, size_t key_len, const char *label,
+ 	       const u8 *data, size_t data_len, u8 *buf, size_t buf_len);
+@@ -23,7 +23,7 @@ int sha256_prf_bits(const u8 *key, size_t key_len, const char *label,
+ void tls_prf_sha256(const u8 *secret, size_t secret_len,
+ 		    const char *label, const u8 *seed, size_t seed_len,
+ 		    u8 *out, size_t outlen);
+-int hmac_sha256_kdf(const u8 *secret, size_t secret_len,
++int rtw_hmac_sha256_kdf(const u8 *secret, size_t secret_len,
+ 		    const char *label, const u8 *seed, size_t seed_len,
+ 		    u8 *out, size_t outlen);
+ 
+diff --git a/core/rtw_mlme.c b/core/rtw_mlme.c
+index 6393090..91408d4 100755
+--- a/core/rtw_mlme.c
++++ b/core/rtw_mlme.c
+@@ -89,6 +89,11 @@ sint	_rtw_init_mlme_priv(_adapter *padapter)
+ 		pmlmepriv->max_bss_cnt += is_supported_6g(padapter->registrypriv.wireless_mode) ? MAX_BSS_CNT : 0;
+ 	}
+ 
++	/* RTL8733BU FIX: force wireless_mode if zero (kernel 6.19 init order issue) */
++	if (padapter->registrypriv.wireless_mode == 0)
++		padapter->registrypriv.wireless_mode = WIRELESS_MODE_24G;
++	if (pmlmepriv->max_bss_cnt == 0)
++		pmlmepriv->max_bss_cnt = MAX_BSS_CNT;
+ 	pbuf = rtw_zvmalloc(pmlmepriv->max_bss_cnt * (sizeof(struct wlan_network)));
+ 
+ 	if (pbuf == NULL) {
+diff --git a/hal/halmac-rs/halmac_type.h b/hal/halmac-rs/halmac_type.h
+index c5a0d53..d148038 100644
+--- a/hal/halmac-rs/halmac_type.h
++++ b/hal/halmac-rs/halmac_type.h
+@@ -1298,6 +1298,9 @@ enum halmac_drv_rsvd_pg_num {
+ 	HALMAC_RSVD_PG_NUM64,   /* 8K */
+ 	HALMAC_RSVD_PG_NUM128,  /* 16K */
+ 	HALMAC_RSVD_PG_NUM256,  /* 32K */
++	HALMAC_RSVD_PG_NUM512,  /* 64K */
++	HALMAC_RSVD_PG_NUM1024, /* 128K */
++	HALMAC_RSVD_PG_NUM1460, /* ~183K */
+ };
+ 
+ enum halmac_pcie_cfg {
+diff --git a/hal/phydm/phydm_interface.c b/hal/phydm/phydm_interface.c
+index 26bb9c8..4c1a45e 100644
+--- a/hal/phydm/phydm_interface.c
++++ b/hal/phydm/phydm_interface.c
+@@ -763,11 +763,11 @@ void odm_initialize_timer(struct dm_struct *dm, struct phydm_timer_list *timer,
+ void odm_cancel_timer(struct dm_struct *dm, struct phydm_timer_list *timer)
+ {
+ #if (DM_ODM_SUPPORT_TYPE & ODM_AP)
+-	del_timer(timer);
++	timer_delete(timer);
+ #elif (DM_ODM_SUPPORT_TYPE & ODM_CE) && defined(DM_ODM_CE_MAC80211)
+-	del_timer(timer);
++	timer_delete(timer);
+ #elif (DM_ODM_SUPPORT_TYPE & ODM_CE) && defined(DM_ODM_CE_MAC80211_V2)
+-	del_timer(&timer->timer);
++	timer_delete(&timer->timer);
+ #elif (DM_ODM_SUPPORT_TYPE & ODM_CE)
+ 	_cancel_timer_ex(timer);
+ #elif (DM_ODM_SUPPORT_TYPE & ODM_WIN)
+diff --git a/hal/rtl8733b/hal8733b_fw.c b/hal/rtl8733b/hal8733b_fw.c
+index a05917e..4028038 100644
+--- a/hal/rtl8733b/hal8733b_fw.c
++++ b/hal/rtl8733b/hal8733b_fw.c
+@@ -64175,4 +64175,19 @@ u32 ccv_array_length_mp_8733b_fw_wowlan = 132112;
+ 
+ #endif /* end of LOAD_FW_HEADER_FROM_DRIVER */
+ 
++#ifndef LOAD_FW_HEADER_FROM_DRIVER
++/* Stub arrays for when firmware is loaded from filesystem (CONFIG_FILE_FWIMG).
++ * The code in rtl8733b_halinit.c / rtl8733b_mac.c references these symbols
++ * even when CONFIG_FILE_FWIMG is defined, so we provide zero-length stubs.
++ * WOWLAN stubs are always defined to satisfy the linker. */
++u8 array_mp_8733b_fw_nic[0];
++u32 array_length_mp_8733b_fw_nic = 0;
++u8 ccv_array_mp_8733b_fw_nic[0];
++u32 ccv_array_length_mp_8733b_fw_nic = 0;
++u8 array_mp_8733b_fw_wowlan[0];
++u32 array_length_mp_8733b_fw_wowlan = 0;
++u8 ccv_array_mp_8733b_fw_wowlan[0];
++u32 ccv_array_length_mp_8733b_fw_wowlan = 0;
++#endif /* !LOAD_FW_HEADER_FROM_DRIVER */
++
+ #endif
+diff --git a/hal/rtl8733b/hal8733b_fw.h b/hal/rtl8733b/hal8733b_fw.h
+index e03a2c9..01353fe 100644
+--- a/hal/rtl8733b/hal8733b_fw.h
++++ b/hal/rtl8733b/hal8733b_fw.h
+@@ -33,6 +33,15 @@ extern u8 ccv_array_mp_8733b_fw_wowlan[132112];
+ extern u32 ccv_array_length_mp_8733b_fw_wowlan;
+ #endif /*CONFIG_WOWLAN*/
+ #endif
++#else /* !LOAD_FW_HEADER_FROM_DRIVER -- file-based firmware stubs */
++extern u8 ccv_array_mp_8733b_fw_nic[];
++extern u32 ccv_array_length_mp_8733b_fw_nic;
++extern u8 array_mp_8733b_fw_nic[];
++extern u32 array_length_mp_8733b_fw_nic;
++extern u8 ccv_array_mp_8733b_fw_wowlan[];
++extern u32 ccv_array_length_mp_8733b_fw_wowlan;
++extern u8 array_mp_8733b_fw_wowlan[];
++extern u32 array_length_mp_8733b_fw_wowlan;
+ #endif /* end of LOAD_FW_HEADER_FROM_DRIVER */
+ 
+ #endif
+diff --git a/include/autoconf.h b/include/autoconf.h
+index 065389b..c1b9045 100755
+--- a/include/autoconf.h
++++ b/include/autoconf.h
+@@ -241,11 +241,14 @@
+ 
+ #define CONFIG_NEW_SIGNAL_STAT_PROCESS
+ 
++/* Embed firmware arrays in the driver module (3MB).
++ * Also enable file-based loading as first-try path;
++ * if file not found, driver falls back to embedded arrays. */
+ #define CONFIG_EMBEDDED_FWIMG
+ #ifdef CONFIG_EMBEDDED_FWIMG
+ 	#define	LOAD_FW_HEADER_FROM_DRIVER
+ #endif
+-/* #define CONFIG_FILE_FWIMG */
++#define CONFIG_FILE_FWIMG
+ #define CONFIG_LONG_DELAY_ISSUE
+ 
+ #define CONFIG_RX_PACKET_APPEND_FCS
+diff --git a/include/osdep_service_linux.h b/include/osdep_service_linux.h
+index 4351d76..ad6dd79 100755
+--- a/include/osdep_service_linux.h
++++ b/include/osdep_service_linux.h
+@@ -371,7 +371,9 @@ static inline void timer_hdl(struct timer_list *in_timer)
+ static inline void timer_hdl(unsigned long cntx)
+ #endif
+ {
+-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0))
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 19, 0))
++	_timer *ptimer = (_timer *)in_timer;
++#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0))
+ 	_timer *ptimer = from_timer(ptimer, in_timer, timer);
+ #else
+ 	_timer *ptimer = (_timer *)cntx;
+@@ -406,12 +408,12 @@ __inline static void _set_timer(_timer *ptimer, u32 delay_time)
+ 
+ __inline static void _cancel_timer(_timer *ptimer, u8 *bcancelled)
+ {
+-	*bcancelled = del_timer_sync(&ptimer->timer) == 1 ? 1 : 0;
++	*bcancelled = timer_delete_sync(&ptimer->timer) == 1 ? 1 : 0;
+ }
+ 
+ __inline static void _cancel_timer_async(_timer *ptimer)
+ {
+-	del_timer(&ptimer->timer);
++	timer_delete(&ptimer->timer);
+ }
+ 
+ static inline void _init_workitem(_workitem *pwork, void *pfunc, void *cntx)
+diff --git a/os_dep/linux/ioctl_cfg80211.c b/os_dep/linux/ioctl_cfg80211.c
+index 8e160c7..11b57ee 100755
+--- a/os_dep/linux/ioctl_cfg80211.c
++++ b/os_dep/linux/ioctl_cfg80211.c
+@@ -3513,7 +3513,11 @@ static void cfg80211_rtw_abort_scan(struct wiphy *wiphy,
+ }
+ #endif
+ 
+-static int cfg80211_rtw_set_wiphy_params(struct wiphy *wiphy, u32 changed)
++static int cfg80211_rtw_set_wiphy_params(struct wiphy *wiphy,
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0))
++	int radio_idx,
++#endif
++	u32 changed)
+ {
+ #if 0
+ 	struct iwm_priv *iwm = wiphy_to_iwm(wiphy);
+@@ -4561,6 +4565,9 @@ static int cfg80211_rtw_set_txpower(struct wiphy *wiphy,
+ #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0))
+ 	struct wireless_dev *wdev,
+ #endif
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0))
++	int radio_idx,
++#endif
+ #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 36)) || defined(COMPAT_KERNEL_RELEASE)
+ 	enum nl80211_tx_power_setting type, int mbm)
+ #else
+@@ -4622,6 +4629,9 @@ exit:
+ static int cfg80211_rtw_get_txpower(struct wiphy *wiphy,
+ #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0))
+ 	struct wireless_dev *wdev,
++#endif
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0))
++	int radio_idx, unsigned int link_id,
+ #endif
+ 	int *dbm)
+ {
+@@ -10874,6 +10884,39 @@ int rtw_wiphy_register(struct wiphy *wiphy)
+ 	rtw_chset_hook_os_channels(chset, wiphy);
+ 	#endif
+ 
++	/* RTL8733BU FIX: ensure at least 2.4GHz band before wiphy_register (kernel 6.19) */
++	if (!wiphy->bands[NL80211_BAND_2GHZ] && !wiphy->bands[NL80211_BAND_5GHZ]) {
++		static struct ieee80211_channel rtw_2g_ch_fb[] = {
++			{.band = NL80211_BAND_2GHZ, .center_freq = 2412, .hw_value = 1},
++			{.band = NL80211_BAND_2GHZ, .center_freq = 2417, .hw_value = 2},
++			{.band = NL80211_BAND_2GHZ, .center_freq = 2422, .hw_value = 3},
++			{.band = NL80211_BAND_2GHZ, .center_freq = 2427, .hw_value = 4},
++			{.band = NL80211_BAND_2GHZ, .center_freq = 2432, .hw_value = 5},
++			{.band = NL80211_BAND_2GHZ, .center_freq = 2437, .hw_value = 6},
++			{.band = NL80211_BAND_2GHZ, .center_freq = 2442, .hw_value = 7},
++			{.band = NL80211_BAND_2GHZ, .center_freq = 2447, .hw_value = 8},
++			{.band = NL80211_BAND_2GHZ, .center_freq = 2452, .hw_value = 9},
++			{.band = NL80211_BAND_2GHZ, .center_freq = 2457, .hw_value = 10},
++			{.band = NL80211_BAND_2GHZ, .center_freq = 2462, .hw_value = 11},
++		};
++		static struct ieee80211_rate rtw_2g_rt_fb[] = {
++			{.bitrate = 10, .hw_value = 0}, {.bitrate = 20, .hw_value = 1},
++			{.bitrate = 55, .hw_value = 2}, {.bitrate = 110, .hw_value = 3},
++			{.bitrate = 60, .hw_value = 4}, {.bitrate = 90, .hw_value = 5},
++			{.bitrate = 120, .hw_value = 6}, {.bitrate = 180, .hw_value = 7},
++			{.bitrate = 240, .hw_value = 8}, {.bitrate = 360, .hw_value = 9},
++			{.bitrate = 480, .hw_value = 10}, {.bitrate = 540, .hw_value = 11},
++		};
++		static struct ieee80211_supported_band rtw_band_2g_fb = {
++			.channels = rtw_2g_ch_fb,
++			.n_channels = ARRAY_SIZE(rtw_2g_ch_fb),
++			.bitrates = rtw_2g_rt_fb,
++			.n_bitrates = ARRAY_SIZE(rtw_2g_rt_fb),
++		};
++		wiphy->bands[NL80211_BAND_2GHZ] = &rtw_band_2g_fb;
++		/* Fallback 2.4GHz band injected for kernel 6.19 compatibility */
++	}
++
+ 	ret = wiphy_register(wiphy);
+ 	if (ret != 0) {
+ 		RTW_INFO(FUNC_WIPHY_FMT" wiphy_register() return %d\n", FUNC_WIPHY_ARG(wiphy), ret);
