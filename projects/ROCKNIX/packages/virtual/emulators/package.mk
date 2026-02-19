@@ -575,6 +575,15 @@ makeinstall_target() {
       ;;
   esac
 
+  ### Nintendo Triforce
+  case ${DEVICE} in
+    RK3399|SDM845|SM8250|SM8550|SM8650)
+      add_emu_core triforce dolphin dolphin-qt-gc true
+      install_script "Start Dolphin.sh"
+      add_es_system triforce
+      ;;
+  esac
+
   ### Nintendo Wii/ware
   case ${DEVICE} in
     RK3399|SDM845|SM8250|SM8550|SM8650)
