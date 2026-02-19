@@ -9,6 +9,7 @@
 #include <dt-bindings/pinctrl/rockchip.h>
 #include <dt-bindings/pwm/pwm.h>
 #include <dt-bindings/input/input.h>
+#include <dt-bindings/input/linux-event-codes.h>
 #include <dt-bindings/interrupt-controller/irq.h>
 #include <dt-bindings/soc/rockchip,vop2.h>
 #include "rk3566.dtsi"
@@ -65,25 +66,6 @@
 #define RETRO_DEVICE_ID_JOYPAD_R3      15
 */
 
-	gpio_keys_vol: gpio-keys-vol {
-		compatible = "gpio-keys";
-		autorepeat;
-		pinctrl-0 = <&btn_pins_vol>;
-		pinctrl-names = "default";
-
-		button-voldown {
-			gpios = <&gpio3 RK_PB0 GPIO_ACTIVE_LOW>;
-			label = "VOLUMEDOWN";
-			linux,code = <KEY_VOLUMEDOWN>;
-		};
-
-		button-volup {
-			gpios = <&gpio3 RK_PA7 GPIO_ACTIVE_LOW>;
-			label = "VOLUMEUP";
-			linux,code = <KEY_VOLUMEUP>;
-		};
-	};
-
 	joypad: rocknix-singleadc-joypad {
 		compatible = "rocknix-singleadc-joypad";
 
@@ -96,6 +78,12 @@
 
 		/* use miyoo serial instead of adc */
 		rocknix,use-miyoo-serial-joypad;
+
+		/* rumble motor */
+		pwms = <&pwm5 0 10000000 0>;
+		pwm-names = "enable";
+		rumble-boost-weak = <0x00>;
+		rumble-boost-strong = <0x00>;
 
 		/* gpio pincontrol setup */
 		pinctrl-names = "default";
@@ -308,11 +296,33 @@
 					<3400000 0>;
 	};
 
-	hall_sensor: hall-mh248 {
-		compatible = "hall-mh248";
-		irq-gpio = <&gpio0 RK_PC6 IRQ_TYPE_EDGE_BOTH>;
-		hall-active = <1>;
-		wakeup-source;
+	gpio_keys: gpio-keys {
+		compatible = "gpio-keys";
+		pinctrl-0 = <&btn_pins_vol>, <&gpio_hall_l>;
+		pinctrl-names = "default";
+
+		button-volup {
+			autorepeat;
+			gpios = <&gpio3 RK_PA7 GPIO_ACTIVE_LOW>;
+			label = "Volume Up";
+			linux,code = <KEY_VOLUMEUP>;
+		};
+
+		button-voldown {
+			autorepeat;
+			gpios = <&gpio3 RK_PB0 GPIO_ACTIVE_LOW>;
+			label = "Volume Down";
+			linux,code = <KEY_VOLUMEDOWN>;
+		};
+
+		lid {
+			gpios = <&gpio0 RK_PC6 GPIO_ACTIVE_LOW>;
+			label = "Lid";
+			linux,input-type = <EV_SW>;
+			linux,code = <SW_LID>;
+			wakeup-source;
+			debounce-interval = <500>;
+		};
 	};
 
 	leds: leds {
@@ -440,6 +450,13 @@
 	*/
 };
 
+&cru {
+	assigned-clocks = <&pmucru CLK_RTC_32K>, <&cru PLL_GPLL>,
+			  <&pmucru PLL_PPLL>, <&cru PLL_VPLL>;
+	assigned-clock-rates = <32768>, <1200000000>,
+			       <200000000>, <1200000000>;
+};
+
 /* Display pipeline: VP1 -> DSI0 -> panel (MIPI DSI).
  * DPHY0 is required for the DSI link; DPHY1 is unused. */
 &dsi_dphy0 {
@@ -515,17 +532,9 @@
 		panel_description =
 			"G size=68,121 delays=0,160,200,200,20 format=rgb888 lanes=2 flags=0xe03",
 
-			"M clock=25600 horizontal=640,150,120,120 vertical=480,20,6,12 default=1",
-			"M clock=32000 horizontal=640,150,130,120 vertical=480,20,104,12",
-			"M clock=32010 horizontal=640,150,157,120 vertical=480,20,88,12",
-			"M clock=32130 horizontal=640,150,152,120 vertical=480,20,93,12",
-			"M clock=32890 horizontal=640,150,130,120 vertical=480,20,38,12",
-			"M clock=38050 horizontal=640,150,150,120 vertical=480,20,89,12",
-			"M clock=33600 horizontal=640,150,168,120 vertical=480,20,8,12",
-			"M clock=32760 horizontal=640,150,140,120 vertical=480,20,8,12",
-			"M clock=32750 horizontal=640,150,126,120 vertical=480,20,14,12",
-			"M clock=43580 horizontal=640,150,138,120 vertical=480,20,39,12",
-			"M clock=49140 horizontal=640,150,140,120 vertical=480,20,8,12",
+			"M clock=34287 horizontal=640,150,130,120 vertical=480,20,38,12 default=1", /* 59.94 Hz (NTSC) */
+			"M clock=32010 horizontal=640,150,157,120 vertical=480,20,88,12",        /* 50.00 Hz (PAL) */
+			"M clock=32760 horizontal=640,150,140,120 vertical=480,20,8,12",          /* 60.00 Hz */
 
 			"I seq=11 wait=250",
 			"I seq=29 wait=32",
@@ -915,6 +924,10 @@
 	status = "okay";
 };
 
+&pwm5 {
+	status = "okay";
+};
+
 /* SARADC: used by joypad driver for analog stick data (ch0).
  * vref-supply sets the ADC reference voltage. */
 
@@ -1197,6 +1210,12 @@
 		lcd_rst: lcd-rst {
 			rockchip,pins =
 				<4 RK_PA0 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+
+	gpio-hall {
+		gpio_hall_l: gpio-hall-l {
+			rockchip,pins = <0 RK_PC6 RK_FUNC_GPIO &pcfg_pull_up>;
 		};
 	};
 
