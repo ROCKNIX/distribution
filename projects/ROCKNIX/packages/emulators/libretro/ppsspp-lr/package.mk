@@ -94,6 +94,7 @@ pre_configure_target() {
 pre_make_target() {
   # This script should work on any board that has issues with system ffmpeg in ppsspp
   if [ "${TARGET_ARCH}" = "aarch64" ]; then
+    sed -i "s|aarch64-linux-gnu-|${TARGET_PREFIX}|g" ${PKG_BUILD}/ffmpeg/linux_arm64.sh
     (cd ${PKG_BUILD}/ffmpeg && ./linux_arm64.sh)
   fi
 

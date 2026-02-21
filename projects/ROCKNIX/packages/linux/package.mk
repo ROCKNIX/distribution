@@ -32,8 +32,8 @@ case ${DEVICE} in
   *)
     case ${DEVICE} in
       SM8250)
-        PKG_VERSION="6.19-rc5"
-        PKG_URL="https://git.kernel.org/torvalds/t/${PKG_NAME}-${PKG_VERSION}.tar.gz"
+        PKG_VERSION="6.19.3"
+        PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
         ;;
       S922X|H700|RK3399|RK3566|SM8550|SM8650)
         PKG_VERSION="6.18.10"
