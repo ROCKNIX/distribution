@@ -1,0 +1,49 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+#
+# Miyoo Flip WiFi/BT combo chip (RTL8733BU) USB power management.
+#
+# The RTL8733BU is a USB combo WiFi+BT device (3-1) with three interfaces:
+#   3-1:1.0  btusb (SCO)
+#   3-1:1.1  btusb (isochronous)
+#   3-1:1.2  rtl8733bu (WiFi)
+#
+# USB autosuspend requires ALL bound interface drivers to release their
+# power references. btusb holds refs on the isoc interface even when
+# hci0 is DOWN, preventing the physical USB device from suspending.
+#
+# This quirk installs a profile.d function that wraps `wifictl` to
+# unbind/rebind all USB interfaces on the combo chip when WiFi is
+# toggled, allowing the chip to draw near-zero current when disabled.
+# Because input_sense sources /etc/profile and calls wifictl by bare
+# name, the shell function takes precedence over /usr/bin/wifictl.
+
+cat <<'EOF' >/storage/.config/profile.d/099-miyoo-wifi-power
+wifictl() {
+  case "$1" in
+    enable)
+      for intf in 3-1:1.0 3-1:1.1; do
+        [ ! -e "/sys/bus/usb/drivers/btusb/${intf}" ] && \
+          echo "${intf}" > /sys/bus/usb/drivers/btusb/bind 2>/dev/null
+      done
+      [ ! -e "/sys/bus/usb/drivers/rtl8733bu/3-1:1.2" ] && \
+        echo "3-1:1.2" > /sys/bus/usb/drivers/rtl8733bu/bind 2>/dev/null
+      sleep 2
+      /usr/bin/wifictl "$@"
+      ;;
+    disable)
+      /usr/bin/wifictl "$@"
+      [ -e "/sys/bus/usb/drivers/rtl8733bu/3-1:1.2" ] && \
+        echo "3-1:1.2" > /sys/bus/usb/drivers/rtl8733bu/unbind 2>/dev/null
+      for intf in 3-1:1.0 3-1:1.1; do
+        [ -e "/sys/bus/usb/drivers/btusb/${intf}" ] && \
+          echo "${intf}" > /sys/bus/usb/drivers/btusb/unbind 2>/dev/null
+      done
+      ;;
+    *)
+      /usr/bin/wifictl "$@"
+      ;;
+  esac
+}
+EOF
