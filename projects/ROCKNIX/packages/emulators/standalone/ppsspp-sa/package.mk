@@ -53,7 +53,8 @@ then
   PKG_CMAKE_OPTS_TARGET+=" -DUSE_VULKAN_DISPLAY_KHR=ON \
                            -DVULKAN=ON \
                            -DEGL_NO_X11=1 \
-                           -DMESA_EGL_NO_X11_HEADERS=1"
+                           -DMESA_EGL_NO_X11_HEADERS=1 \
+                           -DUSING_X11_VULKAN=OFF"
   GRENDERER="3 (VULKAN)"
 else
   PKG_CMAKE_OPTS_TARGET+=" -DVULKAN=OFF \
