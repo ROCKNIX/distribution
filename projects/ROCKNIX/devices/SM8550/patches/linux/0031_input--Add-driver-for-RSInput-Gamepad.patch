@@ -1,14 +1,13 @@
-From 63cf9c45ac695a062d47213b5bc962785b6f9147 Mon Sep 17 00:00:00 2001
-From: Teguh Sobirin <teguh@sobir.in>
-Date: Thu, 20 Feb 2025 14:50:30 +0800
+From 01c245849d2a0e2c0b45d02f768d93dadae7babb Mon Sep 17 00:00:00 2001
+From: Philippe Simons <simons.philippe@gmail.com>
+Date: Sat, 21 Feb 2026 19:06:28 +0100
 Subject: [PATCH] input: Add driver for RSInput Gamepad
 
-Signed-off-by: Teguh Sobirin <teguh@sobir.in>
 ---
  drivers/input/joystick/Kconfig   |   4 +
  drivers/input/joystick/Makefile  |   1 +
- drivers/input/joystick/rsinput.c | 418 +++++++++++++++++++++++++++++++
- 3 files changed, 423 insertions(+)
+ drivers/input/joystick/rsinput.c | 443 +++++++++++++++++++++++++++++++
+ 3 files changed, 448 insertions(+)
  create mode 100644 drivers/input/joystick/rsinput.c
 
 diff --git a/drivers/input/joystick/Kconfig b/drivers/input/joystick/Kconfig
@@ -40,10 +39,10 @@ index 9976f596a920..3de503e29489 100644
  obj-$(CONFIG_JOYSTICK_SIDEWINDER)	+= sidewinder.o
 diff --git a/drivers/input/joystick/rsinput.c b/drivers/input/joystick/rsinput.c
 new file mode 100644
-index 000000000000..4a7096407712
+index 000000000000..79e7054519bb
 --- /dev/null
 +++ b/drivers/input/joystick/rsinput.c
-@@ -0,0 +1,422 @@
+@@ -0,0 +1,443 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * RSInput Gamepad Driver
@@ -51,7 +50,6 @@ index 000000000000..4a7096407712
 + * Copyright (C) 2024 Teguh Sobirin <teguh@sobir.in>
 + *
 + */
-+#define DEBUG
 +
 +#include <linux/errno.h>
 +#include <linux/gpio/consumer.h>
@@ -61,6 +59,7 @@ index 000000000000..4a7096407712
 +#include <linux/module.h>
 +#include <linux/minmax.h>
 +#include <linux/of.h>
++#include <linux/regulator/consumer.h>
 +#include <linux/serdev.h>
 +#include <linux/slab.h>
 +#include <uapi/linux/sched/types.h>
@@ -102,9 +101,14 @@ index 000000000000..4a7096407712
 +struct rsinput_driver {
 +    struct serdev_device *serdev;
 +    struct input_dev *input;
++    struct regulator *vdd;
 +    struct gpio_desc *boot_gpio;
 +    struct gpio_desc *enable_gpio;
 +    struct gpio_desc *reset_gpio;
++    bool invert_x;
++    bool invert_y;
++    bool invert_rx;
++    bool invert_ry;
 +    uint8_t rx_buf[1024];
 +    uint8_t sequence_number;
 +};
@@ -158,6 +162,20 @@ index 000000000000..4a7096407712
 +static int rsinput_init_commands(struct rsinput_driver *drv) {
 +    int error;
 +
++    if (drv->boot_gpio)
++        gpiod_set_value_cansleep(drv->boot_gpio, 0);
++
++    if (drv->reset_gpio)
++        gpiod_set_value_cansleep(drv->reset_gpio, 0);
++
++    msleep(100);
++
++    if (drv->enable_gpio)
++        gpiod_set_value_cansleep(drv->enable_gpio, 1);
++
++    if (drv->reset_gpio)
++        gpiod_set_value_cansleep(drv->reset_gpio, 1);
++
 +    msleep(100);
 +    uint8_t version_request[] = {DATA_COMMOD_VERSION};
 +    error = rsinput_send_command(drv, CMD_COMMOD, version_request, sizeof(version_request));
@@ -168,7 +186,7 @@ index 000000000000..4a7096407712
 +
 +    msleep(100);
 +    uint8_t mcu_params[] = {
-+        DATA_COMMOD_SET_PAR, 
++        DATA_COMMOD_SET_PAR,
 +        0x01,
 +        0x00, 0x00, 0x00, 0x28,
 +        0x00, 0x00, 0x00, 0x07
@@ -224,17 +242,17 @@ index 000000000000..4a7096407712
 +
 +    int raw_trig_l_current = max(0, GAMEPAD_RAW_SENSOR_FULL_RANGE_VAL - (data[FRAME_POS_DATA_3] | (data[FRAME_POS_DATA_4] << 8)));
 +    int raw_trig_r_current = max(0, GAMEPAD_RAW_SENSOR_FULL_RANGE_VAL - (data[FRAME_POS_DATA_5] | (data[FRAME_POS_DATA_6] << 8)));
++    int16_t x = -(int16_t)(data[FRAME_POS_DATA_7] | (data[FRAME_POS_DATA_8] << 8));
++    int16_t y = -(int16_t)(data[FRAME_POS_DATA_9] | (data[FRAME_POS_DATA_10] << 8));
++    int16_t rx = -(int16_t)(data[FRAME_POS_DATA_11] | (data[FRAME_POS_DATA_12] << 8));
++    int16_t ry = -(int16_t)(data[FRAME_POS_DATA_13] | (data[FRAME_POS_DATA_14] << 8));
 +
 +    input_report_abs(drv->input, ABS_Z, raw_trig_l_current);
 +    input_report_abs(drv->input, ABS_RZ, raw_trig_r_current);
-+    input_report_abs(drv->input, ABS_X,
-+             -(int16_t)(data[FRAME_POS_DATA_7] | (data[FRAME_POS_DATA_8] << 8)));
-+    input_report_abs(drv->input, ABS_Y,
-+             -(int16_t)(data[FRAME_POS_DATA_9] | (data[FRAME_POS_DATA_10] << 8)));
-+    input_report_abs(drv->input, ABS_RX,
-+             -(int16_t)(data[FRAME_POS_DATA_11] | (data[FRAME_POS_DATA_12] << 8)));
-+    input_report_abs(drv->input, ABS_RY,
-+             -(int16_t)(data[FRAME_POS_DATA_13] | (data[FRAME_POS_DATA_14] << 8)));
++    input_report_abs(drv->input, ABS_X, drv->invert_x ? x * (-1) : x);
++    input_report_abs(drv->input, ABS_Y, drv->invert_y ? y * (-1) : y);
++    input_report_abs(drv->input, ABS_RX, drv->invert_rx ? rx * (-1) : rx);
++    input_report_abs(drv->input, ABS_RY, drv->invert_ry ? ry * (-1) : ry);
 +
 +    input_sync(drv->input);
 +    prev_states = keys;
@@ -334,6 +352,22 @@ index 000000000000..4a7096407712
 +    if (!drv)
 +    return -ENOMEM;
 +
++    drv->invert_x = device_property_present(&serdev->dev, "invert-x");
++    drv->invert_y = device_property_present(&serdev->dev, "invert-y");
++    drv->invert_rx = device_property_present(&serdev->dev, "invert-rx");
++    drv->invert_ry = device_property_present(&serdev->dev, "invert-ry");
++
++    drv->vdd = devm_regulator_get(&serdev->dev, "vdd");
++    if (IS_ERR(drv->vdd)) {
++    	error = PTR_ERR(drv->vdd);
++    	return error;
++    }
++
++    error = regulator_enable(drv->vdd);
++        if (error < 0) {
++       	return error;
++    }
++
 +    drv->boot_gpio =
 +        devm_gpiod_get_optional(&serdev->dev, "boot", GPIOD_OUT_HIGH);
 +    if (IS_ERR(drv->boot_gpio)) {
@@ -355,29 +389,13 @@ index 000000000000..4a7096407712
 +        dev_warn(&serdev->dev, "Unable to get reset gpio: %d\n", error);
 +    }
 +
-+    if (drv->boot_gpio)
-+        gpiod_set_value_cansleep(drv->boot_gpio, 0);
-+
-+    if (drv->reset_gpio)
-+        gpiod_set_value_cansleep(drv->reset_gpio, 0);
-+
-+    msleep(100);
-+
-+    if (drv->enable_gpio)
-+        gpiod_set_value_cansleep(drv->enable_gpio, 1);
-+
-+    if (drv->reset_gpio)
-+        gpiod_set_value_cansleep(drv->reset_gpio, 1);
-+
-+    msleep(100);
-+
 +    error = serdev_device_open(serdev);
 +    if (error)
 +        return dev_err_probe(&serdev->dev, error, "Unable to open UART device\n");
 +
 +    drv->serdev = serdev;
 +    drv->sequence_number = 0;
-+    
++
 +    serdev_device_set_drvdata(serdev, drv);
 +
 +    error = serdev_device_set_baudrate(serdev, 115200);
@@ -391,7 +409,7 @@ index 000000000000..4a7096407712
 +        return -ENOMEM;
 +
 +    drv->input->phys = "rsinput-gamepad/input0";
-+    
++
 +    error = device_property_read_string(&serdev->dev, "gamepad-name", &drv->input->name);
 +    if (error) {
 +        drv->input->name = "RSInput Gamepad";
@@ -444,6 +462,8 @@ index 000000000000..4a7096407712
 +
 +    if (drv->reset_gpio)
 +        gpiod_set_value_cansleep(drv->reset_gpio, 0);
++
++    regulator_disable(drv->vdd);
 +}
 +
 +static const struct of_device_id rsinput_of_match[] = {
@@ -467,5 +487,5 @@ index 000000000000..4a7096407712
 +MODULE_DESCRIPTION("RSInput Gamepad Driver");
 +MODULE_AUTHOR("Teguh Sobirin <teguh@sobir.in>");
 -- 
-2.34.1
+2.52.0
 

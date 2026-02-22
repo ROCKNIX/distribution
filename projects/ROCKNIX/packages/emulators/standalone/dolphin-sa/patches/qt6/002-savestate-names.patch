@@ -54,11 +54,15 @@ diff --git a/Source/Core/Core/State.cpp b/Source/Core/Core/State.cpp
 index a244fda1b6..13d5baa453 100644
 --- a/Source/Core/Core/State.cpp
 +++ b/Source/Core/Core/State.cpp
-@@ -292,7 +292,10 @@ static std::string SystemTimeAsDoubleToString(double time)
+@@ -248,11 +248,10 @@ static std::string SystemTimeAsDoubleToString(double time)
    return fmt::format(std::locale{""}, "{:%x %X}", *local_time);
  }
  
--static std::string MakeStateFilename(int number);
+-static std::string MakeStateFilename(int number)
+-{
+-  return fmt::format("{}{}.s{:02d}", File::GetUserPath(D_STATESAVES_IDX),
+-                     SConfig::GetInstance().GetGameID(), number);
+-}
 +static std::string MakeStateFilename(bool useId, int number);
 +static std::string MakeStateFilename_partdirectory(int number);
 +static std::string MakeStateFilename_partfileName(int number);
@@ -66,53 +70,51 @@ index a244fda1b6..13d5baa453 100644
  
  static std::vector<SlotWithTimestamp> GetUsedSlotsWithTimestamp()
  {
-@@ -300,7 +303,7 @@ static std::vector<SlotWithTimestamp> GetUsedSlotsWithTimestamp()
+@@ -256,7 +259,7 @@ static std::vector<SlotWithTimestamp> GetUsedSlotsWithTimestamp()
    StateHeader header;
-   for (int i = 1; i <= (int)NUM_STATES; i++)
+   for (int i = 1; i <= int(NUM_STATES); ++i)
    {
 -    std::string filename = MakeStateFilename(i);
 +    std::string filename = MakeStateFilename(true, i);
-     if (File::Exists(filename))
-     {
-       if (ReadHeader(filename, header))
-@@ -644,7 +647,7 @@ bool ReadHeader(const std::string& filename, StateHeader& header)
+     if (!File::Exists(filename) || !ReadHeader(filename, header))
+       continue;
  
- std::string GetInfoStringOfSlot(int slot, bool translate)
+@@ -525,7 +528,7 @@ std::string GetInfoStringOfSlot(int slot, bool translate)
  {
+   std::lock_guard lk{s_state_saves_in_progress};
+ 
 -  std::string filename = MakeStateFilename(slot);
 +  std::string filename = MakeStateFilename(true, slot);
    if (!File::Exists(filename))
      return translate ? Common::GetStringT("Empty") : "Empty";
  
-@@ -658,7 +661,7 @@ std::string GetInfoStringOfSlot(int slot, bool translate)
- u64 GetUnixTimeOfSlot(int slot)
- {
+@@ -538,6 +541,6 @@ u64 GetUnixTimeOfSlot(int slot)
+ 
    State::StateHeader header;
 -  if (!ReadHeader(MakeStateFilename(slot), header))
 +  if (!ReadHeader(MakeStateFilename(true, slot), header))
      return 0;
  
    constexpr u64 MS_PER_SEC = 1000;
-@@ -968,20 +971,48 @@ void Shutdown()
-   }
+@@ -703,52 +706,88 @@ void Shutdown()
+   s_flush_unsaved_data_hook.reset();
  }
  
--static std::string MakeStateFilename(int number)
 +static std::string MakeStateFilename(bool useId, int number)
- {
--  return fmt::format("{}{}.s{:02d}", File::GetUserPath(D_STATESAVES_IDX),
--                     SConfig::GetInstance().GetGameID(), number);
-+  // if the useId flag is set : if the file with name exits, returns it, otherwise, if the file with id exists, returns it, otherwise, return the file with name
-+  // => priority with the file with name.
-+  // if the game is not loaded from a file (disk), use the gameId
++{
++  // Priority: file named by disc filename over file named by game ID.
++  // If the game was not loaded from a disc image, fall back to game ID.
 +  std::string filePartName = MakeStateFilename_partfileName(number);
-+  std::string fileWithName = fmt::format("{}{}", MakeStateFilename_partdirectory(number), filePartName);
++  std::string fileWithName =
++      fmt::format("{}{}", MakeStateFilename_partdirectory(number), filePartName);
 +  if (File::Exists(fileWithName) && filePartName != "")
 +    return fileWithName;
-+  std::string fileWithId = fmt::format("{}{}", MakeStateFilename_partdirectory(number), MakeStateFilename_partfileID(number));
++  std::string fileWithId =
++      fmt::format("{}{}", MakeStateFilename_partdirectory(number), MakeStateFilename_partfileID(number));
 +  if (File::Exists(fileWithId) && useId)
 +    return fileWithId;
-+  if(filePartName == "") return fileWithId;
++  if (filePartName == "")
++    return fileWithId;
 +  return fileWithName;
 +}
 +
@@ -129,15 +131,15 @@ index a244fda1b6..13d5baa453 100644
 +static std::string MakeStateFilename_partfileName(int number)
 +{
 +  std::string basesavestate = SConfig::GetInstance().GetBaseSaveState();
-+  if(basesavestate == "") return "";
++  if (basesavestate == "")
++    return "";
 +  return fmt::format("{}.s{:02d}", basesavestate, number);
- }
- 
- void Save(Core::System& system, int slot, bool wait)
++}
++
+ void Save(Core::System& system, int slot)
  {
--  SaveAs(system, MakeStateFilename(slot), wait);
-+  std::string savePath = MakeStateFilename(false, slot);
-+  SaveAs(system, savePath, wait);
+-  SaveAs(system, MakeStateFilename(slot));
++  SaveAs(system, MakeStateFilename(false, slot));
  }
  
  void Load(Core::System& system, int slot)
@@ -147,3 +149,43 @@ index a244fda1b6..13d5baa453 100644
  }
  
  void LoadLastSaved(Core::System& system, int i)
+ {
+   if (!CheckIfStateLoadIsAllowed(system))
+     return;
+ 
+   Core::RunOnCPUThread(system, [&system, i] {
+     // Data must reach the filesystem for up to date "UsedSlots".
+     s_compress_and_dump_thread.WaitForCompletion();
+ 
+     std::vector<SlotWithTimestamp> used_slots = GetUsedSlotsWithTimestamp();
+     if (std::size_t(i) > used_slots.size())
+     {
+       Core::DisplayMessage("State doesn't exist", 2000);
+       return;
+     }
+ 
+     std::ranges::stable_sort(used_slots, std::ranges::greater{}, &SlotWithTimestamp::timestamp);
+-    LoadAsFromCore(system, MakeStateFilename(used_slots[i].slot));
++    LoadAsFromCore(system, MakeStateFilename(true, used_slots[i].slot));
+   });
+ }
+ 
+ void SaveFirstSaved(Core::System& system)
+ {
+   Core::RunOnCPUThread(system, [&system, lock = GetStateSaveTaskLock()] {
+     // Data must reach the filesystem for up to date "UsedSlots".
+     s_compress_and_dump_thread.WaitForCompletion();
+ 
+     std::vector<SlotWithTimestamp> used_slots = GetUsedSlotsWithTimestamp();
+     auto slot = GetEmptySlot(used_slots);
+     if (!slot.has_value())
+     {
+       // overwrite the oldest state
+       std::ranges::stable_sort(used_slots, {}, &SlotWithTimestamp::timestamp);
+       slot = used_slots.front().slot;
+     }
+ 
+-    SaveAsFromCore(system, MakeStateFilename(*slot));
++    SaveAsFromCore(system, MakeStateFilename(false, *slot));
+   });
+ }

@@ -60,18 +60,6 @@ if [ -d $SYSTEM_ROOT/usr/share/bootloader/overlays ]; then
   cp -f $SYSTEM_ROOT/usr/share/bootloader/overlays/* $BOOT_ROOT/overlays
 fi
 
-for BOOT_IMAGE in ${SUBDEVICE}_uboot.bin uboot.bin; do
-  if [ -f "$SYSTEM_ROOT/usr/share/bootloader/$BOOT_IMAGE" ]; then
-    echo "Updating $BOOT_IMAGE on $BOOT_DISK..."
-    # instead of using small bs, read the missing part from target and do a perfectly aligned write
-    {
-      dd if=$BOOT_DISK bs=32K count=1
-      cat $SYSTEM_ROOT/usr/share/bootloader/$BOOT_IMAGE
-    } | dd of=$BOOT_DISK bs=4M conv=fsync &>/dev/null
-    break
-  fi
-done
-
 # mount $BOOT_ROOT ro
 sync
 mount -o remount,ro $BOOT_ROOT

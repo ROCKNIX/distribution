@@ -67,6 +67,12 @@ if [ ! -d "/storage/roms/bios/GC/" ]; then
     cp -r ${CONF_DIR}/GC /storage/roms/bios/
 fi
 
+# Create Triforce Bios folder if does not exist
+if [ ! -d "/storage/roms/bios/GC/Triforce" ]; then
+    mkdir -p /storage/roms/bios/GC/Triforce
+    cp -r ${CONF_DIR}/GC/Triforce /storage/roms/bios/GC/
+fi
+
 # Link bios and memory cards to roms
 for REGION in EUR JAP USA
 do

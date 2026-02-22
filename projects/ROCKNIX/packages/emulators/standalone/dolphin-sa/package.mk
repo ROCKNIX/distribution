@@ -5,12 +5,12 @@
 PKG_NAME="dolphin-sa"
 PKG_LICENSE="GPLv2"
 PKG_DEPENDS_TARGET="toolchain libevdev libdrm ffmpeg zlib libpng lzo libusb zstd ecm openal-soft pulseaudio alsa-lib libfmt hidapi curl"
-PKG_LONGDESC="Dolphin is a GameCube / Wii emulator, allowing you to play games for these two platforms on PC with improvements. "
+PKG_LONGDESC="Dolphin is a GameCube / Wii / Triforce emulator, allowing you to play games for these two platforms on PC with improvements. "
 PKG_TOOLCHAIN="cmake"
 
 case ${DEVICE} in
   SM8250|SM8550|SDM845|RK3399|SM8650)
-    PKG_VERSION="ba7bf19b102d1b27f594c780c9d75970a276213a"
+    PKG_VERSION="9323074ada4b1d372809dc71ed092efe8d0e4c8e"
     PKG_SITE="https://github.com/dolphin-emu/dolphin"
     PKG_URL="${PKG_SITE}.git"
     PKG_DEPENDS_TARGET+=" qt6"

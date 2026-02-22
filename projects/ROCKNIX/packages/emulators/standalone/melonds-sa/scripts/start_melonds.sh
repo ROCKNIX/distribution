@@ -178,6 +178,9 @@ esac
 #Generate a new MelonDS.toml each run (temporary hack)
 rm -rf "${CONF_DIR}/melonDS.toml"
 
+#Retroachievements
+/usr/bin/cheevos_melonds.sh
+
 #Run MelonDS emulator
 $GPTOKEYB "melonDS" -c "${CONF_DIR}/melonDS.gptk" &
 ${EMUPERF} /usr/bin/melonDS -f "${ROM}"

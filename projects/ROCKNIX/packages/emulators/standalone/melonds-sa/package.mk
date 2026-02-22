@@ -2,7 +2,7 @@
 # Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="melonds-sa"
-PKG_VERSION="b86390e4428bf38ce4c1ce0e9ca446d6d25955e8" #v1.1
+PKG_VERSION="bdd85c9ccb40c0a3fcaa6103baf79c2d2d52d6ad"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/melonDS-emu/melonDS"
 PKG_URL="${PKG_SITE}.git"
@@ -34,7 +34,14 @@ export CXXFLAGS="${CXXFLAGS} -Wno-sign-compare"
 PKG_CMAKE_OPTS_TARGET+=" -DCMAKE_BUILD_TYPE=Release \
                          -DCMAKE_INSTALL_PREFIX="/usr" \
                          -DUSE_QT6=ON \
+                         -DENABLE_RETROACHIEVEMENTS=ON \
                          -DBUILD_SHARED_LIBS=OFF"
+
+mkdir -p ${PKG_BUILD}/src/frontend/qt_sdl/retroachievements/resources/sounds
+mkdir -p ${PKG_BUILD}/src/frontend/qt_sdl/retroachievements/resources/icons
+touch ${PKG_BUILD}/src/frontend/qt_sdl/retroachievements/resources/sounds/unlock.wav
+cp -rf ${PKG_DIR}/resources/ra-icon.png ${PKG_BUILD}/src/frontend/qt_sdl/retroachievements/resources/icons/ra-icon.png
+touch ${PKG_BUILD}/src/frontend/qt_sdl/retroachievements/resources/icons/placeholder.png
 }
 
 
@@ -47,7 +54,7 @@ makeinstall_target() {
   cp -rf ${PKG_DIR}/config/melonDS.gptk ${INSTALL}/usr/config/melonDS
 
   cp -rf ${PKG_DIR}/scripts/* ${INSTALL}/usr/bin
-  chmod +x ${INSTALL}/usr/bin/start_melonds.sh
+  chmod +x ${INSTALL}/usr/bin/*
 }
 
 post_install() {
