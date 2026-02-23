@@ -24,6 +24,17 @@ pre_make_target() {
   PKG_MINILOADER="spl/u-boot-spl.bin"
   PKG_BL31="${PKG_RKBIN}/bin/rk35/rk3568_bl31_v1.44.elf"
   PKG_DDR_BIN="${PKG_RKBIN}/bin/rk35/rk3568_ddr_1056MHz_v1.23.bin"
+
+  # Binman's split-elf requires an executable ELF with PT_LOAD headers;
+  # rkbin ships OP-TEE as raw binary. Convert via objcopy then link with
+  # ld to produce a proper ET_EXEC ELF at the stock OP-TEE load address.
+  PKG_BL32_BIN="${PKG_RKBIN}/bin/rk35/rk3568_bl32_v2.14.bin"
+  PKG_BL32="${PKG_BUILD}/rk3568_bl32_v2.14.elf"
+  ${TARGET_KERNEL_PREFIX}objcopy -I binary -O elf64-littleaarch64 \
+    "${PKG_BL32_BIN}" "${PKG_BUILD}/rk3568_bl32_v2.14.o"
+  echo "SECTIONS { .tee 0x08400000 : { *(.data) } }" > "${PKG_BUILD}/tee.lds"
+  ${TARGET_KERNEL_PREFIX}ld -m aarch64elf -T "${PKG_BUILD}/tee.lds" \
+    -e 0x08400000 "${PKG_BUILD}/rk3568_bl32_v2.14.o" -o "${PKG_BL32}"
 }
 
 make_target() {
@@ -31,7 +42,7 @@ make_target() {
   setup_pkg_config_host
   DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm64 make mrproper
   DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm64 make HOSTCC="${HOST_CC}" HOSTCFLAGS="-I${TOOLCHAIN}/include" HOSTLDFLAGS="${HOST_LDFLAGS}" ${PKG_UBOOT_CONFIG} u-boot.dtb u-boot.img tools
-  DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm64 _python_sysroot="${TOOLCHAIN}" _python_prefix=/ _python_exec_prefix=/ make BL31="${PKG_BL31}" ROCKCHIP_TPL="${PKG_DDR_BIN}" HOSTCC="${HOST_CC}" HOSTCFLAGS="-I${TOOLCHAIN}/include" HOSTLDFLAGS="${HOST_LDFLAGS}" HOSTSTRIP="true" CONFIG_MKIMAGE_DTC_PATH="scripts/dtc/dtc"
+  DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm64 _python_sysroot="${TOOLCHAIN}" _python_prefix=/ _python_exec_prefix=/ make BL31="${PKG_BL31}" TEE="${PKG_BL32}" ROCKCHIP_TPL="${PKG_DDR_BIN}" HOSTCC="${HOST_CC}" HOSTCFLAGS="-I${TOOLCHAIN}/include" HOSTLDFLAGS="${HOST_LDFLAGS}" HOSTSTRIP="true" CONFIG_MKIMAGE_DTC_PATH="scripts/dtc/dtc"
 
   find_file_path bootloader/rkhelper && . ${FOUND_PATH}
 }

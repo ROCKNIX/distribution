@@ -23,6 +23,29 @@
 		stdout-path = "serial2:1500000n8";
 	};
 
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		/*
+		 * OP-TEE (BL32) resident memory — loaded by TF-A at boot and
+		 * stays resident for PSCI deep-sleep suspend/resume.
+		 *   TEEOS 2 MB + TA 12 MB + SHM 2 MB = 16 MB total
+		 *   Load address 0x08400000 (from rkbin rk3568_bl32_v2.14.bin)
+		 *
+		 * Without this reservation the kernel overwrites OP-TEE,
+		 * crashing immediately after "Starting kernel ...".
+		 *
+		 * The matching ELF conversion lives in
+		 *   devices/RK3566/packages/u-boot-Specific/package.mk
+		 */
+		optee_reserved: optee@8400000 {
+			reg = <0x0 0x08400000 0x0 0x01000000>;
+			no-map;
+		};
+	};
+
 	/* adc-keys DISABLED: volume buttons are on GPIO, not ADC.
 	 * The adc-keys driver polls saradc ch0 which is floating on Miyoo Flip,
 	 * causing phantom KEY_VOLUMEDOWN and triggering recovery_mode in init.
@@ -657,7 +680,7 @@
 		interrupts = <3 IRQ_TYPE_LEVEL_LOW>;
 
 		pinctrl-names = "default";
-		pinctrl-0 = <&pmic_int>, <&i2s1m0_mclk>;
+		pinctrl-0 = <&pmic_int>, <&i2s1m0_mclk>, <&soc_slppin_slp>;
 		system-power-controller;
 		wakeup-source;
 		#clock-cells = <1>;
@@ -694,11 +717,8 @@
 				regulator-ramp-delay = <6001>;
 				regulator-initial-mode = <0x2>;
 				regulator-name = "vdd_logic";
-				/* off-in-suspend: TF-A handles vdd_logic power
-				 * sequencing during deep sleep entry/exit. */
 				regulator-state-mem {
 					regulator-off-in-suspend;
-					regulator-suspend-microvolt = <900000>;
 				};
 			};
 
@@ -1247,6 +1267,18 @@
 				<0 RK_PA3 RK_FUNC_GPIO &pcfg_pull_up>;
 		};
 
+		/* SoC-side PMIC SLP pin (GPIO0_PA2) configurations.
+		 * Mux function 1 = PMU_SLEEP: the SoC's PMU hardware
+		 * drives this pin automatically during deep sleep to
+		 * signal the RK817 PMIC to enter its sleep state
+		 * (applying all regulator-state-mem settings). */
+		soc_slppin_slp: soc-slppin-slp {
+			rockchip,pins = <0 RK_PA2 1 &pcfg_pull_none>;
+		};
+
+		soc_slppin_gpio: soc-slppin-gpio {
+			rockchip,pins = <0 RK_PA2 RK_FUNC_GPIO &pcfg_output_low>;
+		};
 	};
 
 	usb {
