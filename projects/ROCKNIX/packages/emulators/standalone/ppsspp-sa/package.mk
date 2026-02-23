@@ -42,8 +42,8 @@ if [ "${OPENGL_SUPPORT}" = "yes" ] && [ ! "${PREFER_GLES}" = "yes" ]; then
 
 elif [ "${OPENGLES_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGLES}"
-  PKG_CMAKE_OPTS_TARGET+=" -DUSING_FBDEV=ON \
-                           -DUSING_EGL=OFF \
+  PKG_CMAKE_OPTS_TARGET+=" -DUSING_FBDEV=OFF \
+                           -DUSING_EGL=ON \
                            -DUSING_GLES2=ON"
 fi
 
@@ -52,8 +52,6 @@ then
   PKG_DEPENDS_TARGET+=" ${VULKAN}"
   PKG_CMAKE_OPTS_TARGET+=" -DUSE_VULKAN_DISPLAY_KHR=ON \
                            -DVULKAN=ON \
-                           -DEGL_NO_X11=1 \
-                           -DMESA_EGL_NO_X11_HEADERS=1 \
                            -DUSING_X11_VULKAN=OFF"
   GRENDERER="3 (VULKAN)"
 else
@@ -76,7 +74,7 @@ pre_configure_target() {
 }
 
 pre_make_target() {
-  export CPPFLAGS="${CPPFLAGS} -Wno-error"
+  export CPPFLAGS="${CPPFLAGS} -Wno-error -DEGL_NO_X11=1 -DMESA_EGL_NO_X11_HEADERS=1"
   export CFLAGS="${CFLAGS} -Wno-error"
 
   # fix cross compiling
