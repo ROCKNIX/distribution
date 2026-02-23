@@ -7,7 +7,7 @@ PKG_VERSION="3.2.30"
 PKG_LICENSE="Zlib"
 PKG_SITE="https://www.libsdl.org/"
 PKG_URL="https://www.libsdl.org/release/SDL3-${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain alsa-lib systemd dbus pulseaudio libdrm"
+PKG_DEPENDS_TARGET="toolchain alsa-lib systemd dbus pulseaudio pipewire libdrm libusb"
 PKG_LONGDESC="Simple DirectMedia Layer is a cross-platform development library designed to provide low level access to audio, keyboard, mouse, joystick, and graphics hardware."
 PKG_DEPENDS_HOST="toolchain:host distutilscross:host"
 
@@ -42,20 +42,16 @@ PKG_CMAKE_OPTS_HOST="
 
 if [ ! "${OPENGL_SUPPORT}" = "no" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL} glu"
-  PKG_CMAKE_OPTS_TARGET+=" -DSDL_OPENGL=ON \
-                           -DSDL_KMSDRM=OFF"
+  PKG_CMAKE_OPTS_TARGET+=" -DSDL_OPENGL=ON"
 else
-  PKG_CMAKE_OPTS_TARGET+=" -DSDL_OPENGL=OFF \
-                           -DSDL_KMSDRM=OFF"
+  PKG_CMAKE_OPTS_TARGET+=" -DSDL_OPENGL=OFF"
 fi
 
 if [ "${OPENGLES_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGLES}"
-  PKG_CMAKE_OPTS_TARGET+=" -DSDL_OPENGLES=ON \
-                           -DSDL_KMSDRM=ON"
+  PKG_CMAKE_OPTS_TARGET+=" -DSDL_OPENGLES=ON"
 else
-  PKG_CMAKE_OPTS_TARGET+=" -DSDL_OPENGLES=OFF \
-                           -DSDL_KMSDRM=OFF"
+  PKG_CMAKE_OPTS_TARGET+=" -DSDL_OPENGLES=OFF"
 fi
 
 if [ "${VULKAN_SUPPORT}" = "yes" ]; then
@@ -76,18 +72,17 @@ if [ "${DISPLAYSERVER}" = "wl" ]; then
       ;;
   esac
   PKG_CMAKE_OPTS_TARGET+=" -DSDL_WAYLAND=ON \
-                           -DSDL_WAYLAND_SHARED=ON \
-                           -DSDL_X11=OFF"
+                           -DSDL_WAYLAND_SHARED=ON"
 else
   PKG_CMAKE_OPTS_TARGET+=" -DSDL_WAYLAND=OFF \
-                           -DSDL_WAYLAND_SHARED=OFF \
-                           -DSDL_X11=OFF"
+                           -DSDL_WAYLAND_SHARED=OFF"
 fi
 
 case ${DEVICE} in
   RK*)
     PKG_DEPENDS_TARGET+=" librga"
     PKG_PATCH_DIRS_TARGET+="${DEVICE}"
+    PKG_CMAKE_OPTS_TARGET+=" -DSDL_ROCKCHIP=ON"
   ;;
 esac
 
@@ -124,12 +119,14 @@ pre_configure_target() {
                            -DSDL_HIDAPI_JOYSTICK=ON \
                            -DSDL_PTHREADS=ON \
                            -DSDL_PTHREADS_SEM=ON \
-                           -DSDL_CLOCK_GETTIME=OFF \
                            -DSDL_RPATH=OFF \
                            -DSDL_PIPEWIRE=ON \
                            -DSDL_PULSEAUDIO=ON \
                            -DSDL_LIBC=ON \
-                           -DSDL_GCC_ATOMICS=ON"
+                           -DSDL_GCC_ATOMICS=ON \
+                           -DSDL_KMSDRM=ON \
+                           -DSDL_TESTS=OFF \
+                           -DSDL_EXAMPLES=OFF"
 }
 
 post_makeinstall_target() {

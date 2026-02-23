@@ -16,13 +16,6 @@ PKG_LONGDESC="SDL2 ABI compatibility layer implemented on top of SDL3."
 
 PKG_TOOLCHAIN="cmake"
 
-case ${DEVICE} in
-  RK*)
-    PKG_DEPENDS_TARGET+=" librga"
-    PKG_PATCH_DIRS_TARGET+="${DEVICE}"
-  ;;
-esac
-
 pre_configure_target() {
   export LDFLAGS="${LDFLAGS} -ludev"
 
