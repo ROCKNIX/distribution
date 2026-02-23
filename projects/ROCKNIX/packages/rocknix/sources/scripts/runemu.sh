@@ -279,7 +279,7 @@ case ${EMULATOR} in
       "setup")
         RUNTHIS='${RUN_SHELL} "${ROMNAME}"'
       ;;
-      "gamecube")
+      "gamecube"|"triforce")
         RUNTHIS='${RUN_SHELL} /usr/bin/start_dolphin_gc.sh "${ROMNAME}" "${PLATFORM}" "${CORE}"'
       ;;
       "wii"|"wiiware")

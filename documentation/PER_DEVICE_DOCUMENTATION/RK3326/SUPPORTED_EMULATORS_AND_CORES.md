@@ -110,7 +110,7 @@
 |SNK|Neo Geo Pocket (ngp)|1998|`ngp`|.ngp .ngc .zip .7z|**retroarch:** beetle_ngp (default)<br>**retroarch:** race<br>**mednafen:** ngp<br>|
 |SNK|Neo Geo Pocket Color (ngpc)|1999|`ngpc`|.ngp .ngc .zip .7z|**retroarch:** beetle_ngp (default)<br>**retroarch:** race<br>**mednafen:** ngp<br>|
 |Sony|PlayStation (psx)|1994|`psx`|.bin .cue .img .mdf .pbp .toc .cbn .m3u .ccd .chd .iso|**retroarch:** pcsx_rearmed32 (default)<br>**retroarch:** pcsx_rearmed<br>**duckstation:** duckstation-sa<br>**retroarch:** swanstation<br>|
-|Sony|PlayStation Portable (psp)|2004|`psp`|.iso .cso .pbp .chd|**ppsspp:** ppsspp-sa (default)<br>|
+|Sony|PlayStation Portable (psp)|2004|`psp`|.iso .cso .pbp .chd|**ppsspp:** ppsspp-sa (default)<br>**retroarch:** ppsspp<br>|
 |Sony|PSP Minis (pspminis)|2004|`pspminis`|.iso .cso .pbp .chd|**ppsspp:** ppsspp-sa (default)<br>**retroarch:** ppsspp<br>|
 |Sun Microsystems|J2ME (j2me)|2002|`j2me`|.jar|**retroarch:** freej2me (default)<br>|
 |Thomson|MO/TO family (TO7, TO7/70, TO8, TO8D, TO9, TO9+, MO5 and MO6) (moto)|1982|`moto`|.fd .sap .k7 .m7 .m5 .rom|**retroarch:** theodore (default)<br>|

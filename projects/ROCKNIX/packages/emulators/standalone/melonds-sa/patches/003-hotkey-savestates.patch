@@ -1,0 +1,106 @@
+diff -rupbN melonDS.orig/src/frontend/qt_sdl/Config.cpp melonDS/src/frontend/qt_sdl/Config.cpp
+--- melonDS.orig/src/frontend/qt_sdl/Config.cpp	2026-02-20 05:47:47.879009667 +0000
++++ melonDS/src/frontend/qt_sdl/Config.cpp	2026-02-20 05:53:32.362245865 +0000
+@@ -186,6 +186,8 @@ LegacyEntry LegacyFile[] =
+     {"HKKey_GuitarGripRed",       0, "Keyboard.HK_GuitarGripRed", true},
+     {"HKKey_GuitarGripYellow",    0, "Keyboard.HK_GuitarGripYellow", true},
+     {"HKKey_GuitarGripBlue",      0, "Keyboard.HK_GuitarGripBlue", true},
++    {"HKKey_SaveState",           0, "Keyboard.HK_SaveState", true},
++    {"HKKey_LoadState",           0, "Keyboard.HK_LoadState", true},
+ 
+     {"HKJoy_Lid",                 0, "Joystick.HK_Lid", true},
+     {"HKJoy_Mic",                 0, "Joystick.HK_Mic", true},
+@@ -209,6 +211,8 @@ LegacyEntry LegacyFile[] =
+     {"HKJoy_GuitarGripRed",       0, "Joystick.HK_GuitarGripRed", true},
+     {"HKJoy_GuitarGripYellow",    0, "Joystick.HK_GuitarGripYellow", true},
+     {"HKJoy_GuitarGripBlue",      0, "Joystick.HK_GuitarGripBlue", true},
++    {"HKJoy_SaveState",           0, "Joystick.HK_SaveState", true},
++    {"HKJoy_LoadState",           0, "Joystick.HK_LoadState", true},
+ 
+     {"JoystickID", 0, "JoystickID", true},
+ 
+diff -rupbN melonDS.orig/src/frontend/qt_sdl/EmuInstance.h melonDS/src/frontend/qt_sdl/EmuInstance.h
+--- melonDS.orig/src/frontend/qt_sdl/EmuInstance.h	2026-02-20 05:47:47.879009667 +0000
++++ melonDS/src/frontend/qt_sdl/EmuInstance.h	2026-02-20 05:57:07.948569265 +0000
+@@ -63,6 +63,8 @@ enum
+     #ifdef RETROACHIEVEMENTS_ENABLED
+     HK_RAOverlayToggle,
+     #endif
++    HK_SaveState,
++    HK_LoadState,
+     HK_MAX
+ };
+ 
+diff -rupbN melonDS.orig/src/frontend/qt_sdl/EmuInstanceInput.cpp melonDS/src/frontend/qt_sdl/EmuInstanceInput.cpp
+--- melonDS.orig/src/frontend/qt_sdl/EmuInstanceInput.cpp	2026-02-20 05:47:47.879009667 +0000
++++ melonDS/src/frontend/qt_sdl/EmuInstanceInput.cpp	2026-02-20 05:53:32.362245865 +0000
+@@ -70,7 +70,9 @@ const char* EmuInstance::hotkeyNames[HK_
+     "HK_GuitarGripGreen",
+     "HK_GuitarGripRed",
+     "HK_GuitarGripYellow",
+-    "HK_GuitarGripBlue"
++    "HK_GuitarGripBlue",
++    "HK_SaveState",
++    "HK_LoadState"
+ };
+ 
+ std::shared_ptr<SDL_mutex> EmuInstance::joyMutexGlobal = nullptr;
+diff -rupbN melonDS.orig/src/frontend/qt_sdl/EmuThread.cpp melonDS/src/frontend/qt_sdl/EmuThread.cpp
+--- melonDS.orig/src/frontend/qt_sdl/EmuThread.cpp	2026-02-20 05:47:47.879009667 +0000
++++ melonDS/src/frontend/qt_sdl/EmuThread.cpp	2026-02-20 05:55:13.083310458 +0000
+@@ -84,6 +84,8 @@ void EmuThread::attachWindow(MainWindow*
+     connect(this, SIGNAL(RAOverlayToggle()), window, SLOT(onRAOverlayToggled()));
+     #endif
+     connect(this, SIGNAL(screenEmphasisToggle()), window, SLOT(onScreenEmphasisToggled()));
++    connect(this, SIGNAL(SaveState()), window->actSaveState[1], SLOT(trigger()));
++    connect(this, SIGNAL(LoadState()), window->actLoadState[1], SLOT(trigger()));
+ 
+     if (window->winHasMenu())
+     {
+@@ -180,6 +182,8 @@ void EmuThread::run()
+         #endif
+         if (emuInstance->hotkeyPressed(HK_SwapScreens)) emit swapScreensToggle();
+         if (emuInstance->hotkeyPressed(HK_SwapScreenEmphasis)) emit screenEmphasisToggle();
++        if (emuInstance->hotkeyPressed(HK_SaveState)) emit SaveState();
++        if (emuInstance->hotkeyPressed(HK_LoadState)) emit LoadState();
+ 
+         if (emuStatus == emuStatus_Running || emuStatus == emuStatus_FrameStep)
+         {
+diff -rupbN melonDS.orig/src/frontend/qt_sdl/EmuThread.h melonDS/src/frontend/qt_sdl/EmuThread.h
+--- melonDS.orig/src/frontend/qt_sdl/EmuThread.h	2026-02-20 05:47:47.879009667 +0000
++++ melonDS/src/frontend/qt_sdl/EmuThread.h	2026-02-20 05:53:32.362245865 +0000
+@@ -161,6 +161,9 @@ signals:
+     void swapScreensToggle();
+     void screenEmphasisToggle();
+ 
++    void SaveState();
++    void LoadState();
++
+     void syncVolumeLevel();
+ 
+ private:
+diff -rupbN melonDS.orig/src/frontend/qt_sdl/InputConfig/InputConfigDialog.h melonDS/src/frontend/qt_sdl/InputConfig/InputConfigDialog.h
+--- melonDS.orig/src/frontend/qt_sdl/InputConfig/InputConfigDialog.h	2026-02-20 05:47:47.879009667 +0000
++++ melonDS/src/frontend/qt_sdl/InputConfig/InputConfigDialog.h	2026-02-20 05:56:25.112094849 +0000
+@@ -71,7 +71,9 @@ static constexpr std::initializer_list<i
+     HK_PowerButton,
+     HK_VolumeUp,
+     HK_VolumeDown,
+-    HK_AudioMuteToggle
++    HK_AudioMuteToggle,
++    HK_SaveState,
++    HK_LoadState
+ };
+ 
+ static constexpr std::initializer_list<const char*> hk_general_labels =
+@@ -95,7 +97,9 @@ static constexpr std::initializer_list<c
+     "DSi Power button",
+     "DSi Volume up",
+     "DSi Volume down",
+-    "Toggle audio mute"
++    "Toggle audio mute",
++    "Save State",
++    "Load State"
+ };
+ 
+ static_assert(hk_general.size() == hk_general_labels.size());
