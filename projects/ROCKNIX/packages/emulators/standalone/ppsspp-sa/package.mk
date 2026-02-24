@@ -42,8 +42,8 @@ if [ "${OPENGL_SUPPORT}" = "yes" ] && [ ! "${PREFER_GLES}" = "yes" ]; then
 
 elif [ "${OPENGLES_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGLES}"
-  PKG_CMAKE_OPTS_TARGET+=" -DUSING_FBDEV=OFF \
-                           -DUSING_EGL=ON \
+  PKG_CMAKE_OPTS_TARGET+=" -DUSING_FBDEV=ON \
+                           -DUSING_EGL=OFF \
                            -DUSING_GLES2=ON"
 fi
 
