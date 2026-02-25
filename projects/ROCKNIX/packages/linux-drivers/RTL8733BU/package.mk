@@ -20,6 +20,8 @@ make_target() {
        KSRC=$(kernel_path) \
        CROSS_COMPILE=${TARGET_KERNEL_PREFIX} \
        CONFIG_POWER_SAVING=y \
+       CONFIG_IPS_MODE=1 \
+       CONFIG_LPS_MODE=1 \
        CONFIG_USB_AUTOSUSPEND=y
 }
 
