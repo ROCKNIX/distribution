@@ -2,7 +2,7 @@
 # Copyright (C) 2025-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="skyemu-sa"
-PKG_VERSION="36771a16bfde7eb5c1c0315877b5e465e6f38858"
+PKG_VERSION="46efbcbdb3b902373a09f4724e6d3b1a5acc4af3"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/skylersaleh/SkyEmu"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
