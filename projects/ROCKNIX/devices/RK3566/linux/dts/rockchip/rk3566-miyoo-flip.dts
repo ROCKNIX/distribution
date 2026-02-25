@@ -13,6 +13,7 @@
 #include <dt-bindings/interrupt-controller/arm-gic.h>
 #include <dt-bindings/interrupt-controller/irq.h>
 #include <dt-bindings/soc/rockchip,vop2.h>
+#include <dt-bindings/suspend/rockchip-rk3568.h>
 #include "rk3566.dtsi"
 
 / {
@@ -441,6 +442,34 @@
 		status = "okay";
 	};
 
+	/*
+	 * Configure BL31 deep-sleep flags via SIP_SUSPEND_MODE SMC calls.
+	 * sleep-mode-config = 0x5ec matches stock firmware:
+	 *   CENTER_OFF | ARMOFF_LOGOFF | PMIC_LP | HW_PLLS_OFF |
+	 *   PMUALIVE_32K | OSC_DIS | 32K_PVTM
+	 */
+	rk356x-suspend {
+		compatible = "rk356x,pm-config";
+		status = "okay";
+		rockchip,sleep-debug-en = <0>;
+		rockchip,sleep-mode-config = <
+			(0
+			| RKPM_SLP_CENTER_OFF
+			| RKPM_SLP_ARMOFF_LOGOFF
+			| RKPM_SLP_PMIC_LP
+			| RKPM_SLP_HW_PLLS_OFF
+			| RKPM_SLP_PMUALIVE_32K
+			| RKPM_SLP_OSC_DIS
+			| RKPM_SLP_32K_PVTM
+			)
+		>;
+		rockchip,wakeup-config = <
+			(0
+			| RKPM_GPIO_WKUP_EN
+			)
+		>;
+	};
+
 	dmc: dmc {
 		compatible = "rockchip,rk3568-dmc";
 		interrupts = <GIC_SPI 10 IRQ_TYPE_LEVEL_HIGH>;
@@ -499,9 +528,9 @@
 	};
 };
 
-/* VOP2 -> HDMI pipeline: use VP0 (standard for RK356x).
- * Without this, dw_hdmi_rockchip_bind() returns -EPROBE_DEFER
- * (possible_crtcs == 0) which blocks the entire display-subsystem master. */
+/* VOP2 -> HDMI pipeline: disabled to save power (no HDMI on Miyoo Flip).
+ * If display-subsystem fails to bind (dw_hdmi_rockchip_bind EPROBE_DEFER),
+ * re-enable this block and the &hdmi / &hdmi_sound nodes below.
 &hdmi_in {
 	hdmi_in_vp0: endpoint {
 		remote-endpoint = <&vp0_out_hdmi>;
@@ -514,6 +543,7 @@
 		remote-endpoint = <&hdmi_in_vp0>;
 	};
 };
+*/
 
 &dfi {
 	status = "okay";
@@ -610,6 +640,7 @@
 	status = "okay";
 };
 
+/* HDMI disabled to save power — no HDMI connector on Miyoo Flip.
 &hdmi {
 	status = "okay";
 	avdd-0v9-supply = <&vdda_0v9>;
@@ -626,6 +657,7 @@
 &hdmi_sound {
 	status = "okay";
 };
+*/
 
 
 &i2c0 {
@@ -710,14 +742,14 @@
 				regulator-ramp-delay = <6001>;
 				regulator-initial-mode = <0x2>;
 				regulator-name = "vdd_logic";
-				/* Must stay on at retention voltage during suspend.
-				 * The SoC logic domain needs vdd_logic for TF-A's
-				 * resume code path after PMIC sleep exit.
-				 * Matches the standard Rockchip reference design
-				 * (Rock 3A, PineNote, Quartz64, EVB). */
+				/*
+				 * vdd_logic off in suspend — matches stock firmware.
+				 * The rk356x-suspend driver configures BL31 with
+				 * RKPM_SLP_ARMOFF_LOGOFF so TF-A properly
+				 * saves/restores the logic domain on resume.
+				 */
 				regulator-state-mem {
-					regulator-on-in-suspend;
-					regulator-suspend-microvolt = <900000>;
+					regulator-off-in-suspend;
 				};
 			};
 
@@ -1195,7 +1227,7 @@
 	pinctrl-0 = <&uart1m0_xfer &uart1m0_ctsn>;
 };
 
-/* Debug serial at 0xfe660000 (same as earlycon); must be okay for console=ttyS2 */
+/* Re-enable for serial console debugging. Disable to save power. */
 &uart2 {
 	status = "okay";
 };
