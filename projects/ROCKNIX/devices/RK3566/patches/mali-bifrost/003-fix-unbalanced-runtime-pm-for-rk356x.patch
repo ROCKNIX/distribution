@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ROCKNIX <rocknix@rocknix.org>
+Date: Mon, 24 Feb 2026 00:00:00 +0000
+Subject: [PATCH] mali: fix unbalanced runtime PM for RK356x suspend/resume
+
+The Meson platform backend directly disables regulators and clocks in
+disable_gpu_power_control(), conflicting with the Rockchip power domain
+and regulator framework:
+
+  - vdd_gpu has regulator-always-on, so regulator_disable() triggers a
+    use-count underflow WARNING.
+  - clk_disable_unprepare() races with the power domain shutdown,
+    corrupting the clock tree state.
+  - On resume, clk_prepare_enable() fails with -ETIMEDOUT because the
+    GPU power domain isn't restored yet.
+
+Fix by letting the power domain and regulator frameworks handle the
+lifecycle: skip direct clk/regulator enable/disable in the runtime PM
+callbacks.
+
+Signed-off-by: ROCKNIX <rocknix@rocknix.org>
+---
+ .../platform/meson/mali_kbase_runtime_pm.c | 10 ++++++----
+ 1 file changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/product/kernel/drivers/gpu/arm/midgard/platform/meson/mali_kbase_runtime_pm.c b/product/kernel/drivers/gpu/arm/midgard/platform/meson/mali_kbase_runtime_pm.c
+index XXXXXXX..XXXXXXX 100644
+--- a/product/kernel/drivers/gpu/arm/midgard/platform/meson/mali_kbase_runtime_pm.c
++++ b/product/kernel/drivers/gpu/arm/midgard/platform/meson/mali_kbase_runtime_pm.c
+@@ -113,7 +113,8 @@ static void enable_gpu_power_control(struct kbase_device *kbdev)
+ 		if (WARN_ON(kbdev->clocks[i] == NULL))
+ 			;
+ 		else if (!__clk_is_enabled(kbdev->clocks[i]))
+-			WARN_ON(clk_prepare_enable(kbdev->clocks[i]));
++			/* let power domain handle clock lifecycle */
++			;
+ 	}
+ }
+ 
+@@ -125,8 +126,8 @@ static void disable_gpu_power_control(struct kbase_device *kbdev)
+ 		if (WARN_ON(kbdev->clocks[i] == NULL))
+ 			;
+ 		else if (__clk_is_enabled(kbdev->clocks[i])) {
+-			clk_disable_unprepare(kbdev->clocks[i]);
+-			WARN_ON(__clk_is_enabled(kbdev->clocks[i]));
++			/* let power domain handle clock lifecycle */
++			;
+ 		}
+ 	}
+ 
+@@ -135,7 +136,8 @@ static void disable_gpu_power_control(struct kbase_device *kbdev)
+ 		if (WARN_ON(kbdev->regulators[i] == NULL))
+ 			;
+ 		else if (regulator_is_enabled(kbdev->regulators[i]))
+-			WARN_ON(regulator_disable(kbdev->regulators[i]));
++			/* let regulator framework handle suspend lifecycle */
++			;
+ 	}
+ #endif
+ }
+-- 
+2.43.0
