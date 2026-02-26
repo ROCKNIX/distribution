@@ -141,6 +141,22 @@ show_status_json() {
 }
 
 show_status() {
+    # Warn if live kernel values don't match what this manager would apply,
+    # indicating --setup or --reload has not been run since the last config change.
+    local live_swappiness
+    live_swappiness=$(sysctl -n vm.swappiness 2>/dev/null)
+    local expected_swappiness=60
+    if [ "$ZRAM_SIZE_VAL" -gt 0 ]; then
+        expected_swappiness=30
+    elif [ "$SWAP_SIZE_VAL" -gt 0 ]; then
+        expected_swappiness=60
+    fi
+    if [ -n "$live_swappiness" ] && [ "$live_swappiness" != "$expected_swappiness" ]; then
+        echo "WARNING: Live kernel values may not reflect current config."
+        echo "         Run --setup or --reload to apply. (swappiness: live=$live_swappiness expected=$expected_swappiness)"
+        echo ""
+    fi
+
     echo "--- ROCKNIX Memory Manager Status ---"
     printf "System RAM:  %s MB\n" "$TOTAL_MEM_MB"
     printf "RAM Tier:    %s\n" "$([ "$IS_LOW_RAM" = true ] && echo "Low" || ([ "$IS_MID_RAM" = true ] && echo "Mid" || echo "High"))"
@@ -188,7 +204,7 @@ show_status() {
     
     # MGLRU
     if [ -f /sys/kernel/mm/lru_gen/enabled ]; then
-        printf "  MGLRU:          Enabled [0x%s]\n" "$(cat /sys/kernel/mm/lru_gen/enabled)"
+        printf "  MGLRU:          Enabled [%s]\n" "$(cat /sys/kernel/mm/lru_gen/enabled)"
     else
         printf "  MGLRU:          Absent\n"
     fi
@@ -288,11 +304,7 @@ apply_vm_tuning() {
     # 1. Watermark Scale Factor
     local watermark_factor=10
     if [[ "${VM_WATERMARK_FACTOR,,}" == "auto" ]]; then
-        if [ "$IS_LOW_RAM" = true ]; then
-            watermark_factor=10
-        else
-            watermark_factor=100
-        fi
+        watermark_factor=150
     elif [[ "$VM_WATERMARK_FACTOR" =~ ^[0-9]+$ ]]; then
         watermark_factor=$VM_WATERMARK_FACTOR
     fi
@@ -355,10 +367,12 @@ apply_tuning() {
     setup_ksm
     
     if [ "$ZRAM_SIZE_VAL" -gt 0 ]; then
-        # With ZRAM + MGLRU + THP, high swappiness ensures the system swaps 
-        # anonymous memory into compressed RAM, keeping physical RAM "unfragmented" 
-        # for Huge Page allocations.
-        sysctl -w vm.swappiness=100 >/dev/null
+        # With ZRAM + MGLRU, moderate swappiness allows the kernel to compress
+        # anonymous pages under pressure without aggressively targeting GPU
+        # buffers (now MGLRU-visible via the mali-bifrost kbase patch), which
+        # may contribute to 0x5b MMU faults/SoC reboots under heavy emu loads.
+        # page-cluster=0 prevents ZRAM readahead bursts during GPU fault-ins.
+        sysctl -w vm.swappiness=30 >/dev/null
         sysctl -w vm.page-cluster=0 >/dev/null
         
         if [ -n "$SECONDARY_ALGO" ] && [ -f /sys/block/zram0/recompress ]; then
@@ -384,9 +398,19 @@ perform_optimization() {
     fi
     
     # 2. Memory Compaction (if Fragmentation is high)
+    # Skipped if system load is elevated: forced compaction under GPU/CPU load
+    # causes THP promotion races and voltage spikes that can reboot RK3566 devices.
     if [ -f /proc/sys/vm/compact_memory ]; then
-        logger -t memory-manager "Optimizing: Triggering Memory Compaction..."
-        echo 1 > /proc/sys/vm/compact_memory
+        local load_int
+        load_int=$(awk '{print int($1)}' /proc/loadavg)
+        local cpu_count
+        cpu_count=$(nproc 2>/dev/null || echo 4)
+        if [ "$load_int" -lt "$cpu_count" ]; then
+            logger -t memory-manager "Optimizing: Triggering Memory Compaction (load=$load_int)..."
+            echo 1 > /proc/sys/vm/compact_memory
+        else
+            logger -t memory-manager "Optimizing: Skipping compaction under load (load=$load_int >= cpus=$cpu_count)"
+        fi
     fi
 }
 
@@ -596,3 +620,4 @@ case "$ACTION" in
         ;;
 esac
 exit 0
+
