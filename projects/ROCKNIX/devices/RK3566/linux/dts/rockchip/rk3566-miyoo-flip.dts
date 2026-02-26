@@ -246,23 +246,33 @@
 	};
 
 	/* WiFi/BT power control: RTL8733BU combo chip, USB-attached.
-	 * regulator-always-on is REQUIRED: without it, the regulator framework
-	 * disables the regulator at ~33s (no DTS consumer holds it), the WiFi
-	 * USB device disconnects, and the 8733bu driver enters a broken Runtime
-	 * PM state that deadlocks the suspend path.
-	 * The driver has rtw_suspend()/rtw_resume() USB callbacks that handle
-	 * system suspend properly when the chip remains powered. */
-	vcc_wifi: vcc-wifi {
-		compatible = "regulator-fixed";
-		regulator-name = "vcc_wifi";
-		regulator-min-microvolt = <3300000>;
-		regulator-max-microvolt = <3300000>;
-		enable-active-low;
-		gpio = <&gpio0 RK_PA0 GPIO_ACTIVE_LOW>;
+	 * We use the rtl8733bu-power platform driver (see node below) instead of
+	 * a regulator-fixed so that power can be cut when WiFi (and BT) are off
+	 * via rfkill.  That gives full hardware off and maximum battery saving,
+	 * matching stock BSP behaviour.  The regulator approach required
+	 * regulator-always-on to avoid the framework disabling the rail and
+	 * breaking suspend; with rtl8733bu-power, the driver owns the GPIO and
+	 * only cuts power on rfkill block.
+	 *
+	 * Original regulator node (commented out):
+	 * vcc_wifi: vcc-wifi {
+	 *	compatible = "regulator-fixed";
+	 *	regulator-name = "vcc_wifi";
+	 *	regulator-min-microvolt = <3300000>;
+	 *	regulator-max-microvolt = <3300000>;
+	 *	enable-active-low;
+	 *	gpio = <&gpio0 RK_PA0 GPIO_ACTIVE_LOW>;
+	 *	pinctrl-names = "default";
+	 *	pinctrl-0 = <&wifi_enable_h>;
+	 *	regulator-boot-on;
+	 *	regulator-always-on;
+	 * };
+	 */
+	rtl8733bu_power: rtl8733bu-power {
+		compatible = "rockchip,rtl8733bu-power";
+		enable-gpios = <&gpio0 RK_PA0 GPIO_ACTIVE_LOW>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&wifi_enable_h>;
-		regulator-boot-on;
-		regulator-always-on;
 	};
 
 	/* Speaker amplifier enable: GPIO4_PC2 (same pin as BSP spk-ctl-gpios).
@@ -750,6 +760,10 @@
 				};
 			};
 
+			/* GPU suspend/resume: without mali-bifrost 003-fix-unbalanced-runtime-pm-for-rk356x.patch
+			 * the Mali driver would call regulator_disable()/clk_disable during suspend, causing
+			 * use-count underflow and clock re-enable timeout on resume. The patch lets the power
+			 * domain and regulator framework handle the lifecycle. */
 			vdd_gpu: DCDC_REG2 {
 				regulator-always-on;
 				regulator-boot-on;
@@ -759,10 +773,6 @@
 				regulator-ramp-delay = <6001>;
 				regulator-initial-mode = <0x2>;
 				regulator-name = "vdd_gpu";
-				/* regulator-always-on causes a harmless WARN in
-				 * mali_kbase suspend (regulator use-count underflow).
-				 * Properly fixing it requires the Mali driver to not
-				 * call regulator_disable() on an always-on supply. */
 				regulator-state-mem {
 					regulator-off-in-suspend;
 				};
