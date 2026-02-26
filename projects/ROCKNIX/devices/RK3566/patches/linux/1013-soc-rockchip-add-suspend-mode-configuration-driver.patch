@@ -1,0 +1,252 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ROCKNIX <rocknix@rocknix.org>
+Date: Tue, 25 Feb 2025 12:00:00 +0000
+Subject: [PATCH] soc: rockchip: add rk3568 suspend mode configuration driver
+
+Adds an out-of-tree driver that configures BL31 (ARM Trusted Firmware)
+deep-sleep flags via SMC calls on RK3568/RK3566.  Without this, BL31
+uses built-in defaults that may not enable the deepest sleep modes
+(oscillator off, PMIC low-power, 32K PVTM clock, center PD off, etc.).
+
+The driver reads rockchip,sleep-mode-config and rockchip,wakeup-config
+from the device-tree rk3568-suspend node and passes them to BL31
+through SIP_SUSPEND_MODE (0x82000003).  This matches the protocol used
+by the BSP kernel's rockchip_pm_config driver.
+
+Uses the "rk3568" namespace to avoid collisions with BSP code.
+
+Signed-off-by: ROCKNIX <rocknix@rocknix.org>
+---
+ drivers/soc/rockchip/Kconfig                   |   8 ++
+ drivers/soc/rockchip/Makefile                  |   1 +
+ drivers/soc/rockchip/rk3568_suspend_config.c   | 128 ++++++++++++++++++
+ include/dt-bindings/suspend/rockchip-rk3568.h |  58 ++++++++
+ 4 files changed, 195 insertions(+)
+ create mode 100644 drivers/soc/rockchip/rk3568_suspend_config.c
+ create mode 100644 include/dt-bindings/suspend/rockchip-rk3568.h
+
+diff --git a/drivers/soc/rockchip/Kconfig b/drivers/soc/rockchip/Kconfig
+index 81b4c4be5de1..a9c1f9d2e3b1 100644
+--- a/drivers/soc/rockchip/Kconfig
++++ b/drivers/soc/rockchip/Kconfig
+@@ -32,4 +32,12 @@ config ROCKCHIP_DTPM
+ 	  have to enable DTPM framework.
+ 	  If you want to use it, say Y.
+ 
++config RK3568_SUSPEND_MODE
++	bool "RK3568 suspend mode configuration"
++	depends on HAVE_ARM_SMCCC && SUSPEND && ARCH_ROCKCHIP
++	help
++	  Configure deep-sleep flags for BL31 (ARM Trusted Firmware)
++	  on Rockchip RK3568/RK3566 SoCs via SIP SMC calls.
++	  Required for lowest-power suspend (vdd_logic off, oscillator off).
++
+ endif
+diff --git a/drivers/soc/rockchip/Makefile b/drivers/soc/rockchip/Makefile
+index 23dde1215e16..f4c5a9b2c8e1 100644
+--- a/drivers/soc/rockchip/Makefile
++++ b/drivers/soc/rockchip/Makefile
+@@ -6,2 +6,3 @@ obj-$(CONFIG_ROCKCHIP_GRF)	+= grf.o
+ obj-$(CONFIG_ROCKCHIP_IODOMAIN)	+= io-domain.o
+ obj-$(CONFIG_ROCKCHIP_DTPM) += dtpm.o
++obj-$(CONFIG_RK3568_SUSPEND_MODE) += rk3568_suspend_config.o
+diff --git a/drivers/soc/rockchip/rk3568_suspend_config.c b/drivers/soc/rockchip/rk3568_suspend_config.c
+new file mode 100644
+index 000000000000..b8e3a1f2c9d1
+--- /dev/null
++++ b/drivers/soc/rockchip/rk3568_suspend_config.c
+@@ -0,0 +1,128 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * RK3568 suspend mode configuration driver
++ *
++ * Configures BL31 (ARM Trusted Firmware) deep-sleep flags on RK3568/RK3566
++ * via SIP_SUSPEND_MODE SMC calls.  Without this driver BL31 uses compiled-in
++ * defaults which may not enable the deepest sleep modes.
++ *
++ * Protocol matches the BSP kernel's rockchip_pm_config driver.
++ * Uses "rk3568" namespace to avoid collisions with BSP code.
++ */
++
++#include <linux/arm-smccc.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++
++#define SIP_SUSPEND_MODE	0x82000003
++
++#define SUSPEND_MODE_CONFIG	0x01
++#define WKUP_SOURCE_CONFIG	0x02
++#define SUSPEND_DEBUG_ENABLE	0x05
++
++struct rk3568_suspend {
++	u32	mode_config;
++	u32	wakeup_config;
++	u32	debug_en;
++};
++
++static int sip_set_suspend_mode(u32 ctrl, u32 config1, u32 config2)
++{
++	struct arm_smccc_res res;
++
++	arm_smccc_smc(SIP_SUSPEND_MODE, ctrl, config1, config2,
++		      0, 0, 0, 0, &res);
++	return res.a0;
++}
++
++static int rk3568_suspend_send_config(struct rk3568_suspend *s)
++{
++	int ret = 0;
++
++	if (s->mode_config)
++		ret = sip_set_suspend_mode(SUSPEND_MODE_CONFIG,
++					   s->mode_config, 0);
++
++	if (s->wakeup_config)
++		sip_set_suspend_mode(WKUP_SOURCE_CONFIG,
++				     s->wakeup_config, 0);
++
++	return ret;
++}
++
++static int rk3568_suspend_prepare(struct device *dev)
++{
++	struct rk3568_suspend *s = dev_get_drvdata(dev);
++
++	rk3568_suspend_send_config(s);
++	return 0;
++}
++
++static const struct dev_pm_ops rk3568_suspend_pm_ops = {
++	.prepare = rk3568_suspend_prepare,
++};
++
++static int rk3568_suspend_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct device_node *node;
++	struct rk3568_suspend *s;
++	int ret;
++
++	s = devm_kzalloc(dev, sizeof(*s), GFP_KERNEL);
++	if (!s)
++		return -ENOMEM;
++
++	node = of_find_node_by_name(NULL, "rk3568-suspend");
++	if (!node) {
++		dev_err(dev, "rk3568-suspend node not found\n");
++		return -ENODEV;
++	}
++
++	if (of_property_read_u32(node, "rockchip,sleep-mode-config",
++				 &s->mode_config))
++		dev_warn(dev, "sleep-mode-config not set\n");
++
++	if (of_property_read_u32(node, "rockchip,wakeup-config",
++				 &s->wakeup_config))
++		dev_warn(dev, "wakeup-config not set\n");
++
++	if (!of_property_read_u32(node, "rockchip,sleep-debug-en",
++				  &s->debug_en))
++		sip_set_suspend_mode(SUSPEND_DEBUG_ENABLE, s->debug_en, 0);
++
++	of_node_put(node);
++
++	platform_set_drvdata(pdev, s);
++
++	ret = rk3568_suspend_send_config(s);
++	dev_info(dev, "sleep-mode-config=0x%x wakeup-config=0x%x (smc ret=%d)\n",
++		 s->mode_config, s->wakeup_config, ret);
++
++	return 0;
++}
++
++static const struct of_device_id rk3568_suspend_match[] = {
++	{ .compatible = "rk3568,pm-config" },
++	{ },
++};
++MODULE_DEVICE_TABLE(of, rk3568_suspend_match);
++
++static struct platform_driver rk3568_suspend_driver = {
++	.probe = rk3568_suspend_probe,
++	.driver = {
++		.name = "rk3568-suspend-config",
++		.of_match_table = rk3568_suspend_match,
++		.pm = &rk3568_suspend_pm_ops,
++	},
++};
++
++static int __init rk3568_suspend_init(void)
++{
++	return platform_driver_register(&rk3568_suspend_driver);
++}
++late_initcall_sync(rk3568_suspend_init);
++
++MODULE_DESCRIPTION("RK3568 suspend mode configuration");
++MODULE_LICENSE("GPL");
+diff --git a/include/dt-bindings/suspend/rockchip-rk3568.h b/include/dt-bindings/suspend/rockchip-rk3568.h
+new file mode 100644
+index 000000000000..c3a1d8e5f2a1
+--- /dev/null
++++ b/include/dt-bindings/suspend/rockchip-rk3568.h
+@@ -0,0 +1,58 @@
++/* SPDX-License-Identifier: (GPL-2.0+ OR MIT) */
++/*
++ * Header providing constants for Rockchip suspend bindings.
++ *
++ * Copyright (C) 2021, Rockchip Electronics Co., Ltd.
++ */
++
++#ifndef __DT_BINDINGS_SUSPEND_ROCKCHIP_RK3568_H__
++#define __DT_BINDINGS_SUSPEND_ROCKCHIP_RK3568_H__
++
++#ifndef BIT
++#define BIT(nr)		(1 << (nr))
++#endif
++
++/* Sleep mode flags */
++#define RKPM_SLP_WFI		BIT(0)
++#define RKPM_SLP_ARMOFF		BIT(1)
++#define RKPM_SLP_CENTER_OFF	BIT(2)
++#define RKPM_SLP_ARMOFF_LOGOFF	BIT(3)
++#define RKPM_SLP_FROM_UBOOT	BIT(4)
++#define RKPM_SLP_PMIC_LP	BIT(5)
++#define RKPM_SLP_HW_PLLS_OFF	BIT(6)
++#define RKPM_SLP_PMUALIVE_32K	BIT(7)
++#define RKPM_SLP_OSC_DIS	BIT(8)
++#define RKPM_SLP_32K_EXT	BIT(9)
++#define RKPM_SLP_32K_PVTM	BIT(10)
++
++/* Wakeup source flags */
++#define RKPM_CPU0_WKUP_EN	BIT(0)
++#define RKPM_CPU1_WKUP_EN	BIT(1)
++#define RKPM_CPU2_WKUP_EN	BIT(2)
++#define RKPM_CPU3_WKUP_EN	BIT(3)
++#define RKPM_GPIO_WKUP_EN	BIT(4)
++#define RKPM_UART0_WKUP_EN	BIT(5)
++#define RKPM_SDMMC0_WKUP_EN	BIT(6)
++#define RKPM_SDMMC1_WKUP_EN	BIT(7)
++#define RKPM_SDMMC2_WKUP_EN	BIT(8)
++#define RKPM_USB_WKUP_EN	BIT(9)
++#define RKPM_PCIE_WKUP_EN	BIT(10)
++#define RKPM_VAD_WKUP_EN	BIT(11)
++#define RKPM_TIMER_WKUP_EN	BIT(12)
++#define RKPM_PWM0_WKUP_EN	BIT(13)
++#define RKPM_TIMEOUT_WKUP_EN	BIT(14)
++#define RKPM_SFT_WKUP_EN	BIT(15)
++#define RKPM_USB_LINESTATE_WKUP_EN	BIT(16)
++
++/* Suspend LDO on/off flags */
++#define RKPM_SLP_LDO1_ON	BIT(0)
++#define RKPM_SLP_LDO2_ON	BIT(1)
++#define RKPM_SLP_LDO3_ON	BIT(2)
++#define RKPM_SLP_LDO4_ON	BIT(3)
++#define RKPM_SLP_LDO5_ON	BIT(4)
++#define RKPM_SLP_LDO6_ON	BIT(5)
++#define RKPM_SLP_LDO7_ON	BIT(6)
++#define RKPM_SLP_LDO8_ON	BIT(7)
++#define RKPM_SLP_LDO9_ON	BIT(8)
++
++#endif
+-- 
+2.43.0
