@@ -2,10 +2,14 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2025 ROCKNIX (https://github.com/ROCKNIX)
 
-# RTL8733BU WiFi+BT combo: btusb holds a runtime PM reference that keeps
-# the entire USB device (and 5V boost converter) powered even when BT is
-# not in use. Unload btusb at boot if BT is disabled; wrap the bluetooth
-# service so btusb is loaded/unloaded with it.
+# RTL8733BU WiFi+BT combo chip power management (Miyoo Flip).
+#
+# rtl8733bu-power registers two rfkill devices (WLAN + BLUETOOTH).
+# Chip power stays on while either is unblocked; power is cut only when
+# both are blocked.  This quirk ties the bluetooth rfkill state to the
+# bluetooth service lifecycle and boot setting.
+
+modprobe rtl8733bu_power 2>/dev/null
 
 . /etc/profile.d/001-functions
 
@@ -13,19 +17,23 @@ BT_ENABLED=$(get_setting controllers.bluetooth.enabled)
 
 if [ "${BT_ENABLED}" != "1" ]; then
   modprobe -r btusb 2>/dev/null
+  rfkill block bluetooth 2>/dev/null
 fi
 
-# Override systemd bluetooth service to manage btusb module lifecycle.
-# When bluetooth starts -> load btusb first.
-# When bluetooth stops -> unload btusb after.
+# Override systemd bluetooth service to manage btusb module and
+# rfkill state together.  When bluetooth starts -> unblock rfkill
+# and load btusb.  When bluetooth stops -> unload btusb and block
+# rfkill so the chip can power off if WiFi is also off.
 OVERRIDE_DIR="/etc/systemd/system/bluetooth.service.d"
 OVERRIDE_FILE="${OVERRIDE_DIR}/btusb-miyoo.conf"
 if [ ! -f "${OVERRIDE_FILE}" ]; then
   mkdir -p "${OVERRIDE_DIR}"
   cat <<'EOF' >"${OVERRIDE_FILE}"
 [Service]
+ExecStartPre=/usr/sbin/rfkill unblock bluetooth
 ExecStartPre=/usr/sbin/modprobe btusb
 ExecStopPost=-/usr/sbin/modprobe -r btusb
+ExecStopPost=-/usr/sbin/rfkill block bluetooth
 EOF
   systemctl daemon-reload
 fi
