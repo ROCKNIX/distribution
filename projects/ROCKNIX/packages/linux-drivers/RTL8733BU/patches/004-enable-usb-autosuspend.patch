@@ -1,0 +1,75 @@
+--- a/os_dep/linux/usb_intf.c
++++ b/os_dep/linux/usb_intf.c
+@@ -355,6 +355,9 @@
+ #if (LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 22))
+ 	.usbdrv.reset_resume   = rtw_resume,
+ #endif
++#ifdef CONFIG_USB_AUTOSUSPEND
++	.usbdrv.supports_autosuspend = 1,
++#endif
+ 
+ #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 8, 0)
+     .usbdrv.drvwrap.driver.shutdown = rtw_dev_shutdown,
+@@ -1207,10 +1210,14 @@
+ #endif
+ 	/* 2012-07-11 Move here to prevent the 8723AS-VAU BT auto suspend influence */
+ #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 33))
++#ifdef CONFIG_USB_AUTOSUSPEND
++	usb_enable_autosuspend(dvobj->pusbdev);
++#else
+ 	if (usb_autopm_get_interface(pusb_intf) < 0)
+ 		RTW_INFO("can't get autopm:\n");
+ #endif
+-#ifdef CONFIG_BT_COEXIST
++#endif
++#if defined(CONFIG_BT_COEXIST) && !defined(CONFIG_USB_AUTOSUSPEND)
+ 	dvobj_to_pwrctl(dvobj)->autopm_cnt = 1;
+ #endif
+ 
+--- a/os_dep/linux/os_intfs.c
++++ b/os_dep/linux/os_intfs.c
+@@ -4144,6 +4144,9 @@
+ {
+ 	int ret = _FALSE;
+ 	_adapter *padapter = (_adapter *)rtw_netdev_priv(pnetdev);
++#ifdef CONFIG_USB_AUTOSUSPEND
++	struct dvobj_priv *dvobj = adapter_to_dvobj(padapter);
++#endif
+ 	struct pwrctrl_priv *pwrctrlpriv = adapter_to_pwrctl(padapter);
+ 
+ 	if (pwrctrlpriv->bInSuspend == _TRUE) {
+@@ -4151,6 +4154,11 @@
+ 		return 0;
+ 	}
+ 
++#ifdef CONFIG_USB_AUTOSUSPEND
++	if (dvobj->pusbintf && usb_autopm_get_interface(dvobj->pusbintf) < 0)
++		return -EIO;
++#endif
++
+ 	_enter_critical_mutex(&(adapter_to_dvobj(padapter)->hw_init_mutex), NULL);
+ #ifdef CONFIG_NEW_NETDEV_HDL
+ 	ret = _netdev_open(pnetdev);
+@@ -4400,6 +4408,9 @@
+ {
+ 	_adapter *padapter = (_adapter *)rtw_netdev_priv(pnetdev);
+ 	struct pwrctrl_priv *pwrctl = adapter_to_pwrctl(padapter);
++#ifdef CONFIG_USB_AUTOSUSPEND
++	struct dvobj_priv *dvobj = adapter_to_dvobj(padapter);
++#endif
+ 	struct mlme_priv	*pmlmepriv = &padapter->mlmepriv;
+ 	struct mlme_ext_priv *pmlmeext = &padapter->mlmeextpriv;
+ 	struct mlme_ext_info *pmlmeinfo = &(pmlmeext->mlmext_info);
+@@ -4501,6 +4512,12 @@
+ 
+ 	RTW_INFO("-871x_drv - drv_close, bup=%d\n", padapter->bup);
+ 
++#ifdef CONFIG_USB_AUTOSUSPEND
++	if (dvobj->pusbintf) {
++		usb_mark_last_busy(dvobj->pusbdev);
++		usb_autopm_put_interface(dvobj->pusbintf);
++	}
++#endif
+ 	return 0;
+ 
+ }

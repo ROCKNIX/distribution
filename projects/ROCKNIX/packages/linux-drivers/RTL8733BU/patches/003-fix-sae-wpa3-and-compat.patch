@@ -1,0 +1,182 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ROCKNIX <rocknix@rocknix.org>
+Date: Thu, 20 Feb 2026 00:00:00 +0100
+Subject: [PATCH] net: rtl8733bu: fix SAE/WPA3 authentication and compat
+
+Fix WPA3-Personal (SAE) connections with iwd on FullMAC drivers.
+Without these changes, SAE authentication either never starts, completes
+but never transitions to association, or silently self-disconnects
+within seconds due to a duplicate association storm.
+
+1. Fix SAE key_mgmt_suite endianness for kernel >= 6.9
+
+   Since kernel 6.9, nl80211 handles the big-endian conversion for
+   WLAN_AKM_SUITE_SAE inside cfg80211_external_auth_request(). The
+   driver was hardcoding cpu_to_be32(WLAN_AKM_SUITE_SAE) which breaks
+   the suite comparison in iwd. Pass the value in host byte order on
+   kernel >= 6.9.
+
+2. Fix cfg80211_external_auth_params struct layout mismatch
+
+   Kernel >= 5.1 changed pmkid from u8[16] to const u8* and added an
+   mld_addr field, making cfg80211_external_auth_params larger than the
+   driver's rtw_external_auth_params. The raw cast corrupted fields.
+   Copy fields individually instead.
+
+3. Fix mgmt_tx rejecting SAE frames when channel is NULL
+
+   iwd sends NL80211_CMD_FRAME for SAE authentication without a channel
+   frequency, causing the kernel to pass chan=NULL. The driver returned
+   -EINVAL, aborting SAE. Fall back to rtw_get_oper_ch() when chan is
+   NULL, and guard the DFS check against NULL dereference.
+
+4. Trigger association after SAE success in STA mode
+
+   The external_auth_status handler only stored the status but never
+   triggered the MLME association phase. Add start_clnt_assoc() call
+   on SAE success so the driver transitions from AUTH to ASSOC state.
+
+5. Remove duplicate start_clnt_assoc from set_pmksa
+
+   cfg80211_rtw_set_pmksa() called start_clnt_assoc() when SAE auth
+   was detected. Since iwd calls set_pmksa AFTER the 4-way handshake
+   (when association already succeeded), this sent a second association
+   request. The AP accepted it, but the driver's OnAssocRsp returned
+   early (ASSOC_SUCCESS already set), leaving the link timer running.
+   After REASSOC_LIMIT retries the driver reported join failure and
+   disconnected. Remove this redundant call.
+
+6. Add MODULE_IMPORT_NS for VFS access (CONFIG_FILE_FWIMG)
+
+   Kernel 6.13 changed MODULE_IMPORT_NS to require a string argument.
+
+7. Optimize _cancel_timer_ex for kernel >= 4.15
+
+   Bypass the _cancel_timer indirection and call timer_delete_sync /
+   del_timer_sync directly.
+
+Signed-off-by: ROCKNIX <rocknix@rocknix.org>
+---
+ include/osdep_service.h       |  8 +++++++-
+ os_dep/linux/ioctl_cfg80211.c | 36 +++++++++++++++++++++++++-----------
+ os_dep/linux/os_intfs.c       |  7 +++++++
+ 3 files changed, 39 insertions(+), 12 deletions(-)
+
+diff --git a/include/osdep_service.h b/include/osdep_service.h
+--- a/include/osdep_service.h
++++ b/include/osdep_service.h
+@@ -480,10 +480,14 @@
+ __inline static unsigned char _cancel_timer_ex(_timer *ptimer)
+ {
+ 	u8 bcancelled;
+-
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0))
++	return timer_delete_sync(&ptimer->timer);
++#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0))
++	return del_timer_sync(&ptimer->timer);
++#else
+ 	_cancel_timer(ptimer, &bcancelled);
+-
+ 	return bcancelled;
++#endif
+ }
+ 
+ static __inline void thread_enter(char *name)
+diff --git a/os_dep/linux/ioctl_cfg80211.c b/os_dep/linux/ioctl_cfg80211.c
+--- a/os_dep/linux/ioctl_cfg80211.c
++++ b/os_dep/linux/ioctl_cfg80211.c
+@@ -4738,12 +4738,6 @@
+ 
+ 	_rtw_set_pmksa(ndev, (u8 *)pmksa->bssid, (u8 *)pmksa->pmkid);
+ 
+-	if (sae_auth &&
+-		(psecuritypriv->extauth_status == WLAN_STATUS_SUCCESS)) {
+-		RTW_PRINT("SAE: auth success, start assoc\n");
+-		start_clnt_assoc(padapter);
+-	}
+-
+ 	return 0;
+ }
+ 
+@@ -7015,7 +7009,11 @@
+ 	params.ssid.ssid_len = pmlmeinfo->network.Ssid.SsidLength;
+ 	_rtw_memcpy(params.ssid.ssid, pmlmeinfo->network.Ssid.Ssid,
+ 		pmlmeinfo->network.Ssid.SsidLength);
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 9, 0))
++	params.key_mgmt_suite = WLAN_AKM_SUITE_SAE;
++#else
+ 	params.key_mgmt_suite = 0x8ac0f00;
++#endif
+ 
+ 	RTW_INFO("external auth: use kernel API: cfg80211_external_auth_request()\n");
+ 	cfg80211_external_auth_request(netdev, &params, GFP_ATOMIC);
+@@ -8258,13 +8256,17 @@
+ #endif
+ 
+ 	if (chan == NULL) {
+-		ret = -EINVAL;
+-		goto exit;
++		tx_ch = rtw_get_oper_ch(padapter);
++		if (tx_ch == 0) {
++			ret = -EINVAL;
++			goto exit;
++		}
++	} else {
++		tx_ch = (u8)ieee80211_frequency_to_channel(chan->center_freq);
+ 	}
+ 
+ 	rfctl = adapter_to_rfctl(padapter);
+-	tx_ch = (u8)ieee80211_frequency_to_channel(chan->center_freq);
+-	if (IS_CH_WAITING(rfctl)) {
++	if (chan && IS_CH_WAITING(rfctl)) {
+ 		#ifdef CONFIG_DFS_MASTER
+ 		if (rtw_rfctl_overlap_radar_detect_ch(rfctl, nl80211_band_to_rtw_band(chan->band), tx_ch, CHANNEL_WIDTH_20, HAL_PRIME_CHNL_OFFSET_DONT_CARE)) {
+ 			ret = -EINVAL;
+@@ -10492,11 +10494,19 @@
+ 	struct cfg80211_external_auth_params *params)
+ {
+ 	PADAPTER padapter = (_adapter *)rtw_netdev_priv(dev);
++	struct rtw_external_auth_params rtw_params = {0};
+ 
+ 	RTW_INFO(FUNC_NDEV_FMT"\n", FUNC_NDEV_ARG(dev));
+ 
+-	rtw_cfg80211_external_auth_status(wiphy, dev,
+-		(struct rtw_external_auth_params *)params);
++	rtw_params.action = params->action;
++	_rtw_memcpy(rtw_params.bssid, params->bssid, ETH_ALEN);
++	rtw_params.ssid = params->ssid;
++	rtw_params.key_mgmt_suite = params->key_mgmt_suite;
++	rtw_params.status = params->status;
++	if (params->pmkid)
++		_rtw_memcpy(rtw_params.pmkid, params->pmkid, PMKID_LEN);
++
++	rtw_cfg80211_external_auth_status(wiphy, dev, &rtw_params);
+ 
+ 	return 0;
+ }
+@@ -10578,6 +10588,8 @@
+ 	} else {
+ 		/* STA mode */
+ 		psecuritypriv->extauth_status = params->status;
++		if (params->status == WLAN_STATUS_SUCCESS)
++			start_clnt_assoc(padapter);
+ 	}
+ }
+ 
+diff --git a/os_dep/linux/os_intfs.c b/os_dep/linux/os_intfs.c
+--- a/os_dep/linux/os_intfs.c
++++ b/os_dep/linux/os_intfs.c
+@@ -21,6 +21,13 @@
+ MODULE_DESCRIPTION("Realtek Wireless Lan Driver");
+ MODULE_AUTHOR("Realtek Semiconductor Corp.");
+ MODULE_VERSION(DRIVERVERSION);
++#ifdef CONFIG_FILE_FWIMG
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0))
++MODULE_IMPORT_NS("VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver");
++#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0))
++MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);
++#endif
++#endif
+ 
+ /* module param defaults */
+ int rtw_chip_version = 0x00;
