@@ -13,17 +13,15 @@ DDR frequency scaling uses the BSP V2 SIP protocol with MCU-based DCF:
  5. MCU performs the HWFFC and fires a completion IRQ (GIC_SPI 10)
  6. IRQ handler calls POST_SET_RATE for cleanup
 
-This protocol is derived from the Rockchip BSP kernel's rockchip_dmc.c
-driver (rockchip-linux/kernel develop-5.10 branch) and verified against
-the stock Miyoo Flip firmware boot log which shows the rockchip-dmc
-driver probing successfully with ATF version 0x102.
+This protocol follows the Rockchip BSP DMC driver behaviour (ATF
+version 0x102 or newer).
 
 Signed-off-by: ROCKNIX <rocknix@rocknix.org>
 ---
  drivers/devfreq/Kconfig      |  12 +
  drivers/devfreq/Makefile     |   1 +
- drivers/devfreq/rk3568_dmc.c | 603 ++++++++++++++++++++++++++++++++++
- 3 files changed, 616 insertions(+)
+ drivers/devfreq/rk3568_dmc.c | 639 ++++++++++++++++++++++++++++++++++
+ 3 files changed, 653 insertions(+)
  create mode 100644 drivers/devfreq/rk3568_dmc.c
 
 diff --git a/drivers/devfreq/Kconfig b/drivers/devfreq/Kconfig
@@ -65,7 +63,7 @@ new file mode 100644
 index 0000000..XXXXXXX
 --- /dev/null
 +++ b/drivers/devfreq/rk3568_dmc.c
-@@ -0,0 +1,603 @@
+@@ -0,0 +1,639 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * RK3566/RK3568 DMC (Dynamic Memory Controller) devfreq driver.
@@ -74,7 +72,7 @@ index 0000000..XXXXXXX
 + *   SET_RATE returns -6 ("timeout"), then kernel starts the MCU,
 + *   waits for a completion IRQ, and calls POST_SET_RATE cleanup.
 + *
-+ * Derived from Rockchip BSP rockchip_dmc.c (develop-5.10 branch).
++ * Protocol and flow derived from the Rockchip BSP DMC driver.
 + *
 + * Copyright (c) 2021 Rockchip Electronics Co. Ltd.
 + * Copyright (c) 2026 ROCKNIX contributors.
@@ -103,8 +101,7 @@ index 0000000..XXXXXXX
 +
 +/*
 + * BSP V2 sub-commands for ROCKCHIP_SIP_DRAM_FREQ (0x82000008).
-+ * These overlap with some mainline definitions (0x08 is SET_ODT_PD in
-+ * mainline but GET_VERSION in the Rockchip proprietary BL31).
++ * Numeric values match the BSP BL31 interface (differ from mainline SIP).
 + */
 +#define RK3568_SIP_DRAM_GET_VERSION		0x08
 +#define RK3568_SIP_DRAM_POST_SET_RATE		0x09
@@ -115,7 +112,7 @@ index 0000000..XXXXXXX
 +#define RK3568_ATF_VERSION_MIN			0x101
 +
 +/*
-+ * Shared-memory layout matching BSP struct share_params.
++ * Shared-memory layout matching the BSP DDR interface.
 + * First 4 KB page: interface parameters. Second 4 KB: DTS parameters.
 + */
 +struct rk3568_share_params {
@@ -156,6 +153,7 @@ index 0000000..XXXXXXX
 +	unsigned long			rate;
 +	unsigned long			volt;
 +	unsigned long			boot_rate;
++	int				post_resume_scale_down;
 +};
 +
 +static struct rk3568_share_params *ddr_psci_param;
@@ -321,11 +319,38 @@ index 0000000..XXXXXXX
 +	struct devfreq_event_data edata;
 +	int ret;
 +
++	stat->current_frequency = dmcfreq->rate;
++
++	/*
++	 * After resume, DFI often returns total_count==0 for several polls
++	 * (monitor block may have been powered off).  Force 0% load for the
++	 * first few polls so the governor scales to min; prime DFI with a
++	 * read so subsequent polls get valid deltas.
++	 */
++	if (dmcfreq->post_resume_scale_down > 0) {
++		dmcfreq->post_resume_scale_down--;
++		devfreq_event_get_event(dmcfreq->edev, &edata);
++		stat->busy_time = 0;
++		stat->total_time = 1;
++		return 0;
++	}
++
 +	ret = devfreq_event_get_event(dmcfreq->edev, &edata);
 +	if (ret < 0)
 +		return ret;
 +
-+	stat->current_frequency = dmcfreq->rate;
++	/*
++	 * Governor simple_ondemand requests DEVFREQ_MAX_FREQ when total_time
++	 * is 0 (divide-by-zero guard).  DFI can return total_count 0 when the
++	 * timer delta is zero.  Report ~20%% so the governor keeps current
++	 * frequency instead of scaling to min or max.
++	 */
++	if (edata.total_count == 0) {
++		stat->busy_time = 2;
++		stat->total_time = 10;
++		return 0;
++	}
++
 +	stat->busy_time = edata.load_count;
 +	stat->total_time = edata.total_count;
 +
@@ -359,13 +384,16 @@ index 0000000..XXXXXXX
 +	if (!dmcfreq->devfreq)
 +		return 0;
 +
-+	devfreq_event_disable_edev(dmcfreq->edev);
++	/*
++	 * devfreq framework (dpm_suspend → devfreq_suspend) already called
++	 * devfreq_suspend_device() which stops the governor polling.
++	 * DFI PM ops (1011 patch) handle DDRMON hardware suspend.
++	 * We only need to set boot rate and clear shared memory.
++	 */
 +
 +	/*
 +	 * Force DDR to the boot frequency before suspend.  BL31's resume
-+	 * path restores DDR from self-refresh expecting this frequency;
-+	 * without this, DDR may be at 324 MHz while BL31 expects 1056 MHz,
-+	 * causing a hang on resume.
++	 * path restores DDR from self-refresh expecting this frequency.
 +	 */
 +	mutex_lock(&dmcfreq->lock);
 +	if (dmcfreq->rate != dmcfreq->boot_rate) {
@@ -386,7 +414,6 @@ index 0000000..XXXXXXX
 +		}
 +	}
 +
-+	/* Clear shared memory state so BL31 sees clean flags on resume */
 +	if (ddr_psci_param) {
 +		ddr_psci_param->hz = 0;
 +		ddr_psci_param->wait_flag1 = 0;
@@ -394,7 +421,7 @@ index 0000000..XXXXXXX
 +	}
 +	mutex_unlock(&dmcfreq->lock);
 +
-+	return devfreq_suspend_device(dmcfreq->devfreq);
++	return 0;
 +}
 +
 +static int rk3568_dmcfreq_resume(struct device *dev)
@@ -404,11 +431,18 @@ index 0000000..XXXXXXX
 +	if (!dmcfreq->devfreq)
 +		return 0;
 +
-+	/* Re-sync rate from hardware; BL31 restores DDR to boot frequency */
++	/*
++	 * Re-sync rate from hardware; BL31 restores DDR to boot frequency.
++	 * DFI PM ops (1011 patch) already re-initialized DDRMON hardware
++	 * and primed counters.  devfreq framework (dpm_resume →
++	 * devfreq_resume) will restart the governor polling after all
++	 * device resumes complete.
++	 */
 +	dmcfreq->rate = clk_get_rate(dmcfreq->dmc_clk);
 +
-+	devfreq_event_enable_edev(dmcfreq->edev);
-+	return devfreq_resume_device(dmcfreq->devfreq);
++	dmcfreq->post_resume_scale_down = 3;
++
++	return 0;
 +}
 +
 +static DEFINE_SIMPLE_DEV_PM_OPS(rk3568_dmcfreq_pm,
@@ -516,7 +550,7 @@ index 0000000..XXXXXXX
 +	/* 3. Set up MCU-based DCF completion wait mechanism */
 +	init_waitqueue_head(&wait_ctrl.wait_wq);
 +	wait_ctrl.wait_en = 1;
-+	wait_ctrl.wait_time_out_ms = 17 * 5;	/* ~85 ms, from BSP */
++	wait_ctrl.wait_time_out_ms = 17 * 5;	/* ~85 ms (BSP value) */
 +
 +	complt_irq = platform_get_irq_byname(pdev, "complete");
 +	if (complt_irq < 0) {
@@ -669,5 +703,3 @@ index 0000000..XXXXXXX
 +MODULE_LICENSE("GPL");
 +MODULE_AUTHOR("ROCKNIX contributors");
 +MODULE_DESCRIPTION("RK3566/RK3568 DMC devfreq driver");
--- 
-2.43.0
