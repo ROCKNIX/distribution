@@ -1,0 +1,129 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ROCKNIX <rocknix@rocknix.org>
+Date: Sun, 23 Feb 2026 00:00:00 +0000
+Subject: [PATCH] devfreq-event: rockchip-dfi: add PM suspend/resume ops
+
+The DFI hardware monitor (DDRMON) block loses its register state when
+the center power domain is turned off during deep suspend.
+
+When CONFIG_PERF_EVENTS is enabled, the DFI perf PMU calls
+rockchip_dfi_enable() during probe, permanently holding a usecount
+reference.  The devfreq enable/disable calls from the DMC driver
+during suspend/resume then never reach usecount==0, so the DDRMON
+hardware is never re-programmed on resume.  Result: counters stay at
+zero, the devfreq governor never sees load, DDR frequency scaling
+stops working.
+
+Add PM suspend/resume callbacks that unconditionally save and restore
+the DDRMON hardware state when any user (perf or devfreq) is active.
+The resume handler also primes last_event_count so that the first
+get_event() after resume computes a valid delta.
+
+Signed-off-by: ROCKNIX <rocknix@rocknix.org>
+---
+ drivers/devfreq/event/rockchip-dfi.c | 84 +++++++++++++++++++++++++++
+ 1 file changed, 84 insertions(+)
+
+diff --git a/drivers/devfreq/event/rockchip-dfi.c b/drivers/devfreq/event/rockchip-dfi.c
+index XXXXXXX..XXXXXXX 100644
+--- a/drivers/devfreq/event/rockchip-dfi.c
++++ b/drivers/devfreq/event/rockchip-dfi.c
+@@ -874,11 +874,95 @@ static int rockchip_dfi_probe(struct platform_device *pdev)
+ 	return 0;
+ }
+ 
++static int __maybe_unused rockchip_dfi_suspend(struct device *dev)
++{
++	struct rockchip_dfi *dfi = dev_get_drvdata(dev);
++	void __iomem *dfi_regs = dfi->regs;
++	int i;
++
++	mutex_lock(&dfi->mutex);
++
++	if (dfi->usecount == 0)
++		goto out;
++
++	for (i = 0; i < dfi->max_channels; i++) {
++		if (!(dfi->channel_mask & BIT(i)))
++			continue;
++
++		writel_relaxed(FIELD_PREP_WM16(DDRMON_CTRL_SOFTWARE_EN, 0),
++			       dfi_regs + i * dfi->ddrmon_stride + DDRMON_CTRL);
++
++		if (dfi->ddrmon_ctrl_single)
++			break;
++	}
++
++	clk_disable_unprepare(dfi->clk);
++
++out:
++	mutex_unlock(&dfi->mutex);
++
++	return 0;
++}
++
++static int __maybe_unused rockchip_dfi_resume(struct device *dev)
++{
++	struct rockchip_dfi *dfi = dev_get_drvdata(dev);
++	void __iomem *dfi_regs = dfi->regs;
++	int i, ret;
++	u32 ctrl;
++
++	mutex_lock(&dfi->mutex);
++
++	if (dfi->usecount == 0)
++		goto out;
++
++	ret = clk_prepare_enable(dfi->clk);
++	if (ret) {
++		dev_err(dev, "failed to enable dfi clk on resume: %d\n", ret);
++		goto out;
++	}
++
++	ret = rockchip_dfi_ddrtype_to_ctrl(dfi, &ctrl);
++	if (ret)
++		goto out;
++
++	for (i = 0; i < dfi->max_channels; i++) {
++		if (!(dfi->channel_mask & BIT(i)))
++			continue;
++
++		writel_relaxed(FIELD_PREP_WM16(DDRMON_CTRL_TIMER_CNT_EN, 0) |
++			       FIELD_PREP_WM16(DDRMON_CTRL_SOFTWARE_EN, 0) |
++			       FIELD_PREP_WM16(DDRMON_CTRL_HARDWARE_EN, 0),
++			       dfi_regs + i * dfi->ddrmon_stride + DDRMON_CTRL);
++
++		writel_relaxed(ctrl, dfi_regs + i * dfi->ddrmon_stride +
++			       DDRMON_CTRL);
++
++		writel_relaxed(FIELD_PREP_WM16(DDRMON_CTRL_SOFTWARE_EN, 1),
++			       dfi_regs + i * dfi->ddrmon_stride + DDRMON_CTRL);
++
++		if (dfi->ddrmon_ctrl_single)
++			break;
++	}
++
++	rockchip_dfi_read_counters(dfi, &dfi->last_event_count);
++
++out:
++	mutex_unlock(&dfi->mutex);
++
++	return 0;
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(rockchip_dfi_pm,
++				rockchip_dfi_suspend,
++				rockchip_dfi_resume);
++
+ static struct platform_driver rockchip_dfi_driver = {
+ 	.probe	= rockchip_dfi_probe,
+ 	.driver = {
+ 		.name	= "rockchip-dfi",
+ 		.of_match_table = rockchip_dfi_id_match,
+ 		.suppress_bind_attrs = true,
++		.pm = pm_sleep_ptr(&rockchip_dfi_pm),
+ 	},
+ };
+-- 
+2.34.1
+
