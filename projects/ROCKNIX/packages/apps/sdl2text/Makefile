@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2025-present ROCKNIX (https://github.com/ROCKNIX)
 
-CXX ?= g++
-CFLAGS = -W -Wall -std=c++17 `sdl2-config --cflags`
+CXX ?= gcc
+CCFLAGS = -W -Wall -std=c++11 `sdl2-config --cflags`
 
 BINARY = sdl2text
 LIBRARIES = -lSDL2 -lSDL2_ttf -lstdc++fs
