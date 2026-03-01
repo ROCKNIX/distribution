@@ -33,6 +33,7 @@ HWDOWNLOAD=$(get_setting hw_download_mode "${PLATFORM}" "${GAME}")
 GRENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
 IRES=$(get_setting internal_resolution "${PLATFORM}" "${GAME}")
 VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
+ENABLE_WIDESCREEN_PATCHES=$(get_setting enable_widescreen_patches "${PLATFORM}" "${GAME}")
 
 #Set the cores to use
 CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
@@ -182,6 +183,14 @@ fi
         if [ "$HWDOWNLOAD" = "3" ]
         then
                 sed -i '/^HWDownloadMode =/c\HWDownloadMode = 3' /storage/.config/aethersx2/inis/PCSX2.ini
+        fi
+
+#Widescreen patches
+	if [ "$ENABLE_WIDESCREEN_PATCHES" = "true" ]
+	then
+  		sed -i '/^EnableWideScreenPatches =/c\EnableWideScreenPatches = true' /storage/.config/aethersx2/inis/PCSX2.ini
+        else
+                sed -i '/^EnableWideScreenPatches =/c\EnableWideScreenPatches = false' /storage/.config/aethersx2/inis/PCSX2.ini
         fi
 
 #Retroachievements
