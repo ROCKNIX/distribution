@@ -65,7 +65,7 @@ PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Dportabled=false \
                        -Duserdb=false \
                        -Dhomed=false \
-                       -Dnetworkd=false \
+                       -Dnetworkd=true \
                        -Dtimedated=false \
                        -Dtimesyncd=true \
                        -Dfirstboot=false \
@@ -92,7 +92,7 @@ PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Dhtml=false \
                        -Dlink-udev-shared=true \
                        -Dlink-systemctl-shared=true \
-                       -Dlink-networkd-shared=false \
+                       -Dlink-networkd-shared=true \
                        -Dbashcompletiondir=no \
                        -Dzshcompletiondir=no \
                        -Dkmod-path=/usr/bin/kmod \
@@ -190,8 +190,10 @@ post_makeinstall_target() {
   safe_remove ${INSTALL}/usr/lib/systemd/user-preset/*
   echo "disable *" > ${INSTALL}/usr/lib/systemd/user-preset/90-systemd.preset
 
-  # remove networkd
-  safe_remove ${INSTALL}/usr/lib/systemd/network
+  # networkd: keep /usr/lib/systemd/network/ for rxnm templates, strip wait-online
+  safe_remove ${INSTALL}/usr/lib/systemd/systemd-networkd-wait-online
+  safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-networkd-wait-online.service
+  safe_remove ${INSTALL}/usr/lib/systemd/system/network-online.target.wants/systemd-networkd-wait-online.service
 
   # remove systemd-time-wait-sync (not detecting slew time updates, using package wait-time-sync)
   safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-time-wait-sync.service
@@ -257,6 +259,7 @@ post_makeinstall_target() {
   ln -sf /storage/.config/resolved.conf.d ${INSTALL}/etc/systemd/resolved.conf.d
   ln -sf /storage/.config/sleep.conf.d ${INSTALL}/etc/systemd/sleep.conf.d
   ln -sf /storage/.config/timesyncd.conf.d ${INSTALL}/etc/systemd/timesyncd.conf.d
+  ln -sf /storage/.config/networkd.conf.d ${INSTALL}/etc/systemd/networkd.conf.d
   safe_remove ${INSTALL}/etc/sysctl.d
   ln -sf /storage/.config/sysctl.d ${INSTALL}/etc/sysctl.d
   safe_remove ${INSTALL}/etc/tmpfiles.d
@@ -314,5 +317,6 @@ post_install() {
   enable_service systemd-timesyncd.service
   enable_service systemd-timesyncd-setup.service
   enable_service systemd-resolved.service
+  enable_service systemd-networkd.service
   enable_service debug-shell.service
 }
