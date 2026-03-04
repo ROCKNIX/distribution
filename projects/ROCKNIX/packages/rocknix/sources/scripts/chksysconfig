@@ -18,17 +18,56 @@ restore() {
   cp ${CFG_PATH}/system.cfg.backup ${CFG_PATH}/system.cfg
 }
 
+restore_critical_settings() {
+  # Only restore settings required for basic system functionality.
+  # These are the settings that, if missing, cause SSH to not start,
+  # hostname to be wrong, WiFi to not enable, etc.
+  # We do NOT restore the full 200+ key reference config — most of
+  # those are emulator defaults that ES manages internally.
+  local ref="/usr/config/system/configs/system.cfg"
+  [ ! -f "$ref" ] && return
+
+  local CRITICAL_KEYS="ssh.enabled root.password wifi.enabled boot system.language system.timezone audio.volume audio.device"
+
+  for key in ${CRITICAL_KEYS}; do
+    if ! grep -q "^${key}=" "${CFG_PATH}/system.cfg" 2>/dev/null; then
+      local value=$(grep "^${key}=" "$ref" | head -1)
+      if [ -n "$value" ]; then
+        echo "$value" >> "${CFG_PATH}/system.cfg"
+      fi
+    fi
+  done
+
+  # Set hostname with -RECOVERY suffix so the user knows settings
+  # were restored after a crash. Visible in ES system info, network
+  # hostname, and SSH banner without requiring ES code changes.
+  # TODO: Add ES startup dialog via flag file check in emulationstation-next
+  local default_hostname=$(grep "^system.hostname=" "$ref" | cut -d= -f2)
+  echo "system.hostname=${default_hostname:-ROCKNIX}-RECOVERY" >> "${CFG_PATH}/system.cfg"
+
+  tocon "WARNING: Settings recovered after crash — check system configuration"
+  logger -t chksysconfig "Critical settings restored from reference config (system.cfg was truncated)"
+}
+
 verify() {
   TYPE=$(grep a ${CFG_PATH}/system.cfg 2>&1)
   if [[ "${TYPE}" =~ binary ]]; then
     restore
   fi
 
-  # Check if any configs are missing and restore everything if they are
+  # Restore retroarch configs if missing entirely
   if [ ! -s /storage/.config/retroarch/retroarch-core-options.cfg ] || \
-     [ ! -s /storage/.config/retroarch/retroarch.cfg ] || \
-     ! grep -q system.hostname /storage/.config/system/configs/system.cfg; then
-    rsync -a /usr/config/ /storage/.config
+     [ ! -s /storage/.config/retroarch/retroarch.cfg ]; then
+    rsync -a /usr/config/retroarch/ /storage/.config/retroarch/
+  fi
+
+  # If system.cfg is missing critical settings (e.g. after a hard crash
+  # that truncated the file), restore only the settings required for
+  # basic system functionality. This preserves all existing user
+  # settings (WiFi credentials, per-game overrides, emulator preferences)
+  # while ensuring SSH, hostname, and WiFi enable correctly on boot.
+  if ! grep -q system.hostname ${CFG_PATH}/system.cfg 2>/dev/null; then
+    restore_critical_settings
   fi
 }
 
