@@ -27,6 +27,11 @@ then
   PKG_DEPENDS_TARGET+=" ${VULKAN}"
 fi
 
+get_graphicdrivers
+if listcontains "${GRAPHIC_DRIVERS}" "(panfrost)"; then
+  GRAPHICS_DRIVER="panfrost"
+fi
+
 pre_configure_target() {
 export CFLAGS+=" -Wno-sign-compare"
 export CXXFLAGS="${CXXFLAGS} -Wno-sign-compare"
@@ -58,8 +63,8 @@ makeinstall_target() {
 }
 
 post_install() {
-  case ${TARGET_ARCH} in
-    aarch64)
+  case ${GRAPHICS_DRIVER} in
+    panfrost)
       PANFROST="export MESA_GL_VERSION_OVERRIDE=3.3"
       ;;
     *)

@@ -25,9 +25,6 @@ make_target() {
 makeinstall_target() {
   mkdir -p $INSTALL/usr/share/bootloader
 
-  # Always install the update script
-  find_file_path bootloader/update.sh && cp -av ${FOUND_PATH} ${INSTALL}/usr/share/bootloader
-
   for PKG_SUBDEVICE in ${SUBDEVICES}; do
     PKG_UBOOTBIN=$(get_build_dir u-boot-${PKG_SUBDEVICE})/uboot.bin
     cp -av ${PKG_UBOOTBIN} $INSTALL/usr/share/bootloader/${PKG_SUBDEVICE}_uboot.bin

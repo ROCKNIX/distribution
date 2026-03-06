@@ -75,9 +75,6 @@ generate_custom_extlinux_conf_files() {
 makeinstall_target() {
   mkdir -p $INSTALL/usr/share/bootloader
 
-  # Always install the update script
-  find_file_path bootloader/update.sh && cp -av ${FOUND_PATH} ${INSTALL}/usr/share/bootloader
-
   for SUBDEVICE in ${SUBDEVICES}; do
     if find_file_path config/${SUBDEVICE}_boot.ini; then
       cp -av ${FOUND_PATH} .

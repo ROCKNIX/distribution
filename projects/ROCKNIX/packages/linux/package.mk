@@ -32,11 +32,11 @@ case ${DEVICE} in
     ;;
   *)
     case ${DEVICE} in
-      SM8250)
-        PKG_VERSION="6.19.3"
+      SM8250|SM8650|H700)
+        PKG_VERSION="6.19.5"
         PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
         ;;
-      S922X|H700|RK3399|RK3566|SM8550|SM8650)
+      S922X|RK3399|RK3566|SM8550)
         PKG_VERSION="6.18.13"
         PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
         ;;
