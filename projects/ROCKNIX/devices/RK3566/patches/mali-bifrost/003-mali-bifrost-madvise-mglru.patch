@@ -1,0 +1,60 @@
+From: Joel Wirāmu Pauling <aenertia@aenertia.net>
+Date: Thu, 26 Feb 2026 20:00:00 +1300
+Subject: [PATCH] mali: bifrost: Enable madvise and MGLRU reclaim for native kbase mem
+
+Strip VM_IO and VM_PFNMAP from CPU VMAs backed by KBASE_MEM_TYPE_NATIVE
+allocations so that:
+
+  1. madvise(MADV_DONTNEED) works correctly from libmali/libmali-vulkan,
+     allowing userspace to hint purgeable GPU buffers back to the kernel.
+
+  2. Linux MGLRU (CONFIG_LRU_GEN + LRU_GEN_WALKS_MMU) can age and reclaim
+     these pages via hardware pgtable walks, improving memory pressure
+     handling on constrained RK3566 devices.
+
+VM_IO and VM_PFNMAP are intentionally preserved on KBASE_MEM_TYPE_IMPORTED_UMM
+(dma-buf/scanout) mappings, which may back non-RAM memory and require the
+original pfn-mapping semantics for correct operation.
+
+VM_MIXEDMAP is not applied: native allocations are homogeneous struct-page
+mappings and do not require mixed pfn/page handling. Setting it here would
+confuse follow_page() and page migration.
+
+VM_NOHUGEPAGE is added to prevent spurious THP promotion races. The RK3566
+kernel is built with CONFIG_TRANSPARENT_HUGEPAGE_MADVISE and the ROCKNIX
+memory manager triggers vm.compact_memory at runtime; without this flag,
+compaction could attempt to collapse 4K GPU buffer pages into a hugepage
+during a concurrent fault-in, causing blank screen hangs on the compositor.
+
+Kernel config confirmed: LRU_GEN=y, LRU_GEN_ENABLED=y, LRU_GEN_WALKS_MMU=y,
+TRANSPARENT_HUGEPAGE_MADVISE=y (Linux 6.18, aarch64, ROCKNIX RK3566).
+
+---
+ product/kernel/drivers/gpu/arm/midgard/mali_kbase_mem_linux.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/product/kernel/drivers/gpu/arm/midgard/mali_kbase_mem_linux.c b/product/kernel/drivers/gpu/arm/midgard/mali_kbase_mem_linux.c
+--- a/product/kernel/drivers/gpu/arm/midgard/mali_kbase_mem_linux.c
++++ b/product/kernel/drivers/gpu/arm/midgard/mali_kbase_mem_linux.c
+@@ -1240,6 +1240,21 @@ static int kbase_cpu_mmap(struct kbase_context *kctx, struct kbase_va_region *re
+ 
+ 	__vm_flags_mod(vma, VM_DONTCOPY | VM_DONTDUMP | VM_DONTEXPAND | VM_IO, 0);
+ 
++	/*
++	 * ROCKNIX/MGLRU: For native struct-page-backed GPU allocations, strip
++	 * VM_IO and VM_PFNMAP so that madvise(MADV_DONTNEED) is honoured by the
++	 * kernel and MGLRU (LRU_GEN_WALKS_MMU) can age and reclaim these pages.
++	 *
++	 * KBASE_MEM_TYPE_IMPORTED_UMM (dma-buf/scanout) is deliberately excluded:
++	 * those mappings may cover non-RAM pfns and must retain VM_IO/VM_PFNMAP.
++	 *
++	 * VM_NOHUGEPAGE guards against THP promotion races during vm.compact_memory
++	 * triggered by the ROCKNIX memory manager (TRANSPARENT_HUGEPAGE_MADVISE).
++	 */
++	if (reg->cpu_alloc->type == KBASE_MEM_TYPE_NATIVE) {
++		vm_flags_clear(vma, VM_IO | VM_PFNMAP);
++		vm_flags_set(vma, VM_NOHUGEPAGE);
++	}
+ 	vma->vm_ops = &kbase_vm_ops;
+ 	vma->vm_private_data = map;
+ 
