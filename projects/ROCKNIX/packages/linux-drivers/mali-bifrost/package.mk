@@ -21,8 +21,21 @@ case ${DEVICE} in
 esac
 
 make_target() {
+  # S922X is an actual Amlogic Meson SoC — it requires the meson platform
+  # backend for correct GPU clock and power domain handling.
+  # Rockchip devices use the devicetree backend which properly coordinates
+  # with kernel power domain drivers during runtime PM suspend/resume cycles.
+  case ${DEVICE} in
+    S922X)
+      MALI_PLATFORM="meson"
+      ;;
+    *)
+      MALI_PLATFORM="devicetree"
+      ;;
+  esac
+
   kernel_make KDIR=$(kernel_path) -C ${PKG_BUILD} \
-       CONFIG_MALI_MIDGARD=m CONFIG_MALI_PLATFORM_NAME=meson CONFIG_MALI_REAL_HW=y CONFIG_MALI_DEVFREQ=y CONFIG_MALI_GATOR_SUPPORT=y
+       CONFIG_MALI_MIDGARD=m CONFIG_MALI_PLATFORM_NAME=${MALI_PLATFORM} CONFIG_MALI_REAL_HW=y CONFIG_MALI_DEVFREQ=y CONFIG_MALI_GATOR_SUPPORT=y
 }
 
 makeinstall_target() {
