@@ -78,13 +78,16 @@ else
 fi
 
 #Graphics Backend
-if [ "$GRENDERER" > "0" ]; then
-	sed -i "/^ScreenUseGL=/c\ScreenUseGL=$GRENDERER" "${CONF_DIR}/${MELONDS_INI}"
-	sed -i "/^3DRenderer=/c\3DRenderer=1" "${CONF_DIR}/${MELONDS_INI}"
-else
-	sed -i '/^ScreenUseGL=/c\ScreenUseGL=0' "${CONF_DIR}/${MELONDS_INI}"
-	sed -i '/^3DRenderer=/c\3DRenderer=0' "${CONF_DIR}/${MELONDS_INI}"
-fi
+case "$GRENDERER" in
+  "1"|"2")
+    sed -i "/^ScreenUseGL=/c\ScreenUseGL=1" "${CONF_DIR}/${MELONDS_INI}"
+    sed -i "/^3DRenderer=/c\3DRenderer=$GRENDERER" "${CONF_DIR}/${MELONDS_INI}"
+  ;;
+  *)
+    sed -i '/^ScreenUseGL=/c\ScreenUseGL=0' "${CONF_DIR}/${MELONDS_INI}"
+    sed -i '/^3DRenderer=/c\3DRenderer=0' "${CONF_DIR}/${MELONDS_INI}"
+  ;;
+esac
 
 #Internal Resolution
 if [ "$IRES" > "0" ]; then

@@ -24,6 +24,12 @@ fi
 
 . $SYSTEM_ROOT/usr/bin/updateabl
 
+### REMOVE IN THE FUTURE ###
+# cleanup old boot files
+[ -d "$BOOT_ROOT/boot" ] && rm -rf "$BOOT_ROOT/boot"
+[ -d "$BOOT_ROOT/EFI" ] && rm -rf "$BOOT_ROOT/EFI"
+# end
+
 # mount $BOOT_ROOT ro
 sync
 mount -o remount,ro $BOOT_ROOT

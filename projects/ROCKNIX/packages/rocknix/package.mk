@@ -42,6 +42,9 @@ makeinstall_target() {
 Passphrase=${LOCAL_WIFI_KEY}
 EOF
   fi
+  # Always install the update script
+  mkdir -p $INSTALL/usr/share/bootloader
+  find_file_path bootloader/update.sh && cp -av ${FOUND_PATH} ${INSTALL}/usr/share/bootloader
 }
 
 post_install() {

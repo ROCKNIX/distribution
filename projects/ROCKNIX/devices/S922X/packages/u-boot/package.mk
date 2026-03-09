@@ -34,9 +34,6 @@ make_target() {
 makeinstall_target() {
   mkdir -p $INSTALL/usr/share/bootloader
 
-  # Always install the update script
-  find_file_path bootloader/update.sh && cp -av ${FOUND_PATH} ${INSTALL}/usr/share/bootloader
-
   cp -av ${PKG_BUILD}/tools/odroid_resource/res ${INSTALL}/usr/share/bootloader
   cp -av ${PKG_BUILD}/sd_fuse/u-boot.bin ${INSTALL}/usr/share/bootloader
 }
