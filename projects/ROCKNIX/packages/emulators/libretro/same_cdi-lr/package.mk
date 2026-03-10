@@ -6,7 +6,7 @@ PKG_VERSION="7ee1d8e9cb4307b7cd44ee1dd757e9b3f48f41d5"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/libretro/same_cdi"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain expat zlib flac sqlite"
 PKG_LONGDESC="SAME_CDI is a Single Arcade/Machine Emulator for libretro"
 PKG_TOOLCHAIN="make"
 

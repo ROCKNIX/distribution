@@ -55,7 +55,7 @@ pre_configure_target() {
     PKG_DEPENDS_TARGET+=" ${VULKAN}"
     PKG_CMAKE_OPTS_TARGET+=" -DUSE_VULKAN_DISPLAY_KHR=ON \
                              -DVULKAN=ON \
-                             -DEGL_NO_X11=1
+                             -DEGL_NO_X11=1 \
                              -DMESA_EGL_NO_X11_HEADERS=1"
   else
     PKG_CMAKE_OPTS_TARGET+=" -DVULKAN=OFF"
@@ -74,21 +74,20 @@ pre_configure_target() {
     ;;
   esac
 
-  PKG_CMAKE_OPTS_TARGET+="${PKG_CMAKE_OPTS_TARGET} \
-                          -DUSE_SYSTEM_FFMPEG=OFF \
-                          -DCMAKE_BUILD_TYPE=Release \
-                          -DCMAKE_SYSTEM_NAME=Linux \
-                          -DBUILD_SHARED_LIBS=OFF \
-                          -DANDROID=OFF \
-                          -DWIN32=OFF \
-                          -DAPPLE=OFF \
-                          -DLIBRETRO=ON \
-                          -DCMAKE_CROSSCOMPILING=ON \
-                          -DUSING_QT_UI=OFF \
-                          -DUNITTEST=OFF \
-                          -DSIMULATOR=OFF \
-                          -DHEADLESS=OFF \
-                          -DUSE_DISCORD=OFF"
+  PKG_CMAKE_OPTS_TARGET+=" -DUSE_SYSTEM_FFMPEG=OFF \
+                           -DCMAKE_BUILD_TYPE=Release \
+                           -DCMAKE_SYSTEM_NAME=Linux \
+                           -DBUILD_SHARED_LIBS=OFF \
+                           -DANDROID=OFF \
+                           -DWIN32=OFF \
+                           -DAPPLE=OFF \
+                           -DLIBRETRO=ON \
+                           -DCMAKE_CROSSCOMPILING=ON \
+                           -DUSING_QT_UI=OFF \
+                           -DUNITTEST=OFF \
+                           -DSIMULATOR=OFF \
+                           -DHEADLESS=OFF \
+                           -DUSE_DISCORD=OFF"
 }
 
 pre_make_target() {

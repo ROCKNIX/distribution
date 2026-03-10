@@ -14,7 +14,7 @@ PKG_PATCH_DIRS+="${DEVICE}"
 
 if [ "${OPENGL_SUPPORT}" = "yes" ] && [ ! "${PREFER_GLES}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
-  PKG_CMAKE_OPTS_TARGET+="  -USE_OPENGL=ON -DUSE_GLES=OFF"
+  PKG_CMAKE_OPTS_TARGET+="  -DUSE_OPENGL=ON -DUSE_GLES=OFF"
 
 elif [ "${OPENGLES_SUPPORT}" = yes ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGLES}"
