@@ -1,0 +1,67 @@
+--- a/product/kernel/drivers/gpu/arm/midgard/platform/devicetree/mali_kbase_runtime_pm.c	2026-03-12 17:07:05.023408990 +1300
++++ b/product/kernel/drivers/gpu/arm/midgard/platform/devicetree/mali_kbase_runtime_pm.c	2026-03-12 17:07:34.828108241 +1300
+@@ -29,24 +29,32 @@
+ 
+ #include "mali_kbase_config_platform.h"
+ 
++/*
++ * When CONFIG_PM_CLK is active, the genpd framework calls
++ * pm_clk_suspend/pm_clk_resume which also manages device clocks.
++ * The original code used __clk_is_enabled() to skip redundant
++ * enable/disable, but this races with pm_clk and can corrupt the
++ * ref-count, causing "already disabled" / "enabling unprepared"
++ * WARNs and eventual crash.
++ *
++ * Fix: always call clk_prepare_enable/clk_disable_unprepare
++ * (ref-counted) so the count stays balanced regardless of pm_clk
++ * activity.  Same treatment for regulators.
++ */
+ static void enable_gpu_power_control(struct kbase_device *kbdev)
+ {
+ 	unsigned int i;
+ 
+ #if defined(CONFIG_REGULATOR)
+ 	for (i = 0; i < kbdev->nr_regulators; i++) {
+-		if (WARN_ON(kbdev->regulators[i] == NULL))
+-			;
+-		else if (!regulator_is_enabled(kbdev->regulators[i]))
+-			WARN_ON(regulator_enable(kbdev->regulators[i]));
++		if (kbdev->regulators[i])
++			regulator_enable(kbdev->regulators[i]);
+ 	}
+ #endif
+ 
+ 	for (i = 0; i < kbdev->nr_clocks; i++) {
+-		if (WARN_ON(kbdev->clocks[i] == NULL))
+-			;
+-		else if (!__clk_is_enabled(kbdev->clocks[i]))
+-			WARN_ON(clk_prepare_enable(kbdev->clocks[i]));
++		if (kbdev->clocks[i])
++			clk_prepare_enable(kbdev->clocks[i]);
+ 	}
+ }
+ 
+@@ -55,20 +63,14 @@
+ 	unsigned int i;
+ 
+ 	for (i = 0; i < kbdev->nr_clocks; i++) {
+-		if (WARN_ON(kbdev->clocks[i] == NULL))
+-			;
+-		else if (__clk_is_enabled(kbdev->clocks[i])) {
++		if (kbdev->clocks[i])
+ 			clk_disable_unprepare(kbdev->clocks[i]);
+-			WARN_ON(__clk_is_enabled(kbdev->clocks[i]));
+-		}
+ 	}
+ 
+ #if defined(CONFIG_REGULATOR)
+ 	for (i = 0; i < kbdev->nr_regulators; i++) {
+-		if (WARN_ON(kbdev->regulators[i] == NULL))
+-			;
+-		else if (regulator_is_enabled(kbdev->regulators[i]))
+-			WARN_ON(regulator_disable(kbdev->regulators[i]));
++		if (kbdev->regulators[i])
++			regulator_disable(kbdev->regulators[i]);
+ 	}
+ #endif
+ 
