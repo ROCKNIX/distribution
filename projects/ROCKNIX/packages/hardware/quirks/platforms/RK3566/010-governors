@@ -7,3 +7,41 @@ cat <<EOF >/storage/.config/profile.d/010-governors
 CPU_FREQ=("/sys/devices/system/cpu/cpufreq/policy0")
 GPU_FREQ=("/sys/devices/platform/fde60000.gpu/devfreq/fde60000.gpu")
 EOF
+
+# RK3566 SCMI cpufreq quirk: the driver does not propagate boost OPPs
+# to scaling_max_freq when boost is enabled. Without this, governors
+# cannot reach turbo frequencies even when "Enable CPU Overclock" is on.
+# Override governor functions to call apply_boost_freq() after setting
+# the governor. The base 099-freqfunctions does not include this because
+# other platforms (Qualcomm CPUFREQ_HW, H700 cpufreq-dt) handle boost
+# differently or do not use the turbo-mode DTS flag.
+cat <<'QUIRK' >>/storage/.config/profile.d/099-freqfunctions
+
+apply_boost_freq() {
+  if [ -f /sys/devices/system/cpu/cpufreq/boost ]; then
+    echo 1 > /sys/devices/system/cpu/cpufreq/boost 2>/dev/null
+    for POLICY in $(ls /sys/devices/system/cpu/cpufreq 2>/dev/null | grep policy[0-9]); do
+      local max=$(cat /sys/devices/system/cpu/cpufreq/${POLICY}/cpuinfo_max_freq 2>/dev/null)
+      [ -n "$max" ] && echo "$max" > /sys/devices/system/cpu/cpufreq/${POLICY}/scaling_max_freq 2>/dev/null
+    done
+  fi
+}
+
+performance() {
+  set_cpu_gov performance
+  set_dmc_gov performance
+  apply_boost_freq
+}
+
+ondemand() {
+  set_cpu_gov ondemand
+  set_dmc_gov ondemand
+  apply_boost_freq
+}
+
+schedutil() {
+  set_cpu_gov schedutil
+  set_dmc_gov ondemand
+  apply_boost_freq
+}
+QUIRK
