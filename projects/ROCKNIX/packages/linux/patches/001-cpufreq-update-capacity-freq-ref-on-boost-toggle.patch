@@ -1,0 +1,66 @@
+From: Joel Wirāmu Pauling <aenertia@aenertia.net>
+Date: Fri, 7 Mar 2026 01:00:00 +1300
+Subject: [PATCH] cpufreq: update capacity_freq_ref when boost is toggled
+
+When cpufreq boost is enabled or disabled, policy->cpuinfo.max_freq is
+updated to include or exclude boost OPPs via cpufreq_boost_set_sw().
+However, the per-CPU capacity_freq_ref used by schedutil's
+get_capacity_ref_freq() is only set once at policy creation time
+(CPUFREQ_CREATE_POLICY notification in arch_topology.c) and never
+updated when boost state changes.
+
+This causes schedutil to never select boost frequencies even when boost
+is enabled and scaling_max_freq includes them, because:
+
+1. capacity_freq_ref stays at the non-boost max (e.g., 1800 MHz)
+2. get_capacity_ref_freq() returns this stale value
+3. map_util_freq(util, 1800000, 1024) caps at 1800 MHz even at 100% util
+4. The boost OPPs (e.g., 1992/2088/2184 MHz) are never requested
+
+Fix by updating capacity_freq_ref and the frequency-invariance scale
+after a successful boost toggle, so schedutil sees the correct maximum
+frequency for its utilization-to-frequency mapping.
+
+Tested on RK3566 (Cortex-A55 quad-core) with 1992/2088/2184 MHz boost
+OPPs. Before: schedutil stays at 1800 MHz under full load with boost
+enabled (confirmed via cpufreq stats). After: schedutil correctly
+scales to boost frequencies under load.
+
+Signed-off-by: Joel Wirāmu Pauling <aenertia@aenertia.net>
+---
+ drivers/cpufreq/cpufreq.c | 18 ++++++++++++++++--
+ 1 file changed, 16 insertions(+), 2 deletions(-)
+
+--- a/drivers/cpufreq/cpufreq.c
++++ b/drivers/cpufreq/cpufreq.c
+@@ -595,6 +595,7 @@
+
+ static int policy_set_boost(struct cpufreq_policy *policy, bool enable)
+ {
++	unsigned int cpu;
+ 	int ret;
+
+ 	if (policy->boost_enabled == enable)
+@@ -603,8 +604,21 @@
+ 	policy->boost_enabled = enable;
+
+ 	ret = cpufreq_driver->set_boost(policy, enable);
+-	if (ret)
++	if (ret) {
+ 		policy->boost_enabled = !policy->boost_enabled;
++	} else {
++		/*
++		 * Update capacity_freq_ref for schedutil: when boost is
++		 * toggled, policy->cpuinfo.max_freq changes but the per-CPU
++		 * capacity reference used by get_capacity_ref_freq() is stale.
++		 * Without this update, schedutil never selects boost OPPs.
++		 */
++		for_each_cpu(cpu, policy->related_cpus)
++			per_cpu(capacity_freq_ref, cpu) =
++				policy->cpuinfo.max_freq;
++		arch_set_freq_scale(policy->related_cpus, policy->cur,
++				    policy->cpuinfo.max_freq);
++	}
+
+ 	return ret;
+ }
