@@ -5,7 +5,7 @@ PKG_NAME="libclc"
 PKG_VERSION="$(get_pkg_version llvm)"
 PKG_LICENSE="Apache-2.0"
 PKG_URL=""
-PKG_DEPENDS_HOST="toolchain:host llvm:host spirv-tools spirv-tools:host"
+PKG_DEPENDS_HOST="toolchain:host llvm:host spirv-tools spirv-tools:host spirv-llvm-translator:host"
 PKG_LONGDESC="Low-Level Virtual Machine (LLVM) is a compiler infrastructure."
 PKG_DEPENDS_UNPACK+=" llvm"
 PKG_PATCH_DIRS+=" $(get_pkg_directory llvm)/patches"
@@ -21,7 +21,7 @@ pre_configure() {
 }
 
 pre_configure_host() {
-  LIBCLC_TARGETS_TO_BUILD="spirv64-mesa3d-,spirv32-mesa3d-"
+  LIBCLC_TARGETS_TO_BUILD="spirv64-mesa3d-;spirv-mesa3d-"
 
   mkdir -p "${PKG_BUILD}/.${HOST_NAME}"
   cd ${PKG_BUILD}/.${HOST_NAME}

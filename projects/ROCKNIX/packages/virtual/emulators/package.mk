@@ -8,7 +8,7 @@ PKG_SECTION="emulation" # Do not change to virtual or makeinstall_target will no
 PKG_LONGDESC="Emulation metapackage."
 PKG_TOOLCHAIN="manual"
 
-PKG_EMUS="amiberry flycast-sa gzdoom-sa hatarisa hypseus-singe moonlight mupen64plus-sa openbor pico-8 ppsspp-sa vice-sa wine"
+PKG_EMUS="amiberry flycast-sa gzdoom-sa hatarisa hypseus-singe moonlight mupen64plus-sa openbor pico-8 ppsspp-sa touchhle-sa vice-sa wine"
 EMUS_32BIT=""
 
 PKG_RETROARCH="core-info libretro-database retroarch retroarch-assets retroarch-joypads retroarch-overlays slang-shaders"
@@ -358,6 +358,10 @@ makeinstall_target() {
   ### EasyRPG
   add_emu_core easyrpg retroarch easyrpg true
   add_es_system easyrpg
+
+  ### iOS
+  add_emu_core ios touchhle touchhle-sa true
+  add_es_system ios
 
   ### Nintendo Famicom
   add_emu_core famicom retroarch nestopia true

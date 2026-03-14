@@ -73,6 +73,12 @@ if [ ! -d "/storage/roms/bios/GC/Triforce" ]; then
     cp -r ${CONF_DIR}/GC/Triforce /storage/roms/bios/GC/
 fi
 
+# Make sure all Triforce Gecko codes are copied to GameSettings
+for f in /usr/config/dolphin-emu/triforce_gecko_codes/*; do
+  [ -e "/storage/.config/dolphin-emu/GameSettings/$(basename "$f")" ] || cp -fH "$f" "/storage/.config/dolphin-emu/GameSettings/"
+done
+rm -rf "/storage/.config/dolphin-emu/triforce_gecko_codes"
+
 # Link bios and memory cards to roms
 for REGION in EUR JAP USA
 do
