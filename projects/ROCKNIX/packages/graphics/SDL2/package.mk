@@ -9,6 +9,9 @@ PKG_SITE="https://www.libsdl.org/"
 PKG_URL="https://www.libsdl.org/release/sdl2-compat-${PKG_VERSION}.tar.gz"
 
 PKG_DEPENDS_TARGET="toolchain SDL3"
+if [ "${PREFER_GLES}" = "yes" ] && [ "${OPENGLES_SUPPORT}" = "yes" ]; then
+  PKG_DEPENDS_TARGET+=" SDL2_gles"
+fi
 PKG_DEPENDS_HOST="toolchain:host distutilscross:host SDL3:host"
 PKG_PROVIDES_TARGET="SDL2"
 
@@ -45,12 +48,6 @@ post_makeinstall_target() {
   if [ -f "${SYSROOT_PREFIX}/usr/bin/sdl2-config" ]; then
     sed -e "s:\(['=LI]\)/usr:\\1${SYSROOT_PREFIX}/usr:g" \
         -i "${SYSROOT_PREFIX}/usr/bin/sdl2-config"
-  fi
-
-  # Copy libs for gles instead of rebuilding for GLES-only
-  if [ "${PREFER_GLES}" = "yes" ] && [ "${OPENGLES_SUPPORT}" = "yes" ] && [ ! "${OPENGL_SUPPORT}" = "no" ]; then
-    mkdir -p "${INSTALL}/usr/lib/glesonly"
-    cp -a "${INSTALL}"/usr/lib/libSDL2*.so* "${INSTALL}/usr/lib/glesonly/"
   fi
 
   rm -rf "${INSTALL}/usr/bin"
