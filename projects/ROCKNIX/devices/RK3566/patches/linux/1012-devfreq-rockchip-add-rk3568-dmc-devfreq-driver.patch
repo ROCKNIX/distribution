@@ -1,0 +1,721 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ROCKNIX <rocknix@rocknix.org>
+Date: Sun, 23 Feb 2026 00:00:00 +0000
+Subject: [PATCH] devfreq: rockchip: add RK3568 DMC devfreq driver
+
+Add a DMC (Dynamic Memory Controller) devfreq driver for RK3566/RK3568.
+
+DDR frequency scaling uses the BSP V2 SIP protocol with MCU-based DCF:
+ 1. Kernel requests shared memory via SIP_SHARE_MEM (0x82000009)
+ 2. Kernel writes target Hz to the shared page
+ 3. SET_RATE SIP call returns -6 ("started, wait for MCU completion")
+ 4. Kernel starts the MCU via MCU_START SIP sub-command
+ 5. MCU performs the HWFFC and fires a completion IRQ (GIC_SPI 10)
+ 6. IRQ handler calls POST_SET_RATE for cleanup
+
+This protocol follows the Rockchip BSP DMC driver behaviour (ATF
+version 0x102 or newer).
+
+Signed-off-by: ROCKNIX <rocknix@rocknix.org>
+---
+ drivers/devfreq/Kconfig      |  12 +
+ drivers/devfreq/Makefile     |   1 +
+ drivers/devfreq/rk3568_dmc.c | 639 ++++++++++++++++++++++++++++++++++
+ 3 files changed, 653 insertions(+)
+ create mode 100644 drivers/devfreq/rk3568_dmc.c
+
+diff --git a/drivers/devfreq/Kconfig b/drivers/devfreq/Kconfig
+index XXXXXXX..XXXXXXX 100644
+--- a/drivers/devfreq/Kconfig
++++ b/drivers/devfreq/Kconfig
+@@ -145,6 +145,19 @@ config ARM_RK3399_DMC_DEVFREQ
+ 	  This adds the DEVFREQ driver for the RK3399 DMC(Dynamic Memory Controller).
+ 	  It sets the frequency for the memory controller and reads the usage counts
+ 	  from hardware.
++
++config ARM_RK3568_DMC_DEVFREQ
++	tristate "ARM RK3568 DMC DEVFREQ Driver"
++	depends on (ARCH_ROCKCHIP && HAVE_ARM_SMCCC) || \
++		   (COMPILE_TEST && HAVE_ARM_SMCCC)
++	select DEVFREQ_EVENT_ROCKCHIP_DFI
++	select DEVFREQ_GOV_SIMPLE_ONDEMAND
++	select PM_DEVFREQ_EVENT
++	help
++	  This adds the DEVFREQ driver for the RK3566/RK3568 DMC (Dynamic
++	  Memory Controller).  DDR frequency scaling is performed via ATF
++	  using the BSP V2 shared-memory SIP protocol with MCU-based DCF
++	  completion.
+ 
+ config ARM_SUN8I_A33_MBUS_DEVFREQ
+ 	tristate "sun8i/sun50i MBUS DEVFREQ Driver"
+diff --git a/drivers/devfreq/Makefile b/drivers/devfreq/Makefile
+index XXXXXXX..XXXXXXX 100644
+--- a/drivers/devfreq/Makefile
++++ b/drivers/devfreq/Makefile
+@@ -16,4 +16,5 @@ obj-$(CONFIG_ARM_MEDIATEK_CCI_DEVFREQ)	+= mtk-cci-devfreq.o
+ obj-$(CONFIG_ARM_RK3399_DMC_DEVFREQ)	+= rk3399_dmc.o
++obj-$(CONFIG_ARM_RK3568_DMC_DEVFREQ)	+= rk3568_dmc.o
+ obj-$(CONFIG_ARM_SUN8I_A33_MBUS_DEVFREQ)	+= sun8i-a33-mbus.o
+ obj-$(CONFIG_ARM_TEGRA_DEVFREQ)		+= tegra30-devfreq.o
+ 
+diff --git a/drivers/devfreq/rk3568_dmc.c b/drivers/devfreq/rk3568_dmc.c
+new file mode 100644
+index 0000000..XXXXXXX
+--- /dev/null
++++ b/drivers/devfreq/rk3568_dmc.c
+@@ -0,0 +1,651 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * RK3566/RK3568 DMC (Dynamic Memory Controller) devfreq driver.
++ *
++ * Uses the BSP V2 SIP protocol with MCU-based DCF:
++ *   SET_RATE returns -6 ("timeout"), then kernel starts the MCU,
++ *   waits for a completion IRQ, and calls POST_SET_RATE cleanup.
++ *
++ * Protocol and flow derived from the Rockchip BSP DMC driver.
++ *
++ * Copyright (c) 2021 Rockchip Electronics Co. Ltd.
++ * Copyright (c) 2026 ROCKNIX contributors.
++ */
++
++#include <linux/arm-smccc.h>
++#include <linux/clk.h>
++#include <linux/devfreq.h>
++#include <linux/devfreq-event.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/ktime.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/pm_opp.h>
++#include <linux/pm_qos.h>
++#include <linux/regulator/consumer.h>
++#include <linux/wait.h>
++
++#include <soc/rockchip/rockchip_sip.h>
++
++/* BSP SIP IDs not in mainline header */
++#define ROCKCHIP_SIP_SHARE_MEM			0x82000009
++#define SHARE_PAGE_TYPE_DDR			2
++
++/*
++ * BSP V2 sub-commands for ROCKCHIP_SIP_DRAM_FREQ (0x82000008).
++ * Numeric values match the BSP BL31 interface (differ from mainline SIP).
++ */
++#define RK3568_SIP_DRAM_GET_VERSION		0x08
++#define RK3568_SIP_DRAM_POST_SET_RATE		0x09
++#define RK3568_SIP_DRAM_MCU_START		0x0c
++#define RK3568_SIP_DRAM_GET_FREQ_INFO		0x0e
++
++#define SIP_RET_SET_RATE_TIMEOUT		(-6)
++#define RK3568_ATF_VERSION_MIN			0x101
++
++/*
++ * Shared-memory layout matching the BSP DDR interface.
++ * First 4 KB page: interface parameters. Second 4 KB: DTS parameters.
++ */
++struct rk3568_share_params {
++	u32 hz;
++	u32 lcdc_type;
++	u32 vop;
++	u32 vop_dclk_mode;
++	u32 sr_idle_en;
++	u32 addr_mcu_el3;
++	u32 wait_flag1;
++	u32 wait_flag0;
++	u32 complt_hwirq;
++	u32 update_drv_odt_cfg;
++	u32 update_deskew_cfg;
++	u32 freq_count;
++	u32 freq_info_mhz[6];
++	u32 wait_mode;
++	u32 vop_scan_line_time_ns;
++};
++
++struct dmcfreq_wait_ctrl {
++	wait_queue_head_t	wait_wq;
++	int			wait_flag;
++	int			wait_en;
++	int			wait_time_out_ms;
++	int			complt_irq;
++};
++
++#define DMC_TRANSITION_COOLDOWN_MS	100
++
++struct rk3568_dmcfreq {
++	struct device			*dev;
++	struct devfreq			*devfreq;
++	struct devfreq_simple_ondemand_data ondemand_data;
++	struct clk			*dmc_clk;
++	struct devfreq_event_dev	*edev;
++	struct regulator		*vdd_center;
++	struct mutex			lock;
++
++	unsigned long			rate;
++	unsigned long			volt;
++	unsigned long			boot_rate;
++	int				post_resume_scale_down;
++	ktime_t				last_transition;
++};
++
++static struct rk3568_share_params *ddr_psci_param;
++static struct dmcfreq_wait_ctrl wait_ctrl;
++static struct pm_qos_request dmc_pm_qos;
++
++/* ---- SIP helpers ------------------------------------------------------ */
++
++static struct arm_smccc_res sip_smc_dram(unsigned long arg0,
++					 unsigned long arg1,
++					 unsigned long arg2)
++{
++	struct arm_smccc_res res;
++
++	arm_smccc_smc(ROCKCHIP_SIP_DRAM_FREQ, arg0, arg1, arg2,
++		      0, 0, 0, 0, &res);
++	return res;
++}
++
++/* ---- MCU completion IRQ & wait logic ---------------------------------- */
++
++static irqreturn_t rk3568_wait_dcf_complete_irq(int irqno, void *dev_id)
++{
++	struct dmcfreq_wait_ctrl *ctrl = dev_id;
++	struct arm_smccc_res res;
++
++	res = sip_smc_dram(SHARE_PAGE_TYPE_DDR, 0,
++			   RK3568_SIP_DRAM_POST_SET_RATE);
++	if (res.a0)
++		pr_err("rk3568-dmc: POST_SET_RATE error: %lx\n", res.a0);
++
++	ctrl->wait_flag = 0;
++	wake_up(&ctrl->wait_wq);
++	return IRQ_HANDLED;
++}
++
++static int rk3568_dmcfreq_wait_complete(void)
++{
++	struct arm_smccc_res res;
++
++	if (!wait_ctrl.wait_en)
++		return 0;
++
++	wait_ctrl.wait_flag = -1;
++	enable_irq(wait_ctrl.complt_irq);
++
++	/* Keep CPUs in WFI (not deep idle) so the FIQ fires promptly */
++	cpu_latency_qos_update_request(&dmc_pm_qos, 0);
++
++	res = sip_smc_dram(0, 0, RK3568_SIP_DRAM_MCU_START);
++	if (res.a0) {
++		pr_err("rk3568-dmc: MCU_START error: %lx\n", res.a0);
++		goto out;
++	}
++
++	wait_event_timeout(wait_ctrl.wait_wq,
++			   wait_ctrl.wait_flag == 0,
++			   msecs_to_jiffies(wait_ctrl.wait_time_out_ms));
++
++	if (wait_ctrl.wait_flag != 0) {
++		pr_warn("rk3568-dmc: MCU completion timed out, forcing POST_SET_RATE\n");
++		res = sip_smc_dram(SHARE_PAGE_TYPE_DDR, 0,
++				   RK3568_SIP_DRAM_POST_SET_RATE);
++		if (res.a0)
++			pr_err("rk3568-dmc: POST_SET_RATE error: %lx\n",
++			       res.a0);
++	}
++
++out:
++	cpu_latency_qos_update_request(&dmc_pm_qos, PM_QOS_DEFAULT_VALUE);
++	disable_irq(wait_ctrl.complt_irq);
++
++	return 0;
++}
++
++/* ---- Rate setting ----------------------------------------------------- */
++
++static int rk3568_dmc_set_rate(unsigned long target_rate)
++{
++	struct arm_smccc_res res;
++
++	ddr_psci_param->hz = target_rate;
++	ddr_psci_param->lcdc_type = 0;
++	ddr_psci_param->wait_flag1 = 1;
++	ddr_psci_param->wait_flag0 = 1;
++
++	res = sip_smc_dram(SHARE_PAGE_TYPE_DDR, 0,
++			   ROCKCHIP_SIP_CONFIG_DRAM_SET_RATE);
++
++	if ((int)res.a1 == SIP_RET_SET_RATE_TIMEOUT)
++		rk3568_dmcfreq_wait_complete();
++
++	return res.a0;
++}
++
++/* ---- devfreq callbacks ------------------------------------------------ */
++
++static int rk3568_dmcfreq_target(struct device *dev, unsigned long *freq,
++				 u32 flags)
++{
++	struct rk3568_dmcfreq *dmcfreq = dev_get_drvdata(dev);
++	struct dev_pm_opp *opp;
++	unsigned long target_rate, target_volt, old_rate;
++	int err;
++
++	opp = devfreq_recommended_opp(dev, freq, flags);
++	if (IS_ERR(opp))
++		return PTR_ERR(opp);
++
++	target_rate = dev_pm_opp_get_freq(opp);
++	target_volt = dev_pm_opp_get_voltage(opp);
++	dev_pm_opp_put(opp);
++
++	if (dmcfreq->rate == target_rate)
++		return 0;
++
++	/* Debounce rapid transitions to avoid HWFFC collisions with
++	 * heavy memory allocation (e.g. emulator stage loading).
++	 */
++	if (ktime_ms_delta(ktime_get(), dmcfreq->last_transition) <
++	    DMC_TRANSITION_COOLDOWN_MS)
++		return 0;
++
++	mutex_lock(&dmcfreq->lock);
++	old_rate = dmcfreq->rate;
++
++	/* Scaling up: raise voltage first */
++	if (target_rate > old_rate) {
++		err = regulator_set_voltage(dmcfreq->vdd_center,
++					    target_volt, target_volt);
++		if (err) {
++			dev_err(dev, "Cannot set voltage %lu uV\n",
++				target_volt);
++			goto unlock;
++		}
++	}
++
++	err = rk3568_dmc_set_rate(target_rate);
++	if (err) {
++		dev_err(dev, "Cannot set DDR rate %lu Hz (%d)\n",
++			target_rate, err);
++		if (target_rate > old_rate)
++			regulator_set_voltage(dmcfreq->vdd_center,
++					      dmcfreq->volt, dmcfreq->volt);
++		goto unlock;
++	}
++
++	/* Scaling down: lower voltage after */
++	if (target_rate < old_rate) {
++		err = regulator_set_voltage(dmcfreq->vdd_center,
++					    target_volt, target_volt);
++		if (err)
++			dev_err(dev, "Cannot set voltage %lu uV\n",
++				target_volt);
++	}
++
++	dmcfreq->rate = target_rate;
++	dmcfreq->volt = target_volt;
++	dmcfreq->last_transition = ktime_get();
++	err = 0;
++
++unlock:
++	mutex_unlock(&dmcfreq->lock);
++	return err;
++}
++
++static int rk3568_dmcfreq_get_dev_status(struct device *dev,
++					 struct devfreq_dev_status *stat)
++{
++	struct rk3568_dmcfreq *dmcfreq = dev_get_drvdata(dev);
++	struct devfreq_event_data edata;
++	int ret;
++
++	stat->current_frequency = dmcfreq->rate;
++
++	/*
++	 * After resume, DFI often returns total_count==0 for several polls
++	 * (monitor block may have been powered off).  Force 0% load for the
++	 * first few polls so the governor scales to min; prime DFI with a
++	 * read so subsequent polls get valid deltas.
++	 */
++	if (dmcfreq->post_resume_scale_down > 0) {
++		dmcfreq->post_resume_scale_down--;
++		devfreq_event_get_event(dmcfreq->edev, &edata);
++		stat->busy_time = 0;
++		stat->total_time = 1;
++		return 0;
++	}
++
++	ret = devfreq_event_get_event(dmcfreq->edev, &edata);
++	if (ret < 0)
++		return ret;
++
++	/*
++	 * Governor simple_ondemand requests DEVFREQ_MAX_FREQ when total_time
++	 * is 0 (divide-by-zero guard).  DFI can return total_count 0 when the
++	 * timer delta is zero.  Report ~20%% so the governor keeps current
++	 * frequency instead of scaling to min or max.
++	 */
++	if (edata.total_count == 0) {
++		stat->busy_time = 2;
++		stat->total_time = 10;
++		return 0;
++	}
++
++	stat->busy_time = edata.load_count;
++	stat->total_time = edata.total_count;
++
++	return 0;
++}
++
++static int rk3568_dmcfreq_get_cur_freq(struct device *dev, unsigned long *freq)
++{
++	struct rk3568_dmcfreq *dmcfreq = dev_get_drvdata(dev);
++
++	*freq = dmcfreq->rate;
++	return 0;
++}
++
++static struct devfreq_dev_profile rk3568_devfreq_profile = {
++	.polling_ms	= 50,
++	.target		= rk3568_dmcfreq_target,
++	.get_dev_status	= rk3568_dmcfreq_get_dev_status,
++	.get_cur_freq	= rk3568_dmcfreq_get_cur_freq,
++};
++
++/* ---- Suspend / resume ------------------------------------------------- */
++
++static int rk3568_dmcfreq_suspend(struct device *dev)
++{
++	struct rk3568_dmcfreq *dmcfreq = dev_get_drvdata(dev);
++	struct dev_pm_opp *opp;
++	unsigned long target_volt;
++	unsigned long freq;
++
++	if (!dmcfreq->devfreq)
++		return 0;
++
++	/*
++	 * devfreq framework (dpm_suspend → devfreq_suspend) already called
++	 * devfreq_suspend_device() which stops the governor polling.
++	 * DFI PM ops (1011 patch) handle DDRMON hardware suspend.
++	 * Scale DDR to lowest OPP for minimum suspend power, then clear
++	 * shared memory flags.
++	 */
++
++	/*
++	 * Force DDR to the lowest OPP before suspend for minimum power.
++	 * BL31's resume path restores DDR to boot frequency from
++	 * self-refresh regardless of our pre-suspend frequency.
++	 */
++	mutex_lock(&dmcfreq->lock);
++	freq = 0;
++	opp = dev_pm_opp_find_freq_ceil(dev, &freq);
++	if (!IS_ERR(opp)) {
++		unsigned long suspend_rate = dev_pm_opp_get_freq(opp);
++
++		target_volt = dev_pm_opp_get_voltage(opp);
++		dev_pm_opp_put(opp);
++		if (dmcfreq->rate != suspend_rate) {
++			if (target_volt > dmcfreq->volt)
++				regulator_set_voltage(dmcfreq->vdd_center,
++						      target_volt, target_volt);
++			rk3568_dmc_set_rate(suspend_rate);
++			if (target_volt < dmcfreq->volt)
++				regulator_set_voltage(dmcfreq->vdd_center,
++						      target_volt, target_volt);
++			dmcfreq->rate = suspend_rate;
++			dmcfreq->volt = target_volt;
++		}
++	}
++
++	if (ddr_psci_param) {
++		ddr_psci_param->hz = 0;
++		ddr_psci_param->wait_flag1 = 0;
++		ddr_psci_param->wait_flag0 = 0;
++	}
++	mutex_unlock(&dmcfreq->lock);
++
++	return 0;
++}
++
++static int rk3568_dmcfreq_resume(struct device *dev)
++{
++	struct rk3568_dmcfreq *dmcfreq = dev_get_drvdata(dev);
++
++	if (!dmcfreq->devfreq)
++		return 0;
++
++	/*
++	 * Re-sync rate from hardware; BL31 restores DDR to boot frequency.
++	 * DFI PM ops (1011 patch) already re-initialized DDRMON hardware
++	 * and primed counters.  devfreq framework (dpm_resume →
++	 * devfreq_resume) will restart the governor polling after all
++	 * device resumes complete.
++	 */
++	dmcfreq->rate = clk_get_rate(dmcfreq->dmc_clk);
++
++	dmcfreq->post_resume_scale_down = 3;
++
++	return 0;
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(rk3568_dmcfreq_pm,
++				rk3568_dmcfreq_suspend,
++				rk3568_dmcfreq_resume);
++
++/* ---- OPP table adjustment from ATF frequency info --------------------- */
++
++static int rk3568_dmc_get_freq_info(struct device *dev,
++				    struct rk3568_dmcfreq *dmcfreq)
++{
++	struct arm_smccc_res res;
++	struct dev_pm_opp *opp;
++	unsigned long rate;
++	unsigned long freq_info_rate[6];
++	int freq_count, i, j, opp_count;
++
++	res = sip_smc_dram(SHARE_PAGE_TYPE_DDR, 0,
++			   RK3568_SIP_DRAM_GET_FREQ_INFO);
++	if (res.a0) {
++		dev_warn(dev, "GET_FREQ_INFO failed (%ld), using DTS OPPs\n",
++			 (long)res.a0);
++		return 0;
++	}
++
++	freq_count = ddr_psci_param->freq_count;
++	if (freq_count == 0 || freq_count > 6) {
++		dev_warn(dev, "Invalid freq_count %d from ATF\n", freq_count);
++		return 0;
++	}
++
++	for (i = 0; i < freq_count; i++) {
++		freq_info_rate[i] = (unsigned long)ddr_psci_param->freq_info_mhz[i] * 1000000;
++		dev_info(dev, "ATF FSP[%d]: %lu Hz\n", i, freq_info_rate[i]);
++	}
++
++	/* Disable OPPs not supported by ATF */
++	opp_count = dev_pm_opp_get_opp_count(dev);
++	if (opp_count <= 0)
++		return 0;
++
++	for (rate = 0; ; rate++) {
++		opp = dev_pm_opp_find_freq_ceil(dev, &rate);
++		if (IS_ERR(opp))
++			break;
++		dev_pm_opp_put(opp);
++
++		for (j = 0; j < freq_count; j++) {
++			if (rate == freq_info_rate[j])
++				break;
++		}
++		if (j == freq_count) {
++			dev_info(dev, "Disabling unsupported OPP %lu Hz\n",
++				 rate);
++			dev_pm_opp_disable(dev, rate);
++		}
++	}
++
++	return 0;
++}
++
++/* ---- Probe / remove --------------------------------------------------- */
++
++static int rk3568_dmcfreq_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct rk3568_dmcfreq *data;
++	struct arm_smccc_res res;
++	struct dev_pm_opp *opp;
++	int complt_irq;
++	int ret;
++
++	data = devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
++	if (!data)
++		return -ENOMEM;
++
++	data->dev = dev;
++	mutex_init(&data->lock);
++
++	/* 1. Check ATF version */
++	res = sip_smc_dram(0, 0, RK3568_SIP_DRAM_GET_VERSION);
++	dev_info(dev, "ATF DDR version 0x%lx\n", res.a1);
++	if (res.a0 || res.a1 < RK3568_ATF_VERSION_MIN) {
++		dev_err(dev, "ATF too old or unsupported (need >= 0x%x)\n",
++			RK3568_ATF_VERSION_MIN);
++		return -ENXIO;
++	}
++
++	/* 2. Request shared memory from ATF (2 pages) */
++	arm_smccc_smc(ROCKCHIP_SIP_SHARE_MEM, 2, SHARE_PAGE_TYPE_DDR, 0,
++		      0, 0, 0, 0, &res);
++	if (res.a0 || !res.a1) {
++		dev_err(dev, "SIP_SHARE_MEM failed (a0=%ld a1=0x%lx)\n",
++			(long)res.a0, res.a1);
++		return -ENOMEM;
++	}
++	ddr_psci_param = ioremap(res.a1, 2 * PAGE_SIZE);
++	if (!ddr_psci_param) {
++		dev_err(dev, "Failed to ioremap shared memory at 0x%lx\n",
++			res.a1);
++		return -ENOMEM;
++	}
++	memset_io(ddr_psci_param, 0, 2 * PAGE_SIZE);
++
++	/* 3. Set up MCU-based DCF completion wait mechanism */
++	init_waitqueue_head(&wait_ctrl.wait_wq);
++	wait_ctrl.wait_en = 1;
++	wait_ctrl.wait_time_out_ms = 17 * 5;	/* ~85 ms (BSP value) */
++
++	complt_irq = platform_get_irq_byname(pdev, "complete");
++	if (complt_irq < 0) {
++		dev_err(dev, "No 'complete' IRQ: %d\n", complt_irq);
++		ret = complt_irq;
++		goto err_unmap;
++	}
++	wait_ctrl.complt_irq = complt_irq;
++
++	ret = devm_request_irq(dev, complt_irq, rk3568_wait_dcf_complete_irq,
++			       0, dev_name(dev), &wait_ctrl);
++	if (ret < 0) {
++		dev_err(dev, "Cannot request complete IRQ: %d\n", ret);
++		goto err_unmap;
++	}
++	disable_irq(complt_irq);
++
++	/* 4. Initialize DRAM scaling in ATF */
++	res = sip_smc_dram(SHARE_PAGE_TYPE_DDR, 0,
++			   ROCKCHIP_SIP_CONFIG_DRAM_INIT);
++	if (res.a0) {
++		dev_err(dev, "DRAM_INIT failed: %lx\n", res.a0);
++		ret = -ENOMEM;
++		goto err_unmap;
++	}
++
++	/* 5. Get device resources */
++	data->vdd_center = devm_regulator_get(dev, "center");
++	if (IS_ERR(data->vdd_center)) {
++		ret = dev_err_probe(dev, PTR_ERR(data->vdd_center),
++				    "Cannot get regulator \"center\"\n");
++		goto err_unmap;
++	}
++
++	data->dmc_clk = devm_clk_get(dev, "dmc_clk");
++	if (IS_ERR(data->dmc_clk)) {
++		ret = dev_err_probe(dev, PTR_ERR(data->dmc_clk),
++				    "Cannot get clk dmc_clk\n");
++		goto err_unmap;
++	}
++
++	data->edev = devfreq_event_get_edev_by_phandle(dev,
++						       "devfreq-events", 0);
++	if (IS_ERR(data->edev)) {
++		ret = -EPROBE_DEFER;
++		goto err_unmap;
++	}
++
++	/* 6. Read boot frequency from SCMI clock */
++	data->rate = clk_get_rate(data->dmc_clk);
++	data->boot_rate = data->rate;
++	dev_info(dev, "Boot DDR rate: %lu Hz\n", data->rate);
++
++	/* 7. Load and adjust OPP table */
++	ret = devm_pm_opp_of_add_table(dev);
++	if (ret) {
++		dev_err(dev, "Invalid operating-points in DT\n");
++		goto err_unmap;
++	}
++
++	rk3568_dmc_get_freq_info(dev, data);
++
++	/* 8. Initialize PM QoS for wait_complete */
++	cpu_latency_qos_add_request(&dmc_pm_qos, PM_QOS_DEFAULT_VALUE);
++
++	/* 9. Enable DFI event device */
++	ret = devfreq_event_enable_edev(data->edev);
++	if (ret < 0) {
++		dev_err(dev, "Failed to enable DFI event device\n");
++		goto err_qos;
++	}
++
++	/* 10. Resolve initial OPP */
++	opp = devfreq_recommended_opp(dev, &data->rate, 0);
++	if (IS_ERR(opp)) {
++		ret = PTR_ERR(opp);
++		goto err_edev;
++	}
++	data->rate = dev_pm_opp_get_freq(opp);
++	data->volt = dev_pm_opp_get_voltage(opp);
++	dev_pm_opp_put(opp);
++
++	/* 11. Register devfreq */
++	data->ondemand_data.upthreshold = 15;
++	data->ondemand_data.downdifferential = 10;
++	rk3568_devfreq_profile.initial_freq = data->rate;
++
++	data->devfreq = devm_devfreq_add_device(dev,
++						&rk3568_devfreq_profile,
++						DEVFREQ_GOV_SIMPLE_ONDEMAND,
++						&data->ondemand_data);
++	if (IS_ERR(data->devfreq)) {
++		ret = PTR_ERR(data->devfreq);
++		dev_err(dev, "Failed to add devfreq device: %d\n", ret);
++		goto err_edev;
++	}
++
++	devm_devfreq_register_opp_notifier(dev, data->devfreq);
++	platform_set_drvdata(pdev, data);
++
++	dev_info(dev, "DDR devfreq enabled: %lu Hz, %lu uV\n",
++		 data->rate, data->volt);
++
++	return 0;
++
++err_edev:
++	devfreq_event_disable_edev(data->edev);
++err_qos:
++	cpu_latency_qos_remove_request(&dmc_pm_qos);
++err_unmap:
++	if (ddr_psci_param) {
++		iounmap(ddr_psci_param);
++		ddr_psci_param = NULL;
++	}
++	return ret;
++}
++
++static void rk3568_dmcfreq_remove(struct platform_device *pdev)
++{
++	struct rk3568_dmcfreq *dmcfreq = dev_get_drvdata(&pdev->dev);
++
++	if (dmcfreq->devfreq)
++		devfreq_event_disable_edev(dmcfreq->edev);
++
++	cpu_latency_qos_remove_request(&dmc_pm_qos);
++
++	if (ddr_psci_param) {
++		iounmap(ddr_psci_param);
++		ddr_psci_param = NULL;
++	}
++}
++
++static const struct of_device_id rk3568_dmcfreq_of_match[] = {
++	{ .compatible = "rockchip,rk3568-dmc" },
++	{ },
++};
++MODULE_DEVICE_TABLE(of, rk3568_dmcfreq_of_match);
++
++static struct platform_driver rk3568_dmcfreq_driver = {
++	.probe	= rk3568_dmcfreq_probe,
++	.remove	= rk3568_dmcfreq_remove,
++	.driver	= {
++		.name	= "rk3568-dmc",
++		.pm	= pm_sleep_ptr(&rk3568_dmcfreq_pm),
++		.of_match_table = rk3568_dmcfreq_of_match,
++	},
++};
++module_platform_driver(rk3568_dmcfreq_driver);
++
++MODULE_LICENSE("GPL");
++MODULE_AUTHOR("ROCKNIX contributors");
++MODULE_DESCRIPTION("RK3566/RK3568 DMC devfreq driver");
