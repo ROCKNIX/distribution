@@ -22,7 +22,7 @@ pre_make_target() {
   PKG_UBOOT_CONFIG="quartz64-a-rk3566_defconfig"
   PKG_RKBIN="$(get_build_dir rkbin)"
   PKG_MINILOADER="spl/u-boot-spl.bin"
-  PKG_BL31="${PKG_RKBIN}/bin/rk35/rk3568_bl31_v1.44.elf"
+  PKG_BL31="${PKG_RKBIN}/bin/rk35/rk3568_bl31_v1.45.elf"
   PKG_DDR_BIN="${PKG_RKBIN}/bin/rk35/rk3568_ddr_1056MHz_v1.23.bin"
 }
 

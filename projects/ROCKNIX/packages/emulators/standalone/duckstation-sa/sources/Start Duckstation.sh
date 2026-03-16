@@ -27,4 +27,4 @@ ln -sfv "${CONF_DIR}" "${APPIMAGE_CONF_DIR}"
 #Link gamecontrollerdb.txt
 ln -sf /usr/config/SDL-GameControllerDB/gamecontrollerdb.txt "${CONF_DIR}/gamecontrollerdb.txt"
 
-/usr/bin/duckstation-sa -fullscreen
+/usr/bin/duckstation-sa -fullscreen -bigpicture

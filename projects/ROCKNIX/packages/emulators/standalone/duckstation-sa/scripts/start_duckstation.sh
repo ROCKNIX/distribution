@@ -123,4 +123,4 @@ fi
 /usr/bin/cheevos_duckstation.sh
 
 #Run Duckstation
-${EMUPERF} duckstation-sa -fullscreen -- "${1}" > /dev/null 2>&1
+${EMUPERF} duckstation-sa -fullscreen -bigpicture -nogui -- "${1}" > /dev/null 2>&1
