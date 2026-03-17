@@ -1,0 +1,49 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joel Wiramu Pauling <aenertia@aenertia.net>
+Date: Fri, 20 Mar 2026 00:00:00 +1300
+Subject: [PATCH] mfd: rk8xx: OTG disable + clear stale flags before
+ RK817/RK809 shutdown
+
+Disable the OTG switch (USB VBUS) before poweroff to prevent current
+backfeed during the power-down sequence. Clear all three interrupt
+status registers (W1C) that persist across reboots to prevent stale
+UVLO/OVP flags from interfering with the next power-on.
+
+Both operations are added BEFORE the existing SLPPIN_DN_FUN write,
+which is preserved — it is required for DEV_OFF to cleanly power
+down all PMIC rails.
+
+ADB register tracing on Android/GammaOS (RG-DS) confirmed that the
+BSP disables OTG_SWITCH before shutdown. INT_STS flags persist across
+reboot and should be cleared to avoid false fault detection.
+
+Signed-off-by: Joel Wiramu Pauling <aenertia@aenertia.net>
+---
+--- a/drivers/mfd/rk8xx-core.c
++++ b/drivers/mfd/rk8xx-core.c
+@@ -15,6 +15,7 @@
+ #include <linux/mfd/rk808.h>
+ #include <linux/mfd/core.h>
+ #include <linux/module.h>
++#include <linux/delay.h>
+ #include <linux/property.h>
+ #include <linux/regmap.h>
+ #include <linux/reboot.h>
+@@ -679,6 +680,19 @@
+ 	case RK809_ID:
+ 	case RK817_ID:
++		/* Disable OTG switch to cut USB VBUS before poweroff */
++		regmap_update_bits(rk808->regmap,
++				   RK817_POWER_EN_REG(3),
++				   BIT(2) | BIT(6), BIT(6));
++		mdelay(1);
++
++		/* Clear stale interrupt status flags (W1C) —
++		 * INT_STS registers at 0xf8, 0xfa, 0xfc (mask regs at 0xf9, 0xfb, 0xfd) */
++		regmap_write(rk808->regmap, RK817_INT_STS_REG0, 0xff);
++		regmap_write(rk808->regmap, RK817_INT_STS_REG1, 0xff);
++		regmap_write(rk808->regmap, RK817_INT_STS_REG2, 0xff);
++
+ 		ret = regmap_update_bits(rk808->regmap,
+ 					 RK817_SYS_CFG(3),
+ 					 RK817_SLPPIN_FUNC_MSK,
