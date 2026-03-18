@@ -11,7 +11,7 @@ PKG_DEPENDS_TARGET="toolchain rocknix-hotkey gamecontrollerdb oga_controls contr
 PKG_LONGDESC="Portmaster - a simple tool that allows you to download various game ports"
 PKG_TOOLCHAIN="manual"
 
-COMPAT_URL="https://github.com/ROCKNIX/packages/raw/main/compat.zip"
+COMPAT_URL="https://github.com/ROCKNIX/packages/raw/main/compat.tar.gz" #f0f5e94
 
 makeinstall_target() {
   export STRIP=true
@@ -26,6 +26,11 @@ makeinstall_target() {
     curl -Lo ${INSTALL}/usr/config/PortMaster/release/PortMaster.zip ${PKG_URL}
 
   mkdir -p ${INSTALL}/usr/lib/compat
-    curl -Lo ${PKG_BUILD}/compat.zip ${COMPAT_URL}
-    unzip -qq ${PKG_BUILD}/compat.zip -d ${INSTALL}/usr/lib/compat
+    curl -Lo ${PKG_BUILD}/compat.tar.gz ${COMPAT_URL}
+    tar -xvf ${PKG_BUILD}/compat.tar.gz -C ${INSTALL}/usr/lib
+    if [ "${PREFER_GLES}" = "yes" ]; then
+      mv ${INSTALL}/usr/lib/compat/libSDL2-2.0.so.0.gles ${INSTALL}/usr/lib/compat/libSDL2-2.0.so.0
+    else
+      rm -rf ${INSTALL}/usr/lib/compat/libSDL2-2.0.so.0.gles
+    fi
 }

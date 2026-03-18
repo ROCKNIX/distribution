@@ -1,0 +1,123 @@
+diff --git a/parallel-rdp/interface.cpp b/parallel-rdp/interface.cpp
+index 7cca8e4..404d442 100644
+--- a/parallel-rdp/interface.cpp
++++ b/parallel-rdp/interface.cpp
+@@ -91,6 +91,10 @@ static size_t fragment_size;
+ std::vector<bool> rdram_dirty;
+ uint64_t sync_signal;
+ 
++static bool guide_held = false;
++static bool r2_held = false;
++static bool fast_forward_toggled = false;
++
+ static TTF_Font *message_font;
+ static std::queue<std::string> messages;
+ static uint64_t message_timer;
+@@ -248,7 +252,71 @@ bool sdl_event_filter(void *userdata, SDL_Event *event)
+ 			break;
+ 		}
+ 	}
++	else if (event->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN)
++	{
++		switch (event->gbutton.button)
++		{
++		case SDL_GAMEPAD_BUTTON_GUIDE:
++			guide_held = true;
++			break;
++
++		case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: // R1
++			if (guide_held)
++			{
++				callback.save_state = true;
++				return 1;
++			}
++			break;
++
++		case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: // L1
++			if (guide_held)
++			{
++				callback.load_state = true;
++				return 1;
++			}
++			break;
++
++		default:
++			if (guide_held)
++				return 1; // block other button inputs while guide held
++			break;
++		}
++	}
++	else if (event->type == SDL_EVENT_GAMEPAD_AXIS_MOTION)
++	{
++		switch (event->gaxis.axis)
++		{
++		case SDL_GAMEPAD_AXIS_RIGHT_TRIGGER: // R2
++			{
++				bool pressed = event->gaxis.value > 0;
++				if (pressed && !r2_held && guide_held)
++				{
++					r2_held = pressed;
++					fast_forward_toggled = !fast_forward_toggled;
++					callback.enable_speedlimiter = !fast_forward_toggled;
++					rdp_onscreen_message(fast_forward_toggled ? "Fast forward on" : "Fast forward off");
++					return 1;
++				}
++				r2_held = pressed;
++			}
++			break;
++
++		default:
++			break;
++		}
++	}
++	else if (event->type == SDL_EVENT_GAMEPAD_BUTTON_UP)
++	{
++		switch (event->gbutton.button)
++		{
++		case SDL_GAMEPAD_BUTTON_GUIDE:
++			guide_held = false;
++			break;
+ 
++		default:
++			break;
++		}
++	}
+ 	return 0;
+ }
+ 
+diff --git a/src/ui/input.rs b/src/ui/input.rs
+index d829312..0dd890d 100644
+--- a/src/ui/input.rs
++++ b/src/ui/input.rs
+@@ -413,6 +413,13 @@ pub fn get(ui: &ui::Ui, channel: usize) -> InputData {
+                 .offset(i32::from(sdl3_sys::scancode::SDL_SCANCODE_RALT) as isize)
+     };
+ 
++    let guide_pressed = !controller.is_null() && unsafe {
++        sdl3_sys::gamepad::SDL_GetGamepadButton(
++            controller,
++            sdl3_sys::gamepad::SDL_GamepadButton::GUIDE,
++        )
++    };
++
+     for i in 0..14 {
+         if profile_name != "default" || channel == 0 {
+             let profile_key = profile.keys[i];
+@@ -423,7 +430,7 @@ pub fn get(ui: &ui::Ui, channel: usize) -> InputData {
+             }
+         }
+ 
+-        if !controller.is_null() {
++        if !controller.is_null() && !guide_pressed {
+             set_buttons_from_controller(profile, i, controller, &mut keys);
+         } else if !joystick.is_null() {
+             set_buttons_from_joystick(profile, i, joystick, &mut keys);
+@@ -437,7 +444,7 @@ pub fn get(ui: &ui::Ui, channel: usize) -> InputData {
+         (x, y) = set_axis_from_keys(profile, ui.input.keyboard_state);
+     }
+ 
+-    if !controller.is_null() {
++    if !controller.is_null() && !guide_pressed {
+         (x, y) = set_axis_from_controller(profile, controller);
+         apply_deadzone(&mut x, &mut y, profile.deadzone);
+     } else if !joystick.is_null() {

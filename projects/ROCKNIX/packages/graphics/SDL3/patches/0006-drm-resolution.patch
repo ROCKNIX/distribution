@@ -1,0 +1,69 @@
+From 2b837f662b12330e2d5afa867f1b6c1476b93102 Mon Sep 17 00:00:00 2001
+Original From: JohnnyonFlame <johnnyonflame@hotmail.com>
+Date: Tue, 8 Aug 2023 04:01:53 -0300
+Subject: [PATCH] drm resolution
+Modifications: Resolved memory leak, detect if HDMI connected
+
+---
+ src/video/kmsdrm/SDL_kmsdrmvideo.c | 40 +++++++++++++++++++++++++++++-
+ 1 file changed, 39 insertions(+), 1 deletion(-)
+
+diff --git a/src/video/kmsdrm/SDL_kmsdrmvideo.c b/src/video/kmsdrm/SDL_kmsdrmvideo.c
+index 7d5c13e19b587..127a52959f75a 100644
+--- a/src/video/kmsdrm/SDL_kmsdrmvideo.c
++++ b/src/video/kmsdrm/SDL_kmsdrmvideo.c
+@@ -1264,6 +1264,25 @@ static void KMSDRM_AddDisplay(SDL_VideoDevice *_this, drmModeConnector *conn, dr
+     dispdata->connector.connector = conn;
+     dispdata->crtc.crtc = crtc;
+ 
++    // rocknix - set resolution from /var/run/drmMode (HDMI only)
++    if (conn->connector_type == DRM_MODE_CONNECTOR_HDMIA ||
++        conn->connector_type == DRM_MODE_CONNECTOR_HDMIB) {
++        FILE *fdDrmMode;
++        int drmMode;
++        if ((fdDrmMode = fopen("/var/run/drmMode", "r")) != NULL) {
++            if (fscanf(fdDrmMode, "%i", &drmMode) == 1) {
++                if (drmMode >= 0 && drmMode < conn->count_modes) {
++                    drmModeCrtc *pcrtc = KMSDRM_drmModeGetCrtc(viddata->drm_fd, encoder->crtc_id);
++                    if (pcrtc != NULL) {
++                        KMSDRM_drmModeSetCrtc(viddata->drm_fd, pcrtc->crtc_id, pcrtc->buffer_id, 0, 0, &conn->connector_id, 1, &conn->modes[drmMode]);
++                        KMSDRM_drmModeFreeCrtc(pcrtc);
++                    }
++                }
++            }
++            fclose(fdDrmMode);
++        }
++   }
++
+     // save previous vrr state
+     dispdata->saved_vrr = KMSDRM_CrtcGetVrr(viddata->drm_fd, crtc->crtc_id);
+     // try to enable vrr
+@@ -1934,8 +1953,27 @@ bool KMSDRM_GetDisplayModes(SDL_VideoDevice *_this, SDL_VideoDisplay *display)
+     SDL_DisplayMode mode;
+     int i;
+ 
++    // rocknix - only expose wanted mode if /var/run/drmMode is set (HDMI only)
++    int wantedMode = -1;
++    if (conn->connector_type == DRM_MODE_CONNECTOR_HDMIA ||
++        conn->connector_type == DRM_MODE_CONNECTOR_HDMIB) {
++        FILE *fdDrmMode;
++        int drmMode;
++        if ((fdDrmMode = fopen("/var/run/drmMode", "r")) != NULL) {
++            if (fscanf(fdDrmMode, "%i", &drmMode) == 1) {
++                if (drmMode >= 0 && drmMode < conn->count_modes) {
++                    wantedMode = drmMode;
++                }
++            }
++            fclose(fdDrmMode);
++        }
++    }
++
+     for (i = 0; i < conn->count_modes; i++) {
+-        SDL_DisplayModeData *modedata = SDL_calloc(1, sizeof(SDL_DisplayModeData));
++        SDL_DisplayModeData *modedata;
++        if (wantedMode >= 0 && i != wantedMode) continue; // rocknix - only report wanted mode on HDMI
++
++        modedata = SDL_calloc(1, sizeof(SDL_DisplayModeData));
+ 
+         if (modedata) {
+             modedata->mode_index = i;

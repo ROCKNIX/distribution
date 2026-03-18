@@ -5,7 +5,7 @@ CXX ?= gcc
 CCFLAGS = -W -Wall -std=c++11 `sdl2-config --cflags`
 
 BINARY = sdl2text
-LIBRARIES = -lSDL2 -lSDL2_ttf
+LIBRARIES = -lSDL2 -lSDL2_ttf -lstdc++fs
 SOURCES = "sdl2text.cpp"
 
 all:

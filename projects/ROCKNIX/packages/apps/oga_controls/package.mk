@@ -15,8 +15,8 @@ PKG_PATCH_DIRS+="${DEVICE}"
 
 pre_make_target() {
   cp -f ${PKG_DIR}/Makefile ${PKG_BUILD}
-  CFLAGS+=" -I$(get_build_dir SDL2)/include -D_REENTRANT"
-  CFLAGS+=" -I$(get_build_dir libevdev)"
+  CFLAGS+=" -I${SYSROOT_PREFIX}/usr/include/SDL2 -D_REENTRANT"
+  CFLAGS+=" -I${SYSROOT_PREFIX}/usr/include/libevdev-1.0"
 }
 
 makeinstall_target() {
