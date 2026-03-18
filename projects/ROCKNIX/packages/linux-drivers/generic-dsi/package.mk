@@ -2,7 +2,7 @@
 # Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="generic-dsi"
-PKG_VERSION="de7b15ea0668d6fcc07c9b7a6bf20adf34c9d6de"
+PKG_VERSION="04e5e55b82d30c5c03d060f44cb6d7cd8840f531"
 PKG_LICENSE="GPL"
 PKG_LONGDESC="generic DSI panel driver and stock DTB import scripts"
 PKG_DEPENDS_TARGET="pyFDT"
