@@ -11,6 +11,8 @@ PKG_LONGDESC="J2ME emulator with libretro and AWT frontends, it aims to run on b
 PKG_TOOLCHAIN="make"
 
 pre_configure_target() {
+  sed -i 's/value="1\.6"/value="1.8"/g' ${PKG_BUILD}/build.xml
+  sed -i '/bootclasspath="${java.home}\/lib\/rt\.jar"/d' ${PKG_BUILD}/build.xml
   ${TOOLCHAIN}/bin/ant
 }
 
