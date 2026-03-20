@@ -1,32 +1,34 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Zetarancio <zetarancio@users.noreply.github.com>
 Date: Sun, 16 Mar 2026 00:00:00 +0000
-Subject: [PATCH] mfd: rk8xx: log ON_SOURCE/OFF_SOURCE at probe for
- RK817/RK809
+Subject: [PATCH] mfd: rk8xx: log ON/OFF_SOURCE and clear stale INT_STS at
+ probe for RK817/RK809
 
 Read the RK817/RK809 ON_SOURCE and OFF_SOURCE registers at probe time
 and log them as dev_info.  These registers record the reason the PMIC
 last powered on (power key, RTC alarm, plug-in, etc.) and the reason
 it last powered off (software, power key, UVLO, etc.).
 
-This is a standard BSP practice that aids debugging
-power-cycle and battery-drain issues: a single dmesg line tells you
-whether the last boot was a cold start, a watchdog reset, or an RTC
-wake, and whether the previous shutdown was clean or caused by
-under-voltage.
+Also clear all three interrupt status registers (W1C) at probe time.
+After a hard fault (PMIC OCP brownout, watchdog reset), stale INT_STS
+flags persist across reboot and can confuse the PMIC power state
+machine, preventing clean boot. Clearing them early in probe — before
+any interrupt handler is registered — ensures a clean slate regardless
+of how the previous session ended.
 
 Signed-off-by: Zetarancio <zetarancio@users.noreply.github.com>
+Signed-off-by: Joel Wiramu Pauling <aenertia@aenertia.net>
 ---
- drivers/mfd/rk8xx-core.c | 15 +++++++++++++++
- 1 file changed, 15 insertions(+)
+ drivers/mfd/rk8xx-core.c | 22 ++++++++++++++++++++++
+ 1 file changed, 22 insertions(+)
 
 diff --git a/drivers/mfd/rk8xx-core.c b/drivers/mfd/rk8xx-core.c
 --- a/drivers/mfd/rk8xx-core.c
 +++ b/drivers/mfd/rk8xx-core.c
-@@ -899,6 +899,21 @@
+@@ -899,6 +899,28 @@
  		}
  	}
- 
+
 +	switch (rk808->variant) {
 +	case RK809_ID:
 +	case RK817_ID: {
@@ -36,6 +38,13 @@ diff --git a/drivers/mfd/rk8xx-core.c b/drivers/mfd/rk8xx-core.c
 +		    !regmap_read(rk808->regmap, RK817_OFF_SOURCE_REG, &off_source))
 +			dev_info(dev, "ON_SOURCE=0x%02x OFF_SOURCE=0x%02x\n",
 +				 on_source, off_source);
++
++		/* Clear stale interrupt status flags (W1C) from previous
++		 * session — prevents confused PMIC state after hard faults
++		 * (OCP brownout, watchdog) where no clean shutdown ran. */
++		regmap_write(rk808->regmap, RK817_INT_STS_REG0, 0xff);
++		regmap_write(rk808->regmap, RK817_INT_STS_REG1, 0xff);
++		regmap_write(rk808->regmap, RK817_INT_STS_REG2, 0xff);
 +		break;
 +	}
 +	default:
