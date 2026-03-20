@@ -13,6 +13,10 @@ PKG_LONGDESC="X.Org Server is the free and open-source implementation of the X W
 
 get_graphicdrivers
 
+post_unpack() {
+  git -C "${PKG_BUILD}" checkout -f HEAD
+}
+
 pre_configure_target() {
 export TARGET_CFLAGS="${TARGET_CFLAGS} -Wno-error=incompatible-pointer-types"
 }
