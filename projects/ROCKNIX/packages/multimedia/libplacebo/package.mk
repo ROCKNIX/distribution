@@ -6,7 +6,7 @@ PKG_VERSION="52314e0e435fbcb731e326815d4091ed0ba27475"
 PKG_LICENSE="GPLv2+"
 PKG_SITE="https://code.videolan.org/videolan/libplacebo"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain ffmpeg SDL2 luajit libass glslang"
+PKG_DEPENDS_TARGET="toolchain ffmpeg SDL2 luajit libass glslang spirv-tools"
 PKG_LONGDESC="The core rendering algorithms and ideas of mpv rewritten as an independent library."
 
 if [ "${VULKAN_SUPPORT}" = "yes" ]; then
@@ -17,5 +17,5 @@ else
 fi
 
 pre_configure_target() {
-  export TARGET_LDFLAGS="${LDFLAGS} -lglslang"
+  export TARGET_LDFLAGS="${LDFLAGS} -lglslang -lSPIRV-Tools-opt -lSPIRV-Tools"
 }
