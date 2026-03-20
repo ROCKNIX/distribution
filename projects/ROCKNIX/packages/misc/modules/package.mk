@@ -12,7 +12,7 @@ PKG_TOOLCHAIN="manual"
 
 case ${DEVICE} in
   RK3588|RK3399|SM8250|SM8550|SDM845|SM8650)
-    PKG_DEPENDS_TARGET+=" gamepadtester qterminal"
+    PKG_DEPENDS_TARGET+=" gamepadtester qterminal vscode-official"
   ;;
 esac
 
