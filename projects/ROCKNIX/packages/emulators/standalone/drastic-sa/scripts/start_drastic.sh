@@ -82,16 +82,6 @@ fi
 cd /storage/.config/drastic/
 @HOTKEY@
 
-# Fix for libmali gpu driver on S922X platform
-if [ "${HW_DEVICE}" = "S922X" ]; then
-  GPUDRIVER=$(/usr/bin/gpudriver)
-
-  if [ "${GPUDRIVER}" = "libmali" ]; then
-    export SDL_VIDEO_GL_DRIVER=\/usr\/lib\/egl\/libGL.so.1
-    export SDL_VIDEO_EGL_DRIVER=\/usr\/lib\/egl\/libEGL.so.1
-  fi
-fi
-
 $GPTOKEYB "drastic" -c "drastic.gptk" &
 # Fix actual touch inputs by replacing touch->mouse translation and add hw mic support
 export LD_PRELOAD="/usr/lib/libdrastouch.so"
