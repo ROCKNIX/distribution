@@ -15,6 +15,7 @@ DEFAULT_SWAP_FILE_SIZE="0"
 DEFAULT_SWAP_PRIORITY="auto"
 DEFAULT_VM_WATERMARK_FACTOR="auto"
 DEFAULT_VM_COMPACTION="auto"
+DEFAULT_VM_OVERCOMMIT="auto"
 DEFAULT_KSM_ENABLE="auto"
 
 # B. Load System Defaults (Distro Config)
@@ -34,6 +35,7 @@ SWAP_FILE_SIZE="${SWAP_FILE_SIZE:-$DEFAULT_SWAP_FILE_SIZE}"
 SWAP_PRIORITY="${SWAP_PRIORITY:-$DEFAULT_SWAP_PRIORITY}"
 VM_WATERMARK_FACTOR="${VM_WATERMARK_FACTOR:-$DEFAULT_VM_WATERMARK_FACTOR}"
 VM_COMPACTION="${VM_COMPACTION:-$DEFAULT_VM_COMPACTION}"
+VM_OVERCOMMIT="${VM_OVERCOMMIT:-$DEFAULT_VM_OVERCOMMIT}"
 KSM_ENABLE="${KSM_ENABLE:-$DEFAULT_KSM_ENABLE}"
 
 # --- 2. ENVIRONMENT & TIER DETECTION ---
@@ -65,7 +67,7 @@ fi
 # even with lower RAM.
 IS_HIGH_PERF_SOC=false
 
-if [[ "${HW_DEVICE,,}" =~ rk3588|sm8|s922x|g12b|rk3399 ]]; then
+if [[ "${HW_DEVICE,,}" =~ rk3588|sm6115|sm8|s922x|g12b|rk3399 ]]; then
     IS_HIGH_PERF_SOC=true
 fi
 
@@ -115,6 +117,8 @@ show_status_json() {
         fi
     fi
 
+    local overcommit=$(cat /proc/sys/vm/overcommit_memory 2>/dev/null || echo 0)
+
     local ram_tier="high"
     [ "$IS_LOW_RAM" = true ] && ram_tier="low"
     [ "$IS_MID_RAM" = true ] && ram_tier="mid"
@@ -123,6 +127,7 @@ show_status_json() {
     echo "  \"ram_total_mb\": $TOTAL_MEM_MB,"
     echo "  \"tier_ram\": \"$ram_tier\","
     echo "  \"tier_soc\": \"$([ "$IS_HIGH_PERF_SOC" = true ] && echo "high" || echo "standard")\","
+    echo "  \"overcommit_memory\": $overcommit,"
     echo "  \"zram\": {"
     echo "    \"enabled\": $zram_enabled,"
     echo "    \"size_mb\": $ZRAM_SIZE_VAL,"
@@ -211,6 +216,7 @@ show_status() {
            vm.dirty_background_ratio \
            vm.watermark_scale_factor \
            vm.compaction_proactiveness \
+           vm.overcommit_memory \
            2>/dev/null | sed 's/^/  /'
 }
 
@@ -344,6 +350,22 @@ apply_vm_tuning() {
             logger -t memory-manager "THP: Flagship mode enabled (defrag=defer+madvise)"
         fi
     fi
+
+    # 4. VM Overcommit Memory
+    local overcommit_val=0
+    if [[ "${VM_OVERCOMMIT,,}" == "auto" ]]; then
+        if [ "$IS_HIGH_PERF_SOC" = true ]; then
+            # High Perf SoCs likely run Box64/Wine which rely on sparse mmap.
+            # Mode 1 (Always) prevents crashes in these translation layers.
+            overcommit_val=1
+        else
+            # Standard SoCs stay on Heuristic (0) for safety.
+            overcommit_val=0
+        fi
+    elif [[ "$VM_OVERCOMMIT" =~ ^[0-9]+$ ]]; then
+        overcommit_val=$VM_OVERCOMMIT
+    fi
+    sysctl -w vm.overcommit_memory=$overcommit_val >/dev/null
 }
 
 apply_tuning() {
@@ -467,6 +489,7 @@ while [[ $# -gt 0 ]]; do
         --swap-priority) update_config "SWAP_PRIORITY" "$2"; shift 2 ;;
         --vm-watermark) update_config "VM_WATERMARK_FACTOR" "$2"; shift 2 ;;
         --vm-compaction) update_config "VM_COMPACTION" "$2"; shift 2 ;;
+        --vm-overcommit) update_config "VM_OVERCOMMIT" "$2"; shift 2 ;;
         --ksm) update_config "KSM_ENABLE" "$2"; shift 2 ;;
         --setup) ACTION="setup"; shift ;;
         --stop) ACTION="stop"; shift ;;
@@ -484,6 +507,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --swap-priority [Auto|Stripe] Set Swap priority"
             echo "  --vm-watermark [Auto|Val]    Set VM watermark scale factor"
             echo "  --vm-compaction [Auto|Val]   Set VM compaction proactiveness"
+            echo "  --vm-overcommit [Auto|Val]   Set VM overcommit memory (0, 1, 2)"
             echo "  --ksm [Auto|Enable|Disable]  Set Kernel Samepage Merging"
             echo "Actions:"
             echo "  --setup        Initial setup"

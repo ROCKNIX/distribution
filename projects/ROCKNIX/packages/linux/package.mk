@@ -36,7 +36,7 @@ case ${DEVICE} in
         PKG_VERSION="6.19.5"
         PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
         ;;
-      S922X|RK3399|RK3566)
+      S922X|RK3399|RK3566|SM6115)
         PKG_VERSION="6.18.13"
         PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
         ;;

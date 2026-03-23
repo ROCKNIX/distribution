@@ -120,7 +120,10 @@ fi
   fi
 
 #Retroachievements
-/usr/bin/cheevos_duckstation.sh
+# Disabled, not working. Seems like Duckstation changed the token encruption...
+# /usr/bin/cheevos_duckstation.sh
+sed -i '/\[Cheevos\]/,/^\s*$/s/Enabled =.*/Enabled = false/' ${CONF_FILE}
+
 
 #Run Duckstation
 ${EMUPERF} duckstation-sa -fullscreen -bigpicture -nogui -- "${1}" > /dev/null 2>&1

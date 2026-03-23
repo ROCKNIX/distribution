@@ -1,0 +1,153 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
+
+# Minimal OS variable loading for performance
+. /etc/profile.d/001-functions
+
+LED_PATH="/sys/devices/platform/"
+
+function led_off() {
+  n=1
+  while [ "$n" -lt 8 ]; do
+    echo 0 >  ${LED_PATH}/multi-led-l${n}/leds/rgb:l${n}/brightness
+    echo 0 >  ${LED_PATH}/multi-led-r${n}/leds/rgb:r${n}/brightness
+    echo 0 0 0 >  ${LED_PATH}/multi-led-l${n}/leds/rgb:l${n}/multi_intensity
+    echo 0 0 0 >  ${LED_PATH}/multi-led-r${n}/leds/rgb:r${n}/multi_intensity
+    n=$(( n + 1 ))
+  done
+}
+
+function led_rainbow() {
+  # Rainbow effect configuration
+  STEPS=30            # Fewer steps for faster transitions
+  DURATION=0.5        # Shorter duration (half a second per cycle)
+  SLEEP_TIME=$(echo "scale=4; $DURATION/$STEPS" | bc)
+  CYCLES=2            # Number of cycles to run
+
+  calculate_rainbow_color() {
+    local position=$1
+    local h=$(echo "scale=2; 360*$position/$STEPS" | bc)
+
+    # Convert HSV (with S=1, V=1) to RGB
+    # Calculate region and fractional part
+    local region=$(echo "scale=0; $h/60" | bc)
+    local remainder=$(echo "scale=2; $h-$region*60" | bc)
+    local fractional=$(echo "scale=2; $remainder/60" | bc)
+
+    # Initialize RGB values
+    local r=0
+    local g=0
+    local b=0
+
+    # Calculate RGB based on hue region (0-5)
+    case $region in
+      0)
+        # 0-60: Red to Yellow
+        r=255
+        g=$(echo "scale=0; 255*$fractional" | bc)
+        b=0
+        ;;
+      1)
+        # 60-120: Yellow to Green
+        r=$(echo "scale=0; 255*(1-$fractional)" | bc)
+        g=255
+        b=0
+        ;;
+      2)
+        # 120-180: Green to Cyan
+        r=0
+        g=255
+        b=$(echo "scale=0; 255*$fractional" | bc)
+        ;;
+      3)
+        # 180-240: Cyan to Blue
+        r=0
+        g=$(echo "scale=0; 255*(1-$fractional)" | bc)
+        b=255
+        ;;
+      4)
+        # 240-300: Blue to Magenta
+        r=$(echo "scale=0; 255*$fractional" | bc)
+        g=0
+        b=255
+        ;;
+      5|6)
+        # 300-360: Magenta to Red
+        r=255
+        g=0
+        b=$(echo "scale=0; 255*(1-$fractional)" | bc)
+        ;;
+    esac
+
+    # Ensure values are integers
+    r=${r%.*}
+    g=${g%.*}
+    b=${b%.*}
+
+    # Ensure values are not negative or exceed 255
+    r=$(( r < 0 ? 0 : r > 255 ? 255 : r ))
+    g=$(( g < 0 ? 0 : g > 255 ? 255 : g ))
+    b=$(( b < 0 ? 0 : b > 255 ? 255 : b ))
+
+    echo "$r $g $b"
+  }
+
+  # Main rainbow effect loop
+  # Loop several times to create a continuous effect
+  for ((cycle=0; cycle<CYCLES; cycle++)); do
+    for ((i=0; i<STEPS; i++)); do
+      # Calculate RGB values dynamically
+      rgb=$(calculate_rainbow_color $i)
+      read r g b <<< "$rgb"
+
+      # Set LED color
+      /usr/bin/analog_sticks_ledcontrol 255 $r $g $b $r $g $b
+
+      # Sleep for calculated time - very brief
+      sleep $SLEEP_TIME
+    done
+  done
+
+  # Return to original state
+  LED_STATE=$(get_setting "led.color")
+  case ${LED_STATE} in
+    off)
+      led_off
+      ;;
+    rgb)
+      LEDS_CONFIG=$(get_setting analogsticks.led)
+      /usr/bin/analog_sticks_ledcontrol ${LEDS_CONFIG}
+      ;;
+    battery)
+      systemctl restart batteryledstatus.service
+      ;;
+  esac
+}
+
+case ${1} in
+  off)
+    led_off
+    set_setting led.color ${1}
+    ;;
+  rgb)
+    LEDS_CONFIG=$(get_setting analogsticks.led)
+    /usr/bin/analog_sticks_ledcontrol ${LEDS_CONFIG}
+    set_setting led.color ${1}
+    ;;
+  battery)
+    led_off
+    set_setting led.color ${1}
+    systemctl restart batteryledstatus.service
+    ;;
+  rainbow)
+    led_rainbow
+    ;;
+  list)
+cat <<EOF
+off
+rgb
+battery
+EOF
+    ;;
+esac

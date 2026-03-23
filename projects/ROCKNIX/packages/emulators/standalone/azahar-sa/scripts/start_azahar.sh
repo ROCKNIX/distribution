@@ -197,7 +197,7 @@ esac
 rm -rf /storage/.local/share/azahar
 ln -sf ${CONF_DIR} /storage/.local/share/azahar
 
-# Run Lime Emulator
+# Run Azahar Emulator
 if [ "${EMOUSE}" = "0" ]; then
   # Use base gptk file
   ${GPTOKEYB} azahar -c ${CONF_DIR}/azahar.gptk &

@@ -9,7 +9,7 @@ PKG_SITE="https://www.libsdl.org/"
 PKG_URL="https://www.libsdl.org/release/sdl2-compat-${PKG_VERSION}.tar.gz"
 
 PKG_DEPENDS_TARGET="toolchain SDL3"
-PKG_DEPENDS_HOST="toolchain:host distutilscross:host SDL3:host"
+PKG_DEPENDS_HOST="toolchain:host distutilscross:host SDL3:host libX11:host"
 PKG_PROVIDES_TARGET="SDL2"
 
 PKG_LONGDESC="SDL2 ABI compatibility layer implemented on top of SDL3."
