@@ -378,6 +378,32 @@ CPU_GOVERNOR=$(get_setting "cpugovernor" "${PLATFORM}" "${ROMNAME##*/}")
 ${VERBOSE} && log $0 "Set emulation performance mode to (${CPU_GOVERNOR})"
 ${CPU_GOVERNOR}
 
+### Run emulator in foreground slice with uclamp performance hints
+### uclamp.min tells schedutil the minimum frequency to maintain under load
+### uclamp.max caps maximum frequency (1024 = no cap)
+if [ -f /proc/sys/kernel/sched_util_clamp_min ]; then
+  UCLAMP_TIER=$(get_setting "uclamp.tier" "${PLATFORM}" "${ROMNAME##*/}")
+  UCLAMP_MIN=$(get_setting "uclamp.min" "${PLATFORM}" "${ROMNAME##*/}")
+  UCLAMP_MAX=$(get_setting "uclamp.max" "${PLATFORM}" "${ROMNAME##*/}")
+
+  # Convert tier name to bucket-aligned uclamp values
+  # Tier values work across all bucket counts (5/10/20)
+  if [ -n "${UCLAMP_TIER}" ] && [ -z "${UCLAMP_MIN}" ]; then
+    case "${UCLAMP_TIER}" in
+      light)      UCLAMP_MIN=205  ;;
+      medium)     UCLAMP_MIN=410  ;;
+      heavy)      UCLAMP_MIN=615  ;;
+      very_heavy) UCLAMP_MIN=820  ;;
+      maximum)    UCLAMP_MIN=1024 ;;
+    esac
+  fi
+
+  : "${UCLAMP_MIN:=512}"
+  : "${UCLAMP_MAX:=1024}"
+  ${VERBOSE} && log $0 "Set uclamp band: min=${UCLAMP_MIN} max=${UCLAMP_MAX} tier=${UCLAMP_TIER:-manual}"
+  RUNTHIS="systemd-run --scope --slice=rocknix-foreground.slice -- ${RUNTHIS}"
+fi
+
 ### Check whether MangoHud is supported and enabled
 if [ "${DEVICE_MANGOHUD_SUPPORT}" == "true" ]; then
   MANGOHUD_ENABLED=$(get_setting "rocknix.mangohud.enabled"  "${PLATFORM}" "${ROMNAME##*/}")
