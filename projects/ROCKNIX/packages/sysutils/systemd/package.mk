@@ -3,59 +3,56 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="systemd"
-PKG_VERSION="255.8"
+PKG_VERSION="260"
 PKG_LICENSE="LGPL2.1+"
 PKG_SITE="http://www.freedesktop.org/wiki/Software/systemd"
-PKG_URL="https://github.com/systemd/systemd-stable/archive/v${PKG_VERSION}.tar.gz"
+PKG_URL="https://github.com/systemd/systemd/archive/v${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain libcap kmod util-linux libidn2 Python3:host Jinja2:host pcre2 zstd libgcrypt openssl"
 PKG_LONGDESC="A system and session manager for Linux, compatible with SysV and LSB init scripts."
+PKG_BUILD_FLAGS="+lto"
 
 PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
-                       -Drootprefix=/usr \
-                       -Dsplit-usr=false \
                        -Dsplit-bin=true \
-                       -Ddefault-hierarchy=hybrid \
                        -Dtty-gid=5 \
                        -Dtests=false \
-                       -Dseccomp=false \
-                       -Dselinux=false \
-                       -Dapparmor=false \
-                       -Dpolkit=false \
-                       -Dacl=false \
-                       -Daudit=false \
-                       -Dblkid=true \
-                       -Dfdisk=false \
-                       -Dkmod=true \
-                       -Dpam=false \
-                       -Dpwquality=false \
-                       -Dmicrohttpd=false \
-                       -Dlibcryptsetup=false \
-                       -Dlibcurl=false \
-                       -Dlibidn=false \
-                       -Dlibidn2=true \
-                       -Dlibiptc=false \
-                       -Dqrencode=false \
-                       -Dgcrypt=true \
-                       -Dgnutls=false \
-                       -Dopenssl=true \
-                       -Dp11kit=false \
-                       -Delfutils=false \
-                       -Dzlib=false \
-                       -Dbzip2=false \
-                       -Dxz=false \
-                       -Dlz4=false \
-                       -Dxkbcommon=false \
-                       -Dpcre2=true \
-                       -Dglib=false \
-                       -Ddbus=false \
+                       -Dseccomp=disabled \
+                       -Dselinux=disabled \
+                       -Dapparmor=disabled \
+                       -Dpolkit=disabled \
+                       -Dacl=disabled \
+                       -Daudit=disabled \
+                       -Dblkid=enabled \
+                       -Dfdisk=disabled \
+                       -Dkmod=enabled \
+                       -Dpam=disabled \
+                       -Dpwquality=disabled \
+                       -Dmicrohttpd=disabled \
+                       -Dlibcryptsetup=disabled \
+                       -Dlibcurl=disabled \
+                       -Dlibidn2=enabled \
+                       -Dqrencode=disabled \
+                       -Dgcrypt=enabled \
+                       -Dgnutls=disabled \
+                       -Dopenssl=enabled \
+                       -Dp11kit=disabled \
+                       -Delfutils=disabled \
+                       -Dzlib=disabled \
+                       -Dbzip2=disabled \
+                       -Dxz=disabled \
+                       -Dlz4=disabled \
+                       -Dzstd=disabled \
+                       -Dxkbcommon=disabled \
+                       -Dpcre2=enabled \
+                       -Dglib=disabled \
+                       -Ddbus=disabled \
                        -Ddefault-dnssec=no \
-                       -Dimportd=false \
-                       -Dremote=false \
+                       -Dimportd=disabled \
+                       -Dremote=disabled \
                        -Dutmp=true \
                        -Dhibernate=false \
                        -Denvironment-d=false \
                        -Dbinfmt=true \
-                       -Drepart=false \
+                       -Drepart=disabled \
                        -Dcoredump=false \
                        -Dresolve=true \
                        -Dlogind=true \
@@ -64,7 +61,7 @@ PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Dmachined=false \
                        -Dportabled=false \
                        -Duserdb=false \
-                       -Dhomed=false \
+                       -Dhomed=disabled \
                        -Dnetworkd=false \
                        -Dtimedated=false \
                        -Dtimesyncd=true \
@@ -85,11 +82,11 @@ PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Dgshadow=false \
                        -Didn=false \
                        -Dnss-myhostname=false \
-                       -Dnss-mymachines=false \
+                       -Dnss-mymachines=disabled \
                        -Dnss-resolve=true \
                        -Dnss-systemd=false \
-                       -Dman=false \
-                       -Dhtml=false \
+                       -Dman=disabled \
+                       -Dhtml=disabled \
                        -Dlink-udev-shared=true \
                        -Dlink-systemctl-shared=true \
                        -Dlink-networkd-shared=false \
@@ -98,9 +95,8 @@ PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Dkmod-path=/usr/bin/kmod \
                        -Dmount-path=/usr/bin/mount \
                        -Dumount-path=/usr/bin/umount \
-                       -Dversion-tag=${PKG_VERSION} \
-                       -Dc_args=-D__counted_by\(x\)\= \
-                       -Dcpp_args=-D__counted_by\(x\)\="
+                       -Djournal-storage-default=auto \
+                       -Dversion-tag=${PKG_VERSION}"
 if [ -n "${BUILD_WITH_DEBUG}" ]
 then
   PKG_MESON_OPTS_TARGET+=" -Ddebug-tty=${DEBUG_TTY}"
