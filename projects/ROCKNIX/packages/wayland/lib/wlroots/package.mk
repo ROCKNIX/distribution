@@ -9,21 +9,22 @@ PKG_LONGDESC="A modular Wayland compositor library"
 PKG_TOOLCHAIN="meson"
 
 case ${DEVICE} in
-  SM8250|SM8550|RK3399|H700)
-    PKG_VERSION="0.19.2"
-    PKG_SHA256="f0530ecaa8739d15f97bd1e1edddb77e281d57e42d4263fccb67157f71730d17"
-    PKG_URL="${PKG_SITE}/-/archive/${PKG_VERSION}/wlroots-${PKG_VERSION}.tar.gz"
+  RK3326|RK3566|S922X)
+    # despite the '-rk' indication this is a wlroots version with libmali hacks
+    PKG_VERSION="0.19.3-rk"
+    PKG_SHA256="5385dc105f2c4c5fe3157e0b0299d6508765086d605fe4efe3ae437d4f18a5d9"
+    PKG_PATCH_DIRS+=" libmali"
+    PKG_URL="https://github.com/rocknix/rockchip-wlroots/archive/refs/tags/${PKG_VERSION}.tar.gz"
   ;;
   RK3588|SDM845)
     PKG_VERSION="0.17.4-rk"
     PKG_SHA256="e9e1e14966c6272ca595307fa817fd0fefae96b13fe36c8084b3a7a55fed20d1"
-    PKG_URL="https://github.com/stolen/rockchip-wlroots/archive/refs/tags/${PKG_VERSION}.tar.gz"
+    PKG_URL="https://github.com/rocknix/rockchip-wlroots/archive/refs/tags/${PKG_VERSION}.tar.gz"
   ;;
   *)
-    PKG_VERSION="0.19.0-rk"
-    PKG_PATCH_DIRS+=" libmali"
-    PKG_SHA256="cf247be7ec6b7be834a2469c6738aa4515e1cb085c6668cdf071bb5a0dc0f524"
-    PKG_URL="https://github.com/stolen/rockchip-wlroots/archive/refs/tags/${PKG_VERSION}.tar.gz"
+    PKG_VERSION="0.19.3"
+    PKG_SHA256="a6ff89b64ea15e424d1b0db4a22145fccf5ec2ff2e7b8af0fa35e2ac8975986f"
+    PKG_URL="${PKG_SITE}/-/archive/${PKG_VERSION}/wlroots-${PKG_VERSION}.tar.gz"
   ;;
 esac
 

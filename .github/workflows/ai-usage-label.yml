@@ -1,0 +1,85 @@
+name: Add AI Usage Label
+
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize]
+
+jobs:
+  check-ai-usage:
+    name: Check AI Usage
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - name: Check/Create ai-generated label with red color
+        id: check_create_label
+        uses: actions/github-script@v8
+        with:
+          script: |
+            try {
+              await github.rest.issues.createLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: 'ai-generated',
+                color: 'd73a49',
+                description: 'This PR was generated or assisted by AI tools'
+              })
+            } catch (error) {
+              const alreadyExists =
+                error.status === 422 &&
+                error.response?.data?.errors?.some(e => e.code === 'already_exists')
+
+              if (alreadyExists) {
+                console.log('Label already exists, continuing')
+                return true
+              }
+
+              console.log('Unhandled error:', error)
+              throw error
+            }
+
+      - name: Check for AI usage in PR description
+        id: check_ai
+        run: |
+          PR_BODY="${{ github.event.pull_request.body }}"
+          
+          if echo "$PR_BODY" | grep -P "(?s)Did you use AI tools to help write this code\?.*(YES|PARTIALLY)" > /dev/null; then
+            echo "ai_used=true" >> $GITHUB_OUTPUT
+          else
+            echo "ai_used=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Add ai-generated label
+        if: steps.check_ai.outputs.ai_used == 'true'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            github.rest.issues.addLabels({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['ai-generated']
+            })
+
+      - name: Remove ai-generated label if not applicable
+        if: steps.check_ai.outputs.ai_used == 'false'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            try {
+              await github.rest.issues.removeLabel({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: 'ai-generated'
+              })
+            } catch (error) {
+              if (error.status === 404) {
+                console.log('Label not found, skipping removal')
+                return true
+              }
+
+              console.log('Unhandled error:', error)
+              throw error
+            }
