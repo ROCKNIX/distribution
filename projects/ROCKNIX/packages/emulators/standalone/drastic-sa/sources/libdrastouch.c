@@ -79,33 +79,39 @@ SDL_Window* SDL_CreateWindow(const char* title, int x, int y, int w, int h, Uint
     if (num_displays > 1)
         xy_idx = (last_width > last_height) ? 1 : 2;
 
-    // Set window size to single screen to fix offsets when resizing
-    return real_SDL_CreateWindow(title, 0, 0, last_width, last_height, flags);
+    return real_SDL_CreateWindow(title, 0, 0, phys_width, phys_height, flags);
 }
 
 void SDL_SetWindowSize(SDL_Window* window, int w, int h) {
-    static int init_resize = 2;
+    static int init_calls = 2;
+    static int nudged = 0;
+    char cmd[256];
 
-    if (init_resize > 0) {
-        real_SDL_SetWindowSize(window, w, h);
-        init_resize -= 1;
+    // DraStic makes two SetWindowSize calls during startup, so we just dont()
+    if (init_calls > 0) {
+        init_calls--;
+        return;
     }
 
-    // Force window size to fill AFTER DraStic does its weird init thing
-    // Also check if this is a resize after init, if so, toggle a scale down to allow DraStic menu visibility
-    if (init_resize == 0) {
-        real_SDL_SetWindowSize(window, phys_width, phys_height);
-        init_resize = -1;
-    } else if (init_resize == -1) {
-        if (xy_idx == 1)
-            w = phys_width / 2;
-        if (xy_idx == 2)
-            h = phys_height / 2;
+    // Toggle between nudged (menu visible on one screen) and full (gameplay).
+    // SDL3 respects Sway's tiling (even for floating windows???), so we call swaymsg directly.
+    if (!nudged) {
+        int target_w = (xy_idx == 1) ? (int)(phys_width * 0.85) : phys_width;
+        int target_h = (xy_idx == 2) ? (int)(phys_height * 0.85) : phys_height;
+        int pos_x = (xy_idx == 1) ? -(phys_width / 6) : 0;
+        int pos_y = (xy_idx == 2) ? -(phys_height / 6) : 0;
 
-        real_SDL_SetWindowSize(window, w, h);
-        init_resize = 0;
+        snprintf(cmd, sizeof(cmd),
+            "swaymsg [app_id='drastic'] 'resize set %d %d, move absolute position %d %d'",
+            target_w, target_h, pos_x, pos_y);
+    } else {
+        snprintf(cmd, sizeof(cmd),
+            "swaymsg [app_id='drastic'] 'resize set %d %d, move absolute position 0 0'",
+            phys_width, phys_height);
     }
 
+    nudged = !nudged;
+    system(cmd);
 }
 
 SDL_Renderer* SDL_CreateRenderer(SDL_Window* window, int index, Uint32 flags) {
