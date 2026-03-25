@@ -34,6 +34,10 @@
 		charge-full-design-microamp-hours = <5000000>;
 		voltage-min-design-microvolt = <3400000>;
 		voltage-max-design-microvolt = <4350000>;
+		constant-charge-current-max-microamp = <2040000>;
+		constant-charge-voltage-max-microvolt = <4350000>;
+		precharge-current-microamp = <180000>;
+		charge-term-current-microamp = <180000>;
 	};
 
 	fan: gpio-fan {
@@ -75,15 +79,6 @@
 			linux,can-disable;
 			wakeup-source;
 		};
-	};
-
-	usb_vbus_dummy: regulator-usb-vbus {
-		compatible = "regulator-fixed";
-		regulator-name = "usb-vbus-dummy";
-		regulator-min-microvolt = <5000000>;
-		regulator-max-microvolt = <5000000>;
-		regulator-always-on;
-		regulator-boot-on;
 	};
 
 	vph_pwr: regulator-vph-pwr {
@@ -335,7 +330,10 @@
 		reg = <0x22>;
 
 		interrupts-extended = <&tlmm 39 IRQ_TYPE_LEVEL_LOW>;
-		vbus-supply = <&usb_vbus_dummy>;
+		vbus-supply = <&usb_otg_vbus>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&tcpc_irq_default>;
 
 		connector {
 			compatible = "usb-c-connector";
@@ -344,9 +342,48 @@
 			power-role = "dual";
 			data-role = "dual";
 			try-power-role = "sink";
-			op-sink-microwatt = <2500000>;
-			sink-pdos = <PDO_FIXED(5000, 1325, PDO_FIXED_USB_COMM)>;
+			op-sink-microwatt = <10000000>;
+			sink-pdos = <PDO_FIXED(5000, 3000, PDO_FIXED_USB_COMM)>;
 			source-pdos = <PDO_FIXED(5000, 3000, PDO_FIXED_USB_COMM)>;
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				port@0 {
+					reg = <0>;
+					usb_con_hs: endpoint {
+						remote-endpoint = <&usb_dwc3_hs>;
+					};
+				};
+
+				port@1 {
+					reg = <1>;
+					usb_con_ss: endpoint {
+						remote-endpoint = <&usb_qmpphy_out>;
+					};
+				};
+			};
+		};
+	};
+
+	charger@1a {
+		compatible = "sgmicro,sgm41515";
+		reg = <0x1a>;
+		monitored-battery = <&battery>;
+		interrupts-extended = <&tlmm 70 IRQ_TYPE_EDGE_FALLING>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&chg_int_default>;
+
+		input-voltage-limit-microvolt = <4500000>;
+		input-current-limit-microamp = <2400000>;
+
+		status = "okay";
+
+		usb_otg_vbus: usb-otg-vbus {
+			regulator-name = "usb-otg-vbus";
+			regulator-min-microvolt = <5000000>;
+			regulator-max-microvolt = <5000000>;
 		};
 	};
 
@@ -996,6 +1033,22 @@
 		bias-pull-up;
 		input-enable;
 	};
+
+	tcpc_irq_default: tcpc-irq-default-state {
+		pins = "gpio39";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+		input-enable;
+	};
+
+	chg_int_default: chg-int-default-state {
+		pins = "gpio70";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+		input-enable;
+	};
 };
 
 &usb {
@@ -1005,6 +1058,14 @@
 &usb_dwc3 {
 	dr_mode = "otg";
 	maximum-speed = "super-speed";
+
+	ports {
+		port@0 {
+			usb_dwc3_hs: endpoint {
+				remote-endpoint = <&usb_con_hs>;
+			};
+		};
+	};
 };
 
 &usb_hsphy {
@@ -1020,6 +1081,14 @@
 	vdda-pll-supply = <&vreg_l12a_1p8>;
 
 	status = "okay";
+
+	ports {
+		port@0 {
+			usb_qmpphy_out: endpoint {
+				remote-endpoint = <&usb_con_ss>;
+			};
+		};
+	};
 };
 
 &wifi {
