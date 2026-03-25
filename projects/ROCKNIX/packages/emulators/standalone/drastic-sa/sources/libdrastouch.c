@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <unistd.h>
 
 static int ds_screen_width = 256;
 static int ds_screen_height = 192;
@@ -16,6 +17,7 @@ static int phys_height = -1;
 static int logical_width = -1;
 static int logical_height = -1;
 static int actual_touch = 0;
+static int has_swaymsg = 0;
 
 // Microphone monitoring
 static SDL_AudioDeviceID mic_device = 0;
@@ -93,25 +95,27 @@ void SDL_SetWindowSize(SDL_Window* window, int w, int h) {
         return;
     }
 
-    // Toggle between nudged (menu visible on one screen) and full (gameplay).
-    // SDL3 respects Sway's tiling (even for floating windows???), so we call swaymsg directly.
-    if (!nudged) {
-        int target_w = (xy_idx == 1) ? (int)(phys_width * 0.85) : phys_width;
-        int target_h = (xy_idx == 2) ? (int)(phys_height * 0.85) : phys_height;
-        int pos_x = (xy_idx == 1) ? -(phys_width / 6) : 0;
-        int pos_y = (xy_idx == 2) ? -(phys_height / 6) : 0;
+    if (xy_idx > 0 && has_swaymsg) {
+        // Toggle between nudged (menu visible on one screen) and full (gameplay).
+        // SDL3 respects Sway's tiling (even for floating windows???), so we call swaymsg directly.
+        if (!nudged) {
+            int target_w = (xy_idx == 1) ? (int)(phys_width * 0.85) : phys_width;
+            int target_h = (xy_idx == 2) ? (int)(phys_height * 0.85) : phys_height;
+            int pos_x = (xy_idx == 1) ? -(phys_width / 6) : 0;
+            int pos_y = (xy_idx == 2) ? -(phys_height / 6) : 0;
 
-        snprintf(cmd, sizeof(cmd),
-            "swaymsg [app_id='drastic'] 'resize set %d %d, move absolute position %d %d'",
-            target_w, target_h, pos_x, pos_y);
-    } else {
-        snprintf(cmd, sizeof(cmd),
-            "swaymsg [app_id='drastic'] 'resize set %d %d, move absolute position 0 0'",
-            phys_width, phys_height);
+            snprintf(cmd, sizeof(cmd),
+                "swaymsg [app_id='drastic'] 'resize set %d %d, move absolute position %d %d'",
+                target_w, target_h, pos_x, pos_y);
+        } else {
+            snprintf(cmd, sizeof(cmd),
+                "swaymsg [app_id='drastic'] 'resize set %d %d, move absolute position 0 0'",
+                phys_width, phys_height);
+        }
+
+        nudged = !nudged;
+        system(cmd);
     }
-
-    nudged = !nudged;
-    system(cmd);
 }
 
 SDL_Renderer* SDL_CreateRenderer(SDL_Window* window, int index, Uint32 flags) {
@@ -333,6 +337,8 @@ static void init(void) {
     real_SDL_CloseAudioDevice = dlsym(RTLD_NEXT, "SDL_CloseAudioDevice");
     real_SDL_GetNumAudioDevices = dlsym(RTLD_NEXT, "SDL_GetNumAudioDevices");
     real_SDL_GetAudioDeviceName = dlsym(RTLD_NEXT, "SDL_GetAudioDeviceName");
+
+    has_swaymsg = (access("/usr/bin/swaymsg", X_OK) == 0);
 
     const char* threshold_str = getenv("DSHOOK_MIC_THRESH");
     if (threshold_str) {
