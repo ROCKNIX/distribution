@@ -1,0 +1,82 @@
+--- a/sound/soc/codecs/aw88261.c
++++ b/sound/soc/codecs/aw88261.c
+@@ -694,6 +694,16 @@
+ 	mutex_unlock(&aw88261->lock);
+ }
+
++static void aw88261_stop_work(struct work_struct *work)
++{
++	struct aw88261 *aw88261 =
++		container_of(work, struct aw88261, stop_work.work);
++
++	mutex_lock(&aw88261->lock);
++	aw88261_dev_stop(aw88261->aw_pa);
++	mutex_unlock(&aw88261->lock);
++}
++
+ static void aw88261_start(struct aw88261 *aw88261, bool sync_start)
+ {
+ 	if (aw88261->aw_pa->fw_status != AW88261_DEV_FW_OK)
+@@ -973,20 +983,33 @@
+ 				struct snd_kcontrol *k, int event)
+ {
+ 	struct snd_soc_component *component = snd_soc_dapm_to_component(w->dapm);
+ 	struct aw88261 *aw88261 = snd_soc_component_get_drvdata(component);
+
+-	mutex_lock(&aw88261->lock);
+ 	switch (event) {
+ 	case SND_SOC_DAPM_PRE_PMU:
+-		aw88261_start(aw88261, AW88261_ASYNC_START);
++		cancel_delayed_work_sync(&aw88261->stop_work);
++		mutex_lock(&aw88261->lock);
++		if (aw88261->aw_pa->status == AW88261_DEV_PW_ON) {
++			/* amp still powered from previous stream, just unmute */
++			aw88261_dev_uls_hmute(aw88261->aw_pa, false);
++			if (!aw88261->mute_st)
++				aw88261_dev_mute(aw88261->aw_pa, false);
++		} else {
++			aw88261_start(aw88261, AW88261_ASYNC_START);
++		}
++		mutex_unlock(&aw88261->lock);
+ 		break;
+ 	case SND_SOC_DAPM_POST_PMD:
+-		aw88261_dev_stop(aw88261->aw_pa);
++		mutex_lock(&aw88261->lock);
++		aw88261_dev_uls_hmute(aw88261->aw_pa, true);
++		aw88261_dev_mute(aw88261->aw_pa, true);
++		mutex_unlock(&aw88261->lock);
++		queue_delayed_work(system_wq, &aw88261->stop_work,
++				   msecs_to_jiffies(1000));
+ 		break;
+ 	default:
+ 		break;
+ 	}
+-	mutex_unlock(&aw88261->lock);
+
+ 	return 0;
+ }
+@@ -1136,6 +1159,7 @@
+ 	int ret;
+
+ 	INIT_DELAYED_WORK(&aw88261->start_work, aw88261_startup_work);
++	INIT_DELAYED_WORK(&aw88261->stop_work, aw88261_stop_work);
+
+ 	ret = aw88261_request_firmware_file(aw88261);
+ 	if (ret)
+@@ -1165,6 +1189,7 @@
+ 	struct aw88261 *aw88261 = snd_soc_component_get_drvdata(aw_codec);
+
+ 	cancel_delayed_work_sync(&aw88261->start_work);
++	cancel_delayed_work_sync(&aw88261->stop_work);
+ }
+
+ static const struct snd_soc_component_driver soc_codec_dev_aw88261 = {
+--- a/sound/soc/codecs/aw88261.h
++++ b/sound/soc/codecs/aw88261.h
+@@ -446,5 +446,6 @@
+ 	struct gpio_desc *reset_gpio;
+ 	struct delayed_work start_work;
++	struct delayed_work stop_work;
+ 	struct regmap *regmap;
+ 	struct aw_container *aw_cfg;
+
