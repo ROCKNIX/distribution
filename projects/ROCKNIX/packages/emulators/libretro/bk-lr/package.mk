@@ -11,7 +11,6 @@ PKG_LONGDESC="Linux/SDL emulator for Soviet (russian) Electronica BK serie"
 PKG_TOOLCHAIN="make"
 
 pre_make_target() {
-#rm -r ${PKG_BUILD}/Makefile
   mv ${PKG_BUILD}/Makefile.libretro ${PKG_BUILD}/Makefile
 }
 

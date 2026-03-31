@@ -141,8 +141,21 @@ struct LineTexture { SDL_Texture* tex; int w,h; };
 std::vector<LineTexture> create_textures(SDL_Renderer* ren, TTF_Font* font, const std::vector<std::string>& wrapped, SDL_Color color) {
     std::vector<LineTexture> textures;
     for(auto &line:wrapped) {
+        // Handle empty lines
+        if(line.empty()) {
+            int lineHeight = TTF_FontHeight(font);
+            textures.push_back({nullptr, 0, lineHeight});
+            continue;
+        }
+        
         SDL_Surface* surf=TTF_RenderUTF8_Blended(font,line.c_str(),color);
-        if(!surf) continue;
+        if(!surf) {
+            // If render fails, still add a placeholder for the line height
+            int lineHeight = TTF_FontHeight(font);
+            textures.push_back({nullptr, 0, lineHeight});
+            continue;
+        }
+        
         SDL_Texture* tex=SDL_CreateTextureFromSurface(ren,surf);
         textures.push_back({tex,surf->w,surf->h});
         SDL_FreeSurface(surf);
@@ -191,15 +204,26 @@ int main(int argc,char* argv[]) {
     SDL_GameController* pad=nullptr;
     for(int i=0;i<SDL_NumJoysticks();i++) { if(SDL_IsGameController(i)) { pad=SDL_GameControllerOpen(i); if(pad) break; } }
 
+    // Wrap lines while preserving empty lines
     std::vector<std::string> wrapped;
     for(auto &line:lines) {
-        std::string clean=filter_invalid_chars(line,font);
-        auto chunks=wrap_line(clean,font,WINDOW_W-20);
-        wrapped.insert(wrapped.end(),chunks.begin(),chunks.end());
+        if(line.empty()) {
+            // Preserve empty lines
+            wrapped.push_back("");
+        } else {
+            std::string clean=filter_invalid_chars(line,font);
+            auto chunks=wrap_line(clean,font,WINDOW_W-20);
+            wrapped.insert(wrapped.end(),chunks.begin(),chunks.end());
+        }
     }
     auto textures=create_textures(ren,font,wrapped,white);
 
     bool upPressed=false,downPressed=false,l1Pressed=false,r1Pressed=false,startPressed=false;
+    // Analog joystick axis state (left stick Y and right stick Y)
+    int16_t axisLeftY=0, axisRightY=0;
+    const int16_t AXIS_DEADZONE=8000;
+    const float AXIS_SCROLL_SCALE=0.002f; // pixels per frame at full deflection
+
     bool running=true,showHelp=false;
     SDL_Event e;
     bool touchActive=false;
@@ -211,6 +235,11 @@ int main(int argc,char* argv[]) {
         while(SDL_PollEvent(&e)) {
             if(e.type==SDL_QUIT) { running=false; break; }
 
+            if(e.type==SDL_CONTROLLERAXISMOTION) {
+                if(e.caxis.axis==SDL_CONTROLLER_AXIS_LEFTY)  axisLeftY  = e.caxis.value;
+                if(e.caxis.axis==SDL_CONTROLLER_AXIS_RIGHTY) axisRightY = e.caxis.value;
+            }
+
             if(e.type==SDL_CONTROLLERBUTTONDOWN) {
                 switch(e.cbutton.button) {
                     case SDL_CONTROLLER_BUTTON_DPAD_UP: upPressed=true; break;
@@ -220,16 +249,39 @@ int main(int argc,char* argv[]) {
                     case SDL_CONTROLLER_BUTTON_START: startPressed=true; break;
                     case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
                         fontSize+=2; TTF_CloseFont(font); font=loadFont(fontSize); if(!font){fontSize-=2; font=loadFont(fontSize);}
+                        // Re-wrap with new font size, preserving empty lines
                         wrapped.clear();
-                        for(auto &line:lines) { std::string clean=filter_invalid_chars(line,font); auto chunks=wrap_line(clean,font,WINDOW_W-20); wrapped.insert(wrapped.end(),chunks.begin(),chunks.end()); }
+                        for(auto &line:lines) {
+                            if(line.empty()) {
+                                wrapped.push_back("");
+                            } else {
+                                std::string clean=filter_invalid_chars(line,font);
+                                auto chunks=wrap_line(clean,font,WINDOW_W-20);
+                                wrapped.insert(wrapped.end(),chunks.begin(),chunks.end());
+                            }
+                        }
                         for(auto &lt:textures) if(lt.tex) SDL_DestroyTexture(lt.tex);
-                        textures=create_textures(ren,font,wrapped,white); lineHeight=TTF_FontHeight(font); break;
+                        textures=create_textures(ren,font,wrapped,white); 
+                        lineHeight=TTF_FontHeight(font); 
+                        break;
                     case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
                         fontSize-=2; if(fontSize<8) fontSize=8; TTF_CloseFont(font); font=loadFont(fontSize); if(!font){fontSize+=2; font=loadFont(fontSize);}
+                        // Re-wrap with new font size, preserving empty lines
                         wrapped.clear();
-                        for(auto &line:lines) { std::string clean=filter_invalid_chars(line,font); auto chunks=wrap_line(clean,font,WINDOW_W-20); wrapped.insert(wrapped.end(),chunks.begin(),chunks.end()); }
+                        for(auto &line:lines) {
+                            if(line.empty()) {
+                                wrapped.push_back("");
+                            } else {
+                                std::string clean=filter_invalid_chars(line,font);
+                                auto chunks=wrap_line(clean,font,WINDOW_W-20);
+                                wrapped.insert(wrapped.end(),chunks.begin(),chunks.end());
+                            }
+                        }
                         for(auto &lt:textures) if(lt.tex) SDL_DestroyTexture(lt.tex);
-                        textures=create_textures(ren,font,wrapped,white); lineHeight=TTF_FontHeight(font); break;
+                        textures=create_textures(ren,font,wrapped,white); 
+                        lineHeight=TTF_FontHeight(font); 
+                        break;
+                    case SDL_CONTROLLER_BUTTON_A: running=false; break;
                     case SDL_CONTROLLER_BUTTON_B: running=false; break;
                     case SDL_CONTROLLER_BUTTON_BACK: showHelp=!showHelp; break;
                 }
@@ -250,39 +302,68 @@ int main(int argc,char* argv[]) {
             if(e.type==SDL_FINGERUP) touchActive=false;
         }
 
-        // Controller continuous scrolling
+        // D-pad continuous scrolling
         if(upPressed) scroll_y-=SCROLL_SPEED;
         if(downPressed) scroll_y+=SCROLL_SPEED;
         if(l1Pressed) scroll_y-=SKIP_LINES*lineHeight;
         if(r1Pressed) scroll_y+=SKIP_LINES*lineHeight;
 
+        // Analog joystick scrolling (left stick or right stick, whichever is deflected)
+        // Apply deadzone, then scale linearly to scroll pixels
+        auto applyAxis = [&](int16_t raw) {
+            if(raw > AXIS_DEADZONE)
+                scroll_y += (int)((raw - AXIS_DEADZONE) * AXIS_SCROLL_SCALE);
+            else if(raw < -AXIS_DEADZONE)
+                scroll_y += (int)((raw + AXIS_DEADZONE) * AXIS_SCROLL_SCALE);
+        };
+        applyAxis(axisLeftY);
+        applyAxis(axisRightY);
+
         // Secret kill combo: L1 + START + SELECT
         if(l1Pressed && startPressed && SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_BACK)) running=false;
 
         // Clamp
-        int total_height=(int)textures.size()*lineHeight;
+        int total_height=0;
+        for(const auto& tex : textures) total_height += tex.h;
         if(total_height<WINDOW_H) total_height=WINDOW_H;
         if(scroll_y<0) scroll_y=0;
         if(scroll_y>total_height-WINDOW_H) scroll_y=total_height-WINDOW_H;
 
         // Render
         SDL_SetRenderDrawColor(ren,0,0,0,255); SDL_RenderClear(ren);
-        int firstLine=scroll_y/lineHeight, offsetY=-(scroll_y%lineHeight);
+        
+        // Find starting line based on scroll position
+        int firstLine=0;
+        int accumulatedHeight=0;
+        for(size_t i=0;i<textures.size();i++) {
+            if(accumulatedHeight + textures[i].h > scroll_y) {
+                firstLine=i;
+                break;
+            }
+            accumulatedHeight += textures[i].h;
+        }
+        
+        int offsetY = - (scroll_y - accumulatedHeight);
+        
         for(size_t i=firstLine;i<textures.size() && offsetY<WINDOW_H;i++) {
-            if(textures[i].tex) { SDL_Rect dst={10,offsetY,textures[i].w,textures[i].h}; SDL_RenderCopy(ren,textures[i].tex,nullptr,&dst); }
-            offsetY+=textures[i].h;
+            if(textures[i].tex) {
+                SDL_Rect dst={10,offsetY,textures[i].w,textures[i].h};
+                SDL_RenderCopy(ren,textures[i].tex,nullptr,&dst);
+            }
+            offsetY += textures[i].h;
         }
 
         // Help overlay
         if(showHelp) {
             std::vector<std::string> helpLines={
                 "CONTROLS:",
-                "SELECT          - Toggle This Help",
+                "SELECT          - Toggle Help Screen",
+                "STICK UP/DOWN   - Scroll Up / Down",
                 "DPAD UP/DOWN    - Scroll Up / Down",
                 "L1/R1           - Skip Up / Down",
-                "DPAD LEFT/RIGHT - Dec / Inc Font Size",
-                "Touch Drag      - Scroll Up / Down",
-                "B               - Exit"
+                "DPAD LEFT/RIGHT - + / - Text Size",
+                "TOUCHSCREEN     - Scroll Up / Down",
+                "A / B           - Exit"
             };
 
             // Calculate box height based on content
@@ -340,8 +421,18 @@ int main(int argc,char* argv[]) {
 
         // ---- Line Counter (bottom-right) ----
         {
-            int currentLine = scroll_y / lineHeight + 1;
-            int totalLines  = (int)textures.size();
+            // Calculate current line number based on scroll position
+            int currentLine = 1;
+            int accumulatedHeight = 0;
+            for(size_t i=0;i<textures.size();i++) {
+                if(accumulatedHeight + textures[i].h > scroll_y) {
+                    currentLine = i + 1;
+                    break;
+                }
+                accumulatedHeight += textures[i].h;
+            }
+            
+            int totalLines = (int)textures.size();
 
             if (currentLine < 1) currentLine = 1;
             if (currentLine > totalLines) currentLine = totalLines;

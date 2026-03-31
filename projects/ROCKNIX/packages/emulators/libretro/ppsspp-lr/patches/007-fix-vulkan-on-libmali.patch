@@ -1,0 +1,45 @@
+--- a/libretro/libretro_vulkan.cpp
++++ b/libretro/libretro_vulkan.cpp
+@@ -109,27 +109,34 @@ static VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice_libretro(VkPhysicalDevice p
+    newInfo.enabledExtensionCount = (uint32_t)enabledExtensionNames.size();
+    newInfo.ppEnabledExtensionNames = newInfo.enabledExtensionCount ? enabledExtensionNames.data() : nullptr;
+ 
+-   // Then check for VkPhysicalDeviceFeatures2 chaining or pEnabledFeatures to enable required features. Note that when both
+-   // structs are present Features2 takes precedence. vkCreateDevice parameters don't give us a simple way to detect
+-   // VK_KHR_get_physical_device_properties2 usage so we'll always try both paths.
++   // Check for VkPhysicalDeviceFeatures2 in pNext chain. Per Vulkan spec, pEnabledFeatures
++   // must be NULL when VkPhysicalDeviceFeatures2 is present in pNext.
+    std::unordered_map<VkPhysicalDeviceFeatures *, VkPhysicalDeviceFeatures> originalFeaturePointers;
+    VkPhysicalDeviceFeatures placeholderEnabledFeatures{};
++   bool hasFeatures2InChain = false;
+ 
+    for (const VkBaseOutStructure *next = (const VkBaseOutStructure *)pCreateInfo->pNext; next != nullptr;) {
+       if (next->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2) {
+          VkPhysicalDeviceFeatures *enabledFeatures = &((VkPhysicalDeviceFeatures2 *)next)->features;
+          originalFeaturePointers.try_emplace(enabledFeatures, *enabledFeatures);
++         hasFeatures2InChain = true;
+       }
+ 
+       next = (const VkBaseOutStructure *)next->pNext;
+    }
+ 
+-   if (newInfo.pEnabledFeatures) {
+-      placeholderEnabledFeatures = *newInfo.pEnabledFeatures;
+-   }
++   if (!hasFeatures2InChain) {
++      // Only use pEnabledFeatures when VkPhysicalDeviceFeatures2 is NOT in pNext chain.
++      if (newInfo.pEnabledFeatures) {
++         placeholderEnabledFeatures = *newInfo.pEnabledFeatures;
++      }
+ 
+-   newInfo.pEnabledFeatures = &placeholderEnabledFeatures;
+-   originalFeaturePointers.try_emplace((VkPhysicalDeviceFeatures *)newInfo.pEnabledFeatures, *newInfo.pEnabledFeatures);
++      newInfo.pEnabledFeatures = &placeholderEnabledFeatures;
++      originalFeaturePointers.try_emplace((VkPhysicalDeviceFeatures *)newInfo.pEnabledFeatures, *newInfo.pEnabledFeatures);
++   } else {
++      // Ensure pEnabledFeatures is NULL when features2 is used (Vulkan spec requirement).
++      newInfo.pEnabledFeatures = nullptr;
++   }
+ 
+    for (const auto& pair : originalFeaturePointers) {
+       for (uint32_t i = 0; i < sizeof(VkPhysicalDeviceFeatures) / sizeof(VkBool32); i++) {

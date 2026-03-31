@@ -39,7 +39,7 @@ then
   rm -f ${CONFIG_DIR}/keymapv2.json
 
   # Handle inputplumber platforms first
-  if [[ "${HW_DEVICE}" =~ SM8550|SM8650 ]]; then
+  if [[ "${HW_DEVICE}" =~ SM6115|SM8550|SM8650 ]]; then
     GAMEPAD="'InputPlumber GameController'"
   else
     # Check for js0, else fall back to joypad

@@ -44,7 +44,7 @@ case "${DEVICE}" in
   RK3566)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 desmume-lr gpsp-lr pcsx_rearmed-lr"
     PKG_DEPENDS_TARGET+=" common-shaders glsl-shaders"
-    PKG_EMUS+=" dolphin-sa drastic-sa mednafen melonds-sa portmaster"
+    PKG_EMUS+=" aethersx2-sa azahar-sa dolphin-sa drastic-sa mednafen melonds-sa"
     LIBRETRO_CORES+=" dolphin-lr"
     ;;
   RK3588|SM6115)
@@ -60,9 +60,14 @@ case "${DEVICE}" in
     LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr flycast2021-lr geolith-lr pcsx_rearmed-lr uae4arm kronos-lr"
     PKG_RETROARCH+=" retropie-shaders"
     ;;
-  SM8550|SM8650)
+  SM8550)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 daedalusx64-sa desmume-lr gpsp-lr pcsx_rearmed-lr"
     PKG_EMUS+=" aethersx2-sa azahar-sa bigpemu-sa cemu-sa dolphin-sa drastic-sa gopher64-sa mednafen melonds-sa nanoboyadvance-sa rpcs3-sa supermodel-sa \
+                xemu-sa skyemu-sa"
+    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr kronos-lr"
+    ;;
+  SM8650)
+    PKG_EMUS+=" aethersx2-sa azahar-sa bigpemu-sa cemu-sa dolphin-sa gopher64-sa mednafen melonds-sa nanoboyadvance-sa rpcs3-sa supermodel-sa \
                 xemu-sa skyemu-sa"
     LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr kronos-lr"
     ;;
@@ -147,7 +152,7 @@ makeinstall_target() {
 
   ### Nintendo 3DS
   case ${DEVICE} in
-    SDM845|SM8250|SM8550|SM8650|S922X|RK3588|SM6115)
+    RK3566|SDM845|SM8250|SM8550|SM8650|S922X|RK3588|SM6115)
       add_emu_core 3ds azahar azahar-sa true
       add_es_system 3ds
       install_script "Start Azahar.sh"
@@ -333,7 +338,6 @@ makeinstall_target() {
 
   ### Elektronika BK
   add_emu_core bk retroarch bk true
-  add_emu_core bk retroarch mame false
   add_es_system bk
 
   ### Nintendo Famicom
@@ -797,10 +801,13 @@ makeinstall_target() {
       add_emu_core n64 daedalusx64 daedalusx64-sa false
       install_script "Start DaedalusX64.sh"
       ;;
-    SM8550|SM8650)
+    SM8550)
       add_emu_core n64 daedalusx64 daedalusx64-sa false
       add_emu_core n64 gopher64 gopher64-sa false
       install_script "Start DaedalusX64.sh"
+      ;;
+    SM8650)
+      add_emu_core n64 gopher64 gopher64-sa false
       ;;
   esac
   add_es_system n64
@@ -970,9 +977,14 @@ makeinstall_target() {
       add_emu_core psx retroarch pcsx_rearmed32 true
       add_emu_core psx retroarch pcsx_rearmed false
       ;;
-    SDM845|SM8250|SM8550|SM8650)
+    SDM845|SM8250|SM8550)
       add_emu_core psx retroarch pcsx_rearmed32 true
       add_emu_core psx retroarch pcsx_rearmed false
+      add_emu_core psx retroarch beetle_psx false
+      add_emu_core psx mednafen psx false
+      ;;
+    SM8650)
+      add_emu_core psx retroarch pcsx_rearmed true
       add_emu_core psx retroarch beetle_psx false
       add_emu_core psx mednafen psx false
       ;;
@@ -988,7 +1000,7 @@ makeinstall_target() {
 
   ### Sony Playstation 2
   case ${DEVICE} in
-    RK3399|RK3588|SM6115|SDM845|SM8250|SM8550|SM8650|S922X)
+    RK3399|RK3566|RK3588|SM6115|SDM845|SM8250|SM8550|SM8650|S922X)
       add_emu_core ps2 aethersx2 aethersx2-sa true
       add_es_system ps2
       install_script "Start AetherSX2.sh"
