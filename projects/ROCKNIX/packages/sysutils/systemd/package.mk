@@ -266,6 +266,10 @@ post_makeinstall_target() {
   safe_remove ${INSTALL}/etc/udev/rules.d
   ln -sf /storage/.config/udev.rules.d ${INSTALL}/etc/udev/rules.d
 
+  # system manager timeout overrides
+  mkdir -p ${INSTALL}/etc/systemd/system.conf.d
+  cp -PR ${PKG_DIR}/config/system.conf.d/* ${INSTALL}/etc/systemd/system.conf.d/
+
   # journald
   ln -sf /storage/.cache/journald.conf.d ${INSTALL}/usr/lib/systemd/journald.conf.d
 }

@@ -29,6 +29,7 @@ IRES=$(get_setting internal_resolution "${PLATFORM}" "${GAME}")
 GRENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
 SKIPB=$(get_setting skip_buffer_effects "${PLATFORM}" "${GAME}")
 VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
+CLOCK_SPEED=$(get_setting clock_speed "${PLATFORM}" "${GAME}")
 
 #Set the cores to use
 CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
@@ -87,6 +88,15 @@ fi
 		sed -i '/^VSyncInterval =/c\VSyncInterval = True' ${CONF_DIR}/${PPSSPP_INI}
 	else
 		sed -i '/^VSyncInterval =/c\VSyncInterval = False' ${CONF_DIR}/${PPSSPP_INI}
+	fi
+
+  #Clock Speed
+	if [ "${CLOCK_SPEED}" = "222" ]; then
+		sed -i '/^CPUSpeed =/c\CPUSpeed = 222' ${CONF_DIR}/${PPSSPP_INI}
+  elif [ "${CLOCK_SPEED}" = "333" ]; then
+		sed -i '/^CPUSpeed =/c\CPUSpeed = 333' ${CONF_DIR}/${PPSSPP_INI}
+	else
+		sed -i '/^CPUSpeed =/c\CPUSpeed = 0' ${CONF_DIR}/${PPSSPP_INI}
 	fi
 
 #Retroachievements
