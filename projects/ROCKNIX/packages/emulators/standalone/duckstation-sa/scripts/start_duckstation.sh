@@ -4,7 +4,7 @@
 # Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
 
 . /etc/profile
-set_kill set "-9 duckstation-mini"
+set_kill set "-9 AppRun.wrapped"
 
 # Filesystem vars
 IMMUTABLE_CONF_DIR="/usr/config/duckstation"
