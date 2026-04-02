@@ -7,8 +7,9 @@
 . /etc/profile
 
 clear
-echo "Scanning for games..."
-bash /usr/bin/start_scummvm.sh add
-echo "Adding games..."
-bash /usr/bin/start_scummvm.sh create
+# Scanning for games...
+bash /usr/bin/start_scummvm.sh add >/dev/null 2>&1
+# Adding games...
+bash /usr/bin/start_scummvm.sh create >/dev/null 2>&1
 clear
+systemctl restart ${UI_SERVICE}

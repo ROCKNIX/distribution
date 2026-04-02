@@ -18,7 +18,6 @@ pre_configure_target() {
 post_makeinstall_target() {
   mkdir -p ${INSTALL}/usr/config/scummvm/
   cp -rf ${PKG_DIR}/config/* ${INSTALL}/usr/config/scummvm/
-  chmod 0755 ${INSTALL}/usr/config/scummvm/games/*sh
 
   mkdir -p ${INSTALL}/usr/config/scummvm/themes
   cp -rf ${PKG_BUILD}/gui/themes ${INSTALL}/usr/config/scummvm/themes
