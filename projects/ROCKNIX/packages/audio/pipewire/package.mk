@@ -26,6 +26,7 @@ else
 fi
 
 if [ "${VULKAN_SUPPORT}" = "yes" ]; then
+  PKG_DEPENDS_TARGET+=" vulkan-loader vulkan-headers"
   PKG_PIPEWIRE_VULKAN+="-Dvulkan=enabled \
                         -Dx11=disabled \
                         -Dx11-xfixes=disabled"
