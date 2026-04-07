@@ -28,9 +28,5 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/compat
     curl -Lo ${PKG_BUILD}/compat.tar.gz ${COMPAT_URL}
     tar -xvf ${PKG_BUILD}/compat.tar.gz -C ${INSTALL}/usr/lib
-    if [ "${PREFER_GLES}" = "yes" ]; then
-      mv ${INSTALL}/usr/lib/compat/libSDL2-2.0.so.0.gles ${INSTALL}/usr/lib/compat/libSDL2-2.0.so.0
-    else
-      rm -rf ${INSTALL}/usr/lib/compat/libSDL2-2.0.so.0.gles
-    fi
+    rm -rf ${INSTALL}/usr/lib/compat/libSDL2-2.0.so.0*
 }
