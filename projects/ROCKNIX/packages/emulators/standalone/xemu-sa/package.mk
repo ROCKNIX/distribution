@@ -2,11 +2,11 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="xemu-sa"
-PKG_VERSION="26fcbe54f17e496bdf530dad9f237e74e2f943fc"
+PKG_VERSION="6b43bc61742939f5a4cf32f28b6f9027b4019f79"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/xemu-project/xemu"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain libthai gtk3 libsamplerate libpcap atk SDL2 Python3 zlib pixman bzip2 openssl xwayland libslirp"
+PKG_DEPENDS_TARGET="toolchain libthai gtk3 libsamplerate libpcap atk SDL3 Python3 zlib pixman bzip2 openssl xwayland libslirp"
 PKG_LONGDESC="Xemu - A free and open-source application that emulates the original Microsoft Xbox game console."
 PKG_TOOLCHAIN="make"
 PKG_PATCH_DIRS+="${DEVICE}"

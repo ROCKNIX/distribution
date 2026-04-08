@@ -31,6 +31,7 @@ make_target() {
   extra_cflags=[]
   extra_asmflags=[]
   "
+  export SKIA_BINARIES_URL="https://github.com/rust-skia/skia-binaries/releases/download/0.90.0/skia-binaries-da4579b39b75fa2187c5-aarch64-unknown-linux-gnu-gl-pdf-textlayout-vulkan.tar.gz"
 
   cargo build \
     --target ${TARGET_NAME} \

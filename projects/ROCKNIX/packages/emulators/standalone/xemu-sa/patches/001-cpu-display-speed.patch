@@ -1,34 +1,12 @@
-From aae8b2e0962a92f40c3ff5a8f46b283c59116bdd Mon Sep 17 00:00:00 2001
-From: Spidy123222 <64176728+Spidy123222@users.noreply.github.com>
-Date: Thu, 29 Jun 2023 10:12:51 -0700
-Subject: [PATCH] UX: Add CPU overclock and display rate override settings
-
-These settings can be used to improve framerate or set a new framerate
-limit (different from the typical 30/60 FPS).
-
-Many games work well with this, but using overrides will break games
-that are not designed around FPS-independent physics. Therefore, submitting
-compatibility reports is disabled if either of the overrides are active.
-
-Co-authored-by: Hugo Locurcio <hugo.locurcio@hugo.pro>
----
- config_spec.yml     | 12 ++++++++++++
- hw/i386/x86-cpu.c   | 10 +++++++++-
- ui/xemu.c           | 10 +++++++---
- ui/xui/compat.cc    | 13 ++++++++++++-
- ui/xui/main-menu.cc | 32 ++++++++++++++++++++++++++++----
- ui/xui/widgets.cc   | 18 ++++++++++++------
- ui/xui/widgets.hh   |  2 +-
- 7 files changed, 81 insertions(+), 16 deletions(-)
-
 diff --git a/config_spec.yml b/config_spec.yml
-index d013c806ac9..2c0d15939fe 100644
+index 3e36d1e5c6..8bc83f2835 100644
 --- a/config_spec.yml
 +++ b/config_spec.yml
-@@ -265,3 +265,15 @@ perf:
+@@ -370,3 +370,16 @@ perf:
    cache_shaders:
      type: bool
      default: true
++
 +  override_clockspeed:
 +    type: bool
 +    default: false
@@ -42,12 +20,12 @@ index d013c806ac9..2c0d15939fe 100644
 +    type: number
 +    default: 1
 diff --git a/hw/i386/x86-cpu.c b/hw/i386/x86-cpu.c
-index 7170e9082ef..b90eac93d71 100644
+index a26055f5b9..859667ba04 100644
 --- a/hw/i386/x86-cpu.c
 +++ b/hw/i386/x86-cpu.c
 @@ -31,11 +31,19 @@
  #include "hw/irq.h"
- #include "sysemu/kvm.h"
+ #include "system/kvm.h"
  
 +#ifdef XBOX
 +#include "ui/xemu-settings.h"
@@ -67,40 +45,47 @@ index 7170e9082ef..b90eac93d71 100644
  #else
      return cpus_get_elapsed_ticks();
 diff --git a/ui/xemu.c b/ui/xemu.c
-index b602d25c09e..f80b4d2faeb 100644
+index 0f8512303b..4a7e5a72e3 100644
 --- a/ui/xemu.c
 +++ b/ui/xemu.c
-@@ -318,7 +318,7 @@ static void handle_keydown(SDL_Event *ev)
- {
-     int win;
-     struct sdl2_console *scon = get_scon_from_window(ev->key.windowID);
--    if (scon == NULL) return; 
-+    if (scon == NULL) return;
-     int gui_key_modifier_pressed = get_mod_state();
-     int gui_keysym = 0;
+@@ -744,7 +744,11 @@ static void vblank_timer_callback(void *opaque)
  
-@@ -1079,10 +1079,14 @@ void sdl2_gl_refresh(DisplayChangeListener *dcl)
-     qemu_mutex_unlock_main_loop();
- 
-     /*
--     * Throttle to make sure swaps happen at 60Hz
-+     * Throttle to make sure swaps happen at 60 Hz (divided by the display rate scale if overridden)
-      */
-     static int64_t last_update = 0;
--    int64_t deadline = last_update + 16666666;
-+    float display_rate_scale = 1.0f;
+     int64_t now = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
+     process_vblank(scon);
+-    timer_mod_ns(vblank_timer, now + vblank_interval_ns);
++    uint64_t effective_interval = vblank_interval_ns;
 +    if (g_config.perf.override_display_rate) {
-+        display_rate_scale /= g_config.perf.display_rate_scale;
++        effective_interval = (uint64_t)((float)vblank_interval_ns / g_config.perf.display_rate_scale);
 +    }
-+    int64_t deadline = last_update + 16666666 * display_rate_scale;
++    timer_mod_ns(vblank_timer, now + effective_interval);
+ }
  
- #ifdef DEBUG_XEMU_C
-     int64_t sleep_acc = 0;
+ static void *vblank_timer_thread(void *opaque)
+@@ -754,13 +758,16 @@ static void *vblank_timer_thread(void *opaque)
+ 
+     while (!qatomic_read(&qemu_exiting)) {
+         // Schedule next vblank at fixed interval (absolute deadline)
+-        next_vblank += vblank_interval_ns;
+-
++        uint64_t effective_interval = vblank_interval_ns;
++        if (g_config.perf.override_display_rate) {
++            effective_interval = (uint64_t)((float)vblank_interval_ns / g_config.perf.display_rate_scale);
++        }
++        next_vblank += effective_interval;
+         // Wait until deadline
+         int64_t now = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
+         if (now < next_vblank) {
+             SDL_DelayPrecise(next_vblank - now);
+-        } else if (now > next_vblank + vblank_interval_ns) {
++        } else if (now > next_vblank + effective_interval) {
+             // We've fallen behind by more than one frame, reset to avoid
+             // rapid-fire catch-up
+             next_vblank = now;
 diff --git a/ui/xui/compat.cc b/ui/xui/compat.cc
-index d0405389f53..5f9d93507b6 100644
+index c16d4a2776..f2ee0f96fe 100644
 --- a/ui/xui/compat.cc
 +++ b/ui/xui/compat.cc
-@@ -203,6 +203,14 @@ void CompatibilityReporter::Draw()
+@@ -202,6 +202,14 @@ void CompatibilityReporter::Draw()
          ImGui::SameLine();
      }
  
@@ -115,7 +100,7 @@ index d0405389f53..5f9d93507b6 100644
      ImGui::SetCursorPosX(ImGui::GetWindowWidth()-(120+10)*g_viewport_mgr.m_scale);
  
      ImGui::SetItemDefaultFocus();
-@@ -213,7 +221,10 @@ void CompatibilityReporter::Draw()
+@@ -212,7 +220,10 @@ void CompatibilityReporter::Draw()
              is_open = false;
          }
      }
@@ -128,10 +113,10 @@ index d0405389f53..5f9d93507b6 100644
  }
  
 diff --git a/ui/xui/main-menu.cc b/ui/xui/main-menu.cc
-index 9bb5dcf33fd..ac580e9a8b9 100644
+index f39320d8a7..7d7037e104 100644
 --- a/ui/xui/main-menu.cc
 +++ b/ui/xui/main-menu.cc
-@@ -66,6 +66,30 @@ void MainMenuGeneralView::Draw()
+@@ -68,6 +68,30 @@ void MainMenuGeneralView::Draw()
      Toggle("Cache shaders to disk", &g_config.perf.cache_shaders,
             "Reduce stutter in games by caching previously generated shaders");
  
@@ -163,7 +148,7 @@ index 9bb5dcf33fd..ac580e9a8b9 100644
      Toggle("Skip startup animation", &g_config.general.skip_boot_anim,
             "Skip the full Xbox boot animation sequence");
 diff --git a/ui/xui/widgets.cc b/ui/xui/widgets.cc
-index 67430ecda8a..b5d7f044c10 100644
+index f1e31c4ab1..3e8c626555 100644
 --- a/ui/xui/widgets.cc
 +++ b/ui/xui/widgets.cc
 @@ -22,6 +22,7 @@
@@ -206,7 +191,7 @@ index 67430ecda8a..b5d7f044c10 100644
              ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight) ||
              ImGui::IsKeyPressed(ImGuiKey_GamepadRStickRight)) {
 -                *v += 0.05;
-+                x += increment / max;
++                x -= increment / max;
          }
  
          if (
@@ -232,15 +217,15 @@ index 67430ecda8a..b5d7f044c10 100644
  }
  
 diff --git a/ui/xui/widgets.hh b/ui/xui/widgets.hh
-index 168878bb9fc..f698d437887 100644
+index a5a6ceaeb9..2860371390 100644
 --- a/ui/xui/widgets.hh
 +++ b/ui/xui/widgets.hh
-@@ -34,7 +34,7 @@ float GetSliderValueForMousePos(ImVec2 mouse, ImVec2 pos, ImVec2 size);
+@@ -36,7 +36,7 @@ float GetSliderValueForMousePos(ImVec2 mouse, ImVec2 pos, ImVec2 size);
  void DrawSlider(float v, bool hovered, ImVec2 pos, ImVec2 size);
  void DrawToggle(bool enabled, bool hovered, ImVec2 pos, ImVec2 size);
  bool Toggle(const char *str_id, bool *v, const char *description = nullptr);
 -void Slider(const char *str_id, float *v, const char *description = nullptr);
 +void Slider(const char *str_id, float *v, const char *description = nullptr, float min = 0, float max = 1, float increment = 0.05);
- bool FilePicker(const char *str_id, const char **buf, const char *filters,
-                 bool dir = false);
- void DrawComboChevron();
+ void FilePicker(const char *str_id, const char *current_path,
+                 const SDL_DialogFileFilter *filters, int nfilters, bool dir,
+                 std::function<void(const char *new_path)> on_select);
