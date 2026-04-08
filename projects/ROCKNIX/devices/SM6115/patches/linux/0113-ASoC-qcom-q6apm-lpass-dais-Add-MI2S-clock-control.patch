@@ -1,0 +1,239 @@
+From: Mohammad Rafi Shaik <mohammad.rafi.shaik@oss.qualcomm.com>
+Subject: [PATCH v1 3/4] ASoC: qcom: q6apm-lpass-dais: Add MI2S clock control
+Date: Mon, 09 Mar 2026 16:42:59 +0530
+Message-Id: <20260309111300.2484262-4-mohammad.rafi.shaik@oss.qualcomm.com>
+Upstream: https://lore.kernel.org/linux-arm-msm/20260309111300.2484262-4-mohammad.rafi.shaik@oss.qualcomm.com/
+
+Add support for MI2S clock control within q6apm-lpass DAIs, including
+handling of MCLK, BCLK, and ECLK via the DAI .set_sysclk callback.
+Each MI2S port now retrieves its clock handles from the device tree,
+allowing per-port clock configuration and proper enable/disable during
+startup and shutdown.
+
+Co-developed-by: Srinivas Kandagatla <srinivas.kandagatla@oss.qualcomm.com>
+Signed-off-by: Srinivas Kandagatla <srinivas.kandagatla@oss.qualcomm.com>
+Signed-off-by: Mohammad Rafi Shaik <mohammad.rafi.shaik@oss.qualcomm.com>
+---
+ sound/soc/qcom/qdsp6/q6apm-lpass-dais.c | 137 +++++++++++++++++++++++-
+ sound/soc/qcom/qdsp6/q6prm.h            |   4 +
+ 2 files changed, 139 insertions(+), 2 deletions(-)
+
+diff --git a/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c b/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c
+index 528756f13..1e739a474 100644
+--- a/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c
+@@ -2,10 +2,12 @@
+ // Copyright (c) 2021, Linaro Limited
+
+ #include <dt-bindings/sound/qcom,q6dsp-lpass-ports.h>
++#include <linux/clk.h>
+ #include <linux/err.h>
+ #include <linux/init.h>
+ #include <linux/module.h>
+ #include <linux/device.h>
++#include <linux/of.h>
+ #include <linux/platform_device.h>
+ #include <linux/slab.h>
+ #include <sound/pcm.h>
+@@ -15,13 +17,22 @@
+ #include "q6dsp-common.h"
+ #include "audioreach.h"
+ #include "q6apm.h"
++#include "q6prm.h"
+
+ #define AUDIOREACH_BE_PCM_BASE	16
+
++struct q6apm_dai_priv_data {
++	struct clk *mclk;
++	struct clk *bclk;
++	struct clk *eclk;
++	bool mclk_enabled, bclk_enabled, eclk_enabled;
++};
++
+ struct q6apm_lpass_dai_data {
+ 	struct q6apm_graph *graph[APM_PORT_MAX];
+ 	bool is_port_started[APM_PORT_MAX];
+ 	struct audioreach_module_config module_config[APM_PORT_MAX];
++	struct q6apm_dai_priv_data priv[APM_PORT_MAX];
+ };
+
+ static int q6dma_set_channel_map(struct snd_soc_dai *dai,
+@@ -238,6 +249,70 @@ static int q6apm_lpass_dai_startup(struct snd_pcm_substream *substream, struct s
+ 	return 0;
+ }
+
++static int q6i2s_dai_startup(struct snd_pcm_substream *substream, struct snd_soc_dai *dai)
++{
++	return q6apm_lpass_dai_startup(substream, dai);
++}
++
++static void q6i2s_lpass_dai_shutdown(struct snd_pcm_substream *substream, struct snd_soc_dai *dai)
++{
++	struct q6apm_lpass_dai_data *dai_data = dev_get_drvdata(dai->dev);
++
++	if (dai_data->priv[dai->id].mclk_enabled) {
++		clk_disable_unprepare(dai_data->priv[dai->id].mclk);
++		dai_data->priv[dai->id].mclk_enabled = false;
++	}
++
++	if (dai_data->priv[dai->id].bclk_enabled) {
++		clk_disable_unprepare(dai_data->priv[dai->id].bclk);
++		dai_data->priv[dai->id].bclk_enabled = false;
++	}
++
++	if (dai_data->priv[dai->id].eclk_enabled) {
++		clk_disable_unprepare(dai_data->priv[dai->id].eclk);
++		dai_data->priv[dai->id].eclk_enabled = false;
++	}
++	q6apm_lpass_dai_shutdown(substream, dai);
++}
++
++static int q6i2s_set_sysclk(struct snd_soc_dai *dai, int clk_id, unsigned int freq, int dir)
++{
++	struct q6apm_lpass_dai_data *dai_data = dev_get_drvdata(dai->dev);
++	struct clk *sysclk;
++	bool *enabled;
++	int ret = 0;
++
++	switch (clk_id) {
++	case LPAIF_MI2S_MCLK:
++		sysclk = dai_data->priv[dai->id].mclk;
++		enabled = &dai_data->priv[dai->id].mclk_enabled;
++		break;
++	case LPAIF_MI2S_BCLK:
++		sysclk = dai_data->priv[dai->id].bclk;
++		enabled = &dai_data->priv[dai->id].bclk_enabled;
++		break;
++	case LPAIF_MI2S_ECLK:
++		sysclk = dai_data->priv[dai->id].eclk;
++		enabled = &dai_data->priv[dai->id].eclk_enabled;
++		break;
++	default:
++		break;
++	}
++
++	if (sysclk) {
++		clk_set_rate(sysclk, freq);
++		ret = clk_prepare_enable(sysclk);
++		if (ret) {
++			dev_err(dai->dev, "Error, Unable to prepare (%d) sysclk\n", clk_id);
++			return ret;
++		}
++
++		*enabled = true;
++	}
++
++	return ret;
++}
++
+ static int q6i2s_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
+ {
+ 	struct q6apm_lpass_dai_data *dai_data = dev_get_drvdata(dai->dev);
+@@ -258,11 +333,12 @@ static const struct snd_soc_dai_ops q6dma_ops = {
+
+ static const struct snd_soc_dai_ops q6i2s_ops = {
+ 	.prepare	= q6apm_lpass_dai_prepare,
+-	.startup	= q6apm_lpass_dai_startup,
+-	.shutdown	= q6apm_lpass_dai_shutdown,
++	.startup	= q6i2s_dai_startup,
++	.shutdown	= q6i2s_lpass_dai_shutdown,
+ 	.set_channel_map  = q6dma_set_channel_map,
+ 	.hw_params        = q6dma_hw_params,
+ 	.set_fmt	= q6i2s_set_fmt,
++	.set_sysclk	= q6i2s_set_sysclk,
+ };
+
+ static const struct snd_soc_dai_ops q6hdmi_ops = {
+@@ -280,6 +356,59 @@ static const struct snd_soc_component_driver q6apm_lpass_dai_component = {
+ 	.use_dai_pcm_id = true,
+ };
+
++static int of_q6apm_parse_dai_data(struct device *dev,
++				   struct q6apm_lpass_dai_data *data)
++{
++	struct device_node *node;
++	int ret;
++
++	for_each_child_of_node(dev->of_node, node) {
++		struct q6apm_dai_priv_data *priv;
++		int id;
++
++		ret = of_property_read_u32(node, "reg", &id);
++		if (ret || id < 0 || id >= APM_PORT_MAX) {
++			dev_err(dev, "valid dai id not found:%d\n", ret);
++			continue;
++		}
++
++		switch (id) {
++		/* MI2S specific properties */
++		case PRIMARY_MI2S_RX ... QUATERNARY_MI2S_TX:
++		case QUINARY_MI2S_RX ... QUINARY_MI2S_TX:
++			priv = &data->priv[id];
++			priv->mclk = of_clk_get_by_name(node, "mclk");
++			if (IS_ERR(priv->mclk)) {
++				if (PTR_ERR(priv->mclk) == -EPROBE_DEFER)
++					return dev_err_probe(dev, PTR_ERR(priv->mclk),
++							     "unable to get mi2s mclk\n");
++				priv->mclk = NULL;
++			}
++
++			priv->bclk = of_clk_get_by_name(node, "bclk");
++			if (IS_ERR(priv->bclk)) {
++				if (PTR_ERR(priv->bclk) == -EPROBE_DEFER)
++					return dev_err_probe(dev, PTR_ERR(priv->bclk),
++							     "unable to get mi2s bclk\n");
++				priv->bclk = NULL;
++			}
++
++			priv->eclk = of_clk_get_by_name(node, "eclk");
++			if (IS_ERR(priv->eclk)) {
++				if (PTR_ERR(priv->eclk) == -EPROBE_DEFER)
++					return dev_err_probe(dev, PTR_ERR(priv->eclk),
++							     "unable to get mi2s eclk\n");
++				priv->eclk = NULL;
++			}
++			break;
++		default:
++			break;
++		}
++	}
++
++	return 0;
++}
++
+ static int q6apm_lpass_dai_dev_probe(struct platform_device *pdev)
+ {
+ 	struct q6dsp_audio_port_dai_driver_config cfg;
+@@ -287,12 +416,16 @@ static int q6apm_lpass_dai_dev_probe(struct platform_device *pdev)
+ 	struct snd_soc_dai_driver *dais;
+ 	struct device *dev = &pdev->dev;
+ 	int num_dais;
++	int ret;
+
+ 	dai_data = devm_kzalloc(dev, sizeof(*dai_data), GFP_KERNEL);
+ 	if (!dai_data)
+ 		return -ENOMEM;
+
+ 	dev_set_drvdata(dev, dai_data);
++	ret = of_q6apm_parse_dai_data(dev, dai_data);
++	if (ret)
++		return ret;
+
+ 	memset(&cfg, 0, sizeof(cfg));
+ 	cfg.q6i2s_ops = &q6i2s_ops;
+diff --git a/sound/soc/qcom/qdsp6/q6prm.h b/sound/soc/qcom/qdsp6/q6prm.h
+index 8296370e3..a00d1eda1 100644
+--- a/sound/soc/qcom/qdsp6/q6prm.h
+@@ -3,6 +3,10 @@
+ #ifndef __Q6PRM_H__
+ #define __Q6PRM_H__
+
++#define LPAIF_MI2S_MCLK 1
++#define LPAIF_MI2S_BCLK 2
++#define LPAIF_MI2S_ECLK 3
++
+ /* Clock ID for Primary I2S IBIT */
+ #define Q6PRM_LPASS_CLK_ID_PRI_MI2S_IBIT                          0x100
+ /* Clock ID for Primary I2S EBIT */
+--
+2.34.1
+

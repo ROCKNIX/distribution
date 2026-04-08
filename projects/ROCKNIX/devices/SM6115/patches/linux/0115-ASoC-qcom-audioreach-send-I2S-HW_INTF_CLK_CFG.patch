@@ -1,0 +1,85 @@
+Subject: [PATCH] ASoC: qcom: audioreach: send HW_INTF_CLK_CFG for I2S endpoints
+
+The ADSP's I2S CAPI module accepts PARAM_ID_HW_INTF_CLK_CFG (0x0800113C)
+to configure the hardware interface bit clock. The vendor AGM sends this
+as part of I2S endpoint configuration, but mainline AudioReach never
+sends it. Without this parameter, the ADSP may not properly configure
+the I2S bit clock, resulting in audio crackling.
+
+Add PARAM_ID_HW_INTF_CLK_CFG as a fourth parameter block in
+audioreach_i2s_set_media_format(), deriving the BCLK rate from
+sample_rate * num_channels * bit_width.
+
+The param ID and struct come from the AudioReach SPF API:
+https://github.com/AudioReach/audioreach-graphservices
+---
+--- a/sound/soc/qcom/qdsp6/audioreach.h	2026-04-06 10:28:48
+@@ -472,6 +472,15 @@
+ #define CONFIG_I2S_WS_SRC_INTERNAL		0x1
+ 
+ #define PARAM_ID_I2S_INTF_CFG			0x08001019
++#define PARAM_ID_HW_INTF_CLK_CFG		0x0800113C
++
++struct apm_hw_intf_clk_cfg {
++	struct apm_module_param_data param_data;
++	uint32_t clock_id;
++	uint32_t clock_freq;
++	uint32_t clock_attri;
++	uint32_t clock_root;
++} __packed;
+ struct param_id_i2s_intf_cfg {
+ 	uint32_t lpaif_type;
+ 	uint32_t intf_idx;
+--- a/sound/soc/qcom/qdsp6/audioreach.c	2026-04-06 10:28:48
+@@ -151,6 +151,7 @@
+ } __packed;
+ 
+ #define APM_I2S_INTF_CFG_PSIZE ALIGN(sizeof(struct apm_i2s_module_intf_cfg), 8)
++#define APM_HW_INTF_CLK_CFG_PSIZE ALIGN(sizeof(struct apm_hw_intf_clk_cfg), 8)
+ 
+ struct apm_module_hw_ep_mf_cfg {
+ 	struct apm_module_param_data param_data;
+@@ -998,7 +999,8 @@
+ 	struct apm_module_param_data *param_data;
+ 	struct apm_i2s_module_intf_cfg *intf_cfg;
+ 	struct apm_module_hw_ep_mf_cfg *hw_cfg;
+-	int ic_sz, ep_sz, fs_sz;
++	struct apm_hw_intf_clk_cfg *clk_cfg;
++	int ic_sz, ep_sz, fs_sz, cc_sz;
+ 	int rc, payload_size;
+ 	struct gpr_pkt *pkt;
+ 	void *p;
+@@ -1006,8 +1008,9 @@
+ 	ic_sz = APM_I2S_INTF_CFG_PSIZE;
+ 	ep_sz = APM_HW_EP_CFG_PSIZE;
+ 	fs_sz = APM_FS_CFG_PSIZE;
++	cc_sz = APM_HW_INTF_CLK_CFG_PSIZE;
+ 
+-	payload_size = ic_sz + ep_sz + fs_sz;
++	payload_size = ic_sz + ep_sz + fs_sz + cc_sz;
+ 
+ 	pkt = audioreach_alloc_apm_cmd_pkt(payload_size, APM_CMD_SET_CFG, 0);
+ 	if (IS_ERR(pkt))
+@@ -1060,6 +1063,22 @@
+ 	param_data->param_size = fs_sz - APM_MODULE_PARAM_DATA_SIZE;
+ 	fs_cfg->frame_size_factor = 1;
+ 
++	p += fs_sz;
++	clk_cfg = p;
++	param_data = &clk_cfg->param_data;
++	param_data->module_instance_id = module->instance_id;
++	param_data->error_code = 0;
++	param_data->param_id = PARAM_ID_HW_INTF_CLK_CFG;
++	param_data->param_size = cc_sz - APM_MODULE_PARAM_DATA_SIZE;
++
++	clk_cfg->clock_id = 0;		/* HW_INTF_CLK_ID_DEFAULT */
++	clk_cfg->clock_freq = cfg->sample_rate * 256;	/* MCLK = 256fs */
++	clk_cfg->clock_attri = 0;	/* HW_INTF_CLK_ATTRI_DEFAULT */
++	clk_cfg->clock_root = 0;	/* CLOCK_ROOT_DEFAULT */
++
++	dev_info(graph->dev, "I2S HW_INTF_CLK_CFG: clock_freq=%d\n",
++		 clk_cfg->clock_freq);
++
+ 	rc = q6apm_send_cmd_sync(graph->apm, pkt, 0);
+ 
+ 	kfree(pkt);

@@ -1,0 +1,49 @@
+Subject: [PATCH] ASoC: qcom: q6apm: retry SPF state check with polling
+
+The vendor spf_core driver polls for SPF readiness with retries
+rather than sending a single state query. Some ADSP firmware needs
+time after boot before the APM service is ready to respond.
+
+Implement a retry loop (2 attempts, 5s timeout each). If all retries
+exhaust, assume ready and proceed — the firmware may not support the
+state query or may respond after clocks are requested.
+
+Based on spf-core.c from AudioReach kernel:
+https://github.com/AudioReach/audioreach-kernel
+---
+--- a/sound/soc/qcom/qdsp6/q6apm.c	2026-04-06 18:33:25
+@@ -163,10 +163,31 @@
+ 
+ bool q6apm_is_adsp_ready(void)
+ {
+-	if (g_apm)
+-		return q6apm_get_apm_state(g_apm);
++	int max_retries = 2;	/* ~10-15 seconds total (5s timeout per attempt) */
++	int i;
+ 
+-	return false;
++	if (!g_apm)
++		return false;
++
++	if (g_apm->state)
++		return true;
++
++	/*
++	 * Poll for SPF readiness. The ADSP firmware may not respond to
++	 * APM_CMD_GET_SPF_STATE immediately after boot — retry with a
++	 * short interval like the vendor spf_core driver does.
++	 */
++	for (i = 0; i < max_retries; i++) {
++		q6apm_get_apm_state(g_apm);
++		if (g_apm->state)
++			return true;
++		msleep(500);
++	}
++
++	/* Firmware may not support GET_SPF_STATE; assume ready */
++	dev_warn(g_apm->dev, "SPF state check timed out, assuming ready\n");
++	g_apm->state = 1;
++	return true;
+ }
+ EXPORT_SYMBOL_GPL(q6apm_is_adsp_ready);
+ 

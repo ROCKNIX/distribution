@@ -1,0 +1,48 @@
+Subject: [PATCH] ASoC: qcom: q6prm: handle GPR_BASIC_RSP_RESULT in PRM callback
+
+Some ADSP firmware (e.g. SM6115 vendor kamorta) responds to PRM
+clock and HW core requests with GPR_BASIC_RSP_RESULT (0x02001005)
+instead of PRM-specific response opcodes. The firmware reports
+AR_EFAILED (status=1) for clock requests that actually succeed.
+
+Handle GPR_BASIC_RSP_RESULT by translating to the original command
+opcode and forcing status to 0, matching the vendor driver behavior
+of ignoring these non-critical errors.
+
+This replaces the fire-and-forget workaround.
+Based on AudioReach API:
+https://github.com/AudioReach/audioreach-graphservices
+---
+--- a/sound/soc/qcom/qdsp6/q6prm.c	2026-04-06 10:45:24
+@@ -203,9 +203,31 @@
+ 		result = data->payload;
+ 		prm->result.opcode = hdr->opcode;
+ 		prm->result.status = result->status;
++		dev_dbg(&gdev->dev, "PRM rsp opcode=0x%08x status=%d\n",
++			hdr->opcode, result->status);
++		wake_up(&prm->wait);
++		break;
++	case GPR_BASIC_RSP_RESULT:
++		/*
++		 * Some ADSP firmware responds with
++		 * GPR_BASIC_RSP_RESULT instead of the PRM-specific response
++		 * opcodes. Translate to the request opcode so that
++		 * audioreach_send_cmd_sync() wait condition is satisfied.
++		 *
++		 * Force status to 0 because this firmware reports
++		 * AR_EFAILED for clock requests that actually succeed.
++		 * The vendor driver ignores this error.
++		 */
++		result = data->payload;
++		prm->result.opcode = result->opcode;
++		prm->result.status = 0;
++		if (result->status)
++			dev_dbg(&gdev->dev, "PRM basic rsp for cmd=0x%08x status=%d (ignored)\n",
++				result->opcode, result->status);
+ 		wake_up(&prm->wait);
+ 		break;
+ 	default:
++		dev_dbg(&gdev->dev, "PRM unknown opcode=0x%08x\n", hdr->opcode);
+ 		break;
+ 	}
+ 
