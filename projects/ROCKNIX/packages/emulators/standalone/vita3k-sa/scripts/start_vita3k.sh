@@ -32,10 +32,22 @@ fi
 ROMNAME=$(echo "${1}" | sed "s#^/.*/##")
 PLATFORM="${2}"
 RENDERER=$(get_setting graphics_backend "${PLATFORM}" "${ROMNAME}")
+PSTVMODE=$(get_setting pstv_mode "${PLATFORM}" "${ROMNAME}")
 IRES=$(get_setting internal_resolution "${PLATFORM}" "${ROMNAME}")
 FILTER=$(get_setting bilinear_filtering "${PLATFORM}" "${ROMNAME}")
 ACCURACY=$(get_setting high_accuracy "${PLATFORM}" "${ROMNAME}")
+MEMMAPPING=$(get_setting memory_mapping "${PLATFORM}" "${ROMNAME}")
 VSYNC=$(get_setting vsync "${PLATFORM}" "${ROMNAME}")
+ANISO=$(get_setting anisotropic_filtering "${PLATFORM}" "${ROMNAME}")
+FPSHACK=$(get_setting fps_hack "${PLATFORM}" "${ROMNAME}")
+NGSENABLE=$(get_setting ngs_audio "${PLATFORM}" "${ROMNAME}")
+DISABLEMOTION=$(get_setting disable_gyro "${PLATFORM}" "${ROMNAME}")
+DISABLESURFACESYNC=$(get_setting disable_surface_sync "${PLATFORM}" "${ROMNAME}")
+SYSBUTTON=$(get_setting confirm_button "${PLATFORM}" "${ROMNAME}")
+FILELOADINGDELAY=$(get_setting file_loading_delay "${PLATFORM}" "${ROMNAME}")
+SPIRVSHADER=$(get_setting spirv_shader "${PLATFORM}" "${ROMNAME}")
+HASHLESSTEXCACHE=$(get_setting hashless_texture_cache "${PLATFORM}" "${ROMNAME}")
+HTTPENABLE=$(get_setting network_features "${PLATFORM}" "${ROMNAME}")
 
 # Graphics Backend
 if [ "${RENDERER}" = "opengl" ]; then
@@ -61,6 +73,13 @@ else
   sed -i "/^resolution-multiplier:/c\resolution-multiplier: 1" /storage/.config/Vita3K/config.yml
 fi
 
+# PSTV Mode
+if [ "${PSTVMODE}" = "true" ]; then
+  sed -i "/^pstv-mode:/c\pstv-mode: true" /storage/.config/Vita3K/config.yml
+else
+  sed -i "/^pstv-mode:/c\pstv-mode: false" /storage/.config/Vita3K/config.yml
+fi
+
 # Bilinear Filtering
 if [ "${FILTER}" = "0" ]; then
   sed -i '/^screen-filter:/c\screen-filter: Nearest' /storage/.config/Vita3K/config.yml
@@ -81,11 +100,88 @@ else
   sed -i "/^high-accuracy:/c\high-accuracy: false" /storage/.config/Vita3K/config.yml
 fi
 
+# Memory Mapping
+if [ -n "${MEMMAPPING}" ]; then
+  sed -i "/^memory-mapping:/c\memory-mapping: ${MEMMAPPING}" /storage/.config/Vita3K/config.yml
+else
+  sed -i "/^memory-mapping:/c\memory-mapping: double-buffer" /storage/.config/Vita3K/config.yml
+fi
+
 # Vsync
 if [ "${VSYNC}" = "false" ]; then
   sed -i "/^v-sync:/c\v-sync: false" /storage/.config/Vita3K/config.yml
 else
   sed -i "/^v-sync:/c\v-sync: true" /storage/.config/Vita3K/config.yml
+fi
+
+# Anisotropic Filtering
+if [ -n "${ANISO}" ]; then
+  sed -i "/^anisotropic-filtering:/c\anisotropic-filtering: ${ANISO}" /storage/.config/Vita3K/config.yml
+else
+  sed -i "/^anisotropic-filtering:/c\anisotropic-filtering: 1" /storage/.config/Vita3K/config.yml
+fi
+
+# FPS Hack
+if [ "${FPSHACK}" = "true" ]; then
+  sed -i "/^fps-hack:/c\fps-hack: true" /storage/.config/Vita3K/config.yml
+else
+  sed -i "/^fps-hack:/c\fps-hack: false" /storage/.config/Vita3K/config.yml
+fi
+
+# NGS Audio Engine
+if [ "${NGSENABLE}" = "false" ]; then
+  sed -i "/^ngs-enable:/c\ngs-enable: false" /storage/.config/Vita3K/config.yml
+else
+  sed -i "/^ngs-enable:/c\ngs-enable: true" /storage/.config/Vita3K/config.yml
+fi
+
+# Disable Motion Controls
+if [ "${DISABLEMOTION}" = "true" ]; then
+  sed -i "/^disable-motion:/c\disable-motion: true" /storage/.config/Vita3K/config.yml
+else
+  sed -i "/^disable-motion:/c\disable-motion: false" /storage/.config/Vita3K/config.yml
+fi
+
+# Disable Surface Sync
+if [ "${DISABLESURFACESYNC}" = "false" ]; then
+  sed -i "/^disable-surface-sync:/c\disable-surface-sync: false" /storage/.config/Vita3K/config.yml
+else
+  sed -i "/^disable-surface-sync:/c\disable-surface-sync: true" /storage/.config/Vita3K/config.yml
+fi
+
+# System Confirm Button
+if [ "${SYSBUTTON}" = "0" ]; then
+  sed -i "/^sys-button:/c\sys-button: 0" /storage/.config/Vita3K/config.yml
+else
+  sed -i "/^sys-button:/c\sys-button: 1" /storage/.config/Vita3K/config.yml
+fi
+
+# File Loading Delay
+if [ -n "${FILELOADINGDELAY}" ]; then
+  sed -i "/^file-loading-delay:/c\file-loading-delay: ${FILELOADINGDELAY}" /storage/.config/Vita3K/config.yml
+else
+  sed -i "/^file-loading-delay:/c\file-loading-delay: 0" /storage/.config/Vita3K/config.yml
+fi
+
+# SPIR-V Shader Path
+if [ "${SPIRVSHADER}" = "true" ]; then
+  sed -i "/^spirv-shader:/c\spirv-shader: true" /storage/.config/Vita3K/config.yml
+else
+  sed -i "/^spirv-shader:/c\spirv-shader: false" /storage/.config/Vita3K/config.yml
+fi
+
+# Hashless Texture Cache
+if [ "${HASHLESSTEXCACHE}" = "true" ]; then
+  sed -i "/^hashless-texture-cache:/c\hashless-texture-cache: true" /storage/.config/Vita3K/config.yml
+else
+  sed -i "/^hashless-texture-cache:/c\hashless-texture-cache: false" /storage/.config/Vita3K/config.yml
+fi
+
+# HTTP Networking
+if [ "${HTTPENABLE}" = "true" ]; then
+  sed -i "/^http-enable:/c\http-enable: true" /storage/.config/Vita3K/config.yml
+else
+  sed -i "/^http-enable:/c\http-enable: false" /storage/.config/Vita3K/config.yml
 fi
 
 # Check if system vita3k folder exists, which needs to be populated by Vita3K before we can do anything.
