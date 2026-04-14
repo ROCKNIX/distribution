@@ -1,41 +1,159 @@
 #!/bin/bash
 
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2026 ROCKNIX (https://github.com/ROCKNIX)
+
+GAME="${1}"
+CONFIG_FILE="/storage/.config/Vita3K/config.yml"
 
 . /etc/profile
-set_kill set "-9 Vita3K"
+set_kill set "-9 vita3k-sa"
 
-OUTPUT_PATH="/storage/.config/vita3k/launcher"
-GAME="${1}"
+# Bail on error, especially since .pkg installation calls can fail if the ZRIF is wrong,
+# and that could cause data loss/confusion with the second call on Vita3K...
+set -e
 
-#Check if vita3k folder exists in /storage/.config/vita3k
-if [ ! -d "/storage/.config/vita3k" ]; then
-    mkdir -p "/storage/.config/vita3k"
+# Check if config vita3k folder exists
+if [ ! -d "/storage/.config/Vita3K" ]; then
+    mkdir -p "/storage/.config/Vita3K"
 fi
 
-#Make sure we sync any changes from /storage/.config so new features will be enabled
-#without overwriting existing settings.
-rsync -ah --update /usr/config/vita3k/* /storage/.config/vita3k 2>/dev/null
-
-#Check if vita3k folder exists in /storage/roms/psvita
-if [ ! -d "/storage/roms/psvita/vita3k" ]; then
-    mkdir -p "/storage/roms/psvita/vita3k"
+# Apply default config if it isn't there yet.
+if [ ! -f "${CONFIG_FILE}" ]; then
+    cp "/usr/config/vita3k/config.yml" "${CONFIG_FILE}"
 fi
 
-if [ ! -d "/storage/psvita"]; then
-   ln -sf /storage/roms/psvita /storage/psvita
+# Copy vita-gamelist for game scanning if not already there.
+if [ ! -f "/storage/.config/Vita3K/vita-gamelist.txt" ]; then
+    cp "/usr/config/vita3k/vita-gamelist.txt" "/storage/.config/Vita3K/"
+fi
+
+# EmulationStation options
+ROMNAME=$(echo "${1}" | sed "s#^/.*/##")
+PLATFORM="${2}"
+RENDERER=$(get_setting graphics_backend "${PLATFORM}" "${ROMNAME}")
+IRES=$(get_setting internal_resolution "${PLATFORM}" "${ROMNAME}")
+FILTER=$(get_setting bilinear_filtering "${PLATFORM}" "${ROMNAME}")
+ACCURACY=$(get_setting high_accuracy "${PLATFORM}" "${ROMNAME}")
+VSYNC=$(get_setting vsync "${PLATFORM}" "${ROMNAME}")
+
+# Graphics Backend
+if [ "${RENDERER}" = "opengl" ]; then
+  sed -i "/^backend-renderer:/c\backend-renderer: OpenGL" /storage/.config/Vita3K/config.yml
 else
-   if [[ ! $(file /storage/psvita | grep "symbolic") ]]; then 
-      rsync -ah --update /storage/psvita/* /storage/roms/psvita 2>/dev/null
-      rm -rf /storage/psvita
-      ln -sf /storage/roms/psvita /storage/psvita
-   fi
+  sed -i "/^backend-renderer:/c\backend-renderer: Vulkan" /storage/.config/Vita3K/config.yml
 fi
 
-if [ -n "${GAME}" ]; then
-  OPTIONS="-r $(cat "${GAME}")"
+# Internal Resolution
+if [ "$IRES" = "0.5" ]; then
+  sed -i "/^resolution-multiplier:/c\resolution-multiplier: 0.5" /storage/.config/Vita3K/config.yml
+elif [ "$IRES" = "0.75" ]; then
+  sed -i "/^resolution-multiplier:/c\resolution-multiplier: 0.75" /storage/.config/Vita3K/config.yml
+elif [ "$IRES" = "1.25" ]; then
+  sed -i "/^resolution-multiplier:/c\resolution-multiplier: 1.25" /storage/.config/Vita3K/config.yml
+elif [ "$IRES" = "1.5" ]; then
+  sed -i "/^resolution-multiplier:/c\resolution-multiplier: 1.5" /storage/.config/Vita3K/config.yml
+elif [ "$IRES" = "1.75" ]; then
+  sed -i "/^resolution-multiplier:/c\resolution-multiplier: 1.75" /storage/.config/Vita3K/config.yml
+elif [ "$IRES" = "2" ]; then
+  sed -i "/^resolution-multiplier:/c\resolution-multiplier: 2" /storage/.config/Vita3K/config.yml
+else
+  sed -i "/^resolution-multiplier:/c\resolution-multiplier: 1" /storage/.config/Vita3K/config.yml
 fi
 
-#Start Vita3K
-/usr/bin/Vita3K ${OPTIONS}
+# Bilinear Filtering
+if [ "${FILTER}" = "0" ]; then
+  sed -i '/^screen-filter:/c\screen-filter: Nearest' /storage/.config/Vita3K/config.yml
+elif [ "${FILTER}" = "2" ]; then
+  sed -i '/^screen-filter:/c\screen-filter: Bicubic' /storage/.config/Vita3K/config.yml
+elif [ "${FILTER}" = "3" ]; then
+  sed -i '/^screen-filter:/c\screen-filter: FXAA' /storage/.config/Vita3K/config.yml
+elif [ "${FILTER}" = "4" ]; then
+  sed -i '/^screen-filter:/c\screen-filter: FSR' /storage/.config/Vita3K/config.yml
+else
+  sed -i '/^screen-filter:/c\screen-filter: Bilinear' /storage/.config/Vita3K/config.yml
+fi
+
+# Renderer Accuracy
+if [ "${ACCURACY}" = "true" ]; then
+  sed -i "/^high-accuracy:/c\high-accuracy: true" /storage/.config/Vita3K/config.yml
+else
+  sed -i "/^high-accuracy:/c\high-accuracy: false" /storage/.config/Vita3K/config.yml
+fi
+
+# Vsync
+if [ "${VSYNC}" = "false" ]; then
+  sed -i "/^v-sync:/c\v-sync: false" /storage/.config/Vita3K/config.yml
+else
+  sed -i "/^v-sync:/c\v-sync: true" /storage/.config/Vita3K/config.yml
+fi
+
+# Check if system vita3k folder exists, which needs to be populated by Vita3K before we can do anything.
+if [ ! -d "/storage/roms/psvita/vita3k" ]; then
+    text_viewer -w -f 64 -t "Vita3K Setup Required" -m "Please launch Vita3K from the Tools menu first to initialize its data folder."
+    exit 1
+fi
+
+# If there aren't any installed firmware files, let the user know that it's gonna be weird...
+if ! compgen -G "/storage/roms/bios/vita3k/*.PUP.installed" > /dev/null; then
+    mako-notify "No firmware has been installed yet! Emulation may be unstable..." -no-es
+fi
+
+# Handle file types depending on extension
+# .pkg: Check for a matching .txt with the same name and hope it contains the required ZRIF,
+#       then install the game, scan to create the .psvita entry, then rename the now
+#       redundant .pkg file since the game is now in the vita3k system folder.
+# .zip: Pass directly to Vita3K since no decryption is needed, then scan on exit to create
+#       the .psvita entry, and also rename the redundant .zip file. Same reasoning as .pkg files.
+# .psvita: This game is already installed, just pass the ID contained in it to Vita3K.
+# TODO: Maybe add a cleanup script for .installed GAME files (not firmware since we need to be able to
+#       tell if they've been installed yet), if the user wants to reclaim space?
+#       Probably not polite to just delete them automatically, even if they aren't needed anymore.
+
+# Snapshot the installed games, so we can see if one was just installed for later.
+APPS_BEFORE=$(ls /storage/roms/psvita/vita3k/ux0/app/ 2>/dev/null)
+NEW_ID=""
+
+case "$GAME" in
+    *.pkg)
+        # Check for the matching .txt file with the ZRIF, and if it's not there, bail since we literally can't install a .pkg without it.
+        if [ ! -f "${GAME%.pkg}.txt" ]; then
+            text_viewer -w -f 64 -t "ZRIF Required" -m "A .txt file with the same name as the .pkg and containing the ZRIF string is required to install and play this game. Please place it next to the .pkg file and try again."
+            exit 1
+        fi
+
+        # Install the requested game and scan so the next gamelist update catches it.
+        # Spawn with foot so that output displays as the game is installed, letting the user know something is happening.
+        foot /usr/bin/vita3k-sa -F --pkg "${GAME}" --zrif "$(cat "${GAME%.pkg}.txt")"
+        /usr/bin/scan_vita3k.sh
+
+        # Get the newly installed game's ID and run it!
+        NEW_ID=$(grep -vxFf <(echo "$APPS_BEFORE") <(ls /storage/roms/psvita/vita3k/ux0/app/) | head -1)
+        /usr/bin/vita3k-sa -F -E -r "${NEW_ID}"
+
+        # Mark them as installed so they don't get caught by any other scans or get put in the gamelist more than once.
+        mv "${GAME}" "${GAME}.installed"
+        mv "${GAME%.pkg}.txt" "${GAME%.pkg}.txt.installed"
+        ;;
+    *.zip)
+        # Vita3K needs to be run in the folder of the game to install if it's a .zip... for some reason.
+        cd "/storage/roms/psvita"
+
+        # Otherwise, reasoning applies similarly for .zip files, but they're packaged with a ZRIF and actually run immediately.
+        foot /usr/bin/vita3k-sa -F -E "${ROMNAME}"
+        /usr/bin/scan_vita3k.sh
+
+        # Store the new game's ID for the check later.
+        NEW_ID=$(grep -vxFf <(echo "$APPS_BEFORE") <(ls /storage/roms/psvita/vita3k/ux0/app/) | head -1)
+        mv "${GAME}" "${GAME%.zip}.installed"
+        ;;
+    *.psvita)
+        /usr/bin/vita3k-sa -F -E -r "$(cat "${GAME}")"
+        ;;
+esac
+
+# Check if we got a new game, or just launched one that was already installed to forcefully update the gamelist.
+if [ -n "${NEW_ID}" ]; then
+    # TODO: Don't do this. Find a better way if possible.
+    killall emulationstation || true
+fi
