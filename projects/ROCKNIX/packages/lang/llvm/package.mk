@@ -93,7 +93,7 @@ pre_configure_host() {
   PKG_CMAKE_OPTS_HOST="${PKG_CMAKE_OPTS_COMMON} \
                        -DCMAKE_BINARY_DIR=${PKG_BUILD}/.${HOST_NAME} \
                        -DLLVM_NATIVE_BUILD=${PKG_BUILD}/.${HOST_NAME}/native \
-                       -DLLVM_ENABLE_PROJECTS='clang' \
+                       -DLLVM_ENABLE_PROJECTS='clang;lld' \
                        -DCLANG_LINK_CLANG_DYLIB=ON \
                        -DLLVM_TARGETS_TO_BUILD=${LLVM_BUILD_TARGETS}"
 }
@@ -111,6 +111,8 @@ post_makeinstall_host() {
     cp -a bin/llvm-config ${TOOLCHAIN}/bin
     cp -a bin/llvm-objcopy ${TOOLCHAIN}/bin
     cp -a bin/llvm-tblgen ${TOOLCHAIN}/bin
+    cp -a bin/lld ${TOOLCHAIN}/bin
+    cp -a bin/ld.lld ${TOOLCHAIN}/bin
 
   if listcontains "${GRAPHIC_DRIVERS}" "iris"; then
     cp -a bin/{llvm-as,llvm-link,llvm-spirv,opt} "${TOOLCHAIN}/bin"

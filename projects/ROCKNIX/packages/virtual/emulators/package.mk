@@ -63,12 +63,12 @@ case "${DEVICE}" in
   SM8550)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 daedalusx64-sa desmume-lr gpsp-lr pcsx_rearmed-lr"
     PKG_EMUS+=" aethersx2-sa azahar-sa bigpemu-sa cemu-sa dolphin-sa drastic-sa gopher64-sa mednafen melonds-sa nanoboyadvance-sa rpcs3-sa supermodel-sa \
-                xemu-sa skyemu-sa vita3k-sa"
+                xemu-sa skyemu-sa steam vita3k-sa"
     LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr kronos-lr"
     ;;
   SM8650)
     PKG_EMUS+=" aethersx2-sa azahar-sa bigpemu-sa cemu-sa dolphin-sa gopher64-sa mednafen melonds-sa nanoboyadvance-sa rpcs3-sa supermodel-sa \
-                xemu-sa skyemu-sa vita3k-sa"
+                xemu-sa skyemu-sa steam vita3k-sa"
     LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr kronos-lr"
     ;;
   S922X)
@@ -646,6 +646,15 @@ makeinstall_target() {
   add_emu_core ios touchhle touchhle-sa true
   install_script "Start touchHLE.sh"
   add_es_system ios
+
+  case ${DEVICE} in
+    SM8250|SM8550|SM8650|SDM845)
+      ### Steam
+      add_emu_core steam steam steam true
+      install_script "Start Steam.sh"
+      add_es_system steam
+      ;;
+  esac
 
   ### Intellivision
   add_emu_core intellivision retroarch freeintv true

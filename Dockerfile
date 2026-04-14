@@ -28,6 +28,7 @@ RUN if [ "$(uname -m)" = "aarch64" ]; then apt-get install -y --no-install-recom
 RUN if [ ! -d /lib64 ]; then ln -sf /usr/x86_64-rocknix-linux-gnu/lib64 /lib64; fi
 RUN if [ ! -d /lib/x86_64-rocknix-linux-gnu ]; then ln -sf /usr/x86_64-rocknix-linux-gnu/lib /lib/x86_64-rocknix-linux-gnu; fi
 
+RUN mkdir -p /nix && chown docker:docker /nix && chmod 777 /nix
 RUN mkdir -p /work && chown docker /work
 
 WORKDIR /work

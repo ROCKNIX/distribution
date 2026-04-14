@@ -30,22 +30,22 @@ case ${DEVICE} in
     PKG_URL="https://gitlab.com/tjstyle/linux/-/archive/sdm845/${PKG_VERSION}-release/linux-sdm845-${PKG_VERSION}-release.tar.gz"
     PKG_PATCH_DIRS="${LINUX} ${DEVICE} default"
     ;;
+  H700)
+    PKG_VERSION="7.0"
+    PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
+    ;;
+  SM8250|SM8550|SM8650)
+    PKG_VERSION="6.19.5"
+    PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
+    ;;
+  S922X|RK3399|RK3566|SM6115)
+    PKG_VERSION="6.18.22"
+    PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
+    ;;
   *)
-    case ${DEVICE} in
-      SM8250|SM8550|SM8650|H700)
-        PKG_VERSION="6.19.5"
-        PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
-        ;;
-      S922X|RK3399|RK3566|SM6115)
-        PKG_VERSION="6.18.21"
-        PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
-        ;;
-      *)
-        PKG_VERSION="6.12.79"
-        PKG_PATCH_DIRS+=" 6.12-LTS"
-        PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
-        ;;
-    esac
+    PKG_VERSION="6.12.79"
+    PKG_PATCH_DIRS+=" 6.12-LTS"
+    PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     ;;
 esac
 

@@ -56,6 +56,7 @@ pre_configure_target() {
 
 post_makeinstall_target() {
   # clean up
+  safe_remove ${SYSROOT_PREFIX}/usr/include/GL
   safe_remove ${INSTALL}/usr/include
   safe_remove ${INSTALL}/usr/lib/pkgconfig
   safe_remove ${INSTALL}/usr/share
