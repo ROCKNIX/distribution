@@ -15,7 +15,7 @@ ENV LANG=en_US.UTF-8 \
 
 RUN adduser --disabled-password --gecos '' docker \
  && adduser docker sudo \
- && echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+ && echo 'docker ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 
 RUN apt-get install -y \
     bc default-jre file gawk gcc git golang-go gperf libjson-perl libncurses5-dev \
