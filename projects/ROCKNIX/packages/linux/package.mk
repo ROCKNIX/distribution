@@ -30,15 +30,15 @@ case ${DEVICE} in
     PKG_URL="https://gitlab.com/tjstyle/linux/-/archive/sdm845/${PKG_VERSION}-release/linux-sdm845-${PKG_VERSION}-release.tar.gz"
     PKG_PATCH_DIRS="${LINUX} ${DEVICE} default"
     ;;
-  H700)
+  H700|SM8250|RK3399)
     PKG_VERSION="7.0"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     ;;
-  SM8250|SM8550|SM8650)
+  SM8550|SM8650)
     PKG_VERSION="6.19.5"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     ;;
-  S922X|RK3399|RK3566|SM6115)
+  S922X|RK3566|SM6115)
     PKG_VERSION="6.18.22"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     ;;
