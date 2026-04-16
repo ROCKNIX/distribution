@@ -16,32 +16,19 @@ fi
 # mount $BOOT_ROOT rw
 mount -o remount,rw $BOOT_ROOT
 
-echo "Updating device trees..."
-for dtb in $SYSTEM_ROOT/usr/share/bootloader/*.dtb; do
-  cp -p $dtb $BOOT_ROOT
-done
-
-if [ -f "$SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/bootaa64.efi" ]; then
-  echo "Updating EFI..."
-  cp -p $SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/bootaa64.efi $BOOT_ROOT/EFI/BOOT
+if [ -d "$SYSTEM_ROOT/usr/share/bootloader/rocknix_abl" ]; then
+  mkdir -p $BOOT_ROOT/rocknix_abl
+  echo "Updating ROCKNIX ABL on SD..."
+  cp $SYSTEM_ROOT/usr/share/bootloader/rocknix_abl/* $BOOT_ROOT/rocknix_abl
 fi
 
-if [ -f "$SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/grub.cfg" ]; then
-  echo "Updating grub.cfg..."
-  cp -p $SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/grub.cfg $BOOT_ROOT/EFI/BOOT
-fi
+. $SYSTEM_ROOT/usr/bin/updateabl
 
-if [ -f "$SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/dejavu-mono.pf2" ]; then
-  echo "Updating dejavu-mono.pf2..."
-  cp -p $SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/dejavu-mono.pf2 $BOOT_ROOT/EFI/BOOT
-fi
-
-if [ -f "$SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/grubenv" ]; then
-  if [ ! -f "$BOOT_ROOT/efi/boot/grubenv" ]; then
-    echo "Installing grubenv..."
-    cp -p $SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/grubenv $BOOT_ROOT/EFI/BOOT
-  fi
-fi
+### REMOVE IN THE FUTURE ###
+# cleanup old boot files
+[ -d "$BOOT_ROOT/boot" ] && rm -rf "$BOOT_ROOT/boot"
+[ -d "$BOOT_ROOT/EFI" ] && rm -rf "$BOOT_ROOT/EFI"
+# end
 
 # mount $BOOT_ROOT ro
 sync

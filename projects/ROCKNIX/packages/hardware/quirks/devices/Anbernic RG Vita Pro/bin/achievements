@@ -1,0 +1,40 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026 ROCKNIX (https://github.com/ROCKNIX)
+
+# Minimal OS variable loading for performance
+. /etc/profile.d/001-functions
+
+# Don't turn on the LEDs when the user has them set to off, that would be rude...
+LED_COLOR=$(get_setting led.color)
+[ "${LED_COLOR}" = "off" ] && exit 0
+
+LED_LEFT=$(ls -d /sys/class/leds/*::joystick-left 2>/dev/null | head -1)
+LED_RIGHT=$(ls -d /sys/class/leds/*::joystick-right 2>/dev/null | head -1)
+[ -n "${LED_LEFT}" ] && MCU_SYSFS=$(readlink -f "${LED_LEFT}/device")
+
+# Can't do it if there's no MCU there!
+[ -z "${MCU_SYSFS}" ] && exit 0
+
+# Burst a rainbowfade (mode 3) ramping from off to moderate brightness and back to off.
+echo 0 > "${LED_LEFT}/brightness"
+echo 0 > "${LED_RIGHT}/brightness"
+
+echo 1 > "${MCU_SYSFS}/led_switch"
+echo 3 > "${MCU_SYSFS}/led_mode"
+echo 20 > "${MCU_SYSFS}/led_speed"
+
+for i in $(seq 0 64); do
+  echo "${i}" > "${LED_LEFT}/brightness"
+  echo "${i}" > "${LED_RIGHT}/brightness"
+  sleep 0.01
+done
+for i in $(seq 64 -1 0); do
+  echo "${i}" > "${LED_LEFT}/brightness"
+  echo "${i}" > "${LED_RIGHT}/brightness"
+  sleep 0.05
+done
+
+# ledcontrol doesn't know we changed sysfs, so it will just
+# re-apply the previous mode and color settings anyway
+/usr/bin/ledcontrol "${LED_COLOR}"

@@ -11,6 +11,7 @@
 
 #include <linux/delay.h>
 #include <linux/gpio/consumer.h>
+#include <linux/hex.h>
 #include <linux/media-bus-format.h>
 #include <linux/module.h>
 #include <linux/firmware.h>

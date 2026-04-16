@@ -1,0 +1,104 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026 ROCKNIX (https://github.com/ROCKNIX)
+
+# LED control for the Anbernic RG Vita Pro.
+# Manages both the SPI MCU joystick ring LEDs and the board status LEDs.
+
+. /etc/profile.d/001-functions
+
+STATUS_LED_PATH="/sys/class/leds"
+
+status_led_off() {
+  for led in green:power red:status amber:charging; do
+    [ -f "${STATUS_LED_PATH}/${led}/brightness" ] && \
+      echo 0 > "${STATUS_LED_PATH}/${led}/brightness"
+  done
+}
+
+status_led_on() {
+  status_led_off
+  [ -f "${STATUS_LED_PATH}/${1}/brightness" ] && \
+    echo 1 > "${STATUS_LED_PATH}/${1}/brightness"
+}
+
+MCU_LED=$(ls -d /sys/class/leds/*::joystick-left 2>/dev/null | head -1)
+if [ -n "${MCU_LED}" ]; then
+  MCU_SYSFS=$(readlink -f "${MCU_LED}/device")
+fi
+
+mcu_led_off() {
+  [ -n "${MCU_SYSFS}" ] && [ -f "${MCU_SYSFS}/led_switch" ] && \
+    echo 0 > "${MCU_SYSFS}/led_switch"
+}
+
+mcu_led_on() {
+  [ -n "${MCU_SYSFS}" ] && [ -f "${MCU_SYSFS}/led_switch" ] && \
+    echo 1 > "${MCU_SYSFS}/led_switch"
+}
+
+mcu_set_mode() {
+  [ -n "${MCU_SYSFS}" ] && [ -f "${MCU_SYSFS}/led_mode" ] && \
+    echo "$1" > "${MCU_SYSFS}/led_mode"
+}
+
+mcu_set_speed() {
+  [ -n "${MCU_SYSFS}" ] && [ -f "${MCU_SYSFS}/led_speed" ] && \
+    echo "$1" > "${MCU_SYSFS}/led_speed"
+}
+
+case ${1} in
+  rgb)
+    mcu_led_on
+    mcu_set_mode 5
+    set_setting led.color rgb
+    LEDS_CONFIG=$(get_setting analogsticks.led)
+    if [ ! -n "${LEDS_CONFIG}" ]; then
+      set_setting analogsticks.led "255 255 10 10 255 10 10"
+      LEDS_CONFIG="255 255 10 10 255 10 10"
+    fi
+    /usr/bin/analog_sticks_ledcontrol ${LEDS_CONFIG}
+    ;;
+  rainbowfade)
+    mcu_led_on
+    mcu_set_mode 3
+    mcu_set_speed 5
+    set_setting led.color rainbowfade
+    ;;
+  rainbowspin)
+    mcu_led_on
+    mcu_set_mode 4
+    mcu_set_speed 10
+    set_setting led.color rainbowspin
+    ;;
+  breathing)
+    mcu_led_on
+    mcu_set_mode 2
+    set_setting led.color breathing
+    ;;
+  off)
+    mcu_led_off
+    set_setting led.color off
+    ;;
+  charging)
+      status_led_on amber:charging
+    ;;
+  discharging)
+      status_led_on green:power
+    ;;
+  red)
+      status_led_on red:status
+    ;;
+  poweroff)
+    status_led_off
+    ;;
+  list)
+cat <<EOF
+rgb
+rainbowfade
+rainbowspin
+breathing
+off
+EOF
+    ;;
+esac

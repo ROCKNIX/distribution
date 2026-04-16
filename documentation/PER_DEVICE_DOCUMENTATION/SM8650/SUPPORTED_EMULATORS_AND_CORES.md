@@ -124,9 +124,11 @@
 |Sony|PlayStation 2 (ps2)|2000|`ps2`|.iso .mdf .nrg .bin .img .dump .gz .cso .chd|**aethersx2:** aethersx2-sa (default)<br>|
 |Sony|PlayStation 3 (ps3)|2006|`ps3`|.ps3 .psn .m3u|**rpcs3:** rpcs3-sa (default)<br>|
 |Sony|PlayStation Portable (psp)|2004|`psp`|.iso .cso .pbp .chd|**ppsspp:** ppsspp-sa (default)<br>**retroarch:** ppsspp<br>|
+|Sony|PlayStation Vita (psvita)|2011|`psvita`|.pkg .psvita .zip|**vita3k:** vita3k-sa (default)<br>|
 |Sony|PSP Minis (pspminis)|2004|`pspminis`|.iso .cso .pbp .chd|**ppsspp:** ppsspp-sa (default)<br>**retroarch:** ppsspp<br>|
 |Sun Microsystems|J2ME (j2me)|2002|`j2me`|.jar|**retroarch:** freej2me (default)<br>|
 |Thomson|MO/TO family (TO7, TO7/70, TO8, TO8D, TO9, TO9+, MO5 and MO6) (moto)|1982|`moto`|.fd .sap .k7 .m7 .m5 .rom|**retroarch:** theodore (default)<br>|
+|Valve|Steam (steam)|System|`applications`|.desktop|**steam:** steam (default)<br>|
 |Various|CHIP-8 / S-CHIP / XO-CHIP (chip-8)|1978|`chip-8`|.ch8 .sc8 .xo8|**retroarch:** jaxe (default)<br>|
 |Various|EasyRPG (easyrpg)|2003|`easyrpg`|.zip .easyrpg .ldb|**retroarch:** easyrpg (default)<br>|
 |Various|OpenBOR (openbor)|2003|`openbor`|.pak|**OpenBOR:** OpenBOR (default)<br>|

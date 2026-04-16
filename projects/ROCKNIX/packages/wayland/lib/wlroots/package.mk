@@ -9,7 +9,7 @@ PKG_LONGDESC="A modular Wayland compositor library"
 PKG_TOOLCHAIN="meson"
 
 case ${DEVICE} in
-  RK3326|RK3566|S922X)
+  RK3326|RK3566|RK3576|S922X)
     # despite the '-rk' indication this is a wlroots version with libmali hacks
     PKG_VERSION="0.19.3-rk"
     PKG_SHA256="5385dc105f2c4c5fe3157e0b0299d6508765086d605fe4efe3ae437d4f18a5d9"

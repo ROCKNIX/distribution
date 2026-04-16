@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
+
+PKG_NAME="u-boot"
+PKG_VERSION="88dc2788777babfd6322fa655df549a019aa1e69"
+PKG_LICENSE="GPL"
+PKG_SITE="https://source.denx.de/u-boot/u-boot"
+PKG_URL="${PKG_SITE}/-/archive/${PKG_VERSION}/u-boot-${PKG_VERSION}.tar.gz"
+PKG_DEPENDS_TARGET="toolchain Python3 swig:host pyelftools:host gnutls:host"
+PKG_LONGDESC="Das U-Boot is a cross-platform bootloader for embedded systems."
+PKG_TOOLCHAIN="manual"
+
+PKG_NEED_UNPACK="${PROJECT_DIR}/${PROJECT}/bootloader ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/bootloader"
+
+if [ -n "${UBOOT_FIRMWARE}" ]; then
+  PKG_DEPENDS_TARGET+=" ${UBOOT_FIRMWARE}"
+  PKG_DEPENDS_UNPACK+=" ${UBOOT_FIRMWARE}"
+fi
+
+pre_make_target() {
+  PKG_UBOOT_CONFIG="generic-rk3576_defconfig"
+  PKG_MINILOADER="spl/u-boot-spl.bin"
+  PKG_BL31="$(get_build_dir atf)/build/rk3576/release/bl31/bl31.elf"
+  PKG_DDR_BIN="$(get_build_dir rkbin)/bin/rk35/rk3576_ddr_lp4_2112MHz_lp5_2736MHz_v1.09.bin"
+}
+
+make_target() {
+  [ "${BUILD_WITH_DEBUG}" = "yes" ] && PKG_DEBUG=1 || PKG_DEBUG=0
+  setup_pkg_config_host
+
+  DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm64 make mrproper
+  DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm64 make HOSTCC="${HOST_CC}" HOSTCFLAGS="-I${TOOLCHAIN}/include" HOSTLDFLAGS="${HOST_LDFLAGS}" ${PKG_UBOOT_CONFIG} u-boot.dtb u-boot.img tools
+  DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm64 _python_sysroot="${TOOLCHAIN}" _python_prefix=/ _python_exec_prefix=/ make BL31="${PKG_BL31}" ROCKCHIP_TPL="${PKG_DDR_BIN}" HOSTCC="${HOST_CC}" HOSTCFLAGS="-I${TOOLCHAIN}/include" HOSTLDFLAGS="${HOST_LDFLAGS}" HOSTSTRIP="true" CONFIG_MKIMAGE_DTC_PATH="scripts/dtc/dtc"
+
+  find_file_path bootloader/rkhelper && . ${FOUND_PATH}
+}
+
+makeinstall_target() {
+  mkdir -p ${INSTALL}/usr/share/bootloader
+
+  cp -av ${PKG_BUILD}/uboot.bin ${INSTALL}/usr/share/bootloader
+}
