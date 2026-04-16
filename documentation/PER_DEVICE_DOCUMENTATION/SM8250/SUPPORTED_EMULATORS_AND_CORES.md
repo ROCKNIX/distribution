@@ -19,7 +19,7 @@
 |Atari|Atari 5200 (atari5200)|1982|`atari5200`|.rom .xfd .atr .atx .cdm .cas .car .bin .a52 .xex .zip .7z|**retroarch:** a5200 (default)<br>**retroarch:** atari800<br>|
 |Atari|Atari 7800 (atari7800)|1986|`atari7800`|.a78 .bin .zip .7z|**retroarch:** prosystem (default)<br>|
 |Atari|Atari 800 (atari800)|1979|`atari800`|.rom .xfd .atr .atx .cdm .cas .car .bin .a52 .xex .zip .7z|**retroarch:** atari800 (default)<br>|
-|Atari|Atari Jaguar (atarijaguar)|1993|`atarijaguar`|.j64 .jag .rom .abs .cof .bin .prg|**retroarch:** virtualjaguar (default)<br>**bigpemu:** bigpemu-sa<br>|
+|Atari|Atari Jaguar (atarijaguar)|1993|`atarijaguar`|.j64 .jag .rom .abs .cof .bin .prg .cdi|**retroarch:** virtualjaguar (default)<br>**bigpemu:** bigpemu-sa (default)<br>|
 |Atari|Atari Lynx (atarilynx)|1989|`atarilynx`|.lnx .lyx .o .zip .7z|**retroarch:** handy (default)<br>**retroarch:** beetle_lynx<br>**mednafen:** lynx<br>|
 |Atari|Atari ST (atarist)|1985|`atarist`|.st .msa .stx .dim .ipf .m3u .zip .7z|**retroarch:** hatari (default)<br>**hatarisa:** hatarisa<br>|
 |Bandai|SuFami Turbo (sufami)|1996|`sufami`|.st .zip .7z|**retroarch:** snes9x (default)<br>|
@@ -84,6 +84,7 @@
 |Nintendo|Super NES MSU-1 (snesmsu1)|2012|`snesmsu1`|.smc .fig .sfc .swc .zip .7z|**retroarch:** snes9x (default)<br>**retroarch:** beetle_supafaust<br>**mednafen:** snes_faust<br>|
 |Nintendo|Super Nintendo (Hacks) (snesh)|1991|`snesh`|.smc .fig .sfc .swc .zip .7z|**retroarch:** snes9x (default)<br>**retroarch:** snes9x2010<br>**retroarch:** snes9x2002<br>**retroarch:** snes9x2005_plus<br>**retroarch:** beetle_supafaust<br>**retroarch:** bsnes_mercury_accuracy<br>**retroarch:** bsnes_mercury_balanced<br>**retroarch:** bsnes_mercury_performance<br>**retroarch:** bsnes2014_accuracy<br>**retroarch:** bsnes2014_balanced<br>**retroarch:** bsnes2014_performance<br>**retroarch:** mesen-s<br>**retroarch:** bsnes<br>**retroarch:** bsnes_hd_beta<br>**mednafen:** snes_faust<br>|
 |Nintendo|Super Nintendo (snes)|1991|`snes`|.smc .fig .sfc .swc .zip .7z|**retroarch:** snes9x (default)<br>**retroarch:** snes9x2010<br>**retroarch:** snes9x2002<br>**retroarch:** snes9x2005_plus<br>**retroarch:** beetle_supafaust<br>**retroarch:** bsnes_mercury_accuracy<br>**retroarch:** bsnes_mercury_balanced<br>**retroarch:** bsnes_mercury_performance<br>**retroarch:** bsnes2014_accuracy<br>**retroarch:** bsnes2014_balanced<br>**retroarch:** bsnes2014_performance<br>**retroarch:** mesen-s<br>**retroarch:** bsnes<br>**retroarch:** bsnes_hd_beta<br>**mednafen:** snes_faust<br>|
+|Nintendo|Switch (switch)|2017|`switch`|.xci .nsp .nca .nso .nro|**eden:** eden-sa (default)<br>**citron:** citron-sa<br>|
 |Nintendo|Triforce (triforce)|2002|`triforce`|.gcm .iso .gcz .ciso .wbfs .rvz .dol .m3u|**dolphin:** dolphin-qt-gc (default)<br>|
 |Nintendo|Virtual Boy (virtualboy)|1995|`virtualboy`|.vb .zip .7z|**retroarch:** beetle_vb (default)<br>**mednafen:** vb<br>|
 |Nintendo|Wii (wii)|2006|`wii`|.gcm .iso .gcz .ciso .wbfs .rvz .dol .wad .m3u|**dolphin:** dolphin-qt-wii (default)<br>**dolphin:** dolphin-sa-wii<br>**retroarch:** dolphin<br>|
