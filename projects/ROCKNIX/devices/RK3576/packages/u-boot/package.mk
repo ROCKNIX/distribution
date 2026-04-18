@@ -9,6 +9,7 @@ PKG_URL="${PKG_SITE}/-/archive/${PKG_VERSION}/u-boot-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain Python3 swig:host pyelftools:host gnutls:host"
 PKG_LONGDESC="Das U-Boot is a cross-platform bootloader for embedded systems."
 PKG_TOOLCHAIN="manual"
+PKG_RKBIN_DIR="$(get_build_dir rkbin)/bin/rk35"
 
 PKG_NEED_UNPACK="${PROJECT_DIR}/${PROJECT}/bootloader ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/bootloader"
 
@@ -20,8 +21,8 @@ fi
 pre_make_target() {
   PKG_UBOOT_CONFIG="generic-rk3576_defconfig"
   PKG_MINILOADER="spl/u-boot-spl.bin"
-  PKG_BL31="$(get_build_dir atf)/build/rk3576/release/bl31/bl31.elf"
-  PKG_DDR_BIN="$(get_build_dir rkbin)/bin/rk35/rk3576_ddr_lp4_2112MHz_lp5_2736MHz_v1.09.bin"
+  PKG_BL31="${PKG_RKBIN_DIR}/rk3576_bl31_v1.20.elf"
+  PKG_DDR_BIN="${PKG_RKBIN_DIR}/rk3576_ddr_lp4_2112MHz_lp5_2736MHz_v1.09.bin"
 }
 
 make_target() {

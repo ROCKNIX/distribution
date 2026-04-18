@@ -6,7 +6,7 @@ PKG_VERSION="1.0.0.85"
 PKG_LICENSE="proprietary"
 PKG_SITE="https://steampowered.com"
 PKG_URL="https://repo.steampowered.com/steam/archive/stable/steam-launcher_${PKG_VERSION}_amd64.deb"
-PKG_DEPENDS_TARGET="mesa:host fex-emu"
+PKG_DEPENDS_TARGET="mesa:host fex-emu gamescope"
 PKG_LONGDESC="Steam is the ultimate destination for playing, discussing, and creating games"
 PKG_TOOLCHAIN="manual"
 

@@ -23,6 +23,12 @@ fi
 
 export GSK_RENDERER=gl
 systemctl stop systemd-binfmt
+if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
+  swaymsg 'seat seat1 fallback true'
+fi
 swaymsg for_window [instance="steamwebhelper"] fullscreen enable
-FEX /usr/bin/steam -bigpicture
+gamescope -w 1920 -h 1080 -W 1920 -H 1080 -f -e -- FEX /usr/bin/steam -bigpicture
+if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
+  swaymsg 'seat seat1 fallback false'
+fi
 systemctl start systemd-binfmt

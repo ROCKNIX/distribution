@@ -12,7 +12,12 @@ ARES_INI="settings.bml"
 
 # Check if ares exists in .config
 if [ ! -d "${CONF_DIR}" ]; then
-        cp -r "/usr/config/ares" "/storage/.config/"
+  cp -r "/usr/config/ares" "/storage/.config/"
+fi
+
+# Check if settings.bml exists in .config/ares/
+if [ ! -f "${CONF_DIR}/${ARES_INI}" ]; then
+  cp -r "/usr/config/ares/${ARES_INI}" "${CONF_DIR}/"
 fi
 
 # Link  .config/ares to .local

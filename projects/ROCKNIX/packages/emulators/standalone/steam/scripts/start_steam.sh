@@ -24,6 +24,7 @@ DRM_LIB=$(get_setting drm_host_library "${PLATFORM}" "${GAME}")
 VULKAN_LIB=$(get_setting vulkan_host_library "${PLATFORM}" "${GAME}")
 WAYLAND_LIB=$(get_setting wayland_client_host_library "${PLATFORM}" "${GAME}")
 GL_LIB=$(get_setting gl_host_library "${PLATFORM}" "${GAME}")
+GAMESCOPE=$(get_setting gamescope "${PLATFORM}" "${GAME}")
 
 TMP=$(mktemp)
 
@@ -67,14 +68,29 @@ export GSK_RENDERER=gl
   echo "VULKAN HOST LIB set to: ${VULKAN_LIB}"
   echo "WAYLAND HOST LIB set to: ${WAYLAND_LIB}"
   echo "GL HOST LIB set to: ${GL_LIB}"
+  echo "GAMESCOPE set to: ${GAMESCOPE}"
   echo "VSYNC set to: ${VSYNC}"
 
 systemctl stop systemd-binfmt
+if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
+  swaymsg 'seat seat1 fallback true'
+fi
 if [[ "$1" == *.desktop && -f "$1" && "$(basename "$1")" != "Steam.desktop" ]]; then
     EXEC_LINE=$(grep -m1 '^Exec=' "$1" | cut -d'=' -f2-)
     GAME_URI="${EXEC_LINE#steam }"
-    ${EMUPERF} FEX /usr/bin/steam -bigpicture "$GAME_URI"
+    if [ "${GAMESCOPE}" = "0" ]; then
+        ${EMUPERF} FEX /usr/bin/steam -bigpicture "$GAME_URI"
+    else
+        ${EMUPERF} gamescope -w 1920 -h 1080 -W 1920 -H 1080 -f -e -- FEX /usr/bin/steam -bigpicture "$GAME_URI"
+    fi
 else
-    ${EMUPERF} FEX /usr/bin/steam -bigpicture
+    if [ "${GAMESCOPE}" = "0" ]; then
+        ${EMUPERF} FEX /usr/bin/steam -bigpicture
+    else
+        ${EMUPERF} gamescope -w 1920 -h 1080 -W 1920 -H 1080 -f -e -- FEX /usr/bin/steam -bigpicture
+    fi
+fi
+if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
+  swaymsg 'seat seat1 fallback false'
 fi
 systemctl start systemd-binfmt
