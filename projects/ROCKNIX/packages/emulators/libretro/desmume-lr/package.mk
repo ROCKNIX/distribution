@@ -4,7 +4,7 @@
 PKG_NAME="desmume-lr"
 PKG_VERSION="7f05a8d447b00acd9e0798aee97b4f72eb505ef9"
 PKG_LICENSE="GPLv2"
-PKG_SITE="https://git.libretro.com/libretro/desmume"
+PKG_SITE="https://github.com/libretro/desmume"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain libpcap"
 PKG_LONGDESC="DeSmuME - Nintendo DS libretro"
