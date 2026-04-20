@@ -113,10 +113,12 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin
   cp -p ${PKG_BUILD}/dist/xemu ${INSTALL}/usr/bin
   cp -rf ${PKG_DIR}/scripts/start_xemu.sh ${INSTALL}/usr/bin
+  patch ${INSTALL}/usr/bin/start_xemu.sh < ${PKG_DIR}/scripts/004-override-xemu-config.patch
   chmod 755 ${INSTALL}/usr/bin/*
 
   mkdir -p ${INSTALL}/usr/config/xemu
   cp -rf ${PKG_DIR}/config/${DEVICE}/xemu.toml ${INSTALL}/usr/config/xemu
+
 
   #Download HDD IMAGE
   curl -Lo ${INSTALL}/usr/config/xemu/hdd.zip ${PKG_HDD_IMAGE}
