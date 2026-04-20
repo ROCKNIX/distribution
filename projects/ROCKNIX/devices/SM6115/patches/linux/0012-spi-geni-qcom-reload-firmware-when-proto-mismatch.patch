@@ -1,0 +1,40 @@
+From: ROCKNIX <rocknix@rocknix.org>
+Date: Mon, 20 Apr 2026 00:00:00 +0000
+Subject: [PATCH] spi: spi-geni-qcom: reload SPI firmware when proto mismatch in master mode
+
+On Qualcomm SM6115-based handhelds (Mangmi Air X), the bootloader
+programs GENI SE2 (4a88000.spi) with I2C microcode (proto=3) before
+handing off to Linux. The SPI driver currently only calls
+geni_load_se_firmware() for GENI_SE_INVALID_PROTO (0xFF), so a
+chainloaded system that inherits a stale I2C/UART protocol fails
+immediately with "Invalid proto 3".
+
+Extend the master-mode firmware-reload path to cover any non-SPI
+protocol value. This is safe: geni_load_se_firmware() will only proceed
+if the wrapper node provides a "firmware-name" property pointing to a
+valid QUP firmware blob, so boards without such a property are
+unaffected.
+
+Signed-off-by: ROCKNIX <rocknix@rocknix.org>
+---
+ drivers/spi/spi-geni-qcom.c | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/spi/spi-geni-qcom.c b/drivers/spi/spi-geni-qcom.c
+--- a/drivers/spi/spi-geni-qcom.c
++++ b/drivers/spi/spi-geni-qcom.c
+@@ -609,11 +609,8 @@ static int spi_geni_init(struct spi_geni_master *mas)
+ 		spi_slv_setup(mas);
+-	} else if (proto == GENI_SE_INVALID_PROTO) {
++	} else if (proto != GENI_SE_SPI) {
++		/* Reload firmware for any non-SPI proto (stale I2C/UART from bootloader, or INVALID) */
+ 		ret = geni_load_se_firmware(se, GENI_SE_SPI);
+ 		if (ret) {
+-			dev_err(mas->dev, "spi master firmware load failed ret: %d\n", ret);
++			dev_err(mas->dev, "spi master firmware load failed for proto %d: %d\n", proto, ret);
+ 			goto out_pm;
+ 		}
+-	} else if (proto != GENI_SE_SPI) {
+-		dev_err(mas->dev, "Invalid proto %d\n", proto);
+-		goto out_pm;
+ 	}
