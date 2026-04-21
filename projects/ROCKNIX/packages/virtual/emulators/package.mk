@@ -1581,6 +1581,10 @@ makeinstall_target() {
   add_emu_core palm retroarch mu true
   add_es_system palm
 
+  ### GamePark GP32
+  add_emu_core gp32 retroarch mame true
+  add_es_system gp32
+
   ### PC Ports
   add_emu_core ports portmaster portmaster true
   add_es_system ports
