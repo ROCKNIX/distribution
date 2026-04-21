@@ -2,7 +2,7 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="qt6"
-PKG_VERSION_MAJOR="6.8"
+PKG_VERSION_MAJOR="6.9"
 PKG_VERSION="${PKG_VERSION_MAJOR}.3"
 PKG_LICENSE="GPL"
 PKG_SITE="https://download.qt.io"
@@ -55,7 +55,7 @@ pre_configure_host() {
 
   unset HOST_CMAKE_OPTS
   # Disable unneeded modules
-  MODULES_TO_DISABLE=("qt3d" "qt5compat" "qtactiveqt" "qtcharts" "qtcoap" "qtconnectivity" "qtdatavis3d"
+  MODULES_TO_DISABLE=("qt3d" "qt5compat" "qtactiveqt" "qtcoap" "qtconnectivity" "qtdatavis3d"
                       "qtdoc" "qtgraphs" "qtgrpc" "qthttpserver" "qtlocation" "qtlottie" "qtmqtt"
                       "qtmultimedia" "qtnetworkauth" "qtopcua" "qtpositioning" "qtquick3d" "qtquick3dphysics"
                       "qtquickeffectmaker" "qtquicktimeline" "qtremoteobjects" "qtscxml" "qtsensors" "qtserialbus"
@@ -67,7 +67,7 @@ pre_configure_host() {
 
   # Enable required modules
   # > qtbase qtshadertools qtdeclarative qtsvg qtlanguageserver qttools qtwayland
-  MODULES_TO_ENABLE=("qtbase" "qtshadertools" "qtdeclarative" "qtsvg" "qtlanguageserver" "qtimageformats" "qttools" "qtwayland")
+  MODULES_TO_ENABLE=("qtbase" "qtshadertools" "qtdeclarative" "qtsvg" "qtlanguageserver" "qtimageformats" "qttools" "qtwayland" "qtcharts")
   for module in "${MODULES_TO_ENABLE[@]}"; do
     PKG_CMAKE_OPTS_HOST+=" -DBUILD_${module}=ON"
   done
@@ -87,7 +87,7 @@ pre_configure_host() {
 pre_configure_target(){
   unset TARGET_CMAKE_OPTS
   # Disable unneeded modules
-  MODULES_TO_DISABLE=("qt3d" "qt5compat" "qtactiveqt" "qtcharts" "qtcoap" "qtconnectivity" "qtdatavis3d"
+  MODULES_TO_DISABLE=("qt3d" "qt5compat" "qtactiveqt" "qtcoap" "qtconnectivity" "qtdatavis3d"
                       "qtdoc" "qtgraphs" "qtgrpc" "qthttpserver" "qtimageformats"
                       "qtlocation" "qtlottie" "qtmqtt" "qtnetworkauth" "qtopcua" "qtpositioning"
                       "qtquick3d" "qtquick3dphysics" "qtquickeffectmaker" "qtquicktimeline" "qtremoteobjects"
@@ -99,7 +99,7 @@ pre_configure_target(){
 
   # Enable required modules: qtbase qtmultimedia qtshadertools qtdeclarative qtserialbus qtserialport qtsvg qttools qtwebsockets qtlanguageserver
   # Conditionals: qtwayland
-  MODULES_TO_ENABLE=("qtbase" "qtmultimedia" "qtshadertools" "qtdeclarative" "qtserialbus"
+  MODULES_TO_ENABLE=("qtbase" "qtmultimedia" "qtshadertools" "qtdeclarative" "qtserialbus" "qtcharts"
                      "qtserialport" "qtsvg" "qttools" "qtwebsockets" "qtlanguageserver")
   for module in "${MODULES_TO_ENABLE[@]}"; do
     PKG_CMAKE_OPTS_TARGET+=" -DBUILD_${module}=ON"
