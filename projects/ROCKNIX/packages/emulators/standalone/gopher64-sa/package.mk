@@ -3,16 +3,16 @@
 
 PKG_NAME="gopher64-sa"
 PKG_LICENSE="GPLv3"
-PKG_VERSION="acf5e08b97d8526e7f25578bdaa202557c42c200"
+PKG_VERSION="6eb3367f1b1637b842eb3d5615701d1c9d97acdf"
 PKG_SITE="https://github.com/gopher64/gopher64"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain SDL3 cargo:host cargo rust mesa libXss ${VULKAN}"
+PKG_DEPENDS_TARGET="toolchain SDL3 SDL3_ttf cargo:host cargo rust mesa libXss ${VULKAN}"
 PKG_LONGDESC="Gopher64 - Highly compatible N64 emulator"
 PKG_TOOLCHAIN="manual"
 
 make_target() {
   unset CMAKE
-  export RUSTFLAGS="-A unpredictable_function_pointer_comparisons -C link-arg=-ldrm -C link-arg=-lgbm -C link-arg=-lasound -C link-arg=-lvulkan -C link-arg=-lvolk"
+  export RUSTFLAGS="-A unpredictable_function_pointer_comparisons -C link-arg=-ldrm -C link-arg=-lgbm -C link-arg=-lasound -C link-arg=-lvulkan -C link-arg=-lvolk -C link-arg=-lfreetype"
   export PKG_CONFIG_ALLOW_CROSS=1
 
   export CC=${TARGET_NAME}-gcc
@@ -35,6 +35,7 @@ make_target() {
 
   cargo build \
     --target ${TARGET_NAME} \
+    --no-default-features \
     --release
 }
 
