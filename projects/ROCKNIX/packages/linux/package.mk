@@ -25,14 +25,10 @@ case ${DEVICE} in
     PKG_GIT_CLONE_BRANCH="rk-6.1-rkr3"
     PKG_PATCH_DIRS="${LINUX} ${DEVICE} default"
     ;;
-  SDM845)
-    PKG_VERSION="5.18"
-    PKG_URL="https://gitlab.com/tjstyle/linux/-/archive/sdm845/${PKG_VERSION}-release/linux-sdm845-${PKG_VERSION}-release.tar.gz"
-    PKG_PATCH_DIRS="${LINUX} ${DEVICE} default"
-    ;;
   H700|SM8250|RK3399|RK3576|SM8650|SM8550|SM6115|S922X|RK3566)
-    PKG_VERSION="7.0"
+    PKG_VERSION="7.0.1"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
+    PKG_PATCH_DIRS+=" 7.0"
     ;;
   *)
     PKG_VERSION="6.12.79"
@@ -69,7 +65,7 @@ done
 
 if [ "${DEVICE}" = "RK3326" -o "${DEVICE}" = "RK3566" ]; then
   PKG_DEPENDS_UNPACK+=" generic-dsi"
-elif [ "${DEVICE}" = "SM8250" -o "${DEVICE}" = "SDM845" -o "${DEVICE}" = "H700" ]; then
+elif [ "${DEVICE}" = "SM8250" -o "${DEVICE}" = "H700" ]; then
   PKG_DEPENDS_UNPACK+=" kernel-firmware"
 fi
 
@@ -197,20 +193,6 @@ pre_make_target() {
 
     ${PKG_BUILD}/scripts/config --set-str CONFIG_EXTRA_FIRMWARE "${FW_LIST}"
     ${PKG_BUILD}/scripts/config --set-str CONFIG_EXTRA_FIRMWARE_DIR "external-firmware"
-  elif [ "${TARGET_ARCH}" = "aarch64" -a "${DEVICE}" = "SDM845" ]; then
-    mkdir -p ${PKG_BUILD}/external-firmware/qcom/sdm845
-      cp -Lv $(get_build_dir kernel-firmware)/.copied-firmware/qcom/a630_gmu.bin ${PKG_BUILD}/external-firmware/qcom
-      cp -Lv $(get_build_dir kernel-firmware)/.copied-firmware/qcom/a630_sqe.fw ${PKG_BUILD}/external-firmware/qcom
-      cp -Lv $(get_build_dir kernel-firmware)/.copied-firmware/qcom/sdm845/a630_zap.mbn ${PKG_BUILD}/external-firmware/qcom/sdm845
-      cp -Lv $(get_build_dir kernel-firmware)/.copied-firmware/qcom/sdm845/mba.mbn ${PKG_BUILD}/external-firmware/qcom/sdm845
-      cp -Lv $(get_build_dir kernel-firmware)/.copied-firmware/qcom/sdm845/modem.mbn ${PKG_BUILD}/external-firmware/qcom/sdm845
-      cp -Lv $(get_build_dir kernel-firmware)/.copied-firmware/qcom/sdm845/adsp.mbn ${PKG_BUILD}/external-firmware/qcom/sdm845
-      cp -Lv $(get_build_dir kernel-firmware)/.copied-firmware/qcom/sdm845/cdsp.mbn ${PKG_BUILD}/external-firmware/qcom/sdm845
-
-    FW_LIST="$(find ${PKG_BUILD}/external-firmware -type f | sed 's|.*external-firmware/||' | sort | xargs)"
-
-    ${PKG_BUILD}/scripts/config --set-str CONFIG_EXTRA_FIRMWARE "${FW_LIST}"
-    ${PKG_BUILD}/scripts/config --set-str CONFIG_EXTRA_FIRMWARE_DIR "external-firmware"
   elif [ "${TARGET_ARCH}" = "aarch64" -a "${DEVICE}" = "H700" ]; then
     mkdir -p ${PKG_BUILD}/external-firmware/rtl_bt
     mkdir -p ${PKG_BUILD}/external-firmware/rtw88
@@ -296,7 +278,7 @@ make_target() {
           ;;
       esac
 
-      [[ "${DEVICE}" != "RK3588" && "${DEVICE}" != "SDM845" ]] && export BUILD_BPF_SKEL=0
+      [[ "${DEVICE}" != "RK3588" ]] && export BUILD_BPF_SKEL=0
 
       WERROR=0 \
       NO_LIBPERL=1 \

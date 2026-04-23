@@ -3,7 +3,7 @@
 
 PKG_NAME="gopher64-sa"
 PKG_LICENSE="GPLv3"
-PKG_VERSION="6eb3367f1b1637b842eb3d5615701d1c9d97acdf"
+PKG_VERSION="ca4a20f52403bb14f819db53f1cb161d41894666"
 PKG_SITE="https://github.com/gopher64/gopher64"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain SDL3 SDL3_ttf cargo:host cargo rust mesa libXss ${VULKAN}"

@@ -9,7 +9,7 @@ PKG_LONGDESC="Dolphin is a GameCube / Wii / Triforce emulator, allowing you to p
 PKG_TOOLCHAIN="cmake"
 
 case ${DEVICE} in
-  SM8250|SM8550|SDM845|RK3399|SM8650)
+  SM8250|SM8550|RK3399|SM8650)
     PKG_VERSION="cddffd2e2a40a00ad1da6821e98e9a06bf02d97d"
     PKG_DOLPHIN_VERSION_MAJOR="2603"
     PKG_DOLPHIN_VERSION_MINOR="1"
