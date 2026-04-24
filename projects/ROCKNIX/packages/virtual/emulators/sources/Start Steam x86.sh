@@ -21,13 +21,26 @@ if [  -f $VDF ]; then
     grep -q '"/storage/roms/steam"' "$VDF" || sed -i '$ s/}/\t"1" {"path" "\/storage\/roms\/steam"}\n}/' "$VDF"
 fi
 
+eval $(swaymsg -t get_outputs | jq -r '
+  .[] | select(.focused == true) |
+  "W=\(.current_mode.width) H=\(.current_mode.height) TRANSFORM=\(.transform) REFRESH=\(.current_mode.refresh // 60000)"
+')
+REFRESH_HZ=$((REFRESH / 1000))
+if [[ "$TRANSFORM" == "90" || "$TRANSFORM" == "270" || "$TRANSFORM" == "flipped-90" || "$TRANSFORM" == "flipped-270" ]]; then
+  WIDTH=$H
+  HEIGHT=$W
+else
+  WIDTH=$W
+  HEIGHT=$H
+fi
+
 export GSK_RENDERER=gl
 systemctl stop systemd-binfmt
 if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
   swaymsg 'seat seat1 fallback true'
 fi
 swaymsg for_window [instance="steamwebhelper"] fullscreen enable
-gamescope -w 1920 -h 1080 -W 1920 -H 1080 -f -e -- FEX /usr/bin/steam -bigpicture
+gamescope -w $WIDTH -h $HEIGHT -W $WIDTH -H $HEIGHT -r $REFRESH_HZ -f -e -- FEX /usr/bin/steam -bigpicture
 if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
   swaymsg 'seat seat1 fallback false'
 fi

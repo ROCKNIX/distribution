@@ -33,7 +33,8 @@ PKG_CMAKE_OPTS_TARGET="-DBUILD_DEMO_CARTS=OFF \
                        -DBUILD_WITH_WASM=OFF \
                        -DBUILD_WITH_WREN=ON \
                        -DBUILD_WITH_ZLIB=ON \
-                       -DCMAKE_BUILD_TYPE=Release"
+                       -DCMAKE_BUILD_TYPE=Release \
+                       -DCMAKE_POLICY_VERSION_MINIMUM=3.5"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro

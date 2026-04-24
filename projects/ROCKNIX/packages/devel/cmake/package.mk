@@ -1,17 +1,9 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2009-2016 Stephan Raue (stephan@openelec.tv)
-# Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
-# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
-PKG_NAME="cmake"
-PKG_VERSION="3.30.3"
-PKG_LICENSE="BSD"
-PKG_SITE="https://cmake.org/"
-PKG_URL="https://cmake.org/files/v$(get_pkg_version_maj_min)/cmake-${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_HOST="pkg-config:host openssl:host"
-PKG_LONGDESC="A cross-platform, open-source make system."
-PKG_TOOLCHAIN="configure"
-PKG_BUILD_FLAGS="+local-cc"
+. ${ROOT}/packages/devel/cmake/package.mk
+
+PKG_DEPENDS_HOST="openssl:host pkg-config:host"
 
 configure_host() {
   ../configure --prefix=${TOOLCHAIN} \

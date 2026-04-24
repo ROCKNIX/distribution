@@ -31,10 +31,10 @@ pre_configure_target() {
     aarch64)
       CMAKE_EXTRA_OPTS="-DXXHASH_BUILD_XXHSUM=ON \
                         -DXXH_X86DISPATCH_ALLOW_AVX=OFF"
-    ;;
+      ;;
     *)
       CMAKE_EXTRA_OPTS="-DXXH_X86DISPATCH_ALLOW_AVX=ON"
-    ;;
+      ;;
   esac
 
   PKG_CMAKE_OPTS_TARGET+=" -DCMAKE_BUILD_TYPE=Release \
