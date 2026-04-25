@@ -6,7 +6,7 @@ PKG_LICENSE="MPLv2"
 PKG_VERSION="76462c030b75c4f2d56e5386c3d4d7d1128318b8"
 PKG_SITE="https://github.com/SnowflakePowered/librashader"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain cargo:host cargo rust"
+PKG_DEPENDS_TARGET="toolchain cargo:host cargo rust glfw"
 PKG_LONGDESC="Librashader is a preprocessor, compiler, and runtime for RetroArch 'slang' shaders, rewritten in pure Rust."
 PKG_TOOLCHAIN="manual"
 

@@ -34,7 +34,6 @@ else
   HEIGHT=$H
 fi
 
-export GSK_RENDERER=gl
 systemctl stop systemd-binfmt
 if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
   swaymsg 'seat seat1 fallback true'
