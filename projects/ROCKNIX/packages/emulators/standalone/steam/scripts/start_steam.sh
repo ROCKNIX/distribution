@@ -104,6 +104,7 @@ steam_scope_reexec_if_needed() {
 steam_dual_screen_begin() {
   if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
     swaymsg 'seat seat1 fallback true'
+    PREFER_OUTPUT="--prefer-output $SDL_VIDEO_DISPLAY_PRIORITY"
   fi
 }
 
@@ -134,7 +135,7 @@ steam_launch_bigpicture() {
     else
       systemctl stop sway
       env -u WAYLAND_DISPLAY LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} \
-        gamescope -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --backend drm --use-rotation-shader -b -e -- \
+        gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --backend drm --use-rotation-shader -b -e -- \
         /storage/.local/share/Steam/steamrtarm64/steam -bigpicture ${game_uri:+"$game_uri"}
       systemctl start essway
     fi
@@ -144,7 +145,7 @@ steam_launch_bigpicture() {
     else
       systemctl stop sway
       env -u WAYLAND_DISPLAY ${EMUPERF} \
-        gamescope -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --backend drm --use-rotation-shader -b -e -- \
+        gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --backend drm --use-rotation-shader -b -e -- \
         FEX /usr/bin/steam -bigpicture ${game_uri:+"$game_uri"}
       systemctl start essway
     fi
