@@ -7,7 +7,7 @@ STEAM_MAIN_SCRIPT=${0}
 STEAM_FLAVOR=arm64
 
 source /etc/profile
-set_kill set "-9 gamescope steam FEX"
+set_kill set "gamescope steam FEX"
 
 # shellcheck source=start_steam.sh
 . /usr/bin/start_steam.sh

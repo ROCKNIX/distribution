@@ -7,6 +7,7 @@ PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/ares-emulator/ares"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_LONGDESC="Ares is a multi-system emulator. It is a descendant of higan and bsnes, and focuses on accuracy and preservation."
+PKG_DEPENDS_HOST="toolchain"
 PKG_DEPENDS_TARGET="toolchain librashader ares-sa:host SDL3 libao gtk3 openal-soft"
 PKG_TOOLCHAIN="cmake"
 

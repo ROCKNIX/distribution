@@ -123,6 +123,13 @@ steam_arm64_binfmt_and_proton_prep() {
 
 steam_launch_bigpicture() {
   local game_uri=""
+  local force_orientation="left"
+  if [ "${TRANSFORM}" = "90" ]; then
+    force_orientation="right"
+  elif [ "${TRANSFORM}" = "270" ]; then
+    force_orientation="left"
+  fi
+
   if [[ "$1" == *.desktop && -f "$1" && "$(basename "$1")" != "Steam.desktop" ]]; then
     local exec_line
     exec_line=$(grep -m1 '^Exec=' "$1" | cut -d'=' -f2-)
@@ -135,7 +142,7 @@ steam_launch_bigpicture() {
     else
       systemctl stop sway
       env -u WAYLAND_DISPLAY LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} \
-        gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --backend drm --use-rotation-shader -b -e -- \
+        gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --backend drm --force-orientation "${force_orientation}" --use-rotation-shader -b -e -- \
         /storage/.local/share/Steam/steamrtarm64/steam -bigpicture ${game_uri:+"$game_uri"}
       systemctl start essway
     fi
@@ -145,7 +152,7 @@ steam_launch_bigpicture() {
     else
       systemctl stop sway
       env -u WAYLAND_DISPLAY ${EMUPERF} \
-        gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --backend drm --use-rotation-shader -b -e -- \
+        gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --backend drm --force-orientation "${force_orientation}" --use-rotation-shader -b -e -- \
         FEX /usr/bin/steam -bigpicture ${game_uri:+"$game_uri"}
       systemctl start essway
     fi
