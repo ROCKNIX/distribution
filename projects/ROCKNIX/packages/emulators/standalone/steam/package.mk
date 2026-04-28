@@ -27,4 +27,5 @@ makeinstall_target() {
   cp -rf ${PKG_DIR}/scripts/* ${INSTALL}/usr/bin
   cp -rf ${PKG_DIR}/resources/compatibilitytool.vdf ${INSTALL}/usr/share/steam
   cp -rf ${PKG_DIR}/resources/toolmanifest.vdf ${INSTALL}/usr/share/steam
+  cp -rf ${PKG_DIR}/resources/registry.vdf ${INSTALL}/usr/share/steam
 }

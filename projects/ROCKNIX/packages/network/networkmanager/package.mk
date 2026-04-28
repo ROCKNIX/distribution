@@ -55,6 +55,7 @@ PKG_MESON_OPTS_TARGET="
 "
 
 post_makeinstall_target() {
+  rm -rf ${INSTALL}/home
   rm -rf ${INSTALL}/mnt
   rm -rf ${INSTALL}/usr/bin
   rm -rf ${INSTALL}/usr/sbin

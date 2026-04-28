@@ -133,28 +133,34 @@ steam_launch_bigpicture() {
   if [[ "$1" == *.desktop && -f "$1" && "$(basename "$1")" != "Steam.desktop" ]]; then
     local exec_line
     exec_line=$(grep -m1 '^Exec=' "$1" | cut -d'=' -f2-)
-    game_uri="${exec_line#steam }"
+    game_uri="${exec_line#steam } -silent"
   fi
 
   if [ "${STEAM_FLAVOR}" = "arm64" ]; then
+    SDL_VIDEODRIVER=x11 LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} /storage/.local/share/Steam/steamrtarm64/steam -steamdeck -exitsteam
     if [ "${GAMESCOPE}" = "0" ]; then
-      SDL_VIDEODRIVER=x11 LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} /storage/.local/share/Steam/steamrtarm64/steam -bigpicture ${game_uri:+"$game_uri"}
+      SDL_VIDEODRIVER=x11 LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} /storage/.local/share/Steam/steamrtarm64/steam -nofriendsui -noverifyfiles -nobootstrapupdate -skipinitialbootstrap -norepairfiles ${game_uri:+"$game_uri"}
+      exit 0
     else
       systemctl stop sway
-      env -u WAYLAND_DISPLAY LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} \
-        gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --backend drm --force-orientation "${force_orientation}" --use-rotation-shader -b -e -- \
-        /storage/.local/share/Steam/steamrtarm64/steam -bigpicture ${game_uri:+"$game_uri"}
+      GAMESCOPE_FAKE_OUTPUT_MM=508x286 env -u WAYLAND_DISPLAY LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} \
+        gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --mangoapp --backend drm --force-orientation "${force_orientation}" --use-rotation-shader -b -e -- \
+        /storage/.local/share/Steam/steamrtarm64/steam -steamdeck -steamos3 -gamepadui -noverifyfiles -nobootstrapupdate -skipinitialbootstrap -norepairfiles ${game_uri:+"$game_uri"}
       systemctl start essway
+      exit 0
     fi
   else
+    FEX /usr/bin/steam -steamdeck -exitsteam
     if [ "${GAMESCOPE}" = "0" ]; then
-      ${EMUPERF} FEX /usr/bin/steam -bigpicture ${game_uri:+"$game_uri"}
+      ${EMUPERF} FEX /usr/bin/steam -nofriendsui -noverifyfiles -nobootstrapupdate -skipinitialbootstrap -norepairfiles ${game_uri:+"$game_uri"}
+      exit 0
     else
       systemctl stop sway
-      env -u WAYLAND_DISPLAY ${EMUPERF} \
-        gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --backend drm --force-orientation "${force_orientation}" --use-rotation-shader -b -e -- \
-        FEX /usr/bin/steam -bigpicture ${game_uri:+"$game_uri"}
+      GAMESCOPE_FAKE_OUTPUT_MM=508x286 env -u WAYLAND_DISPLAY ${EMUPERF} \
+        gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --mangoapp --backend drm --force-orientation "${force_orientation}" --use-rotation-shader -b -e -- \
+        FEX /usr/bin/steam -steamdeck -steamos3 -gamepadui -noverifyfiles -nobootstrapupdate -skipinitialbootstrap -norepairfiles ${game_uri:+"$game_uri"}
       systemctl start essway
+      exit 0
     fi
   fi
 }

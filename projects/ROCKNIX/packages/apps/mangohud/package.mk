@@ -23,7 +23,8 @@ pre_configure_target() {
   PKG_MESON_OPTS_TARGET+=" -Dwith_xnvctrl=disabled \
                            -Dwith_x11=enabled \
                            -Dmangoplot=disabled \
-                           -Dwith_wayland=enabled"
+                           -Dwith_wayland=enabled \
+                           -Dmangoapp=true"
 
   # Download Sub Modules
   mkdir -p ${PKG_BUILD}/subprojects/
