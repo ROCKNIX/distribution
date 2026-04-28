@@ -19,6 +19,11 @@ makeinstall_target() {
 
   tar -xzf ${PKG_BUILD}/rocknix/gpcal-python-3.13.tgz -C ${INSTALL}/usr/local/share
   sed -i 's|/sys/module/retroid/parameters|/sys/module/rsinput/parameters|g' ${INSTALL}/usr/local/share/gpcal/Klib/RPocket.py
+  # restart inputplumber
+  sed -i '364a\
+            savefile.write("# Restart InputPlumber\\n")\
+            savefile.write("systemctl restart inputplumber\\n")
+' ${INSTALL}/usr/local/share/gpcal/Klib/RPocket.py
   chmod 0755 ${INSTALL}/usr/local/share/gpcal/main.py
 
   mkdir -p ${INSTALL}/usr/config/modules

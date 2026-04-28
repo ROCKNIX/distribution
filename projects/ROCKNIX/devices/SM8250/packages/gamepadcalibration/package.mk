@@ -18,6 +18,11 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/local/share
 
   tar -xzf ${PKG_BUILD}/rocknix/gpcal-python-3.13.tgz -C ${INSTALL}/usr/local/share
+  # restart inputplumber
+  sed -i '364a\
+            savefile.write("# Restart InputPlumber\\n")\
+            savefile.write("systemctl restart inputplumber\\n")
+' ${INSTALL}/usr/local/share/gpcal/Klib/RPocket.py
   chmod 0755 ${INSTALL}/usr/local/share/gpcal/main.py
 
   mkdir -p ${INSTALL}/usr/config/modules

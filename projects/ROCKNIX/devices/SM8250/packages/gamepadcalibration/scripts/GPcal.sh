@@ -12,7 +12,7 @@ set_kill set "python3"
 sway_fullscreen "python3" &
 
 # Enable the python3 venv that has the pyxel library installed
-# Note: the activate script relies on the CWD, thus the cd 
+# Note: the activate script relies on the CWD, thus the cd
 # before
 cd "$GPCAL_PATH"
 source pyxel/bin/activate
@@ -20,4 +20,6 @@ source pyxel/bin/activate
 # PYTHONDONTWRITEBYTECODE: We don't expect to do write files
 # on a readonly mount point. Thus we tell Python to not try to
 # write .pyc files on the import of source modules.
+systemctl stop inputplumber
 PYTHONDONTWRITEBYTECODE=1 python3 main.py
+systemctl start inputplumber
