@@ -1,7 +1,20 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
+PKG_NAME="gcc"
+PKG_VERSION="15.2.0"
+PKG_SHA256="438fd996826b0c82485a29da03a72d71d6e3541a83ec702df4271f6fe025d24e"
+PKG_LICENSE="GPL-2.0-or-later"
+PKG_SITE="https://gcc.gnu.org/"
+PKG_URL="https://ftpmirror.gnu.org/gcc/${PKG_NAME}-${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tar.xz"
+PKG_DEPENDS_BOOTSTRAP="ccache:host autoconf:host binutils:host gmp:host mpfr:host mpc:host zstd:host"
+PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_HOST="ccache:host autoconf:host binutils:host gmp:host mpfr:host mpc:host zstd:host glibc libxcrypt"
+PKG_DEPENDS_INIT="toolchain"
+PKG_LONGDESC="This package contains the GNU Compiler Collection."
 
-. ${ROOT}/packages/lang/gcc/package.mk
+if [ "${MOLD_SUPPORT}" = "yes" ]; then
+  PKG_DEPENDS_HOST+=" mold:host"
+fi
 
 case ${TARGET_ARCH} in
   arm|aarch64)
