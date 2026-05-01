@@ -196,9 +196,8 @@ fi
 #Retroachievements
   /usr/bin/cheevos_aethersx2.sh
 
-#Set OpenGL 3.3 on panfrost
-  export MESA_GL_VERSION_OVERRIDE=3.3
-  export MESA_GLSL_VERSION_OVERRIDE=330
+#Graphic driver fixes
+@GRAPHICS@
 
 #Set QT enviornment to wayland
   export QT_QPA_PLATFORM=wayland
