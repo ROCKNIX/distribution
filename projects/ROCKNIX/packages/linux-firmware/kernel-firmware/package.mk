@@ -87,11 +87,6 @@ makeinstall_target() {
    mv ${FW_TARGET_DIR}/qcom/sm8250/Thundercomm/RB5/* ${FW_TARGET_DIR}/qcom/sm8250/
   fi
 
-  # SDM845 devices need wlan firmware set to the correct dir
-  if [ ${DEVICE} = "SDM845" ]; then
-   cp -Lv ${FW_TARGET_DIR}/ath10k/WCN3990/hw1.0/wlanmdsp.mbn ${FW_TARGET_DIR}/qcom/sdm845/
-  fi
-
   # Cleanup - which may be project or device specific
   find_file_path scripts/cleanup.sh && ${FOUND_PATH} ${FW_TARGET_DIR} || true
 }

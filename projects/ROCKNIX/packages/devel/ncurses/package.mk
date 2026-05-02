@@ -4,18 +4,16 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="ncurses"
-PKG_VERSION="6.4"
+PKG_VERSION="6.5"
 PKG_LICENSE="MIT"
 PKG_SITE="http://www.gnu.org/software/ncurses/"
-PKG_URL="http://invisible-island.net/archives/ncurses/ncurses-${PKG_VERSION}.tar.gz"
+PKG_URL="http://invisible-mirror.net/archives/ncurses/ncurses-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_HOST="ccache:host"
-PKG_DEPENDS_TARGET="toolchain zlib ncurses:host"
+PKG_DEPENDS_TARGET="autotools:host gcc:host zlib ncurses:host"
 PKG_LONGDESC="A library is a free software emulation of curses in System V Release 4.0, and more."
-PKG_BUILD_FLAGS="+pic +pic:host"
-PKG_TOOLCHAIN="auto"
+PKG_BUILD_FLAGS="+pic"
 
-PKG_CONFIGURE_OPTS_TARGET="
-                           --without-ada \
+PKG_CONFIGURE_OPTS_TARGET="--without-ada \
                            --without-cxx \
                            --without-cxx-binding \
                            --disable-db-install \
@@ -45,7 +43,6 @@ PKG_CONFIGURE_OPTS_TARGET="
                            --enable-ext-funcs \
                            --disable-const \
                            --enable-no-padding \
-                           --disable-sigwinch \
                            --enable-pc-files \
                            --with-pkg-config-libdir=/usr/lib/pkgconfig \
                            --enable-tcap-names \
@@ -60,16 +57,26 @@ PKG_CONFIGURE_OPTS_TARGET="
                            --disable-warnings \
                            --enable-home-terminfo \
                            --enable-lib-suffixes \
-                           --disable-assertions"
+                           --disable-assertions \
+                           --enable-leaks \
+                           --enable-sigwinch \
+                           --cache-file=config.cache"
 
-PKG_CONFIGURE_OPTS_HOST="
-                         --without-cxx-binding \
-                         --enable-termcap \
+PKG_CONFIGURE_OPTS_HOST="--enable-termcap \
                          --with-termlib \
-                         --without-shared \
+                         --with-shared \
                          --enable-pc-files \
                          --without-tests \
                          --without-manpages"
+
+pre_configure_target() {
+  cat >config.cache <<EOF
+cf_cv_builtin_bool=yes
+cf_cv_header_stdbool_h=yes
+EOF
+
+  CFLAGS="${CFLAGS} -std=gnu17"
+}
 
 post_makeinstall_target() {
   local f

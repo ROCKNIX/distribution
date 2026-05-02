@@ -3,7 +3,7 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="glibc"
-PKG_VERSION="2.40"
+PKG_VERSION="2.41"
 PKG_LICENSE="GPL"
 PKG_SITE="https://www.gnu.org/software/libc/"
 PKG_URL="https://ftp.gnu.org/pub/gnu/glibc/${PKG_NAME}-${PKG_VERSION}.tar.xz"
@@ -13,15 +13,12 @@ PKG_LONGDESC="The Glibc package contains the main C library."
 PKG_BUILD_FLAGS="+bfd -gold"
 
 case "${DEVICE}" in
-  RK3588*)
+  RK3588)
     OPT_ENABLE_KERNEL=6.1.0
-  ;;
-  SDM845)
-    OPT_ENABLE_KERNEL=5.18.0
-  ;;
+    ;;
   *)
     OPT_ENABLE_KERNEL=6.10.0
-  ;;
+    ;;
 esac
 
 case ${TARGET_ARCH} in

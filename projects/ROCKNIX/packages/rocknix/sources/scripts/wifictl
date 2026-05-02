@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 # Copyright (C) 2022 kkoshelev (https://github.com/kkoshelev)
-# Refactored for iwd (including AP mode)
-# Symlink management added for read-only root filesystems.
+# Wi-Fi via NetworkManager (iwd backend). AP/netplay still uses iwctl on the interface.
 
 . /etc/profile
+
+NMCLI="$(command -v nmcli 2>/dev/null)"
 
 ###
 ### Basic WIFI properties used across the tool.
@@ -24,6 +25,7 @@ DEFAULT_CHAN="6"
 # Exit the script if the WiFi device isn't available
 [ -z "${WIFI_DEV}" ] && exit 0
 [ ! -d "/sys/class/net/${WIFI_DEV}" ] && exit 0
+[ -z "${NMCLI}" ] && exit 0
 
 SSID="${2:-$(get_setting wifi.ssid 2>/dev/null)}"
 PSK="${3:-$(get_setting wifi.key 2>/dev/null)}"
@@ -56,21 +58,30 @@ wait_for_wifi() {
 # lists all wifi networks
 list_wifi() {
   wait_for_wifi
-  /usr/bin/iwd_get-networks
+  "${NMCLI}" -w 15 dev wifi rescan ifname "${WIFI_DEV}" 2>/dev/null
+  sleep 1
+  "${NMCLI}" -t -f SSID dev wifi list ifname "${WIFI_DEV}" 2>/dev/null | sed '/^$/d' | sort -u
 }
 
 connect_wifi() {
   wait_for_wifi
-
-  iwctl device ${WIFI_DEV} set-property Mode station
-  # Connect to the network.
-  iwctl --passphrase "${PSK}" station ${WIFI_DEV} connect "${SSID}" 2>/dev/null
+  # If a keyfile profile for this SSID already exists but is incomplete (e.g. missing
+  # 802-11-wireless-security.key-mgmt), NM fails connection-update with "key-mgmt: property is missing".
+  # Drop the stale profile so "device wifi connect" creates a clean one.
+  "${NMCLI}" connection delete id "${SSID}" >/dev/null 2>&1 || true
+  if [ -n "${PSK}" ]; then
+    "${NMCLI}" -w 90 device wifi connect "${SSID}" password "${PSK}" ifname "${WIFI_DEV}" >/dev/null 2>&1
+  else
+    "${NMCLI}" -w 90 device wifi connect "${SSID}" ifname "${WIFI_DEV}" >/dev/null 2>&1
+  fi
 }
 
 create_adhoc() {
   wait_for_wifi
+  "${NMCLI}" device set "${WIFI_DEV}" managed no >/dev/null 2>&1
 
   # Create an iwd AP profile file
+  mkdir -p "${IWD_AP_CFG_DIR}"
   cat <<EOF >"${IWD_AP_CFG_DIR}/${SSID}.ap"
 [General]
 Channel=${ADHOC_CHAN}
@@ -93,6 +104,7 @@ EOF
 destroy_adhoc() {
   iwctl ap ${WIFI_DEV} stop 2>/dev/null
   rm -f "${IWD_AP_CFG_DIR}/${SSID}.ap" 2>/dev/null
+  "${NMCLI}" device set "${WIFI_DEV}" managed yes >/dev/null 2>&1
 }
 
 has_ap_mode() {
@@ -127,7 +139,7 @@ case "${1}" in
       destroy_adhoc >/dev/null 2>&1
       iwctl ap ${WIFI_DEV} stop 2>/dev/null
     else
-      iwctl station ${WIFI_DEV} disconnect 2>/dev/null
+      "${NMCLI}" device disconnect "${WIFI_DEV}" >/dev/null 2>&1
     fi
     ;;
   reconnect)
@@ -144,10 +156,10 @@ case "${1}" in
     has_ap_mode
     ;;
   scan)
-    iwctl station ${WIFI_DEV} scan 2>/dev/null
+    "${NMCLI}" dev wifi rescan ifname "${WIFI_DEV}" 2>/dev/null
     ;;
   scanlist)
-    iwctl station ${WIFI_DEV} scan 2>/dev/null
+    "${NMCLI}" dev wifi rescan ifname "${WIFI_DEV}" 2>/dev/null
     sleep 2
     list_wifi
     ;;

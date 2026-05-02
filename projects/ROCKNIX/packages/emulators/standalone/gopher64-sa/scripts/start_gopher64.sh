@@ -29,6 +29,7 @@ INTEGERSCALING=$(get_setting integer_scaling "${PLATFORM}" "${GAME}")
 WIDESCREEN=$(get_setting wide_screen "${PLATFORM}" "${GAME}")
 CRTFILTER=$(get_setting crt_filter "${PLATFORM}" "${GAME}")
 OVERCLOCKN64=$(get_setting overclock_n64 "${PLATFORM}" "${GAME}")
+VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
 
 # Upscaling
 if [[ "$UPSCALE" =~ ^[1-4]$ ]]; then
@@ -65,6 +66,13 @@ else
   sed -Ei "s/^([[:space:]]*)\"overclock\":.*/\1\"overclock\": false,/" "${CONF_DIR}/${GOPHER64_JSON}"
 fi
 
+# Vsync
+if [[ "$VSYNC" =~ ^(true|false)$ ]]; then
+  sed -Ei "s/^([[:space:]]*)\"vsync\":.*/\1\"vsync\": $VSYNC,/" "${CONF_DIR}/${GOPHER64_JSON}"
+else
+  sed -Ei "s/^([[:space:]]*)\"vsync\":.*/\1\"vsync\": false,/" "${CONF_DIR}/${GOPHER64_JSON}"
+fi
+
 #Set the cores to use
 CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
 if [ "${CORES}" = "little" ]
@@ -86,6 +94,23 @@ else
   GAMEPAD="ERROR: No matching gamepad found."
 fi
 
+# Cheevos
+CHEEVOS_LOG_FILE="/var/log/cheevos.log"
+
+# Extract username, password, if enabled, and hardcore mode from system.cfg
+ra_username=$(get_setting "global.retroachievements.username")
+ra_password=$(get_setting "global.retroachievements.password")
+ra_enabled=$(get_setting "global.retroachievements")
+
+# Check if RetroAchievements are enabled in Emulation Station
+if [ "${ra_enabled}" = 1 ]; then
+  echo "RetroAchievements enabled." > ${CHEEVOS_LOG_FILE}
+  CHEEVOS="--ra-username $ra_username --ra-password $ra_password"
+else
+  echo "RetroAchievements are disabled, please turn them on in Emulation Station." > ${CHEEVOS_LOG_FILE}
+  CHEEVOS=""
+fi
+
 # Debugging info:
   echo "GAME set to: ${GAME}"
   echo "PLATFORM set to: ${PLATFORM}"
@@ -96,8 +121,9 @@ fi
   echo "WIDESCREEN set to: ${WIDESCREEN}"
   echo "CRT FILTER set to: ${CRTFILTER}"
   echo "OVERCLOCK N64 set to: ${OVERCLOCKN64}"
+  echo "VSYNC set to: ${VSYNC}"
   echo "GAMEPAD set to: ${GAMEPAD}"
   echo "Launching /usr/bin/gopher64 ${1}"
 
 # Start Gopher64
-${EMUPERF} /usr/bin/gopher64 -f "${1}"
+${EMUPERF} /usr/bin/gopher64 --fullscreen --assign-controller 0 --port 1 ${CHEEVOS} "${1}"

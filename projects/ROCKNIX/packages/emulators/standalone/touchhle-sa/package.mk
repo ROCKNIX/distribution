@@ -10,15 +10,23 @@ PKG_DEPENDS_TARGET="toolchain cargo:host cargo rust SDL2 sndio"
 PKG_LONGDESC="touchHLE: high-level emulator for iPhone OS apps"
 PKG_TOOLCHAIN="manual"
 
+post_unpack() {
+  cd ${PKG_BUILD}/vendor/openal-soft
+  sed -i 's/false,/AL_FALSE_ENUM,/g' alc/backends/sdl2.c 2>/dev/null || true
+  sed -i 's/enum CompatFlags : uint8_t/enum CompatFlags/g' alc/alu.h
+  sed -i 's/enum class UhjQualityType : uint8_t/enum UhjQualityType/g' core/uhjfilter.h
+}
+
 make_target() {
   unset CMAKE
   export RUSTFLAGS="-C link-arg=-lasound"
+  export CMAKE_POLICY_VERSION_MINIMUM="3.5"
+  export CFLAGS="${CFLAGS} -std=gnu11"
 
   cargo build \
     --target ${TARGET_NAME} \
     --release
 }
-
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin

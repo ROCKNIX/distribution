@@ -9,8 +9,9 @@ PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_SHORTDESC="An enhanced remake of the melonDS core for libretro that prioritizes standalone parity, reliability, and usability."
 PKG_TOOLCHAIN="cmake-make"
+PKG_BUILD_FLAGS="+lto-off"
 
-PKG_CMAKE_OPTS_TARGET=" -DENABLE_OPENGL=ON"
+PKG_CMAKE_OPTS_TARGET=" -DENABLE_OPENGL=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5"
 
 if [ "${OPENGL_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL}"

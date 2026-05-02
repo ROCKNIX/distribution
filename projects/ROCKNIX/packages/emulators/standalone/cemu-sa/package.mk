@@ -1,18 +1,16 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2022-present Frank Hartung (supervisedthinking (@) gmail.com)
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="cemu-sa"
-PKG_VERSION="a6fb0a48eb437a8a41c13b782ac8ae0433bf8f98"
+PKG_VERSION="6f6c1299e29fa6e1062ae283a035b4ef787cc397"
 PKG_LICENSE="MPL-2.0"
 PKG_SITE="https://github.com/cemu-project/Cemu"
 PKG_URL="${PKG_SITE}.git"
+PKG_LONGDESC="KDE Extra CMake Modules"
 PKG_DEPENDS_TARGET="toolchain libzip glslang glm curl rapidjson openssl boost libfmt pugixml libpng gtk3 wxwidgets SDL2 libsodium hidapi spirv-tools"
-PKG_LONGDESC="Cemu is a Wii U emulator that is able to run most Wii U games and homebrew in a playable state"
-PKG_GIT_CLONE_BRANCH="main"
-PKG_GIT_CLONE_SINGLE="yes"
-GET_HANDLER_SUPPORT="git"
-#PKG_BUILD_FLAGS="+lto"
+PKG_TOOLCHAIN="cmake"
 
 configure_package() {
   # Displayserver Support
@@ -34,25 +32,20 @@ configure_package() {
 }
 
 pre_configure_target() {
-
-	# Extract aarch64 deps
-  tar xzvf ${PKG_DIR}/dependencies/aarch64_deps.tar.gz  -C ${PKG_BUILD}/dependencies
-
   # Force build of cubeb submodule
   sed -e '/find_package(cubeb)/d' -i ${PKG_BUILD}/CMakeLists.txt
   # Fix glm linking
   sed -e "s#glm::glm#glm#" -i ${PKG_BUILD}/src/{Common,input}/CMakeLists.txt
 
   CXXFLAGS+=" -fpch-preprocess"
-  PKG_CMAKE_OPTS_TARGET="-D ENABLE_VCPKG=OFF \
-                         -D PORTABLE=OFF \
-                         -D ENABLE_DISCORD_RPC=OFF \
-                         -D ENABLE_SDL=ON \
-                         -D ENABLE_CUBEB=ON \
-                         -D ENABLE_WXWIDGETS=ON \
-                         -D CMAKE_BUILD_TYPE=Release \
-                         -D ENABLE_FERAL_GAMEMODE=OFF \
-                         -Wno-dev"
+  PKG_CMAKE_OPTS_TARGET=" -DCMAKE_CXX_FLAGS="-Wno-changes-meaning" \
+                          -DENABLE_VCPKG=OFF \
+                          -DENABLE_DISCORD_RPC=OFF \
+                          -DENABLE_SDL=ON \
+                          -DENABLE_CUBEB=ON \
+                          -DENABLE_WXWIDGETS=ON \
+                          -DCMAKE_BUILD_TYPE=Release \
+                          -DENABLE_FERAL_GAMEMODE=OFF"
 
   # Wayland Support
   if [ "${DISPLAYSERVER}" = "wl" ]; then

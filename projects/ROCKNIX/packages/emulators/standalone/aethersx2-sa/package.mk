@@ -11,6 +11,13 @@ PKG_DEPENDS_TARGET="toolchain qt6 libgpg-error fuse2 xz libpcap"
 PKG_LONGDESC="Arm PS2 Emulator appimage"
 PKG_TOOLCHAIN="manual"
 
+get_graphicdrivers
+  if listcontains "${GRAPHIC_DRIVERS}" "(panfrost)"; then
+    GRAPHICS_DRIVER="panfrost"
+  elif listcontains "${GRAPHIC_DRIVERS}" "(freedreno)"; then
+    GRAPHICS_DRIVER="freedreno"
+  fi
+
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin
   mkdir -p ${INSTALL}/usr/share/aethersx2-sa
@@ -23,4 +30,28 @@ makeinstall_target() {
 
   mkdir -p ${INSTALL}/usr/config
   cp -rf ${PKG_DIR}/config/${DEVICE}/aethersx2 ${INSTALL}/usr/config
+}
+
+post_install() {
+  case ${GRAPHICS_DRIVER} in
+    panfrost)
+      GRAPHICS="export MESA_GL_VERSION_OVERRIDE=3.3"
+    ;;
+    freedreno)
+      case ${DEVICE} in
+        SM8250)
+          GRAPHICS="export TU_DEBUG=sysmem"
+        ;;
+        *)
+          GRAPHICS=""
+        ;;
+      esac
+    ;;
+    *)
+      GRAPHICS=""
+    ;;
+  esac
+
+  sed -e "s/@GRAPHICS@/${GRAPHICS}/g" \
+        -i ${INSTALL}/usr/bin/start_aethersx2.sh
 }
