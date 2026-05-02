@@ -262,6 +262,22 @@ case ${EMULATOR} in
     ${VERBOSE} && log $0 "Execute setsettings (${PLATFORM} ${ROMNAME} ${CORE} --controllers=${CONTROLLERCONFIG} --autosave=${AUTOSAVE} --snapshot=${SNAPSHOT})"
     (/usr/bin/setsettings.sh "${PLATFORM}" "${ROMNAME}" "${CORE}" --controllers="${CONTROLLERCONFIG}" --autosave="${AUTOSAVE}" --snapshot="${SNAPSHOT}" >${SET_SETTINGS_TMP})
 
+    ### Enable RetroArch Network Control for this session on dual-screen devices
+    ### so the bottom-screen UI can forward save-state / load-state / resume commands.
+    if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
+      echo 'network_cmd_enable = "true"' >> "${RETROARCH_APPEND_CONFIG}"
+      echo 'network_cmd_port = "55355"'  >> "${RETROARCH_APPEND_CONFIG}"
+      echo 'savestate_thumbnail_enable = "true"' >> "${RETROARCH_APPEND_CONFIG}"
+
+      if ! pgrep -f 'python3 .*/lowerdeck/ra_proxy\.py' >/dev/null 2>&1; then
+        ( python3 /usr/share/lowerdeck/ra_proxy.py >/dev/null 2>&1 ) &
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+          netstat -ln 2>/dev/null | grep -q ':8080 ' && break
+          sleep 0.1
+        done
+      fi
+    fi
+
     ### If setsettings wrote data in the background, grab it and assign it to EXTRAOPTS
     if [ -e "${SET_SETTINGS_TMP}" ]
     then
