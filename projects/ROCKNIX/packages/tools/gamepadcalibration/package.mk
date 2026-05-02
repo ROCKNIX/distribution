@@ -7,7 +7,7 @@ PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/cdeletre/GPcal"
 PKG_URL="https://github.com/cdeletre/GPcal/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="Python3 SDL2 gamecontrollerdb"
-PKG_LONGDESC="A gamepad calibration tool for the MANGMI Air X (SM6115)"
+PKG_LONGDESC="A gamepad calibration tool for the Retroid Pocket 5 and Mini"
 PKG_TOOLCHAIN="manual"
 
 make_target() {
@@ -18,7 +18,21 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/local/share
 
   tar -xzf ${PKG_BUILD}/rocknix/gpcal-python-3.13.tgz -C ${INSTALL}/usr/local/share
-  sed -i 's|/sys/module/retroid/parameters|/sys/module/mangmi/parameters|g' ${INSTALL}/usr/local/share/gpcal/Klib/RPocket.py
+
+  case ${DEVICE} in
+    SM8550)
+      sed -i 's|/sys/module/retroid/parameters|/sys/module/rsinput/parameters|g' ${INSTALL}/usr/local/share/gpcal/Klib/RPocket.py
+      ;;
+    SM6115)
+      sed -i 's|/sys/module/retroid/parameters|/sys/module/mangmi/parameters|g' ${INSTALL}/usr/local/share/gpcal/Klib/RPocket.py
+      ;;
+  esac
+
+  # restart inputplumber
+  sed -i '364a\
+            savefile.write("# Restart InputPlumber\\n")\
+            savefile.write("systemctl restart inputplumber\\n")
+' ${INSTALL}/usr/local/share/gpcal/Klib/RPocket.py
   chmod 0755 ${INSTALL}/usr/local/share/gpcal/main.py
 
   mkdir -p ${INSTALL}/usr/config/modules

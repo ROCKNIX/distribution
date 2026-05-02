@@ -6,32 +6,34 @@ PKG_VERSION="1.51.4"
 PKG_LICENSE="GPL"
 PKG_SITE="https://gitlab.freedesktop.org/NetworkManager/NetworkManager"
 PKG_URL="https://download.gnome.org/sources/NetworkManager/1.51/NetworkManager-${PKG_VERSION}.tar.xz"
-PKG_DEPENDS_TARGET="toolchain glib dbus libndp"
-PKG_LONGDESC="Network connection manager"
+PKG_DEPENDS_TARGET="toolchain glib dbus libndp nss nspr systemd util-linux readline ncurses"
+PKG_LONGDESC="Network connection manager (Ethernet and Wi-Fi; Wi-Fi via iwd backend)"
+PKG_TOOLCHAIN="meson"
 
 PKG_MESON_OPTS_TARGET="
   -Dsystemdsystemunitdir=no
   -Dudev_dir=no
-  -Ddbus_conf_dir=${INSTALL}/etc/dbus-1/system.d
+  -Ddbus_conf_dir=/etc/dbus-1/system.d
 
-  -Dsession_tracking_consolekit=false
   -Dsession_tracking=no
+  -Dsession_tracking_consolekit=false
   -Dsuspend_resume=auto
   -Dpolkit=false
   -Dselinux=false
   -Dsystemd_journal=false
   -Dlibaudit=no
   -Dlibpsl=false
-  -Dwifi=false
+  -Dwifi=true
   -Dwext=false
-  -Diwd=false
+  -Diwd=true
+  -Dconfig_wifi_backend_default=iwd
   -Dppp=false
   -Dmodem_manager=false
   -Dofono=false
   -Dconcheck=false
   -Dteamdctl=false
   -Dovs=false
-  -Dnmcli=false
+  -Dnmcli=true
   -Dnmtui=false
   -Dnm_cloud_setup=false
   -Dbluez5_dun=false
@@ -49,20 +51,31 @@ PKG_MESON_OPTS_TARGET="
   -Dmore_logging=false
   -Dvalgrind=no
   -Dqt=false
-  -Dreadline=none
+  -Dreadline=auto
   -Dconfig_plugins_default=keyfile
-  -Dcrypto=null
+  -Dcrypto=nss
 "
 
 post_makeinstall_target() {
   rm -rf ${INSTALL}/home
   rm -rf ${INSTALL}/mnt
-  rm -rf ${INSTALL}/usr/bin
-  rm -rf ${INSTALL}/usr/sbin
-  rm -rf ${INSTALL}/usr/share
   rm -rf ${INSTALL}/usr/include
   rm -rf ${INSTALL}/usr/lib/pkgconfig
-  rm -rf ${INSTALL}/usr/lib/nm*
-  rm -rf ${INSTALL}/usr/lib/NetworkManager
+  find ${INSTALL}/usr/lib -name "*.a" -delete
+  find ${INSTALL}/usr/lib -name "*.la" -delete
+  rm -rf ${INSTALL}/usr/share/locale
 
+  mkdir -p ${INSTALL}/etc/NetworkManager/conf.d
+  cp -P ${PKG_DIR}/config/NetworkManager.conf ${INSTALL}/etc/NetworkManager/NetworkManager.conf
+
+  mkdir -p ${INSTALL}/etc/dbus-1/system.d
+  cp -P ${PKG_DIR}/dbus.d/org.freedesktop.NetworkManager.conf ${INSTALL}/etc/dbus-1/system.d/
+
+  mkdir -p ${INSTALL}/usr/lib/tmpfiles.d
+  cp -P ${PKG_DIR}/tmpfiles.d/z_02_networkmanager.conf ${INSTALL}/usr/lib/tmpfiles.d/
+}
+
+post_install() {
+  enable_service NetworkManager.service
+  enable_service network-online.service
 }
