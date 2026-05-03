@@ -1,0 +1,105 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ROCKNIX <noreply@rocknix.org>
+Date: Mon, 01 Jan 2024 00:00:00 +0000
+Subject: [PATCH] drm/bridge: dw-dp: Add RK3576 USB-C DisplayPort Alt Mode support
+
+Three driver changes are needed to support the DesignWare DP controller
+on RK3576 for USB-C DisplayPort Alt Mode output:
+
+1. Add "rockchip,rk3576-dp" to the OF match table in the Rockchip
+   platform glue driver (dw_dp-rockchip.c).
+
+2. Make the i2s and spdif clocks optional.
+
+   The RK3576 CRU does not provide i2s or spdif clocks for the DP
+   controller.  The current devm_clk_get() (mandatory) calls fail at
+   probe time with -ENOENT, preventing the bridge from registering.
+   Change both to devm_clk_get_optional() so the driver probes
+   successfully on SoCs that lack these clocks.
+
+3. Add single-pixel input mode for RK3576.
+
+   The DP controller supports three input pixel modes (PIXEL_MODE_SELECT):
+     SINGLE (0): 1 pixel per VOP2 clock cycle
+     DUAL   (1): 2 pixels per VOP2 clock cycle
+     QUAD   (2): 4 pixels per VOP2 clock cycle  <- current hard-coded default
+
+   The QUAD default is correct for RK3588, where the VOP2 comment
+   explicitly states "4 pixclk/cycle on rk3588".  On RK3576, VOP2 video
+   port 2 (VP2) has pixel_rate = 1 (single pixel per cycle).  With QUAD
+   mode the controller latches four pixels per clock while VOP2 provides
+   only one; three of every four pixel slots contain undefined data.  The
+   resulting DP stream is completely blank even though link training
+   succeeds and the CRTC reports a valid active mode.
+
+   Add a boolean field `single_pixel_mode` to `dw_dp_plat_data`.  When
+   set, dw_dp_bind() selects DW_DP_MP_SINGLE_PIXEL instead of the QUAD
+   default.  The Rockchip glue driver sets this flag via
+   of_device_is_compatible() for "rockchip,rk3576-dp"; RK3588 continues
+   to use QUAD unchanged.
+
+Signed-off-by: ROCKNIX <noreply@rocknix.org>
+---
+ drivers/gpu/drm/bridge/synopsys/dw-dp.c   | 4 ++--
+ drivers/gpu/drm/rockchip/dw_dp-rockchip.c | 2 ++
+ include/drm/bridge/dw_dp.h                | 1 +
+ 3 files changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-dp.c b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+--- a/drivers/gpu/drm/bridge/synopsys/dw-dp.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+@@ -1984,7 +1984,7 @@
+ 		return ERR_CAST(dp);
+
+ 	dp->dev = dev;
+-	dp->pixel_mode = DW_DP_MP_QUAD_PIXEL;
++	dp->pixel_mode = plat_data->single_pixel_mode ? DW_DP_MP_SINGLE_PIXEL : DW_DP_MP_QUAD_PIXEL;
+
+ 	dp->plat_data.max_link_rate = plat_data->max_link_rate;
+ 	bridge = &dp->bridge;
+@@ -2020,13 +2020,13 @@
+ 		return ERR_CAST(dp->aux_clk);
+ 	}
+
+-	dp->i2s_clk = devm_clk_get(dev, "i2s");
++	dp->i2s_clk = devm_clk_get_optional(dev, "i2s");
+ 	if (IS_ERR(dp->i2s_clk)) {
+ 		dev_err_probe(dev, PTR_ERR(dp->i2s_clk), "failed to get i2s clock\n");
+ 		return ERR_CAST(dp->i2s_clk);
+ 	}
+
+-	dp->spdif_clk = devm_clk_get(dev, "spdif");
++	dp->spdif_clk = devm_clk_get_optional(dev, "spdif");
+ 	if (IS_ERR(dp->spdif_clk)) {
+ 		dev_err_probe(dev, PTR_ERR(dp->spdif_clk), "failed to get spdif clock\n");
+ 		return ERR_CAST(dp->spdif_clk);
+diff --git a/drivers/gpu/drm/rockchip/dw_dp-rockchip.c b/drivers/gpu/drm/rockchip/dw_dp-rockchip.c
+--- a/drivers/gpu/drm/rockchip/dw_dp-rockchip.c
++++ b/drivers/gpu/drm/rockchip/dw_dp-rockchip.c
+@@ -90,6 +90,7 @@
+ 	platform_set_drvdata(pdev, dp);
+
+ 	plat_data.max_link_rate = 810000;
++	plat_data.single_pixel_mode = of_device_is_compatible(dev->of_node, "rockchip,rk3576-dp");
+ 	encoder = &dp->encoder.encoder;
+ 	encoder->possible_crtcs = drm_of_find_possible_crtcs(drm_dev, dev->of_node);
+ 	rockchip_drm_encoder_set_crtc_endpoint_id(&dp->encoder, dev->of_node, 0, 0);
+@@ -135,6 +136,7 @@
+ }
+
+ static const struct of_device_id dw_dp_of_match[] = {
++	{ .compatible = "rockchip,rk3576-dp", },
+ 	{ .compatible = "rockchip,rk3588-dp", },
+ 	{}
+ };
+diff --git a/include/drm/bridge/dw_dp.h b/include/drm/bridge/dw_dp.h
+--- a/include/drm/bridge/dw_dp.h
++++ b/include/drm/bridge/dw_dp.h
+@@ -13,6 +13,7 @@
+
+ struct dw_dp_plat_data {
+ 	u32 max_link_rate;
++	bool single_pixel_mode;
+ };
+
+ struct dw_dp *dw_dp_bind(struct device *dev, struct drm_encoder *encoder,
