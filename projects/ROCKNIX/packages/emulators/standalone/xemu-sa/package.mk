@@ -25,6 +25,10 @@ else
   GRENDERER="OPENGL"
 fi
 
+post_unpack() {
+  sed -i "s|host_cc=\"cc\"|host_cc=\"${TOOLCHAIN}/bin/host-gcc\"|" ${PKG_BUILD}/configure
+}
+
 pre_configure_target() {
   # xemu does not build with NDEBUG
   export TARGET_CFLAGS=$(echo ${TARGET_CFLAGS} | sed -e "s|-DNDEBUG||g")

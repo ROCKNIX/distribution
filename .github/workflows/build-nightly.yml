@@ -2,7 +2,8 @@ name: Build
 
 on:
   schedule:
-    - cron: "0 3 * * *"
+    - cron: "0 0 2-31 * *"
+    - cron: "0 0 1 * *"
   workflow_dispatch:
     inputs:
       release:
@@ -81,8 +82,8 @@ jobs:
       name: ${{ github.event_name == 'pull_request' && 'pr-approval' || 'auto' }}
     runs-on: ubuntu-24.04
     outputs:
-      NIGHTLY: ${{ github.event_name == 'workflow_dispatch' && inputs.release == true && 'no' || 'yes' }}
-      OFFICIAL: ${{ github.event_name == 'workflow_dispatch' && inputs.release == true && 'yes' || 'no' }}
+      NIGHTLY: ${{ steps.set-release-type.outputs.NIGHTLY }}
+      OFFICIAL: ${{ steps.set-release-type.outputs.OFFICIAL }}
       OWNER_LC: ${{ steps.set-envs.outputs.OWNER_OUTPUT }}
       matrix: ${{ steps.generate.outputs.matrix }}
     steps:
@@ -93,6 +94,19 @@ jobs:
           echo "OWNER_OUTPUT=${OWNER_LC}" >> $GITHUB_OUTPUT
         env:
           OWNER: ${{ github.repository_owner }}
+      - name: Determine release type
+        id: set-release-type
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.release }}" == "true" ]]; then
+            echo "OFFICIAL=yes" >> $GITHUB_OUTPUT
+            echo "NIGHTLY=no" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.event_name }}" == "schedule" && "${{ github.event.schedule }}" == "0 0 1 * *" ]]; then
+            echo "OFFICIAL=yes" >> $GITHUB_OUTPUT
+            echo "NIGHTLY=no" >> $GITHUB_OUTPUT
+          else
+            echo "OFFICIAL=no" >> $GITHUB_OUTPUT
+            echo "NIGHTLY=yes" >> $GITHUB_OUTPUT
+          fi
       - id: generate
         shell: bash
         run: |
@@ -269,7 +283,7 @@ jobs:
          FILES=$(find . -type f \( -name "*.tar" -o -name "*.img.gz" -o -name "*.sha256" \))
          for FILE in $FILES; do
            rsync -e ssh "$FILE" tiopex@frs.sourceforge.net:/home/frs/project/rocknix/nightly/${{ env.DATE }}/
-         done         
+         done
 
   release-official:
     if: ${{ always() && !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && github.repository_owner == 'ROCKNIX' && needs.set-envs.outputs.OFFICIAL == 'yes' }}
@@ -315,14 +329,11 @@ jobs:
           app-id: ${{ secrets.NIGHTLY_APP_ID }}
           private-key: ${{ secrets.NIGHTLY_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
-      - name: Prepare environment for release body
-        run: |
-          echo "DATE=${{ env.DATE }}" >> $GITHUB_ENV
-          echo "LAST_TAG=${{ steps.get-last-tag.outputs.TAG }}" >> $GITHUB_ENV
-
+      - name: Install xmlstarlet
+        run: sudo apt-get install -y xmlstarlet
       - name: Generate release body
         run: |
-          envsubst < .github/release-body.md > release-body.md
+          bash .github/scripts/generate-release-body.sh "${{ env.DATE }}" "${{ steps.get-last-tag.outputs.TAG }}" > release-body.md
       - name: release official
         uses: ncipollo/release-action@v1
         with:
