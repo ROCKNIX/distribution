@@ -75,9 +75,9 @@ for HEROIC_LAUNCHER_DIR in /storage/.config/heroic-launchers /storage/.config/mo
   [ -x "\${H}" ] || continue
   exec "\${H}" --no-gui $(printf '%q' "${uri}")
 done
-H="/usr/bin/Start Heroic Play.sh"
+H="/usr/bin/start_heroic_play.sh"
 [ -x "\${H}" ] && exec "\${H}" --no-gui $(printf '%q' "${uri}")
-echo "Heroic: Start Heroic Play.sh not found under /storage/.config/heroic-launchers, /storage/.config/modules, /usr/config/modules, or /usr/bin." >&2
+echo "Heroic: start_heroic_play.sh not found under /storage/.config/heroic-launchers, /storage/.config/modules, /usr/config/modules, or /usr/bin." >&2
 exit 127
 EOF
   chmod 0755 "${launcher_path}"

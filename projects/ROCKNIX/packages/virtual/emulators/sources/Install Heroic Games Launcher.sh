@@ -41,9 +41,9 @@ EOF
 heroic_seed_rom_launchers() {
   local roms="/storage/roms/heroic"
   mkdir -p "${roms}"
-  heroic_write_es_stub "${roms}/Heroic Games Launcher (Authenticate).sh" "Start Heroic Authenticate.sh"
-  heroic_write_es_stub "${roms}/Heroic Games Launcher.sh" "Start Heroic Play.sh"
-  heroic_write_es_stub "${roms}/Heroic Games Launcher (Gamescope).sh" "Start Heroic Play Gamescope.sh"
+  heroic_write_es_stub "${roms}/Heroic Games Launcher (Authenticate).sh" "start_heroic_authenticate.sh"
+  heroic_write_es_stub "${roms}/Heroic Games Launcher.sh" "start_heroic_play.sh"
+  heroic_write_es_stub "${roms}/Heroic Games Launcher (Gamescope).sh" "start_heroic_play_gamescope.sh"
 }
 
 if ! resolve_heroic_bin; then
