@@ -1,0 +1,4450 @@
+From a8ebd4d2d69c06bda0c52c216f54b48544ffca92 Mon Sep 17 00:00:00 2001
+From: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Date: Fri, 27 Mar 2026 05:43:51 +0530
+Subject: [PATCH 01/26] drm/msm/a8xx: Fix the ticks used in submit traces
+
+GMU_ALWAYS_ON_COUNTER_* registers got moved in A8x, but currently, A6x
+register offsets are used in the submit traces instead of A8x offsets.
+To fix this, refactor a bit and use adreno_gpu->funcs->get_timestamp()
+everywhere.
+
+While we are at it, update a8xx_gmu_get_timestamp() to use the GMU AO
+counter.
+
+Fixes: 288a93200892 ("drm/msm/adreno: Introduce A8x GPU Support")
+Signed-off-by: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+---
+ drivers/gpu/drm/msm/adreno/a4xx_gpu.c         |  6 ++---
+ drivers/gpu/drm/msm/adreno/a5xx_gpu.c         |  6 ++---
+ drivers/gpu/drm/msm/adreno/a6xx_gpu.c         | 23 ++++++-------------
+ drivers/gpu/drm/msm/adreno/a6xx_gpu.h         |  2 +-
+ drivers/gpu/drm/msm/adreno/a8xx_gpu.c         | 20 +++++++---------
+ drivers/gpu/drm/msm/adreno/adreno_gpu.c       |  6 ++---
+ drivers/gpu/drm/msm/adreno/adreno_gpu.h       |  2 +-
+ .../gpu/drm/msm/registers/adreno/a6xx_gmu.xml |  6 +++--
+ 8 files changed, 27 insertions(+), 44 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a4xx_gpu.c b/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
+index 8464d89e37f3..e6ab731f8e9a 100644
+--- a/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a4xx_gpu.c
+@@ -604,11 +604,9 @@ static int a4xx_pm_suspend(struct msm_gpu *gpu) {
+ 	return 0;
+ }
+ 
+-static int a4xx_get_timestamp(struct msm_gpu *gpu, uint64_t *value)
++static u64 a4xx_get_timestamp(struct msm_gpu *gpu)
+ {
+-	*value = gpu_read64(gpu, REG_A4XX_RBBM_PERFCTR_CP_0_LO);
+-
+-	return 0;
++	return gpu_read64(gpu, REG_A4XX_RBBM_PERFCTR_CP_0_LO);
+ }
+ 
+ static u64 a4xx_gpu_busy(struct msm_gpu *gpu, unsigned long *out_sample_rate)
+diff --git a/drivers/gpu/drm/msm/adreno/a5xx_gpu.c b/drivers/gpu/drm/msm/adreno/a5xx_gpu.c
+index ef9fd6171af7..e44302251de5 100644
+--- a/drivers/gpu/drm/msm/adreno/a5xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a5xx_gpu.c
+@@ -1435,11 +1435,9 @@ static int a5xx_pm_suspend(struct msm_gpu *gpu)
+ 	return 0;
+ }
+ 
+-static int a5xx_get_timestamp(struct msm_gpu *gpu, uint64_t *value)
++static u64 a5xx_get_timestamp(struct msm_gpu *gpu)
+ {
+-	*value = gpu_read64(gpu, REG_A5XX_RBBM_ALWAYSON_COUNTER_LO);
+-
+-	return 0;
++	return gpu_read64(gpu, REG_A5XX_RBBM_ALWAYSON_COUNTER_LO);
+ }
+ 
+ struct a5xx_crashdumper {
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
+index d6dfe6337bc3..346600118291 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
+@@ -16,8 +16,10 @@
+ 
+ #define GPU_PAS_ID 13
+ 
+-static u64 read_gmu_ao_counter(struct a6xx_gpu *a6xx_gpu)
++static u64 a6xx_gmu_get_timestamp(struct msm_gpu *gpu)
+ {
++	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
++	struct a6xx_gpu *a6xx_gpu = to_a6xx_gpu(adreno_gpu);
+ 	u64 count_hi, count_lo, temp;
+ 
+ 	do {
+@@ -404,7 +406,7 @@ static void a6xx_submit(struct msm_gpu *gpu, struct msm_gem_submit *submit)
+ 	OUT_RING(ring, upper_32_bits(rbmemptr(ring, fence)));
+ 	OUT_RING(ring, submit->seqno);
+ 
+-	trace_msm_gpu_submit_flush(submit, read_gmu_ao_counter(a6xx_gpu));
++	trace_msm_gpu_submit_flush(submit, adreno_gpu->funcs->get_timestamp(gpu));
+ 
+ 	a6xx_flush(gpu, ring);
+ }
+@@ -614,7 +616,7 @@ static void a7xx_submit(struct msm_gpu *gpu, struct msm_gem_submit *submit)
+ 	}
+ 
+ 
+-	trace_msm_gpu_submit_flush(submit, read_gmu_ao_counter(a6xx_gpu));
++	trace_msm_gpu_submit_flush(submit, adreno_gpu->funcs->get_timestamp(gpu));
+ 
+ 	a6xx_flush(gpu, ring);
+ 
+@@ -2414,20 +2416,9 @@ static int a6xx_pm_suspend(struct msm_gpu *gpu)
+ 	return 0;
+ }
+ 
+-static int a6xx_gmu_get_timestamp(struct msm_gpu *gpu, uint64_t *value)
++static u64 a6xx_get_timestamp(struct msm_gpu *gpu)
+ {
+-	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
+-	struct a6xx_gpu *a6xx_gpu = to_a6xx_gpu(adreno_gpu);
+-
+-	*value = read_gmu_ao_counter(a6xx_gpu);
+-
+-	return 0;
+-}
+-
+-static int a6xx_get_timestamp(struct msm_gpu *gpu, uint64_t *value)
+-{
+-	*value = gpu_read64(gpu, REG_A6XX_CP_ALWAYS_ON_COUNTER);
+-	return 0;
++	return gpu_read64(gpu, REG_A6XX_CP_ALWAYS_ON_COUNTER);
+ }
+ 
+ static struct msm_ringbuffer *a6xx_active_ring(struct msm_gpu *gpu)
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gpu.h b/drivers/gpu/drm/msm/adreno/a6xx_gpu.h
+index 4eaa04711246..a4434a6a56dd 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gpu.h
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gpu.h
+@@ -320,7 +320,7 @@ int a6xx_zap_shader_init(struct msm_gpu *gpu);
+ void a8xx_bus_clear_pending_transactions(struct adreno_gpu *adreno_gpu, bool gx_off);
+ int a8xx_fault_handler(void *arg, unsigned long iova, int flags, void *data);
+ void a8xx_flush(struct msm_gpu *gpu, struct msm_ringbuffer *ring);
+-int a8xx_gmu_get_timestamp(struct msm_gpu *gpu, uint64_t *value);
++u64 a8xx_gmu_get_timestamp(struct msm_gpu *gpu);
+ u64 a8xx_gpu_busy(struct msm_gpu *gpu, unsigned long *out_sample_rate);
+ int a8xx_gpu_feature_probe(struct msm_gpu *gpu);
+ void a8xx_gpu_get_slice_info(struct msm_gpu *gpu);
+diff --git a/drivers/gpu/drm/msm/adreno/a8xx_gpu.c b/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
+index b1887e0cf698..840af9c4d718 100644
+--- a/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
+@@ -1174,23 +1174,19 @@ void a8xx_bus_clear_pending_transactions(struct adreno_gpu *adreno_gpu, bool gx_
+ 	gpu_write(gpu, REG_A6XX_GBIF_HALT, 0x0);
+ }
+ 
+-int a8xx_gmu_get_timestamp(struct msm_gpu *gpu, uint64_t *value)
++u64 a8xx_gmu_get_timestamp(struct msm_gpu *gpu)
+ {
+ 	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
+ 	struct a6xx_gpu *a6xx_gpu = to_a6xx_gpu(adreno_gpu);
++	u64 count_hi, count_lo, temp;
+ 
+-	mutex_lock(&a6xx_gpu->gmu.lock);
+-
+-	/* Force the GPU power on so we can read this register */
+-	a6xx_gmu_set_oob(&a6xx_gpu->gmu, GMU_OOB_PERFCOUNTER_SET);
+-
+-	*value = gpu_read64(gpu, REG_A8XX_CP_ALWAYS_ON_COUNTER);
+-
+-	a6xx_gmu_clear_oob(&a6xx_gpu->gmu, GMU_OOB_PERFCOUNTER_SET);
+-
+-	mutex_unlock(&a6xx_gpu->gmu.lock);
++	do {
++		count_hi = gmu_read(&a6xx_gpu->gmu, REG_A8XX_GMU_ALWAYS_ON_COUNTER_H);
++		count_lo = gmu_read(&a6xx_gpu->gmu, REG_A8XX_GMU_ALWAYS_ON_COUNTER_L);
++		temp = gmu_read(&a6xx_gpu->gmu, REG_A8XX_GMU_ALWAYS_ON_COUNTER_H);
++	} while (unlikely(count_hi != temp));
+ 
+-	return 0;
++	return (count_hi << 32) | count_lo;
+ }
+ 
+ u64 a8xx_gpu_busy(struct msm_gpu *gpu, unsigned long *out_sample_rate)
+diff --git a/drivers/gpu/drm/msm/adreno/adreno_gpu.c b/drivers/gpu/drm/msm/adreno/adreno_gpu.c
+index d5fe6f6f0dec..785e99fb5bd5 100644
+--- a/drivers/gpu/drm/msm/adreno/adreno_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/adreno_gpu.c
+@@ -391,13 +391,11 @@ int adreno_get_param(struct msm_gpu *gpu, struct msm_context *ctx,
+ 		return 0;
+ 	case MSM_PARAM_TIMESTAMP:
+ 		if (adreno_gpu->funcs->get_timestamp) {
+-			int ret;
+-
+ 			pm_runtime_get_sync(&gpu->pdev->dev);
+-			ret = adreno_gpu->funcs->get_timestamp(gpu, value);
++			*value = adreno_gpu->funcs->get_timestamp(gpu);
+ 			pm_runtime_put_autosuspend(&gpu->pdev->dev);
+ 
+-			return ret;
++			return 0;
+ 		}
+ 		return -EINVAL;
+ 	case MSM_PARAM_PRIORITIES:
+diff --git a/drivers/gpu/drm/msm/adreno/adreno_gpu.h b/drivers/gpu/drm/msm/adreno/adreno_gpu.h
+index 1d0145f8b3ec..c08725ed54c4 100644
+--- a/drivers/gpu/drm/msm/adreno/adreno_gpu.h
++++ b/drivers/gpu/drm/msm/adreno/adreno_gpu.h
+@@ -79,7 +79,7 @@ struct adreno_gpu;
+ struct adreno_gpu_funcs {
+ 	struct msm_gpu_funcs base;
+ 	struct msm_gpu *(*init)(struct drm_device *dev);
+-	int (*get_timestamp)(struct msm_gpu *gpu, uint64_t *value);
++	u64 (*get_timestamp)(struct msm_gpu *gpu);
+ 	void (*bus_halt)(struct adreno_gpu *adreno_gpu, bool gx_off);
+ 	int (*mmu_fault_handler)(void *arg, unsigned long iova, int flags, void *data);
+ };
+diff --git a/drivers/gpu/drm/msm/registers/adreno/a6xx_gmu.xml b/drivers/gpu/drm/msm/registers/adreno/a6xx_gmu.xml
+index c4e00b1263cd..33404eb18fd0 100644
+--- a/drivers/gpu/drm/msm/registers/adreno/a6xx_gmu.xml
++++ b/drivers/gpu/drm/msm/registers/adreno/a6xx_gmu.xml
+@@ -141,8 +141,10 @@ xsi:schemaLocation="https://gitlab.freedesktop.org/freedreno/ rules-fd.xsd">
+ 	<reg32 offset="0x1f9f0" name="GMU_BOOT_KMD_LM_HANDSHAKE"/>
+ 	<reg32 offset="0x1f957" name="GMU_LLM_GLM_SLEEP_CTRL"/>
+ 	<reg32 offset="0x1f958" name="GMU_LLM_GLM_SLEEP_STATUS"/>
+-	<reg32 offset="0x1f888" name="GMU_ALWAYS_ON_COUNTER_L"/>
+-	<reg32 offset="0x1f889" name="GMU_ALWAYS_ON_COUNTER_H"/>
++	<reg32 offset="0x1f888" name="GMU_ALWAYS_ON_COUNTER_L" variants="A6XX-A7XX"/>
++	<reg32 offset="0x1f840" name="GMU_ALWAYS_ON_COUNTER_L" variants="A8XX-"/>
++	<reg32 offset="0x1f889" name="GMU_ALWAYS_ON_COUNTER_H" variants="A6XX-A7XX"/>
++	<reg32 offset="0x1f841" name="GMU_ALWAYS_ON_COUNTER_H" variants="A8XX-"/>
+ 	<reg32 offset="0x1f8c3" name="GMU_GMU_PWR_COL_KEEPALIVE" variants="A6XX-A7XX"/>
+ 	<reg32 offset="0x1f7e4" name="GMU_GMU_PWR_COL_KEEPALIVE" variants="A8XX-"/>
+ 	<reg32 offset="0x1f8c4" name="GMU_PWR_COL_PREEMPT_KEEPALIVE" variants="A6XX-A7XX"/>
+-- 
+2.43.0
+
+
+From f991e21cfd5150c4948ca68e5db75bc53da15e47 Mon Sep 17 00:00:00 2001
+From: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Date: Fri, 27 Mar 2026 05:43:52 +0530
+Subject: [PATCH 02/26] drm/msm/a6xx: Switch to preemption safe AO counter
+
+CP_ALWAYS_ON_COUNTER is not save-restored during preemption, so it won't
+provide accurate data about the 'submit' when preemption is enabled.
+Switch to CP_ALWAYS_ON_CONTEXT which is preemption safe.
+
+Fixes: e7ae83da4a28 ("drm/msm/a6xx: Implement preemption for a7xx targets")
+Signed-off-by: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+---
+ drivers/gpu/drm/msm/adreno/a6xx_gpu.c | 14 +++++++-------
+ 1 file changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
+index 346600118291..10910729fd29 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
+@@ -347,7 +347,7 @@ static void a6xx_submit(struct msm_gpu *gpu, struct msm_gem_submit *submit)
+ 	 * GPU registers so we need to add 0x1a800 to the register value on A630
+ 	 * to get the right value from PM4.
+ 	 */
+-	get_stats_counter(ring, REG_A6XX_CP_ALWAYS_ON_COUNTER,
++	get_stats_counter(ring, REG_A6XX_CP_ALWAYS_ON_CONTEXT,
+ 		rbmemptr_stats(ring, index, alwayson_start));
+ 
+ 	/* Invalidate CCU depth and color */
+@@ -388,7 +388,7 @@ static void a6xx_submit(struct msm_gpu *gpu, struct msm_gem_submit *submit)
+ 
+ 	get_stats_counter(ring, REG_A6XX_RBBM_PERFCTR_CP(0),
+ 		rbmemptr_stats(ring, index, cpcycles_end));
+-	get_stats_counter(ring, REG_A6XX_CP_ALWAYS_ON_COUNTER,
++	get_stats_counter(ring, REG_A6XX_CP_ALWAYS_ON_CONTEXT,
+ 		rbmemptr_stats(ring, index, alwayson_end));
+ 
+ 	/* Write the fence to the scratch register */
+@@ -457,7 +457,7 @@ static void a7xx_submit(struct msm_gpu *gpu, struct msm_gem_submit *submit)
+ 	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
+ 	struct a6xx_gpu *a6xx_gpu = to_a6xx_gpu(adreno_gpu);
+ 	struct msm_ringbuffer *ring = submit->ring;
+-	u32 rbbm_perfctr_cp0, cp_always_on_counter;
++	u32 rbbm_perfctr_cp0, cp_always_on_context;
+ 	unsigned int i, ibs = 0;
+ 
+ 	adreno_check_and_reenable_stall(adreno_gpu);
+@@ -480,14 +480,14 @@ static void a7xx_submit(struct msm_gpu *gpu, struct msm_gem_submit *submit)
+ 
+ 	if (adreno_is_a8xx(adreno_gpu)) {
+ 		rbbm_perfctr_cp0 = REG_A8XX_RBBM_PERFCTR_CP(0);
+-		cp_always_on_counter = REG_A8XX_CP_ALWAYS_ON_COUNTER;
++		cp_always_on_context = REG_A8XX_CP_ALWAYS_ON_CONTEXT;
+ 	} else {
+ 		rbbm_perfctr_cp0 = REG_A7XX_RBBM_PERFCTR_CP(0);
+-		cp_always_on_counter = REG_A6XX_CP_ALWAYS_ON_COUNTER;
++		cp_always_on_context = REG_A6XX_CP_ALWAYS_ON_CONTEXT;
+ 	}
+ 
+ 	get_stats_counter(ring, rbbm_perfctr_cp0, rbmemptr_stats(ring, index, cpcycles_start));
+-	get_stats_counter(ring, cp_always_on_counter, rbmemptr_stats(ring, index, alwayson_start));
++	get_stats_counter(ring, cp_always_on_context, rbmemptr_stats(ring, index, alwayson_start));
+ 
+ 	OUT_PKT7(ring, CP_THREAD_CONTROL, 1);
+ 	OUT_RING(ring, CP_SET_THREAD_BOTH);
+@@ -535,7 +535,7 @@ static void a7xx_submit(struct msm_gpu *gpu, struct msm_gem_submit *submit)
+ 	}
+ 
+ 	get_stats_counter(ring, rbbm_perfctr_cp0, rbmemptr_stats(ring, index, cpcycles_end));
+-	get_stats_counter(ring, cp_always_on_counter, rbmemptr_stats(ring, index, alwayson_end));
++	get_stats_counter(ring, cp_always_on_context, rbmemptr_stats(ring, index, alwayson_end));
+ 
+ 	/* Write the fence to the scratch register */
+ 	if (adreno_is_a8xx(adreno_gpu)) {
+-- 
+2.43.0
+
+
+From 005cfb3aa823fd0d43244c9557b585558fc724ba Mon Sep 17 00:00:00 2001
+From: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Date: Fri, 27 Mar 2026 05:43:53 +0530
+Subject: [PATCH 03/26] drm/msm/a6xx: Correct OOB usage
+
+During the GMU resume sequence, using another OOB other than OOB_GPU may
+confuse the internal state of GMU firmware. To align more strictly with
+the downstream sequence, move the sysprof related OOB setup after the
+OOB_GPU is cleared.
+
+Fixes: 62cd0fa6990b ("drm/msm/adreno: Disable IFPC when sysprof is active")
+Signed-off-by: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+---
+ drivers/gpu/drm/msm/adreno/a6xx_gmu.c | 5 -----
+ drivers/gpu/drm/msm/adreno/a6xx_gpu.c | 6 ++++++
+ drivers/gpu/drm/msm/adreno/a8xx_gpu.c | 6 ++++++
+ 3 files changed, 12 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+index 9662201cd2e9..690d3e53e273 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+@@ -1236,11 +1236,6 @@ int a6xx_gmu_resume(struct a6xx_gpu *a6xx_gpu)
+ 	/* Set the GPU to the current freq */
+ 	a6xx_gmu_set_initial_freq(gpu, gmu);
+ 
+-	if (refcount_read(&gpu->sysprof_active) > 1) {
+-		ret = a6xx_gmu_set_oob(gmu, GMU_OOB_PERFCOUNTER_SET);
+-		if (!ret)
+-			set_bit(GMU_STATUS_OOB_PERF_SET, &gmu->status);
+-	}
+ out:
+ 	/* On failure, shut down the GMU to leave it in a good state */
+ 	if (ret) {
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
+index 10910729fd29..1f5afe7c44ca 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
+@@ -1605,6 +1605,12 @@ static int hw_init(struct msm_gpu *gpu)
+ 		a6xx_gmu_clear_oob(&a6xx_gpu->gmu, GMU_OOB_BOOT_SLUMBER);
+ 	}
+ 
++	if (!ret && (refcount_read(&gpu->sysprof_active) > 1)) {
++		ret = a6xx_gmu_set_oob(gmu, GMU_OOB_PERFCOUNTER_SET);
++		if (!ret)
++			set_bit(GMU_STATUS_OOB_PERF_SET, &gmu->status);
++	}
++
+ 	return ret;
+ }
+ 
+diff --git a/drivers/gpu/drm/msm/adreno/a8xx_gpu.c b/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
+index 840af9c4d718..fafeac62aebf 100644
+--- a/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
+@@ -711,6 +711,12 @@ static int hw_init(struct msm_gpu *gpu)
+ 	 */
+ 	a6xx_gmu_clear_oob(&a6xx_gpu->gmu, GMU_OOB_GPU_SET);
+ 
++	if (!ret && (refcount_read(&gpu->sysprof_active) > 1)) {
++		ret = a6xx_gmu_set_oob(gmu, GMU_OOB_PERFCOUNTER_SET);
++		if (!ret)
++			set_bit(GMU_STATUS_OOB_PERF_SET, &gmu->status);
++	}
++
+ 	return ret;
+ }
+ 
+-- 
+2.43.0
+
+
+From e62ba627ba940f0a8f96f7cbbcb0976a82004a92 Mon Sep 17 00:00:00 2001
+From: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Date: Fri, 27 Mar 2026 05:43:54 +0530
+Subject: [PATCH 04/26] drm/msm/adreno: Implement gx_is_on() for A8x
+
+A8x has a diverged enough for a separate implementation of gx_is_on()
+check. Add that and move them to the adreno func table.
+
+Fixes: 288a93200892 ("drm/msm/adreno: Introduce A8x GPU Support")
+Reviewed-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Signed-off-by: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+---
+ drivers/gpu/drm/msm/adreno/a6xx_gmu.c       | 42 +++++++++++++++++++--
+ drivers/gpu/drm/msm/adreno/a6xx_gmu.h       |  5 ++-
+ drivers/gpu/drm/msm/adreno/a6xx_gpu.c       |  6 ++-
+ drivers/gpu/drm/msm/adreno/a6xx_gpu_state.c |  4 +-
+ drivers/gpu/drm/msm/adreno/adreno_gpu.h     |  1 +
+ 5 files changed, 50 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+index 690d3e53e273..b41dbca1ebc6 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+@@ -91,10 +91,10 @@ bool a6xx_gmu_sptprac_is_on(struct a6xx_gmu *gmu)
+ }
+ 
+ /* Check to see if the GX rail is still powered */
+-bool a6xx_gmu_gx_is_on(struct a6xx_gmu *gmu)
++bool a6xx_gmu_gx_is_on(struct adreno_gpu *adreno_gpu)
+ {
+-	struct a6xx_gpu *a6xx_gpu = container_of(gmu, struct a6xx_gpu, gmu);
+-	struct adreno_gpu *adreno_gpu = &a6xx_gpu->base;
++	struct a6xx_gpu *a6xx_gpu = to_a6xx_gpu(adreno_gpu);
++	struct a6xx_gmu *gmu = &a6xx_gpu->gmu;
+ 	u32 val;
+ 
+ 	/* This can be called from gpu state code so make sure GMU is valid */
+@@ -117,6 +117,40 @@ bool a6xx_gmu_gx_is_on(struct a6xx_gmu *gmu)
+ 		A6XX_GMU_SPTPRAC_PWR_CLK_STATUS_GX_HM_CLK_OFF));
+ }
+ 
++bool a7xx_gmu_gx_is_on(struct adreno_gpu *adreno_gpu)
++{
++	struct a6xx_gpu *a6xx_gpu = to_a6xx_gpu(adreno_gpu);
++	struct a6xx_gmu *gmu = &a6xx_gpu->gmu;
++	u32 val;
++
++	/* This can be called from gpu state code so make sure GMU is valid */
++	if (!gmu->initialized)
++		return false;
++
++	val = gmu_read(gmu, REG_A6XX_GMU_SPTPRAC_PWR_CLK_STATUS);
++
++	return !(val &
++		(A7XX_GMU_SPTPRAC_PWR_CLK_STATUS_GX_HM_GDSC_POWER_OFF |
++		A7XX_GMU_SPTPRAC_PWR_CLK_STATUS_GX_HM_CLK_OFF));
++}
++
++bool a8xx_gmu_gx_is_on(struct adreno_gpu *adreno_gpu)
++{
++	struct a6xx_gpu *a6xx_gpu = to_a6xx_gpu(adreno_gpu);
++	struct a6xx_gmu *gmu = &a6xx_gpu->gmu;
++	u32 val;
++
++	/* This can be called from gpu state code so make sure GMU is valid */
++	if (!gmu->initialized)
++		return false;
++
++	val = gmu_read(gmu, REG_A8XX_GMU_PWR_CLK_STATUS);
++
++	return !(val &
++		(A8XX_GMU_PWR_CLK_STATUS_GX_HM_GDSC_POWER_OFF |
++		 A8XX_GMU_PWR_CLK_STATUS_GX_HM_CLK_OFF));
++}
++
+ void a6xx_gmu_set_freq(struct msm_gpu *gpu, struct dev_pm_opp *opp,
+ 		       bool suspended)
+ {
+@@ -240,7 +274,7 @@ static bool a6xx_gmu_check_idle_level(struct a6xx_gmu *gmu)
+ 
+ 	if (val == local) {
+ 		if (gmu->idle_level != GMU_IDLE_STATE_IFPC ||
+-			!a6xx_gmu_gx_is_on(gmu))
++			!adreno_gpu->funcs->gx_is_on(adreno_gpu))
+ 			return true;
+ 	}
+ 
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.h b/drivers/gpu/drm/msm/adreno/a6xx_gmu.h
+index 2af074c8e8cf..9f09daf45ab2 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.h
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.h
+@@ -10,6 +10,7 @@
+ #include <linux/notifier.h>
+ #include <linux/soc/qcom/qcom_aoss.h>
+ #include "msm_drv.h"
++#include "adreno_gpu.h"
+ #include "a6xx_hfi.h"
+ 
+ struct a6xx_gmu_bo {
+@@ -231,7 +232,9 @@ void a6xx_hfi_stop(struct a6xx_gmu *gmu);
+ int a6xx_hfi_send_prep_slumber(struct a6xx_gmu *gmu);
+ int a6xx_hfi_set_freq(struct a6xx_gmu *gmu, u32 perf_index, u32 bw_index);
+ 
+-bool a6xx_gmu_gx_is_on(struct a6xx_gmu *gmu);
++bool a6xx_gmu_gx_is_on(struct adreno_gpu *adreno_gpu);
++bool a7xx_gmu_gx_is_on(struct adreno_gpu *adreno_gpu);
++bool a8xx_gmu_gx_is_on(struct adreno_gpu *adreno_gpu);
+ bool a6xx_gmu_sptprac_is_on(struct a6xx_gmu *gmu);
+ void a6xx_sptprac_disable(struct a6xx_gmu *gmu);
+ int a6xx_sptprac_enable(struct a6xx_gmu *gmu);
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
+index 1f5afe7c44ca..85fee0a63076 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
+@@ -1643,7 +1643,7 @@ static void a6xx_recover(struct msm_gpu *gpu)
+ 
+ 	adreno_dump_info(gpu);
+ 
+-	if (a6xx_gmu_gx_is_on(&a6xx_gpu->gmu)) {
++	if (adreno_gpu->funcs->gx_is_on(adreno_gpu)) {
+ 		/* Sometimes crashstate capture is skipped, so SQE should be halted here again */
+ 		gpu_write(gpu, REG_A6XX_CP_SQE_CNTL, 3);
+ 
+@@ -2762,6 +2762,7 @@ const struct adreno_gpu_funcs a6xx_gpu_funcs = {
+ 	.get_timestamp = a6xx_gmu_get_timestamp,
+ 	.bus_halt = a6xx_bus_clear_pending_transactions,
+ 	.mmu_fault_handler = a6xx_fault_handler,
++	.gx_is_on = a6xx_gmu_gx_is_on,
+ };
+ 
+ const struct adreno_gpu_funcs a6xx_gmuwrapper_funcs = {
+@@ -2794,6 +2795,7 @@ const struct adreno_gpu_funcs a6xx_gmuwrapper_funcs = {
+ 	.get_timestamp = a6xx_get_timestamp,
+ 	.bus_halt = a6xx_bus_clear_pending_transactions,
+ 	.mmu_fault_handler = a6xx_fault_handler,
++	.gx_is_on = a6xx_gmu_gx_is_on,
+ };
+ 
+ const struct adreno_gpu_funcs a7xx_gpu_funcs = {
+@@ -2828,6 +2830,7 @@ const struct adreno_gpu_funcs a7xx_gpu_funcs = {
+ 	.get_timestamp = a6xx_gmu_get_timestamp,
+ 	.bus_halt = a6xx_bus_clear_pending_transactions,
+ 	.mmu_fault_handler = a6xx_fault_handler,
++	.gx_is_on = a7xx_gmu_gx_is_on,
+ };
+ 
+ const struct adreno_gpu_funcs a8xx_gpu_funcs = {
+@@ -2855,4 +2858,5 @@ const struct adreno_gpu_funcs a8xx_gpu_funcs = {
+ 	.get_timestamp = a8xx_gmu_get_timestamp,
+ 	.bus_halt = a8xx_bus_clear_pending_transactions,
+ 	.mmu_fault_handler = a8xx_fault_handler,
++	.gx_is_on = a8xx_gmu_gx_is_on,
+ };
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gpu_state.c b/drivers/gpu/drm/msm/adreno/a6xx_gpu_state.c
+index 2d56fe0a65b7..e3a42d0b5760 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gpu_state.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gpu_state.c
+@@ -1251,7 +1251,7 @@ static void a6xx_get_gmu_registers(struct msm_gpu *gpu,
+ 		_a6xx_get_gmu_registers(gpu, a6xx_state, &a6xx_gpucc_reg,
+ 			&a6xx_state->gmu_registers[2], false);
+ 
+-	if (!a6xx_gmu_gx_is_on(&a6xx_gpu->gmu))
++	if (!adreno_gpu->funcs->gx_is_on(adreno_gpu))
+ 		return;
+ 
+ 	/* Set the fence to ALLOW mode so we can access the registers */
+@@ -1607,7 +1607,7 @@ struct msm_gpu_state *a6xx_gpu_state_get(struct msm_gpu *gpu)
+ 	}
+ 
+ 	/* If GX isn't on the rest of the data isn't going to be accessible */
+-	if (!a6xx_gmu_gx_is_on(&a6xx_gpu->gmu))
++	if (!adreno_gpu->funcs->gx_is_on(adreno_gpu))
+ 		return &a6xx_state->base;
+ 
+ 	/* Halt SQE first */
+diff --git a/drivers/gpu/drm/msm/adreno/adreno_gpu.h b/drivers/gpu/drm/msm/adreno/adreno_gpu.h
+index c08725ed54c4..29097e6b4253 100644
+--- a/drivers/gpu/drm/msm/adreno/adreno_gpu.h
++++ b/drivers/gpu/drm/msm/adreno/adreno_gpu.h
+@@ -82,6 +82,7 @@ struct adreno_gpu_funcs {
+ 	u64 (*get_timestamp)(struct msm_gpu *gpu);
+ 	void (*bus_halt)(struct adreno_gpu *adreno_gpu, bool gx_off);
+ 	int (*mmu_fault_handler)(void *arg, unsigned long iova, int flags, void *data);
++	bool (*gx_is_on)(struct adreno_gpu *adreno_gpu);
+ };
+ 
+ struct adreno_reglist {
+-- 
+2.43.0
+
+
+From e1aa00d9580384b663bdeb36a1738faf4d25f0c3 Mon Sep 17 00:00:00 2001
+From: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Date: Fri, 27 Mar 2026 05:43:55 +0530
+Subject: [PATCH 05/26] drm/msm/a6xx: Fix gpu init from secure world
+
+A7XX_GEN2 and newer GPUs requires initialization of few configurations
+related to features/power from secure world. The SCM call to do this
+should be triggered after GDSC and clocks are enabled. So, keep this
+sequence to a6xx_gmu_resume instead of the probe.
+
+Also, simplify the error handling in a6xx_gmu_resume() using 'goto'
+labels.
+
+Fixes: 14b27d5df3ea ("drm/msm/a7xx: Initialize a750 "software fuse"")
+Signed-off-by: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+---
+ drivers/gpu/drm/msm/adreno/a6xx_gmu.c | 93 ++++++++++++++++++++++-----
+ drivers/gpu/drm/msm/adreno/a6xx_gmu.h |  2 +
+ drivers/gpu/drm/msm/adreno/a6xx_gpu.c | 59 -----------------
+ 3 files changed, 80 insertions(+), 74 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+index b41dbca1ebc6..1b44b9e21ad8 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+@@ -3,6 +3,7 @@
+ 
+ #include <linux/bitfield.h>
+ #include <linux/clk.h>
++#include <linux/firmware/qcom/qcom_scm.h>
+ #include <linux/interconnect.h>
+ #include <linux/of_platform.h>
+ #include <linux/platform_device.h>
+@@ -1191,6 +1192,65 @@ static void a6xx_gmu_set_initial_bw(struct msm_gpu *gpu, struct a6xx_gmu *gmu)
+ 	dev_pm_opp_put(gpu_opp);
+ }
+ 
++static int a6xx_gmu_secure_init(struct a6xx_gpu *a6xx_gpu)
++{
++	struct adreno_gpu *adreno_gpu = &a6xx_gpu->base;
++	struct msm_gpu *gpu = &adreno_gpu->base;
++	struct a6xx_gmu *gmu = &a6xx_gpu->gmu;
++	u32 fuse_val;
++	int ret;
++
++	if (test_bit(GMU_STATUS_SECURE_INIT, &gmu->status))
++		return 0;
++
++	if (adreno_is_a750(adreno_gpu) || adreno_is_a8xx(adreno_gpu)) {
++		/*
++		 * Assume that if qcom scm isn't available, that whatever
++		 * replacement allows writing the fuse register ourselves.
++		 * Users of alternative firmware need to make sure this
++		 * register is writeable or indicate that it's not somehow.
++		 * Print a warning because if you mess this up you're about to
++		 * crash horribly.
++		 */
++		if (!qcom_scm_is_available()) {
++			dev_warn_once(gpu->dev->dev,
++				"SCM is not available, poking fuse register\n");
++			a6xx_llc_write(a6xx_gpu, REG_A7XX_CX_MISC_SW_FUSE_VALUE,
++				A7XX_CX_MISC_SW_FUSE_VALUE_RAYTRACING |
++				A7XX_CX_MISC_SW_FUSE_VALUE_FASTBLEND |
++				A7XX_CX_MISC_SW_FUSE_VALUE_LPAC);
++			adreno_gpu->has_ray_tracing = true;
++			goto done;
++		}
++
++		ret = qcom_scm_gpu_init_regs(QCOM_SCM_GPU_ALWAYS_EN_REQ |
++					     QCOM_SCM_GPU_TSENSE_EN_REQ);
++		if (ret) {
++			dev_warn_once(gpu->dev->dev,
++				"SCM call failed\n");
++			return ret;
++		}
++
++		/*
++		 * On A7XX_GEN3 and newer, raytracing may be disabled by the
++		 * firmware, find out whether that's the case. The scm call
++		 * above sets the fuse register.
++		 */
++		fuse_val = a6xx_llc_read(a6xx_gpu,
++					 REG_A7XX_CX_MISC_SW_FUSE_VALUE);
++		adreno_gpu->has_ray_tracing =
++			!!(fuse_val & A7XX_CX_MISC_SW_FUSE_VALUE_RAYTRACING);
++	} else if (adreno_is_a740(adreno_gpu)) {
++		/* Raytracing is always enabled on a740 */
++		adreno_gpu->has_ray_tracing = true;
++	}
++
++done:
++	set_bit(GMU_STATUS_SECURE_INIT, &gmu->status);
++	return 0;
++}
++
++
+ int a6xx_gmu_resume(struct a6xx_gpu *a6xx_gpu)
+ {
+ 	struct adreno_gpu *adreno_gpu = &a6xx_gpu->base;
+@@ -1219,11 +1279,12 @@ int a6xx_gmu_resume(struct a6xx_gpu *a6xx_gpu)
+ 	clk_set_rate(gmu->hub_clk, adreno_is_a740_family(adreno_gpu) ?
+ 		     200000000 : 150000000);
+ 	ret = clk_bulk_prepare_enable(gmu->nr_clocks, gmu->clocks);
+-	if (ret) {
+-		pm_runtime_put(gmu->gxpd);
+-		pm_runtime_put(gmu->dev);
+-		return ret;
+-	}
++	if (ret)
++		goto rpm_put;
++
++	ret = a6xx_gmu_secure_init(a6xx_gpu);
++	if (ret)
++		goto disable_clk;
+ 
+ 	/* Read the slice info on A8x GPUs */
+ 	a8xx_gpu_get_slice_info(gpu);
+@@ -1253,11 +1314,11 @@ int a6xx_gmu_resume(struct a6xx_gpu *a6xx_gpu)
+ 
+ 	ret = a6xx_gmu_fw_start(gmu, status);
+ 	if (ret)
+-		goto out;
++		goto disable_irq;
+ 
+ 	ret = a6xx_hfi_start(gmu, status);
+ 	if (ret)
+-		goto out;
++		goto disable_irq;
+ 
+ 	/*
+ 	 * Turn on the GMU firmware fault interrupt after we know the boot
+@@ -1270,14 +1331,16 @@ int a6xx_gmu_resume(struct a6xx_gpu *a6xx_gpu)
+ 	/* Set the GPU to the current freq */
+ 	a6xx_gmu_set_initial_freq(gpu, gmu);
+ 
+-out:
+-	/* On failure, shut down the GMU to leave it in a good state */
+-	if (ret) {
+-		disable_irq(gmu->gmu_irq);
+-		a6xx_rpmh_stop(gmu);
+-		pm_runtime_put(gmu->gxpd);
+-		pm_runtime_put(gmu->dev);
+-	}
++	return 0;
++
++disable_irq:
++	disable_irq(gmu->gmu_irq);
++	a6xx_rpmh_stop(gmu);
++disable_clk:
++	clk_bulk_disable_unprepare(gmu->nr_clocks, gmu->clocks);
++rpm_put:
++	pm_runtime_put(gmu->gxpd);
++	pm_runtime_put(gmu->dev);
+ 
+ 	return ret;
+ }
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.h b/drivers/gpu/drm/msm/adreno/a6xx_gmu.h
+index 9f09daf45ab2..0cd8ae1b4f5c 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.h
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.h
+@@ -130,6 +130,8 @@ struct a6xx_gmu {
+ #define GMU_STATUS_PDC_SLEEP	1
+ /* To track Perfcounter OOB set status */
+ #define GMU_STATUS_OOB_PERF_SET 2
++/* To track whether secure world init was done */
++#define GMU_STATUS_SECURE_INIT	3
+ 	unsigned long status;
+ };
+ 
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
+index 85fee0a63076..f206c08e8f68 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
+@@ -10,7 +10,6 @@
+ 
+ #include <linux/bitfield.h>
+ #include <linux/devfreq.h>
+-#include <linux/firmware/qcom/qcom_scm.h>
+ #include <linux/pm_domain.h>
+ #include <linux/soc/qcom/llcc-qcom.h>
+ 
+@@ -2160,56 +2159,6 @@ static void a6xx_llc_slices_init(struct platform_device *pdev,
+ 		a6xx_gpu->llc_mmio = ERR_PTR(-EINVAL);
+ }
+ 
+-static int a7xx_cx_mem_init(struct a6xx_gpu *a6xx_gpu)
+-{
+-	struct adreno_gpu *adreno_gpu = &a6xx_gpu->base;
+-	struct msm_gpu *gpu = &adreno_gpu->base;
+-	u32 fuse_val;
+-	int ret;
+-
+-	if (adreno_is_a750(adreno_gpu) || adreno_is_a8xx(adreno_gpu)) {
+-		/*
+-		 * Assume that if qcom scm isn't available, that whatever
+-		 * replacement allows writing the fuse register ourselves.
+-		 * Users of alternative firmware need to make sure this
+-		 * register is writeable or indicate that it's not somehow.
+-		 * Print a warning because if you mess this up you're about to
+-		 * crash horribly.
+-		 */
+-		if (!qcom_scm_is_available()) {
+-			dev_warn_once(gpu->dev->dev,
+-				"SCM is not available, poking fuse register\n");
+-			a6xx_llc_write(a6xx_gpu, REG_A7XX_CX_MISC_SW_FUSE_VALUE,
+-				A7XX_CX_MISC_SW_FUSE_VALUE_RAYTRACING |
+-				A7XX_CX_MISC_SW_FUSE_VALUE_FASTBLEND |
+-				A7XX_CX_MISC_SW_FUSE_VALUE_LPAC);
+-			adreno_gpu->has_ray_tracing = true;
+-			return 0;
+-		}
+-
+-		ret = qcom_scm_gpu_init_regs(QCOM_SCM_GPU_ALWAYS_EN_REQ |
+-					     QCOM_SCM_GPU_TSENSE_EN_REQ);
+-		if (ret)
+-			return ret;
+-
+-		/*
+-		 * On A7XX_GEN3 and newer, raytracing may be disabled by the
+-		 * firmware, find out whether that's the case. The scm call
+-		 * above sets the fuse register.
+-		 */
+-		fuse_val = a6xx_llc_read(a6xx_gpu,
+-					 REG_A7XX_CX_MISC_SW_FUSE_VALUE);
+-		adreno_gpu->has_ray_tracing =
+-			!!(fuse_val & A7XX_CX_MISC_SW_FUSE_VALUE_RAYTRACING);
+-	} else if (adreno_is_a740(adreno_gpu)) {
+-		/* Raytracing is always enabled on a740 */
+-		adreno_gpu->has_ray_tracing = true;
+-	}
+-
+-	return 0;
+-}
+-
+-
+ #define GBIF_CLIENT_HALT_MASK		BIT(0)
+ #define GBIF_ARB_HALT_MASK		BIT(1)
+ #define VBIF_XIN_HALT_CTRL0_MASK	GENMASK(3, 0)
+@@ -2705,14 +2654,6 @@ static struct msm_gpu *a6xx_gpu_init(struct drm_device *dev)
+ 		return ERR_PTR(ret);
+ 	}
+ 
+-	if (adreno_is_a7xx(adreno_gpu) || adreno_is_a8xx(adreno_gpu)) {
+-		ret = a7xx_cx_mem_init(a6xx_gpu);
+-		if (ret) {
+-			a6xx_destroy(&(a6xx_gpu->base.base));
+-			return ERR_PTR(ret);
+-		}
+-	}
+-
+ 	adreno_gpu->uche_trap_base = 0x1fffffffff000ull;
+ 
+ 	msm_mmu_set_fault_handler(to_msm_vm(gpu->vm)->mmu, gpu,
+-- 
+2.43.0
+
+
+From a8834ddc3c756cff8fa0e19fe7aacc74641330a0 Mon Sep 17 00:00:00 2001
+From: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Date: Fri, 27 Mar 2026 05:43:56 +0530
+Subject: [PATCH 06/26] drm/msm/a6xx: Add support for Debug HFI Q
+
+Add the Debug HFI Queue which contains the F2H messages posted from the
+GMU firmware. Having this data in coredump is useful to debug firmware
+issues.
+
+Signed-off-by: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Reviewed-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+---
+ drivers/gpu/drm/msm/adreno/a6xx_gmu.h       |  2 +-
+ drivers/gpu/drm/msm/adreno/a6xx_gpu_state.c |  2 +-
+ drivers/gpu/drm/msm/adreno/a6xx_hfi.c       | 16 +++++++++++++---
+ drivers/gpu/drm/msm/adreno/a6xx_hfi.h       |  2 ++
+ 4 files changed, 17 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.h b/drivers/gpu/drm/msm/adreno/a6xx_gmu.h
+index 0cd8ae1b4f5c..3f96b10b5f61 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.h
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.h
+@@ -111,7 +111,7 @@ struct a6xx_gmu {
+ 
+ 	unsigned long freq;
+ 
+-	struct a6xx_hfi_queue queues[2];
++	struct a6xx_hfi_queue queues[HFI_MAX_QUEUES];
+ 
+ 	bool initialized;
+ 	bool hung;
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gpu_state.c b/drivers/gpu/drm/msm/adreno/a6xx_gpu_state.c
+index e3a42d0b5760..a887cc96bde8 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gpu_state.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gpu_state.c
+@@ -57,7 +57,7 @@ struct a6xx_gpu_state {
+ 	struct msm_gpu_state_bo *gmu_hfi;
+ 	struct msm_gpu_state_bo *gmu_debug;
+ 
+-	s32 hfi_queue_history[2][HFI_HISTORY_SZ];
++	s32 hfi_queue_history[HFI_MAX_QUEUES][HFI_HISTORY_SZ];
+ 
+ 	struct list_head objs;
+ 
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_hfi.c b/drivers/gpu/drm/msm/adreno/a6xx_hfi.c
+index 4f5dbf46132b..09b6bc464b47 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_hfi.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_hfi.c
+@@ -1062,8 +1062,8 @@ void a6xx_hfi_init(struct a6xx_gmu *gmu)
+ 	struct a6xx_gmu_bo *hfi = &gmu->hfi;
+ 	struct a6xx_hfi_queue_table_header *table = hfi->virt;
+ 	struct a6xx_hfi_queue_header *headers = hfi->virt + sizeof(*table);
++	int table_size, idx;
+ 	u64 offset;
+-	int table_size;
+ 
+ 	/*
+ 	 * The table size is the size of the table header plus all of the queue
+@@ -1082,12 +1082,22 @@ void a6xx_hfi_init(struct a6xx_gmu *gmu)
+ 	table->active_queues = ARRAY_SIZE(gmu->queues);
+ 
+ 	/* Command queue */
++	idx = 0;
+ 	offset = SZ_4K;
+-	a6xx_hfi_queue_init(&gmu->queues[0], &headers[0], hfi->virt + offset,
++	a6xx_hfi_queue_init(&gmu->queues[idx], &headers[idx], hfi->virt + offset,
+ 		hfi->iova + offset, 0);
+ 
+ 	/* GMU response queue */
++	idx++;
+ 	offset += SZ_4K;
+-	a6xx_hfi_queue_init(&gmu->queues[1], &headers[1], hfi->virt + offset,
++	a6xx_hfi_queue_init(&gmu->queues[idx], &headers[idx], hfi->virt + offset,
+ 		hfi->iova + offset, gmu->legacy ? 4 : 1);
++
++	/* GMU Debug queue */
++	idx++;
++	offset += SZ_4K;
++	a6xx_hfi_queue_init(&gmu->queues[idx], &headers[idx], hfi->virt + offset,
++		hfi->iova + offset, gmu->legacy ? 5 : 2);
++
++	WARN_ON(idx >= HFI_MAX_QUEUES);
+ }
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_hfi.h b/drivers/gpu/drm/msm/adreno/a6xx_hfi.h
+index 6f9f74a0bc85..19f6eca2c8c9 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_hfi.h
++++ b/drivers/gpu/drm/msm/adreno/a6xx_hfi.h
+@@ -4,6 +4,8 @@
+ #ifndef _A6XX_HFI_H_
+ #define _A6XX_HFI_H_
+ 
++#define HFI_MAX_QUEUES 3
++
+ struct a6xx_hfi_queue_table_header {
+ 	u32 version;
+ 	u32 size;		/* Size of the queue table in dwords */
+-- 
+2.43.0
+
+
+From a30c415a3c082e3f894826c28a18bd27aa60f7de Mon Sep 17 00:00:00 2001
+From: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Date: Fri, 27 Mar 2026 05:43:57 +0530
+Subject: [PATCH 07/26] drm/msm/adreno: Coredump on GPU/GMU init failures
+
+Capture coredump on GPU or GMU errors during initialization to help in
+debugging the issues. To be consistent with the locks while calling
+msm_gpu_crashstate_capture(), call pm_runtime_get(gpu) always with
+msm_gpu->lock.
+
+Signed-off-by: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+---
+ drivers/gpu/drm/msm/adreno/a6xx_gmu.c      | 1 +
+ drivers/gpu/drm/msm/adreno/adreno_device.c | 5 +++--
+ drivers/gpu/drm/msm/adreno/adreno_gpu.c    | 5 ++++-
+ drivers/gpu/drm/msm/msm_gpu.c              | 5 +++--
+ drivers/gpu/drm/msm/msm_gpu.h              | 2 ++
+ 5 files changed, 13 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+index 1b44b9e21ad8..916c5d99c4d1 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+@@ -1335,6 +1335,7 @@ int a6xx_gmu_resume(struct a6xx_gpu *a6xx_gpu)
+ 
+ disable_irq:
+ 	disable_irq(gmu->gmu_irq);
++	msm_gpu_crashstate_capture(gpu, NULL, NULL, NULL, NULL);
+ 	a6xx_rpmh_stop(gmu);
+ disable_clk:
+ 	clk_bulk_disable_unprepare(gmu->nr_clocks, gmu->clocks);
+diff --git a/drivers/gpu/drm/msm/adreno/adreno_device.c b/drivers/gpu/drm/msm/adreno/adreno_device.c
+index 4edfe80c5be7..ca5f96e16870 100644
+--- a/drivers/gpu/drm/msm/adreno/adreno_device.c
++++ b/drivers/gpu/drm/msm/adreno/adreno_device.c
+@@ -105,6 +105,8 @@ struct msm_gpu *adreno_load_gpu(struct drm_device *dev)
+ 	 */
+ 	pm_runtime_enable(&pdev->dev);
+ 
++	guard(mutex)(&gpu->lock);
++
+ 	ret = pm_runtime_get_sync(&pdev->dev);
+ 	if (ret < 0) {
+ 		pm_runtime_put_noidle(&pdev->dev);
+@@ -112,10 +114,9 @@ struct msm_gpu *adreno_load_gpu(struct drm_device *dev)
+ 		goto err_disable_rpm;
+ 	}
+ 
+-	mutex_lock(&gpu->lock);
+ 	ret = msm_gpu_hw_init(gpu);
+-	mutex_unlock(&gpu->lock);
+ 	if (ret) {
++		msm_gpu_crashstate_capture(gpu, NULL, NULL, NULL, NULL);
+ 		DRM_DEV_ERROR(dev->dev, "gpu hw init failed: %d\n", ret);
+ 		goto err_put_rpm;
+ 	}
+diff --git a/drivers/gpu/drm/msm/adreno/adreno_gpu.c b/drivers/gpu/drm/msm/adreno/adreno_gpu.c
+index 785e99fb5bd5..8475802fdde2 100644
+--- a/drivers/gpu/drm/msm/adreno/adreno_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/adreno_gpu.c
+@@ -391,10 +391,13 @@ int adreno_get_param(struct msm_gpu *gpu, struct msm_context *ctx,
+ 		return 0;
+ 	case MSM_PARAM_TIMESTAMP:
+ 		if (adreno_gpu->funcs->get_timestamp) {
++			mutex_lock(&gpu->lock);
+ 			pm_runtime_get_sync(&gpu->pdev->dev);
++
+ 			*value = adreno_gpu->funcs->get_timestamp(gpu);
+-			pm_runtime_put_autosuspend(&gpu->pdev->dev);
+ 
++			pm_runtime_put_autosuspend(&gpu->pdev->dev);
++			mutex_unlock(&gpu->lock);
+ 			return 0;
+ 		}
+ 		return -EINVAL;
+diff --git a/drivers/gpu/drm/msm/msm_gpu.c b/drivers/gpu/drm/msm/msm_gpu.c
+index 84d6c7f50c8d..77a31ff78032 100644
+--- a/drivers/gpu/drm/msm/msm_gpu.c
++++ b/drivers/gpu/drm/msm/msm_gpu.c
+@@ -360,7 +360,7 @@ static void crashstate_get_vm_logs(struct msm_gpu_state *state, struct msm_gem_v
+ 	mutex_unlock(&vm->mmu_lock);
+ }
+ 
+-static void msm_gpu_crashstate_capture(struct msm_gpu *gpu,
++void msm_gpu_crashstate_capture(struct msm_gpu *gpu,
+ 		struct msm_gem_submit *submit, struct msm_gpu_fault_info *fault_info,
+ 		char *comm, char *cmd)
+ {
+@@ -885,7 +885,8 @@ void msm_gpu_submit(struct msm_gpu *gpu, struct msm_gem_submit *submit)
+ 
+ 	pm_runtime_get_sync(&gpu->pdev->dev);
+ 
+-	msm_gpu_hw_init(gpu);
++	if (msm_gpu_hw_init(gpu))
++		msm_gpu_crashstate_capture(gpu, NULL, NULL, NULL, NULL);
+ 
+ 	submit->seqno = submit->hw_fence->seqno;
+ 
+diff --git a/drivers/gpu/drm/msm/msm_gpu.h b/drivers/gpu/drm/msm/msm_gpu.h
+index 666cf499b7ec..eb5b3a7b81f9 100644
+--- a/drivers/gpu/drm/msm/msm_gpu.h
++++ b/drivers/gpu/drm/msm/msm_gpu.h
+@@ -747,6 +747,8 @@ static inline void msm_gpu_crashstate_put(struct msm_gpu *gpu)
+ }
+ 
+ void msm_gpu_fault_crashstate_capture(struct msm_gpu *gpu, struct msm_gpu_fault_info *fault_info);
++void msm_gpu_crashstate_capture(struct msm_gpu *gpu, struct msm_gem_submit *submit,
++		struct msm_gpu_fault_info *fault_info, char *comm, char *cmd);
+ 
+ /*
+  * Simple macro to semi-cleanly add the MAP_PRIV flag for targets that can
+-- 
+2.43.0
+
+
+From 79fca9860f15c94f60f0e702c110183674050eb9 Mon Sep 17 00:00:00 2001
+From: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Date: Fri, 27 Mar 2026 05:43:58 +0530
+Subject: [PATCH 08/26] drm/msm/a6xx: Use packed structs for HFI
+
+HFI related structs define the ABI between the KMD and the GMU firmware.
+So, use packed structures to avoid unintended compiler inserted padding.
+
+Reviewed-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Signed-off-by: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+---
+ drivers/gpu/drm/msm/adreno/a6xx_hfi.h | 40 +++++++++++++--------------
+ 1 file changed, 20 insertions(+), 20 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_hfi.h b/drivers/gpu/drm/msm/adreno/a6xx_hfi.h
+index 19f6eca2c8c9..217708b03f6f 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_hfi.h
++++ b/drivers/gpu/drm/msm/adreno/a6xx_hfi.h
+@@ -13,7 +13,7 @@ struct a6xx_hfi_queue_table_header {
+ 	u32 qhdr_size;		/* Size of the queue headers */
+ 	u32 num_queues;		/* Number of total queues */
+ 	u32 active_queues;	/* Number of active queues */
+-};
++} __packed;
+ 
+ struct a6xx_hfi_queue_header {
+ 	u32 status;
+@@ -28,7 +28,7 @@ struct a6xx_hfi_queue_header {
+ 	u32 tx_request;
+ 	u32 read_index;
+ 	u32 write_index;
+-};
++} __packed;
+ 
+ struct a6xx_hfi_queue {
+ 	struct a6xx_hfi_queue_header *header;
+@@ -74,7 +74,7 @@ struct a6xx_hfi_msg_response {
+ 	u32 ret_header;
+ 	u32 error;
+ 	u32 payload[HFI_RESPONSE_PAYLOAD_SIZE];
+-};
++} __packed;
+ 
+ #define HFI_F2H_MSG_ERROR 100
+ 
+@@ -82,7 +82,7 @@ struct a6xx_hfi_msg_error {
+ 	u32 header;
+ 	u32 code;
+ 	u32 payload[2];
+-};
++} __packed;
+ 
+ #define HFI_H2F_MSG_INIT 0
+ 
+@@ -92,27 +92,27 @@ struct a6xx_hfi_msg_gmu_init_cmd {
+ 	u32 dbg_buffer_addr;
+ 	u32 dbg_buffer_size;
+ 	u32 boot_state;
+-};
++} __packed;
+ 
+ #define HFI_H2F_MSG_FW_VERSION 1
+ 
+ struct a6xx_hfi_msg_fw_version {
+ 	u32 header;
+ 	u32 supported_version;
+-};
++} __packed;
+ 
+ #define HFI_H2F_MSG_PERF_TABLE 4
+ 
+ struct perf_level {
+ 	u32 vote;
+ 	u32 freq;
+-};
++} __packed;
+ 
+ struct perf_gx_level {
+ 	u32 vote;
+ 	u32 acd;
+ 	u32 freq;
+-};
++} __packed;
+ 
+ struct a6xx_hfi_msg_perf_table_v1 {
+ 	u32 header;
+@@ -121,7 +121,7 @@ struct a6xx_hfi_msg_perf_table_v1 {
+ 
+ 	struct perf_level gx_votes[16];
+ 	struct perf_level cx_votes[4];
+-};
++} __packed;
+ 
+ struct a6xx_hfi_msg_perf_table {
+ 	u32 header;
+@@ -130,7 +130,7 @@ struct a6xx_hfi_msg_perf_table {
+ 
+ 	struct perf_gx_level gx_votes[16];
+ 	struct perf_level cx_votes[4];
+-};
++} __packed;
+ 
+ #define HFI_H2F_MSG_BW_TABLE 3
+ 
+@@ -145,13 +145,13 @@ struct a6xx_hfi_msg_bw_table {
+ 	u32 cnoc_cmds_data[2][6];
+ 	u32 ddr_cmds_addrs[8];
+ 	u32 ddr_cmds_data[16][8];
+-};
++} __packed;
+ 
+ #define HFI_H2F_MSG_TEST 5
+ 
+ struct a6xx_hfi_msg_test {
+ 	u32 header;
+-};
++} __packed;
+ 
+ #define HFI_H2F_MSG_ACD 7
+ #define MAX_ACD_STRIDE 2
+@@ -163,13 +163,13 @@ struct a6xx_hfi_acd_table {
+ 	u32 stride;
+ 	u32 num_levels;
+ 	u32 data[16 * MAX_ACD_STRIDE];
+-};
++} __packed;
+ 
+ #define HFI_H2F_MSG_START 10
+ 
+ struct a6xx_hfi_msg_start {
+ 	u32 header;
+-};
++} __packed;
+ 
+ #define HFI_H2F_FEATURE_CTRL 11
+ 
+@@ -178,14 +178,14 @@ struct a6xx_hfi_msg_feature_ctrl {
+ 	u32 feature;
+ 	u32 enable;
+ 	u32 data;
+-};
++} __packed;
+ 
+ #define HFI_H2F_MSG_CORE_FW_START 14
+ 
+ struct a6xx_hfi_msg_core_fw_start {
+ 	u32 header;
+ 	u32 handle;
+-};
++} __packed;
+ 
+ #define HFI_H2F_MSG_TABLE 15
+ 
+@@ -193,7 +193,7 @@ struct a6xx_hfi_table_entry {
+ 	u32 count;
+ 	u32 stride;
+ 	u32 data[];
+-};
++} __packed;
+ 
+ struct a6xx_hfi_table {
+ 	u32 header;
+@@ -202,7 +202,7 @@ struct a6xx_hfi_table {
+ #define HFI_TABLE_BW_VOTE 0
+ #define HFI_TABLE_GPU_PERF 1
+ 	struct a6xx_hfi_table_entry entry[];
+-};
++} __packed;
+ 
+ #define HFI_H2F_MSG_GX_BW_PERF_VOTE 30
+ 
+@@ -211,7 +211,7 @@ struct a6xx_hfi_gx_bw_perf_vote_cmd {
+ 	u32 ack_type;
+ 	u32 freq;
+ 	u32 bw;
+-};
++} __packed;
+ 
+ #define AB_VOTE_MASK		GENMASK(31, 16)
+ #define MAX_AB_VOTE		(FIELD_MAX(AB_VOTE_MASK) - 1)
+@@ -224,6 +224,6 @@ struct a6xx_hfi_prep_slumber_cmd {
+ 	u32 header;
+ 	u32 bw;
+ 	u32 freq;
+-};
++} __packed;
+ 
+ #endif
+-- 
+2.43.0
+
+
+From 9e6ec183faae7a50c8b85ff77832a811e53f7d3f Mon Sep 17 00:00:00 2001
+From: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Date: Fri, 27 Mar 2026 05:43:59 +0530
+Subject: [PATCH 09/26] drm/msm/a6xx: Update HFI definitions
+
+Update the HFI definitions to support additional GMU based power
+features.
+
+Signed-off-by: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Reviewed-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+---
+ drivers/gpu/drm/msm/adreno/a6xx_hfi.c |   3 -
+ drivers/gpu/drm/msm/adreno/a6xx_hfi.h | 113 +++++++++++++++++++++++++-
+ 2 files changed, 111 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_hfi.c b/drivers/gpu/drm/msm/adreno/a6xx_hfi.c
+index 09b6bc464b47..487c2736f2b3 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_hfi.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_hfi.c
+@@ -851,7 +851,6 @@ static int a6xx_hfi_feature_ctrl_msg(struct a6xx_gmu *gmu, u32 feature, u32 enab
+ 	return a6xx_hfi_send_msg(gmu, HFI_H2F_FEATURE_CTRL, &msg, sizeof(msg), NULL, 0);
+ }
+ 
+-#define HFI_FEATURE_IFPC 9
+ #define IFPC_LONG_HYST 0x1680
+ 
+ static int a6xx_hfi_enable_ifpc(struct a6xx_gmu *gmu)
+@@ -862,8 +861,6 @@ static int a6xx_hfi_enable_ifpc(struct a6xx_gmu *gmu)
+ 	return a6xx_hfi_feature_ctrl_msg(gmu, HFI_FEATURE_IFPC, 1, IFPC_LONG_HYST);
+ }
+ 
+-#define HFI_FEATURE_ACD 12
+-
+ static int a6xx_hfi_enable_acd(struct a6xx_gmu *gmu)
+ {
+ 	struct a6xx_hfi_acd_table *acd_table = &gmu->acd_table;
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_hfi.h b/drivers/gpu/drm/msm/adreno/a6xx_hfi.h
+index 217708b03f6f..e10d32ce93e0 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_hfi.h
++++ b/drivers/gpu/drm/msm/adreno/a6xx_hfi.h
+@@ -165,6 +165,42 @@ struct a6xx_hfi_acd_table {
+ 	u32 data[16 * MAX_ACD_STRIDE];
+ } __packed;
+ 
++#define CLX_DATA(irated, num_phases, clx_path, extd_intf) \
++	((extd_intf << 29) |				  \
++	 (clx_path << 28) |				  \
++	 (num_phases << 22) |				  \
++	 (irated << 16))
++
++struct a6xx_hfi_clx_domain_v2 {
++	/**
++	 * @data: BITS[0:15]  Migration time
++	 *        BITS[16:21] Current rating
++	 *        BITS[22:27] Phases for domain
++	 *        BITS[28:28] Path notification
++	 *        BITS[29:31] Extra features
++	 */
++	u32 data;
++	/** @clxt: CLX time in microseconds */
++	u32 clxt;
++	/** @clxh: CLH time in microseconds */
++	u32 clxh;
++	/** @urg_mode: Urgent HW throttle mode of operation */
++	u32 urg_mode;
++	/** @lkg_en: Enable leakage current estimate */
++	u32 lkg_en;
++	/** curr_budget: Current Budget */
++	u32 curr_budget;
++} __packed;
++
++#define HFI_H2F_MSG_CLX_TBL 8
++
++#define MAX_CLX_DOMAINS 2
++struct a6xx_hfi_clx_table_v2_cmd {
++	u32 hdr;
++	u32 version;
++	struct a6xx_hfi_clx_domain_v2 domain[MAX_CLX_DOMAINS];
++} __packed;
++
+ #define HFI_H2F_MSG_START 10
+ 
+ struct a6xx_hfi_msg_start {
+@@ -176,6 +212,41 @@ struct a6xx_hfi_msg_start {
+ struct a6xx_hfi_msg_feature_ctrl {
+ 	u32 header;
+ 	u32 feature;
++#define HFI_FEATURE_DCVS		0
++#define HFI_FEATURE_HWSCHED		1
++#define HFI_FEATURE_PREEMPTION		2
++#define HFI_FEATURE_CLOCKS_ON		3
++#define HFI_FEATURE_BUS_ON		4
++#define HFI_FEATURE_RAIL_ON		5
++#define HFI_FEATURE_HWCG		6
++#define HFI_FEATURE_LM			7
++#define HFI_FEATURE_THROTTLE		8
++#define HFI_FEATURE_IFPC		9
++#define HFI_FEATURE_NAP			10
++#define HFI_FEATURE_BCL			11
++#define HFI_FEATURE_ACD			12
++#define HFI_FEATURE_DIDT		13
++#define HFI_FEATURE_DEPRECATED		14
++#define HFI_FEATURE_CB			15
++#define HFI_FEATURE_KPROF		16
++#define HFI_FEATURE_BAIL_OUT_TIMER	17
++#define HFI_FEATURE_GMU_STATS		18
++#define HFI_FEATURE_DBQ			19
++#define HFI_FEATURE_MINBW		20
++#define HFI_FEATURE_CLX			21
++#define HFI_FEATURE_LSR			23
++#define HFI_FEATURE_LPAC		24
++#define HFI_FEATURE_HW_FENCE		25
++#define HFI_FEATURE_PERF_NORETAIN	26
++#define HFI_FEATURE_DMS			27
++#define HFI_FEATURE_THERMAL		28
++#define HFI_FEATURE_AQE			29
++#define HFI_FEATURE_TDCVS		30
++#define HFI_FEATURE_DCE			31
++#define HFI_FEATURE_IFF_PCLX		32
++#define HFI_FEATURE_SOFT_RESET		0x10000001
++#define HFI_FEATURE_DCVS_PROFILE	0x10000002
++#define HFI_FEATURE_FAST_CTX_DESTROY	0x10000003
+ 	u32 enable;
+ 	u32 data;
+ } __packed;
+@@ -199,8 +270,17 @@ struct a6xx_hfi_table {
+ 	u32 header;
+ 	u32 version;
+ 	u32 type;
+-#define HFI_TABLE_BW_VOTE 0
+-#define HFI_TABLE_GPU_PERF 1
++#define HFI_TABLE_BW_VOTE	0
++#define HFI_TABLE_GPU_PERF	1
++#define HFI_TABLE_DIDT		2
++#define HFI_TABLE_ACD		3
++#define HFI_TABLE_CLX_V1	4 /* Unused */
++#define HFI_TABLE_CLX_V2	5
++#define HFI_TABLE_THERM		6
++#define HFI_TABLE_DCVS		7
++#define HFI_TABLE_SYS_TIME	8
++#define HFI_TABLE_GMU_DCVS	9
++#define HFI_TABLE_LIMITS_MIT	10
+ 	struct a6xx_hfi_table_entry entry[];
+ } __packed;
+ 
+@@ -226,4 +306,33 @@ struct a6xx_hfi_prep_slumber_cmd {
+ 	u32 freq;
+ } __packed;
+ 
++struct a6xx_hfi_limits_cfg {
++	u32 enable;
++	u32 msg_path;
++	u32 lkg_en;
++	/*
++	 * BIT[0]: 0 = (static) throttle to fixed sid level
++	 *         1 = (dynamic) throttle to sid level calculated by HW
++	 * BIT[1]: 0 = Mx
++	 *         1 = Bx
++	 */
++	u32 mode;
++	u32 sid;
++	/* Mitigation time in microseconds */
++	u32 mit_time;
++	/* Max current in mA during mitigation */
++	u32 curr_limit;
++} __packed;
++
++struct a6xx_hfi_limits_tbl {
++	u8 feature_id;
++#define GMU_MIT_IFF  0
++#define GMU_MIT_PCLX 1
++	u8 domain;
++#define GMU_GX_DOMAIN 0
++#define GMU_MX_DOMAIN 1
++	u16 feature_rev;
++	struct a6xx_hfi_limits_cfg cfg;
++} __packed;
++
+ #endif
+-- 
+2.43.0
+
+
+From a67e33d1ed65c76974eccc20f6c1015b6e7f4fe3 Mon Sep 17 00:00:00 2001
+From: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Date: Fri, 27 Mar 2026 05:44:00 +0530
+Subject: [PATCH 10/26] drm/msm/a8xx: Add SKU table for A840
+
+Add the SKU table in the catalog for A840 GPU. This data helps to pick
+the correct bin from the OPP table based on the speed_bin fuse value.
+
+Signed-off-by: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+---
+ drivers/gpu/drm/msm/adreno/a6xx_catalog.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_catalog.c b/drivers/gpu/drm/msm/adreno/a6xx_catalog.c
+index 38561f26837e..f6b9792531a6 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_catalog.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_catalog.c
+@@ -1954,6 +1954,12 @@ static const struct adreno_info a8xx_gpus[] = {
+ 			},
+ 		},
+ 		.preempt_record_size = 19708 * SZ_1K,
++		.speedbins = ADRENO_SPEEDBINS(
++			{ 0,   0 },
++			{ 273, 1 },
++			{ 252, 2 },
++			{ 221, 3 },
++		),
+ 	}
+ };
+ 
+-- 
+2.43.0
+
+
+From 153e92b8d32c2b940d49a2cbea345aadf7f4f363 Mon Sep 17 00:00:00 2001
+From: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Date: Fri, 27 Mar 2026 05:44:01 +0530
+Subject: [PATCH 11/26] drm/msm/a6xx: Add soft fuse detection support
+
+Recent chipsets like Glymur supports a new mechanism for SKU detection.
+A new CX_MISC register exposes the combined (or final) speedbin value
+from both HW fuse register and the Soft Fuse register. Implement this new
+SKU detection along with a new quirk to identify the GPUs that has soft
+fuse support.
+
+There is a side effect of this patch on A4x and older series. The
+speedbin field in the MSM_PARAM_CHIPID will be 0 instead of 0xffff. This
+should be okay as Mesa correctly handles it. Speedbin was not even a
+thing when those GPUs' support were added.
+
+Signed-off-by: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+---
+ drivers/gpu/drm/msm/adreno/a5xx_gpu.c         |  6 +++
+ drivers/gpu/drm/msm/adreno/a6xx_gpu.c         | 41 +++++++++++++++----
+ drivers/gpu/drm/msm/adreno/adreno_gpu.c       |  5 ---
+ drivers/gpu/drm/msm/adreno/adreno_gpu.h       |  1 +
+ drivers/gpu/drm/msm/registers/adreno/a6xx.xml |  4 ++
+ 5 files changed, 45 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a5xx_gpu.c b/drivers/gpu/drm/msm/adreno/a5xx_gpu.c
+index e44302251de5..79acae11154a 100644
+--- a/drivers/gpu/drm/msm/adreno/a5xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a5xx_gpu.c
+@@ -1730,6 +1730,7 @@ static struct msm_gpu *a5xx_gpu_init(struct drm_device *dev)
+ 	struct adreno_gpu *adreno_gpu;
+ 	struct msm_gpu *gpu;
+ 	unsigned int nr_rings;
++	u32 speedbin;
+ 	int ret;
+ 
+ 	a5xx_gpu = kzalloc_obj(*a5xx_gpu);
+@@ -1756,6 +1757,11 @@ static struct msm_gpu *a5xx_gpu_init(struct drm_device *dev)
+ 		return ERR_PTR(ret);
+ 	}
+ 
++	/* Set the speedbin value that is passed to userspace */
++	if (adreno_read_speedbin(&pdev->dev, &speedbin) || !speedbin)
++		speedbin = 0xffff;
++	adreno_gpu->speedbin = (uint16_t) (0xffff & speedbin);
++
+ 	msm_mmu_set_fault_handler(to_msm_vm(gpu->vm)->mmu, gpu,
+ 				  a5xx_fault_handler);
+ 
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
+index f206c08e8f68..1285f60bd24c 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
+@@ -2546,13 +2546,33 @@ static u32 fuse_to_supp_hw(const struct adreno_info *info, u32 fuse)
+ 	return UINT_MAX;
+ }
+ 
+-static int a6xx_set_supported_hw(struct device *dev, const struct adreno_info *info)
++static int a6xx_read_speedbin(struct device *dev, struct a6xx_gpu *a6xx_gpu,
++		const struct adreno_info *info, u32 *speedbin)
++{
++	int ret;
++
++	/* Use speedbin fuse if present. Otherwise, fallback to softfuse */
++	ret = adreno_read_speedbin(dev, speedbin);
++	if (ret != -ENOENT)
++		return ret;
++
++	if (info->quirks & ADRENO_QUIRK_SOFTFUSE) {
++		*speedbin = a6xx_llc_read(a6xx_gpu, REG_A8XX_CX_MISC_SW_FUSE_FREQ_LIMIT_STATUS);
++		*speedbin = A8XX_CX_MISC_SW_FUSE_FREQ_LIMIT_STATUS_FINALFREQLIMIT(*speedbin);
++		return 0;
++	}
++
++	return -ENOENT;
++}
++
++static int a6xx_set_supported_hw(struct device *dev, struct a6xx_gpu *a6xx_gpu,
++		const struct adreno_info *info)
+ {
+ 	u32 supp_hw;
+ 	u32 speedbin;
+ 	int ret;
+ 
+-	ret = adreno_read_speedbin(dev, &speedbin);
++	ret = a6xx_read_speedbin(dev, a6xx_gpu, info, &speedbin);
+ 	/*
+ 	 * -ENOENT means that the platform doesn't support speedbin which is
+ 	 * fine
+@@ -2586,11 +2606,13 @@ static struct msm_gpu *a6xx_gpu_init(struct drm_device *dev)
+ 	struct msm_drm_private *priv = dev->dev_private;
+ 	struct platform_device *pdev = priv->gpu_pdev;
+ 	struct adreno_platform_config *config = pdev->dev.platform_data;
++	const struct adreno_info *info = config->info;
+ 	struct device_node *node;
+ 	struct a6xx_gpu *a6xx_gpu;
+ 	struct adreno_gpu *adreno_gpu;
+ 	struct msm_gpu *gpu;
+ 	extern int enable_preemption;
++	u32 speedbin;
+ 	bool is_a7xx;
+ 	int ret, nr_rings = 1;
+ 
+@@ -2613,14 +2635,14 @@ static struct msm_gpu *a6xx_gpu_init(struct drm_device *dev)
+ 	adreno_gpu->gmu_is_wrapper = of_device_is_compatible(node, "qcom,adreno-gmu-wrapper");
+ 
+ 	adreno_gpu->base.hw_apriv =
+-		!!(config->info->quirks & ADRENO_QUIRK_HAS_HW_APRIV);
++		!!(info->quirks & ADRENO_QUIRK_HAS_HW_APRIV);
+ 
+ 	/* gpu->info only gets assigned in adreno_gpu_init(). A8x is included intentionally */
+-	is_a7xx = config->info->family >= ADRENO_7XX_GEN1;
++	is_a7xx = info->family >= ADRENO_7XX_GEN1;
+ 
+ 	a6xx_llc_slices_init(pdev, a6xx_gpu, is_a7xx);
+ 
+-	ret = a6xx_set_supported_hw(&pdev->dev, config->info);
++	ret = a6xx_set_supported_hw(&pdev->dev, a6xx_gpu, info);
+ 	if (ret) {
+ 		a6xx_llc_slices_destroy(a6xx_gpu);
+ 		kfree(a6xx_gpu);
+@@ -2628,15 +2650,20 @@ static struct msm_gpu *a6xx_gpu_init(struct drm_device *dev)
+ 	}
+ 
+ 	if ((enable_preemption == 1) || (enable_preemption == -1 &&
+-	    (config->info->quirks & ADRENO_QUIRK_PREEMPTION)))
++	    (info->quirks & ADRENO_QUIRK_PREEMPTION)))
+ 		nr_rings = 4;
+ 
+-	ret = adreno_gpu_init(dev, pdev, adreno_gpu, config->info->funcs, nr_rings);
++	ret = adreno_gpu_init(dev, pdev, adreno_gpu, info->funcs, nr_rings);
+ 	if (ret) {
+ 		a6xx_destroy(&(a6xx_gpu->base.base));
+ 		return ERR_PTR(ret);
+ 	}
+ 
++	/* Set the speedbin value that is passed to userspace */
++	if (a6xx_read_speedbin(&pdev->dev, a6xx_gpu, info, &speedbin) || !speedbin)
++		speedbin = 0xffff;
++	adreno_gpu->speedbin = (uint16_t) (0xffff & speedbin);
++
+ 	/*
+ 	 * For now only clamp to idle freq for devices where this is known not
+ 	 * to cause power supply issues:
+diff --git a/drivers/gpu/drm/msm/adreno/adreno_gpu.c b/drivers/gpu/drm/msm/adreno/adreno_gpu.c
+index 8475802fdde2..f6c39aed50f2 100644
+--- a/drivers/gpu/drm/msm/adreno/adreno_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/adreno_gpu.c
+@@ -1185,7 +1185,6 @@ int adreno_gpu_init(struct drm_device *drm, struct platform_device *pdev,
+ 	struct msm_gpu_config adreno_gpu_config  = { 0 };
+ 	struct msm_gpu *gpu = &adreno_gpu->base;
+ 	const char *gpu_name;
+-	u32 speedbin;
+ 	int ret;
+ 
+ 	adreno_gpu->funcs = funcs;
+@@ -1214,10 +1213,6 @@ int adreno_gpu_init(struct drm_device *drm, struct platform_device *pdev,
+ 			devm_pm_opp_set_clkname(dev, "core");
+ 	}
+ 
+-	if (adreno_read_speedbin(dev, &speedbin) || !speedbin)
+-		speedbin = 0xffff;
+-	adreno_gpu->speedbin = (uint16_t) (0xffff & speedbin);
+-
+ 	gpu_name = devm_kasprintf(dev, GFP_KERNEL, "%"ADRENO_CHIPID_FMT,
+ 			ADRENO_CHIPID_ARGS(config->chip_id));
+ 	if (!gpu_name)
+diff --git a/drivers/gpu/drm/msm/adreno/adreno_gpu.h b/drivers/gpu/drm/msm/adreno/adreno_gpu.h
+index 29097e6b4253..044ed4d49aa7 100644
+--- a/drivers/gpu/drm/msm/adreno/adreno_gpu.h
++++ b/drivers/gpu/drm/msm/adreno/adreno_gpu.h
+@@ -63,6 +63,7 @@ enum adreno_family {
+ #define ADRENO_QUIRK_PREEMPTION			BIT(5)
+ #define ADRENO_QUIRK_4GB_VA			BIT(6)
+ #define ADRENO_QUIRK_IFPC			BIT(7)
++#define ADRENO_QUIRK_SOFTFUSE			BIT(8)
+ 
+ /* Helper for formating the chip_id in the way that userspace tools like
+  * crashdec expect.
+diff --git a/drivers/gpu/drm/msm/registers/adreno/a6xx.xml b/drivers/gpu/drm/msm/registers/adreno/a6xx.xml
+index 3941e7510754..2309870f5031 100644
+--- a/drivers/gpu/drm/msm/registers/adreno/a6xx.xml
++++ b/drivers/gpu/drm/msm/registers/adreno/a6xx.xml
+@@ -5016,6 +5016,10 @@ by a particular renderpass/blit.
+ 		<bitfield pos="1" name="LPAC" type="boolean"/>
+ 		<bitfield pos="2" name="RAYTRACING" type="boolean"/>
+ 	</reg32>
++	<reg32 offset="0x0405" name="CX_MISC_SW_FUSE_FREQ_LIMIT_STATUS" variants="A8XX-">
++		<bitfield high="8" low="0" name="FINALFREQLIMIT"/>
++		<bitfield pos="24" name="SOFTSKUDISABLED" type="boolean"/>
++	</reg32>
+ </domain>
+ 
+ </database>
+-- 
+2.43.0
+
+
+From 861c80cd5271e77b5053923a3baf6a60c4aa63f1 Mon Sep 17 00:00:00 2001
+From: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Date: Fri, 27 Mar 2026 05:44:02 +0530
+Subject: [PATCH 12/26] drm/msm/a6xx: Add SKU detection support for X2-85
+
+Add the Speedbin table to the catalog to enable SKU detection support
+for X2-85 GPU found in Glymur chipset. As this chipset support the SOFT
+FUSE mechanism, enable the ADRENO_QUIRK_SOFTFUSE quirk too.
+
+Signed-off-by: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+---
+ drivers/gpu/drm/msm/adreno/a6xx_catalog.c | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_catalog.c b/drivers/gpu/drm/msm/adreno/a6xx_catalog.c
+index f6b9792531a6..758bc7bd31f6 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_catalog.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_catalog.c
+@@ -1902,7 +1902,8 @@ static const struct adreno_info a8xx_gpus[] = {
+ 		.gmem = 21 * SZ_1M,
+ 		.inactive_period = DRM_MSM_INACTIVE_PERIOD,
+ 		.quirks = ADRENO_QUIRK_HAS_CACHED_COHERENT |
+-			  ADRENO_QUIRK_HAS_HW_APRIV,
++			  ADRENO_QUIRK_HAS_HW_APRIV |
++			  ADRENO_QUIRK_SOFTFUSE,
+ 		.funcs = &a8xx_gpu_funcs,
+ 		.a6xx = &(const struct a6xx_info) {
+ 			.protect = &x285_protect,
+@@ -1922,6 +1923,12 @@ static const struct adreno_info a8xx_gpus[] = {
+ 				{ /* sentinel */ },
+ 			},
+ 		},
++		.speedbins = ADRENO_SPEEDBINS(
++			{ 0,   0 },
++			{ 388, 1 },
++			{ 357, 2 },
++			{ 284, 3 },
++		),
+ 	}, {
+ 		.chip_ids = ADRENO_CHIP_IDS(0x44050a01),
+ 		.family = ADRENO_8XX_GEN2,
+-- 
+2.43.0
+
+
+From b4d0fd331f3dc9ce8dda145f3d8f1aa742ad7f07 Mon Sep 17 00:00:00 2001
+From: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Date: Fri, 27 Mar 2026 05:44:03 +0530
+Subject: [PATCH 13/26] drm/msm/a8xx: Implement IFPC support for A840
+
+Implement pwrup reglist support and add the necessary register
+configurations to enable IFPC support on A840
+
+Signed-off-by: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+---
+ drivers/gpu/drm/msm/adreno/a6xx_catalog.c | 185 +++++++++++++++++++++-
+ drivers/gpu/drm/msm/adreno/a8xx_gpu.c     |  99 +++++++++++-
+ 2 files changed, 281 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_catalog.c b/drivers/gpu/drm/msm/adreno/a6xx_catalog.c
+index 758bc7bd31f6..53548f6e891b 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_catalog.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_catalog.c
+@@ -1891,6 +1891,185 @@ static const struct adreno_reglist a840_gbif[] = {
+ 	{ },
+ };
+ 
++static const uint32_t a840_pwrup_reglist_regs[] = {
++	REG_A7XX_SP_HLSQ_TIMEOUT_THRESHOLD_DP,
++	REG_A7XX_SP_READ_SEL,
++	REG_A6XX_UCHE_MODE_CNTL,
++	REG_A8XX_UCHE_VARB_IDLE_TIMEOUT,
++	REG_A8XX_UCHE_GBIF_GX_CONFIG,
++	REG_A8XX_UCHE_CCHE_MODE_CNTL,
++	REG_A8XX_UCHE_CCHE_CACHE_WAYS,
++	REG_A8XX_UCHE_CACHE_WAYS,
++	REG_A8XX_UCHE_CCHE_GC_GMEM_RANGE_MIN,
++	REG_A8XX_UCHE_CCHE_GC_GMEM_RANGE_MIN + 1,
++	REG_A8XX_UCHE_CCHE_LPAC_GMEM_RANGE_MIN,
++	REG_A8XX_UCHE_CCHE_LPAC_GMEM_RANGE_MIN + 1,
++	REG_A8XX_UCHE_CCHE_TRAP_BASE,
++	REG_A8XX_UCHE_CCHE_TRAP_BASE + 1,
++	REG_A8XX_UCHE_CCHE_WRITE_THRU_BASE,
++	REG_A8XX_UCHE_CCHE_WRITE_THRU_BASE + 1,
++	REG_A8XX_UCHE_HW_DBG_CNTL,
++	REG_A8XX_UCHE_WRITE_THRU_BASE,
++	REG_A8XX_UCHE_WRITE_THRU_BASE + 1,
++	REG_A8XX_UCHE_TRAP_BASE,
++	REG_A8XX_UCHE_TRAP_BASE + 1,
++	REG_A8XX_UCHE_CLIENT_PF,
++	REG_A8XX_RB_CMP_NC_MODE_CNTL,
++	REG_A8XX_SP_HLSQ_GC_GMEM_RANGE_MIN,
++	REG_A8XX_SP_HLSQ_GC_GMEM_RANGE_MIN + 1,
++	REG_A6XX_TPL1_NC_MODE_CNTL,
++	REG_A6XX_TPL1_DBG_ECO_CNTL,
++	REG_A6XX_TPL1_DBG_ECO_CNTL1,
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(0),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(1),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(2),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(3),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(4),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(5),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(6),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(7),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(8),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(9),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(10),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(11),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(12),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(13),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(14),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(15),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(16),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(17),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(18),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(19),
++};
++DECLARE_ADRENO_REGLIST_LIST(a840_pwrup_reglist);
++
++static const u32 a840_ifpc_reglist_regs[] = {
++	REG_A8XX_RBBM_NC_MODE_CNTL,
++	REG_A8XX_RBBM_SLICE_NC_MODE_CNTL,
++	REG_A6XX_SP_NC_MODE_CNTL,
++	REG_A6XX_SP_CHICKEN_BITS,
++	REG_A8XX_SP_SS_CHICKEN_BITS_0,
++	REG_A7XX_SP_CHICKEN_BITS_1,
++	REG_A7XX_SP_CHICKEN_BITS_2,
++	REG_A7XX_SP_CHICKEN_BITS_3,
++	REG_A8XX_SP_CHICKEN_BITS_4,
++	REG_A6XX_SP_PERFCTR_SHADER_MASK,
++	REG_A8XX_RBBM_SLICE_PERFCTR_CNTL,
++	REG_A8XX_RBBM_SLICE_INTERFACE_HANG_INT_CNTL,
++	REG_A7XX_SP_HLSQ_DBG_ECO_CNTL,
++	REG_A7XX_SP_HLSQ_DBG_ECO_CNTL_1,
++	REG_A7XX_SP_HLSQ_DBG_ECO_CNTL_2,
++	REG_A8XX_SP_HLSQ_DBG_ECO_CNTL_3,
++	REG_A8XX_SP_HLSQ_LPAC_GMEM_RANGE_MIN,
++	REG_A8XX_SP_HLSQ_LPAC_GMEM_RANGE_MIN + 1,
++	REG_A8XX_CP_INTERRUPT_STATUS_MASK_GLOBAL,
++	REG_A8XX_RBBM_PERFCTR_CNTL,
++	REG_A8XX_CP_PROTECT_GLOBAL(0),
++	REG_A8XX_CP_PROTECT_GLOBAL(1),
++	REG_A8XX_CP_PROTECT_GLOBAL(2),
++	REG_A8XX_CP_PROTECT_GLOBAL(3),
++	REG_A8XX_CP_PROTECT_GLOBAL(4),
++	REG_A8XX_CP_PROTECT_GLOBAL(5),
++	REG_A8XX_CP_PROTECT_GLOBAL(6),
++	REG_A8XX_CP_PROTECT_GLOBAL(7),
++	REG_A8XX_CP_PROTECT_GLOBAL(8),
++	REG_A8XX_CP_PROTECT_GLOBAL(9),
++	REG_A8XX_CP_PROTECT_GLOBAL(10),
++	REG_A8XX_CP_PROTECT_GLOBAL(11),
++	REG_A8XX_CP_PROTECT_GLOBAL(12),
++	REG_A8XX_CP_PROTECT_GLOBAL(13),
++	REG_A8XX_CP_PROTECT_GLOBAL(14),
++	REG_A8XX_CP_PROTECT_GLOBAL(15),
++	REG_A8XX_CP_PROTECT_GLOBAL(16),
++	REG_A8XX_CP_PROTECT_GLOBAL(17),
++	REG_A8XX_CP_PROTECT_GLOBAL(18),
++	REG_A8XX_CP_PROTECT_GLOBAL(19),
++	REG_A8XX_CP_PROTECT_GLOBAL(20),
++	REG_A8XX_CP_PROTECT_GLOBAL(21),
++	REG_A8XX_CP_PROTECT_GLOBAL(22),
++	REG_A8XX_CP_PROTECT_GLOBAL(23),
++	REG_A8XX_CP_PROTECT_GLOBAL(24),
++	REG_A8XX_CP_PROTECT_GLOBAL(25),
++	REG_A8XX_CP_PROTECT_GLOBAL(26),
++	REG_A8XX_CP_PROTECT_GLOBAL(27),
++	REG_A8XX_CP_PROTECT_GLOBAL(28),
++	REG_A8XX_CP_PROTECT_GLOBAL(29),
++	REG_A8XX_CP_PROTECT_GLOBAL(30),
++	REG_A8XX_CP_PROTECT_GLOBAL(31),
++	REG_A8XX_CP_PROTECT_GLOBAL(32),
++	REG_A8XX_CP_PROTECT_GLOBAL(33),
++	REG_A8XX_CP_PROTECT_GLOBAL(34),
++	REG_A8XX_CP_PROTECT_GLOBAL(35),
++	REG_A8XX_CP_PROTECT_GLOBAL(36),
++	REG_A8XX_CP_PROTECT_GLOBAL(37),
++	REG_A8XX_CP_PROTECT_GLOBAL(38),
++	REG_A8XX_CP_PROTECT_GLOBAL(39),
++	REG_A8XX_CP_PROTECT_GLOBAL(40),
++	REG_A8XX_CP_PROTECT_GLOBAL(41),
++	REG_A8XX_CP_PROTECT_GLOBAL(42),
++	REG_A8XX_CP_PROTECT_GLOBAL(43),
++	REG_A8XX_CP_PROTECT_GLOBAL(44),
++	REG_A8XX_CP_PROTECT_GLOBAL(45),
++	REG_A8XX_CP_PROTECT_GLOBAL(46),
++	REG_A8XX_CP_PROTECT_GLOBAL(47),
++	REG_A8XX_CP_PROTECT_GLOBAL(48),
++	REG_A8XX_CP_PROTECT_GLOBAL(49),
++	REG_A8XX_CP_PROTECT_GLOBAL(50),
++	REG_A8XX_CP_PROTECT_GLOBAL(51),
++	REG_A8XX_CP_PROTECT_GLOBAL(52),
++	REG_A8XX_CP_PROTECT_GLOBAL(53),
++	REG_A8XX_CP_PROTECT_GLOBAL(54),
++	REG_A8XX_CP_PROTECT_GLOBAL(55),
++	REG_A8XX_CP_PROTECT_GLOBAL(56),
++	REG_A8XX_CP_PROTECT_GLOBAL(57),
++	REG_A8XX_CP_PROTECT_GLOBAL(58),
++	REG_A8XX_CP_PROTECT_GLOBAL(59),
++	REG_A8XX_CP_PROTECT_GLOBAL(60),
++	REG_A8XX_CP_PROTECT_GLOBAL(61),
++	REG_A8XX_CP_PROTECT_GLOBAL(62),
++	REG_A8XX_CP_PROTECT_GLOBAL(63),
++};
++DECLARE_ADRENO_REGLIST_LIST(a840_ifpc_reglist);
++
++static const struct adreno_reglist_pipe a840_dyn_pwrup_reglist_regs[] = {
++	{ REG_A8XX_GRAS_TSEFE_DBG_ECO_CNTL, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_GRAS_NC_MODE_CNTL, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_GRAS_DBG_ECO_CNTL, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A6XX_PC_AUTO_VERTEX_STRIDE, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_PC_CHICKEN_BITS_1, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_PC_CHICKEN_BITS_2, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_PC_CHICKEN_BITS_3, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_PC_CHICKEN_BITS_4, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_PC_CONTEXT_SWITCH_STABILIZE_CNTL_1, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_PC_VIS_STREAM_CNTL, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A7XX_RB_CCU_CNTL, 0, BIT(PIPE_BR) },
++	{ REG_A7XX_RB_CCU_DBG_ECO_CNTL, 0, BIT(PIPE_BR)},
++	{ REG_A8XX_RB_CCU_NC_MODE_CNTL, 0, BIT(PIPE_BR) },
++	{ REG_A8XX_RB_CMP_NC_MODE_CNTL, 0, BIT(PIPE_BR) },
++	{ REG_A6XX_RB_RBP_CNTL, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_RB_RESOLVE_PREFETCH_CNTL, 0, BIT(PIPE_BR) },
++	{ REG_A6XX_RB_DBG_ECO_CNTL, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_RB_CMP_DBG_ECO_CNTL, 0, BIT(PIPE_BR) },
++	{ REG_A7XX_VFD_DBG_ECO_CNTL, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_VFD_CB_BV_THRESHOLD, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_VFD_CB_BR_THRESHOLD, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_VFD_CB_BUSY_REQ_CNT, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_VFD_CB_LP_REQ_CNT, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_VPC_FLATSHADE_MODE_CNTL, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_CP_HW_FAULT_STATUS_MASK_PIPE, 0, BIT(PIPE_BR) |
++		BIT(PIPE_BV) | BIT(PIPE_LPAC) | BIT(PIPE_AQE0) |
++		BIT(PIPE_AQE1) | BIT(PIPE_DDE_BR) | BIT(PIPE_DDE_BV) },
++	{ REG_A8XX_CP_INTERRUPT_STATUS_MASK_PIPE, 0, BIT(PIPE_BR) |
++		BIT(PIPE_BV) | BIT(PIPE_LPAC) | BIT(PIPE_AQE0) |
++		BIT(PIPE_AQE1) | BIT(PIPE_DDE_BR) | BIT(PIPE_DDE_BV) },
++	{ REG_A8XX_CP_PROTECT_CNTL_PIPE, 0, BIT(PIPE_BR) | BIT(PIPE_BV) | BIT(PIPE_LPAC)},
++	{ REG_A8XX_CP_PROTECT_PIPE(15), 0, BIT(PIPE_BR) | BIT(PIPE_BV) | BIT(PIPE_LPAC) },
++	{ REG_A8XX_RB_GC_GMEM_PROTECT, 0, BIT(PIPE_BR) },
++	{ REG_A8XX_RB_LPAC_GMEM_PROTECT, 0, BIT(PIPE_BR) },
++	{ REG_A6XX_RB_CONTEXT_SWITCH_GMEM_SAVE_RESTORE_ENABLE, 0, BIT(PIPE_BR) },
++};
++DECLARE_ADRENO_REGLIST_PIPE_LIST(a840_dyn_pwrup_reglist);
++
+ static const struct adreno_info a8xx_gpus[] = {
+ 	{
+ 		.chip_ids = ADRENO_CHIP_IDS(0x44070001),
+@@ -1940,11 +2119,15 @@ static const struct adreno_info a8xx_gpus[] = {
+ 		.gmem = 18 * SZ_1M,
+ 		.inactive_period = DRM_MSM_INACTIVE_PERIOD,
+ 		.quirks = ADRENO_QUIRK_HAS_CACHED_COHERENT |
+-			  ADRENO_QUIRK_HAS_HW_APRIV,
++			  ADRENO_QUIRK_HAS_HW_APRIV |
++			  ADRENO_QUIRK_IFPC,
+ 		.funcs = &a8xx_gpu_funcs,
+ 		.a6xx = &(const struct a6xx_info) {
+ 			.protect = &a840_protect,
+ 			.nonctxt_reglist = a840_nonctxt_regs,
++			.pwrup_reglist = &a840_pwrup_reglist,
++			.dyn_pwrup_reglist = &a840_dyn_pwrup_reglist,
++			.ifpc_reglist = &a840_ifpc_reglist,
+ 			.gbif_cx = a840_gbif,
+ 			.max_slices = 3,
+ 			.gmu_chipid = 0x8020100,
+diff --git a/drivers/gpu/drm/msm/adreno/a8xx_gpu.c b/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
+index fafeac62aebf..e406681b8c80 100644
+--- a/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
+@@ -173,7 +173,7 @@ void a8xx_flush(struct msm_gpu *gpu, struct msm_ringbuffer *ring)
+ 	/* Update HW if this is the current ring and we are not in preempt*/
+ 	if (!a6xx_in_preempt(a6xx_gpu)) {
+ 		if (a6xx_gpu->cur_ring == ring)
+-			gpu_write(gpu, REG_A6XX_CP_RB_WPTR, wptr);
++			a6xx_fenced_write(a6xx_gpu, REG_A6XX_CP_RB_WPTR, wptr, BIT(0), false);
+ 		else
+ 			ring->restore_wptr = true;
+ 	} else {
+@@ -386,8 +386,87 @@ static void a8xx_nonctxt_config(struct msm_gpu *gpu, u32 *gmem_protect)
+ 	a8xx_aperture_clear(gpu);
+ }
+ 
++static void a8xx_patch_pwrup_reglist(struct msm_gpu *gpu)
++{
++	const struct adreno_reglist_pipe_list *dyn_pwrup_reglist;
++	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
++	struct a6xx_gpu *a6xx_gpu = to_a6xx_gpu(adreno_gpu);
++	const struct adreno_reglist_list *reglist;
++	void *ptr = a6xx_gpu->pwrup_reglist_ptr;
++	struct cpu_gpu_lock *lock = ptr;
++	u32 *dest = (u32 *)&lock->regs[0];
++	u32 dyn_pwrup_reglist_count = 0;
++	int i;
++
++	lock->gpu_req = lock->cpu_req = lock->turn = 0;
++
++	reglist = adreno_gpu->info->a6xx->ifpc_reglist;
++	if (reglist) {
++		lock->ifpc_list_len = reglist->count;
++
++		/*
++		 * For each entry in each of the lists, write the offset and the current
++		 * register value into the GPU buffer
++		 */
++		for (i = 0; i < reglist->count; i++) {
++			*dest++ = reglist->regs[i];
++			*dest++ = gpu_read(gpu, reglist->regs[i]);
++		}
++	}
++
++	reglist = adreno_gpu->info->a6xx->pwrup_reglist;
++	if (reglist) {
++		lock->preemption_list_len = reglist->count;
++
++		for (i = 0; i < reglist->count; i++) {
++			*dest++ = reglist->regs[i];
++			*dest++ = gpu_read(gpu, reglist->regs[i]);
++		}
++	}
++
++	/*
++	 * The overall register list is composed of
++	 * 1. Static IFPC-only registers
++	 * 2. Static IFPC + preemption registers
++	 * 3. Dynamic IFPC + preemption registers (ex: perfcounter selects)
++	 *
++	 * The first two lists are static. Size of these lists are stored as
++	 * number of pairs in ifpc_list_len and preemption_list_len
++	 * respectively. With concurrent binning, Some of the perfcounter
++	 * registers being virtualized, CP needs to know the pipe id to program
++	 * the aperture inorder to restore the same. Thus, third list is a
++	 * dynamic list with triplets as
++	 * (<aperture, shifted 12 bits> <address> <data>), and the length is
++	 * stored as number for triplets in dynamic_list_len.
++	 */
++	dyn_pwrup_reglist = adreno_gpu->info->a6xx->dyn_pwrup_reglist;
++	if (!dyn_pwrup_reglist)
++		goto done;
++
++	for (u32 pipe_id = PIPE_BR; pipe_id <= PIPE_DDE_BV; pipe_id++) {
++		for (i = 0; i < dyn_pwrup_reglist->count; i++) {
++			if (!(dyn_pwrup_reglist->regs[i].pipe & BIT(pipe_id)))
++				continue;
++			*dest++ = A8XX_CP_APERTURE_CNTL_HOST_PIPEID(pipe_id);
++			*dest++ = dyn_pwrup_reglist->regs[i].offset;
++			*dest++ = a8xx_read_pipe_slice(gpu,
++						       pipe_id,
++						       a8xx_get_first_slice(a6xx_gpu),
++						       dyn_pwrup_reglist->regs[i].offset);
++			dyn_pwrup_reglist_count++;
++		}
++	}
++
++	lock->dynamic_list_len = dyn_pwrup_reglist_count;
++
++done:
++	a8xx_aperture_clear(gpu);
++}
++
+ static int a8xx_cp_init(struct msm_gpu *gpu)
+ {
++	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
++	struct a6xx_gpu *a6xx_gpu = to_a6xx_gpu(adreno_gpu);
+ 	struct msm_ringbuffer *ring = gpu->rb[0];
+ 	u32 mask;
+ 
+@@ -395,7 +474,7 @@ static int a8xx_cp_init(struct msm_gpu *gpu)
+ 	OUT_PKT7(ring, CP_THREAD_CONTROL, 1);
+ 	OUT_RING(ring, BIT(27));
+ 
+-	OUT_PKT7(ring, CP_ME_INIT, 4);
++	OUT_PKT7(ring, CP_ME_INIT, 7);
+ 
+ 	/* Use multiple HW contexts */
+ 	mask = BIT(0);
+@@ -409,6 +488,9 @@ static int a8xx_cp_init(struct msm_gpu *gpu)
+ 	/* Disable save/restore of performance counters across preemption */
+ 	mask |= BIT(6);
+ 
++	/* Enable the register init list with the spinlock */
++	mask |= BIT(8);
++
+ 	OUT_RING(ring, mask);
+ 
+ 	/* Enable multiple hardware contexts */
+@@ -420,6 +502,14 @@ static int a8xx_cp_init(struct msm_gpu *gpu)
+ 	/* Operation mode mask */
+ 	OUT_RING(ring, 0x00000002);
+ 
++	/* Lo address */
++	OUT_RING(ring, lower_32_bits(a6xx_gpu->pwrup_reglist_iova));
++	/* Hi address */
++	OUT_RING(ring, upper_32_bits(a6xx_gpu->pwrup_reglist_iova));
++
++	/* Enable dyn pwrup list with triplets (offset, value, pipe) */
++	OUT_RING(ring, BIT(31));
++
+ 	a6xx_flush(gpu, ring);
+ 	return a8xx_idle(gpu, ring) ? 0 : -EINVAL;
+ }
+@@ -702,6 +792,11 @@ static int hw_init(struct msm_gpu *gpu)
+ 	WARN_ON(!gmem_protect);
+ 	a8xx_aperture_clear(gpu);
+ 
++	if (!a6xx_gpu->pwrup_reglist_emitted) {
++		a8xx_patch_pwrup_reglist(gpu);
++		a6xx_gpu->pwrup_reglist_emitted = true;
++	}
++
+ 	/* Enable hardware clockgating */
+ 	a8xx_set_hwcg(gpu, true);
+ out:
+-- 
+2.43.0
+
+
+From 3e13cfa5e3c5e61661441b92ef274af6d29bdde1 Mon Sep 17 00:00:00 2001
+From: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Date: Fri, 27 Mar 2026 05:44:04 +0530
+Subject: [PATCH 14/26] drm/msm/a8xx: Preemption support for A840
+
+The programing sequence related to preemption is unchanged from A7x. But
+there is some code churn due to register shuffling in A8x. So, split out
+the common code into a header file for code sharing and add/update
+additional changes required to support preemption feature on A8x GPUs.
+
+Finally, enable the preemption quirk in A840's catalog to enable this
+feature.
+
+Signed-off-by: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+---
+ drivers/gpu/drm/msm/Makefile              |   1 +
+ drivers/gpu/drm/msm/adreno/a6xx_catalog.c |   1 +
+ drivers/gpu/drm/msm/adreno/a6xx_gpu.c     |   7 +-
+ drivers/gpu/drm/msm/adreno/a6xx_gpu.h     |   5 +
+ drivers/gpu/drm/msm/adreno/a6xx_preempt.c |  77 +------
+ drivers/gpu/drm/msm/adreno/a6xx_preempt.h |  82 +++++++
+ drivers/gpu/drm/msm/adreno/a8xx_gpu.c     |  37 +++-
+ drivers/gpu/drm/msm/adreno/a8xx_preempt.c | 259 ++++++++++++++++++++++
+ 8 files changed, 389 insertions(+), 80 deletions(-)
+ create mode 100644 drivers/gpu/drm/msm/adreno/a6xx_preempt.h
+ create mode 100644 drivers/gpu/drm/msm/adreno/a8xx_preempt.c
+
+diff --git a/drivers/gpu/drm/msm/Makefile b/drivers/gpu/drm/msm/Makefile
+index 8b94c5f1cb68..ba45e99be05b 100644
+--- a/drivers/gpu/drm/msm/Makefile
++++ b/drivers/gpu/drm/msm/Makefile
+@@ -25,6 +25,7 @@ adreno-y := \
+ 	adreno/a6xx_hfi.o \
+ 	adreno/a6xx_preempt.o \
+ 	adreno/a8xx_gpu.o \
++	adreno/a8xx_preempt.o \
+ 
+ adreno-$(CONFIG_DEBUG_FS) += adreno/a5xx_debugfs.o \
+ 
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_catalog.c b/drivers/gpu/drm/msm/adreno/a6xx_catalog.c
+index 53548f6e891b..21f5a685196b 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_catalog.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_catalog.c
+@@ -2120,6 +2120,7 @@ static const struct adreno_info a8xx_gpus[] = {
+ 		.inactive_period = DRM_MSM_INACTIVE_PERIOD,
+ 		.quirks = ADRENO_QUIRK_HAS_CACHED_COHERENT |
+ 			  ADRENO_QUIRK_HAS_HW_APRIV |
++			  ADRENO_QUIRK_PREEMPTION |
+ 			  ADRENO_QUIRK_IFPC,
+ 		.funcs = &a8xx_gpu_funcs,
+ 		.a6xx = &(const struct a6xx_info) {
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
+index 1285f60bd24c..19716f6ab869 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
+@@ -410,7 +410,7 @@ static void a6xx_submit(struct msm_gpu *gpu, struct msm_gem_submit *submit)
+ 	a6xx_flush(gpu, ring);
+ }
+ 
+-static void a6xx_emit_set_pseudo_reg(struct msm_ringbuffer *ring,
++void a6xx_emit_set_pseudo_reg(struct msm_ringbuffer *ring,
+ 		struct a6xx_gpu *a6xx_gpu, struct msm_gpu_submitqueue *queue)
+ {
+ 	u64 preempt_postamble;
+@@ -620,7 +620,10 @@ static void a7xx_submit(struct msm_gpu *gpu, struct msm_gem_submit *submit)
+ 	a6xx_flush(gpu, ring);
+ 
+ 	/* Check to see if we need to start preemption */
+-	a6xx_preempt_trigger(gpu);
++	if (adreno_is_a8xx(adreno_gpu))
++		a8xx_preempt_trigger(gpu);
++	else
++		a6xx_preempt_trigger(gpu);
+ }
+ 
+ static void a6xx_set_hwcg(struct msm_gpu *gpu, bool state)
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gpu.h b/drivers/gpu/drm/msm/adreno/a6xx_gpu.h
+index a4434a6a56dd..eb431e5e00b1 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gpu.h
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gpu.h
+@@ -278,6 +278,8 @@ void a6xx_preempt_hw_init(struct msm_gpu *gpu);
+ void a6xx_preempt_trigger(struct msm_gpu *gpu);
+ void a6xx_preempt_irq(struct msm_gpu *gpu);
+ void a6xx_preempt_fini(struct msm_gpu *gpu);
++void a6xx_emit_set_pseudo_reg(struct msm_ringbuffer *ring,
++		struct a6xx_gpu *a6xx_gpu, struct msm_gpu_submitqueue *queue);
+ int a6xx_preempt_submitqueue_setup(struct msm_gpu *gpu,
+ 		struct msm_gpu_submitqueue *queue);
+ void a6xx_preempt_submitqueue_close(struct msm_gpu *gpu,
+@@ -327,6 +329,9 @@ void a8xx_gpu_get_slice_info(struct msm_gpu *gpu);
+ int a8xx_hw_init(struct msm_gpu *gpu);
+ irqreturn_t a8xx_irq(struct msm_gpu *gpu);
+ void a8xx_llc_activate(struct a6xx_gpu *a6xx_gpu);
++void a8xx_preempt_hw_init(struct msm_gpu *gpu);
++void a8xx_preempt_trigger(struct msm_gpu *gpu);
++void a8xx_preempt_irq(struct msm_gpu *gpu);
+ bool a8xx_progress(struct msm_gpu *gpu, struct msm_ringbuffer *ring);
+ void a8xx_recover(struct msm_gpu *gpu);
+ #endif /* __A6XX_GPU_H__ */
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_preempt.c b/drivers/gpu/drm/msm/adreno/a6xx_preempt.c
+index 747a22afad9f..df4cbf42e9a4 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_preempt.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_preempt.c
+@@ -6,85 +6,10 @@
+ #include "msm_gem.h"
+ #include "a6xx_gpu.h"
+ #include "a6xx_gmu.xml.h"
++#include "a6xx_preempt.h"
+ #include "msm_mmu.h"
+ #include "msm_gpu_trace.h"
+ 
+-/*
+- * Try to transition the preemption state from old to new. Return
+- * true on success or false if the original state wasn't 'old'
+- */
+-static inline bool try_preempt_state(struct a6xx_gpu *a6xx_gpu,
+-		enum a6xx_preempt_state old, enum a6xx_preempt_state new)
+-{
+-	enum a6xx_preempt_state cur = atomic_cmpxchg(&a6xx_gpu->preempt_state,
+-		old, new);
+-
+-	return (cur == old);
+-}
+-
+-/*
+- * Force the preemption state to the specified state.  This is used in cases
+- * where the current state is known and won't change
+- */
+-static inline void set_preempt_state(struct a6xx_gpu *gpu,
+-		enum a6xx_preempt_state new)
+-{
+-	/*
+-	 * preempt_state may be read by other cores trying to trigger a
+-	 * preemption or in the interrupt handler so barriers are needed
+-	 * before...
+-	 */
+-	smp_mb__before_atomic();
+-	atomic_set(&gpu->preempt_state, new);
+-	/* ... and after*/
+-	smp_mb__after_atomic();
+-}
+-
+-/* Write the most recent wptr for the given ring into the hardware */
+-static inline void update_wptr(struct a6xx_gpu *a6xx_gpu, struct msm_ringbuffer *ring)
+-{
+-	unsigned long flags;
+-	uint32_t wptr;
+-
+-	spin_lock_irqsave(&ring->preempt_lock, flags);
+-
+-	if (ring->restore_wptr) {
+-		wptr = get_wptr(ring);
+-
+-		a6xx_fenced_write(a6xx_gpu, REG_A6XX_CP_RB_WPTR, wptr, BIT(0), false);
+-
+-		ring->restore_wptr = false;
+-	}
+-
+-	spin_unlock_irqrestore(&ring->preempt_lock, flags);
+-}
+-
+-/* Return the highest priority ringbuffer with something in it */
+-static struct msm_ringbuffer *get_next_ring(struct msm_gpu *gpu)
+-{
+-	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
+-	struct a6xx_gpu *a6xx_gpu = to_a6xx_gpu(adreno_gpu);
+-
+-	unsigned long flags;
+-	int i;
+-
+-	for (i = 0; i < gpu->nr_rings; i++) {
+-		bool empty;
+-		struct msm_ringbuffer *ring = gpu->rb[i];
+-
+-		spin_lock_irqsave(&ring->preempt_lock, flags);
+-		empty = (get_wptr(ring) == gpu->funcs->get_rptr(gpu, ring));
+-		if (!empty && ring == a6xx_gpu->cur_ring)
+-			empty = ring->memptrs->fence == a6xx_gpu->last_seqno[i];
+-		spin_unlock_irqrestore(&ring->preempt_lock, flags);
+-
+-		if (!empty)
+-			return ring;
+-	}
+-
+-	return NULL;
+-}
+-
+ static void a6xx_preempt_timer(struct timer_list *t)
+ {
+ 	struct a6xx_gpu *a6xx_gpu = timer_container_of(a6xx_gpu, t,
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_preempt.h b/drivers/gpu/drm/msm/adreno/a6xx_preempt.h
+new file mode 100644
+index 000000000000..df36c945b836
+--- /dev/null
++++ b/drivers/gpu/drm/msm/adreno/a6xx_preempt.h
+@@ -0,0 +1,82 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/* Copyright (c) 2018, The Linux Foundation. All rights reserved. */
++/* Copyright (c) 2023 Collabora, Ltd. */
++/* Copyright (c) 2024 Valve Corporation */
++/* Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries. */
++
++/*
++ * Try to transition the preemption state from old to new. Return
++ * true on success or false if the original state wasn't 'old'
++ */
++static inline bool try_preempt_state(struct a6xx_gpu *a6xx_gpu,
++		enum a6xx_preempt_state old, enum a6xx_preempt_state new)
++{
++	enum a6xx_preempt_state cur = atomic_cmpxchg(&a6xx_gpu->preempt_state,
++		old, new);
++
++	return (cur == old);
++}
++
++/*
++ * Force the preemption state to the specified state.  This is used in cases
++ * where the current state is known and won't change
++ */
++static inline void set_preempt_state(struct a6xx_gpu *gpu,
++		enum a6xx_preempt_state new)
++{
++	/*
++	 * preempt_state may be read by other cores trying to trigger a
++	 * preemption or in the interrupt handler so barriers are needed
++	 * before...
++	 */
++	smp_mb__before_atomic();
++	atomic_set(&gpu->preempt_state, new);
++	/* ... and after */
++	smp_mb__after_atomic();
++}
++
++/* Write the most recent wptr for the given ring into the hardware */
++static inline void update_wptr(struct a6xx_gpu *a6xx_gpu, struct msm_ringbuffer *ring)
++{
++	unsigned long flags;
++	uint32_t wptr;
++
++	spin_lock_irqsave(&ring->preempt_lock, flags);
++
++	if (ring->restore_wptr) {
++		wptr = get_wptr(ring);
++
++		a6xx_fenced_write(a6xx_gpu, REG_A6XX_CP_RB_WPTR, wptr, BIT(0), false);
++
++		ring->restore_wptr = false;
++	}
++
++	spin_unlock_irqrestore(&ring->preempt_lock, flags);
++}
++
++/* Return the highest priority ringbuffer with something in it */
++static inline struct msm_ringbuffer *get_next_ring(struct msm_gpu *gpu)
++{
++	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
++	struct a6xx_gpu *a6xx_gpu = to_a6xx_gpu(adreno_gpu);
++
++	unsigned long flags;
++	int i;
++
++	for (i = 0; i < gpu->nr_rings; i++) {
++		bool empty;
++		struct msm_ringbuffer *ring = gpu->rb[i];
++
++		spin_lock_irqsave(&ring->preempt_lock, flags);
++		empty = (get_wptr(ring) == gpu->funcs->get_rptr(gpu, ring));
++		if (!empty && ring == a6xx_gpu->cur_ring)
++			empty = ring->memptrs->fence == a6xx_gpu->last_seqno[i];
++		spin_unlock_irqrestore(&ring->preempt_lock, flags);
++
++		if (!empty)
++			return ring;
++	}
++
++	return NULL;
++}
++
+diff --git a/drivers/gpu/drm/msm/adreno/a8xx_gpu.c b/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
+index e406681b8c80..9e6f2ed69247 100644
+--- a/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
+@@ -463,6 +463,34 @@ static void a8xx_patch_pwrup_reglist(struct msm_gpu *gpu)
+ 	a8xx_aperture_clear(gpu);
+ }
+ 
++static int a8xx_preempt_start(struct msm_gpu *gpu)
++{
++	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
++	struct a6xx_gpu *a6xx_gpu = to_a6xx_gpu(adreno_gpu);
++	struct msm_ringbuffer *ring = gpu->rb[0];
++
++	if (gpu->nr_rings <= 1)
++		return 0;
++
++	/* Turn CP protection off */
++	OUT_PKT7(ring, CP_SET_PROTECTED_MODE, 1);
++	OUT_RING(ring, 0);
++
++	a6xx_emit_set_pseudo_reg(ring, a6xx_gpu, NULL);
++
++	/* Yield the floor on command completion */
++	OUT_PKT7(ring, CP_CONTEXT_SWITCH_YIELD, 4);
++	OUT_RING(ring, 0x00);
++	OUT_RING(ring, 0x00);
++	OUT_RING(ring, 0x00);
++	/* Generate interrupt on preemption completion */
++	OUT_RING(ring, 0x00);
++
++	a6xx_flush(gpu, ring);
++
++	return a8xx_idle(gpu, ring) ? 0 : -EINVAL;
++}
++
+ static int a8xx_cp_init(struct msm_gpu *gpu)
+ {
+ 	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
+@@ -738,6 +766,8 @@ static int hw_init(struct msm_gpu *gpu)
+ 	gpu_write64(gpu, REG_A6XX_CP_RB_RPTR_ADDR, shadowptr(a6xx_gpu, gpu->rb[0]));
+ 	gpu_write64(gpu, REG_A8XX_CP_RB_RPTR_ADDR_BV, rbmemptr(gpu->rb[0], bv_rptr));
+ 
++	a8xx_preempt_hw_init(gpu);
++
+ 	for (i = 0; i < gpu->nr_rings; i++)
+ 		a6xx_gpu->shadow[i] = 0;
+ 
+@@ -800,6 +830,9 @@ static int hw_init(struct msm_gpu *gpu)
+ 	/* Enable hardware clockgating */
+ 	a8xx_set_hwcg(gpu, true);
+ out:
++	/* Last step - yield the ringbuffer */
++	a8xx_preempt_start(gpu);
++
+ 	/*
+ 	 * Tell the GMU that we are done touching the GPU and it can start power
+ 	 * management
+@@ -1209,11 +1242,11 @@ irqreturn_t a8xx_irq(struct msm_gpu *gpu)
+ 
+ 	if (status & A6XX_RBBM_INT_0_MASK_CP_CACHE_FLUSH_TS) {
+ 		msm_gpu_retire(gpu);
+-		a6xx_preempt_trigger(gpu);
++		a8xx_preempt_trigger(gpu);
+ 	}
+ 
+ 	if (status & A6XX_RBBM_INT_0_MASK_CP_SW)
+-		a6xx_preempt_irq(gpu);
++		a8xx_preempt_irq(gpu);
+ 
+ 	return IRQ_HANDLED;
+ }
+diff --git a/drivers/gpu/drm/msm/adreno/a8xx_preempt.c b/drivers/gpu/drm/msm/adreno/a8xx_preempt.c
+new file mode 100644
+index 000000000000..3d8c33ba722e
+--- /dev/null
++++ b/drivers/gpu/drm/msm/adreno/a8xx_preempt.c
+@@ -0,0 +1,259 @@
++// SPDX-License-Identifier: GPL-2.0
++/* Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries. */
++
++#include "msm_gem.h"
++#include "a6xx_gpu.h"
++#include "a6xx_gmu.xml.h"
++#include "a6xx_preempt.h"
++#include "msm_mmu.h"
++#include "msm_gpu_trace.h"
++
++static void preempt_prepare_postamble(struct a6xx_gpu *a6xx_gpu)
++{
++	u32 *postamble = a6xx_gpu->preempt_postamble_ptr;
++	u32 count = 0;
++
++	postamble[count++] = PKT7(CP_REG_RMW, 3);
++	postamble[count++] = REG_A8XX_RBBM_PERFCTR_SRAM_INIT_CMD;
++	postamble[count++] = 0;
++	postamble[count++] = 1;
++
++	postamble[count++] = PKT7(CP_WAIT_REG_MEM, 6);
++	postamble[count++] = CP_WAIT_REG_MEM_0_FUNCTION(WRITE_EQ);
++	postamble[count++] = CP_WAIT_REG_MEM_POLL_ADDR_LO(
++				REG_A8XX_RBBM_PERFCTR_SRAM_INIT_STATUS);
++	postamble[count++] = CP_WAIT_REG_MEM_POLL_ADDR_HI(0);
++	postamble[count++] = CP_WAIT_REG_MEM_3_REF(0x1);
++	postamble[count++] = CP_WAIT_REG_MEM_4_MASK(0x1);
++	postamble[count++] = CP_WAIT_REG_MEM_5_DELAY_LOOP_CYCLES(0);
++
++	a6xx_gpu->preempt_postamble_len = count;
++
++	a6xx_gpu->postamble_enabled = true;
++}
++
++static void preempt_disable_postamble(struct a6xx_gpu *a6xx_gpu)
++{
++	u32 *postamble = a6xx_gpu->preempt_postamble_ptr;
++
++	/*
++	 * Disable the postamble by replacing the first packet header with a NOP
++	 * that covers the whole buffer.
++	 */
++	*postamble = PKT7(CP_NOP, (a6xx_gpu->preempt_postamble_len - 1));
++
++	a6xx_gpu->postamble_enabled = false;
++}
++
++/*
++ * Set preemption keepalive vote. Please note that this vote is different from the one used in
++ * a8xx_irq()
++ */
++static void a8xx_preempt_keepalive_vote(struct msm_gpu *gpu, bool on)
++{
++	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
++	struct a6xx_gpu *a6xx_gpu = to_a6xx_gpu(adreno_gpu);
++
++	gmu_write(&a6xx_gpu->gmu, REG_A8XX_GMU_PWR_COL_PREEMPT_KEEPALIVE, on);
++}
++
++void a8xx_preempt_irq(struct msm_gpu *gpu)
++{
++	uint32_t status;
++	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
++	struct a6xx_gpu *a6xx_gpu = to_a6xx_gpu(adreno_gpu);
++	struct drm_device *dev = gpu->dev;
++
++	if (!try_preempt_state(a6xx_gpu, PREEMPT_TRIGGERED, PREEMPT_PENDING))
++		return;
++
++	/* Delete the preemption watchdog timer */
++	timer_delete(&a6xx_gpu->preempt_timer);
++
++	/*
++	 * The hardware should be setting the stop bit of CP_CONTEXT_SWITCH_CNTL
++	 * to zero before firing the interrupt, but there is a non zero chance
++	 * of a hardware condition or a software race that could set it again
++	 * before we have a chance to finish. If that happens, log and go for
++	 * recovery
++	 */
++	status = gpu_read(gpu, REG_A8XX_CP_CONTEXT_SWITCH_CNTL);
++	if (unlikely(status & A8XX_CP_CONTEXT_SWITCH_CNTL_STOP)) {
++		DRM_DEV_ERROR(&gpu->pdev->dev,
++					  "!!!!!!!!!!!!!!!! preemption faulted !!!!!!!!!!!!!! irq\n");
++		set_preempt_state(a6xx_gpu, PREEMPT_FAULTED);
++		dev_err(dev->dev, "%s: Preemption failed to complete\n",
++			gpu->name);
++		kthread_queue_work(gpu->worker, &gpu->recover_work);
++		return;
++	}
++
++	a6xx_gpu->cur_ring = a6xx_gpu->next_ring;
++	a6xx_gpu->next_ring = NULL;
++
++	set_preempt_state(a6xx_gpu, PREEMPT_FINISH);
++
++	update_wptr(a6xx_gpu, a6xx_gpu->cur_ring);
++
++	set_preempt_state(a6xx_gpu, PREEMPT_NONE);
++
++	a8xx_preempt_keepalive_vote(gpu, false);
++
++	trace_msm_gpu_preemption_irq(a6xx_gpu->cur_ring->id);
++
++	/*
++	 * Retrigger preemption to avoid a deadlock that might occur when preemption
++	 * is skipped due to it being already in flight when requested.
++	 */
++	a8xx_preempt_trigger(gpu);
++}
++
++void a8xx_preempt_hw_init(struct msm_gpu *gpu)
++{
++	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
++	struct a6xx_gpu *a6xx_gpu = to_a6xx_gpu(adreno_gpu);
++	int i;
++
++	/* No preemption if we only have one ring */
++	if (gpu->nr_rings == 1)
++		return;
++
++	for (i = 0; i < gpu->nr_rings; i++) {
++		struct a6xx_preempt_record *record_ptr = a6xx_gpu->preempt[i];
++
++		record_ptr->wptr = 0;
++		record_ptr->rptr = 0;
++		record_ptr->rptr_addr = shadowptr(a6xx_gpu, gpu->rb[i]);
++		record_ptr->info = 0;
++		record_ptr->data = 0;
++		record_ptr->rbase = gpu->rb[i]->iova;
++	}
++
++	/* Write a 0 to signal that we aren't switching pagetables */
++	gpu_write64(gpu, REG_A8XX_CP_CONTEXT_SWITCH_SMMU_INFO, 0);
++
++	/* Enable the GMEM save/restore feature for preemption */
++	gpu_write(gpu, REG_A6XX_RB_CONTEXT_SWITCH_GMEM_SAVE_RESTORE_ENABLE, 0x1);
++
++	/* Reset the preemption state */
++	set_preempt_state(a6xx_gpu, PREEMPT_NONE);
++
++	spin_lock_init(&a6xx_gpu->eval_lock);
++
++	/* Always come up on rb 0 */
++	a6xx_gpu->cur_ring = gpu->rb[0];
++}
++
++void a8xx_preempt_trigger(struct msm_gpu *gpu)
++{
++	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
++	struct a6xx_gpu *a6xx_gpu = to_a6xx_gpu(adreno_gpu);
++	unsigned long flags;
++	struct msm_ringbuffer *ring;
++	unsigned int cntl;
++	bool sysprof;
++
++	if (gpu->nr_rings == 1)
++		return;
++
++	/*
++	 * Lock to make sure another thread attempting preemption doesn't skip it
++	 * while we are still evaluating the next ring. This makes sure the other
++	 * thread does start preemption if we abort it and avoids a soft lock.
++	 */
++	spin_lock_irqsave(&a6xx_gpu->eval_lock, flags);
++
++	/*
++	 * Try to start preemption by moving from NONE to START. If
++	 * unsuccessful, a preemption is already in flight
++	 */
++	if (!try_preempt_state(a6xx_gpu, PREEMPT_NONE, PREEMPT_START)) {
++		spin_unlock_irqrestore(&a6xx_gpu->eval_lock, flags);
++		return;
++	}
++
++	cntl = A8XX_CP_CONTEXT_SWITCH_CNTL_LEVEL(a6xx_gpu->preempt_level);
++
++	if (a6xx_gpu->skip_save_restore)
++		cntl |= A8XX_CP_CONTEXT_SWITCH_CNTL_SKIP_SAVE_RESTORE;
++
++	if (a6xx_gpu->uses_gmem)
++		cntl |= A8XX_CP_CONTEXT_SWITCH_CNTL_USES_GMEM;
++
++	cntl |= A8XX_CP_CONTEXT_SWITCH_CNTL_STOP;
++
++	/* Get the next ring to preempt to */
++	ring = get_next_ring(gpu);
++
++	/*
++	 * If no ring is populated or the highest priority ring is the current
++	 * one do nothing except to update the wptr to the latest and greatest
++	 */
++	if (!ring || (a6xx_gpu->cur_ring == ring)) {
++		set_preempt_state(a6xx_gpu, PREEMPT_FINISH);
++		update_wptr(a6xx_gpu, a6xx_gpu->cur_ring);
++		set_preempt_state(a6xx_gpu, PREEMPT_NONE);
++		spin_unlock_irqrestore(&a6xx_gpu->eval_lock, flags);
++		return;
++	}
++
++	spin_unlock_irqrestore(&a6xx_gpu->eval_lock, flags);
++
++	spin_lock_irqsave(&ring->preempt_lock, flags);
++
++	struct a7xx_cp_smmu_info *smmu_info_ptr =
++		a6xx_gpu->preempt_smmu[ring->id];
++	struct a6xx_preempt_record *record_ptr = a6xx_gpu->preempt[ring->id];
++	u64 ttbr0 = ring->memptrs->ttbr0;
++	u32 context_idr = ring->memptrs->context_idr;
++
++	smmu_info_ptr->ttbr0 = ttbr0;
++	smmu_info_ptr->context_idr = context_idr;
++	record_ptr->wptr = get_wptr(ring);
++
++	/*
++	 * The GPU will write the wptr we set above when we preempt. Reset
++	 * restore_wptr to make sure that we don't write WPTR to the same
++	 * thing twice. It's still possible subsequent submissions will update
++	 * wptr again, in which case they will set the flag to true. This has
++	 * to be protected by the lock for setting the flag and updating wptr
++	 * to be atomic.
++	 */
++	ring->restore_wptr = false;
++
++	trace_msm_gpu_preemption_trigger(a6xx_gpu->cur_ring->id, ring->id);
++
++	spin_unlock_irqrestore(&ring->preempt_lock, flags);
++
++	/* Set the keepalive bit to keep the GPU ON until preemption is complete */
++	a8xx_preempt_keepalive_vote(gpu, true);
++
++	a6xx_fenced_write(a6xx_gpu,
++		REG_A8XX_CP_CONTEXT_SWITCH_SMMU_INFO, a6xx_gpu->preempt_smmu_iova[ring->id],
++		BIT(1), true);
++
++	a6xx_fenced_write(a6xx_gpu,
++		REG_A8XX_CP_CONTEXT_SWITCH_PRIV_NON_SECURE_RESTORE_ADDR,
++		a6xx_gpu->preempt_iova[ring->id], BIT(1), true);
++
++	a6xx_gpu->next_ring = ring;
++
++	/* Start a timer to catch a stuck preemption */
++	mod_timer(&a6xx_gpu->preempt_timer, jiffies + msecs_to_jiffies(10000));
++
++	/* Enable or disable postamble as needed */
++	sysprof = refcount_read(&a6xx_gpu->base.base.sysprof_active) > 1;
++
++	if (!sysprof && !a6xx_gpu->postamble_enabled)
++		preempt_prepare_postamble(a6xx_gpu);
++
++	if (sysprof && a6xx_gpu->postamble_enabled)
++		preempt_disable_postamble(a6xx_gpu);
++
++	/* Set the preemption state to triggered */
++	set_preempt_state(a6xx_gpu, PREEMPT_TRIGGERED);
++
++	/* Trigger the preemption */
++	a6xx_fenced_write(a6xx_gpu, REG_A8XX_CP_CONTEXT_SWITCH_CNTL, cntl, BIT(1), false);
++}
++
+-- 
+2.43.0
+
+
+From fa7b5789d893586a377458c46e746205feb68e04 Mon Sep 17 00:00:00 2001
+From: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Date: Fri, 27 Mar 2026 05:44:05 +0530
+Subject: [PATCH 15/26] drm/msm/a6xx: Enable Preemption on X2-85
+
+Add the save-restore register lists and set the necessary quirk flags
+in the catalog to enable the Preemption feature on Adreno X2-85 GPU.
+
+Signed-off-by: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+---
+ drivers/gpu/drm/msm/adreno/a6xx_catalog.c | 42 +++++++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_catalog.c b/drivers/gpu/drm/msm/adreno/a6xx_catalog.c
+index 21f5a685196b..550ff3a9b82e 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_catalog.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_catalog.c
+@@ -1761,6 +1761,44 @@ static const u32 x285_protect_regs[] = {
+ 
+ DECLARE_ADRENO_PROTECT(x285_protect, 15);
+ 
++static const struct adreno_reglist_pipe x285_dyn_pwrup_reglist_regs[] = {
++	{ REG_A8XX_GRAS_TSEFE_DBG_ECO_CNTL, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_GRAS_NC_MODE_CNTL, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_GRAS_DBG_ECO_CNTL, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A6XX_PC_AUTO_VERTEX_STRIDE, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_PC_CHICKEN_BITS_1, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_PC_CHICKEN_BITS_2, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_PC_CHICKEN_BITS_3, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_PC_CHICKEN_BITS_4, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_PC_CONTEXT_SWITCH_STABILIZE_CNTL_1, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_PC_VIS_STREAM_CNTL, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A7XX_RB_CCU_CNTL, 0, BIT(PIPE_BR) },
++	{ REG_A7XX_RB_CCU_DBG_ECO_CNTL, 0, BIT(PIPE_BR)},
++	{ REG_A8XX_RB_CCU_NC_MODE_CNTL, 0, BIT(PIPE_BR) },
++	{ REG_A8XX_RB_CMP_NC_MODE_CNTL, 0, BIT(PIPE_BR) },
++	{ REG_A6XX_RB_RBP_CNTL, 0, BIT(PIPE_BR) },
++	{ REG_A8XX_RB_RESOLVE_PREFETCH_CNTL, 0, BIT(PIPE_BR) },
++	{ REG_A8XX_RB_CMP_DBG_ECO_CNTL, 0, BIT(PIPE_BR) },
++	{ REG_A7XX_VFD_DBG_ECO_CNTL, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_VFD_CB_BV_THRESHOLD, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_VFD_CB_BR_THRESHOLD, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_VFD_CB_BUSY_REQ_CNT, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_VFD_CB_LP_REQ_CNT, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_VPC_FLATSHADE_MODE_CNTL, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_CP_HW_FAULT_STATUS_MASK_PIPE, 0, BIT(PIPE_BR) |
++		BIT(PIPE_BV) | BIT(PIPE_LPAC) | BIT(PIPE_AQE0) |
++		BIT(PIPE_AQE1) | BIT(PIPE_DDE_BR) | BIT(PIPE_DDE_BV) },
++	{ REG_A8XX_CP_INTERRUPT_STATUS_MASK_PIPE, 0, BIT(PIPE_BR) |
++		BIT(PIPE_BV) | BIT(PIPE_LPAC) | BIT(PIPE_AQE0) |
++		BIT(PIPE_AQE1) | BIT(PIPE_DDE_BR) | BIT(PIPE_DDE_BV) },
++	{ REG_A8XX_CP_PROTECT_CNTL_PIPE, 0, BIT(PIPE_BR) | BIT(PIPE_BV) | BIT(PIPE_LPAC)},
++	{ REG_A8XX_CP_PROTECT_PIPE(15), 0, BIT(PIPE_BR) | BIT(PIPE_BV) | BIT(PIPE_LPAC) },
++	{ REG_A8XX_RB_GC_GMEM_PROTECT, 0, BIT(PIPE_BR) },
++	{ REG_A8XX_RB_LPAC_GMEM_PROTECT, 0, BIT(PIPE_BR) },
++	{ REG_A6XX_RB_CONTEXT_SWITCH_GMEM_SAVE_RESTORE_ENABLE, 0, BIT(PIPE_BR) },
++};
++DECLARE_ADRENO_REGLIST_PIPE_LIST(x285_dyn_pwrup_reglist);
++
+ static const struct adreno_reglist_pipe a840_nonctxt_regs[] = {
+ 	{ REG_A8XX_CP_SMMU_STREAM_ID_LPAC, 0x00000101, BIT(PIPE_NONE) },
+ 	{ REG_A8XX_GRAS_DBG_ECO_CNTL, 0x00000800, BIT(PIPE_BV) | BIT(PIPE_BR) },
+@@ -2082,11 +2120,15 @@ static const struct adreno_info a8xx_gpus[] = {
+ 		.inactive_period = DRM_MSM_INACTIVE_PERIOD,
+ 		.quirks = ADRENO_QUIRK_HAS_CACHED_COHERENT |
+ 			  ADRENO_QUIRK_HAS_HW_APRIV |
++			  ADRENO_QUIRK_PREEMPTION |
+ 			  ADRENO_QUIRK_SOFTFUSE,
+ 		.funcs = &a8xx_gpu_funcs,
+ 		.a6xx = &(const struct a6xx_info) {
+ 			.protect = &x285_protect,
+ 			.nonctxt_reglist = x285_nonctxt_regs,
++			.pwrup_reglist = &a840_pwrup_reglist,
++			.dyn_pwrup_reglist = &x285_dyn_pwrup_reglist,
++			.ifpc_reglist = &a840_ifpc_reglist,
+ 			.gbif_cx = a840_gbif,
+ 			.max_slices = 4,
+ 			.gmu_chipid = 0x8010100,
+-- 
+2.43.0
+
+
+From 68922cc0c2b014e0234abff5b78ad6458162afa7 Mon Sep 17 00:00:00 2001
+From: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Date: Fri, 27 Mar 2026 05:44:06 +0530
+Subject: [PATCH 16/26] drm/msm/adreno: Expose a PARAM to check AQE support
+
+AQE (Applicaton Qrisc Engine) is required to support VK ray-pipeline. Two
+conditions should be met to use this HW:
+  1. AQE firmware should be loaded and programmed
+  2. Preemption support
+
+Expose a new MSM_PARAM to allow userspace to query its support.
+
+Signed-off-by: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Reviewed-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+---
+ drivers/gpu/drm/msm/adreno/a6xx_gpu.c   | 13 +++++++++++++
+ drivers/gpu/drm/msm/adreno/adreno_gpu.c |  4 ++++
+ drivers/gpu/drm/msm/adreno/adreno_gpu.h |  1 +
+ include/uapi/drm/msm_drm.h              |  1 +
+ 4 files changed, 19 insertions(+)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
+index 19716f6ab869..e1eae6cb1e40 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
+@@ -2604,6 +2604,17 @@ static int a6xx_set_supported_hw(struct device *dev, struct a6xx_gpu *a6xx_gpu,
+ 	return 0;
+ }
+ 
++static bool a6xx_aqe_is_enabled(struct adreno_gpu *adreno_gpu)
++{
++	struct a6xx_gpu *a6xx_gpu = to_a6xx_gpu(adreno_gpu);
++
++	/*
++	 * AQE uses preemption context record as scratch pad, so check if
++	 * preemption is enabled
++	 */
++	return (adreno_gpu->base.nr_rings > 1) && !!a6xx_gpu->aqe_bo;
++}
++
+ static struct msm_gpu *a6xx_gpu_init(struct drm_device *dev)
+ {
+ 	struct msm_drm_private *priv = dev->dev_private;
+@@ -2802,6 +2813,7 @@ const struct adreno_gpu_funcs a7xx_gpu_funcs = {
+ 	.bus_halt = a6xx_bus_clear_pending_transactions,
+ 	.mmu_fault_handler = a6xx_fault_handler,
+ 	.gx_is_on = a7xx_gmu_gx_is_on,
++	.aqe_is_enabled = a6xx_aqe_is_enabled,
+ };
+ 
+ const struct adreno_gpu_funcs a8xx_gpu_funcs = {
+@@ -2830,4 +2842,5 @@ const struct adreno_gpu_funcs a8xx_gpu_funcs = {
+ 	.bus_halt = a8xx_bus_clear_pending_transactions,
+ 	.mmu_fault_handler = a8xx_fault_handler,
+ 	.gx_is_on = a8xx_gmu_gx_is_on,
++	.aqe_is_enabled = a6xx_aqe_is_enabled,
+ };
+diff --git a/drivers/gpu/drm/msm/adreno/adreno_gpu.c b/drivers/gpu/drm/msm/adreno/adreno_gpu.c
+index f6c39aed50f2..78c348852b4b 100644
+--- a/drivers/gpu/drm/msm/adreno/adreno_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/adreno_gpu.c
+@@ -444,6 +444,10 @@ int adreno_get_param(struct msm_gpu *gpu, struct msm_context *ctx,
+ 	case MSM_PARAM_HAS_PRR:
+ 		*value = adreno_smmu_has_prr(gpu);
+ 		return 0;
++	case MSM_PARAM_AQE:
++		*value = !!(adreno_gpu->funcs->aqe_is_enabled &&
++			    adreno_gpu->funcs->aqe_is_enabled(adreno_gpu));
++		return 0;
+ 	default:
+ 		return UERR(EINVAL, drm, "%s: invalid param: %u", gpu->name, param);
+ 	}
+diff --git a/drivers/gpu/drm/msm/adreno/adreno_gpu.h b/drivers/gpu/drm/msm/adreno/adreno_gpu.h
+index 044ed4d49aa7..c0ee544ce257 100644
+--- a/drivers/gpu/drm/msm/adreno/adreno_gpu.h
++++ b/drivers/gpu/drm/msm/adreno/adreno_gpu.h
+@@ -84,6 +84,7 @@ struct adreno_gpu_funcs {
+ 	void (*bus_halt)(struct adreno_gpu *adreno_gpu, bool gx_off);
+ 	int (*mmu_fault_handler)(void *arg, unsigned long iova, int flags, void *data);
+ 	bool (*gx_is_on)(struct adreno_gpu *adreno_gpu);
++	bool (*aqe_is_enabled)(struct adreno_gpu *adreno_gpu);
+ };
+ 
+ struct adreno_reglist {
+diff --git a/include/uapi/drm/msm_drm.h b/include/uapi/drm/msm_drm.h
+index 5c67294edc95..b99098792371 100644
+--- a/include/uapi/drm/msm_drm.h
++++ b/include/uapi/drm/msm_drm.h
+@@ -117,6 +117,7 @@ struct drm_msm_timespec {
+  * ioctl will throw -EPIPE.
+  */
+ #define MSM_PARAM_EN_VM_BIND 0x16  /* WO, once */
++#define MSM_PARAM_AQE	     0x17  /* RO */
+ 
+ /* For backwards compat.  The original support for preemption was based on
+  * a single ring per priority level so # of priority levels equals the #
+-- 
+2.43.0
+
+
+From 765aaab58488a5ffabfd66bb24eab6c5d61315b5 Mon Sep 17 00:00:00 2001
+From: Jagadeesh Kona <jagadeesh.kona@oss.qualcomm.com>
+Date: Tue, 7 Apr 2026 15:00:51 +0530
+Subject: [PATCH 17/26] clk: qcom: gdsc: Add custom disable callback for GX
+ GDSC
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The GX GDSC is a special power domain that should only be disabled
+by OS during GMU recovery. In all other scenarios, the GMU firmware
+is responsible for handling its disable sequence, and OS must not
+interfere.
+
+During the resume_noirq() phase of system resume, the GenPD framework
+enables all power domains and later disables them in the complete()
+phase if there are no active votes from OS. This behavior can
+incorrectly disable the GX GDSC while the GMU firmware is still using
+it.
+
+To prevent this, implement a custom disable callback for GX GDSC that
+relies on GenPD’s synced_poweroff flag. The GMU driver sets this flag
+only during recovery, allowing OS to explicitly disable GX GDSC in
+hardware in that case. In all other situations, the disable callback
+will avoid touching GX GDSC hardware.
+
+Signed-off-by: Jagadeesh Kona <jagadeesh.kona@oss.qualcomm.com>
+Signed-off-by: Taniya Das <taniya.das@oss.qualcomm.com>
+---
+ drivers/clk/qcom/gdsc.c | 22 ++++++++++++++++++++++
+ drivers/clk/qcom/gdsc.h |  1 +
+ 2 files changed, 23 insertions(+)
+
+diff --git a/drivers/clk/qcom/gdsc.c b/drivers/clk/qcom/gdsc.c
+index 7deabf8400cf..d2b642b7c4ba 100644
+--- a/drivers/clk/qcom/gdsc.c
++++ b/drivers/clk/qcom/gdsc.c
+@@ -665,3 +665,25 @@ int gdsc_gx_do_nothing_enable(struct generic_pm_domain *domain)
+ 	return ret;
+ }
+ EXPORT_SYMBOL_GPL(gdsc_gx_do_nothing_enable);
++
++/*
++ * GX GDSC is a special power domain. Normally, its disable sequence
++ * is managed by the GMU firmware, and high level OS must not attempt
++ * to disable it. The only exception is during GMU recovery, where the
++ * GMU driver can set GenPD’s synced_poweroff flag to allow explicitly
++ * disable GX GDSC in hardware.
++ */
++int gdsc_gx_disable(struct generic_pm_domain *domain)
++{
++	struct gdsc *sc = domain_to_gdsc(domain);
++
++	if (domain->synced_poweroff)
++		return gdsc_disable(domain);
++
++	/* Remove parent-supply placed in enable */
++	if (sc->rsupply)
++		return regulator_disable(sc->rsupply);
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(gdsc_gx_disable);
+diff --git a/drivers/clk/qcom/gdsc.h b/drivers/clk/qcom/gdsc.h
+index dd843e86c05b..495daebaf995 100644
+--- a/drivers/clk/qcom/gdsc.h
++++ b/drivers/clk/qcom/gdsc.h
+@@ -88,6 +88,7 @@ int gdsc_register(struct gdsc_desc *desc, struct reset_controller_dev *,
+ 		  struct regmap *);
+ void gdsc_unregister(struct gdsc_desc *desc);
+ int gdsc_gx_do_nothing_enable(struct generic_pm_domain *domain);
++int gdsc_gx_disable(struct generic_pm_domain *domain);
+ #else
+ static inline int gdsc_register(struct gdsc_desc *desc,
+ 				struct reset_controller_dev *rcdev,
+-- 
+2.43.0
+
+
+From 2d9b7278a5470fe42add76fded794718ccec0324 Mon Sep 17 00:00:00 2001
+From: Taniya Das <taniya.das@oss.qualcomm.com>
+Date: Tue, 7 Apr 2026 15:00:52 +0530
+Subject: [PATCH 18/26] clk: qcom: gxclkctl: Use custom disable callback for
+ gx_gdsc
+
+The GX GDSC represents a special GPU power domain that must not be
+disabled during normal runtime PM flows. As per the GMU architecture,
+GX GDSC should only be force-disabled during GMU/GPU recovery, where the
+OS explicitly resets the GX power domain.
+
+However, when managed by the generic GDSC runtime PM path, GX GDSC may be
+disabled during GMU runtime suspend, resulting in warnings such as:
+
+  gx_clkctl_gx_gdsc status stuck at 'on'
+
+and failures in gdsc_toggle_logic() during rpm suspend.
+
+Use the newly added custom disable callback for gx_gdsc to ensure the
+GDSC is toggled only in recovery scenarios, while preventing unintended
+disable attempts during normal GMU runtime PM operations.
+
+Reported-by: Pengyu Luo <mitltlatltl@gmail.com>
+Closes: https://lore.kernel.org/all/CAH2e8h4Vp9fJYAUUbOmoHSKB25wakPBvmpwa62BTRqgRQbMWuw@mail.gmail.com/
+Reported-by: Alexander Koskovich <akoskovich@pm.me>
+Closes: https://lore.kernel.org/all/gwVAH2mJerU4dBInw8pKmOs5aQK55Q7W6q_UQAlLFCsEgX6eyvSgXAWbNNMqAX4WmPlYCKUSMhfkr5Jry4Ps5EqnxYZqEEDd3Whwv7ZXGlc=@pm.me/
+Fixes: 5af11acae660 ("clk: qcom: Add a driver for SM8750 GPU clocks")
+Signed-off-by: Taniya Das <taniya.das@oss.qualcomm.com>
+Reviewed-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+---
+ drivers/clk/qcom/gxclkctl-kaanapali.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/clk/qcom/gxclkctl-kaanapali.c b/drivers/clk/qcom/gxclkctl-kaanapali.c
+index c209ce5fe4f0..de9cde0892b7 100644
+--- a/drivers/clk/qcom/gxclkctl-kaanapali.c
++++ b/drivers/clk/qcom/gxclkctl-kaanapali.c
+@@ -27,6 +27,7 @@ static struct gdsc gx_clkctl_gx_gdsc = {
+ 	.pd = {
+ 		.name = "gx_clkctl_gx_gdsc",
+ 		.power_on = gdsc_gx_do_nothing_enable,
++		.power_off = gdsc_gx_disable,
+ 	},
+ 	.pwrsts = PWRSTS_OFF_ON,
+ 	.flags = POLL_CFG_GDSCR | RETAIN_FF_ENABLE,
+-- 
+2.43.0
+
+
+From b35a2c4c3f928495c4ff86424c126dbaca27e464 Mon Sep 17 00:00:00 2001
+From: Taniya Das <taniya.das@oss.qualcomm.com>
+Date: Tue, 7 Apr 2026 15:00:53 +0530
+Subject: [PATCH 19/26] clk: qcom: common: ensure runtime PM suspend completes
+ on probe
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When the clock controller is probed with 'use_rpm' enabled, the
+runtime PM reference is currently released using pm_runtime_put(),
+which may return before the runtime suspend has completed. This
+can leave the power domain transition in progress while the probe
+path continues or returns.
+
+Use pm_runtime_put_sync() instead to ensure the runtime PM “put”
+completes synchronously during probe, guaranteeing the device is
+fully runtime‑suspended before returning.
+
+Signed-off-by: Taniya Das <taniya.das@oss.qualcomm.com>
+---
+ drivers/clk/qcom/common.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/clk/qcom/common.c b/drivers/clk/qcom/common.c
+index eec369d2173b..2c09abaf1d2a 100644
+--- a/drivers/clk/qcom/common.c
++++ b/drivers/clk/qcom/common.c
+@@ -428,7 +428,7 @@ int qcom_cc_really_probe(struct device *dev,
+ 
+ put_rpm:
+ 	if (desc->use_rpm)
+-		pm_runtime_put(dev);
++		pm_runtime_put_sync(dev);
+ 
+ 	return ret;
+ }
+-- 
+2.43.0
+
+
+From c6ec547a3224e55a33174dcccac4ca436ff8d94d Mon Sep 17 00:00:00 2001
+From: Taniya Das <taniya.das@oss.qualcomm.com>
+Date: Tue, 7 Apr 2026 15:00:54 +0530
+Subject: [PATCH 20/26] clk: qcom: gxclkctl: Remove GX/GMxC rail votes to align
+ with IFPC
+
+The GX GDSC control is handled through a dedicated clock controller,
+and the enable/disable sequencing depends on correct rail voting.
+The driver votes for the GX/GMxC rails and CX GDSC before toggling
+the GX GDSC. Currently, during GMU runtime PM resume, rails remain
+enabled due to upstream votes propagated via RPM-enabled devlinks
+and explicit pm_runtime votes on GX GDSC.
+
+This is not an expected behaviour of IFPC(Inter Frame Power Collapse)
+requirements of GPU as GMU firmware is expected to control these rails,
+except during the GPU/GMU recovery via the OS and that is where the GX
+GDSC should be voting for the rails (GX/GMxC and CX GDSC) before
+toggling the GX GDSC.
+
+Thus, disable runtime PM after successfully registering the clock
+controller.
+
+Signed-off-by: Taniya Das <taniya.das@oss.qualcomm.com>
+---
+ drivers/clk/qcom/gxclkctl-kaanapali.c | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/clk/qcom/gxclkctl-kaanapali.c b/drivers/clk/qcom/gxclkctl-kaanapali.c
+index de9cde0892b7..6b57713954f4 100644
+--- a/drivers/clk/qcom/gxclkctl-kaanapali.c
++++ b/drivers/clk/qcom/gxclkctl-kaanapali.c
+@@ -8,6 +8,7 @@
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/platform_device.h>
++#include <linux/pm_runtime.h>
+ #include <linux/regmap.h>
+ 
+ #include <dt-bindings/clock/qcom,kaanapali-gxclkctl.h>
+@@ -60,7 +61,15 @@ MODULE_DEVICE_TABLE(of, gx_clkctl_kaanapali_match_table);
+ 
+ static int gx_clkctl_kaanapali_probe(struct platform_device *pdev)
+ {
+-	return qcom_cc_probe(pdev, &gx_clkctl_kaanapali_desc);
++	int ret;
++
++	ret = qcom_cc_probe(pdev, &gx_clkctl_kaanapali_desc);
++	if (ret)
++		return ret;
++
++	pm_runtime_disable(&pdev->dev);
++
++	return ret;
+ }
+ 
+ static struct platform_driver gx_clkctl_kaanapali_driver = {
+-- 
+2.43.0
+
+
+From f04c47413a5d480b945107dbabbfaa365d036a79 Mon Sep 17 00:00:00 2001
+From: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Date: Tue, 7 Apr 2026 15:00:55 +0530
+Subject: [PATCH 21/26] drm/msm/a8xx: Make a8xx_recover IFPC safe
+
+Similar to a6xx_recover(), check the GX power domain status before
+accessing mmio in GX domain a8xx_recover().
+
+Fixes: 288a93200892 ("drm/msm/adreno: Introduce A8x GPU Support")
+Signed-off-by: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Signed-off-by: Taniya Das <taniya.das@oss.qualcomm.com>
+Reviewed-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+---
+ drivers/gpu/drm/msm/adreno/a8xx_gpu.c | 15 ++++++++++-----
+ 1 file changed, 10 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a8xx_gpu.c b/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
+index 9e6f2ed69247..edfd04bf6cd1 100644
+--- a/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
+@@ -876,17 +876,22 @@ void a8xx_recover(struct msm_gpu *gpu)
+ 
+ 	adreno_dump_info(gpu);
+ 
+-	if (hang_debug)
+-		a8xx_dump(gpu);
+-
+ 	/*
+ 	 * To handle recovery specific sequences during the rpm suspend we are
+ 	 * about to trigger
+ 	 */
+ 	a6xx_gpu->hung = true;
+ 
+-	/* Halt SQE first */
+-	gpu_write(gpu, REG_A8XX_CP_SQE_CNTL, 3);
++	if (adreno_gpu->funcs->gx_is_on(adreno_gpu)) {
++		/*
++		 * Sometimes crashstate capture is skipped, so SQE should be
++		 * halted here again
++		 */
++		gpu_write(gpu, REG_A8XX_CP_SQE_CNTL, 3);
++
++		if (hang_debug)
++			a8xx_dump(gpu);
++	}
+ 
+ 	pm_runtime_dont_use_autosuspend(&gpu->pdev->dev);
+ 
+-- 
+2.43.0
+
+
+From 5fe1ba4f1bdf00c132687ac986f7c370b2d4c3dc Mon Sep 17 00:00:00 2001
+From: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Date: Tue, 7 Apr 2026 15:00:56 +0530
+Subject: [PATCH 22/26] drm/msm/a6xx: Limit GXPD votes to recovery in A8x
+
+In A8x GPUs, the GX GDSC is moved to a separate block called GXCLKCTL
+which is under the GX power domain. Due to the way the support for this
+block is implemented in its driver, pm_runtime votes result in a vote on
+GX/GMxC/MxC rails from the APPS RSC. This is against the Adreno
+architecture which require GMU to be the sole voter of these collapsible
+rails on behalf of GPU, except during the GPU/GMU recovery.
+
+To align with this architectural requirement and to realize the power
+benefits of the IFPC feature, remove the GXPD votes during gmu resume
+and suspend. And during the recovery sequence, enable/disable the GXPD
+along with the 'synced_poweroff' genpd hint to force collapse this GDSC.
+
+Signed-off-by: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Signed-off-by: Taniya Das <taniya.das@oss.qualcomm.com>
+---
+ drivers/gpu/drm/msm/adreno/a6xx_gmu.c | 64 ++++++++++++++++++++++-----
+ 1 file changed, 54 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+index 916c5d99c4d1..1fe7a04e4677 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+@@ -1250,6 +1250,56 @@ static int a6xx_gmu_secure_init(struct a6xx_gpu *a6xx_gpu)
+ 	return 0;
+ }
+ 
++static int a6xx_gmu_gxpd_get(struct a6xx_gmu *gmu)
++{
++	struct a6xx_gpu *a6xx_gpu = container_of(gmu, struct a6xx_gpu, gmu);
++	struct adreno_gpu *adreno_gpu = &a6xx_gpu->base;
++
++	if (IS_ERR_OR_NULL(gmu->gxpd))
++		return 0;
++
++	/*
++	 * On A8xx HW, GX GDSC is moved to a new clk controller block under GX
++	 * power domain. The clock driver for this new block keeps the GX rail
++	 * voted when gxpd is voted. So, use the gxpd only during gpu recovery.
++	 */
++	if (adreno_gpu->info->family >= ADRENO_8XX_GEN1)
++		return 0;
++
++	/*
++	 * On A6x/A7x, "enable" the GX power domain which won't actually do
++	 * anything but it will make sure that the refcounting is correct in
++	 * case we need to bring down the GX after a GMU failure
++	 */
++	return pm_runtime_get_sync(gmu->gxpd);
++}
++
++static int a6xx_gmu_gxpd_put(struct a6xx_gmu *gmu)
++{
++	struct a6xx_gpu *a6xx_gpu = container_of(gmu, struct a6xx_gpu, gmu);
++	struct adreno_gpu *adreno_gpu = &a6xx_gpu->base;
++
++	if (IS_ERR_OR_NULL(gmu->gxpd))
++		return 0;
++
++	if (adreno_gpu->info->family < ADRENO_8XX_GEN1)
++		return pm_runtime_put_sync(gmu->gxpd);
++
++	/*
++	 * On A8x, GX GDSC collapse should be triggered only when it is stuck ON
++	 */
++	if (adreno_gpu->funcs->gx_is_on(adreno_gpu)) {
++		pm_runtime_get_sync(gmu->gxpd);
++		/*
++		 * Hint to gfxclkctl driver to do a hw collapse during the next
++		 * RPM PUT. This is a special behavior in the gfxclkctl driver
++		 */
++		dev_pm_genpd_synced_poweroff(gmu->gxpd);
++		pm_runtime_put_sync(gmu->gxpd);
++	}
++
++	return 0;
++}
+ 
+ int a6xx_gmu_resume(struct a6xx_gpu *a6xx_gpu)
+ {
+@@ -1266,13 +1316,7 @@ int a6xx_gmu_resume(struct a6xx_gpu *a6xx_gpu)
+ 	/* Turn on the resources */
+ 	pm_runtime_get_sync(gmu->dev);
+ 
+-	/*
+-	 * "enable" the GX power domain which won't actually do anything but it
+-	 * will make sure that the refcounting is correct in case we need to
+-	 * bring down the GX after a GMU failure
+-	 */
+-	if (!IS_ERR_OR_NULL(gmu->gxpd))
+-		pm_runtime_get_sync(gmu->gxpd);
++	a6xx_gmu_gxpd_get(gmu);
+ 
+ 	/* Use a known rate to bring up the GMU */
+ 	clk_set_rate(gmu->core_clk, 200000000);
+@@ -1340,7 +1384,8 @@ int a6xx_gmu_resume(struct a6xx_gpu *a6xx_gpu)
+ disable_clk:
+ 	clk_bulk_disable_unprepare(gmu->nr_clocks, gmu->clocks);
+ rpm_put:
+-	pm_runtime_put(gmu->gxpd);
++	a6xx_gmu_gxpd_put(gmu);
++
+ 	pm_runtime_put(gmu->dev);
+ 
+ 	return ret;
+@@ -1456,8 +1501,7 @@ int a6xx_gmu_stop(struct a6xx_gpu *a6xx_gpu)
+ 	 * domain. Usually the GMU does this but only if the shutdown sequence
+ 	 * was successful
+ 	 */
+-	if (!IS_ERR_OR_NULL(gmu->gxpd))
+-		pm_runtime_put_sync(gmu->gxpd);
++	a6xx_gmu_gxpd_put(gmu);
+ 
+ 	clk_bulk_disable_unprepare(gmu->nr_clocks, gmu->clocks);
+ 
+-- 
+2.43.0
+
+
+From b1d87694dedc97d7e9674a811752e237ff5bc3f6 Mon Sep 17 00:00:00 2001
+From: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Date: Thu, 5 Mar 2026 16:10:08 +0530
+Subject: [PATCH 23/26] dt-bindings: clock: qcom: Add SM8750 GPU clocks
+
+The SM8750 features a "traditional" GPU_CC block, much of which is
+controlled through the GMU microcontroller. GPU_CC block requires the MX
+and CX rail control and thus add the corresponding power-domains and
+require-opps. Additionally, there's an separate GX_CC block, where
+the GX GDSC is moved.
+
+Update the bindings to accommodate for SM8750 SoC.
+
+Reviewed-by: Krzysztof Kozlowski <krzysztof.kozlowski@oss.qualcomm.com>
+Signed-off-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Signed-off-by: Taniya Das <taniya.das@oss.qualcomm.com>
+---
+ .../clock/qcom,kaanapali-gxclkctl.yaml        |  1 +
+ .../bindings/clock/qcom,sm8450-gpucc.yaml     | 23 +++++++++
+ include/dt-bindings/clock/qcom,sm8750-gpucc.h | 50 +++++++++++++++++++
+ 3 files changed, 74 insertions(+)
+ create mode 100644 include/dt-bindings/clock/qcom,sm8750-gpucc.h
+
+diff --git a/Documentation/devicetree/bindings/clock/qcom,kaanapali-gxclkctl.yaml b/Documentation/devicetree/bindings/clock/qcom,kaanapali-gxclkctl.yaml
+index 5490a975f3db..1876f23c174e 100644
+--- a/Documentation/devicetree/bindings/clock/qcom,kaanapali-gxclkctl.yaml
++++ b/Documentation/devicetree/bindings/clock/qcom,kaanapali-gxclkctl.yaml
+@@ -21,6 +21,7 @@ properties:
+   compatible:
+     enum:
+       - qcom,kaanapali-gxclkctl
++      - qcom,sm8750-gxclkctl
+ 
+   power-domains:
+     description:
+diff --git a/Documentation/devicetree/bindings/clock/qcom,sm8450-gpucc.yaml b/Documentation/devicetree/bindings/clock/qcom,sm8450-gpucc.yaml
+index 6feaa32569f9..d8828f905bc0 100644
+--- a/Documentation/devicetree/bindings/clock/qcom,sm8450-gpucc.yaml
++++ b/Documentation/devicetree/bindings/clock/qcom,sm8450-gpucc.yaml
+@@ -8,6 +8,7 @@ title: Qualcomm Graphics Clock & Reset Controller on SM8450
+ 
+ maintainers:
+   - Konrad Dybcio <konradybcio@kernel.org>
++  - Taniya Das <taniya.das@oss.qualcomm.com>
+ 
+ description: |
+   Qualcomm graphics clock control module provides the clocks, resets and power
+@@ -22,6 +23,7 @@ description: |
+     include/dt-bindings/clock/qcom,sm8550-gpucc.h
+     include/dt-bindings/reset/qcom,sm8450-gpucc.h
+     include/dt-bindings/reset/qcom,sm8650-gpucc.h
++    include/dt-bindings/reset/qcom,sm8750-gpucc.h
+     include/dt-bindings/reset/qcom,x1e80100-gpucc.h
+ 
+ properties:
+@@ -35,6 +37,7 @@ properties:
+       - qcom,sm8475-gpucc
+       - qcom,sm8550-gpucc
+       - qcom,sm8650-gpucc
++      - qcom,sm8750-gpucc
+       - qcom,x1e80100-gpucc
+       - qcom,x1p42100-gpucc
+ 
+@@ -44,6 +47,16 @@ properties:
+       - description: GPLL0 main branch source
+       - description: GPLL0 div branch source
+ 
++  power-domains:
++    items:
++      - description: A phandle to the MX power-domain
++      - description: A phandle to the CX power-domain
++
++  required-opps:
++    items:
++      - description: A phandle to an OPP node describing MX performance points
++      - description: A phandle to an OPP node describing CX performance points
++
+ required:
+   - compatible
+   - clocks
+@@ -51,6 +64,16 @@ required:
+ 
+ allOf:
+   - $ref: qcom,gcc.yaml#
++  - if:
++      properties:
++        compatible:
++          contains:
++            enum:
++              - qcom,sm8750-gpucc
++    then:
++      required:
++        - power-domains
++        - required-opps
+ 
+ unevaluatedProperties: false
+ 
+diff --git a/include/dt-bindings/clock/qcom,sm8750-gpucc.h b/include/dt-bindings/clock/qcom,sm8750-gpucc.h
+new file mode 100644
+index 000000000000..e2143d905fec
+--- /dev/null
++++ b/include/dt-bindings/clock/qcom,sm8750-gpucc.h
+@@ -0,0 +1,50 @@
++/* SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause) */
++/*
++ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
++ */
++#ifndef _DT_BINDINGS_CLK_QCOM_GPU_CC_SM8750_H
++#define _DT_BINDINGS_CLK_QCOM_GPU_CC_SM8750_H
++
++/* GPU_CC clocks */
++#define GPU_CC_AHB_CLK						0
++#define GPU_CC_CB_CLK						1
++#define GPU_CC_CX_ACCU_SHIFT_CLK				2
++#define GPU_CC_CX_FF_CLK					3
++#define GPU_CC_CX_GMU_CLK					4
++#define GPU_CC_CXO_AON_CLK					5
++#define GPU_CC_CXO_CLK						6
++#define GPU_CC_DEMET_CLK					7
++#define GPU_CC_DPM_CLK						8
++#define GPU_CC_FF_CLK_SRC					9
++#define GPU_CC_FREQ_MEASURE_CLK					10
++#define GPU_CC_GMU_CLK_SRC					11
++#define GPU_CC_GX_ACCU_SHIFT_CLK				12
++#define GPU_CC_GX_ACD_AHB_FF_CLK				13
++#define GPU_CC_GX_AHB_FF_CLK					14
++#define GPU_CC_GX_GMU_CLK					15
++#define GPU_CC_GX_RCG_AHB_FF_CLK				16
++#define GPU_CC_HLOS1_VOTE_GPU_SMMU_CLK				17
++#define GPU_CC_HUB_AON_CLK					18
++#define GPU_CC_HUB_CLK_SRC					19
++#define GPU_CC_HUB_CX_INT_CLK					20
++#define GPU_CC_HUB_DIV_CLK_SRC					21
++#define GPU_CC_MEMNOC_GFX_CLK					22
++#define GPU_CC_PLL0						23
++#define GPU_CC_PLL0_OUT_EVEN					24
++#define GPU_CC_RSCC_HUB_AON_CLK					25
++#define GPU_CC_RSCC_XO_AON_CLK					26
++#define GPU_CC_SLEEP_CLK					27
++
++/* GPU_CC power domains */
++#define GPU_CC_CX_GDSC						0
++
++/* GPU_CC resets */
++#define GPU_CC_GPU_CC_CB_BCR					0
++#define GPU_CC_GPU_CC_CX_BCR					1
++#define GPU_CC_GPU_CC_FAST_HUB_BCR				2
++#define GPU_CC_GPU_CC_FF_BCR					3
++#define GPU_CC_GPU_CC_GMU_BCR					4
++#define GPU_CC_GPU_CC_GX_BCR					5
++#define GPU_CC_GPU_CC_XO_BCR					6
++
++#endif
+-- 
+2.43.0
+
+
+From 233f8da93f846b1ee70182d406a725bd05e18426 Mon Sep 17 00:00:00 2001
+From: Teguh Sobirin <teguh@sobir.in>
+Date: Thu, 9 Apr 2026 20:42:05 +0800
+Subject: [PATCH 24/26] clk: qcom: Add a driver for SM8750 GPU clocks
+
+Support the graphics clock controller for SM8750 for Graphics SW
+driver to use the clocks. GXCLKCTL (Graphics GX Clock Controller) is a
+block dedicated to managing clocks for the GPU subsystem on GX power
+domain. The GX clock controller driver manages only the GX GDSC and the
+rest of the resources of the controller are managed by the firmware.
+
+Update the compatible for Graphics GX Clock Controller for SM8750 as the
+GX clock controller is a reuse of the Kaanapali driver.
+
+Reviewed-by: Abel Vesa <abel.vesa@oss.qualcomm.com>
+Signed-off-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Co-developed-by: Taniya Das <taniya.das@oss.qualcomm.com>
+Signed-off-by: Taniya Das <taniya.das@oss.qualcomm.com>
+
+Signed-off-by: Teguh Sobirin <teguh@sobir.in>
+---
+ drivers/clk/qcom/Kconfig              |   9 +
+ drivers/clk/qcom/Makefile             |   1 +
+ drivers/clk/qcom/gpucc-sm8750.c       | 473 ++++++++++++++++++++++++++
+ drivers/clk/qcom/gxclkctl-kaanapali.c |   1 +
+ 4 files changed, 484 insertions(+)
+ create mode 100644 drivers/clk/qcom/gpucc-sm8750.c
+
+diff --git a/drivers/clk/qcom/Kconfig b/drivers/clk/qcom/Kconfig
+index a8a86ea6bb74..e4ec41e3dc7d 100644
+--- a/drivers/clk/qcom/Kconfig
++++ b/drivers/clk/qcom/Kconfig
+@@ -1481,6 +1481,15 @@ config SM_GPUCC_8650
+ 	  Say Y if you want to support graphics controller devices and
+ 	  functionality such as 3D graphics.
+ 
++config SM_GPUCC_8750
++	tristate "SM8750 Graphics Clock Controller"
++	depends on ARM64 || COMPILE_TEST
++	select SM_GCC_8750
++	help
++	  Support for the graphics clock controller on SM8750 devices.
++	  Say Y if you want to support graphics controller devices and
++	  functionality such as 3D graphics.
++
+ config SM_LPASSCC_6115
+ 	tristate "SM6115 Low Power Audio Subsystem (LPASS) Clock Controller"
+ 	depends on ARM64 || COMPILE_TEST
+diff --git a/drivers/clk/qcom/Makefile b/drivers/clk/qcom/Makefile
+index 6b0ad8832b55..817b13f5e78c 100644
+--- a/drivers/clk/qcom/Makefile
++++ b/drivers/clk/qcom/Makefile
+@@ -180,6 +180,7 @@ obj-$(CONFIG_SM_GPUCC_8350) += gpucc-sm8350.o
+ obj-$(CONFIG_SM_GPUCC_8450) += gpucc-sm8450.o
+ obj-$(CONFIG_SM_GPUCC_8550) += gpucc-sm8550.o
+ obj-$(CONFIG_SM_GPUCC_8650) += gpucc-sm8650.o
++obj-$(CONFIG_SM_GPUCC_8750) += gpucc-sm8750.o gxclkctl-kaanapali.o
+ obj-$(CONFIG_SM_GPUCC_MILOS) += gpucc-milos.o
+ obj-$(CONFIG_SM_LPASSCC_6115) += lpasscc-sm6115.o
+ obj-$(CONFIG_SM_TCSRCC_8550) += tcsrcc-sm8550.o
+diff --git a/drivers/clk/qcom/gpucc-sm8750.c b/drivers/clk/qcom/gpucc-sm8750.c
+new file mode 100644
+index 000000000000..5d52c6d8b5e5
+--- /dev/null
++++ b/drivers/clk/qcom/gpucc-sm8750.c
+@@ -0,0 +1,473 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
++ */
++#include <linux/clk-provider.h>
++#include <linux/mod_devicetable.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/pm_runtime.h>
++#include <linux/regmap.h>
++
++#include <dt-bindings/clock/qcom,sm8750-gpucc.h>
++
++#include "clk-alpha-pll.h"
++#include "clk-branch.h"
++#include "clk-rcg.h"
++#include "clk-regmap.h"
++#include "clk-regmap-divider.h"
++#include "clk-regmap-mux.h"
++#include "gdsc.h"
++#include "reset.h"
++
++enum {
++	DT_BI_TCXO,
++	DT_GPLL0_OUT_MAIN,
++	DT_GPLL0_OUT_MAIN_DIV,
++};
++
++enum {
++	P_BI_TCXO,
++	P_GPLL0_OUT_MAIN,
++	P_GPLL0_OUT_MAIN_DIV,
++	P_GPU_CC_PLL0_OUT_EVEN,
++	P_GPU_CC_PLL0_OUT_MAIN,
++	P_GPU_CC_PLL0_OUT_ODD,
++};
++
++static const struct pll_vco taycan_elu_vco[] = {
++	{ 249600000, 2500000000, 0 },
++};
++
++static const struct alpha_pll_config gpu_cc_pll0_config = {
++	.l = 0x34,
++	.alpha = 0x1555,
++	.config_ctl_val = 0x19660387,
++	.config_ctl_hi_val = 0x098060a0,
++	.config_ctl_hi1_val = 0xb416cb20,
++	.user_ctl_val = 0x00000400,
++	.user_ctl_hi_val = 0x00000002,
++};
++
++static struct clk_alpha_pll gpu_cc_pll0 = {
++	.offset = 0x0,
++	.config = &gpu_cc_pll0_config,
++	.vco_table = taycan_elu_vco,
++	.num_vco = ARRAY_SIZE(taycan_elu_vco),
++	.regs = clk_alpha_pll_regs[CLK_ALPHA_PLL_TYPE_TAYCAN_ELU],
++	.clkr = {
++		.hw.init = &(const struct clk_init_data) {
++			.name = "gpu_cc_pll0",
++			.parent_data = &(const struct clk_parent_data) {
++				.index = DT_BI_TCXO,
++			},
++			.num_parents = 1,
++			.ops = &clk_alpha_pll_taycan_elu_ops,
++		},
++	},
++};
++
++static const struct clk_div_table post_div_table_gpu_cc_pll0_out_even[] = {
++	{ 0x1, 2 },
++	{ }
++};
++
++static struct clk_alpha_pll_postdiv gpu_cc_pll0_out_even = {
++	.offset = 0x0,
++	.post_div_shift = 10,
++	.post_div_table = post_div_table_gpu_cc_pll0_out_even,
++	.num_post_div = ARRAY_SIZE(post_div_table_gpu_cc_pll0_out_even),
++	.width = 4,
++	.regs = clk_alpha_pll_regs[CLK_ALPHA_PLL_TYPE_TAYCAN_ELU],
++	.clkr.hw.init = &(const struct clk_init_data) {
++		.name = "gpu_cc_pll0_out_even",
++		.parent_hws = (const struct clk_hw*[]) {
++			&gpu_cc_pll0.clkr.hw,
++		},
++		.num_parents = 1,
++		.flags = CLK_SET_RATE_PARENT,
++		.ops = &clk_alpha_pll_postdiv_taycan_elu_ops,
++	},
++};
++
++static const struct parent_map gpu_cc_parent_map_1[] = {
++	{ P_BI_TCXO, 0 },
++	{ P_GPU_CC_PLL0_OUT_MAIN, 1 },
++	{ P_GPU_CC_PLL0_OUT_EVEN, 2 },
++	{ P_GPU_CC_PLL0_OUT_ODD, 3 },
++	{ P_GPLL0_OUT_MAIN, 5 },
++	{ P_GPLL0_OUT_MAIN_DIV, 6 },
++};
++
++static const struct clk_parent_data gpu_cc_parent_data_1[] = {
++	{ .index = DT_BI_TCXO },
++	{ .hw = &gpu_cc_pll0.clkr.hw },
++	{ .hw = &gpu_cc_pll0_out_even.clkr.hw },
++	{ .hw = &gpu_cc_pll0.clkr.hw },
++	{ .index = DT_GPLL0_OUT_MAIN },
++	{ .index = DT_GPLL0_OUT_MAIN_DIV },
++};
++
++static const struct freq_tbl ftbl_gpu_cc_gmu_clk_src[] = {
++	F(19200000, P_BI_TCXO, 1, 0, 0),
++	F(500000000, P_GPU_CC_PLL0_OUT_EVEN, 1, 0, 0),
++	F(650000000, P_GPU_CC_PLL0_OUT_EVEN, 1, 0, 0),
++	F(687500000, P_GPU_CC_PLL0_OUT_EVEN, 1, 0, 0),
++	{ }
++};
++
++static struct clk_rcg2 gpu_cc_gmu_clk_src = {
++	.cmd_rcgr = 0x9318,
++	.mnd_width = 0,
++	.hid_width = 5,
++	.parent_map = gpu_cc_parent_map_1,
++	.freq_tbl = ftbl_gpu_cc_gmu_clk_src,
++	.clkr.hw.init = &(const struct clk_init_data) {
++		.name = "gpu_cc_gmu_clk_src",
++		.parent_data = gpu_cc_parent_data_1,
++		.num_parents = ARRAY_SIZE(gpu_cc_parent_data_1),
++		.flags = CLK_SET_RATE_PARENT,
++		.ops = &clk_rcg2_shared_ops,
++	},
++};
++
++static const struct freq_tbl ftbl_gpu_cc_hub_clk_src[] = {
++	F(200000000, P_GPLL0_OUT_MAIN, 3, 0, 0),
++	F(300000000, P_GPLL0_OUT_MAIN, 2, 0, 0),
++	F(400000000, P_GPLL0_OUT_MAIN, 1.5, 0, 0),
++	{ }
++};
++
++static struct clk_rcg2 gpu_cc_hub_clk_src = {
++	.cmd_rcgr = 0x93ec,
++	.mnd_width = 0,
++	.hid_width = 5,
++	.parent_map = gpu_cc_parent_map_1,
++	.freq_tbl = ftbl_gpu_cc_hub_clk_src,
++	.clkr.hw.init = &(const struct clk_init_data) {
++		.name = "gpu_cc_hub_clk_src",
++		.parent_data = gpu_cc_parent_data_1,
++		.num_parents = ARRAY_SIZE(gpu_cc_parent_data_1),
++		.flags = CLK_SET_RATE_PARENT,
++		.ops = &clk_rcg2_shared_ops,
++	},
++};
++
++static struct clk_regmap_div gpu_cc_hub_div_clk_src = {
++	.reg = 0x942c,
++	.shift = 0,
++	.width = 4,
++	.clkr.hw.init = &(const struct clk_init_data) {
++		.name = "gpu_cc_hub_div_clk_src",
++		.parent_hws = (const struct clk_hw*[]) {
++			&gpu_cc_hub_clk_src.clkr.hw,
++		},
++		.num_parents = 1,
++		.flags = CLK_SET_RATE_PARENT,
++		.ops = &clk_regmap_div_ro_ops,
++	},
++};
++
++static struct clk_branch gpu_cc_ahb_clk = {
++	.halt_reg = 0x90bc,
++	.halt_check = BRANCH_HALT_DELAY,
++	.clkr = {
++		.enable_reg = 0x90bc,
++		.enable_mask = BIT(0),
++		.hw.init = &(const struct clk_init_data) {
++			.name = "gpu_cc_ahb_clk",
++			.parent_hws = (const struct clk_hw*[]) {
++				&gpu_cc_hub_div_clk_src.clkr.hw,
++			},
++			.num_parents = 1,
++			.flags = CLK_SET_RATE_PARENT,
++			.ops = &clk_branch2_ops,
++		},
++	},
++};
++
++static struct clk_branch gpu_cc_cx_accu_shift_clk = {
++	.halt_reg = 0x910c,
++	.halt_check = BRANCH_HALT_VOTED,
++	.clkr = {
++		.enable_reg = 0x910c,
++		.enable_mask = BIT(0),
++		.hw.init = &(const struct clk_init_data) {
++			.name = "gpu_cc_cx_accu_shift_clk",
++			.ops = &clk_branch2_ops,
++		},
++	},
++};
++
++static struct clk_branch gpu_cc_cx_gmu_clk = {
++	.halt_reg = 0x90d4,
++	.halt_check = BRANCH_HALT_VOTED,
++	.clkr = {
++		.enable_reg = 0x90d4,
++		.enable_mask = BIT(0),
++		.hw.init = &(const struct clk_init_data) {
++			.name = "gpu_cc_cx_gmu_clk",
++			.parent_hws = (const struct clk_hw*[]) {
++				&gpu_cc_gmu_clk_src.clkr.hw,
++			},
++			.num_parents = 1,
++			.flags = CLK_SET_RATE_PARENT,
++			.ops = &clk_branch2_aon_ops,
++		},
++	},
++};
++
++static struct clk_branch gpu_cc_cxo_clk = {
++	.halt_reg = 0x90e4,
++	.halt_check = BRANCH_HALT,
++	.clkr = {
++		.enable_reg = 0x90e4,
++		.enable_mask = BIT(0),
++		.hw.init = &(const struct clk_init_data) {
++			.name = "gpu_cc_cxo_clk",
++			.ops = &clk_branch2_ops,
++		},
++	},
++};
++
++static struct clk_branch gpu_cc_demet_clk = {
++	.halt_reg = 0x9010,
++	.halt_check = BRANCH_HALT_VOTED,
++	.clkr = {
++		.enable_reg = 0x9010,
++		.enable_mask = BIT(0),
++		.hw.init = &(const struct clk_init_data) {
++			.name = "gpu_cc_demet_clk",
++			.ops = &clk_branch2_ops,
++		},
++	},
++};
++
++static struct clk_branch gpu_cc_dpm_clk = {
++	.halt_reg = 0x9110,
++	.halt_check = BRANCH_HALT,
++	.clkr = {
++		.enable_reg = 0x9110,
++		.enable_mask = BIT(0),
++		.hw.init = &(const struct clk_init_data) {
++			.name = "gpu_cc_dpm_clk",
++			.ops = &clk_branch2_ops,
++		},
++	},
++};
++
++static struct clk_branch gpu_cc_freq_measure_clk = {
++	.halt_reg = 0x900c,
++	.halt_check = BRANCH_HALT,
++	.clkr = {
++		.enable_reg = 0x900c,
++		.enable_mask = BIT(0),
++		.hw.init = &(const struct clk_init_data) {
++			.name = "gpu_cc_freq_measure_clk",
++			.ops = &clk_branch2_ops,
++		},
++	},
++};
++
++static struct clk_branch gpu_cc_gx_accu_shift_clk = {
++	.halt_reg = 0x9070,
++	.halt_check = BRANCH_HALT_VOTED,
++	.clkr = {
++		.enable_reg = 0x9070,
++		.enable_mask = BIT(0),
++		.hw.init = &(const struct clk_init_data) {
++			.name = "gpu_cc_gx_accu_shift_clk",
++			.ops = &clk_branch2_ops,
++		},
++	},
++};
++
++static struct clk_branch gpu_cc_gx_gmu_clk = {
++	.halt_reg = 0x9060,
++	.halt_check = BRANCH_HALT,
++	.clkr = {
++		.enable_reg = 0x9060,
++		.enable_mask = BIT(0),
++		.hw.init = &(const struct clk_init_data) {
++			.name = "gpu_cc_gx_gmu_clk",
++			.parent_hws = (const struct clk_hw*[]) {
++				&gpu_cc_gmu_clk_src.clkr.hw,
++			},
++			.num_parents = 1,
++			.flags = CLK_SET_RATE_PARENT,
++			.ops = &clk_branch2_ops,
++		},
++	},
++};
++
++static struct clk_branch gpu_cc_hlos1_vote_gpu_smmu_clk = {
++	.halt_reg = 0x7000,
++	.halt_check = BRANCH_HALT_VOTED,
++	.clkr = {
++		.enable_reg = 0x7000,
++		.enable_mask = BIT(0),
++		.hw.init = &(const struct clk_init_data) {
++			.name = "gpu_cc_hlos1_vote_gpu_smmu_clk",
++			.ops = &clk_branch2_ops,
++		},
++	},
++};
++
++static struct clk_branch gpu_cc_hub_aon_clk = {
++	.halt_reg = 0x93e8,
++	.halt_check = BRANCH_HALT_VOTED,
++	.clkr = {
++		.enable_reg = 0x93e8,
++		.enable_mask = BIT(0),
++		.hw.init = &(const struct clk_init_data) {
++			.name = "gpu_cc_hub_aon_clk",
++			.parent_hws = (const struct clk_hw*[]) {
++				&gpu_cc_hub_clk_src.clkr.hw,
++			},
++			.num_parents = 1,
++			.flags = CLK_SET_RATE_PARENT,
++			.ops = &clk_branch2_aon_ops,
++		},
++	},
++};
++
++static struct clk_branch gpu_cc_hub_cx_int_clk = {
++	.halt_reg = 0x90e8,
++	.halt_check = BRANCH_HALT_VOTED,
++	.clkr = {
++		.enable_reg = 0x90e8,
++		.enable_mask = BIT(0),
++		.hw.init = &(const struct clk_init_data) {
++			.name = "gpu_cc_hub_cx_int_clk",
++			.parent_hws = (const struct clk_hw*[]) {
++				&gpu_cc_hub_clk_src.clkr.hw,
++			},
++			.num_parents = 1,
++			.flags = CLK_SET_RATE_PARENT,
++			.ops = &clk_branch2_aon_ops,
++		},
++	},
++};
++
++static struct clk_branch gpu_cc_memnoc_gfx_clk = {
++	.halt_reg = 0x90f4,
++	.halt_check = BRANCH_HALT_VOTED,
++	.clkr = {
++		.enable_reg = 0x90f4,
++		.enable_mask = BIT(0),
++		.hw.init = &(const struct clk_init_data) {
++			.name = "gpu_cc_memnoc_gfx_clk",
++			.ops = &clk_branch2_ops,
++		},
++	},
++};
++
++static struct gdsc gpu_cc_cx_gdsc = {
++	.gdscr = 0x9080,
++	.gds_hw_ctrl = 0x9094,
++	.en_rest_wait_val = 0x2,
++	.en_few_wait_val = 0x2,
++	.clk_dis_wait_val = 0x8,
++	.pd = {
++		.name = "gpu_cc_cx_gdsc",
++	},
++	.pwrsts = PWRSTS_OFF_ON,
++	.flags = RETAIN_FF_ENABLE | VOTABLE,
++};
++
++static struct clk_regmap *gpu_cc_sm8750_clocks[] = {
++	[GPU_CC_AHB_CLK] = &gpu_cc_ahb_clk.clkr,
++	[GPU_CC_CX_ACCU_SHIFT_CLK] = &gpu_cc_cx_accu_shift_clk.clkr,
++	[GPU_CC_CX_GMU_CLK] = &gpu_cc_cx_gmu_clk.clkr,
++	[GPU_CC_CXO_CLK] = &gpu_cc_cxo_clk.clkr,
++	[GPU_CC_DEMET_CLK] = &gpu_cc_demet_clk.clkr,
++	[GPU_CC_DPM_CLK] = &gpu_cc_dpm_clk.clkr,
++	[GPU_CC_FREQ_MEASURE_CLK] = &gpu_cc_freq_measure_clk.clkr,
++	[GPU_CC_GMU_CLK_SRC] = &gpu_cc_gmu_clk_src.clkr,
++	[GPU_CC_GX_ACCU_SHIFT_CLK] = &gpu_cc_gx_accu_shift_clk.clkr,
++	[GPU_CC_GX_GMU_CLK] = &gpu_cc_gx_gmu_clk.clkr,
++	[GPU_CC_HLOS1_VOTE_GPU_SMMU_CLK] = &gpu_cc_hlos1_vote_gpu_smmu_clk.clkr,
++	[GPU_CC_HUB_AON_CLK] = &gpu_cc_hub_aon_clk.clkr,
++	[GPU_CC_HUB_CLK_SRC] = &gpu_cc_hub_clk_src.clkr,
++	[GPU_CC_HUB_CX_INT_CLK] = &gpu_cc_hub_cx_int_clk.clkr,
++	[GPU_CC_HUB_DIV_CLK_SRC] = &gpu_cc_hub_div_clk_src.clkr,
++	[GPU_CC_MEMNOC_GFX_CLK] = &gpu_cc_memnoc_gfx_clk.clkr,
++	[GPU_CC_PLL0] = &gpu_cc_pll0.clkr,
++	[GPU_CC_PLL0_OUT_EVEN] = &gpu_cc_pll0_out_even.clkr,
++};
++
++static struct gdsc *gpu_cc_sm8750_gdscs[] = {
++	[GPU_CC_CX_GDSC] = &gpu_cc_cx_gdsc,
++};
++
++static const struct qcom_reset_map gpu_cc_sm8750_resets[] = {
++	[GPU_CC_GPU_CC_XO_BCR] = { 0x9000 },
++	[GPU_CC_GPU_CC_GX_BCR] = { 0x905c },
++	[GPU_CC_GPU_CC_CX_BCR] = { 0x907c },
++	[GPU_CC_GPU_CC_GMU_BCR] = { 0x9314 },
++	[GPU_CC_GPU_CC_CB_BCR] = { 0x93a0 },
++	[GPU_CC_GPU_CC_FAST_HUB_BCR] = { 0x93e4 },
++};
++
++static const struct regmap_config gpu_cc_sm8750_regmap_config = {
++	.reg_bits = 32,
++	.reg_stride = 4,
++	.val_bits = 32,
++	.max_register = 0x9800,
++	.fast_io = true,
++};
++
++static struct clk_alpha_pll *gpu_cc_alpha_plls[] = {
++	&gpu_cc_pll0,
++};
++
++static u32 gpu_cc_sm8750_critical_cbcrs[] = {
++	0x9004, /* GPU_CC_RSCC_XO_AON_CLK */
++	0x9008, /* GPU_CC_CXO_AON_CLK */
++	0x9064, /* GPU_CC_GX_AHB_FF_CLK */
++	0x90cc, /* GPU_CC_SLEEP_CLK */
++	0x93a4, /* GPU_CC_CB_CLK */
++	0x93a8, /* GPU_CC_RSCC_HUB_AON_CLK */
++};
++
++static struct qcom_cc_driver_data gpu_cc_sm8750_driver_data = {
++	.alpha_plls = gpu_cc_alpha_plls,
++	.num_alpha_plls = ARRAY_SIZE(gpu_cc_alpha_plls),
++	.clk_cbcrs = gpu_cc_sm8750_critical_cbcrs,
++	.num_clk_cbcrs = ARRAY_SIZE(gpu_cc_sm8750_critical_cbcrs),
++};
++
++static const struct qcom_cc_desc gpu_cc_sm8750_desc = {
++	.config = &gpu_cc_sm8750_regmap_config,
++	.clks = gpu_cc_sm8750_clocks,
++	.num_clks = ARRAY_SIZE(gpu_cc_sm8750_clocks),
++	.resets = gpu_cc_sm8750_resets,
++	.num_resets = ARRAY_SIZE(gpu_cc_sm8750_resets),
++	.gdscs = gpu_cc_sm8750_gdscs,
++	.num_gdscs = ARRAY_SIZE(gpu_cc_sm8750_gdscs),
++	.use_rpm = true,
++	.driver_data = &gpu_cc_sm8750_driver_data,
++};
++
++static const struct of_device_id gpu_cc_sm8750_match_table[] = {
++	{ .compatible = "qcom,sm8750-gpucc" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, gpu_cc_sm8750_match_table);
++
++static int gpu_cc_sm8750_probe(struct platform_device *pdev)
++{
++	return qcom_cc_probe(pdev, &gpu_cc_sm8750_desc);
++}
++
++static struct platform_driver gpu_cc_sm8750_driver = {
++	.probe = gpu_cc_sm8750_probe,
++	.driver = {
++		.name = "sm8750-gpucc",
++		.of_match_table = gpu_cc_sm8750_match_table,
++	},
++};
++module_platform_driver(gpu_cc_sm8750_driver);
++
++MODULE_DESCRIPTION("QTI GPU_CC SM8750 Driver");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/clk/qcom/gxclkctl-kaanapali.c b/drivers/clk/qcom/gxclkctl-kaanapali.c
+index 6b57713954f4..58c34e064705 100644
+--- a/drivers/clk/qcom/gxclkctl-kaanapali.c
++++ b/drivers/clk/qcom/gxclkctl-kaanapali.c
+@@ -55,6 +55,7 @@ static const struct qcom_cc_desc gx_clkctl_kaanapali_desc = {
+ 
+ static const struct of_device_id gx_clkctl_kaanapali_match_table[] = {
+ 	{ .compatible = "qcom,kaanapali-gxclkctl" },
++	{ .compatible = "qcom,sm8750-gxclkctl" },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, gx_clkctl_kaanapali_match_table);
+-- 
+2.43.0
+
+
+From 661cbdd511df8f81135603d33efe2d0ea2216df0 Mon Sep 17 00:00:00 2001
+From: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Date: Thu, 5 Mar 2026 16:10:10 +0530
+Subject: [PATCH 25/26] arm64: dts: qcom: sm8750: Add GPU clock & IOMMU nodes
+
+Add the GPU_CC and GX_CC (brand new! as far as we're concerned, this
+is simply a separate block housing the GX GDSC) nodes, required to
+power up the graphics-related hardware.
+
+Make use of it by enabling the associated IOMMU as well. The GPU itself
+needs some more work and will be enabled later.
+
+Reviewed-by: Abel Vesa <abel.vesa@oss.qualcomm.com>
+Signed-off-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Co-developed-by: Taniya Das <taniya.das@oss.qualcomm.com>
+Signed-off-by: Taniya Das <taniya.das@oss.qualcomm.com>
+---
+ arch/arm64/boot/dts/qcom/sm8750.dtsi | 68 ++++++++++++++++++++++++++++
+ 1 file changed, 68 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8750.dtsi b/arch/arm64/boot/dts/qcom/sm8750.dtsi
+index f56b1f889b85..0e7a343297e3 100644
+--- a/arch/arm64/boot/dts/qcom/sm8750.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8750.dtsi
+@@ -4,7 +4,9 @@
+  */
+ 
+ #include <dt-bindings/clock/qcom,rpmh.h>
++#include <dt-bindings/clock/qcom,kaanapali-gxclkctl.h>
+ #include <dt-bindings/clock/qcom,sm8750-gcc.h>
++#include <dt-bindings/clock/qcom,sm8750-gpucc.h>
+ #include <dt-bindings/clock/qcom,sm8750-tcsr.h>
+ #include <dt-bindings/clock/qcom,sm8750-videocc.h>
+ #include <dt-bindings/dma/qcom-gpi.h>
+@@ -3001,6 +3003,34 @@ videocc: clock-controller@aaf0000 {
+ 			#power-domain-cells = <1>;
+ 		};
+ 
++		gxclkctl: clock-controller@3d64000 {
++			compatible = "qcom,sm8750-gxclkctl";
++			reg = <0x0 0x03d64000 0x0 0x6000>;
++
++			power-domains = <&rpmhpd RPMHPD_GFX>,
++					<&rpmhpd RPMHPD_GMXC>,
++					<&gpucc GPU_CC_CX_GDSC>;
++
++			#power-domain-cells = <1>;
++		};
++
++		gpucc: clock-controller@3d90000 {
++			compatible = "qcom,sm8750-gpucc";
++			reg = <0x0 0x03d90000 0x0 0x9800>;
++
++			clocks = <&bi_tcxo_div2>,
++				 <&gcc GCC_GPU_GPLL0_CLK_SRC>,
++				 <&gcc GCC_GPU_GPLL0_DIV_CLK_SRC>;
++
++			power-domains = <&rpmhpd RPMHPD_MX>,
++					<&rpmhpd RPMHPD_CX>;
++			required-opps = <&rpmhpd_opp_low_svs>,
++					<&rpmhpd_opp_low_svs>;
++			#clock-cells = <1>;
++			#reset-cells = <1>;
++			#power-domain-cells = <1>;
++		};
++
+ 		pdc: interrupt-controller@b220000 {
+ 			compatible = "qcom,sm8750-pdc", "qcom,pdc";
+ 			reg = <0x0 0x0b220000 0x0 0x10000>, <0x0 0x164400f0 0x0 0x64>;
+@@ -4515,6 +4545,44 @@ tpdm_swao_out: endpoint {
+ 			};
+ 		};
+ 
++		adreno_smmu: iommu@3da0000 {
++			compatible = "qcom,sm8750-smmu-500", "qcom,adreno-smmu",
++				     "qcom,smmu-500", "arm,mmu-500";
++			reg = <0x0 0x03da0000 0x0 0x40000>;
++			#iommu-cells = <2>;
++			#global-interrupts = <1>;
++			interrupts = <GIC_SPI 674 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 678 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 679 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 680 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 681 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 682 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 683 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 684 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 685 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 686 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 687 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 688 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 422 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 476 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 574 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 575 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 576 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 577 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 660 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 662 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 665 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 666 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 667 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 669 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 670 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 700 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&gpucc GPU_CC_HLOS1_VOTE_GPU_SMMU_CLK>;
++			clock-names = "hlos";
++			power-domains = <&gpucc GPU_CC_CX_GDSC>;
++			dma-coherent;
++		};
++
+ 		apps_smmu: iommu@15000000 {
+ 			compatible = "qcom,sm8750-smmu-500", "qcom,smmu-500", "arm,mmu-500";
+ 			reg = <0x0 0x15000000 0x0 0x100000>;
+-- 
+2.43.0
+
+
+From 299505d181553e7c4323d01416d3faf28c1e0e29 Mon Sep 17 00:00:00 2001
+From: Teguh Sobirin <teguh@sobir.in>
+Date: Wed, 15 Apr 2026 15:02:49 +0800
+Subject: [PATCH 26/26] drm/msm/a8xx: Add support for Adreno 830 GPU
+
+Adreno 830 present in SM8750 SoC is the first generation GPU in
+A8x family.
+
+Add the necessary register configurations to the catalog and enable
+support for it.
+
+Signed-off-by: Teguh Sobirin <teguh@sobir.in>
+---
+ drivers/gpu/drm/msm/adreno/a6xx_catalog.c | 303 ++++++++++++++++++++++
+ drivers/gpu/drm/msm/adreno/adreno_gpu.h   |   5 +
+ 2 files changed, 308 insertions(+)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_catalog.c b/drivers/gpu/drm/msm/adreno/a6xx_catalog.c
+index 550ff3a9b82e..a97bf2c0c89d 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_catalog.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_catalog.c
+@@ -1799,6 +1799,272 @@ static const struct adreno_reglist_pipe x285_dyn_pwrup_reglist_regs[] = {
+ };
+ DECLARE_ADRENO_REGLIST_PIPE_LIST(x285_dyn_pwrup_reglist);
+ 
++static const struct adreno_reglist_pipe a830_nonctxt_regs[] = {
++	{ REG_A8XX_CP_SMMU_STREAM_ID_LPAC, 0x00000101, BIT(PIPE_NONE) },
++	{ REG_A8XX_GRAS_DBG_ECO_CNTL, 0x00000800, BIT(PIPE_BR) | BIT(PIPE_BV) },
++	{ REG_A6XX_PC_AUTO_VERTEX_STRIDE, 0x00000001, BIT(PIPE_BR) | BIT(PIPE_BV) },
++	{ REG_A8XX_PC_VIS_STREAM_CNTL, 0x10010000, BIT(PIPE_BR) | BIT(PIPE_BV) },
++	{ REG_A8XX_PC_CONTEXT_SWITCH_STABILIZE_CNTL_1, 0x00000002, BIT(PIPE_BR) | BIT(PIPE_BV) },
++	{ REG_A8XX_PC_CHICKEN_BITS_1, 0x00000003, BIT(PIPE_BR) | BIT(PIPE_BV) },
++	{ REG_A8XX_PC_CHICKEN_BITS_2, 0x00000200, BIT(PIPE_BR) | BIT(PIPE_BV) },
++	/* Disable BR throttling */
++	{ REG_A8XX_PC_CHICKEN_BITS_3, 0x00400000, BIT(PIPE_BR) | BIT(PIPE_BV) },
++	{ REG_A8XX_PC_CHICKEN_BITS_4, 0x00500050, BIT(PIPE_BR) | BIT(PIPE_BV) },
++	/* Configure GBIF GX registers */
++	{ REG_A8XX_UCHE_GBIF_GX_CONFIG, 0x010240e0, BIT(PIPE_NONE) },
++	{ REG_A8XX_RBBM_GBIF_CLIENT_QOS_CNTL, 0x22122212, BIT(PIPE_NONE) },
++	/* Enable full concurrent resolve and unresolves */
++	{ REG_A7XX_RB_CCU_CNTL, 0x00000068, BIT(PIPE_BR) },
++	{ REG_A8XX_RB_GC_GMEM_PROTECT, 0x0c000000, BIT(PIPE_BR) },
++	/* Configure number of outstanding transactions to 32 */
++	{ REG_A8XX_RB_RESOLVE_PREFETCH_CNTL, 0x00000007, BIT(PIPE_BR) },
++	/* Configure UCHE request time out to 16 cycles for CCU/UCHE arbitration */
++	{ REG_A8XX_RB_CMP_DBG_ECO_CNTL, 0x00004000, BIT(PIPE_BR) },
++	{ REG_A8XX_RBBM_NC_MODE_CNTL, 0x00000001, BIT(PIPE_NONE) },
++	{ REG_A8XX_RBBM_SLICE_NC_MODE_CNTL, 0x00000001, BIT(PIPE_NONE) },
++	{ REG_A8XX_RBBM_WAIT_IDLE_CLOCKS_CNTL, 0x00000030, BIT(PIPE_NONE) },
++	{ REG_A8XX_RBBM_WAIT_IDLE_CLOCKS_CNTL2, 0x00000030, BIT(PIPE_NONE) },
++	{ REG_A8XX_RBBM_CGC_P2S_CNTL, 0x00000040, BIT(PIPE_NONE) },
++	/* Enable contribution of all shader stages to SP perfcounters */
++	{ REG_A6XX_SP_PERFCTR_SHADER_MASK, 0x0000003f, BIT(PIPE_NONE) },
++	/*
++	 * BIT(26): Limit the number of wave-slots for Eviction buffer to 1 per ALU GRP
++	 * BIT(30): Disable LPAC auto-promotion
++	 */
++	{ REG_A7XX_SP_CHICKEN_BITS_1, BIT(26) | BIT(30), BIT(PIPE_NONE) },
++	/*
++	 * BIT(22): Disable PS out of order retire
++	 * BIT(23): Enable half wave mode and MM instruction src&dst is half precision
++	 */
++	{ REG_A7XX_SP_CHICKEN_BITS_2, BIT(22) | BIT(23), BIT(PIPE_NONE) },
++	{ REG_A7XX_SP_CHICKEN_BITS_3, 0x00300000, BIT(PIPE_NONE) },
++	{ REG_A7XX_SP_HLSQ_TIMEOUT_THRESHOLD_DP, 0x00000080, BIT(PIPE_NONE) },
++	{ REG_A6XX_TPL1_DBG_ECO_CNTL, 0x10000000, BIT(PIPE_NONE) },
++	/* Enable cubemap small miplevel optimization settings */
++	/* BIT(26): Disable final clamp for bicubic filtering */
++	{ REG_A6XX_TPL1_DBG_ECO_CNTL1, 0x04000724, BIT(PIPE_NONE) },
++	/* Disable tag bank id hashing */
++	{ REG_A6XX_UCHE_MODE_CNTL, 0x00080000, BIT(PIPE_NONE) },
++	{ REG_A8XX_UCHE_CCHE_MODE_CNTL, 0x00001000, BIT(PIPE_NONE) },
++	/* Limit gmem number of ways for GMEM requests in each set */
++	{ REG_A8XX_UCHE_CCHE_CACHE_WAYS, 0x00000800, BIT(PIPE_NONE) },
++	/* Disable write slow pointer in data phase queue */
++	{ REG_A8XX_UCHE_HW_DBG_CNTL, BIT(8), BIT(PIPE_NONE) },
++	/* Configure UCHE to CCU switchthreshold timeout cycles */
++	{ REG_A8XX_UCHE_VARB_IDLE_TIMEOUT, 0x00000020, BIT(PIPE_NONE) },
++	{ REG_A7XX_VFD_DBG_ECO_CNTL, 0x00008000, BIT(PIPE_BR) | BIT(PIPE_BV) },
++	{ REG_A8XX_VFD_CB_BV_THRESHOLD, 0x00500050, BIT(PIPE_BR) | BIT(PIPE_BV) },
++	{ REG_A8XX_VFD_CB_BR_THRESHOLD, 0x00600060, BIT(PIPE_BR) | BIT(PIPE_BV) },
++	{ REG_A8XX_VFD_CB_BUSY_REQ_CNT, 0x00200020, BIT(PIPE_BR) | BIT(PIPE_BV) },
++	{ REG_A8XX_VFD_CB_LP_REQ_CNT, 0x00100020, BIT(PIPE_BR) | BIT(PIPE_BV) },
++	{ REG_A8XX_VPC_FLATSHADE_MODE_CNTL, 0x00000001, BIT(PIPE_BR) | BIT(PIPE_BV) },
++	/* Disable redundant tile data optimization */
++	{ REG_A8XX_VSC_KMD_DBG_ECO_CNTL, BIT(11), BIT(PIPE_NONE) },
++	{ },
++};
++
++static const u32 a830_protect_regs[] = {
++	A6XX_PROTECT_RDONLY(0x00000, 0x03a3),
++	A6XX_PROTECT_RDONLY(0x003b4, 0x008b),
++	A6XX_PROTECT_NORDWR(0x00440, 0x001f),
++	A6XX_PROTECT_RDONLY(0x00580, 0x005f),
++	A6XX_PROTECT_NORDWR(0x005e0, 0x011f),
++	A6XX_PROTECT_RDONLY(0x0074a, 0x0005),
++	A6XX_PROTECT_RDONLY(0x00759, 0x0026),
++	A6XX_PROTECT_RDONLY(0x00789, 0x0000),
++	A6XX_PROTECT_RDONLY(0x0078c, 0x0013),
++	A6XX_PROTECT_NORDWR(0x00800, 0x0029),
++	A6XX_PROTECT_NORDWR(0x00837, 0x00af),
++	A6XX_PROTECT_RDONLY(0x008e7, 0x00c9),
++	A6XX_PROTECT_NORDWR(0x008ec, 0x00c3),
++	A6XX_PROTECT_NORDWR(0x009b1, 0x0250),
++	A6XX_PROTECT_RDONLY(0x00ce0, 0x0001),
++	A6XX_PROTECT_RDONLY(0x00df0, 0x0000),
++	A6XX_PROTECT_NORDWR(0x00df1, 0x0000),
++	A6XX_PROTECT_NORDWR(0x00e01, 0x0000),
++	A6XX_PROTECT_NORDWR(0x00e03, 0x1fff),
++	A6XX_PROTECT_NORDWR(0x03c00, 0x00c5),
++	A6XX_PROTECT_RDONLY(0x03cc6, 0x1fff),
++	A6XX_PROTECT_NORDWR(0x08600, 0x01ff),
++	A6XX_PROTECT_NORDWR(0x08e00, 0x00ff),
++	A6XX_PROTECT_RDONLY(0x08f00, 0x0000),
++	A6XX_PROTECT_NORDWR(0x08f01, 0x01be),
++	A6XX_PROTECT_NORDWR(0x09600, 0x01ff),
++	A6XX_PROTECT_RDONLY(0x0981a, 0x02e5),
++	A6XX_PROTECT_NORDWR(0x09e00, 0x01ff),
++	A6XX_PROTECT_NORDWR(0x0a600, 0x01ff),
++	A6XX_PROTECT_NORDWR(0x0ae00, 0x0000),
++	A6XX_PROTECT_NORDWR(0x0ae02, 0x0004),
++	A6XX_PROTECT_NORDWR(0x0ae08, 0x0006),
++	A6XX_PROTECT_NORDWR(0x0ae10, 0x036f),
++	A6XX_PROTECT_NORDWR(0x0b600, 0x1fff),
++	A6XX_PROTECT_NORDWR(0x0dc00, 0x1fff),
++	A6XX_PROTECT_RDONLY(0x0fc00, 0x1fff),
++	A6XX_PROTECT_NORDWR(0x18400, 0x003f),
++	A6XX_PROTECT_RDONLY(0x18440, 0x013f),
++	A6XX_PROTECT_NORDWR(0x18580, 0x1fff),
++	A6XX_PROTECT_NORDWR(0x1b400, 0x1fff),
++	A6XX_PROTECT_NORDWR(0x1f400, 0x0477),
++	A6XX_PROTECT_RDONLY(0x1f878, 0x0787),
++	A6XX_PROTECT_NORDWR(0x1f930, 0x0329),
++	A6XX_PROTECT_NORDWR(0x20000, 0x1fff),
++	A6XX_PROTECT_NORDWR(0x27800, 0x007f),
++	A6XX_PROTECT_RDONLY(0x27880, 0x0381),
++	A6XX_PROTECT_NORDWR(0x27882, 0x0001),
++	A6XX_PROTECT_NORDWR(0x27c02, 0x0000),
++};
++DECLARE_ADRENO_PROTECT(a830_protect, 15);
++
++static const uint32_t a830_pwrup_reglist_regs[] = {
++	REG_A6XX_UCHE_MODE_CNTL,
++	REG_A8XX_UCHE_VARB_IDLE_TIMEOUT,
++	REG_A8XX_UCHE_GBIF_GX_CONFIG,
++	REG_A8XX_UCHE_CACHE_WAYS,
++	REG_A8XX_UCHE_CCHE_MODE_CNTL,
++	REG_A8XX_UCHE_CCHE_CACHE_WAYS,
++	REG_A8XX_UCHE_CCHE_GC_GMEM_RANGE_MIN,
++	REG_A8XX_UCHE_CCHE_GC_GMEM_RANGE_MIN + 1,
++	REG_A8XX_UCHE_CCHE_LPAC_GMEM_RANGE_MIN,
++	REG_A8XX_UCHE_CCHE_LPAC_GMEM_RANGE_MIN + 1,
++	REG_A8XX_UCHE_CCHE_TRAP_BASE,
++	REG_A8XX_UCHE_CCHE_TRAP_BASE + 1,
++	REG_A8XX_UCHE_CCHE_WRITE_THRU_BASE,
++	REG_A8XX_UCHE_CCHE_WRITE_THRU_BASE + 1,
++	REG_A8XX_UCHE_HW_DBG_CNTL,
++	REG_A8XX_UCHE_WRITE_THRU_BASE,
++	REG_A8XX_UCHE_WRITE_THRU_BASE + 1,
++	REG_A8XX_UCHE_TRAP_BASE,
++	REG_A8XX_UCHE_TRAP_BASE + 1,
++	REG_A8XX_UCHE_CLIENT_PF,
++	REG_A8XX_VSC_KMD_DBG_ECO_CNTL,
++	REG_A8XX_RB_CMP_NC_MODE_CNTL,
++	REG_A7XX_SP_HLSQ_TIMEOUT_THRESHOLD_DP,
++	REG_A8XX_SP_HLSQ_GC_GMEM_RANGE_MIN,
++	REG_A8XX_SP_HLSQ_GC_GMEM_RANGE_MIN + 1,
++	REG_A7XX_SP_READ_SEL,
++	REG_A6XX_TPL1_NC_MODE_CNTL,
++	REG_A6XX_TPL1_DBG_ECO_CNTL,
++	REG_A6XX_TPL1_DBG_ECO_CNTL1,
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(1),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(2),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(3),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(4),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(5),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(6),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(7),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(8),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(9),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(10),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(11),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(12),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(13),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(14),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(15),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(16),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(17),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(18),
++	REG_A8XX_TPL1_BICUBIC_WEIGHTS_TABLE(19),
++};
++DECLARE_ADRENO_REGLIST_LIST(a830_pwrup_reglist);
++
++static const u32 a830_ifpc_reglist_regs[] = {
++	REG_A8XX_RBBM_NC_MODE_CNTL,
++	REG_A8XX_RBBM_SLICE_INTERFACE_HANG_INT_CNTL,
++	REG_A8XX_RBBM_SLICE_NC_MODE_CNTL,
++	REG_A6XX_SP_NC_MODE_CNTL,
++	REG_A8XX_SP_HLSQ_LPAC_GMEM_RANGE_MIN,
++	REG_A8XX_SP_HLSQ_LPAC_GMEM_RANGE_MIN + 1,
++	REG_A7XX_SP_CHICKEN_BITS_1,
++	REG_A7XX_SP_CHICKEN_BITS_2,
++	REG_A7XX_SP_CHICKEN_BITS_3,
++	REG_A6XX_SP_PERFCTR_SHADER_MASK,
++	REG_A8XX_CP_PROTECT_GLOBAL(0),
++	REG_A8XX_CP_PROTECT_GLOBAL(1),
++	REG_A8XX_CP_PROTECT_GLOBAL(2),
++	REG_A8XX_CP_PROTECT_GLOBAL(3),
++	REG_A8XX_CP_PROTECT_GLOBAL(4),
++	REG_A8XX_CP_PROTECT_GLOBAL(5),
++	REG_A8XX_CP_PROTECT_GLOBAL(6),
++	REG_A8XX_CP_PROTECT_GLOBAL(7),
++	REG_A8XX_CP_PROTECT_GLOBAL(8),
++	REG_A8XX_CP_PROTECT_GLOBAL(9),
++	REG_A8XX_CP_PROTECT_GLOBAL(10),
++	REG_A8XX_CP_PROTECT_GLOBAL(11),
++	REG_A8XX_CP_PROTECT_GLOBAL(12),
++	REG_A8XX_CP_PROTECT_GLOBAL(13),
++	REG_A8XX_CP_PROTECT_GLOBAL(14),
++	REG_A8XX_CP_PROTECT_GLOBAL(15),
++	REG_A8XX_CP_PROTECT_GLOBAL(16),
++	REG_A8XX_CP_PROTECT_GLOBAL(17),
++	REG_A8XX_CP_PROTECT_GLOBAL(18),
++	REG_A8XX_CP_PROTECT_GLOBAL(19),
++	REG_A8XX_CP_PROTECT_GLOBAL(20),
++	REG_A8XX_CP_PROTECT_GLOBAL(21),
++	REG_A8XX_CP_PROTECT_GLOBAL(22),
++	REG_A8XX_CP_PROTECT_GLOBAL(23),
++	REG_A8XX_CP_PROTECT_GLOBAL(24),
++	REG_A8XX_CP_PROTECT_GLOBAL(25),
++	REG_A8XX_CP_PROTECT_GLOBAL(26),
++	REG_A8XX_CP_PROTECT_GLOBAL(27),
++	REG_A8XX_CP_PROTECT_GLOBAL(28),
++	REG_A8XX_CP_PROTECT_GLOBAL(29),
++	REG_A8XX_CP_PROTECT_GLOBAL(30),
++	REG_A8XX_CP_PROTECT_GLOBAL(31),
++	REG_A8XX_CP_PROTECT_GLOBAL(32),
++	REG_A8XX_CP_PROTECT_GLOBAL(33),
++	REG_A8XX_CP_PROTECT_GLOBAL(34),
++	REG_A8XX_CP_PROTECT_GLOBAL(35),
++	REG_A8XX_CP_PROTECT_GLOBAL(36),
++	REG_A8XX_CP_PROTECT_GLOBAL(37),
++	REG_A8XX_CP_PROTECT_GLOBAL(38),
++	REG_A8XX_CP_PROTECT_GLOBAL(39),
++	REG_A8XX_CP_PROTECT_GLOBAL(40),
++	REG_A8XX_CP_PROTECT_GLOBAL(41),
++	REG_A8XX_CP_PROTECT_GLOBAL(42),
++	REG_A8XX_CP_PROTECT_GLOBAL(43),
++	REG_A8XX_CP_PROTECT_GLOBAL(44),
++	REG_A8XX_CP_PROTECT_GLOBAL(45),
++	REG_A8XX_CP_PROTECT_GLOBAL(46),
++	REG_A8XX_CP_PROTECT_GLOBAL(63),
++	REG_A8XX_CP_INTERRUPT_STATUS_MASK_GLOBAL,
++};
++DECLARE_ADRENO_REGLIST_LIST(a830_ifpc_reglist);
++
++static const struct adreno_reglist_pipe a830_dyn_pwrup_reglist_regs[] = {
++	{ REG_A8XX_CP_HW_FAULT_STATUS_MASK_PIPE, 0, BIT(PIPE_BR) |
++		BIT(PIPE_BV) | BIT(PIPE_LPAC) | BIT(PIPE_AQE0) |
++		BIT(PIPE_AQE1) | BIT(PIPE_DDE_BR) | BIT(PIPE_DDE_BV) },
++	{ REG_A8XX_CP_INTERRUPT_STATUS_MASK_PIPE, 0, BIT(PIPE_BR) |
++		BIT(PIPE_BV) | BIT(PIPE_LPAC) | BIT(PIPE_AQE0) |
++		BIT(PIPE_AQE1) | BIT(PIPE_DDE_BR) | BIT(PIPE_DDE_BV) },
++	{ REG_A8XX_CP_PROTECT_CNTL_PIPE, 0, BIT(PIPE_BR) | BIT(PIPE_BV) | BIT(PIPE_LPAC) },
++	{ REG_A8XX_CP_PROTECT_PIPE(15), 0, BIT(PIPE_BR) | BIT(PIPE_BV) | BIT(PIPE_LPAC) },
++	{ REG_A8XX_GRAS_TSEFE_DBG_ECO_CNTL, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_GRAS_NC_MODE_CNTL, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_GRAS_DBG_ECO_CNTL, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A7XX_RB_CCU_CNTL, 0, BIT(PIPE_BR) },
++	{ REG_A8XX_RB_CCU_NC_MODE_CNTL, 0, BIT(PIPE_BR) },
++	{ REG_A8XX_RB_CMP_NC_MODE_CNTL, 0, BIT(PIPE_BR) },
++	{ REG_A8XX_RB_RESOLVE_PREFETCH_CNTL, 0, BIT(PIPE_BR) },
++	{ REG_A8XX_RB_CMP_DBG_ECO_CNTL, 0, BIT(PIPE_BR) },
++	{ REG_A8XX_RB_GC_GMEM_PROTECT, 0, BIT(PIPE_BR) },
++	{ REG_A6XX_RB_CONTEXT_SWITCH_GMEM_SAVE_RESTORE_ENABLE, 0, BIT(PIPE_BR) },
++	{ REG_A8XX_VPC_FLATSHADE_MODE_CNTL, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_PC_CHICKEN_BITS_1, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_PC_CHICKEN_BITS_2, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_PC_CHICKEN_BITS_3, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_PC_CHICKEN_BITS_4, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A6XX_PC_AUTO_VERTEX_STRIDE, 0, BIT(PIPE_BR) | BIT(PIPE_BV) },
++	{ REG_A8XX_PC_VIS_STREAM_CNTL, 0, BIT(PIPE_BR) | BIT(PIPE_BV) },
++	{ REG_A8XX_PC_CONTEXT_SWITCH_STABILIZE_CNTL_1, 0, BIT(PIPE_BR) | BIT(PIPE_BV) },
++	{ REG_A8XX_VFD_CB_BV_THRESHOLD, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_VFD_CB_BR_THRESHOLD, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_VFD_CB_BUSY_REQ_CNT, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A8XX_VFD_CB_LP_REQ_CNT, 0, BIT(PIPE_BV) | BIT(PIPE_BR) },
++	{ REG_A7XX_VFD_DBG_ECO_CNTL, 0, BIT(PIPE_BR) | BIT(PIPE_BV) },
++};
++DECLARE_ADRENO_REGLIST_PIPE_LIST(a830_dyn_pwrup_reglist);
++
+ static const struct adreno_reglist_pipe a840_nonctxt_regs[] = {
+ 	{ REG_A8XX_CP_SMMU_STREAM_ID_LPAC, 0x00000101, BIT(PIPE_NONE) },
+ 	{ REG_A8XX_GRAS_DBG_ECO_CNTL, 0x00000800, BIT(PIPE_BV) | BIT(PIPE_BR) },
+@@ -2150,6 +2416,43 @@ static const struct adreno_info a8xx_gpus[] = {
+ 			{ 357, 2 },
+ 			{ 284, 3 },
+ 		),
++	}, {
++		.chip_ids = ADRENO_CHIP_IDS(0x44050000),
++		.family = ADRENO_8XX_GEN1,
++		.fw = {
++			[ADRENO_FW_SQE] = "gen80000_sqe.fw",
++			[ADRENO_FW_GMU] = "gen80000_gmu.bin",
++			[ADRENO_FW_AQE] = "gen80000_aqe.fw",
++		},
++		.gmem = 12 * SZ_1M,
++		.inactive_period = DRM_MSM_INACTIVE_PERIOD,
++		.quirks = ADRENO_QUIRK_HAS_CACHED_COHERENT |
++			  ADRENO_QUIRK_HAS_HW_APRIV |
++			  ADRENO_QUIRK_PREEMPTION |
++			  ADRENO_QUIRK_IFPC,
++		.funcs = &a8xx_gpu_funcs,
++		.a6xx = &(const struct a6xx_info) {
++			.protect = &a830_protect,
++			.nonctxt_reglist = a830_nonctxt_regs,
++			.pwrup_reglist = &a830_pwrup_reglist,
++			.dyn_pwrup_reglist = &a830_dyn_pwrup_reglist,
++			.ifpc_reglist = &a830_ifpc_reglist,
++			.gbif_cx = a840_gbif,
++			.max_slices = 3,
++			.gmu_chipid = 0x8000100,
++			.bcms = (const struct a6xx_bcm[]) {
++				{ .name = "SH0", .buswidth = 16 },
++				{ .name = "MC0", .buswidth = 4 },
++				{
++					.name = "ACV",
++					.fixed = true,
++					.perfmode = BIT(2),
++					.perfmode_bw = 8171875,
++				},
++				{ /* sentinel */ },
++			},
++		},
++		.preempt_record_size = 13536 * SZ_1K,
+ 	}, {
+ 		.chip_ids = ADRENO_CHIP_IDS(0x44050a01),
+ 		.family = ADRENO_8XX_GEN2,
+diff --git a/drivers/gpu/drm/msm/adreno/adreno_gpu.h b/drivers/gpu/drm/msm/adreno/adreno_gpu.h
+index c0ee544ce257..2dd009b1ced5 100644
+--- a/drivers/gpu/drm/msm/adreno/adreno_gpu.h
++++ b/drivers/gpu/drm/msm/adreno/adreno_gpu.h
+@@ -601,6 +601,11 @@ static inline int adreno_is_x285(struct adreno_gpu *gpu)
+ 	return gpu->info->chip_ids[0] == 0x44070001;
+ }
+ 
++static inline int adreno_is_a830(struct adreno_gpu *gpu)
++{
++	return gpu->info->chip_ids[0] == 0x44050000;
++}
++
+ static inline int adreno_is_a840(struct adreno_gpu *gpu)
+ {
+ 	return gpu->info->chip_ids[0] == 0x44050a01;
+-- 
+2.43.0
+

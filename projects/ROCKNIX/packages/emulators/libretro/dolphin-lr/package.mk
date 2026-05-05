@@ -50,6 +50,11 @@ PKG_CMAKE_OPTS_TARGET+=" -DENABLE_EGL=ON \
                          -DLIBRETRO=ON \
                          -DCMAKE_POLICY_VERSION_MINIMUM=3.5"
 
+post_unpack() {
+  sed -i "s|gcc-ar|${TARGET_PREFIX}ar|g" "${PKG_BUILD}/CMakeLists.txt"
+  sed -i "s|gcc-ranlib|${TARGET_PREFIX}ranlib|g" "${PKG_BUILD}/CMakeLists.txt"
+}
+
 pre_configure_target() {
   if [ "${ARCH}" = "aarch64" ]; then
     # This is only needed for armv8.2-a targets where we don't use this flag

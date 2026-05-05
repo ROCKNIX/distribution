@@ -1,0 +1,76 @@
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH 1/2] drm/msm: Disallow foreign mapping of _NO_SHARE
+From: Rob Clark <robin.clark@oss.qualcomm.com>
+Date: Tue, 24 Mar 2026 14:40:31 -0700
+Message-Id: <20260324214033.1219113-1-robin.clark@oss.qualcomm.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+This restriction applies to mapping of _NO_SHARE objs in the kms vm as
+well as importing/exporting BOs.  Since the DPU has it's own VM, scanout
+counts as "exporting" a BO from outside of it's host VM.
+
+Signed-off-by: Rob Clark <robin.clark@oss.qualcomm.com>
+---
+ drivers/gpu/drm/msm/msm_gem_vma.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/drivers/gpu/drm/msm/msm_gem_vma.c b/drivers/gpu/drm/msm/msm_gem_vma.c
+index 1c6b0920c0d8..68a8f8f592fb 100644
+--- a/drivers/gpu/drm/msm/msm_gem_vma.c
++++ b/drivers/gpu/drm/msm/msm_gem_vma.c
+@@ -373,6 +373,12 @@ msm_gem_vma_new(struct drm_gpuvm *gpuvm, struct drm_gem_object *obj,
+ 	struct msm_gem_vma *vma;
+ 	int ret;
+ 
++	/* _NO_SHARE objs cannot be mapped outside of their "host" vm: */
++	if ((to_msm_bo(obj)->flags & MSM_BO_NO_SHARE) &&
++	    GEM_WARN_ON(obj->resv != drm_gpuvm_resv(gpuvm))) {
++		return ERR_PTR(-EINVAL);
++	}
++
+ 	drm_gpuvm_resv_assert_held(&vm->base);
+ 
+ 	vma = kzalloc(sizeof(*vma), GFP_KERNEL);
+-- 
+2.53.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH 2/2] drm/msm: Fix VM_BIND UNMAP locking
+From: Rob Clark <robin.clark@oss.qualcomm.com>
+Date: Tue, 24 Mar 2026 14:40:32 -0700
+Message-Id: <20260324214033.1219113-2-robin.clark@oss.qualcomm.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Wrong argument meant that the objs involved in UNMAP ops were not always
+getting locked.
+
+Since _NO_SHARE objs share a common resv with the VM (which is always
+locked) this would only show up with non-_NO_SHARE BOs.
+
+Signed-off-by: Rob Clark <robin.clark@oss.qualcomm.com>
+Closes: https://gitlab.freedesktop.org/drm/msm/-/issues/94
+Fixes: 2e6a8a1fe2b2 ("drm/msm: Add VM_BIND ioctl")
+---
+ drivers/gpu/drm/msm/msm_gem_vma.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/msm/msm_gem_vma.c b/drivers/gpu/drm/msm/msm_gem_vma.c
+index 68a8f8f592fb..40892e206dbd 100644
+--- a/drivers/gpu/drm/msm/msm_gem_vma.c
++++ b/drivers/gpu/drm/msm/msm_gem_vma.c
+@@ -1251,7 +1251,7 @@ vm_bind_job_lock_objects(struct msm_vm_bind_job *job, struct drm_exec *exec)
+ 			case MSM_VM_BIND_OP_UNMAP:
+ 				ret = drm_gpuvm_sm_unmap_exec_lock(job->vm, exec,
+ 							      op->iova,
+-							      op->obj_offset);
++							      op->range);
+ 				break;
+ 			case MSM_VM_BIND_OP_MAP:
+ 			case MSM_VM_BIND_OP_MAP_NULL: {
+-- 
+2.53.0
+

@@ -14,6 +14,7 @@ PKG_TOOLCHAIN="autotools"
 pre_configure_target() {
   export CFLAGS="${CFLAGS} -Wno-error=incompatible-pointer-types"
   export CXXLFAGS="${CXXFLAGS} -Wno-error=incompatible-pointer-types"
+  export BUILDCC="${TOOLCHAIN}/bin/host-gcc"
 
   ENABLED_FEATURES="--enable-silent-rules \
             --enable-run-as-root \

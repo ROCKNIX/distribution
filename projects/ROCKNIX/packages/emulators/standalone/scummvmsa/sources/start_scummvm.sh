@@ -12,7 +12,7 @@ BIOSPATH="${ROMSPATH}/bios"
 RATMPCONF="/storage/.config/retroarch/retroarch.cfg"
 
 shopt -s extglob
-if [[ "$1" =~ ?(add|create|libretro) ]]
+if [[ "$1" =~ ^(add|create|libretro)$ ]]
 then
   GAME="$2"
 else

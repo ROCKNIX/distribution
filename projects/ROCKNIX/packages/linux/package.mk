@@ -25,7 +25,7 @@ case ${DEVICE} in
     PKG_GIT_CLONE_BRANCH="rk-6.1-rkr3"
     PKG_PATCH_DIRS="${LINUX} ${DEVICE} default"
     ;;
-  H700|SM8250|RK3399|RK3576|SM8650|SM8550|SM6115|RK3566)
+  H700|SM8250|RK3399|RK3576|SM8650|SM8750|SM8550|SM6115|RK3566)
     PKG_VERSION="7.0.2"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     PKG_PATCH_DIRS+=" 7.0"
@@ -225,6 +225,19 @@ pre_make_target() {
       cp -Lv ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/filesystem/usr/lib/kernel-overlays/base/lib/firmware/qcom/gmu_gen70900.bin ${PKG_BUILD}/external-firmware/qcom
     mkdir -p ${PKG_BUILD}/external-firmware/qcom/sm8650/ayaneo/ps2
       cp -Lv ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/filesystem/usr/lib/kernel-overlays/base/lib/firmware/qcom/sm8650/ayaneo/ps2/gen70900_zap.mbn ${PKG_BUILD}/external-firmware/qcom/sm8650/ayaneo/ps2
+
+    FW_LIST="$(find ${PKG_BUILD}/external-firmware -type f | sed 's|.*external-firmware/||' | sort | xargs)"
+
+    ${PKG_BUILD}/scripts/config --set-str CONFIG_EXTRA_FIRMWARE "${FW_LIST}"
+    ${PKG_BUILD}/scripts/config --set-str CONFIG_EXTRA_FIRMWARE_DIR "external-firmware"
+  elif [ "${TARGET_ARCH}" = "aarch64" -a "${DEVICE}" = "SM8750" ]; then
+    mkdir -p ${PKG_BUILD}/external-firmware/qcom
+      cp -Lv $(get_build_dir kernel-firmware)/.copied-firmware/qcom/gen80000_aqe.fw ${PKG_BUILD}/external-firmware/qcom
+      cp -Lv $(get_build_dir kernel-firmware)/.copied-firmware/qcom/gen80000_sqe.fw ${PKG_BUILD}/external-firmware/qcom
+      cp -Lv $(get_build_dir kernel-firmware)/.copied-firmware/qcom/gen80000_gmu.bin ${PKG_BUILD}/external-firmware/qcom
+
+    mkdir -p ${PKG_BUILD}/external-firmware/qcom/sm8750
+      cp -Lv $(get_build_dir kernel-firmware)/.copied-firmware/qcom/sm8750/gen80000_zap.mbn ${PKG_BUILD}/external-firmware/qcom/sm8750
 
     FW_LIST="$(find ${PKG_BUILD}/external-firmware -type f | sed 's|.*external-firmware/||' | sort | xargs)"
 

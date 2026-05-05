@@ -11,14 +11,14 @@ PKG_LONGDESC="OS Modules Package"
 PKG_TOOLCHAIN="manual"
 
 case ${DEVICE} in
-  RK3588|RK3399|SM8250|SM8550|SM8650)
+  RK3588|RK3399|SM8250|SM8550|SM8650|SM8750)
     PKG_DEPENDS_TARGET+=" gamepadtester qterminal"
   ;;
 esac
 
 # Fileman or Commander Filemanager
 case ${DEVICE} in
-  RK3326|RK3399|RK3566|RK3576|RK3588|S922X|SM6115|SM8250|SM8550|SM8650)
+  RK3326|RK3399|RK3566|RK3576|RK3588|S922X|SM6115|SM8250|SM8550|SM8650|SM8750)
     PKG_DEPENDS_TARGET+=" commander"
     FILEMANAGER="commander"
   ;;
@@ -46,7 +46,7 @@ post_makeinstall_target() {
   esac
 
   case ${DEVICE} in
-    SM8650)
+    SM8650|SM8750)
       rm -f ${INSTALL}/usr/config/modules/*32bit*
     ;;
   esac
