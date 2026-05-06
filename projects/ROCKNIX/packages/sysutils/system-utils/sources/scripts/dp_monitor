@@ -1,0 +1,52 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2025 ROCKNIX (https://github.com/ROCKNIX)
+#
+# Monitors DP-1 output via sway IPC and powers DSI-1 (internal panel)
+# off/on when DP-1 is enabled/disabled. Needed for USB-C DisplayPort
+# Alt Mode (e.g. RK3576) where the DP driver does not emit a DRM
+# connector hotplug uevent, making the standard udev/hdmi_sense path
+# unreliable.
+
+. /etc/profile
+
+# Only needed on devices that have DP-1 hardware
+[ -d /sys/class/drm/card0-DP-1 ] || exit 0
+
+_LAST_STATE="init"
+
+_apply() {
+    local state="dsi"
+    wlr-randr 2>/dev/null | grep -A7 "^DP-1" | grep -q "Enabled: yes" && state="dp"
+    [ "$_LAST_STATE" = "$state" ] && return
+    local prev="$_LAST_STATE"
+    _LAST_STATE="$state"
+
+    if [ "$state" = "dp" ]; then
+        wlr-randr --output DSI-1 --off 2>/dev/null
+        # Stop USB gadget when DP is via USB-C Alt Mode (data lane conflict)
+        if cat /sys/class/drm/card*-DP*/status /sys/class/drm/card*-DisplayPort*/status 2>/dev/null | grep -q "^connected"; then
+            systemctl is-active --quiet usbgadget && systemctl stop usbgadget
+        fi
+    else
+        # Only re-enable DSI-1 on actual disconnect, not on first-boot detection
+        [ "$prev" != "init" ] && wlr-randr --output DSI-1 --preferred --on 2>/dev/null
+    fi
+
+    # Restart ES so it re-initialises at the new output's resolution.
+    # Skip on first-boot detection (init→dp/dsi) since ES hasn't started yet.
+    [ "$prev" != "init" ] && killall emulationstation 2>/dev/null
+}
+
+# Allow sway to finish initialising outputs before first check
+sleep 3
+
+while true; do
+    _apply
+    # Block until sway reports an output event, then loop immediately.
+    # grep -q exits on first '"change"' match, breaking the pipe and
+    # terminating swaymsg cleanly.  '|| true' keeps the loop running
+    # if sway disconnects.
+    swaymsg -t subscribe '["output"]' 2>/dev/null | grep -q '"change"' || true
+    sleep 0.3
+done
