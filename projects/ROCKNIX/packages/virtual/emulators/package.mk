@@ -603,14 +603,14 @@ makeinstall_target() {
 
   ### Nintendo GameCube
   case ${DEVICE} in
-    RK3399|SM8250|SM8550|SM8650|SM8750)
+    RK3399|SM6115|SM8250|SM8550|SM8650|SM8750)
       add_emu_core gamecube dolphin dolphin-qt-gc true
       add_emu_core gamecube dolphin dolphin-sa-gc false
       add_emu_core gamecube retroarch dolphin false
       install_script "Start Dolphin.sh"
       add_es_system gamecube
       ;;
-    RK3576|RK3566|RK3588|SM6115|S922X)
+    RK3576|RK3566|RK3588|S922X)
       add_emu_core gamecube dolphin dolphin-sa-gc true
       add_emu_core gamecube retroarch dolphin false
       add_es_system gamecube
@@ -619,7 +619,7 @@ makeinstall_target() {
 
   ### Nintendo Triforce
   case ${DEVICE} in
-    RK3399|SM8250|SM8550|SM8650|SM8750)
+    RK3399|SM6115|SM8250|SM8550|SM8650|SM8750)
       add_emu_core triforce dolphin dolphin-qt-gc true
       install_script "Start Dolphin.sh"
       add_es_system triforce
@@ -628,7 +628,7 @@ makeinstall_target() {
 
   ### Nintendo Wii/ware
   case ${DEVICE} in
-    RK3399|SM8250|SM8550|SM8650|SM8750)
+    RK3399|SM6115|SM8250|SM8550|SM8650|SM8750)
       add_emu_core wii dolphin dolphin-qt-wii true
       add_emu_core wiiware dolphin dolphin-qt-wii true
       add_emu_core wii dolphin dolphin-sa-wii false
@@ -638,7 +638,7 @@ makeinstall_target() {
       add_es_system wii
       add_es_system wiiware
       ;;
-    RK3576|RK3566|RK3588|SM6115|S922X)
+    RK3576|RK3566|RK3588|S922X)
       add_emu_core wii dolphin dolphin-sa-wii true
       add_emu_core wiiware dolphin dolphin-sa-wii true
       add_emu_core wii retroarch dolphin false
@@ -709,7 +709,7 @@ makeinstall_target() {
 
   ## Steam
   case ${DEVICE} in
-    SM8250|SM8550|SM8650|SM8750)
+    SM6115|SM8250|SM8550|SM8650|SM8750)
       add_emu_core steam steam steam true
       install_script "Install Steam.sh"
       install_script "Uninstall Steam.sh"
