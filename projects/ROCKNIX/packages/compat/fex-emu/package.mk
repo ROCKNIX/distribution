@@ -91,6 +91,7 @@ make_target() {
     -DGENERATOR_EXE="${TOOLCHAIN}/usr/bin/thunkgen"
     -DCMAKE_INSTALL_LIBDIR=lib
     -DQT_HOST_PATH="${TOOLCHAIN}/usr/local/qt6"
+    -DTUNE_CPU="${TARGET_CPU##*.}"
   )
   cmake "${tgt_opts[@]}"
   bash "${PKG_BUILD}/Data/nix/cmake_enable_libfwd.sh"
