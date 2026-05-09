@@ -1,6 +1,6 @@
 |Manufacturer|System|Release Date|Games Path|Supported Extensions|Emulator / Core|
 |----|----|----|----|----|----|
-|&#xf013; System|Media Player (mplayer)|System|`mplayer`|.3g2 .3gp .aac .ac3 .asf .avi .divx .dts .eac33 .f4f .f4v .flac .flv .m2p .m2ts .m3u .m4a .mka .mkv .mov .mp3 .mp4 .mpeg .mpg .mxf .ogg .ogm .opus .ps .sh .thd .ts .twi .vob .wav .webm .wma .wmv .wv .ytb|**mplayer:** mplayer (default)<br>**retroarch:** ffmpeg<br>|
+|&#xf013; System|Media Player (mplayer)|System|`mplayer`|.3g2 .3gp .aac .ac3 .asf .avi .divx .dts .eac33 .f4f .f4v .flac .flv .m2p .m2ts .m3u .m4a .m4v .mka .mkv .mov .mp3 .mp4 .mpeg .mpg .mxf .ogg .ogm .opus .ps .sh .thd .ts .twi .vob .wav .webm .wma .wmv .wv .ytb|**mplayer:** mplayer (default)<br>**retroarch:** ffmpeg<br>|
 |&#xf013; System|Moonlight Game Streaming (moonlight)|System|`moonlight`|.sh|**moonlight:** moonlight (default)<br>|
 |&#xf013; System|Music Player (music)|System|`playlists`|.m3u .sh|**gmu:** gmu (default)<br>|
 |&#xf013; System|Ports (ports)|System|`ports`|.sh|**portmaster:** portmaster (default)<br>|
@@ -126,7 +126,7 @@
 |Sony|PlayStation 2 (ps2)|2000|`ps2`|.iso .mdf .nrg .bin .img .dump .gz .cso .chd|**aethersx2:** aethersx2-sa (default)<br>|
 |Sony|PlayStation 3 (ps3)|2006|`ps3`|.ps3 .psn .m3u|**rpcs3:** rpcs3-sa (default)<br>|
 |Sony|PlayStation Portable (psp)|2004|`psp`|.iso .cso .pbp .chd|**ppsspp:** ppsspp-sa (default)<br>**retroarch:** ppsspp<br>|
-|Sony|PlayStation Vita (psvita)|2011|`psvita`|.pkg .psvita .zip|**vita3k:** vita3k-sa (default)<br>|
+|Sony|PlayStation Vita (psvita)|2011|`psvita`|.pkg .psvita .zip .sh|**vita3k:** vita3k-sa (default)<br>|
 |Sony|PSP Minis (pspminis)|2004|`pspminis`|.iso .cso .pbp .chd|**ppsspp:** ppsspp-sa (default)<br>**retroarch:** ppsspp<br>|
 |Sun Microsystems|J2ME (j2me)|2002|`j2me`|.jar|**retroarch:** freej2me (default)<br>|
 |Thomson|MO/TO family (TO7, TO7/70, TO8, TO8D, TO9, TO9+, MO5 and MO6) (moto)|1982|`moto`|.fd .sap .k7 .m7 .m5 .rom|**retroarch:** theodore (default)<br>|
