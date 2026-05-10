@@ -3,6 +3,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
 
+[ "$HW_DEVICE" = "SM8250" ] && systemctl stop inputplumber
+
 GPCAL_PATH="/usr/local/share/gpcal"
 
 source /etc/profile
