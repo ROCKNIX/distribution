@@ -1,0 +1,141 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026 ROCKNIX (https://github.com/ROCKNIX)
+# Based on SM8550/SM8650 fancontrol by tiopex (https://github.com/ROCKNIX/distribution/pull/2653)
+# Tuned for AYN Odin 3 (SM8750): idle 30-45C, gaming peak 97-98C, hardware max 130C
+# Averages CPU and GPU thermal zones only for accurate load-based fan control
+
+. /etc/profile
+
+DEBUG=false
+COOLING_PROFILE=$(get_setting "cooling.profile")
+FAN_PWM="${DEVICE_PWM_FAN}"
+
+# Enable fan if it's turned off
+if [ -f "${DEVICE_PWM_FAN}_enable" ] && [ "$(cat "${DEVICE_PWM_FAN}_enable")" != "1" ]; then
+  echo 1 > "${DEVICE_PWM_FAN}_enable"
+  echo "Enabling fan pwm"
+fi
+
+log $0 "Setting profile to ${COOLING_PROFILE}"
+
+function set_control() {
+  log $0 "Set fan control to ${1}"
+  if [ -e "${DEVICE_PWM_FAN}_enable" ]
+  then
+    echo ${1} >${DEVICE_PWM_FAN}_enable
+  fi
+}
+
+trap "set_control 0 && exit 0" SIGHUP SIGINT SIGQUIT SIGABRT
+
+if [ "${COOLING_PROFILE}" = "custom" ]
+then
+  if [ -e "/storage/.config/fancontrol.conf" ]
+  then
+    log $0 "Loading configuration file" 2>/dev/null
+    source /storage/.config/fancontrol.conf
+    if [ ! $? = 0 ]
+    then
+      WARN="Custom fan profile could not be loaded, defaulting to moderate."
+      log $0 "${WARN}"
+      COOLING_PROFILE="moderate"
+      set_setting cooling.profile moderate
+    fi
+  else
+    log $0 "No custom config found, defaulting to moderate."
+    COOLING_PROFILE="moderate"
+    set_setting cooling.profile moderate
+  fi
+fi
+
+# Temperature thresholds tuned for AYN Odin 3 (SM8750)
+# Based on CPU+GPU zone averages only
+# PWM scale: 0=off, 51=20%, 77=30%, 102=40%, 128=50%, 153=60%, 204=80%, 255=100%
+
+if [ ! "${COOLING_PROFILE}" = "custom" ]
+then
+  if [ "${COOLING_PROFILE}" = "aggressive" ]; then
+    # Maximum cooling - fan starts at 35C, full speed at 65C
+    MAXTEMP="65000"
+    T6="62000"
+    T5="58000"
+    T4="55000"
+    T3="52000"
+    T2="47000"
+    T1="35000"
+  elif [ "${COOLING_PROFILE}" = "moderate" ]; then
+    # Balanced - fan starts at 45C, full speed at 72C
+    MAXTEMP="72000"
+    T6="68000"
+    T5="64000"
+    T4="60000"
+    T3="56000"
+    T2="52000"
+    T1="45000"
+  elif [ "${COOLING_PROFILE}" = "quiet" ]; then
+    # Quieter - fan starts at 45C, full speed at 80C
+    MAXTEMP="80000"
+    T6="75000"
+    T5="70000"
+    T4="65000"
+    T3="60000"
+    T2="55000"
+    T1="45000"
+  else
+    # default to moderate
+    MAXTEMP="72000"
+    T6="68000"
+    T5="64000"
+    T4="60000"
+    T3="56000"
+    T2="52000"
+    T1="45000"
+  fi
+fi
+
+CTEMP="1"
+
+log $0 "Enabling fan control."
+set_control 1 >/dev/null 2>&1
+
+while true
+  do
+  INDEX=0
+  CPU_TEMP=$(awk '{total += $1; count++} END {printf "%d", total/count}' ${DEVICE_TEMP_SENSOR})
+  $DEBUG && log $0 "CPU TEMP: ${CPU_TEMP}" 2>/dev/null
+  if (( "${CPU_TEMP}" > "${MAXTEMP}" )); then
+    FSPEED="255"
+    TEMP="${MAXTEMP}"
+  elif (( "${CPU_TEMP}" > "${T6}" )); then
+    FSPEED="204"
+    TEMP="${T6}"
+  elif (( "${CPU_TEMP}" > "${T5}" )); then
+    FSPEED="153"
+    TEMP="${T5}"
+  elif (( "${CPU_TEMP}" > "${T4}" )); then
+    FSPEED="128"
+    TEMP="${T4}"
+  elif (( "${CPU_TEMP}" > "${T3}" )); then
+    FSPEED="102"
+    TEMP="${T3}"
+  elif (( "${CPU_TEMP}" > "${T2}" )); then
+    FSPEED="77"
+    TEMP="${T2}"
+  elif (( "${CPU_TEMP}" > "${T1}" )); then
+    FSPEED="51"
+    TEMP="${T1}"
+  else
+    FSPEED="0"
+    TEMP=0
+  fi
+  if (( ${TEMP} != ${CTEMP} )); then
+    echo ${FSPEED} > ${FAN_PWM}
+    CTEMP=${TEMP}
+    $DEBUG && log $0 "Setting PWM FAN to ${FSPEED} at CPU Temp: ${CPU_TEMP}" 2>/dev/null
+  fi
+  sleep 3
+done
+
+log $0 "Disabling fan control."
+set_control 0 >/dev/null 2>&1
