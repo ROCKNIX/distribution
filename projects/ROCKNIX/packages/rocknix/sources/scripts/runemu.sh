@@ -286,8 +286,13 @@ case ${EMULATOR} in
         RUNTHIS='${RUN_SHELL} /usr/bin/start_dolphin_wii.sh "${ROMNAME}" "${PLATFORM}" "${CORE}"'
       ;;
       "ports")
+      if [[ "${ROMNAME,,}" == *".appimage" ]]; then
+        RUNTHIS='${EMUPERF} "${ROMNAME}"'
+      else
         RUNTHIS='${EMUPERF} ${RUN_SHELL} "${ROMNAME}"'
-	      sed -i "/^ACTIVE_GAME=/c\ACTIVE_GAME=\"${ROMNAME}\"" /storage/.config/PortMaster/mapper.txt
+      fi
+        chmod +x "${ROMNAME}"
+        sed -i "/^ACTIVE_GAME=/c\ACTIVE_GAME=\"${ROMNAME}\"" /storage/.config/PortMaster/mapper.txt
         sed -i "/^ACTIVE_PLATFORM=/c\ACTIVE_PLATFORM=\"${PLATFORM}\"" /storage/.config/PortMaster/mapper.txt
       ;;
       "windows")
