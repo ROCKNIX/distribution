@@ -2,7 +2,7 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="lowerdeck"
-PKG_VERSION="dffc09f6a3f3af5cf4e1a30fe7595aae436a75a7"
+PKG_VERSION="0ad677c37419218bc284c3aec0d30b131e8efb8c"
 PKG_GIT_CLONE_BRANCH="main"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/bulzipke/lowerdeck"
