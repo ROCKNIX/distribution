@@ -477,9 +477,45 @@ setup_toolchain() {
       export _python_exec_prefix=/usr
 
       # rust
+      case "${TARGET_ARCH}" in
+        "arm")
+          export RUST_TARGET="arm-unknown-linux-gnueabihf"
+          ;;
+        "aarch64")
+          export RUST_TARGET="aarch64-unknown-linux-gnu"
+          ;;
+        "x86_64")
+          export RUST_TARGET="x86_64-unknown-linux-gnu"
+          ;;
+      esac
+
+      # Configure cargo for cross-compilation
+      # Convert rust target to cargo env var format: aarch64-unknown-linux-gnu -> AARCH64_UNKNOWN_LINUX_GNU
+      CARGO_TARGET_VAR=$(echo "${RUST_TARGET}" | tr '[:lower:]' '[:upper:]' | tr '-' '_')
+      eval "export CARGO_TARGET_${CARGO_TARGET_VAR}_LINKER=\"${TARGET_PREFIX}gcc\""
+      eval "export CARGO_TARGET_${CARGO_TARGET_VAR}_AR=\"${TARGET_PREFIX}ar\""
+      # CC and AR with underscores instead of dashes for cargo build scripts
+      CC_VAR=$(echo "${RUST_TARGET}" | tr '-' '_')
+      eval "export CC_${CC_VAR}=\"${TARGET_PREFIX}gcc\""
+      eval "export AR_${CC_VAR}=\"${TARGET_PREFIX}ar\""
+      eval "export CXX_${CC_VAR}=\"${TARGET_PREFIX}g++\""
+      # For cargo build scripts that compile for the host
+      export HOST_CC="${TOOLCHAIN}/bin/host-gcc"
+      export HOST_CXX="${TOOLCHAIN}/bin/host-g++"
+
       export CARGO_TARGET_DIR="${PKG_BUILD}/.${TARGET_NAME}/target"
-      export CARGO_HOME="$(get_build_dir rust)/cargo_home"
-      export RUST_TARGET_PATH="${TOOLCHAIN}/lib/rustlib/"
+      export CARGO_HOME="${BUILD}/.cargo-home"
+
+      # Create cargo config for host linker
+      mkdir -p "${CARGO_HOME}"
+      cat >"${CARGO_HOME}/config.toml" <<EOF
+[target.x86_64-unknown-linux-gnu]
+linker = "${TOOLCHAIN}/bin/host-gcc"
+
+[target.${RUST_TARGET}]
+linker = "${TARGET_PREFIX}gcc"
+ar = "${TARGET_PREFIX}ar"
+EOF
 
       ;;
     host:*|bootstrap:*)
@@ -557,8 +593,7 @@ setup_toolchain() {
       esac
 
       export CARGO_TARGET_DIR="${PKG_BUILD}/.${RUST_HOST}/target"
-      export CARGO_HOME="$(get_build_dir rust)/cargo_home"
-      export RUST_TARGET_PATH="${TOOLCHAIN}/lib/rustlib/"
+      export CARGO_HOME="${BUILD}/.cargo-home"
       ;;
   esac
 }

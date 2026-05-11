@@ -6,6 +6,11 @@
 
 set -e
 
+# Ensure Rust tools are in PATH if installed via rustup
+if [ -f "$HOME/.cargo/env" ]; then
+  . "$HOME/.cargo/env"
+fi
+
 # set up variables
 declare -A dep_map file_map perl_map need_map
 DEBUG="false"
@@ -61,7 +66,11 @@ dep_map=(
   [curl]=curl
   [diff]=diffutils
   [gawk]=gawk
-  [gcc]=gcc
+  [cpp]=cpp
+  [gcc]=gcc-12
+  [g++]=g++-12
+  [gcc-12]=gcc-12
+  [g++-12]=g++-12
   [gperf]=gperf
   [gzip]=gzip
   [file]=file
@@ -79,6 +88,8 @@ dep_map=(
   [xz]=xz-utils
   [zip]=zip
   [zstd]=zstd
+  [rustc]=rustc
+  [cargo]=cargo
 )
 
 # [file]=package
@@ -172,6 +183,8 @@ case "${DISTRO}" in
       ;;
     arch|endeavouros)
       dep_map+=(
+        [g++]=g++-12
+        [gcc]=gcc-12
         [g++-12]=g++-12
         [gcc-12]=gcc-12
         [mkfontscale]=xfonts-utils
@@ -213,6 +226,8 @@ case "${DISTRO}" in
       ;;
     *)
       dep_map+=(
+        [g++]=g++-12
+        [gcc]=gcc-12
         [g++-12]=g++-12
         [gcc-12]=gcc-12
         [mkfontscale]=xfonts-utils
@@ -257,35 +272,63 @@ if [ "${#need_map[@]}" -gt 0 ]; then
   done
   echo "**** The system appears to be a ${DISTRO} system ****"
 
+  # install rust via rustup
+  if [ -n "${need_map[rustc]}" ] || [ -n "${need_map[cargo]}" ]; then
+    if get_yes_no; then
+      echo "Installing Rust via rustup..."
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+      # Add cargo to current session PATH
+      export PATH="$HOME/.cargo/bin:$PATH"
+      # Add to shell rc files
+      if [ -f "$HOME/.bashrc" ] && ! grep -q ".cargo/env" "$HOME/.bashrc"; then
+        echo 'source "$HOME/.cargo/env"' >> "$HOME/.bashrc"
+      fi
+      # Source cargo env if exists (for current shell)
+      if [ -f "$HOME/.cargo/env" ]; then
+        . "$HOME/.cargo/env"
+      fi
+      # Install cross-compilation target
+      rustup target add aarch64-unknown-linux-gnu
+      rustup toolchain install 1.94.1
+      rustup target add --toolchain 1.94.1 aarch64-unknown-linux-gnu
+      # Remove from need_map so apt doesn't try to install them
+      unset need_map[rustc]
+      unset need_map[cargo]
+      get_deps
+    fi
+  fi
+
   if command -v sudo >/dev/null; then
-    case "${DISTRO}" in
-      ubuntu|debian|linuxmint|\"elementary\")
-        get_yes_no && sudo apt-get install "${need_map[@]}"
-        ;;
-      fedora|centos|rhel)
-        command -v dnf >/dev/null && YUM=dnf || YUM=yum
-        get_yes_no && sudo ${YUM} install "${need_map[@]}"
-        ;;
-      gentoo)
-        get_yes_no && sudo emerge --ask --deep "${need_map[@]}"
-        ;;
-      sabayon)
-        get_yes_no && sudo equo install --ask "${need_map[@]}"
-        ;;
-      mageia)
-        get_yes_no && sudo urpmi "${need_map[@]}"
-        ;;
-      arch|endeavouros)
-        get_yes_no && sudo pacman -Sy "${need_map[@]}"
-        ;;
-      opensuse)
-        get_yes_no && sudo zypper install -y --no-recommends "${need_map[@]}"
-        ;;
-      *)
-        echo "**** unsupported distro ${DISTRO} ****"
-        exit 1
-        ;;
-    esac
+    if [ "${#need_map[@]}" -gt 0 ]; then
+      case "${DISTRO}" in
+        ubuntu|debian|linuxmint|\"elementary\")
+          get_yes_no && sudo apt-get install "${need_map[@]}"
+          ;;
+        fedora|centos|rhel)
+          command -v dnf >/dev/null && YUM=dnf || YUM=yum
+          get_yes_no && sudo ${YUM} install "${need_map[@]}"
+          ;;
+        gentoo)
+          get_yes_no && sudo emerge --ask --deep "${need_map[@]}"
+          ;;
+        sabayon)
+          get_yes_no && sudo equo install --ask "${need_map[@]}"
+          ;;
+        mageia)
+          get_yes_no && sudo urpmi "${need_map[@]}"
+          ;;
+        arch|endeavouros)
+          get_yes_no && sudo pacman -Sy "${need_map[@]}"
+          ;;
+        opensuse)
+          get_yes_no && sudo zypper install -y --no-recommends "${need_map[@]}"
+          ;;
+        *)
+          echo "**** unsupported distro ${DISTRO} ****"
+          exit 1
+          ;;
+      esac
+    fi
   else
     echo "The command 'sudo' was not found. Please install necessary packages manually."
     exit 1

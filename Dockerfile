@@ -48,3 +48,17 @@ RUN mkdir -p /work && chown docker /work
 WORKDIR /work
 
 USER docker
+
+# Install Rust and cross-compilation targets
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable \
+ && . "$HOME/.cargo/env" \
+ && rustup target add aarch64-unknown-linux-gnu \
+ && rustup toolchain install 1.94.1 \
+ && rustup target add --toolchain 1.94.1 aarch64-unknown-linux-gnu \
+ && chmod a+rx /home/docker \
+ && chmod -R a+rwX /home/docker/.cargo /home/docker/.rustup
+
+ENV RUSTUP_HOME=/home/docker/.rustup \
+    CARGO_HOME=/home/docker/.cargo \
+    PATH=/home/docker/.cargo/bin:$PATH
+

@@ -6,7 +6,7 @@ PKG_LICENSE="MPLv2"
 PKG_VERSION="3c5850585ba55615b17a58c58331b6d6f52d4a9d"
 PKG_SITE="https://github.com/touchHLE/touchHLE"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain cargo:host cargo rust SDL2 sndio libsamplerate"
+PKG_DEPENDS_TARGET="toolchain SDL2 sndio libsamplerate"
 PKG_LONGDESC="touchHLE: high-level emulator for iPhone OS apps"
 PKG_TOOLCHAIN="manual"
 
@@ -21,20 +21,20 @@ post_unpack() {
 
 make_target() {
   unset CMAKE
-  export RUSTFLAGS="-C link-arg=-lasound"
+  export RUSTFLAGS="${RUSTFLAGS} -C link-arg=-lasound"
   export CMAKE_POLICY_VERSION_MINIMUM="3.5"
   export CFLAGS="${CFLAGS} -std=gnu11"
 
   export CMAKE_ARGS="${CMAKE_ARGS} -DALSOFT_BACKEND_JACK=OFF"
 
   cargo build \
-    --target ${TARGET_NAME} \
+    --target ${RUST_TARGET} \
     --release
 }
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin
-  cp -rf ${PKG_BUILD}/.${TARGET_NAME}/target/${TARGET_NAME}/release/touchHLE ${INSTALL}/usr/bin
+  cp -rf ${PKG_BUILD}/.${TARGET_NAME}/target/${RUST_TARGET}/release/touchHLE ${INSTALL}/usr/bin
   cp -rf ${PKG_DIR}/scripts/* ${INSTALL}/usr/bin
   mkdir -p ${INSTALL}/usr/lib/touchHLE/touchHLE_dylibs
   cp -rf ${PKG_BUILD}/touchHLE_dylibs/lib* ${INSTALL}/usr/lib/touchHLE/touchHLE_dylibs/
