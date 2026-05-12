@@ -1,9 +1,9 @@
 |Manufacturer|System|Release Date|Games Path|Supported Extensions|Emulator / Core|
 |----|----|----|----|----|----|
-|&#xf013; System|Media Player (mplayer)|System|`mplayer`|.3g2 .3gp .aac .ac3 .asf .avi .divx .dts .eac33 .f4f .f4v .flac .flv .m2p .m2ts .m3u .m4a .mka .mkv .mov .mp3 .mp4 .mpeg .mpg .mxf .ogg .ogm .opus .ps .sh .thd .ts .twi .vob .wav .webm .wma .wmv .wv .ytb|**mplayer:** mplayer (default)<br>**retroarch:** ffmpeg<br>|
+|&#xf013; System|Media Player (mplayer)|System|`mplayer`|.3g2 .3gp .aac .ac3 .asf .avi .divx .dts .eac33 .f4f .f4v .flac .flv .m2p .m2ts .m3u .m4a .m4v .mka .mkv .mov .mp3 .mp4 .mpeg .mpg .mxf .ogg .ogm .opus .ps .sh .thd .ts .twi .vob .wav .webm .wma .wmv .wv .ytb|**mplayer:** mplayer (default)<br>**retroarch:** ffmpeg<br>|
 |&#xf013; System|Moonlight Game Streaming (moonlight)|System|`moonlight`|.sh|**moonlight:** moonlight (default)<br>|
 |&#xf013; System|Music Player (music)|System|`playlists`|.m3u .sh|**gmu:** gmu (default)<br>|
-|&#xf013; System|Ports (ports)|System|`ports`|.sh|**portmaster:** portmaster (default)<br>|
+|&#xf013; System|Ports (ports)|System|`ports`|.sh .appimage|**portmaster:** portmaster (default)<br>|
 |&#xf013; System|Screenshots (imageviewer)|System|`screenshots`|.jpg .jpeg .png .bmp .psd .tga .gif .hdr .pic .ppm .pgm .mkv .pdf .mp4 .avi||
 |&#xf013; System|Tools (tools)|System|`modules`|.sh||
 |Acorn|BBC Micro (bbcmicro)|1981|`bbcmicro`|.ssd .dsd|**retroarch:** b2 (default)<br>|
