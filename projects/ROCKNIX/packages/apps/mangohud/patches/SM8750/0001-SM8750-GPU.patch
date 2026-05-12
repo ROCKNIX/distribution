@@ -1,86 +1,26 @@
-From 8abf317204f876b19238c21f045b1d54fc77cd80 Mon Sep 17 00:00:00 2001
+From 4cbe2951d40e3f57a0807d8ac392c51c23f261dc Mon Sep 17 00:00:00 2001
 From: John Williams <porschemad911@gmail.com>
-Date: Tue, 13 Jan 2026 21:46:12 +1100
-Subject: [PATCH 1/1] SM8750 GPU (Adreno 830)
+Date: Tue, 12 May 2026 10:15:03 +1000
+Subject: [PATCH] SM8750 GPU
 
 ---
- src/gpu_fdinfo.cpp | 68 ++++++++++++++++++++++++++++++++++------------
- src/gpu_fdinfo.h   |  2 ++
- 2 files changed, 53 insertions(+), 17 deletions(-)
+ src/gpu_fdinfo.cpp | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
 
 diff --git a/src/gpu_fdinfo.cpp b/src/gpu_fdinfo.cpp
-index 0fdd99e..4a8b7c1 100644
+index c4d63f5..054161b 100644
 --- a/src/gpu_fdinfo.cpp
 +++ b/src/gpu_fdinfo.cpp
-@@ -55,7 +55,7 @@ void GPU_fdinfo::find_fd()
-                 client_id = val;
-         }
- 
--        if (!driver.empty() && driver == module) {
-+        if ((module == "msm_dpu" || module == "msm_drm") && driver == "msm") {
-             total++;
-             SPDLOG_TRACE(
-                 "driver = \"{}\", pdev = \"{}\", "
-@@ -63,14 +63,30 @@ void GPU_fdinfo::find_fd()
-                 driver, pdev,
-                 client_id, client_ids.find(client_id) != client_ids.end()
-             );
--        }
- 
--        if (
--            driver.empty() || client_id.empty() ||
--            driver != module || pdev != pci_dev ||
--            client_ids.find(client_id) != client_ids.end()
--        )
--            continue;
-+            if (
-+                driver.empty() || client_id.empty() ||
-+                client_ids.find(client_id) != client_ids.end()
-+            )
-+                continue;
-+        } else {
-+            if (!driver.empty() && driver == module) {
-+                total++;
-+                SPDLOG_TRACE(
-+                    "driver = \"{}\", pdev = \"{}\", "
-+                    "client_id = \"{}\", client_id_exists = \"{}\"",
-+                    driver, pdev,
-+                    client_id, client_ids.find(client_id) != client_ids.end()
-+                );
-+            }
-+
-+            if (
-+                driver.empty() || client_id.empty() ||
-+                driver != module || pdev != pci_dev ||
-+                client_ids.find(client_id) != client_ids.end()
-+            )
-+                continue;
-+        }
- 
-         client_ids.insert(client_id);
-         open_fdinfo_fd(fd_path);
-@@ -175,8 +191,9 @@ void GPU_fdinfo::find_hwmon_sensors()
- {
+@@ -192,7 +192,7 @@ void GPU_fdinfo::find_hwmon_sensors()
      std::string hwmon;
  
--    if (module == "msm")
+     if (module == "msm_drm" || module == "msm_dpu" )
 -        hwmon = find_hwmon_sensor_dir("gpu");
-+    if (module == "msm_drm" || module == "msm_dpu" )
-+        // Adreno 830 (SM8750): gpuss0_thermal (no underscore before digit)
 +        hwmon = find_hwmon_sensor_dir("gpuss0_thermal");
      else if (module == "panfrost" || module == "panthor")
          hwmon = find_hwmon_sensor_dir("gpu_thermal");
      else
-@@ -538,6 +555,8 @@ int GPU_fdinfo::get_gpu_clock()
- {
-     if (module == "panfrost" || module == "panthor")
-         return get_gpu_clock_mali();
-+    else if (module == "msm_dpu")
-+        return get_kgsl_clock();
- 
-     if (!gpu_clock_stream.is_open())
-         return 0;
-@@ -637,7 +656,7 @@ float GPU_fdinfo::amdgpu_helper_get_proc_vram() {
+@@ -655,7 +655,7 @@ float GPU_fdinfo::amdgpu_helper_get_proc_vram() {
  }
  
  void GPU_fdinfo::init_kgsl() {
@@ -89,77 +29,6 @@ index 0fdd99e..4a8b7c1 100644
  
      try {
          if (!fs::exists(sys_path)) {
-@@ -649,7 +668,8 @@ void GPU_fdinfo::init_kgsl() {
-         return;
-     }
- 
--    for (std::string metric : {"gpu_busy_percentage", "temp", "clock_mhz" }) {
-+    // Only GPU clocks accessible
-+    for (std::string metric : {"cur_freq" }) {
-         std::string p = sys_path + "/" + metric;
- 
-         if (!fs::exists(p)) {
-@@ -658,11 +678,7 @@ void GPU_fdinfo::init_kgsl() {
-         }
- 
-         SPDLOG_DEBUG("kgsl: {} found", p);
--
--        if (metric == "clock_mhz")
--            gpu_clock_stream.open(p);
--        else
--            kgsl_streams[metric].open(p);
-+        kgsl_streams[metric].open(p);
-     }
- }
- 
-@@ -702,6 +718,24 @@ int GPU_fdinfo::get_kgsl_temp() {
-     return std::round(std::stoi(temp_str) / 1'000.f);
- }
- 
-+int GPU_fdinfo::get_kgsl_clock() {
-+    std::ifstream* s = &kgsl_streams["cur_freq"];
-+
-+    if (!s->is_open())
-+        return 0;
-+
-+    std::string freq_str;
-+
-+    s->seekg(0);
-+
-+    std::getline(*s, freq_str);
-+
-+    if (freq_str.empty())
-+        return 0;
-+
-+    return std::round(std::stoi(freq_str) / 1'000'000.f);
-+}
-+
- void GPU_fdinfo::main_thread()
- {
-     while (!stop_thread) {
-diff --git a/src/gpu_fdinfo.h b/src/gpu_fdinfo.h
-index 97e62e5..a5b1d9e 100644
---- a/src/gpu_fdinfo.h
-+++ b/src/gpu_fdinfo.h
-@@ -119,6 +119,7 @@ private:
-     void init_kgsl();
-     int get_kgsl_load();
-     int get_kgsl_temp();
-+    int get_kgsl_clock();
- 
- public:
-     GPU_fdinfo(
-@@ -146,6 +147,7 @@ public:
-         } else if (module == "msm_dpu") {
-             // msm driver does not report vram usage
-             drm_engine_type = "drm-engine-gpu";
-+            init_kgsl();
-         } else if (module == "msm_drm") {
-             init_kgsl();
-         } else if (module == "panfrost") {
 -- 
 2.47.3
-
--- 
-2.54.0
 
