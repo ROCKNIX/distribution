@@ -1,13 +1,14 @@
+
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2021-present Shanti Gilbert (https://github.com/shantigilbert)
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="hypseus-singe"
-PKG_VERSION="b353e1728bf56d8b6c6fb606df78b7296a203702"
+PKG_VERSION="dac37bcac963407ae719f04b178f80353a4bbc12" # v2.12.0
 PKG_LICENSE="GPL3"
 PKG_SITE="https://github.com/DirtBagXon/hypseus-singe"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain SDL2 SDL2_ttf SDL2_image libmpeg2 libogg libvorbis libzip"
+PKG_DEPENDS_TARGET="toolchain SDL2 SDL2_mixer SDL2_ttf SDL2_image libmpeg2 libogg libvorbis libzip"
 PKG_LONGDESC="Hypseus is a fork of Daphne. A program that lets one play the original versions of many laserdisc arcade games on one's PC."
 PKG_TOOLCHAIN="cmake"
 GET_HANDLER_SUPPORT="git"
