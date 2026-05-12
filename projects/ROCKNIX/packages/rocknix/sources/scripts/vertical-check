@@ -3,10 +3,19 @@
 . /etc/profile
 
 ARCADEROMS_XML="/usr/config/emulationstation/resources/arcaderoms.xml"
+BOTTOM_SCREEN_UI_DIR="/usr/share/lowerdeck"
+BOTTOM_SCREEN_PID_FILE="/run/lowerdeck.pid"
 
 RUNEMU_LINE=$(ps aux | grep '[r]unemu.sh' | head -n 1)
 CURRENT_CORE=$(echo "${RUNEMU_LINE}" | sed -n 's/.*--core=\([^ ]*\).*/\1/p')
-ROM_PATH=$(echo "${RUNEMU_LINE}" | sed -n 's|.*runemu\.sh \([^ ]*\).*|\1|p')
+PLATFORM=$(echo "${RUNEMU_LINE}" | sed -n 's/.* -P *\([^ ]*\).*/\1/p')
+ROM_PATH=$(echo "${RUNEMU_LINE}" | sed '
+    s|.*runemu\.sh ||
+    s/\\ /__ESC_SP__/g
+    s/ .*//
+    s/__ESC_SP__/ /g
+    s/\\\(.\)/\1/g
+')
 
 if [ -z "${CURRENT_CORE}" ] || [ -z "${ROM_PATH}" ]; then
     exit 0
@@ -80,5 +89,46 @@ if [ "${IS_VERTICAL}" = "true" ]; then
         swaymsg input "0:0:generic_ft5x06_(a0)" events enabled
         swaymsg input "0:0:generic_ft5x06_(8d)" map_to_output DSI-1
         swaymsg input "0:0:generic_ft5x06_(8d)" events enabled
+    fi
+elif [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
+    BOTTOM_SCREEN_TYPE=$(get_setting rocknix.bottomscreen.type 2>/dev/null)
+    if [ -z "${BOTTOM_SCREEN_TYPE}" ]; then
+        set_setting rocknix.bottomscreen.type vc 2>/dev/null
+        BOTTOM_SCREEN_TYPE=vc
+    fi
+    if [ "${BOTTOM_SCREEN_TYPE}" = "vc" ] && [ -d "${BOTTOM_SCREEN_UI_DIR}" ]; then
+        if [ -f "${BOTTOM_SCREEN_PID_FILE}" ] && kill -0 "$(cat "${BOTTOM_SCREEN_PID_FILE}" 2>/dev/null)" 2>/dev/null; then
+            exit 0
+        fi
+        if pgrep -f 'python3 .*/lowerdeck/main\.py' >/dev/null 2>&1; then
+            exit 0
+        fi
+
+        case "${QUIRK_DEVICE}" in
+            "AYANEO Pocket DS") OUTPUT="DSI-2" ;;
+            *)                  OUTPUT="DSI-1" ;;
+        esac
+
+        swaymsg "output ${OUTPUT} power on" >/dev/null 2>&1
+        RA_PID=$(pgrep -f '/usr/bin/retroarch' | head -n 1)
+        USE_CHEEVOS=$(get_setting "retroachievements" 2>/dev/null)
+
+        ( cd "${BOTTOM_SCREEN_UI_DIR}" && \
+          exec python3 "${BOTTOM_SCREEN_UI_DIR}/main.py" \
+              --rom      "${ROM_PATH}" \
+              --core     "${CURRENT_CORE}" \
+              --platform "${PLATFORM}" \
+              --ra-pid   "${RA_PID:-0}" \
+              --cheevos-enabled  "${USE_CHEEVOS:-1}" \
+          >/dev/null 2>&1 ) &
+        echo $! > "${BOTTOM_SCREEN_PID_FILE}"
+
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            if swaymsg -t get_tree 2>/dev/null | grep -q '"app_id": "lowerdeck"'; then
+                break
+            fi
+            sleep 0.05
+        done
+        swaymsg "[app_id=\"lowerdeck\"] move container to output ${OUTPUT}, fullscreen enable" >/dev/null 2>&1 ||:
     fi
 fi

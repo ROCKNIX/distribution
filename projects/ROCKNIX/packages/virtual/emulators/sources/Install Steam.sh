@@ -20,6 +20,7 @@ PROTON_DIR="${STEAM}/steamapps/common/${PROTON_NAME}"
 RUNTIME_TAR_URL="https://repo.steampowered.com/steamrt3c/images/latest-public-beta/steam-runtime-steamrt-arm64.tar.xz"
 STEAM_MANIFEST_URL="https://client-update.fastly.steamstatic.com/steam_client_publicbeta_linuxarm64"
 STEAM_CDN="https://client-update.steamstatic.com"
+unset MESA_LOADER_DRIVER_OVERRIDE
 
 install_fex_config() {
   cp -r "/usr/config/fex-emu" "/storage/.config/"

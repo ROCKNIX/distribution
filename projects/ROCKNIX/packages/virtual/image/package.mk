@@ -15,7 +15,7 @@ PKG_DEPENDS_TARGET="toolchain squashfs-tools:host dosfstools:host fakeroot:host 
                     bash coreutils system-utils autostart quirks powerstate \
                     gzip six xmlstarlet pyudev dialog network mako-osd rocknix"
 
-PKG_UI="emulationstation es-themes textviewer"
+PKG_UI="emulationstation es-themes textviewer lowerdeck"
 
 PKG_UI_TOOLS="fbgrab grim"
 

@@ -5,7 +5,7 @@
 . /etc/profile
 
 DEBUG=false
-COOLING_PROFILE=$(get_setting "cooling.profile")
+sleep 1 && COOLING_PROFILE=$(get_setting "cooling.profile")
 FAN_PWM="${DEVICE_PWM_FAN}"
 
 # Enable fan if it's turned off
@@ -27,13 +27,21 @@ function set_control() {
 
 trap "set_control 0 && exit 0" SIGHUP SIGINT SIGQUIT SIGABRT
 
-if [ -e "/storage/.config/fancontrol.conf" ] && [ "${COOLING_PROFILE}" = "custom" ]
+if [ "${COOLING_PROFILE}" = "custom" ]
 then
-  log $0 "Loading configuration file" 2>/dev/null
-  source /storage/.config/fancontrol.conf
-  if [ ! $? = 0 ]
+  if [ -e "/storage/.config/fancontrol.conf" ]
   then
-    WARN="Custom fan profile could not be loaded, defaulting to auto."
+    log $0 "Loading configuration file" 2>/dev/null
+    source /storage/.config/fancontrol.conf
+    if [ ! $? = 0 ]
+    then
+      WARN="Custom fan profile could not be loaded, defaulting to auto."
+      log $0 "${WARN}"
+      COOLING_PROFILE="auto"
+      set_setting cooling.profile auto
+    fi
+  else
+    WARN="Custom fan profile selected but fancontrol.conf not found, defaulting to auto."
     log $0 "${WARN}"
     COOLING_PROFILE="auto"
     set_setting cooling.profile auto
@@ -44,24 +52,15 @@ fi
 if [ ! "${COOLING_PROFILE}" = "custom" ]
 then
   if [ "${COOLING_PROFILE}" = "aggressive" ]; then
-    MAXTEMP="75000"
-    HIGHTEMP="65000"
-    MIDTEMP="55000"
-    LOWTEMP="45000"
-    MINTEMP="35000"
+    SPEEDS=(255 196 128 96 64 32)
+    TEMPS=(75000 65000 55000 45000 35000 0)
   elif [ "${COOLING_PROFILE}" = "moderate" ]; then
-    MAXTEMP="80000"
-    HIGHTEMP="70000"
-    MIDTEMP="60000"
-    LOWTEMP="50000"
-    MINTEMP="40000"
+    SPEEDS=(255 196 128 96 64 32)
+    TEMPS=(80000 70000 60000 50000 40000 0)
   elif [ "${COOLING_PROFILE}" = "quiet" ]; then
     # Quiet.
-    MAXTEMP="85000"
-    HIGHTEMP="75000"
-    MIDTEMP="65000"
-    LOWTEMP="55000"
-    MINTEMP="45000"
+    SPEEDS=(255 196 128 96 64 32)
+    TEMPS=(85000 75000 65000 55000 45000 0)
   else
     # auto
     set_control 0 >/dev/null 2>&1
@@ -69,39 +68,28 @@ then
   fi
 fi
 
-CTEMP="1"
-
 log $0 "Enabling fan control."
 set_control 1 >/dev/null 2>&1
 
 while true
-  do
-  INDEX=0
+do
   CPU_TEMP=$(awk '{total += $1; count++} END {printf "%d", total/count}' ${DEVICE_TEMP_SENSOR})
   $DEBUG && log $0 "CPU TEMP: ${CPU_TEMP}" 2>/dev/null
-  if (( "${CPU_TEMP}" > "${MAXTEMP}" )); then
-    FSPEED="255"
-    TEMP="${MAXTEMP}"
-  elif (( "${CPU_TEMP}" > "${HIGHTEMP}" )); then
-    FSPEED="196"
-    TEMP="${HIGHTEMP}"
-  elif (( "${CPU_TEMP}" > "${MIDTEMP}" )); then
-    FSPEED="128"
-    TEMP="${MIDTEMP}"
-  elif (( "${CPU_TEMP}" > "${LOWTEMP}" )); then
-    FSPEED="96"
-    TEMP="${LOWTEMP}"
-  elif (( "${CPU_TEMP}" > "${MINTEMP}" )); then
-    FSPEED="64"
-    TEMP="${MINTEMP}"
-  else
-    FSPEED="32"
-    TEMP=0
-  fi
-  if (( ${TEMP} != ${CTEMP} )); then
-    echo ${FSPEED} > ${FAN_PWM}
-    CTEMP=${TEMP}
-    $DEBUG && log $0 "Setting PWM FAN to ${FSPEED} at CPU Temp: ${CPU_TEMP}" 2>/dev/null
+  INDEX=0
+  for TEMP in "${TEMPS[@]}"
+  do
+    if (( "${CPU_TEMP}" > "${TEMP}" ))
+    then
+      break
+    fi
+    INDEX=$(( $INDEX + 1 ))
+  done
+  FSPEED=${SPEEDS[${INDEX}]}
+  if [ ! "${LASTSPEED}" = "${FSPEED}" ]
+  then
+    $DEBUG && log $0 "Setting PWM FAN to ${FSPEED} (${TEMP})" 2>/dev/null
+    echo ${FSPEED} >${FAN_PWM}
+    LASTSPEED=${FSPEED}
   fi
   sleep 3
 done

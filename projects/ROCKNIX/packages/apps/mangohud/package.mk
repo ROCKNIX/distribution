@@ -8,7 +8,10 @@ PKG_SITE="https://github.com/flightlessmango/MangoHud"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain glslang mesa Python3 wayland libxcb dbus"
 PKG_LONGDESC="A Vulkan and OpenGL overlay for monitoring FPS, temperatures, CPU/GPU load and more."
-PKG_PATCH_DIRS+="${DEVICE}"
+
+PKG_PATCH_DIRS+=" common"
+[[ "${DEVICE}" =~ SM6115||SM8250|SM8550|SM8650|SM8750 ]] && PKG_PATCH_DIRS+=" qualcomm"
+PKG_PATCH_DIRS+=" ${DEVICE}"
 
 if [ "${OPENGL_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL}"
