@@ -198,6 +198,13 @@ case "${DISABLE_RIGHT_EYE_RENDER}" in
   *) sed -i '/^disable_right_eye_render=/c\disable_right_eye_render=false' ${CONF_FILE};;
 esac
 
+# QT platform - some device / screen combinations need xcb
+case ${HW_DEVICE} in
+    SM8550)
+        [[ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]] && export QT_QPA_PLATFORM=xcb
+    ;;
+esac
+
 rm -rf /storage/.local/share/azahar
 ln -sf ${CONF_DIR} /storage/.local/share/azahar
 
