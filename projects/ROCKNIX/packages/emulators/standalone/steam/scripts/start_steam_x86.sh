@@ -5,7 +5,6 @@
 
 STEAM_MAIN_SCRIPT=${0}
 STEAM_FLAVOR=x86
-unset MESA_LOADER_DRIVER_OVERRIDE
 
 source /etc/profile
 set_kill set "-9 FEX"

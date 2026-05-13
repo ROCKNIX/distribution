@@ -156,6 +156,7 @@ steam_launch_bigpicture() {
       exit 0
     fi
   else
+    unset MESA_LOADER_DRIVER_OVERRIDE
     FEX /usr/bin/steam -steamdeck -exitsteam
     if [ "${GAMESCOPE}" = "0" ]; then
       ${EMUPERF} FEX /usr/bin/steam -nofriendsui -noverifyfiles -nobootstrapupdate -skipinitialbootstrap -norepairfiles ${game_uri:+"$game_uri"}
