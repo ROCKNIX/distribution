@@ -844,6 +844,7 @@ makeinstall_target() {
   ### SNK NeoCD
   add_emu_core neocd retroarch neocd true
   add_emu_core neocd retroarch fbneo false
+  add_emu_core neocd retroarch geolith false
   add_es_system neocd
 
   ### SNK NeoGeo Pocket
