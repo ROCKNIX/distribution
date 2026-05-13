@@ -20,10 +20,10 @@ LIBRETRO_CORES="81-lr a5200-lr arduous-lr atari800-lr b2-lr beetle-gba-lr beetle
                 bsnes-mercury-balanced-lr bsnes-mercury-performance-lr beetle-supafaust-lr beetle-supergrafx-lr beetle-vb-lr            \
                 beetle-wswan-lr bluemsx-lr cap32-lr crocods-lr daphne-lr doublecherrygb-lr dosbox-core-lr dosbox-pure-lr duckstation-lr \
                 easyrpg-lr emuscv-lr fake08-lr fbalpha2012-lr fbalpha2019-lr fbneo-lr fceumm-lr flycast-lr flycast2021-lr fmsx-lr       \
-                freechaf-lr freeintv-lr freej2me-lr fuse-lr gambatte-lr gearboy-lr gearcoleco-lr gearsystem-lr geolith-lr               \
-                genesis-plus-gx-lr genesis-plus-gx-wide-lr gw-lr handy-lr hatari-lr idtech-lr jaxe-lr mame-lr mame2003-plus-lr          \
-                mame2010-lr mame2015-lr melonds-lr melonds-ds-lr mesen-lr mesen-s-lr mgba-lr minivmac-lr mojozork-lr mu-lr              \
-                mupen64plus-lr mupen64plus-nx-lr neocd_lr nestopia-lr np2kai-lr o2em-lr opera-lr parallel-n64-lr pcsx_rearmed-lr        \
+                freechaf-lr freeintv-lr freej2me-lr fuse-lr gambatte-lr gearboy-lr gearcoleco-lr geargrafx-lr gearlynx-lr gearsystem-lr \
+                geolith-lr genesis-plus-gx-lr genesis-plus-gx-wide-lr gw-lr handy-lr hatari-lr idtech-lr jaxe-lr mame-lr                \
+                mame2003-plus-lr mame2010-lr mame2015-lr melonds-lr melonds-ds-lr mesen-lr mesen-s-lr mgba-lr minivmac-lr mojozork-lr   \
+                mu-lr mupen64plus-lr mupen64plus-nx-lr neocd_lr nestopia-lr np2kai-lr o2em-lr opera-lr parallel-n64-lr pcsx_rearmed-lr  \
                 picodrive-lr pokemini-lr potator-lr ppsspp-lr prosystem-lr puae-lr puae2021-lr px68k-lr quasi88-lr quicknes-lr race-lr  \
                 same_cdi-lr sameboy-lr sameduck-lr scummvm-lr skyemu-lr smsplus-gx-lr snes9x-lr snes9x2002-lr snes9x2005_plus-lr        \
                 snes9x2010-lr stella-lr swanstation-lr tgbdual-lr theodore-lr tic80-lr uae4arm uzem-lr vba-next-lr vbam-lr vecx-lr      \
@@ -730,6 +730,7 @@ makeinstall_target() {
   ### Atari Lynx
   add_emu_core atarilynx retroarch handy true
   add_emu_core atarilynx retroarch beetle_lynx false
+  add_emu_core atarilynx retroarch gearlynx false
   case ${DEVICE} in
     H700|RK3326|RK3399|RK3576|RK3566|RK3588|SM6115|SM8250|SM8550|SM8650|SM8750)
       add_emu_core atarilynx mednafen lynx false
@@ -1032,6 +1033,7 @@ makeinstall_target() {
   add_emu_core pcengine retroarch beetle_pce_fast true
   add_emu_core pcengine retroarch beetle_pce false
   add_emu_core pcengine retroarch beetle_supergrafx false
+  add_emu_core pcengine retroarch geargrafx false
   case ${DEVICE} in
     H700|RK3326|RK3399|RK3576|RK3566|RK3588|SM6115|SM8250|SM8550|SM8650|SM8750)
       add_emu_core pcengine mednafen pce false
@@ -1049,6 +1051,7 @@ makeinstall_target() {
   add_emu_core pcenginecd retroarch beetle_pce_fast true
   add_emu_core pcenginecd retroarch beetle_pce false
   add_emu_core pcenginecd retroarch beetle_supergrafx false
+  add_emu_core pcenginecd retroarch geargrafx false
   case ${DEVICE} in
     H700|RK3326|RK3399|RK3576|RK3566|RK3588|SM6115|SM8250|SM8550|SM8650|SM8750)
       add_emu_core pcenginecd mednafen pce false
@@ -1338,6 +1341,7 @@ makeinstall_target() {
   ### NEC Super Grafx
   add_emu_core supergrafx retroarch beetle_supergrafx true
   add_emu_core supergrafx retroarch beetle_pce false
+  add_emu_core supergrafx retroarch geargrafx false
   case ${DEVICE} in
     H700|RK3326|RK3399|RK3576|RK3566|RK3588|SM6115|SM8250|SM8550|SM8650|SM8750)
       add_emu_core supergrafx mednafen pce false
@@ -1482,6 +1486,7 @@ makeinstall_target() {
   add_emu_core tg16 retroarch beetle_pce_fast true
   add_emu_core tg16 retroarch beetle_pce false
   add_emu_core tg16 retroarch beetle_supergrafx false
+  add_emu_core tg16 retroarch geargrafx false
   case ${DEVICE} in
     H700|RK3326|RK3399|RK3576|RK3566|RK3588|SM6115|SM8250|SM8550|SM8650|SM8750)
       add_emu_core tg16 mednafen pce false
@@ -1494,6 +1499,7 @@ makeinstall_target() {
   add_emu_core tg16cd retroarch beetle_pce_fast true
   add_emu_core tg16cd retroarch beetle_pce false
   add_emu_core tg16cd retroarch beetle_supergrafx false
+  add_emu_core tg16cd retroarch geargrafx false
   case ${DEVICE} in
     H700|RK3326|RK3399|RK3576|RK3566|RK3588|SM6115|SM8250|SM8550|SM8650|SM8750)
       add_emu_core tg16cd mednafen pce false
