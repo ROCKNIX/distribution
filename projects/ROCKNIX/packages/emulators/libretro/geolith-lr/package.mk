@@ -2,13 +2,13 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="geolith-lr"
-PKG_VERSION="1391cef3d373cd2aaf4f8a0478b9d6f831c7dfac"
+PKG_VERSION="39b96aebee7188126a7a5422cd978ac60e0cbb59"
 PKG_ARCH="aarch64"
 PKG_LICENSE="BSD"
 PKG_SITE="https://github.com/libretro/geolith-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_LONGDESC="Geolith is a highly accurate emulator for the Neo Geo AES and MVS."
+PKG_LONGDESC="Geolith is a highly accurate emulator for the Neo Geo AES, MVS and Neo Geo CD."
 PKG_TOOLCHAIN="make"
 
 make_target() {

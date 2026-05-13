@@ -1,6 +1,6 @@
 ################################################################################
 #
-#  Copyright (C) 2021      351ELEC team (https://github.com/351ELEC/351ELEC)
+#  Copyright (C) 2021-2026    351ELEC team (https://github.com/351ELEC/351ELEC)
 #
 #  This Program is free software; you can redistribute it and/or modify
 #  it under the terms of the GNU General Public License as published by
@@ -14,13 +14,13 @@
 #
 ################################################################################
 
-PKG_NAME="gearcoleco-lr"
-PKG_VERSION="f336da73f64917a2889b183e7e5025485bcd0e79"
+PKG_NAME="gearlynx-lr"
+PKG_VERSION="61ed2e05c75419ebd906c1cc5d8c6077d57fda92"
 PKG_LICENSE="GPL"
-PKG_SITE="https://github.com/drhelius/Gearcoleco"
+PKG_SITE="https://github.com/drhelius/Gearlynx"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_LONGDESC="Gearcoleco is a very accurate cross-platform ColecoVision emulator written in C++ that runs on Windows, macOS, Linux, BSD, Raspberry Pi and RetroArch."
+PKG_LONGDESC="Gearlynx is a very accurate, cross-platform Atari Lynx emulator written in C++ that runs on Windows, macOS, Linux, BSD and RetroArch."
 
 PKG_TOOLCHAIN="make"
 
@@ -30,5 +30,5 @@ make_target() {
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp platforms/libretro/gearcoleco_libretro.so ${INSTALL}/usr/lib/libretro/
+  cp platforms/libretro/gearlynx_libretro.so ${INSTALL}/usr/lib/libretro/
 }
