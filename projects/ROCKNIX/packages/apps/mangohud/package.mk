@@ -2,7 +2,7 @@
 # Copyright (C) 2025-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="mangohud"
-PKG_VERSION="d7654ebcefb3bdb106d581c937417aa2007eaeeb" # v0.8.3-rc1 + a few fixes
+PKG_VERSION="330c42a5956e005a4d102473f5782bb0e3d94b6f" # v0.8.3
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/flightlessmango/MangoHud"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
@@ -81,12 +81,18 @@ post_makeinstall_target() {
   case ${DEVICE} in
     RK3326)
       sed -e "s/@FONT_SIZE@/30/g" -i ${INSTALL}/usr/config/MangoHud/MangoHud.conf
+
+      # No battery life estimate available
+      sed -i 's/^battery_time/\# battery_time/g' ${INSTALL}/usr/config/MangoHud/MangoHud.conf
     ;;
     S922X)
       sed -e "s/@FONT_SIZE@/30/g" -i ${INSTALL}/usr/config/MangoHud/MangoHud.conf
 
       # No GPU temperature sensor available
       sed -i 's/^gpu_temp/\# gpu_temp/g' ${INSTALL}/usr/config/MangoHud/MangoHud.conf
+
+      # No battery life estimate available
+      sed -i 's/^battery_time/\# battery_time/g' ${INSTALL}/usr/config/MangoHud/MangoHud.conf
     ;;
     *)
       sed -e "s/@FONT_SIZE@/40/g" -i ${INSTALL}/usr/config/MangoHud/MangoHud.conf

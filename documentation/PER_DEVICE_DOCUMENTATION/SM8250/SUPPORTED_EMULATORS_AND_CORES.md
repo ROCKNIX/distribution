@@ -20,7 +20,7 @@
 |Atari|Atari 7800 (atari7800)|1986|`atari7800`|.a78 .bin .zip .7z|**retroarch:** prosystem (default)<br>|
 |Atari|Atari 800 (atari800)|1979|`atari800`|.rom .xfd .atr .atx .cdm .cas .car .bin .a52 .xex .zip .7z|**retroarch:** atari800 (default)<br>|
 |Atari|Atari Jaguar (atarijaguar)|1993|`atarijaguar`|.j64 .jag .rom .abs .cof .bin .prg|**retroarch:** virtualjaguar (default)<br>**bigpemu:** bigpemu-sa<br>|
-|Atari|Atari Lynx (atarilynx)|1989|`atarilynx`|.lnx .lyx .o .zip .7z|**retroarch:** handy (default)<br>**retroarch:** beetle_lynx<br>**mednafen:** lynx<br>|
+|Atari|Atari Lynx (atarilynx)|1989|`atarilynx`|.lnx .lyx .o .zip .7z|**retroarch:** handy (default)<br>**retroarch:** beetle_lynx<br>**retroarch:** gearlynx<br>**mednafen:** lynx<br>|
 |Atari|Atari ST (atarist)|1985|`atarist`|.st .msa .stx .dim .ipf .m3u .zip .7z|**retroarch:** hatari (default)<br>**hatarisa:** hatarisa<br>|
 |Bandai|SuFami Turbo (sufami)|1996|`sufami`|.st .zip .7z|**retroarch:** snes9x (default)<br>|
 |Bandai|Wonderswan (wonderswan)|1999|`wonderswan`|.ws .wsc .zip .7z|**retroarch:** beetle_wswan (default)<br>**mednafen:** wswan<br>|
@@ -52,14 +52,14 @@
 |Microsoft|MSX 2 (msx2)|1988|`msx2`|.dsk .mx1 .mx2 .rom .zip .7z .m3u|**retroarch:** bluemsx (default)<br>**retroarch:** fmsx<br>|
 |Microsoft|Windows (windows)|System|`windows`|.sh|**wine:** wine (default)<br>|
 |Microsoft|Xbox (xbox)|2001|`xbox`|.iso|**xemu:** xemu-sa (default)<br>|
-|NEC|PC Engine (pcengine)|1987|`pcengine`|.pce .bin .zip .7z|**retroarch:** beetle_pce_fast (default)<br>**retroarch:** beetle_pce<br>**retroarch:** beetle_supergrafx<br>**mednafen:** pce<br>**mednafen:** pce_fast<br>|
-|NEC|PC Engine CD (pcenginecd)|1988|`pcenginecd`|.cue .ccd .chd .toc .m3u|**retroarch:** beetle_pce_fast (default)<br>**retroarch:** beetle_pce<br>**retroarch:** beetle_supergrafx<br>**mednafen:** pce<br>**mednafen:** pce_fast<br>|
+|NEC|PC Engine (pcengine)|1987|`pcengine`|.pce .bin .zip .7z|**retroarch:** beetle_pce_fast (default)<br>**retroarch:** beetle_pce<br>**retroarch:** beetle_supergrafx<br>**mednafen:** pce<br>**retroarch:** geargrafx<br>**mednafen:** pce_fast<br>|
+|NEC|PC Engine CD (pcenginecd)|1988|`pcenginecd`|.cue .ccd .chd .toc .m3u|**retroarch:** beetle_pce_fast (default)<br>**retroarch:** beetle_pce<br>**retroarch:** beetle_supergrafx<br>**mednafen:** pce<br>**retroarch:** geargrafx<br>**mednafen:** pce_fast<br>|
 |NEC|PC-8800 (pc-8800)|1981|`pc88`|.d88 .u88 .m3u|**retroarch:** quasi88 (default)<br>|
 |NEC|PC-9800 (pc-9800)|1983|`pc98`|.d98 .zip .fdi .fdd .2hd .tfd .d88 .hdm .xdf .dup .hdi .thd .nhd .hdd .hdn .cmd|**retroarch:** np2kai (default)<br>|
 |NEC|PC-FX (pcfx)|1994|`pcfx`|.chd .cue .ccd .toc|**retroarch:** beetle_pcfx (default)<br>**mednafen:** pcfx<br>|
-|NEC|SuperGrafx (supergrafx)|1989|`sgfx`|.pce .sgx .cue .ccd .chd .zip .7z|**retroarch:** beetle_supergrafx (default)<br>**retroarch:** beetle_pce<br>**mednafen:** pce<br>**mednafen:** pce_fast<br>|
-|NEC|TurboGrafx-16 (tg16)|1989|`tg16`|.pce .bin .zip .7z|**retroarch:** beetle_pce_fast (default)<br>**retroarch:** beetle_pce<br>**retroarch:** beetle_supergrafx<br>**mednafen:** pce<br>**mednafen:** pce_fast<br>|
-|NEC|TurboGrafx-CD (tg16cd)|1989|`tg16cd`|.cue .ccd .chd .toc .m3u|**retroarch:** beetle_pce_fast (default)<br>**retroarch:** beetle_pce<br>**retroarch:** beetle_supergrafx<br>**mednafen:** pce<br>**mednafen:** pce_fast<br>|
+|NEC|SuperGrafx (supergrafx)|1989|`sgfx`|.pce .sgx .cue .ccd .chd .zip .7z|**retroarch:** beetle_supergrafx (default)<br>**retroarch:** beetle_pce<br>**retroarch:** geargrafx<br>**mednafen:** pce<br>**mednafen:** pce_fast<br>|
+|NEC|TurboGrafx-16 (tg16)|1989|`tg16`|.pce .bin .zip .7z|**retroarch:** beetle_pce_fast (default)<br>**retroarch:** beetle_pce<br>**retroarch:** beetle_supergrafx<br>**retroarch:** geargrafx<br>**mednafen:** pce<br>**mednafen:** pce_fast<br>|
+|NEC|TurboGrafx-CD (tg16cd)|1989|`tg16cd`|.cue .ccd .chd .toc .m3u|**retroarch:** beetle_pce_fast (default)<br>**retroarch:** beetle_pce<br>**retroarch:** beetle_supergrafx<br>**retroarch:** geargrafx<br>**mednafen:** pce<br>**mednafen:** pce_fast<br>|
 |Nesbox|TIC-80 (tic-80)|2017|`tic-80`|.tic|**retroarch:** tic80 (default)<br>|
 |Nintendo|Famicom (famicom)|1983|`famicom`|.nes .unif .unf .zip .7z|**retroarch:** nestopia (default)<br>**retroarch:** fceumm<br>**retroarch:** quicknes<br>**retroarch:** mesen<br>**mednafen:** nes<br>|
 |Nintendo|Famicom Disk System (fds)|1986|`fds`|.fds .zip .7z|**retroarch:** nestopia (default)<br>**retroarch:** fceumm<br>**retroarch:** quicknes<br>**retroarch:** mesen<br>**mednafen:** nes<br>|
@@ -118,7 +118,7 @@
 |Sinclair|ZX81 (zx81)|1981|`zx81`|.tzx .p .t81 .zip .7z|**retroarch:** 81 (default)<br>|
 |Smith Engineering|Vectrex (vectrex)|1982|`vectrex`|.bin .gam .vec .zip .7z|**retroarch:** vecx (default)<br>|
 |SNK|Neo Geo (neogeo)|1990|`neogeo`|.7z .zip .neo|**retroarch:** fbneo (default)<br>**retroarch:** mame2003_plus<br>**retroarch:** fbalpha2012<br>**retroarch:** fbalpha2019<br>**retroarch:** mame2010<br>**retroarch:** mame2015<br>**retroarch:** mame<br>**retroarch:** geolith<br>|
-|SNK|Neo Geo CD (neocd)|1994|`neocd`|.cue .iso .chd|**retroarch:** neocd (default)<br>**retroarch:** fbneo<br>|
+|SNK|Neo Geo CD (neocd)|1994|`neocd`|.cue .iso .chd|**retroarch:** neocd (default)<br>**retroarch:** fbneo<br>**retroarch:** geolith<br>|
 |SNK|Neo Geo Pocket (ngp)|1998|`ngp`|.ngp .ngc .zip .7z|**retroarch:** beetle_ngp (default)<br>**retroarch:** race<br>**mednafen:** ngp<br>|
 |SNK|Neo Geo Pocket Color (ngpc)|1999|`ngpc`|.ngp .ngc .zip .7z|**retroarch:** beetle_ngp (default)<br>**retroarch:** race<br>**mednafen:** ngp<br>|
 |Sony|PlayStation (psx)|1994|`psx`|.bin .cue .img .mdf .pbp .toc .cbn .m3u .ccd .chd .iso|**retroarch:** pcsx_rearmed32 (default)<br>**retroarch:** pcsx_rearmed<br>**retroarch:** beetle_psx<br>**mednafen:** psx<br>**duckstation:** duckstation-sa<br>**retroarch:** swanstation<br>**retroarch:** duckstation<br>|
