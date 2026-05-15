@@ -7,6 +7,7 @@ PKG_SITE="https://swaywm.org/"
 PKG_DEPENDS_TARGET="toolchain glib wayland wayland-protocols libdrm libxkbcommon libinput cairo pango libjpeg-turbo dbus json-c wlroots gdk-pixbuf swaybg foot bemenu xcb-util-wm xwayland xkbcomp xterm libthai"
 PKG_LONGDESC="i3-compatible Wayland compositor"
 PKG_TOOLCHAIN="meson"
+PKG_PATCH_DIRS+="${DEVICE}"
 
 case ${DEVICE} in
   RK3588)

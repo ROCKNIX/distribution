@@ -8,7 +8,7 @@ PKG_LICENSE="BSD"
 PKG_SITE="https://github.com/libretro/geolith-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_LONGDESC="Geolith is a highly accurate emulator for the Neo Geo AES, MVS and Neo Geo CD."
+PKG_LONGDESC="Geolith is a highly accurate emulator for the Neo Geo AES, MVS, CD, and CDZ."
 PKG_TOOLCHAIN="make"
 
 make_target() {
