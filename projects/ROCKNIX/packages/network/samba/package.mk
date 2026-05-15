@@ -3,7 +3,7 @@
 # Copyright (C) 2017-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="samba"
-PKG_VERSION="4.21.0"
+PKG_VERSION="4.24.1"
 PKG_LICENSE="GPLv3+"
 PKG_SITE="https://www.samba.org"
 PKG_URL="https://download.samba.org/pub/samba/stable/${PKG_NAME}-${PKG_VERSION}.tar.gz"
@@ -109,6 +109,10 @@ configure_target() {
 
 # disable icu, there is no buildswitch to disable
 pre_make_target() {
+  rm -f ${PKG_BUILD}/bin/compile_et ${PKG_BUILD}/bin/asn1_compile
+
+  ln -sf ${TOOLCHAIN}/bin/heimdal_compile_et   ${PKG_BUILD}/bin/compile_et
+  ln -sf ${TOOLCHAIN}/bin/heimdal_asn1_compile ${PKG_BUILD}/bin/asn1_compile
   sed -e '/#define HAVE_ICU_I18N 1/d' \
       -e '/#define HAVE_LIBICUI.* 1/d' \
       -i bin/default/include/config.h
