@@ -3,9 +3,9 @@
 
 . ${ROOT}/packages/lang/gcc/package.mk
 
-PKG_VERSION="15.2.0"
-PKG_SHA256="438fd996826b0c82485a29da03a72d71d6e3541a83ec702df4271f6fe025d24e"
-PKG_URL="https://ftpmirror.gnu.org/gcc/${PKG_NAME}-${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tar.xz"
+PKG_VERSION="16.1.0"
+PKG_SHA256="50efb4d94c3397aff3b0d61a5abd748b4dd31d9d3f2ab7be05b171d36a510f79"
+PKG_URL="https://mirrorservice.org/sites/sourceware.org/pub/gcc/releases/${PKG_NAME}-${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 
 case ${TARGET_ARCH} in
   arm|aarch64)

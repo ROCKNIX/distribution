@@ -14,4 +14,4 @@ if [ "${MOLD_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" mold:host"
 fi
 
-PKG_CONFIGURE_OPTS_TARGET="--disable-obsolete-api"
+PKG_CONFIGURE_OPTS_TARGET="--disable-obsolete-api --disable-werror"

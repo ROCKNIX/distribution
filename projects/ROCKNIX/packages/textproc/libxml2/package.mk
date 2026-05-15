@@ -12,7 +12,8 @@ PKG_CMAKE_OPTS_ALL="-DBUILD_SHARED_LIBS=ON \
                     -DLIBXML2_WITH_ZLIB=ON"
 
 PKG_CMAKE_OPTS_HOST="${PKG_CMAKE_OPTS_ALL} \
-                     -DLIBXML2_WITH_PYTHON=ON"
+                     -DLIBXML2_WITH_PYTHON=ON \
+                     -DLIBXML2_PYTHON_INSTALL_DIR=../../../toolchain/lib/python3.13/site-packages"
 
 PKG_CMAKE_OPTS_TARGET="${PKG_CMAKE_OPTS_ALL} \
                        -DLIBXML2_WITH_PYTHON=OFF"

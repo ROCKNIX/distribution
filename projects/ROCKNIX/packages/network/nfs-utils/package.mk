@@ -2,12 +2,12 @@
 # Copyright (C) 2024-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="nfs-utils"
-PKG_VERSION="2.6.4"
-PKG_SHA256="01b3b0fb9c7d0bbabf5114c736542030748c788ec2fd9734744201e9b0a1119d"
+PKG_VERSION="2.9.1"
+PKG_SHA256="302846343bf509f8f884c23bdbd0fe853b7f7cbb6572060a9082279d13b21a2c"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="http://www.linux-nfs.org/"
 PKG_URL="https://www.kernel.org/pub/linux/utils/nfs-utils/${PKG_VERSION}/nfs-utils-${PKG_VERSION}.tar.xz"
-PKG_DEPENDS_TARGET="toolchain keyutils libevent libtirpc rpcbind sqlite util-linux"
+PKG_DEPENDS_TARGET="toolchain keyutils libevent libtirpc rpcbind sqlite util-linux ncurses"
 PKG_LONGDESC="Linux NFS userland utility package"
 
 PKG_CONFIGURE_OPTS_TARGET="--disable-gss \
@@ -20,6 +20,7 @@ PKG_CONFIGURE_OPTS_TARGET="--disable-gss \
 pre_configure_target() {
   cd ${PKG_BUILD}
   rm -rf .${TARGET_NAME}
+  export LIBS="${LIBS} -ltinfo"
 }
 
 makeinstall_target() {
