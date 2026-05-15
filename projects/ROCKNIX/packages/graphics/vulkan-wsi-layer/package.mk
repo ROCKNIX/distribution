@@ -11,6 +11,7 @@ PKG_LONGDESC="Implements Vulkan extensions for Window System Integration inside 
 PKG_TOOLCHAIN="cmake"
 
 pre_configure_target() {
+sed -i 's/-Werror//g' ${PKG_BUILD}/CMakeLists.txt
 if [ "${DEVICE}" = "RK3588" ]; then
   #BSP name?, probably can be removed when moving to mainline
   HEAP_NAME=cma
