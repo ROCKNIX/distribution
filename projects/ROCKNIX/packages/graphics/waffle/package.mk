@@ -2,7 +2,7 @@
 # Copyright (C) 2024-present ROCKNIX (https://rocknix.org)
 PKG_NAME="waffle"
 PKG_LICENSE="BSD"
-PKG_VERSION="master"
+PKG_VERSION="6b3c46483844faba4dfe7dd90dc2b0cd06e67158"
 PKG_SITE="https://waffle.freedesktop.org/"
 PKG_URL="https://gitlab.freedesktop.org/mesa/waffle/-/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain wayland mesa Python3"
