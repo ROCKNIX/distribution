@@ -6,7 +6,7 @@ PKG_LICENSE="MPLv2"
 PKG_VERSION="d7668926268eded91545fa8ffae6590871ecf5b1"
 PKG_SITE="https://github.com/touchHLE/touchHLE"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain cargo:host cargo rust SDL2 sndio"
+PKG_DEPENDS_TARGET="toolchain cargo:host cargo rust SDL2 sndio libsamplerate"
 PKG_LONGDESC="touchHLE: high-level emulator for iPhone OS apps"
 PKG_TOOLCHAIN="manual"
 
@@ -15,6 +15,8 @@ post_unpack() {
   sed -i 's/false,/AL_FALSE_ENUM,/g' alc/backends/sdl2.c 2>/dev/null || true
   sed -i 's/enum CompatFlags : uint8_t/enum CompatFlags/g' alc/alu.h
   sed -i 's/enum class UhjQualityType : uint8_t/enum UhjQualityType/g' core/uhjfilter.h
+  # Disable JACK backend (avoids needing jack/jack.h in sysroot)
+  sed -i '/build.define("ALSOFT_EXAMPLES", "OFF");/a\        build.define("ALSOFT_BACKEND_JACK", "OFF");' ${PKG_BUILD}/src/audio/openal_soft_wrapper/build.rs
 }
 
 make_target() {
