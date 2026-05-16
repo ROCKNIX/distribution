@@ -61,6 +61,5 @@ makeinstall_target() {
   cp -f ${PKG_DIR}/config/config.yml ${INSTALL}/usr/config/vita3k/
   cp -rf ${PKG_BUILD}/.${TARGET_NAME}/bin/shaders-builtin ${INSTALL}/usr/config/vita3k/
   cp -rf ${PKG_BUILD}/.${TARGET_NAME}/bin/data ${INSTALL}/usr/config/vita3k/
-  cp -rf ${PKG_BUILD}/.${TARGET_NAME}/bin/lang ${INSTALL}/usr/config/vita3k/
   cp -f ${PKG_DIR}/sources/vita-gamelist.txt ${INSTALL}/usr/config/vita3k/vita-gamelist.txt
 }
