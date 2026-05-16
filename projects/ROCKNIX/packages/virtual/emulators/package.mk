@@ -60,7 +60,7 @@ case "${DEVICE}" in
     ;;
   SM8550)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 daedalusx64-sa desmume-lr gpsp-lr pcsx_rearmed-lr"
-    PKG_EMUS+=" aethersx2-sa ares-sa azahar-sa bigpemu-sa cemu-sa dolphin-sa drastic-sa gopher64-sa heroic mednafen melonds-sa nanoboyadvance-sa rpcs3-sa supermodel-sa \
+    PKG_EMUS+=" aethersx2-sa ares-sa azahar-sa bigpemu-sa cemu-sa dolphin-sa drastic-sa heroic mednafen melonds-sa nanoboyadvance-sa rpcs3-sa supermodel-sa \
                 xemu-sa skyemu-sa steam vita3k-sa"
     LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr kronos-lr"
     ;;
@@ -893,7 +893,7 @@ makeinstall_target() {
       ;;
     SM8550)
       add_emu_core n64 daedalusx64 daedalusx64-sa false
-      add_emu_core n64 gopher64 gopher64-sa false
+      add_emu_core n64 false
       add_emu_core n64 ares ares-sa false
       install_script "Start DaedalusX64.sh"
       ;;
