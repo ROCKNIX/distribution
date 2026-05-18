@@ -696,7 +696,7 @@ makeinstall_target() {
 
   ## Steam & Heroic Games Launcher
   case ${DEVICE} in
-    SM6115|SM8250|SM8550|SM8650|SM8750)
+    SM8250|SM8550|SM8650|SM8750)
       add_emu_core steam steam steam true
       install_script "Install Steam.sh"
       install_script "Uninstall Steam.sh"
