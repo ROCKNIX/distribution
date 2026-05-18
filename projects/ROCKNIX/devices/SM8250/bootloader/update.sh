@@ -22,13 +22,13 @@ if [ -d "$SYSTEM_ROOT/usr/share/bootloader/rocknix_abl" ]; then
   cp $SYSTEM_ROOT/usr/share/bootloader/rocknix_abl/* $BOOT_ROOT/rocknix_abl
 fi
 
-#if [ -f "$SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/bootaa64.efi" ]; then
-#  if [ ! -f "$BOOT_ROOT/EFI/BOOT/bootaa64.efi" ]; then
-#    mkdir -p $BOOT_ROOT/EFI/BOOT
-#    echo "Updating EFI..."
-#    cp $SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/bootaa64.efi $BOOT_ROOT/EFI/BOOT
-#  fi
-#fi
+if [ -f "$SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/bootaa64.efi" ]; then
+  if [ ! -f "$BOOT_ROOT/EFI/BOOT/bootaa64.efi" ]; then
+    mkdir -p $BOOT_ROOT/EFI/BOOT
+    echo "Installing GRUB..."
+    cp $SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/bootaa64.efi $BOOT_ROOT/EFI/BOOT
+  fi
+fi
 
 if [ -d "$SYSTEM_ROOT/usr/share/bootloader/boot/grub" ]; then
   mkdir -p $BOOT_ROOT/boot/grub
