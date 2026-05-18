@@ -41,6 +41,7 @@
 |EPOCH/YENO|Super Cassette Vision (scv)|1984|`scv`|.cart .bin .rom .0 .zip|**retroarch:** emuscv (default)<br>|
 |Fairchild|Fairchild Channel F (channelf)|1976|`channelf`|.bin .chf .zip .7z|**retroarch:** freechaf (default)<br>|
 |GamePark|GP32 (gp32)|1996|`gp32`|.smc .zip .7z|**retroarch:** mame (default)<br>|
+|Heroic|Heroic Games Launcher (heroic)|System|`heroic`|.sh|**heroic:** heroic (default)<br>|
 |id Software|Doom (doom)|1993|`doom`|.doom|**gzdoom:** gzdoom-sa (default)<br>|
 |id Software|iDtech (idtech)|1991|`idtech`|.sh|**retroarch:** idtech (default)<br>|
 |Infocom|Z-machine (zmachine)|1979|`zmachine`|.dat .z1 .z2 .z3 .z4 .z5 .z6 .zip|**retroarch:** mojozork (default)<br>|

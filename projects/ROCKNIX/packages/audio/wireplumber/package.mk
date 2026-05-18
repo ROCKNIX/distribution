@@ -20,6 +20,9 @@ PKG_MESON_OPTS_TARGET="-Dintrospection=disabled \
                        -Dtests=false"
 
 post_makeinstall_target() {
+  mkdir -p ${INSTALL}/etc
+  ln -sf /storage/.config/wireplumber ${INSTALL}/etc/wireplumber
+
   # connect to the system bus
   sed '/^\[Service\]/a Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket' -i ${INSTALL}/usr/lib/systemd/system/wireplumber.service
 

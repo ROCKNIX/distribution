@@ -41,6 +41,7 @@
 |EPOCH/YENO|Super Cassette Vision (scv)|1984|`scv`|.cart .bin .rom .0 .zip|**retroarch:** emuscv (default)<br>|
 |Fairchild|Fairchild Channel F (channelf)|1976|`channelf`|.bin .chf .zip .7z|**retroarch:** freechaf (default)<br>|
 |GamePark|GP32 (gp32)|1996|`gp32`|.smc .zip .7z|**retroarch:** mame (default)<br>|
+|Heroic|Heroic Games Launcher (heroic)|System|`heroic`|.sh|**heroic:** heroic (default)<br>|
 |id Software|Doom (doom)|1993|`doom`|.doom|**gzdoom:** gzdoom-sa (default)<br>|
 |id Software|iDtech (idtech)|1991|`idtech`|.sh|**retroarch:** idtech (default)<br>|
 |Infocom|Z-machine (zmachine)|1979|`zmachine`|.dat .z1 .z2 .z3 .z4 .z5 .z6 .zip|**retroarch:** mojozork (default)<br>|
@@ -52,8 +53,8 @@
 |Microsoft|MSX 2 (msx2)|1988|`msx2`|.dsk .mx1 .mx2 .rom .zip .7z .m3u|**retroarch:** bluemsx (default)<br>**retroarch:** fmsx<br>|
 |Microsoft|Windows (windows)|System|`windows`|.sh|**wine:** wine (default)<br>|
 |Microsoft|Xbox (xbox)|2001|`xbox`|.iso|**xemu:** xemu-sa (default)<br>|
-|NEC|PC Engine (pcengine)|1987|`pcengine`|.pce .bin .zip .7z|**retroarch:** beetle_pce_fast (default)<br>**retroarch:** beetle_pce<br>**retroarch:** beetle_supergrafx<br>**mednafen:** pce<br>**retroarch:** geargrafx<br>**mednafen:** pce_fast<br>|
-|NEC|PC Engine CD (pcenginecd)|1988|`pcenginecd`|.cue .ccd .chd .toc .m3u|**retroarch:** beetle_pce_fast (default)<br>**retroarch:** beetle_pce<br>**retroarch:** beetle_supergrafx<br>**mednafen:** pce<br>**retroarch:** geargrafx<br>**mednafen:** pce_fast<br>|
+|NEC|PC Engine (pcengine)|1987|`pcengine`|.pce .bin .zip .7z|**retroarch:** beetle_pce_fast (default)<br>**retroarch:** beetle_pce<br>**retroarch:** beetle_supergrafx<br>**retroarch:** geargrafx<br>**mednafen:** pce<br>**mednafen:** pce_fast<br>|
+|NEC|PC Engine CD (pcenginecd)|1988|`pcenginecd`|.cue .ccd .chd .toc .m3u|**retroarch:** beetle_pce_fast (default)<br>**retroarch:** beetle_pce<br>**retroarch:** beetle_supergrafx<br>**retroarch:** geargrafx<br>**mednafen:** pce<br>**mednafen:** pce_fast<br>|
 |NEC|PC-8800 (pc-8800)|1981|`pc88`|.d88 .u88 .m3u|**retroarch:** quasi88 (default)<br>|
 |NEC|PC-9800 (pc-9800)|1983|`pc98`|.d98 .zip .fdi .fdd .2hd .tfd .d88 .hdm .xdf .dup .hdi .thd .nhd .hdd .hdn .cmd|**retroarch:** np2kai (default)<br>|
 |NEC|PC-FX (pcfx)|1994|`pcfx`|.chd .cue .ccd .toc|**retroarch:** beetle_pcfx (default)<br>**mednafen:** pcfx<br>|

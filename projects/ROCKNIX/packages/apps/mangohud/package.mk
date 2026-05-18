@@ -83,12 +83,14 @@ post_makeinstall_target() {
       sed -e "s/@FONT_SIZE@/30/g" -i ${INSTALL}/usr/config/MangoHud/MangoHud.conf
     ;;
     S922X)
-      sed -e "s/@FONT_SIZE@/30/g" -i ${INSTALL}/usr/config/MangoHud/MangoHud.conf
+      # Compact, horizontal display with smaller font works well
+      sed -e "s/@FONT_SIZE@/15/g" -i ${INSTALL}/usr/config/MangoHud/MangoHud.conf
+      sed -i 's/^\# hud_no_margin/\hud_no_margin/g' ${INSTALL}/usr/config/MangoHud/MangoHud.conf
+      sed -i 's/^\# hud_compact/\hud_compact/g' ${INSTALL}/usr/config/MangoHud/MangoHud.conf
+      sed -i 's/^\# horizontal/\horizontal/g' ${INSTALL}/usr/config/MangoHud/MangoHud.conf
 
-      # No GPU temperature sensor available
+      # No GPU temperature sensor or battery life estimate available
       sed -i 's/^gpu_temp/\# gpu_temp/g' ${INSTALL}/usr/config/MangoHud/MangoHud.conf
-
-      # No battery life estimate available
       sed -i 's/^battery_time/\# battery_time/g' ${INSTALL}/usr/config/MangoHud/MangoHud.conf
     ;;
     *)

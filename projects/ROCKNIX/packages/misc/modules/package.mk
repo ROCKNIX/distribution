@@ -1,68 +1,33 @@
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="modules"
-PKG_VERSION=""
+PKG_VERSION="1.0"
 PKG_LICENSE="custom"
 PKG_SITE=""
 PKG_URL=""
-PKG_DEPENDS_TARGET="toolchain rclone"
+PKG_DEPENDS_TARGET="toolchain rclone commander"
 PKG_LONGDESC="OS Modules Package"
 PKG_TOOLCHAIN="manual"
 
 case ${DEVICE} in
-  RK3588|RK3399|SM8250|SM8550|SM8650|SM8750)
+  RK3399|RK3588|SM8250|SM8550|SM8650|SM8750)
     PKG_DEPENDS_TARGET+=" gamepadtester qterminal"
-  ;;
+    ;;
 esac
-
-# Fileman or Commander Filemanager
-case ${DEVICE} in
-  RK3326|RK3399|RK3566|RK3576|RK3588|S922X|SM6115|SM8250|SM8550|SM8650|SM8750)
-    PKG_DEPENDS_TARGET+=" commander"
-    FILEMANAGER="commander"
-  ;;
-  *)
-    PKG_DEPENDS_TARGET+=" fileman"
-    FILEMANAGER="fileman"
-  ;;
-esac
-
-make_target() {
-  :
-}
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/config/modules
-  cp -rf ${PKG_DIR}/sources/* ${INSTALL}/usr/config/modules
-  chmod 0755 ${INSTALL}/usr/config/modules/*
+    cp -rf ${PKG_DIR}/sources/* ${INSTALL}/usr/config/modules
 }
 
 post_makeinstall_target() {
-  case ${ARCH} in
-    x86_64)
-      rm -f ${INSTALL}/usr/config/modules/*Master*
-    ;;
-  esac
-
   case ${DEVICE} in
-    SM8650|SM8750)
-      rm -f ${INSTALL}/usr/config/modules/*32bit*
-    ;;
+    SM8650|SM8750) rm -f ${INSTALL}/usr/config/modules/*32bit* ;;
   esac
 
-  if [ ! "${INSTALLER_SUPPORT}" = "yes" ] || \
-     [ ! "${DISPLAYSERVER}" = "wl" ]
-  then
+  if [[ "${INSTALLER_SUPPORT}" != "yes" || "${DISPLAYSERVER}" != "wl" ]]; then
     rm -f ${INSTALL}/usr/config/modules/Install*
-  fi
-
-# Set filemanger
-  sed -e "s/@FILEMANAGER@/${FILEMANAGER}/g" -i ${INSTALL}/usr/config/modules/gamelist.xml
-  if [ ${FILEMANAGER} == "commander" ]; then
-    rm -rf ${INSTALL}/usr/config/modules/fileman.sh
-  else
-    rm -rf ${INSTALL}/usr/config/modules/commander.sh
   fi
 }
 
