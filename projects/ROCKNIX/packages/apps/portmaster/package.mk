@@ -2,8 +2,7 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="portmaster"
-PKG_VERSION="2026.04.01-1426"
-PKG_ARCH="arm aarch64"
+PKG_VERSION="2026.05.04-1202"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/PortsMaster/PortMaster-GUI"
 PKG_URL="https://github.com/PortsMaster/PortMaster-GUI/releases/download/${PKG_VERSION}/PortMaster.zip"

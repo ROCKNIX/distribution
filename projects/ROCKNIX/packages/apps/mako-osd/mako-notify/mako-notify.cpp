@@ -49,6 +49,9 @@ void ensure_mako_config() {
 "width=500\n";
 
         ofs.close();
+
+        // Config was just created, reload mako to pick it up
+        system("makoctl reload > /dev/null 2>&1");
     }
 }
 
@@ -75,6 +78,9 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Ensure config exists and mako is reloaded before anything else
+    ensure_mako_config();
+
     // check for -no-es / -no-ra option
     bool no_es_flag = false;
     bool no_ra_flag = false;
@@ -98,9 +104,6 @@ int main(int argc, char* argv[]) {
             return 0;
         }
     }
-
-    // Ensure the Mako config exists
-    ensure_mako_config();
 
     DBusError err;
     dbus_error_init(&err);

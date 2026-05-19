@@ -16,10 +16,16 @@ fi
 # mount $BOOT_ROOT rw
 mount -o remount,rw $BOOT_ROOT
 
+if [ -d "$SYSTEM_ROOT/usr/share/bootloader/rocknix_abl" ]; then
+  mkdir -p $BOOT_ROOT/rocknix_abl
+  echo "Updating ROCKNIX ABL on SD..."
+  cp $SYSTEM_ROOT/usr/share/bootloader/rocknix_abl/* $BOOT_ROOT/rocknix_abl
+fi
+
 if [ -f "$SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/bootaa64.efi" ]; then
   if [ ! -f "$BOOT_ROOT/EFI/BOOT/bootaa64.efi" ]; then
     mkdir -p $BOOT_ROOT/EFI/BOOT
-    echo "Updating EFI..."
+    echo "Installing GRUB..."
     cp $SYSTEM_ROOT/usr/share/bootloader/EFI/BOOT/bootaa64.efi $BOOT_ROOT/EFI/BOOT
   fi
 fi
