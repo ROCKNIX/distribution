@@ -14,7 +14,8 @@ rm -f "${APPLICATIONS}/Heroic.desktop"
 if [ -d "${ROMS_DIR}" ]; then
   rm -f \
     "${ROMS_DIR}/Heroic Games Launcher (Authenticate).sh" \
-    "${ROMS_DIR}/Heroic Games Launcher.sh"
+    "${ROMS_DIR}/Heroic Games Launcher.sh" \
+    "${ROMS_DIR}/Heroic Games Launcher (Gamescope).sh"
 fi
 
 echo ""

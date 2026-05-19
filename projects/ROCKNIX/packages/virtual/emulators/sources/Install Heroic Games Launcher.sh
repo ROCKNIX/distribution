@@ -48,6 +48,7 @@ heroic_seed_rom_launchers() {
   mkdir -p "${roms}"
   heroic_write_es_stub "${roms}/Heroic Games Launcher (Authenticate).sh" "start_heroic_authenticate.sh"
   heroic_write_es_stub "${roms}/Heroic Games Launcher.sh" "start_heroic_play.sh"
+  heroic_write_es_stub "${roms}/Heroic Games Launcher (Gamescope).sh" "start_heroic_play_gamescope.sh"
 }
 
 if ! resolve_heroic_bin; then

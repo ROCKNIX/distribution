@@ -31,7 +31,7 @@ mkdir -p "${ROMS_DIR}"
 for launcher in "${ROMS_DIR}"/*.sh; do
   [ -f "${launcher}" ] || continue
   case "$(basename "${launcher}")" in
-    "Heroic Games Launcher (Authenticate).sh"|"Heroic Games Launcher.sh")
+    "Heroic Games Launcher (Authenticate).sh"|"Heroic Games Launcher.sh"|"Heroic Games Launcher (Gamescope).sh")
       ;;
     *)
       rm -f "${launcher}"

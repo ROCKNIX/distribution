@@ -30,13 +30,27 @@ trap '[ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ] && swaymsg "seat seat1 fallback f
 swaymsg for_window [app_id="heroic"] fullscreen enable
 swaymsg for_window [class="heroic"] fullscreen enable
 
-export ELECTRON_OZONE_PLATFORM_HINT=wayland
-HEROIC_ARGS=(--no-sandbox --ozone-platform=wayland)
-if [ "${1:-}" = "--no-gui" ]; then
-  HEROIC_ARGS=(--no-gui "${HEROIC_ARGS[@]}")
-  shift
+eval "$(swaymsg -t get_outputs | jq -r '
+  .[] | select(.focused == true) |
+  "W=\(.current_mode.width) H=\(.current_mode.height) TRANSFORM=\(.transform)"
+')"
+if [[ "${TRANSFORM:-}" == "90" || "${TRANSFORM:-}" == "270" || "${TRANSFORM:-}" == "flipped-90" || "${TRANSFORM:-}" == "flipped-270" ]]; then
+  WIDTH="${H}"
+  HEIGHT="${W}"
+else
+  WIDTH="${W}"
+  HEIGHT="${H}"
 fi
-[ "$#" -gt 0 ] && HEROIC_ARGS+=("$@")
+
+if ! command -v gamescope >/dev/null 2>&1; then
+  command -v mako-notify >/dev/null 2>&1 && mako-notify "Heroic: gamescope not installed." -no-es
+  exit 1
+fi
+
+if [ -z "${WIDTH:-}" ]; then
+  command -v mako-notify >/dev/null 2>&1 && mako-notify "Heroic: display size not found." -no-es
+  exit 1
+fi
 
 cd "$(dirname "${HEROIC_BIN}")" || exit 1
-"${HEROIC_BIN}" "${HEROIC_ARGS[@]}"
+gamescope -f -W "${WIDTH}" -H "${HEIGHT}" -- "${HEROIC_BIN}" --no-sandbox "$@"
