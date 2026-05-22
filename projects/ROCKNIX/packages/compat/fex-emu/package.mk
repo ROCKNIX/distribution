@@ -73,6 +73,15 @@ make_target() {
   mkdir -p "${PKG_BUILD}/.${TARGET_NAME}"
   cd "${PKG_BUILD}/.${TARGET_NAME}"
 
+  case ${TARGET_CPU} in
+    cortex-x3|cortex-x4)
+      TUNE_CPU="cortex-a78"
+      ;;
+    *)
+      TUNE_CPU="${TARGET_CPU##*.}"
+      ;;
+  esac
+
   local -a tgt_opts=(
     -G Ninja
     -S "${PKG_BUILD}"
@@ -91,7 +100,7 @@ make_target() {
     -DGENERATOR_EXE="${TOOLCHAIN}/usr/bin/thunkgen"
     -DCMAKE_INSTALL_LIBDIR=lib
     -DQT_HOST_PATH="${TOOLCHAIN}/usr/local/qt6"
-    -DTUNE_CPU="${TARGET_CPU##*.}"
+    -DTUNE_CPU="${TUNE_CPU}"
   )
   cmake "${tgt_opts[@]}"
   bash "${PKG_BUILD}/Data/nix/cmake_enable_libfwd.sh"
