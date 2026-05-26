@@ -1,0 +1,40 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2025 ROCKNIX (https://github.com/ROCKNIX)
+
+# Apply the user's saved InputPlumber gamepad profile preference at boot.
+# The preference (ds5 or xbox-series) is stored via the ROCKNIX settings system.
+# ds5 is the default for this device; only a bind-mount override is needed for xbox-series.
+
+. /etc/profile.d/001-functions
+
+SETTING="inputplumber.profile"
+DEVICE_YAML="/usr/share/inputplumber/devices/01-ayn-controller.yaml"
+OVERRIDE_YAML="/run/inputplumber-profile.yaml"
+
+[ -f "${DEVICE_YAML}" ] || exit 0
+
+TARGET=$(get_setting "${SETTING}")
+[ -z "${TARGET}" ] && TARGET="ds5"
+
+# ds5 is already the compiled-in default — no override needed
+[ "${TARGET}" = "ds5" ] && exit 0
+
+# Generate override YAML with the stored target device
+awk -v target="${TARGET}" '
+/^target_devices:/ {
+    print "target_devices:"
+    print "  - " target
+    print "  - keyboard"
+    in_targets = 1
+    next
+}
+in_targets && /^  - / { next }
+{ in_targets = 0; print }
+' "${DEVICE_YAML}" > "${OVERRIDE_YAML}"
+
+# InputPlumber is already running (multi-user.target); stop it, apply the
+# bind-mount override over the read-only system file, then restart before the UI starts.
+systemctl stop inputplumber
+mount --bind "${OVERRIDE_YAML}" "${DEVICE_YAML}"
+systemctl start inputplumber
