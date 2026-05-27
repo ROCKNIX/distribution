@@ -93,6 +93,12 @@ post_makeinstall_target() {
       sed -i 's/^gpu_temp/\# gpu_temp/g' ${INSTALL}/usr/config/MangoHud/MangoHud.conf
       sed -i 's/^battery_time/\# battery_time/g' ${INSTALL}/usr/config/MangoHud/MangoHud.conf
     ;;
+    SM8250)
+      sed -e "s/@FONT_SIZE@/40/g" -i ${INSTALL}/usr/config/MangoHud/MangoHud.conf
+      
+      # No battery life estimate available
+      sed -i 's/^battery_time/\# battery_time/g' ${INSTALL}/usr/config/MangoHud/MangoHud.conf
+    ;;
     *)
       sed -e "s/@FONT_SIZE@/40/g" -i ${INSTALL}/usr/config/MangoHud/MangoHud.conf
     ;;

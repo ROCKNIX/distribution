@@ -20,6 +20,10 @@ PROTON_DIR="${STEAM}/steamapps/common/${PROTON_NAME}"
 RUNTIME_TAR_URL="https://repo.steampowered.com/steamrt3c/images/latest-public-beta/steam-runtime-steamrt-arm64.tar.xz"
 STEAM_MANIFEST_URL="https://client-update.fastly.steamstatic.com/steam_client_publicbeta_linuxarm64"
 STEAM_CDN="https://client-update.steamstatic.com"
+PROTON_CACHYOS_VERSION_FULL="11.0-20260506-slr"
+PROTON_CACHYOS_TAR="proton-cachyos-${PROTON_CACHYOS_VERSION_FULL}-arm64.tar.xz"
+PROTON_CACHYOS_DIR="proton-cachyos-${PROTON_CACHYOS_VERSION_FULL}-arm64"
+PROTON_CACHYOS_URL="https://github.com/CachyOS/proton-cachyos/releases/download/cachyos-${PROTON_CACHYOS_VERSION_FULL}/${PROTON_CACHYOS_TAR}"
 unset MESA_LOADER_DRIVER_OVERRIDE
 
 install_fex_config() {
@@ -89,6 +93,25 @@ install_bundled_proton_files() {
   cp -f "/usr/share/steam/registry.vdf" "${STEAM_DOT}"
 }
 
+install_proton_cachyos() {
+  local url="$PROTON_CACHYOS_URL"
+  local dest_dir="${STEAM}/compatibilitytools.d"
+  local tar_path="${dest_dir}/${PROTON_CACHYOS_TAR}"
+  local extracted_dir="${dest_dir}/${PROTON_CACHYOS_DIR}"
+  local manifest_file="${extracted_dir}/toolmanifest.vdf"
+  if [ -d "${extracted_dir}" ]; then
+    echo "Proton-CachyOS already installed. Skipping download."
+    return 0
+  fi
+  mkdir -p "${dest_dir}"
+  wget -c -t 5 -O "${tar_path}" "$url"
+  tar -xvf "${tar_path}" -C "${dest_dir}"
+  rm -f "${tar_path}"
+  if [ -f "${manifest_file}" ]; then
+    sed -i '/require_tool_appid/d' "${manifest_file}"
+  fi
+}
+
 run_steam_first_launch() {
   echo 0 > /proc/sys/fs/binfmt_misc/x86_64
   echo 0 > /proc/sys/fs/binfmt_misc/x86
@@ -111,6 +134,7 @@ ensure_steam_desktop_stub
 install_steam_runtime_arm64
 install_steam_client_arm64
 install_bundled_proton_files
+install_proton_cachyos
 run_steam_first_launch
 
 echo ""

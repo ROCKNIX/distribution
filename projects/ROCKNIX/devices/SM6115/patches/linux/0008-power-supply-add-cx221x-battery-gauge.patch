@@ -9,8 +9,8 @@ reworked to use regmap and devm managed resources.
 ---
  drivers/power/supply/Kconfig          |  11 +
  drivers/power/supply/Makefile         |   1 +
- drivers/power/supply/cw221x_battery.c | 548 ++++++++++++++++++++++++++++
- 3 files changed, 560 insertions(+)
+ drivers/power/supply/cw221x_battery.c | 554 ++++++++++++++++++++++++++++
+ 3 files changed, 566 insertions(+)
  create mode 100644 drivers/power/supply/cw221x_battery.c
 
 diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
@@ -52,7 +52,7 @@ new file mode 100644
 index 000000000000..a1b2c3d4e5f6
 --- /dev/null
 +++ b/drivers/power/supply/cw221x_battery.c
-@@ -0,0 +1,548 @@
+@@ -0,0 +1,597 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Battery gauge driver for CellWise CW2215/CW2217/CW2218
@@ -69,6 +69,7 @@ index 000000000000..a1b2c3d4e5f6
 +#include <linux/power_supply.h>
 +#include <linux/regmap.h>
 +#include <linux/workqueue.h>
++#include <linux/thermal.h>
 +
 +#define CW221X_REG_CHIP_ID		0x00
 +#define CW221X_REG_VCELL_H		0x02
@@ -82,6 +83,7 @@ index 000000000000..a1b2c3d4e5f6
 +#define CW221X_REG_CYCLE_H		0xA4
 +#define CW221X_REG_SOH			0xA6
 +#define CW221X_REG_IC_STATE		0xA7
++#define CW221X_REG_STB_CUR_H		0xA8
 +#define CW221X_REG_FW_VERSION		0xAB
 +
 +#define CW221X_MODE_RESTART		0x30
@@ -118,7 +120,8 @@ index 000000000000..a1b2c3d4e5f6
 +	int voltage_uv;
 +	int soc;
 +	int temp_decidegc;
-+	long current_ua;
++	int current_ua;
++	int stb_current_ua;
 +	int cycle;
 +	int soh;
 +	int last_soc;
@@ -213,17 +216,23 @@ index 000000000000..a1b2c3d4e5f6
 +	int ret, i;
 +
 +	ret = regmap_read(cw->regmap, CW221X_REG_MODE_CONFIG, &reg_val);
-+	if (ret || reg_val != CW221X_MODE_ACTIVE)
++	if (ret)
++		return false;
++	if (reg_val != CW221X_MODE_ACTIVE)
 +		return true;
 +
 +	ret = regmap_read(cw->regmap, CW221X_REG_SOC_ALERT, &reg_val);
-+	if (ret || !(reg_val & CW221X_UPDATE_FLAG))
++	if (ret)
++		return false;
++	if (!(reg_val & CW221X_UPDATE_FLAG))
 +		return true;
 +
 +	for (i = 0; i < CW221X_PROFILE_SIZE; i++) {
 +		ret = regmap_read(cw->regmap, CW221X_REG_BAT_PROFILE + i,
 +				  &reg_val);
-+		if (ret || cw->profile[i] != (u8)reg_val)
++		if (ret)
++			return false;
++		if (cw->profile[i] != (u8)reg_val)
 +			return true;
 +	}
 +
@@ -268,19 +277,41 @@ index 000000000000..a1b2c3d4e5f6
 +	switch (cw->fw_version & CW221X_FW_VARIANT_MASK) {
 +	case CW2215_VARIANT:
 +	case CW2217_VARIANT:
-+		cw->current_ua = (long)((s16)raw * 1600000LL /
-+				  cw->rsense_uohm);
++		cw->current_ua = (int)((s16)raw * 1600000LL /
++				 cw->rsense_uohm);
 +		break;
 +	case CW2218_VARIANT:
 +		if (!cw->fw_version) {
 +			cw->current_ua = 0;
 +			break;
 +		}
-+		cw->current_ua = (long)((s16)raw * 3815000LL /
-+				  cw->rsense_uohm);
++		cw->current_ua = (int)((s16)raw * 3815000LL /
++				 cw->rsense_uohm);
 +		break;
 +	default:
 +		cw->current_ua = 0;
++		break;
++	}
++
++	ret = cw221x_read_word(cw, CW221X_REG_STB_CUR_H, &raw);
++	if (ret)
++		return ret;
++	switch (cw->fw_version & CW221X_FW_VARIANT_MASK) {
++	case CW2215_VARIANT:
++	case CW2217_VARIANT:
++		cw->stb_current_ua = (int)((s16)raw * 1600000LL /
++					   cw->rsense_uohm);
++		break;
++	case CW2218_VARIANT:
++		if (!cw->fw_version) {
++			cw->stb_current_ua = 0;
++			break;
++		}
++		cw->stb_current_ua = (int)((s16)raw * 3815000LL /
++					   cw->rsense_uohm);
++		break;
++	default:
++		cw->stb_current_ua = 0;
 +		break;
 +	}
 +
@@ -296,7 +327,7 @@ index 000000000000..a1b2c3d4e5f6
 +		return ret;
 +	cw->soh = reg_val;
 +
-+	dev_dbg(cw->dev, "V=%duV SOC=%d%% T=%ddC I=%lduA cyc=%d soh=%d%%\n",
++	dev_dbg(cw->dev, "V=%duV SOC=%d%% T=%ddC I=%duA cyc=%d soh=%d%%\n",
 +		cw->voltage_uv, cw->soc, cw->temp_decidegc,
 +		cw->current_ua, cw->cycle, cw->soh);
 +
@@ -370,6 +401,9 @@ index 000000000000..a1b2c3d4e5f6
 +	case POWER_SUPPLY_PROP_CURRENT_NOW:
 +		val->intval = cw->current_ua;
 +		break;
++	case POWER_SUPPLY_PROP_CURRENT_AVG:
++		val->intval = cw->stb_current_ua;
++		break;
 +	case POWER_SUPPLY_PROP_CAPACITY:
 +		val->intval = cw->soc;
 +		break;
@@ -413,11 +447,24 @@ index 000000000000..a1b2c3d4e5f6
 +	return 0;
 +}
 +
++static int cw221x_get_temp(struct thermal_zone_device *tzd, int *temp)
++{
++	struct cw221x *cw = thermal_zone_device_priv(tzd);
++
++	*temp = cw->temp_decidegc * 100;
++	return 0;
++}
++
++static const struct thermal_zone_device_ops cw221x_thermal_ops = {
++	.get_temp = cw221x_get_temp,
++};
++
 +static enum power_supply_property cw221x_properties[] = {
 +	POWER_SUPPLY_PROP_STATUS,
 +	POWER_SUPPLY_PROP_PRESENT,
 +	POWER_SUPPLY_PROP_VOLTAGE_NOW,
 +	POWER_SUPPLY_PROP_CURRENT_NOW,
++	POWER_SUPPLY_PROP_CURRENT_AVG,
 +	POWER_SUPPLY_PROP_CAPACITY,
 +	POWER_SUPPLY_PROP_CAPACITY_LEVEL,
 +	POWER_SUPPLY_PROP_TEMP,
@@ -532,6 +579,8 @@ index 000000000000..a1b2c3d4e5f6
 +		return dev_err_probe(cw->dev, PTR_ERR(cw->battery),
 +				     "failed to register battery\n");
 +
++	devm_thermal_of_zone_register(cw->dev, 0, cw, &cw221x_thermal_ops);
++
 +	/* Read battery design capacity from monitored-battery phandle */
 +	if (!power_supply_get_battery_info(cw->battery, &bat_info)) {
 +		if (bat_info->charge_full_design_uah > 0)
@@ -601,5 +650,3 @@ index 000000000000..a1b2c3d4e5f6
 +MODULE_AUTHOR("Xu Shengfei <xsf@rock-chips.com>");
 +MODULE_DESCRIPTION("CellWise CW2215/CW2217/CW2218 battery gauge driver");
 +MODULE_LICENSE("GPL");
---
-
