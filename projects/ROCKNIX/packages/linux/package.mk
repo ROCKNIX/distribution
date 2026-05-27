@@ -298,6 +298,7 @@ make_target() {
       [[ "${DEVICE}" != "RK3588" ]] && export BUILD_BPF_SKEL=0
 
       WERROR=0 \
+      NO_RUST=1 \
       NO_LIBPERL=1 \
       NO_LIBPYTHON=1 \
       NO_SLANG=1 \
