@@ -35,7 +35,7 @@ makeinstall_target() {
 post_install() {
   case ${GRAPHICS_DRIVER} in
     panfrost)
-      GRAPHICS="export MESA_GL_VERSION_OVERRIDE=3.3"
+      GRAPHICS="export MESA_GL_VERSION_OVERRIDE=3.3 MESA_GLSL_VERSION_OVERRIDE=330"
     ;;
     freedreno)
       case ${DEVICE} in
