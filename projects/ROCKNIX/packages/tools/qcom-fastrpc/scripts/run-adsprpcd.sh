@@ -39,6 +39,16 @@ else
     mount -t overlay overlay -o lowerdir="${SENSOR_DATA_BASE_DIR}",upperdir="${SENSOR_DATA_USER_DIR}",workdir="${SENSOR_DATA_WORK_DIR}" $MOUNT_OUTPUT_DIR
 fi
 
+# FastRPC is odd and wants directories all over the place
+mkdir -p "$MOUNT_OUTPUT_DIR"/mnt
+mkdir -p "$MOUNT_OUTPUT_DIR"/mnt/vendor
+
+if [ -d "$MOUNT_OUTPUT_DIR"/vendor ]; then
+    # /vendor -> /mnt/vendor
+    echo "Mounting sensor data subpath: /vendor -> /mnt/vendor"
+    mount --rbind "$MOUNT_OUTPUT_DIR"/vendor "$MOUNT_OUTPUT_DIR"/mnt/vendor
+fi
+
 echo "Running adsprpcd! (sensor data dir = $MOUNT_OUTPUT_DIR)"
 export ADSP_LIBRARY_PATH=$MOUNT_OUTPUT_DIR
 adsprpcd sensorspd adsp
