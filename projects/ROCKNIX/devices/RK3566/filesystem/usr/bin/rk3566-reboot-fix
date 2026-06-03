@@ -1,0 +1,21 @@
+#!/bin/sh
+# Workaround for RK3566 DRM VBlank hang on reboot/shutdown.
+#
+# Root cause: drm_atomic_helper_wait_for_vblanks() in the Rockchip DRM driver
+# has no timeout, causing the kernel reboot notifier chain to hang indefinitely
+# when there are pending display commits at shutdown time.
+#
+# Fix: (1) disable sway outputs via IPC so pending VBlank waiters are woken
+# cleanly, then (2) use sysrq emergency restart which bypasses the broken
+# notifier chain and calls machine_emergency_restart() directly.
+#
+# Tested on: RG ARC-D (RK3566), ROCKNIX kernel 7.0.2
+SOCK=/var/run/0-runtime-dir/sway-ipc.0.sock
+if [ -S "$SOCK" ]; then
+    XDG_RUNTIME_DIR=/var/run/0-runtime-dir SWAYSOCK=$SOCK swaymsg output '*' power off 2>/dev/null
+fi
+sleep 0.5
+echo 128 > /proc/sys/kernel/sysrq
+echo s > /proc/sysrq-trigger
+sleep 1
+echo b > /proc/sysrq-trigger
