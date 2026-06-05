@@ -450,6 +450,12 @@ makeinstall_target() {
   add_emu_core gbh retroarch DoubleCherryGB false
   add_emu_core gbh retroarch skyemu false
   add_emu_core gbh retroarch mesen-s false
+  add_emu_core gbh retroarch supersnes9x false
+  case ${DEVICE} in
+    RK3399|RK3588|SM6115|SM8250|SM8550|SM8650|SM8750|S922X)
+      add_emu_core gbh retroarch bsnes false
+      ;;
+  esac
   case ${DEVICE} in
     H700|RK3326|RK3399|RK3576|RK3566|RK3588|SM6115|SM8250|SM8550|SM8650|SM8750)
       add_emu_core gbh mednafen gb false
@@ -784,6 +790,7 @@ makeinstall_target() {
 
   ### Nintendo MSU-1
   add_emu_core snesmsu1 retroarch snes9x true
+  add_emu_core snesmsu1 retroarch supersnes9x false
   add_emu_core snesmsu1 retroarch beetle_supafaust false
   case ${DEVICE} in
     H700|RK3326|RK3399|RK3576|RK3566|RK3588|SM6115|SM8250|SM8550|SM8650|SM8750)
@@ -1474,6 +1481,7 @@ makeinstall_target() {
 
   ### Bandai SuFami Turbo
   add_emu_core sufami retroarch snes9x true
+  add_emu_core sufami retroarch supersnes9x false
   case ${DEVICE} in
     SM8550|SM8650|SM8750)
       add_emu_core sufami ares ares-sa false
