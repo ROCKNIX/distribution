@@ -26,8 +26,8 @@ LIBRETRO_CORES="81-lr a5200-lr arduous-lr atari800-lr b2-lr beetle-gba-lr beetle
                 mu-lr mupen64plus-lr mupen64plus-nx-lr neocd_lr nestopia-lr np2kai-lr o2em-lr opera-lr parallel-n64-lr pcsx_rearmed-lr  \
                 picodrive-lr pokemini-lr potator-lr ppsspp-lr prosystem-lr puae-lr puae2021-lr px68k-lr quasi88-lr quicknes-lr race-lr  \
                 same_cdi-lr sameboy-lr sameduck-lr scummvm-lr skyemu-lr smsplus-gx-lr snes9x-lr snes9x2002-lr snes9x2005_plus-lr        \
-                snes9x2010-lr stella-lr swanstation-lr tgbdual-lr theodore-lr tic80-lr uae4arm uzem-lr vba-next-lr vbam-lr vecx-lr      \
-                vice-lr vircon32-lr virtualjaguar-lr xmil-lr wasm4-lr yabasanshiro-lr"
+                snes9x2010-lr stella-lr supersnes9x-lr swanstation-lr tgbdual-lr theodore-lr tic80-lr uae4arm uzem-lr vba-next-lr       \
+                vbam-lr vecx-lr vice-lr vircon32-lr virtualjaguar-lr xmil-lr wasm4-lr yabasanshiro-lr"
 
 ### Emulators or cores for specific devices
 case "${DEVICE}" in
@@ -416,6 +416,12 @@ makeinstall_target() {
   add_emu_core gb retroarch DoubleCherryGB false
   add_emu_core gb retroarch skyemu false
   add_emu_core gb retroarch mesen-s false
+  add_emu_core gb retroarch supersnes9x false
+  case ${DEVICE} in
+    RK3399|RK3588|SM6115|SM8250|SM8550|SM8650|SM8750|S922X)
+      add_emu_core gb retroarch bsnes false
+      ;;
+  esac
   case ${DEVICE} in
     H700|RK3326|RK3399|RK3576|RK3566|RK3588|SM6115|SM8250|SM8550|SM8650|SM8750)
       add_emu_core gb mednafen gb false
@@ -1361,6 +1367,7 @@ makeinstall_target() {
   add_emu_core snes retroarch snes9x2010 false
   add_emu_core snes retroarch snes9x2002 false
   add_emu_core snes retroarch snes9x2005_plus false
+  add_emu_core snes retroarch supersnes9x true
   add_emu_core snes retroarch beetle_supafaust false
   add_emu_core snes retroarch bsnes_mercury_accuracy false
   add_emu_core snes retroarch bsnes_mercury_balanced false
@@ -1392,6 +1399,7 @@ makeinstall_target() {
   add_emu_core snesh retroarch snes9x2010 false
   add_emu_core snesh retroarch snes9x2002 false
   add_emu_core snesh retroarch snes9x2005_plus false
+  add_emu_core snesh retroarch supersnes9x true
   add_emu_core snesh retroarch beetle_supafaust false
   add_emu_core snesh retroarch bsnes_mercury_accuracy false
   add_emu_core snesh retroarch bsnes_mercury_balanced false
@@ -1423,6 +1431,7 @@ makeinstall_target() {
   add_emu_core sfc retroarch snes9x2010 false
   add_emu_core sfc retroarch snes9x2002 false
   add_emu_core sfc retroarch snes9x2005_plus false
+  add_emu_core sfc retroarch supersnes9x true
   add_emu_core sfc retroarch beetle_supafaust false
   add_emu_core sfc retroarch bsnes_mercury_accuracy false
   add_emu_core sfc retroarch bsnes_mercury_balanced false
@@ -1454,6 +1463,7 @@ makeinstall_target() {
   add_emu_core satellaview retroarch snes9x2010 false
   add_emu_core satellaview retroarch snes9x2002 false
   add_emu_core satellaview retroarch snes9x2005_plus false
+  add_emu_core satellaview retroarch supersnes9x true
   add_emu_core satellaview retroarch mesen-s false
   case ${DEVICE} in
     SM8550|SM8650|SM8750)
