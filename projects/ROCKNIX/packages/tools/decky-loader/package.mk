@@ -2,7 +2,7 @@
 # Copyright (C) 2026 ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="decky-loader"
-PKG_VERSION="v3.2.3"
+PKG_VERSION="v3.2.4"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/SteamDeckHomebrew/decky-loader"
 PKG_URL="${PKG_SITE}/archive/refs/tags/${PKG_VERSION}.tar.gz"
