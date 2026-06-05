@@ -1367,7 +1367,7 @@ makeinstall_target() {
   add_emu_core snes retroarch snes9x2010 false
   add_emu_core snes retroarch snes9x2002 false
   add_emu_core snes retroarch snes9x2005_plus false
-  add_emu_core snes retroarch supersnes9x true
+  add_emu_core snes retroarch supersnes9x false
   add_emu_core snes retroarch beetle_supafaust false
   add_emu_core snes retroarch bsnes_mercury_accuracy false
   add_emu_core snes retroarch bsnes_mercury_balanced false
@@ -1399,7 +1399,7 @@ makeinstall_target() {
   add_emu_core snesh retroarch snes9x2010 false
   add_emu_core snesh retroarch snes9x2002 false
   add_emu_core snesh retroarch snes9x2005_plus false
-  add_emu_core snesh retroarch supersnes9x true
+  add_emu_core snesh retroarch supersnes9x false
   add_emu_core snesh retroarch beetle_supafaust false
   add_emu_core snesh retroarch bsnes_mercury_accuracy false
   add_emu_core snesh retroarch bsnes_mercury_balanced false
@@ -1431,7 +1431,7 @@ makeinstall_target() {
   add_emu_core sfc retroarch snes9x2010 false
   add_emu_core sfc retroarch snes9x2002 false
   add_emu_core sfc retroarch snes9x2005_plus false
-  add_emu_core sfc retroarch supersnes9x true
+  add_emu_core sfc retroarch supersnes9x false
   add_emu_core sfc retroarch beetle_supafaust false
   add_emu_core sfc retroarch bsnes_mercury_accuracy false
   add_emu_core sfc retroarch bsnes_mercury_balanced false
@@ -1463,7 +1463,7 @@ makeinstall_target() {
   add_emu_core satellaview retroarch snes9x2010 false
   add_emu_core satellaview retroarch snes9x2002 false
   add_emu_core satellaview retroarch snes9x2005_plus false
-  add_emu_core satellaview retroarch supersnes9x true
+  add_emu_core satellaview retroarch supersnes9x false
   add_emu_core satellaview retroarch mesen-s false
   case ${DEVICE} in
     SM8550|SM8650|SM8750)
