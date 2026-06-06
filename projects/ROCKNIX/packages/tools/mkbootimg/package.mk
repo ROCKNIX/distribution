@@ -9,9 +9,14 @@ PKG_URL="${PKG_SITE}.git"
 PKG_LONGDESC="mkbootimg: Creates kernel boot images for Android"
 PKG_TOOLCHAIN="manual"
 PKG_DEPENDS_HOST="toolchain Python3:host"
+PKG_DEPENDS_TARGET="toolchain Python3:target"
 
 makeinstall_host() {
   mkdir -p ${TOOLCHAIN}/mkbootimg
   cp -r gki/ mkbootimg.py $TOOLCHAIN/mkbootimg/
 }
 
+makeinstall_target() {
+  mkdir -p ${INSTALL}/usr/bin/mkbootimg
+  cp -r gki/ mkbootimg.py ${INSTALL}/usr/bin/mkbootimg
+}
