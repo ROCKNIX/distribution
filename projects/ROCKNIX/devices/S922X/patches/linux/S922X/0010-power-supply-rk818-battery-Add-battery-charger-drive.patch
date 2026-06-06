@@ -1,0 +1,2598 @@
+From 12023312f6084289e221e7f2d5f3fa5c45659e5f Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sun, 11 Jun 2023 18:29:24 +0200
+Subject: [PATCH 10/28] power: supply: rk818-battery: Add battery charger
+ driver for RK818
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RK818 is a PMIC used on Pinephone. This is a battery charger driver
+for it.
+
+Signed-of-by: Ondřej Jirman <megi@xff.cz>
+---
+ drivers/mfd/rk8xx-core.c             |    1 +
+ drivers/mfd/rk8xx-i2c.c              |   38 +-
+ drivers/power/supply/Kconfig         |    8 +
+ drivers/power/supply/Makefile        |    1 +
+ drivers/power/supply/rk818_battery.c | 2369 ++++++++++++++++++++++++++
+ include/linux/mfd/rk808.h            |   81 +-
+ 6 files changed, 2495 insertions(+), 3 deletions(-)
+ create mode 100644 drivers/power/supply/rk818_battery.c
+
+diff --git a/drivers/mfd/rk8xx-core.c b/drivers/mfd/rk8xx-core.c
+index 8dd162a5b124..f43a886e91bf 100644
+--- a/drivers/mfd/rk8xx-core.c
++++ b/drivers/mfd/rk8xx-core.c
+@@ -145,6 +145,7 @@ static const struct mfd_cell rk817s[] = {
+ static const struct mfd_cell rk818s[] = {
+ 	{ .name = "rk808-clkout", },
+ 	{ .name = "rk808-regulator", },
++	{ .name = "rk818-charger", .of_compatible = "rockchip,rk818-charger", },
+ 	{
+ 		.name = "rk808-rtc",
+ 		.num_resources = ARRAY_SIZE(rtc_resources),
+diff --git a/drivers/mfd/rk8xx-i2c.c b/drivers/mfd/rk8xx-i2c.c
+index 2951b2911a37..1f5b291e127c 100644
+--- a/drivers/mfd/rk8xx-i2c.c
++++ b/drivers/mfd/rk8xx-i2c.c
+@@ -132,13 +132,47 @@ static bool rk817_is_volatile_reg(struct device *dev, unsigned int reg)
+ 	return false;
+ }
+ 
++static bool rk818_is_volatile_reg(struct device *dev, unsigned int reg)
++{
++	/*
++	 * Notes:
++	 * - Technically the ROUND_30s bit makes RTC_CTRL_REG volatile, but
++	 *   we don't use that feature.  It's better to cache.
++	 * - It's unlikely we care that RK808_DEVCTRL_REG is volatile since
++	 *   bits are cleared in case when we shutoff anyway, but better safe.
++	 */
++
++	switch (reg) {
++	case RK808_SECONDS_REG ... RK808_WEEKS_REG:
++	case RK808_RTC_STATUS_REG:
++	case RK808_VB_MON_REG:
++	case RK808_THERMAL_REG:
++	case RK808_DCDC_EN_REG:
++	case RK808_LDO_EN_REG:
++	case RK808_DCDC_UV_STS_REG:
++	case RK808_LDO_UV_STS_REG:
++	case RK808_DCDC_PG_REG:
++	case RK808_LDO_PG_REG:
++	case RK808_DEVCTRL_REG:
++	case RK808_INT_STS_REG1:
++	case RK808_INT_STS_REG2:
++	case RK808_INT_STS_MSK_REG1:
++	case RK808_INT_STS_MSK_REG2:
++	case RK818_LDO8_ON_VSEL_REG: // TODO(ayufan):??
++	case RK818_LDO8_SLP_VSEL_REG: // TODO(ayufan):??
++	case RK818_SUP_STS_REG ... RK818_SAVE_DATA19:
++		return true;
++	}
++
++	return false;
++}
+ 
+ static const struct regmap_config rk818_regmap_config = {
+ 	.reg_bits = 8,
+ 	.val_bits = 8,
+-	.max_register = RK818_USB_CTRL_REG,
++	.max_register = RK818_SAVE_DATA19,
+ 	.cache_type = REGCACHE_MAPLE,
+-	.volatile_reg = rk808_is_volatile_reg,
++	.volatile_reg = rk818_is_volatile_reg,
+ };
+ 
+ static const struct regmap_config rk801_regmap_config = {
+diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
+index 92f9f7aae92f..50c70adea589 100644
+--- a/drivers/power/supply/Kconfig
++++ b/drivers/power/supply/Kconfig
+@@ -1132,4 +1132,12 @@ config FUEL_GAUGE_MM8013
+ 	  the state of charge, temperature, cycle count, actual and design
+ 	  capacity, etc.
+ 
++config CHARGER_RK818
++	bool "RK818 Charger driver"
++	depends on MFD_RK8XX
++	default n
++	help
++	  If you say yes here you will get support for the charger of RK818 PMIC.
++	  This driver can give support for Rk818 Charger Interface.
++
+ endif # POWER_SUPPLY
+diff --git a/drivers/power/supply/Makefile b/drivers/power/supply/Makefile
+index 4b79d5abc49a..2835d3230fe4 100644
+--- a/drivers/power/supply/Makefile
++++ b/drivers/power/supply/Makefile
+@@ -128,3 +128,4 @@ obj-$(CONFIG_CHARGER_SURFACE)	+= surface_charger.o
+ obj-$(CONFIG_BATTERY_UG3105)	+= ug3105_battery.o
+ obj-$(CONFIG_CHARGER_QCOM_SMB2)	+= qcom_smbx.o
+ obj-$(CONFIG_FUEL_GAUGE_MM8013)	+= mm8013.o
++obj-$(CONFIG_CHARGER_RK818)	+= rk818_battery.o
+diff --git a/drivers/power/supply/rk818_battery.c b/drivers/power/supply/rk818_battery.c
+new file mode 100644
+index 000000000000..8cac751f8644
+--- /dev/null
++++ b/drivers/power/supply/rk818_battery.c
+@@ -0,0 +1,2369 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * rk818 battery and charger driver
++ *
++ * Copyright (c) 2026 Ondrej Jirman <megi@xff.cz>
++ *
++ * Design:
++ * - Coulomb counter is the primary SoC source; it is accurate when
++ *   COFFSET is correctly calibrated.
++ * - OCV (open-circuit voltage) and relaxed voltage are used to
++ *   periodically re-anchor the coulomb counter.
++ * - Display SoC (dsoc) tracks real SoC (rsoc) through a simple
++ *   rate-limiter so it never jumps more than 1% per poll cycle.
++ * - At charge completion the coulomb counter is snapped to FCC.
++ * - COFFSET auto-calibration runs once per charge cycle when the
++ *   charger reports RK818_CHG_STS_TERMINATED and current appears near zero.
++ */
++
++#include <linux/delay.h>
++#include <linux/fixp-arith.h>
++#include <linux/jiffies.h>
++#include <linux/ktime.h>
++#include <linux/mfd/rk808.h>
++#include <linux/mod_devicetable.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/of_device.h>
++#include <linux/platform_device.h>
++#include <linux/power_supply.h>
++#include <linux/property.h>
++#include <linux/regmap.h>
++#include <linux/workqueue.h>
++
++/* RK818_TS_CTRL_REG */
++#define GG_EN				BIT(7)
++#define TS1_CUR_MSK			0x03
++#define ADC_CUR_20UA			0x00
++#define ADC_CUR_40UA			0x01
++#define ADC_CUR_60UA			0x02
++#define ADC_CUR_80UA			0x03
++
++/* NTC battery temperature sensing on TS1 */
++#define NTC_CALC_FACTOR_80UA		7
++#define NTC_CALC_FACTOR_60UA		9
++#define NTC_CALC_FACTOR_40UA		13
++#define NTC_CALC_FACTOR_20UA		27
++#define NTC_80UA_MAX_MEASURE		27500
++#define NTC_60UA_MAX_MEASURE		36666
++#define NTC_40UA_MAX_MEASURE		55000
++#define NTC_20UA_MAX_MEASURE		110000
++
++/* RK818_ADC_CTRL_REG */
++#define ADC_CUR_EN			BIT(6)
++#define ADC_TS1_EN			BIT(5)
++#define ADC_TS2_EN			BIT(4)
++
++/* RK818_GGCON_REG */
++#define OCV_SAMP_MIN_MSK		0x0c
++#define OCV_SAMP_8MIN			(0x00 << 2)
++#define ADC_CAL_MIN_MSK			0x30
++#define ADC_CAL_8MIN			(0x00 << 4)
++#define ADC_CUR_MODE			BIT(1)
++
++/* RK818_GGSTS_REG */
++#define BAT_CON				BIT(4)
++#define RELAX_VOL1_UPD			BIT(3)
++#define RELAX_VOL2_UPD			BIT(2)
++#define RELAX_VOL12_UPD_MSK		(RELAX_VOL1_UPD | RELAX_VOL2_UPD)
++#define RELAX_VOL_STS			BIT(0)
++
++/* RK818_SUP_STS_REG */
++#define BAT_EXS				BIT(7)
++
++#define RK818_CHG_STS_MASK		(7u << 4) /* charger status */
++#define RK818_CHG_STS_NONE		(0u << 4)
++#define RK818_CHG_STS_WAKEUP_CUR	(1u << 4)
++#define RK818_CHG_STS_TRICKLE_CUR	(2u << 4)
++#define RK818_CHG_STS_CC_OR_CV		(3u << 4)
++#define RK818_CHG_STS_TERMINATED	(4u << 4)
++#define RK818_CHG_STS_USB_OV		(5u << 4)
++#define RK818_CHG_STS_BAT_TEMP_FAULT	(6u << 4)
++#define RK818_CHG_STS_TIMEOUT		(7u << 4)
++
++#define RK818_SUP_STS_USB_VLIM_EN	BIT(3) /* input voltage limit enable */
++#define RK818_SUP_STS_USB_ILIM_EN	BIT(2) /* input current limit enable */
++#define RK818_SUP_STS_USB_EXS		BIT(1) /* USB power connected */
++#define RK818_SUP_STS_USB_EFF		BIT(0) /* USB fault */
++
++/* RK818_VB_MON_REG */
++#define PLUG_IN_STS			BIT(6)
++#define RK818_VBAT_LOW_3V4		0x06
++
++/* RK818_MISC_MARK_REG */
++#define FG_INIT				BIT(5)
++
++/* RK818_INT_STS_MSK_REG1 */
++#define VB_LOW_INT_EN			BIT(1)
++
++/* RK818_USB_CTRL_REG */
++#define CHRG_CT_EN			BIT(7)
++#define FINISH_CUR_MSK			0xc0
++#define FINISH_100MA			(0x00 << 6)
++#define FINISH_150MA			(0x01 << 6)
++#define FINISH_200MA			(0x02 << 6)
++#define FINISH_250MA			(0x03 << 6)
++/*
++ * CHRG_TIMER_CCCV: CC/CV charging timeout threshold, REG2 bits [2:0]:
++ *   000: 4h, 001: 5h, 010: 6h, 011: 8h,
++ *   100: 10h, 101: 12h, 110: 14h, 111: 16h
++ */
++#define CHRG_TIMER_CCCV_MSK		0x07
++#define CHRG_TIMER_CCCV_4H		0x00
++#define CHRG_TIMER_CCCV_5H		0x01
++#define CHRG_TIMER_CCCV_6H		0x02
++#define CHRG_TIMER_CCCV_8H		0x03
++#define CHRG_TIMER_CCCV_10H		0x04
++#define CHRG_TIMER_CCCV_12H		0x05
++#define CHRG_TIMER_CCCV_14H		0x06
++#define CHRG_TIMER_CCCV_16H		0x07
++/*
++ * HOTDIE_TEMP: Hot-die temperature threshold, thermal reg bits [3:2]:
++ *   00: 85C, 01: 95C, 10: 105C, 11: 115C
++ */
++#define HOTDIE_TEMP_MASK		(0x3 << 2)
++#define HOTDIE_TEMP_85C			(0x0 << 2)
++#define HOTDIE_TEMP_95C			(0x1 << 2)
++#define HOTDIE_TEMP_105C		(0x2 << 2)
++#define HOTDIE_TEMP_115C		(0x3 << 2)
++
++#define RK818_USB_CTRL_USB_ILIM_MASK		(0xfu)
++#define RK818_USB_CTRL_USB_CHG_SD_VSEL_OFFSET	4
++#define RK818_USB_CTRL_USB_CHG_SD_VSEL_MASK	(0x7u << 4)
++
++/* RK818_CHRG_CTRL_REG1 */
++#define RK818_CHRG_CTRL_REG1_CHRG_EN			BIT(7)
++#define RK818_CHRG_CTRL_REG1_CHRG_VOL_SEL_OFFSET	4
++#define RK818_CHRG_CTRL_REG1_CHRG_VOL_SEL_MASK		(0x7u << 4)
++#define RK818_CHRG_CTRL_REG1_CHRG_CUR_SEL_OFFSET	0
++#define RK818_CHRG_CTRL_REG1_CHRG_CUR_SEL_MASK		(0xfu << 0)
++
++/* RK818_CHRG_CTRL_REG3 */
++#define CHRG_TERM_DIG_SIGNAL		BIT(5)
++#define CHRG_TIMER_CCCV_EN		BIT(2)
++#define RK818_CHRG_CTRL_REG3_CHRG_TERM_DIGITAL	BIT(5)
++
++/* Current offset calibration */
++#define COFFSET_MIN			0x780
++#define COFFSET_MAX			0x980
++#define COFFSET_DEFAULT			0x832
++#define POFFSET_DEFAULT			42
++/* Threshold in raw ADC counts below which current is considered zero (~12 mA) */
++#define ADC_ZERO_THRESHOLD		4
++#define ADC_CALIB_ITERATIONS		5
++#define ADC_CALIB_MAX_RUNS		5
++#define ADC_CALIB_MIN_BOOT_SEC		(3 * 60)
++
++/* SoC / capacity */
++#define MIN_FCC				500	/* mAh */
++
++/*
++ * Coulomb counter LSB denominator.
++ * raw_counts / CC_LSB_DENOM * res_div = mAh  (for a 20 mOhm sense resistor)
++ */
++#define CC_LSB_DENOM			2390
++
++/* Maximum display SoC change per monitor cycle */
++#define DSOC_DELTA_MAX			1	/* % */
++
++/*
++ * Conservative current estimate used to cross-check dsoc during sleep.
++ * The coulomb counter keeps running, so this is only used to bound
++ * how far dsoc can lag behind rsoc after a long suspend without a
++ * charger attached.
++ */
++#define SLP_CURR_MA			20
++
++#define MONITOR_MS_DEFAULT		(5 * 1000)
++
++/* Safe non-zero divisor */
++#define DIV(x)				((x) ? (x) : 1)
++
++/* -------------------------------------------------------------------------
++ * Platform data
++ * ------------------------------------------------------------------------- */
++
++/*
++ * Vendor-specific battery tunables only.
++ *
++ * Standard simple-battery properties (design capacity, design voltages,
++ * max charge current/voltage, internal resistance, OCV table, ...) are
++ * fetched by the power-supply core from the "monitored-battery" phandle
++ * and exposed via psy->battery_info.  They must not be duplicated here.
++ */
++
++/* -------------------------------------------------------------------------
++ * Driver state
++ * ------------------------------------------------------------------------- */
++
++/*
++ * Single entry in the NTC battery thermistor lookup table.
++ * Entries are sorted by temperature ascending; resistance therefore
++ * decreases monotonically as the index grows (NTC: cold = high R).
++ */
++struct rk818_ntc_entry {
++	s32	temp;	/* whole degrees Celsius */
++	u32	res;	/* thermistor resistance, ohms */
++};
++
++struct rk818_battery {
++	struct platform_device		*pdev;
++	struct rk808			*rk818;
++	struct regmap			*regmap;
++	struct device			*dev;
++	struct power_supply_battery_info *info;
++	struct workqueue_struct		*wq;
++	struct delayed_work		work;
++
++	/* Device-tree tunables (previously in struct battery_platform_data) */
++	u32	monitor_sec;
++	u32	sense_resist_mohm;	/* 10 or 20 */
++	u32	relax_entry_current_ma;
++	u32	relax_exit_current_ma;
++	u32	max_soc_offset_pct;
++	u32	feedback_temp;		/* Celsius, 0 = disabled */
++	u32	cccv_timeout_h;		/* CC/CV safety timer hours; 0 = disabled */
++
++	/* NTC battery thermistor (TS1) */
++	u32	ntc_size;
++	u32	ntc_factor;
++	u32	ntc_uA;
++	struct rk818_ntc_entry *ntc_entries;
++	int	temperature;		/* tenths of a degree C */
++
++	/* Boottime of last periodic calibration; see rk818_battery_work() */
++	ktime_t	last_calib;
++
++	/* Power supplies */
++	struct power_supply		*usb_psy;
++	struct power_supply		*charger_psy;
++
++	/* USB input current limit state */
++	bool	apply_ilim;
++
++	/*
++	 * Voltage ADC calibration coefficients.
++	 * voltage_mV = raw_adc * voltage_k / 1000 + voltage_b
++	 */
++	int	voltage_k;
++	int	voltage_b;
++
++	/* Persistent current offset saved across reboots via POFFSET_REG */
++	int	poffset;
++
++	/*
++	 * Sense resistor divisor:
++	 *   1 for 20 mOhm (default), 2 for 10 mOhm.
++	 * Used to scale coulomb counter and current readings.
++	 */
++	u8	res_div;
++
++	/* Latest measurements, updated each monitor cycle */
++	int	voltage_avg_mv;
++	int	voltage_ocv_mv;
++	int	voltage_relax_mv;
++	int	current_avg_ma;
++	int	remain_cap_mah;
++	int	fcc_mah;
++	int	rsoc;
++	int	dsoc;
++
++	int	chrg_status;
++	bool	is_charging;
++
++	/* COFFSET auto-calibration state, reset each charge cycle */
++	bool	coffset_calib_done;
++	u32	coffset_calib_runs;
++
++	/* Suspend/resume bookkeeping */
++	ktime_t		suspend_time;
++	bool		sleep_chrg_online;
++
++	/* Startup flags */
++	bool	is_first_power_on;
++	bool	is_initialized;
++	u32	pwroff_min;
++
++	u32		monitor_ms;
++	unsigned long	boot_base_jiffies;
++};
++
++/* -------------------------------------------------------------------------
++ * Time helpers
++ * ------------------------------------------------------------------------- */
++
++static u64 rk818_sec_since(unsigned long base_jiffies)
++{
++	if (!base_jiffies)
++		return 0;
++	return jiffies_to_msecs(jiffies - base_jiffies) / 1000;
++}
++
++/* -------------------------------------------------------------------------
++ * Register access
++ * ------------------------------------------------------------------------- */
++
++static int rk818_read(struct rk818_battery *di, u8 reg)
++{
++	int ret, val;
++
++	ret = regmap_read(di->regmap, reg, &val);
++	if (ret)
++		dev_err(di->dev, "read reg 0x%02x failed: %d\n", reg, ret);
++	return val;
++}
++
++static void rk818_write(struct rk818_battery *di, u8 reg, u8 val)
++{
++	int ret;
++
++	ret = regmap_write(di->regmap, reg, val);
++	if (ret)
++		dev_err(di->dev, "write reg 0x%02x failed: %d\n", reg, ret);
++}
++
++static void rk818_clrsetbits(struct rk818_battery *di, u8 reg, u8 mask, u8 val)
++{
++	int ret;
++
++	ret = regmap_update_bits(di->regmap, reg, mask, val);
++	if (ret)
++		dev_err(di->dev, "update reg 0x%02x failed: %d\n", reg, ret);
++}
++
++/* Forward declarations for helpers used before their definition. */
++static int rk818_charger_set_current_max(struct rk818_battery *di, int val);
++static int rk818_charger_set_voltage_max(struct rk818_battery *di, int val);
++
++/*
++ * Read a big-endian 16-bit register pair and apply linear voltage calibration.
++ * @regh is the address of the high byte; @regh+1 is the low byte.
++ */
++static int rk818_read_vol(struct rk818_battery *di, u8 regh)
++{
++	int raw;
++
++	raw  = rk818_read(di, regh)     << 8;
++	raw |= rk818_read(di, regh + 1);
++	return di->voltage_k * raw / 1000 + di->voltage_b;
++}
++
++/*
++ * Read a big-endian signed 12-bit current ADC word and convert to mA.
++ *
++ * The LSB size depends on the sense resistor:
++ *   20 mOhm -> 1506 uA/LSB  (res_div == 1)
++ *   10 mOhm -> 3012 uA/LSB  (res_div == 2)
++ */
++static int rk818_read_cur(struct rk818_battery *di, u8 regh)
++{
++	int raw;
++
++	raw  = rk818_read(di, regh)     << 8;
++	raw |= rk818_read(di, regh + 1);
++
++	if (raw & 0x800)
++		raw -= 4096;
++
++	return raw * (int)di->res_div * 1506 / 1000;
++}
++
++/* -------------------------------------------------------------------------
++ * OCV table interpolation
++ * -------------------------------------------------------------------------
++ * OCV lookup is delegated to power_supply_batinfo_ocv2cap(), which
++ * operates on the standard simple-battery ocv-capacity-table parsed by
++ * the power-supply core into psy->battery_info.
++ */
++
++static int vol_to_soc(struct rk818_battery *di, int voltage_mv)
++{
++	int cap;
++
++	/*
++	 * power_supply_batinfo_ocv2cap() takes microvolts and a
++	 * temperature in whole degrees Celsius (matching the values in
++	 * the battery node's ocv-capacity-celsius property), and
++	 * returns the capacity percent (or a negative errno).
++	 */
++	cap = power_supply_batinfo_ocv2cap(di->info, voltage_mv * 1000, 20);
++	return cap < 0 ? 0 : cap;
++}
++
++static int vol_to_cap(struct rk818_battery *di, int voltage_mv)
++{
++	return vol_to_soc(di, voltage_mv) * di->fcc_mah / 100;
++}
++
++/* -------------------------------------------------------------------------
++ * Coulomb counter
++ * ------------------------------------------------------------------------- */
++
++static int rk818_get_coulomb_cap(struct rk818_battery *di)
++{
++	int raw = 0;
++
++	raw |= rk818_read(di, RK818_GASCNT3_REG) << 24;
++	raw |= rk818_read(di, RK818_GASCNT2_REG) << 16;
++	raw |= rk818_read(di, RK818_GASCNT1_REG) <<  8;
++	raw |= rk818_read(di, RK818_GASCNT0_REG);
++
++	return (raw / CC_LSB_DENOM) * di->res_div;
++}
++
++static void rk818_set_coulomb_cap(struct rk818_battery *di, int cap_mah)
++{
++	u32 raw = (u32)cap_mah * CC_LSB_DENOM / DIV(di->res_div);
++
++	rk818_write(di, RK818_GASCNT_CAL_REG3, (raw >> 24) & 0xff);
++	rk818_write(di, RK818_GASCNT_CAL_REG2, (raw >> 16) & 0xff);
++	rk818_write(di, RK818_GASCNT_CAL_REG1, (raw >>  8) & 0xff);
++	rk818_write(di, RK818_GASCNT_CAL_REG0,  raw        & 0xff);
++
++	di->remain_cap_mah = cap_mah;
++	dev_dbg(di->dev, "coulomb cap set to %d mAh\n", cap_mah);
++}
++
++/* -------------------------------------------------------------------------
++ * Charger / battery presence
++ * ------------------------------------------------------------------------- */
++
++static bool rk818_charger_online(struct rk818_battery *di)
++{
++	return !!(rk818_read(di, RK818_VB_MON_REG) & PLUG_IN_STS);
++}
++
++static int rk818_get_chrg_status(struct rk818_battery *di)
++{
++	return rk818_read(di, RK818_SUP_STS_REG) & RK818_CHG_STS_MASK;
++}
++
++static bool rk818_battery_present(struct rk818_battery *di)
++{
++	return !!(rk818_read(di, RK818_SUP_STS_REG) & BAT_EXS);
++}
++
++/* -------------------------------------------------------------------------
++ * Relaxed voltage (open-circuit approximation during low-current periods)
++ * ------------------------------------------------------------------------- */
++
++/*
++ * Returns the higher of the two hardware-captured relaxed voltage samples,
++ * or 0 if neither sample is valid yet.
++ */
++static int rk818_get_relax_voltage(struct rk818_battery *di)
++{
++	int rv1, rv2;
++	u8 sts;
++
++	sts = rk818_read(di, RK818_GGSTS_REG);
++	if (!(sts & RELAX_VOL1_UPD) || !(sts & RELAX_VOL2_UPD))
++		return 0;
++
++	rv1 = rk818_read_vol(di, RK818_RELAX_VOL1_REGH);
++	rv2 = rk818_read_vol(di, RK818_RELAX_VOL2_REGH);
++
++	return max(rv1, rv2);
++}
++
++/* Clear the valid flags so the hardware will capture fresh samples. */
++static void rk818_restart_relax(struct rk818_battery *di)
++{
++	u8 sts = rk818_read(di, RK818_GGSTS_REG);
++
++	rk818_write(di, RK818_GGSTS_REG, sts & ~RELAX_VOL12_UPD_MSK);
++}
++
++/* -------------------------------------------------------------------------
++ * Voltage ADC calibration (k / b coefficients)
++ * ------------------------------------------------------------------------- */
++
++/*
++ * The PMIC stores two factory calibration points in VCALIB0 / VCALIB1:
++ *   vcalib0 = ADC code at 3000 mV
++ *   vcalib1 = ADC code at 4200 mV
++ *
++ * From these we derive:
++ *   k = (4200 - 3000) * 1000 / (vcalib1 - vcalib0)
++ *   b = 4200 - k * vcalib1 / 1000
++ *   voltage_mV = raw * k / 1000 + b
++ */
++static void rk818_init_voltage_kb(struct rk818_battery *di)
++{
++	int v0, v1;
++
++	v0  = rk818_read(di, RK818_VCALIB0_REGL);
++	v0 |= rk818_read(di, RK818_VCALIB0_REGH) << 8;
++	v1  = rk818_read(di, RK818_VCALIB1_REGL);
++	v1 |= rk818_read(di, RK818_VCALIB1_REGH) << 8;
++
++	di->voltage_k = (4200 - 3000) * 1000 / DIV(v1 - v0);
++	di->voltage_b = 4200 - di->voltage_k * v1 / 1000;
++
++	dev_dbg(di->dev, "voltage cal: k=%d b=%d (calib0=%d calib1=%d)\n",
++		di->voltage_k, di->voltage_b, v0, v1);
++}
++
++/* -------------------------------------------------------------------------
++ * Current offset calibration
++ * ------------------------------------------------------------------------- */
++
++static int rk818_get_coffset(struct rk818_battery *di)
++{
++	int val;
++
++	val  = rk818_read(di, RK818_CAL_OFFSET_REGL);
++	val |= rk818_read(di, RK818_CAL_OFFSET_REGH) << 8;
++	return val;
++}
++
++static void rk818_set_coffset(struct rk818_battery *di, int val)
++{
++	if (val < COFFSET_MIN || val > COFFSET_MAX) {
++		dev_warn(di->dev,
++			 "coffset 0x%x out of range [0x%x, 0x%x], ignoring\n",
++			 val, COFFSET_MIN, COFFSET_MAX);
++		return;
++	}
++	rk818_write(di, RK818_CAL_OFFSET_REGH, (val >> 8) & 0xff);
++	rk818_write(di, RK818_CAL_OFFSET_REGL,  val       & 0xff);
++}
++
++static int rk818_get_ioffset(struct rk818_battery *di)
++{
++	int val;
++
++	val  = rk818_read(di, RK818_IOFFSET_REGL);
++	val |= rk818_read(di, RK818_IOFFSET_REGH) << 8;
++	return val;
++}
++
++/*
++ * Read the raw signed 12-bit ADC code used for current sensing.
++ * This is the value before the COFFSET subtraction that the hardware
++ * applies internally, so it reflects the residual offset we want to zero.
++ */
++static int rk818_get_iadc(struct rk818_battery *di)
++{
++	int val;
++
++	val  = rk818_read(di, RK818_BAT_CUR_AVG_REGL);
++	val |= rk818_read(di, RK818_BAT_CUR_AVG_REGH) << 8;
++	if (val > 2047)
++		val -= 4096;
++	return val;
++}
++
++/*
++ * rk818_init_coffset - restore the calibrated current offset on boot.
++ *
++ * COFFSET = IOFFSET (written by the PMIC at power-on) + POFFSET (saved by
++ * the driver after a successful auto-calibration).  This combination
++ * cancels both the hardware reference offset and any board-level parasitic.
++ */
++static void rk818_init_coffset(struct rk818_battery *di)
++{
++	int ioffset, coffset;
++
++	ioffset = rk818_get_ioffset(di);
++	di->poffset = rk818_read(di, RK818_POFFSET_REG);
++	if (!di->poffset)
++		di->poffset = POFFSET_DEFAULT;
++
++	coffset = di->poffset + ioffset;
++	if (coffset < COFFSET_MIN || coffset > COFFSET_MAX)
++		coffset = COFFSET_DEFAULT;
++
++	rk818_set_coffset(di, coffset);
++	dev_dbg(di->dev,
++		"coffset init: poffset=0x%x ioffset=0x%x -> coffset=0x%x\n",
++		di->poffset, ioffset, coffset);
++}
++
++/*
++ * rk818_auto_calib_coffset - iteratively nudge COFFSET until BAT_CUR_AVG = 0.
++ *
++ * Only attempted when the charger reports RK818_CHG_STS_TERMINATED and the charger is
++ * present, so battery current should genuinely be close to zero.  After
++ * convergence, POFFSET is saved so the correction survives a reboot.
++ *
++ * Returns true if calibration converged.
++ */
++static bool rk818_auto_calib_coffset(struct rk818_battery *di)
++{
++	int i, iadc, coffset, saved_coffset, ioffset;
++
++	if (di->coffset_calib_done ||
++	    di->coffset_calib_runs >= ADC_CALIB_MAX_RUNS ||
++	    di->chrg_status != RK818_CHG_STS_TERMINATED ||
++	    rk818_sec_since(di->boot_base_jiffies) < ADC_CALIB_MIN_BOOT_SEC ||
++	    abs(di->current_avg_ma) < ADC_ZERO_THRESHOLD)
++		return false;
++
++	di->coffset_calib_runs++;
++	saved_coffset = rk818_get_coffset(di);
++
++	for (i = 0; i < ADC_CALIB_ITERATIONS; i++) {
++		if (!rk818_charger_online(di)) {
++			rk818_set_coffset(di, saved_coffset);
++			dev_info(di->dev,
++				 "coffset calib aborted: charger removed\n");
++			return false;
++		}
++
++		iadc = rk818_get_iadc(di);
++		coffset = rk818_get_coffset(di);
++		rk818_set_coffset(di, coffset + iadc);
++		msleep(2000);
++
++		iadc = rk818_get_iadc(di);
++		if (abs(iadc) < ADC_ZERO_THRESHOLD) {
++			ioffset = rk818_get_ioffset(di);
++			coffset = rk818_get_coffset(di);
++			di->poffset = coffset - ioffset;
++			rk818_write(di, RK818_POFFSET_REG, di->poffset);
++			di->coffset_calib_done = true;
++			dev_info(di->dev,
++				 "coffset calib done: coffset=0x%x ioffset=0x%x poffset=0x%x\n",
++				 coffset, ioffset, di->poffset);
++			return true;
++		}
++	}
++
++	rk818_set_coffset(di, saved_coffset);
++	dev_info(di->dev,
++		 "coffset calib incomplete after %d iters (run %u/%u)\n",
++		 ADC_CALIB_ITERATIONS, di->coffset_calib_runs,
++		 ADC_CALIB_MAX_RUNS);
++	return false;
++}
++
++/* -------------------------------------------------------------------------
++ * FCC (fully-charged capacity) persistence
++ * ------------------------------------------------------------------------- */
++
++static int rk818_read_fcc(struct rk818_battery *di)
++{
++	u32 fcc = 0;
++
++	fcc |= (u32)rk818_read(di, RK818_NEW_FCC_REG3) << 24;
++	fcc |= (u32)rk818_read(di, RK818_NEW_FCC_REG2) << 16;
++	fcc |= (u32)rk818_read(di, RK818_NEW_FCC_REG1) <<  8;
++	fcc |= (u32)rk818_read(di, RK818_NEW_FCC_REG0);
++
++	u32 design_mah = di->info->charge_full_design_uah / 1000;
++
++	if (fcc < MIN_FCC || fcc > design_mah) {
++		dev_info(di->dev,
++			 "stored FCC %u mAh out of range, using design capacity\n",
++			 fcc);
++		fcc = design_mah;
++	}
++
++	return (int)clamp(fcc, (u32)MIN_FCC, design_mah);
++}
++
++static void rk818_save_fcc(struct rk818_battery *di, u32 fcc)
++{
++	rk818_write(di, RK818_NEW_FCC_REG3, (fcc >> 24) & 0xff);
++	rk818_write(di, RK818_NEW_FCC_REG2, (fcc >> 16) & 0xff);
++	rk818_write(di, RK818_NEW_FCC_REG1, (fcc >>  8) & 0xff);
++	rk818_write(di, RK818_NEW_FCC_REG0,  fcc        & 0xff);
++	dev_info(di->dev, "FCC saved: %u mAh\n", fcc);
++}
++
++/* -------------------------------------------------------------------------
++ * State persistence
++ * ------------------------------------------------------------------------- */
++
++static void rk818_save_dsoc(struct rk818_battery *di)
++{
++	rk818_write(di, RK818_SOC_REG, (u8)clamp(di->dsoc, 0, 100));
++}
++
++static void rk818_save_remain_cap(struct rk818_battery *di)
++{
++	int cap = clamp(di->remain_cap_mah, 0,
++			(int)(di->info->charge_full_design_uah / 1000));
++
++	rk818_write(di, RK818_REMAIN_CAP_REG3, (cap >> 24) & 0xff);
++	rk818_write(di, RK818_REMAIN_CAP_REG2, (cap >> 16) & 0xff);
++	rk818_write(di, RK818_REMAIN_CAP_REG1, (cap >>  8) & 0xff);
++	rk818_write(di, RK818_REMAIN_CAP_REG0,  cap        & 0xff);
++}
++
++static int rk818_read_saved_cap(struct rk818_battery *di)
++{
++	int cap = 0;
++
++	cap |= rk818_read(di, RK818_REMAIN_CAP_REG3) << 24;
++	cap |= rk818_read(di, RK818_REMAIN_CAP_REG2) << 16;
++	cap |= rk818_read(di, RK818_REMAIN_CAP_REG1) <<  8;
++	cap |= rk818_read(di, RK818_REMAIN_CAP_REG0);
++
++	return cap;
++}
++
++/* -------------------------------------------------------------------------
++ * Hardware configuration
++ * ------------------------------------------------------------------------- */
++
++static void rk818_enable_gauge(struct rk818_battery *di)
++{
++	u8 val = rk818_read(di, RK818_TS_CTRL_REG);
++
++	rk818_write(di, RK818_TS_CTRL_REG, val | GG_EN);
++}
++
++static void rk818_configure_sampling(struct rk818_battery *di)
++{
++	u8 ggcon = rk818_read(di, RK818_GGCON_REG);
++
++	ggcon = (ggcon & ~OCV_SAMP_MIN_MSK) | OCV_SAMP_8MIN;
++	ggcon = (ggcon & ~ADC_CAL_MIN_MSK)  | ADC_CAL_8MIN;
++	ggcon |= ADC_CUR_MODE;
++	rk818_write(di, RK818_GGCON_REG, ggcon);
++}
++
++static void rk818_configure_relax_thresholds(struct rk818_battery *di)
++{
++	int enter_raw, exit_raw;
++
++	enter_raw = (int)di->relax_entry_current_ma * 1000 / 1506 /
++		    DIV(di->res_div);
++	exit_raw  = (int)di->relax_exit_current_ma  * 1000 / 1506 /
++		    DIV(di->res_div);
++
++	rk818_write(di, RK818_RELAX_ENTRY_THRES_REGL,  enter_raw & 0xff);
++	rk818_write(di, RK818_RELAX_ENTRY_THRES_REGH, (enter_raw >> 8) & 0xff);
++	rk818_write(di, RK818_RELAX_EXIT_THRES_REGL,   exit_raw & 0xff);
++	rk818_write(di, RK818_RELAX_EXIT_THRES_REGH,  (exit_raw >> 8) & 0xff);
++
++	rk818_restart_relax(di);
++}
++
++/*
++ * Set the VBAT low-voltage monitor to 3.4 V in IRQ (not hard-shutdown) mode
++ * so the system receives a wakeup event when the battery is nearly empty.
++ * Unmask the corresponding interrupt so it is actually delivered.
++ */
++static void rk818_set_low_voltage_irq(struct rk818_battery *di)
++{
++	u8 val = rk818_read(di, RK818_VB_MON_REG);
++
++	val = (val & ~(VBAT_LOW_VOL_MASK | VBAT_LOW_ACT_MASK)) |
++	      RK818_VBAT_LOW_3V4 | EN_VBAT_LOW_IRQ;
++	rk818_write(di, RK818_VB_MON_REG, val);
++	/* Clear the mask bit to enable the interrupt */
++	rk818_clrsetbits(di, RK818_INT_STS_MSK_REG1, VB_LOW_INT_EN, 0);
++}
++
++/*
++ * Encode a Celsius temperature into the HOTDIE threshold register bits,
++ * rounding down to the nearest supported table entry (85/95/105/115 C).
++ */
++static u8 rk818_encode_hotdie_temp(u32 celsius)
++{
++	if (celsius >= 115)
++		return HOTDIE_TEMP_115C;
++	if (celsius >= 105)
++		return HOTDIE_TEMP_105C;
++	if (celsius >= 95)
++		return HOTDIE_TEMP_95C;
++
++	return HOTDIE_TEMP_85C;
++}
++
++/*
++ * Encode a termination-current value (microamps) into FINISH_CUR_MSK bits.
++ * Rounds down to the nearest supported step (100/150/200/250 mA).
++ */
++static u8 rk818_encode_finish_current(int term_ua)
++{
++	int term_ma = term_ua / 1000;
++
++	if (term_ma >= 250)
++		return FINISH_250MA;
++	if (term_ma >= 200)
++		return FINISH_200MA;
++	if (term_ma >= 150)
++		return FINISH_150MA;
++	return FINISH_100MA;
++}
++
++/*
++ * Encode a CC/CV safety-timer duration (hours) into CHRG_TIMER_CCCV bits.
++ * Rounds down to the nearest supported step (4/5/6/8/10/12/14/16 h).
++ */
++static u8 rk818_encode_cccv_timeout(u32 hours)
++{
++	if (hours >= 16)
++		return CHRG_TIMER_CCCV_16H;
++	if (hours >= 14)
++		return CHRG_TIMER_CCCV_14H;
++	if (hours >= 12)
++		return CHRG_TIMER_CCCV_12H;
++	if (hours >= 10)
++		return CHRG_TIMER_CCCV_10H;
++	if (hours >= 8)
++		return CHRG_TIMER_CCCV_8H;
++	if (hours >= 6)
++		return CHRG_TIMER_CCCV_6H;
++	if (hours >= 5)
++		return CHRG_TIMER_CCCV_5H;
++	return CHRG_TIMER_CCCV_4H;
++}
++
++/*
++ * Configure charge termination current and thermal feedback register.
++ * Termination current, constant-charge voltage, and constant-charge
++ * current are taken from the simple-battery info where available and
++ * fall back to safe defaults otherwise.
++ */
++static void rk818_configure_charger(struct rk818_battery *di)
++{
++	u8 finish_ma, usb_ctrl, chrg2, chrg3, thermal;
++	int term_ua;
++
++	/*
++	 * Apply max CC current and max CV voltage from the simple-battery
++	 * info.  The register set helpers clamp to supported hardware steps.
++	 */
++	if (di->info->constant_charge_current_max_ua > 0)
++		rk818_charger_set_current_max(di,
++			di->info->constant_charge_current_max_ua);
++	if (di->info->constant_charge_voltage_max_uv > 0)
++		rk818_charger_set_voltage_max(di,
++			di->info->constant_charge_voltage_max_uv);
++
++	/*
++	 * Termination current: prefer charge_term_current_ua from the DT;
++	 * fall back to ~C/30 of FCC scaled by sense resistor, then encode
++	 * to the nearest supported FINISH_*MA step.
++	 */
++	term_ua = di->info->charge_term_current_ua;
++	if (term_ua <= 0) {
++		if (di->sense_resist_mohm == 10)
++			term_ua = 100000;
++		else if (di->fcc_mah >= 5000)
++			term_ua = 250000;
++		else if (di->fcc_mah >= 4000)
++			term_ua = 200000;
++		else if (di->fcc_mah >= 3000)
++			term_ua = 150000;
++		else
++			term_ua = 100000;
++	}
++	finish_ma = rk818_encode_finish_current(term_ua);
++
++	usb_ctrl = rk818_read(di, RK818_USB_CTRL_REG);
++	chrg2    = rk818_read(di, RK818_CHRG_CTRL_REG2);
++	chrg3    = rk818_read(di, RK818_CHRG_CTRL_REG3);
++	thermal  = rk818_read(di, RK818_THERMAL_REG);
++
++	/* Use digital charge-termination signal */
++	chrg3 |= CHRG_TERM_DIG_SIGNAL;
++
++	/*
++	 * CC/CV safety timer: enable when a non-zero timeout is set in DT,
++	 * otherwise leave disabled.  The hardware timer guards against a
++	 * stuck charger that would otherwise keep pushing CC indefinitely
++	 * on a broken cell.
++	 */
++	if (di->cccv_timeout_h) {
++		chrg2 = (chrg2 & ~CHRG_TIMER_CCCV_MSK) |
++			rk818_encode_cccv_timeout(di->cccv_timeout_h);
++		chrg3 |= CHRG_TIMER_CCCV_EN;
++	} else {
++		chrg3 &= ~CHRG_TIMER_CCCV_EN;
++	}
++
++	chrg2 = (chrg2 & ~FINISH_CUR_MSK) | finish_ma;
++
++	if (di->feedback_temp) {
++		usb_ctrl |= CHRG_CT_EN;
++		thermal = (thermal & ~HOTDIE_TEMP_MASK) |
++			  rk818_encode_hotdie_temp(di->feedback_temp);
++	} else {
++		usb_ctrl &= ~CHRG_CT_EN;
++	}
++
++	rk818_write(di, RK818_USB_CTRL_REG,   usb_ctrl);
++	rk818_write(di, RK818_CHRG_CTRL_REG2, chrg2);
++	rk818_write(di, RK818_CHRG_CTRL_REG3, chrg3);
++	rk818_write(di, RK818_THERMAL_REG,    thermal);
++}
++
++/* -------------------------------------------------------------------------
++ * Startup SoC initialisation
++ * ------------------------------------------------------------------------- */
++
++static bool rk818_is_first_power_on(struct rk818_battery *di)
++{
++	u8 val = rk818_read(di, RK818_GGSTS_REG);
++
++	if (val & BAT_CON) {
++		rk818_write(di, RK818_GGSTS_REG, val & ~BAT_CON);
++		return true;
++	}
++	return false;
++}
++
++static bool rk818_was_warm_initialized(struct rk818_battery *di)
++{
++	u8 val = rk818_read(di, RK818_MISC_MARK_REG);
++
++	if (val & FG_INIT) {
++		rk818_write(di, RK818_MISC_MARK_REG, val & ~FG_INIT);
++		return true;
++	}
++	return false;
++}
++
++/*
++ * rk818_init_soc - choose the correct starting dsoc / remain_cap on boot.
++ *
++ * Decision priority:
++ *  1. First ever power-on: use OCV-derived SoC (battery was just connected).
++ *  2. Warm reboot (FG_INIT flag set): the coulomb counter is still live;
++ *     trust it and the saved dsoc directly.
++ *  3. Cold boot after >= 30 min off: OCV has settled; re-anchor from OCV.
++ *  4. Short cold boot: start from saved dsoc, but jump to OCV if the
++ *     discrepancy exceeds max_soc_offset_pct.
++ */
++static void rk818_init_soc(struct rk818_battery *di)
++{
++	int ocv_vol, ocv_soc, ocv_cap;
++	int saved_dsoc, saved_cap;
++	u8 cur, last;
++
++	di->fcc_mah           = rk818_read_fcc(di);
++	di->is_first_power_on = rk818_is_first_power_on(di);
++	di->is_initialized    = rk818_was_warm_initialized(di);
++
++	cur  = rk818_read(di, RK818_NON_ACT_TIMER_CNT_REG);
++	last = rk818_read(di, RK818_NON_ACT_TIMER_CNT_SAVE_REG);
++	rk818_write(di, RK818_NON_ACT_TIMER_CNT_SAVE_REG, cur);
++	di->pwroff_min = (cur != last) ? cur : 0;
++
++	ocv_vol = rk818_read_vol(di, RK818_BAT_OCV_REGH);
++	ocv_soc = vol_to_soc(di, ocv_vol);
++	ocv_cap = vol_to_cap(di, ocv_vol);
++
++	if (di->is_first_power_on) {
++		di->dsoc           = ocv_soc;
++		di->remain_cap_mah = ocv_cap;
++		rk818_save_fcc(di, (u32)di->fcc_mah);
++		dev_info(di->dev,
++			 "first power-on: dsoc=%d cap=%d mAh ocv=%d mV\n",
++			 di->dsoc, di->remain_cap_mah, ocv_vol);
++		goto done;
++	}
++
++	saved_dsoc = rk818_read(di, RK818_SOC_REG);
++	saved_cap  = rk818_read_saved_cap(di);
++
++	if (di->is_initialized) {
++		di->dsoc           = saved_dsoc;
++		di->remain_cap_mah = rk818_get_coulomb_cap(di);
++		dev_info(di->dev, "warm boot: dsoc=%d cap=%d mAh\n",
++			 di->dsoc, di->remain_cap_mah);
++		goto done;
++	}
++
++	if (di->pwroff_min >= 30) {
++		di->dsoc           = ocv_soc;
++		di->remain_cap_mah = ocv_cap;
++		dev_info(di->dev,
++			 "OCV re-anchor after %u min off: dsoc %d -> %d, cap=%d mAh\n",
++			 di->pwroff_min, saved_dsoc,
++			 di->dsoc, di->remain_cap_mah);
++		goto done;
++	}
++
++	di->dsoc           = saved_dsoc;
++	di->remain_cap_mah = max(0, saved_cap);
++
++	if (abs(ocv_soc - saved_dsoc) >= (int)di->max_soc_offset_pct) {
++		dev_info(di->dev,
++			 "OCV offset too large (saved=%d ocv=%d), jumping\n",
++			 saved_dsoc, ocv_soc);
++		di->dsoc           = ocv_soc;
++		di->remain_cap_mah = ocv_cap;
++	}
++
++done:
++	di->dsoc           = clamp(di->dsoc, 0, 100);
++	di->remain_cap_mah = max(0, di->remain_cap_mah);
++
++	rk818_set_coulomb_cap(di, di->remain_cap_mah);
++	di->rsoc = di->dsoc;
++
++	dev_info(di->dev,
++		 "init done: dsoc=%d rsoc=%d cap=%d mAh fcc=%d mAh\n",
++		 di->dsoc, di->rsoc, di->remain_cap_mah, di->fcc_mah);
++}
++
++/* -------------------------------------------------------------------------
++ * Periodic calibration
++ *
++ * Refreshes the voltage k/b coefficients and re-applies the current offset
++ * every CALIB_INTERVAL_MIN minutes so long-running drift is corrected
++ * without a reboot.  Driven from the main monitor work via
++ * ktime_get_boottime() so suspend time is accounted for automatically.
++ * ------------------------------------------------------------------------- */
++
++#define CALIB_INTERVAL_MIN	8
++
++static void rk818_periodic_calib(struct rk818_battery *di)
++{
++	int poffset, ioffset;
++
++	poffset = rk818_read(di, RK818_POFFSET_REG);
++	di->poffset = poffset ? poffset : POFFSET_DEFAULT;
++	ioffset = rk818_get_ioffset(di);
++	rk818_set_coffset(di, ioffset + di->poffset);
++	rk818_init_voltage_kb(di);
++
++	dev_dbg(di->dev, "periodic calib: coffset=0x%x poffset=%d\n",
++		rk818_get_coffset(di), di->poffset);
++}
++
++/* -------------------------------------------------------------------------
++ * Main monitor work
++ * ------------------------------------------------------------------------- */
++
++/*
++ * rk818_update_soc - recompute rsoc from the coulomb counter and step dsoc
++ * toward it by at most DSOC_DELTA_MAX per call.
++ *
++ * Special cases:
++ *   - RK818_CHG_STS_TERMINATED: snap remain_cap to fcc so rsoc hits 100 cleanly.
++ *   - Valid relaxed voltage: re-anchor the coulomb counter to the OCV cap.
++ *   - Voltage below shutdown threshold: force dsoc to 0.
++ */
++static void rk818_update_soc(struct rk818_battery *di)
++{
++	di->remain_cap_mah = rk818_get_coulomb_cap(di);
++
++	if (di->chrg_status == RK818_CHG_STS_TERMINATED &&
++	    di->remain_cap_mah != di->fcc_mah) {
++		dev_info(di->dev, "charge finish: cap %d -> %d mAh\n",
++			 di->remain_cap_mah, di->fcc_mah);
++		rk818_set_coulomb_cap(di, di->fcc_mah);
++	}
++
++	di->voltage_relax_mv = rk818_get_relax_voltage(di);
++	if (di->voltage_relax_mv > 0) {
++		int ocv_cap = vol_to_cap(di, di->voltage_relax_mv);
++		int ocv_soc = vol_to_soc(di, di->voltage_relax_mv);
++
++		dev_dbg(di->dev,
++			"relax OCV re-anchor: vol=%d mV soc=%d%% cap=%d mAh (was %d mAh)\n",
++			di->voltage_relax_mv, ocv_soc, ocv_cap,
++			di->remain_cap_mah);
++		rk818_set_coulomb_cap(di, ocv_cap);
++		rk818_restart_relax(di);
++	}
++
++	di->remain_cap_mah = rk818_get_coulomb_cap(di);
++	di->rsoc = clamp(di->remain_cap_mah * 100 / DIV(di->fcc_mah), 0, 100);
++
++	if (di->voltage_avg_mv < di->info->voltage_min_design_uv / 1000) {
++		dev_dbg(di->dev,
++			"voltage %d mV below shutdown threshold %u mV\n",
++			di->voltage_avg_mv, di->info->voltage_min_design_uv / 1000);
++		di->dsoc = 0;
++		return;
++	}
++
++	di->dsoc = clamp(di->dsoc +
++			 clamp(di->rsoc - di->dsoc,
++			       -DSOC_DELTA_MAX, DSOC_DELTA_MAX),
++			 0, 100);
++}
++
++/* -------------------------------------------------------------------------
++ * NTC battery temperature sensing (TS1)
++ * ------------------------------------------------------------------------- */
++
++static void rk818_init_ts1_detect(struct rk818_battery *di)
++{
++	u32 rmax;
++	u8 buf;
++
++	if (!di->ntc_size)
++		return;
++
++	/*
++	 * Pick a sample current based on the largest resistance we might
++	 * need to measure.  Entries are sorted by temperature ascending,
++	 * so the coldest entry -- entry 0 -- has the highest resistance.
++	 */
++	rmax = di->ntc_entries[0].res;
++
++	buf = rk818_read(di, RK818_TS_CTRL_REG);
++	buf &= ~TS1_CUR_MSK;
++	if (rmax < NTC_80UA_MAX_MEASURE) {
++		di->ntc_factor = NTC_CALC_FACTOR_80UA;
++		di->ntc_uA = 80;
++		buf |= ADC_CUR_80UA;
++	} else if (rmax < NTC_60UA_MAX_MEASURE) {
++		di->ntc_factor = NTC_CALC_FACTOR_60UA;
++		di->ntc_uA = 60;
++		buf |= ADC_CUR_60UA;
++	} else if (rmax < NTC_40UA_MAX_MEASURE) {
++		di->ntc_factor = NTC_CALC_FACTOR_40UA;
++		di->ntc_uA = 40;
++		buf |= ADC_CUR_40UA;
++	} else {
++		di->ntc_factor = NTC_CALC_FACTOR_20UA;
++		di->ntc_uA = 20;
++		buf |= ADC_CUR_20UA;
++	}
++	rk818_write(di, RK818_TS_CTRL_REG, buf);
++
++	/* Enable ADC TS1 channel */
++	buf = rk818_read(di, RK818_ADC_CTRL_REG);
++	buf |= ADC_TS1_EN;
++	rk818_write(di, RK818_ADC_CTRL_REG, buf);
++}
++
++/*
++ * Due to a hardware design issue, Vdelta = (R_sample + R_other) * I_avg is
++ * folded into the TS1 ADC value.  Subtract it to recover the real reading
++ * by sampling at two different excitation currents and solving for Vdelta:
++ *
++ *   adc1 - Vdelta    ua1                 (adc2 * ua1) - (adc1 * ua2)
++ *   ------------- = -----  =>  Vdelta = -----------------------------
++ *   adc2 - Vdelta    ua2                          ua1 - ua2
++ *
++ * Then, depending on current direction:
++ *     charging: ADC = adc1 - |Vdelta|
++ *  discharging: ADC = adc1 + |Vdelta|
++ */
++static int rk818_get_ntc_res(struct rk818_battery *di)
++{
++	int adc1 = 0, adc2 = 0;
++	int ua1, ua2, v_delta, val;
++	u8 buf;
++
++	/* Read adc1 at the configured sample current */
++	ua1 = di->ntc_uA;
++	adc1 |= rk818_read(di, RK818_TS1_ADC_REGL) << 0;
++	adc1 |= rk818_read(di, RK818_TS1_ADC_REGH) << 8;
++
++	/* Switch to a different reference current for adc2 */
++	ua2 = (ua1 != 20) ? 20 : 40;
++	buf = rk818_read(di, RK818_TS_CTRL_REG);
++	buf &= ~TS1_CUR_MSK;
++	buf |= ((ua2 - 20) / 20);
++	rk818_write(di, RK818_TS_CTRL_REG, buf);
++
++	/* Allow the new sample current to settle, then read adc2 */
++	msleep(1000);
++	adc2 |= rk818_read(di, RK818_TS1_ADC_REGL) << 0;
++	adc2 |= rk818_read(di, RK818_TS1_ADC_REGH) << 8;
++
++	if (adc2 != adc1)
++		v_delta = abs((adc2 * ua1 - adc1 * ua2) / (ua2 - ua1));
++	else
++		v_delta = 0;
++
++	val = (di->current_avg_ma >= 0) ? (adc1 - v_delta) : (adc1 + v_delta);
++
++	/* Restore the original sample current */
++	rk818_init_ts1_detect(di);
++
++	return val * di->ntc_factor;
++}
++
++/*
++ * Binary-search bracket lookup over the NTC table.
++ *
++ * Entries are sorted by temperature ascending, so resistance is strictly
++ * descending.  Given a measured resistance "ohm", return indices "low" and
++ * "high" such that:
++ *
++ *     entries[low].res >= ohm >= entries[high].res   (with low >= high)
++ *
++ * When "ohm" is out of range or an exact match, low == high.  The caller
++ * is expected to then interpolate between entries[low] and entries[high].
++ *
++ * Lifted in spirit from drivers/hwmon/ntc_thermistor.c's lookup_comp().
++ */
++static void rk818_ntc_lookup(const struct rk818_battery *di, u32 ohm,
++			     unsigned int *low, unsigned int *high)
++{
++	const struct rk818_ntc_entry *e = di->ntc_entries;
++	unsigned int n = di->ntc_size;
++	unsigned int start, end, mid;
++
++	/* Clamp: colder than coldest -> first entry */
++	if (ohm >= e[0].res) {
++		*low = 0;
++		*high = 0;
++		return;
++	}
++	/* Clamp: hotter than hottest -> last entry */
++	if (ohm <= e[n - 1].res) {
++		*low = n - 1;
++		*high = n - 1;
++		return;
++	}
++
++	/*
++	 * Invariant: e[start].res > ohm >= e[end].res
++	 * At entry, start=0 and end=n-1 satisfy it thanks to the clamps.
++	 */
++	start = 0;
++	end = n - 1;
++	while (start < end) {
++		mid = start + (end - start) / 2;
++
++		if (ohm >= e[mid].res)
++			end = mid;
++		else
++			start = mid + 1;
++	}
++
++	/*
++	 * start == end, and e[end].res <= ohm < e[end - 1].res.
++	 * So "low" (higher resistance) is end - 1 and "high" (lower
++	 * resistance) is end -- unless we hit an exact match.
++	 */
++	*high = end;
++	if (ohm == e[end].res)
++		*low = end;
++	else
++		*low = end - 1;
++}
++
++static void rk818_update_temperature(struct rk818_battery *di)
++{
++	static int old_temp;
++	static bool first_time = true;
++	unsigned int low, high;
++	int res, temp_mc, temp;
++
++	if (!di->ntc_size)
++		return;
++
++	res = rk818_get_ntc_res(di);
++	if (res < 0)
++		res = 0;
++
++	rk818_ntc_lookup(di, (u32)res, &low, &high);
++
++	/*
++	 * Interpolate in milli-degrees for precision, then convert to
++	 * tenths (the unit power_supply expects for POWER_SUPPLY_PROP_TEMP).
++	 * When low == high (clamp or exact match), fixp_linear_interpolate
++	 * returns y0 directly.
++	 */
++	temp_mc = fixp_linear_interpolate(di->ntc_entries[low].res,
++					  di->ntc_entries[low].temp * 1000,
++					  di->ntc_entries[high].res,
++					  di->ntc_entries[high].temp * 1000,
++					  res);
++	temp = temp_mc / 100;
++
++	if (first_time) {
++		old_temp = temp;
++		first_time = false;
++	}
++
++	/*
++	 * Reject single-sample glitches greater than 5 C from the previous
++	 * reading; trust everything else.
++	 */
++	if (abs(temp - old_temp) > 50)
++		temp = old_temp;
++	else
++		old_temp = temp;
++
++	/*
++	 * Assign only once per cycle, at the end, with the final value.
++	 * Writing a placeholder at the top of the function would be
++	 * visible to userspace during the ~1 s window while we wait for
++	 * adc2 to settle inside rk818_get_ntc_res(), causing the reported
++	 * temperature to flap between the placeholder and the real value
++	 * on every monitor poll.
++	 */
++	di->temperature = temp;
++	dev_dbg(di->dev, "temperature = %d\n", di->temperature);
++}
++
++static void rk818_battery_work(struct work_struct *work)
++{
++	struct rk818_battery *di =
++		container_of(work, struct rk818_battery, work.work);
++	int prev_dsoc = di->dsoc;
++	bool is_charging;
++	ktime_t now = ktime_get_boottime();
++
++	if (!di->last_calib ||
++	    ktime_after(now, ktime_add_ms(di->last_calib,
++					  CALIB_INTERVAL_MIN * 60 * MSEC_PER_SEC))) {
++		rk818_periodic_calib(di);
++		di->last_calib = now;
++	}
++
++	di->voltage_avg_mv = rk818_read_vol(di, RK818_BAT_VOL_REGH);
++	di->voltage_ocv_mv = rk818_read_vol(di, RK818_BAT_OCV_REGH);
++	di->current_avg_ma = rk818_read_cur(di, RK818_BAT_CUR_AVG_REGH);
++	di->chrg_status    = rk818_get_chrg_status(di);
++	rk818_update_temperature(di);
++
++	/*
++	 * Derive is_charging from CHG_STS, not the current sign: during
++	 * thermal foldback or at CC->CV transition, the measured current
++	 * can dip near zero while the charger is still actively regulating.
++	 */
++	switch (di->chrg_status) {
++	case RK818_CHG_STS_WAKEUP_CUR:
++	case RK818_CHG_STS_TRICKLE_CUR:
++	case RK818_CHG_STS_CC_OR_CV:
++		is_charging = true;
++		break;
++	default:
++		is_charging = false;
++		break;
++	}
++	if (is_charging != di->is_charging) {
++		di->is_charging = is_charging;
++		if (is_charging) {
++			/*
++			 * Reset flag so auto-calibration will run again the
++			 * next time RK818_CHG_STS_TERMINATED is reached.
++			 */
++			di->coffset_calib_done = false;
++		}
++	}
++
++	/* Clamp coulomb counter to [0, fcc] */
++	if (di->remain_cap_mah > di->fcc_mah) {
++		rk818_set_coulomb_cap(di, di->fcc_mah);
++	} else if (di->remain_cap_mah < 0) {
++		/*
++		 * Estimate from terminal voltage when the counter underflows.
++		 * Subtract the resistive drop to get a rough OCV.
++		 */
++		int est_vol = di->voltage_avg_mv -
++			      (di->info->factory_internal_resistance_uohm / 1000) *
++			      di->current_avg_ma / 1000;
++		int est_cap = max(0, vol_to_cap(di, est_vol));
++
++		dev_info(di->dev,
++			 "counter underflow, voltage estimate: %d mAh\n",
++			 est_cap);
++		rk818_set_coulomb_cap(di, est_cap);
++	}
++
++	if (di->chrg_status == RK818_CHG_STS_TERMINATED && rk818_charger_online(di))
++		rk818_auto_calib_coffset(di);
++
++	rk818_update_soc(di);
++
++	rk818_save_dsoc(di);
++	rk818_save_remain_cap(di);
++
++	if (di->dsoc != prev_dsoc) {
++		if (di->charger_psy)
++			power_supply_changed(di->charger_psy);
++		dev_info(di->dev,
++			 "dsoc %d -> %d (rsoc=%d v=%d mV i=%d mA cap=%d mAh fcc=%d mAh)\n",
++			 prev_dsoc, di->dsoc, di->rsoc,
++			 di->voltage_avg_mv, di->current_avg_ma,
++			 di->remain_cap_mah, di->fcc_mah);
++	}
++
++	dev_dbg(di->dev,
++		"v=%d ocv=%d rv=%d i=%d cap=%d rsoc=%d dsoc=%d chrg=0x%x\n",
++		di->voltage_avg_mv, di->voltage_ocv_mv, di->voltage_relax_mv,
++		di->current_avg_ma, di->remain_cap_mah,
++		di->rsoc, di->dsoc, di->chrg_status);
++
++	queue_delayed_work(di->wq, &di->work,
++			   msecs_to_jiffies(di->monitor_ms));
++}
++
++/* -------------------------------------------------------------------------
++ * Battery fuel-gauge properties (used by the charger psy get_property)
++ * ------------------------------------------------------------------------- */
++
++static int rk818_bat_get_property(struct rk818_battery *di,
++				  enum power_supply_property psp,
++				  union power_supply_propval *val)
++{
++	switch (psp) {
++	case POWER_SUPPLY_PROP_STATUS:
++		switch (di->chrg_status) {
++		case RK818_CHG_STS_WAKEUP_CUR:
++		case RK818_CHG_STS_TRICKLE_CUR:
++		case RK818_CHG_STS_CC_OR_CV:
++			val->intval = POWER_SUPPLY_STATUS_CHARGING;
++			break;
++		case RK818_CHG_STS_TERMINATED:
++			val->intval = rk818_charger_online(di) ?
++				      POWER_SUPPLY_STATUS_FULL :
++				      POWER_SUPPLY_STATUS_DISCHARGING;
++			break;
++		case RK818_CHG_STS_USB_OV:
++		case RK818_CHG_STS_BAT_TEMP_FAULT:
++		case RK818_CHG_STS_TIMEOUT:
++			val->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;
++			break;
++		default:
++			val->intval = POWER_SUPPLY_STATUS_DISCHARGING;
++			break;
++		}
++		break;
++	case POWER_SUPPLY_PROP_PRESENT:
++		val->intval = rk818_battery_present(di);
++		break;
++	case POWER_SUPPLY_PROP_CAPACITY:
++		val->intval = di->dsoc;
++		break;
++	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
++		val->intval = di->voltage_avg_mv * 1000; /* uV */
++		break;
++	case POWER_SUPPLY_PROP_VOLTAGE_OCV:
++		val->intval = di->voltage_ocv_mv * 1000; /* uV */
++		break;
++	case POWER_SUPPLY_PROP_CURRENT_NOW:
++		val->intval = di->current_avg_ma * 1000; /* uA */
++		break;
++	case POWER_SUPPLY_PROP_CHARGE_FULL:
++		val->intval = di->fcc_mah * 1000; /* uAh */
++		break;
++	case POWER_SUPPLY_PROP_TEMP:
++		val->intval = di->temperature;
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++/* -------------------------------------------------------------------------
++ * Suspend / resume
++ * ------------------------------------------------------------------------- */
++
++static int rk818_battery_suspend(struct platform_device *pdev,
++				  pm_message_t state)
++{
++	struct rk818_battery *di = platform_get_drvdata(pdev);
++
++	cancel_delayed_work_sync(&di->work);
++
++	di->sleep_chrg_online = rk818_charger_online(di);
++	di->current_avg_ma    = rk818_read_cur(di, RK818_BAT_CUR_AVG_REGH);
++	di->remain_cap_mah    = rk818_get_coulomb_cap(di);
++	di->rsoc = di->remain_cap_mah * 100 / DIV(di->fcc_mah);
++	di->suspend_time = ktime_get_boottime();
++
++	rk818_save_dsoc(di);
++	rk818_save_remain_cap(di);
++	rk818_set_low_voltage_irq(di);
++
++	dev_info(di->dev,
++		 "suspend: dsoc=%d rsoc=%d i=%d mA v=%d mV cap=%d mAh chrg=%d\n",
++		 di->dsoc, di->rsoc, di->current_avg_ma, di->voltage_avg_mv,
++		 di->remain_cap_mah, di->sleep_chrg_online);
++
++	return 0;
++}
++
++static int rk818_battery_resume(struct platform_device *pdev)
++{
++	struct rk818_battery *di = platform_get_drvdata(pdev);
++	int sleep_sec, sleep_mah, sleep_soc_drop;
++
++	di->current_avg_ma = rk818_read_cur(di, RK818_BAT_CUR_AVG_REGH);
++	di->voltage_avg_mv = rk818_read_vol(di, RK818_BAT_VOL_REGH);
++	di->remain_cap_mah = rk818_get_coulomb_cap(di);
++	di->rsoc = di->remain_cap_mah * 100 / DIV(di->fcc_mah);
++
++	sleep_sec = ktime_ms_delta(ktime_get_boottime(), di->suspend_time) /
++		    MSEC_PER_SEC;
++
++	/*
++	 * The coulomb counter runs through suspend, so remain_cap_mah already
++	 * accounts for actual consumption.  We only apply a conservative
++	 * minimum-consumption correction to dsoc so it does not appear to
++	 * lag behind reality after a long sleep without a charger attached.
++	 * Clamp to rsoc so we never push dsoc below what the counter reports.
++	 */
++	if (!di->sleep_chrg_online && sleep_sec > 0) {
++		sleep_mah = SLP_CURR_MA * sleep_sec / 3600;
++		sleep_soc_drop = sleep_mah * 100 / DIV(di->fcc_mah);
++		di->dsoc = max(di->dsoc - sleep_soc_drop, max(di->rsoc, 0));
++
++		dev_info(di->dev,
++			 "resume: slept %d s, est. drop %d%%, dsoc=%d rsoc=%d\n",
++			 sleep_sec, sleep_soc_drop, di->dsoc, di->rsoc);
++	}
++
++	rk818_save_dsoc(di);
++	rk818_set_low_voltage_irq(di);
++
++	dev_info(di->dev,
++		 "resume: dsoc=%d rsoc=%d i=%d mA v=%d mV cap=%d mAh\n",
++		 di->dsoc, di->rsoc, di->current_avg_ma,
++		 di->voltage_avg_mv, di->remain_cap_mah);
++
++	queue_delayed_work(di->wq, &di->work, msecs_to_jiffies(1000));
++
++	return 0;
++}
++
++/* -------------------------------------------------------------------------
++ * IRQ
++ * ------------------------------------------------------------------------- */
++
++static irqreturn_t rk818_vb_low_irq(int irq, void *data)
++{
++	struct rk818_battery *di = data;
++
++	dev_warn(di->dev, "low battery IRQ: v=%d mV dsoc=%d%%\n",
++		 di->voltage_avg_mv, di->dsoc);
++	return IRQ_HANDLED;
++}
++
++/* =========================================================================
++ * USB supply
++ * ========================================================================= */
++
++static int rk818_usb_set_input_current_max(struct rk818_battery *di, int val)
++{
++	unsigned reg;
++	int ret;
++
++	if (val < 450000)
++		reg = 1;
++	else if (val < 850000)
++		reg = 0;
++	else if (val < 1000000)
++		reg = 2;
++	else if (val < 3000000)
++		reg = 3 + (val - 1000000) / 250000;
++	else
++		reg = 11;
++
++	dev_info(di->dev, "applying input current limit %d mA\n", val / 1000);
++
++	ret = regmap_update_bits(di->regmap, RK818_USB_CTRL_REG,
++				 RK818_USB_CTRL_USB_ILIM_MASK, reg);
++	if (ret)
++		dev_err(di->dev,
++			"USB input current limit setting failed (%d)\n", ret);
++
++	return ret;
++}
++
++static int rk818_usb_get_input_current_max(struct rk818_battery *di, int *val)
++{
++	unsigned reg;
++	int ret;
++
++	ret = regmap_read(di->regmap, RK818_USB_CTRL_REG, &reg);
++	if (ret) {
++		dev_err(di->dev,
++			"USB input current limit getting failed (%d)\n", ret);
++		return ret;
++	}
++
++	reg &= RK818_USB_CTRL_USB_ILIM_MASK;
++	if (reg == 0)
++		*val = 450000;
++	else if (reg == 1)
++		*val = 80000;
++	else if (reg == 2)
++		*val = 850000;
++	else if (reg < 11)
++		*val = 1000000 + (reg - 3) * 250000;
++	else
++		*val = 3000000;
++
++	return 0;
++}
++
++static int rk818_usb_set_input_voltage_min(struct rk818_battery *di, int val)
++{
++	unsigned reg;
++	int ret;
++
++	if (val < 2780000)
++		reg = 0;
++	else if (val < 3270000)
++		reg = (val - 2780000) / 70000;
++	else
++		reg = 7;
++
++	ret = regmap_update_bits(di->regmap, RK818_USB_CTRL_REG,
++				 RK818_USB_CTRL_USB_CHG_SD_VSEL_MASK,
++				 reg << RK818_USB_CTRL_USB_CHG_SD_VSEL_OFFSET);
++	if (ret)
++		dev_err(di->dev,
++			"USB input voltage limit setting failed (%d)\n", ret);
++
++	return ret;
++}
++
++static int rk818_usb_get_input_voltage_min(struct rk818_battery *di, int *val)
++{
++	unsigned reg;
++	int ret;
++
++	ret = regmap_read(di->regmap, RK818_USB_CTRL_REG, &reg);
++	if (ret) {
++		dev_err(di->dev,
++			"USB input voltage limit getting failed (%d)\n", ret);
++		return ret;
++	}
++
++	reg &= RK818_USB_CTRL_USB_CHG_SD_VSEL_MASK;
++	reg >>= RK818_USB_CTRL_USB_CHG_SD_VSEL_OFFSET;
++
++	*val = 2780000 + (reg * 70000);
++
++	return 0;
++}
++
++static int rk818_usb_power_get_property(struct power_supply *psy,
++					enum power_supply_property psp,
++					union power_supply_propval *val)
++{
++	struct rk818_battery *di = power_supply_get_drvdata(psy);
++	unsigned reg;
++	int ret;
++
++	switch (psp) {
++	case POWER_SUPPLY_PROP_PRESENT:
++		ret = regmap_read(di->regmap, RK818_SUP_STS_REG, &reg);
++		if (ret)
++			return ret;
++
++		val->intval = !!(reg & RK818_SUP_STS_USB_EXS);
++		break;
++
++	case POWER_SUPPLY_PROP_HEALTH:
++		ret = regmap_read(di->regmap, RK818_SUP_STS_REG, &reg);
++		if (ret)
++			return ret;
++
++		if (!(reg & RK818_SUP_STS_USB_EXS)) {
++			val->intval = POWER_SUPPLY_HEALTH_UNKNOWN;
++		} else if (reg & RK818_SUP_STS_USB_EFF) {
++			val->intval = POWER_SUPPLY_HEALTH_GOOD;
++		} else {
++			val->intval = POWER_SUPPLY_HEALTH_UNSPEC_FAILURE;
++		}
++
++		break;
++
++	case POWER_SUPPLY_PROP_INPUT_VOLTAGE_LIMIT:
++		return rk818_usb_get_input_voltage_min(di, &val->intval);
++
++	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
++		return rk818_usb_get_input_current_max(di, &val->intval);
++
++	default:
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static int rk818_usb_power_set_property(struct power_supply *psy,
++					enum power_supply_property psp,
++					const union power_supply_propval *val)
++{
++	struct rk818_battery *di = power_supply_get_drvdata(psy);
++
++	switch (psp) {
++	case POWER_SUPPLY_PROP_INPUT_VOLTAGE_LIMIT:
++		return rk818_usb_set_input_voltage_min(di, val->intval);
++
++	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
++		return rk818_usb_set_input_current_max(di, val->intval);
++
++	default:
++		return -EINVAL;
++	}
++}
++
++static int rk818_usb_power_prop_writeable(struct power_supply *psy,
++					  enum power_supply_property psp)
++{
++	switch (psp) {
++	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
++	case POWER_SUPPLY_PROP_INPUT_VOLTAGE_LIMIT:
++		return 1;
++
++	default:
++		return 0;
++	}
++}
++
++/* Sync the input-current-limit with our parent supply (if we have one) */
++static void rk818_usb_power_external_power_changed(struct power_supply *psy)
++{
++	struct rk818_battery *di = power_supply_get_drvdata(psy);
++	union power_supply_propval val;
++	int ret;
++
++	ret = power_supply_get_property_from_supplier(di->usb_psy,
++						      POWER_SUPPLY_PROP_CURRENT_MAX,
++						      &val);
++	if (ret)
++		return;
++
++	/*
++	 * We only want to start applying input current limit after we get first
++	 * non-0 value from the supplier. Until then, we keep the limit applied
++	 * by the bootloader. If we lower the limit before the charger is properly
++	 * detected, we risk boot failure due to insufficient power.
++	 */
++	if (!di->apply_ilim) {
++		if (!val.intval)
++			return;
++
++		di->apply_ilim = true;
++	}
++
++	if (val.intval < 500000)
++		val.intval = 500000;
++
++	rk818_usb_power_set_property(di->usb_psy,
++				     POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT,
++				     &val);
++}
++
++static enum power_supply_property rk818_usb_power_props[] = {
++	POWER_SUPPLY_PROP_PRESENT,
++	POWER_SUPPLY_PROP_HEALTH,
++	POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT,
++	POWER_SUPPLY_PROP_INPUT_VOLTAGE_LIMIT,
++};
++
++static const struct power_supply_desc rk818_usb_desc = {
++	.name			= "rk818-usb",
++	.type			= POWER_SUPPLY_TYPE_USB,
++	.properties		= rk818_usb_power_props,
++	.num_properties		= ARRAY_SIZE(rk818_usb_power_props),
++	.property_is_writeable	= rk818_usb_power_prop_writeable,
++	.get_property		= rk818_usb_power_get_property,
++	.set_property		= rk818_usb_power_set_property,
++	.external_power_changed	= rk818_usb_power_external_power_changed,
++};
++
++/* =========================================================================
++ * Charger / battery supply
++ * ========================================================================= */
++
++static int rk818_charger_set_current_max(struct rk818_battery *di, int val)
++{
++	unsigned reg;
++	int ret;
++
++	if (val < 1000000)
++		reg = 0;
++	else if (val < 3000000)
++		reg = (val - 1000000) / 200000;
++	else
++		reg = 10;
++
++	ret = regmap_update_bits(di->regmap, RK818_CHRG_CTRL_REG1,
++				 RK818_CHRG_CTRL_REG1_CHRG_CUR_SEL_MASK,
++				 reg << RK818_CHRG_CTRL_REG1_CHRG_CUR_SEL_OFFSET);
++	if (ret)
++		dev_err(di->dev,
++			"Charging max current setting failed (%d)\n", ret);
++
++	return ret;
++}
++
++static int rk818_charger_get_current_max(struct rk818_battery *di, int *val)
++{
++	unsigned reg;
++	int ret;
++
++	ret = regmap_read(di->regmap, RK818_CHRG_CTRL_REG1, &reg);
++	if (ret) {
++		dev_err(di->dev,
++			"Charging max current getting failed (%d)\n", ret);
++		return ret;
++	}
++
++	reg &= RK818_CHRG_CTRL_REG1_CHRG_CUR_SEL_MASK;
++	reg >>= RK818_CHRG_CTRL_REG1_CHRG_CUR_SEL_OFFSET;
++
++	*val = 1000000 + reg * 200000;
++
++	return 0;
++}
++
++static int rk818_charger_set_voltage_max(struct rk818_battery *di, int val)
++{
++	unsigned reg;
++	int ret;
++
++	if (val < 4050000)
++		reg = 0;
++	else if (val < 4350000)
++		reg = (val - 4050000) / 50000;
++	else
++		reg = 6;
++
++	ret = regmap_update_bits(di->regmap, RK818_CHRG_CTRL_REG1,
++				 RK818_CHRG_CTRL_REG1_CHRG_VOL_SEL_MASK,
++				 reg << RK818_CHRG_CTRL_REG1_CHRG_VOL_SEL_OFFSET);
++	if (ret)
++		dev_err(di->dev,
++			"Charging end voltage setting failed (%d)\n", ret);
++
++	return ret;
++}
++
++static int rk818_charger_get_voltage_max(struct rk818_battery *di, int *val)
++{
++	unsigned reg;
++	int ret;
++
++	ret = regmap_read(di->regmap, RK818_CHRG_CTRL_REG1, &reg);
++	if (ret) {
++		dev_err(di->dev,
++			"Charging end voltage getting failed (%d)\n", ret);
++		return ret;
++	}
++
++	reg &= RK818_CHRG_CTRL_REG1_CHRG_VOL_SEL_MASK;
++	reg >>= RK818_CHRG_CTRL_REG1_CHRG_VOL_SEL_OFFSET;
++
++	*val = 4050000 + reg * 50000;
++
++	return 0;
++}
++
++static int rk818_charger_get_property(struct power_supply *psy,
++				      enum power_supply_property psp,
++				      union power_supply_propval *val)
++{
++	struct rk818_battery *di = power_supply_get_drvdata(psy);
++	unsigned reg;
++	int ret;
++
++	/* Properties delegated to the fuel-gauge */
++	switch (psp) {
++	case POWER_SUPPLY_PROP_CURRENT_NOW:
++	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
++	case POWER_SUPPLY_PROP_VOLTAGE_OCV:
++	case POWER_SUPPLY_PROP_PRESENT:
++	case POWER_SUPPLY_PROP_CAPACITY:
++	case POWER_SUPPLY_PROP_TEMP:
++	case POWER_SUPPLY_PROP_STATUS:
++	case POWER_SUPPLY_PROP_CHARGE_FULL:
++		return rk818_bat_get_property(di, psp, val);
++	default:
++		break;
++	}
++
++	switch (psp) {
++	case POWER_SUPPLY_PROP_ONLINE:
++		ret = regmap_read(di->regmap, RK818_CHRG_CTRL_REG1, &reg);
++		if (ret) {
++			dev_err(di->dev, "failed to read the charger state (%d)\n", ret);
++			return ret;
++		}
++
++		val->intval = !!(reg & RK818_CHRG_CTRL_REG1_CHRG_EN);
++		break;
++
++	case POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR:
++		ret = regmap_read(di->regmap, RK818_CHRG_CTRL_REG1, &reg);
++		if (ret) {
++			dev_err(di->dev, "failed to read the charger state (%d)\n", ret);
++			return ret;
++		}
++
++		if (reg & RK818_CHRG_CTRL_REG1_CHRG_EN)
++			val->intval = POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO;
++		else
++			val->intval = POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE;
++
++		return 0;
++
++	case POWER_SUPPLY_PROP_CHARGE_TYPE:
++		ret = regmap_read(di->regmap, RK818_SUP_STS_REG, &reg);
++		if (ret)
++			return ret;
++
++		switch (reg & RK818_CHG_STS_MASK) {
++		case RK818_CHG_STS_WAKEUP_CUR:
++		case RK818_CHG_STS_TRICKLE_CUR:
++			val->intval = POWER_SUPPLY_CHARGE_TYPE_TRICKLE;
++			break;
++		case RK818_CHG_STS_CC_OR_CV:
++			val->intval = POWER_SUPPLY_CHARGE_TYPE_FAST;
++			break;
++		case RK818_CHG_STS_TERMINATED:
++			val->intval = POWER_SUPPLY_CHARGE_TYPE_NONE;
++			break;
++		default:
++			val->intval = POWER_SUPPLY_CHARGE_TYPE_UNKNOWN;
++			break;
++		}
++
++		break;
++
++	case POWER_SUPPLY_PROP_CHARGE_TERM_CURRENT:
++		ret = regmap_read(di->regmap, RK818_CHRG_CTRL_REG2, &reg);
++		if (ret)
++			return ret;
++
++		val->intval = 100000 + ((reg >> 6) & 3) * 50000;
++		break;
++
++	case POWER_SUPPLY_PROP_HEALTH:
++		ret = regmap_read(di->regmap, RK818_SUP_STS_REG, &reg);
++		if (ret)
++			return ret;
++
++		switch (reg & RK818_CHG_STS_MASK) {
++		case RK818_CHG_STS_USB_OV:
++			val->intval = POWER_SUPPLY_HEALTH_OVERVOLTAGE;
++			break;
++		case RK818_CHG_STS_BAT_TEMP_FAULT:
++			val->intval = POWER_SUPPLY_HEALTH_OVERHEAT;
++			break;
++		case RK818_CHG_STS_TIMEOUT:
++			val->intval = POWER_SUPPLY_HEALTH_SAFETY_TIMER_EXPIRE;
++			break;
++		default:
++			val->intval = POWER_SUPPLY_HEALTH_GOOD;
++			break;
++		}
++
++		break;
++
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
++		return rk818_charger_get_voltage_max(di, &val->intval);
++
++	case POWER_SUPPLY_PROP_PRECHARGE_CURRENT:
++		ret = rk818_charger_get_current_max(di, &val->intval);
++		val->intval /= 10;
++		return ret;
++
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
++		return rk818_charger_get_current_max(di, &val->intval);
++
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
++		val->intval = di->info->constant_charge_voltage_max_uv;
++		break;
++
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
++		val->intval = di->info->constant_charge_current_max_ua;
++		break;
++
++	case POWER_SUPPLY_PROP_ENERGY_FULL_DESIGN:
++		val->intval = di->info->energy_full_design_uwh;
++		return 0;
++
++	case POWER_SUPPLY_PROP_ENERGY_EMPTY_DESIGN:
++		val->intval = 0;
++		return 0;
++
++	default:
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static int rk818_charger_set_property(struct power_supply *psy,
++				      enum power_supply_property psp,
++				      const union power_supply_propval *val)
++{
++	struct rk818_battery *di = power_supply_get_drvdata(psy);
++
++	switch (psp) {
++	case POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR:
++		switch (val->intval) {
++		case POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO:
++			return regmap_update_bits(di->regmap, RK818_CHRG_CTRL_REG1,
++						  RK818_CHRG_CTRL_REG1_CHRG_EN,
++						  RK818_CHRG_CTRL_REG1_CHRG_EN);
++		case POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE:
++			return regmap_update_bits(di->regmap, RK818_CHRG_CTRL_REG1,
++						  RK818_CHRG_CTRL_REG1_CHRG_EN, 0);
++		default:
++			return -EINVAL;
++		}
++
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
++		return rk818_charger_set_voltage_max(di, val->intval);
++
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
++		return rk818_charger_set_current_max(di, val->intval);
++
++	default:
++		return -EINVAL;
++	}
++}
++
++static int rk818_charger_prop_writeable(struct power_supply *psy,
++					enum power_supply_property psp)
++{
++	switch (psp) {
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
++	case POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR:
++		return 1;
++
++	default:
++		return 0;
++	}
++}
++
++static enum power_supply_property rk818_charger_props[] = {
++	POWER_SUPPLY_PROP_ONLINE,
++	POWER_SUPPLY_PROP_HEALTH,
++	POWER_SUPPLY_PROP_STATUS,
++	POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR,
++	POWER_SUPPLY_PROP_CHARGE_TYPE,
++	POWER_SUPPLY_PROP_CHARGE_TERM_CURRENT,
++	POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT,
++	POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE,
++	POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX,
++	POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX,
++	POWER_SUPPLY_PROP_PRECHARGE_CURRENT,
++	POWER_SUPPLY_PROP_ENERGY_FULL_DESIGN,
++	POWER_SUPPLY_PROP_ENERGY_EMPTY_DESIGN,
++	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
++	POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN,
++	POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN,
++	POWER_SUPPLY_PROP_TECHNOLOGY,
++
++	/* Fuel-gauge properties exposed on the battery supply */
++	POWER_SUPPLY_PROP_CURRENT_NOW,
++	POWER_SUPPLY_PROP_VOLTAGE_NOW,
++	POWER_SUPPLY_PROP_VOLTAGE_OCV,
++	POWER_SUPPLY_PROP_PRESENT,
++	POWER_SUPPLY_PROP_CAPACITY,
++	POWER_SUPPLY_PROP_TEMP,
++	POWER_SUPPLY_PROP_CHARGE_FULL,
++};
++
++static const struct power_supply_desc rk818_charger_desc = {
++	.name			= "rk818-battery",
++	.type			= POWER_SUPPLY_TYPE_BATTERY,
++	.properties		= rk818_charger_props,
++	.num_properties		= ARRAY_SIZE(rk818_charger_props),
++	.property_is_writeable	= rk818_charger_prop_writeable,
++	.get_property		= rk818_charger_get_property,
++	.set_property		= rk818_charger_set_property,
++	.charge_behaviours	= BIT(POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO) |
++				  BIT(POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE),
++};
++
++static int rk818_parse_dt(struct rk818_battery *di)
++{
++	struct device *dev = di->dev;
++	struct device_node *np = dev->of_node;
++	u32 val;
++	int length;
++	int ret;
++
++	/* Defaults for optional properties */
++	di->monitor_sec		   = 5;
++	di->relax_entry_current_ma = 300;
++	di->relax_exit_current_ma  = 300;
++	di->max_soc_offset_pct	   = 60;
++	di->sense_resist_mohm	   = 20;
++	di->feedback_temp	   = 105;	/* Celsius */
++	di->cccv_timeout_h	   = 12;	/* hours */
++
++	if (!of_property_read_u32(np, "rockchip,sense-resistor-micro-ohms",
++				  &val))
++		di->sense_resist_mohm = val / 1000;
++
++	of_property_read_u32(np, "rockchip,monitor-sec", &di->monitor_sec);
++
++	if (!of_property_read_u32(np, "rockchip,relax-entry-current-microamp",
++				  &val))
++		di->relax_entry_current_ma = val / 1000;
++	if (!of_property_read_u32(np, "rockchip,relax-exit-current-microamp",
++				  &val))
++		di->relax_exit_current_ma = val / 1000;
++
++	of_property_read_u32(np, "rockchip,max-soc-offset-percent",
++			     &di->max_soc_offset_pct);
++
++	/*
++	 * HOTDIE threshold, in Celsius.  The register only supports
++	 * 85/95/105/115 C; the nearest lower entry is selected at
++	 * register-write time.  A DT value of 0 disables the feature.
++	 */
++	of_property_read_u32(np, "rockchip,feedback-temp-celsius",
++			     &di->feedback_temp);
++
++	/*
++	 * CC/CV safety timer, in hours.  The register only supports
++	 * 4/5/6/8/10/12/14/16 h; the nearest lower entry is selected at
++	 * register-write time.  A DT value of 0 disables the timer.
++	 */
++	of_property_read_u32(np, "rockchip,cccv-timeout-hours",
++			     &di->cccv_timeout_h);
++
++	/*
++	 * NTC battery thermistor table.
++	 *
++	 * "rockchip,ntc-table" is a flat array of <degree_celsius resistance_ohms>
++	 * pairs.  Degrees are signed (negative temperatures allowed), resistances
++	 * are ohms.  Entries must be sorted by temperature ascending, which for
++	 * an NTC means resistance is strictly descending.  The table may be
++	 * sparse (any step, not necessarily 1 C) -- lookup interpolates.
++	 *
++	 * Example:
++	 *   rockchip,ntc-table = <
++	 *       (-20) 26458836
++	 *       (-15) 20048010
++	 *       ( -6) 12489321
++	 *       ...
++	 *   >;
++	 */
++	if (of_find_property(np, "rockchip,ntc-table", &length)) {
++		unsigned int cells = length / sizeof(u32);
++		unsigned int i;
++		size_t size;
++
++		if (cells < 4 || (cells & 1)) {
++			dev_err(di->dev,
++				"rockchip,ntc-table must be an array of >=2 <deg res> pairs\n");
++			return -EINVAL;
++		}
++
++		di->ntc_size = cells / 2;
++		size = sizeof(*di->ntc_entries) * di->ntc_size;
++		di->ntc_entries = devm_kzalloc(di->dev, size, GFP_KERNEL);
++		if (!di->ntc_entries)
++			return -ENOMEM;
++
++		for (i = 0; i < di->ntc_size; i++) {
++			struct rk818_ntc_entry *e = &di->ntc_entries[i];
++			u32 temp_cell;
++
++			/*
++			 * of_property_read_s32_index does not exist -- read as
++			 * u32 and reinterpret.  DT cells are 32-bit two's
++			 * complement, so a negative value like -20 arrives as
++			 * 0xffffffec and the (s32) cast recovers -20.
++			 */
++			ret = of_property_read_u32_index(np, "rockchip,ntc-table",
++							 2 * i, &temp_cell);
++			if (ret)
++				return ret;
++			e->temp = (s32)temp_cell;
++
++			ret = of_property_read_u32_index(np, "rockchip,ntc-table",
++							 2 * i + 1, &e->res);
++			if (ret)
++				return ret;
++
++			if (i > 0) {
++				const struct rk818_ntc_entry *p = &di->ntc_entries[i - 1];
++
++				if (e->temp <= p->temp) {
++					dev_err(di->dev,
++						"rockchip,ntc-table: temps must be strictly ascending (entry %u: %d <= %d)\n",
++						i, e->temp, p->temp);
++					return -EINVAL;
++				}
++				if (e->res >= p->res) {
++					dev_err(di->dev,
++						"rockchip,ntc-table: resistances must be strictly descending (entry %u: %u >= %u)\n",
++						i, e->res, p->res);
++					return -EINVAL;
++				}
++			}
++		}
++	}
++
++	return 0;
++}
++
++/* -------------------------------------------------------------------------
++ * Probe / shutdown
++ * ------------------------------------------------------------------------- */
++
++static int rk818_battery_probe(struct platform_device *pdev)
++{
++	struct rk808 *rk818 = dev_get_drvdata(pdev->dev.parent);
++	struct power_supply_config psy_cfg = { };
++	struct device *dev = &pdev->dev;
++	struct rk818_battery *di;
++	int ret, vb_lo_irq;
++
++	di = devm_kzalloc(dev, sizeof(*di), GFP_KERNEL);
++	if (!di)
++		return -ENOMEM;
++
++	di->rk818 = rk818;
++	di->pdev = pdev;
++	di->dev = dev;
++	di->regmap = rk818->regmap;
++	platform_set_drvdata(pdev, di);
++
++	ret = rk818_parse_dt(di);
++	if (ret)
++		return ret;
++
++	if (!rk818_battery_present(di))
++		return dev_err_probe(di->dev, -ENODEV,
++				     "no battery detected\n");
++
++	di->res_div = (di->sense_resist_mohm == 20) ? 1 : 2;
++	di->monitor_ms = di->monitor_sec * 1000;
++	if (!di->monitor_ms)
++		di->monitor_ms = MONITOR_MS_DEFAULT;
++
++	/*
++	 * Plausible placeholder (20.0 C) until the first monitor cycle
++	 * runs rk818_update_temperature().  Without this, userspace could
++	 * briefly observe 0.0 C between power-supply registration and the
++	 * first poll.
++	 */
++	di->temperature = 200;
++
++	di->boot_base_jiffies = jiffies;
++
++	/*
++	 * Register power supplies first: the power-supply core will
++	 * parse the "monitored-battery" phandle on our fwnode and
++	 * populate psy->battery_info with the standard simple-battery
++	 * properties.  The gauge init sequence below depends on those
++	 * values (design capacity, OCV table, internal resistance,
++	 * shutdown voltage), so it must run afterwards.
++	 */
++	psy_cfg.drv_data = di;
++	psy_cfg.fwnode = dev_fwnode(dev);
++
++	di->usb_psy = devm_power_supply_register(dev, &rk818_usb_desc,
++						 &psy_cfg);
++	if (IS_ERR(di->usb_psy))
++		return dev_err_probe(dev, PTR_ERR(di->usb_psy),
++				     "register usb power supply fail\n");
++
++	di->charger_psy = devm_power_supply_register(dev, &rk818_charger_desc,
++						     &psy_cfg);
++	if (IS_ERR(di->charger_psy))
++		return dev_err_probe(dev, PTR_ERR(di->charger_psy),
++				     "register charger power supply fail\n");
++
++	di->info = di->charger_psy->battery_info;
++	if (!di->info)
++		return dev_err_probe(dev, -ENODEV,
++				     "monitored-battery info not available\n");
++
++	rk818_enable_gauge(di);
++	rk818_init_voltage_kb(di);
++	rk818_init_coffset(di);
++	rk818_configure_sampling(di);
++	rk818_configure_relax_thresholds(di);
++	rk818_init_soc(di);
++	rk818_configure_charger(di);
++	rk818_init_ts1_detect(di);
++	rk818_set_low_voltage_irq(di);
++
++	/* disable voltage limit and enable input current limit */
++	ret = regmap_update_bits(di->regmap, RK818_SUP_STS_REG,
++				 RK818_SUP_STS_USB_ILIM_EN | RK818_SUP_STS_USB_VLIM_EN,
++				 RK818_SUP_STS_USB_ILIM_EN);
++	if (ret)
++		dev_warn(di->dev, "failed to enable input current limit (%d)\n", ret);
++
++	/* make sure analog control loop is enabled */
++	ret = regmap_update_bits(di->regmap, RK818_CHRG_CTRL_REG3,
++				 RK818_CHRG_CTRL_REG3_CHRG_TERM_DIGITAL,
++				 0);
++	if (ret)
++		dev_warn(di->dev, "failed to enable analog control loop (%d)\n", ret);
++
++	/* enable charger and set some reasonable limits on each boot */
++	ret = regmap_write(di->regmap, RK818_CHRG_CTRL_REG1,
++			   RK818_CHRG_CTRL_REG1_CHRG_EN
++			   | (1) /* 1.2A */
++			   | (5 << 4) /* 4.3V */);
++	if (ret)
++		dev_warn(di->dev, "failed to enable charger (%d)\n", ret);
++
++	rk818_usb_power_external_power_changed(di->usb_psy);
++
++	vb_lo_irq = regmap_irq_get_virq(rk818->irq_data, RK818_IRQ_VB_LO);
++	if (vb_lo_irq < 0)
++		return dev_err_probe(di->dev, vb_lo_irq,
++				     "cannot get vb_lo virq\n");
++
++	ret = devm_request_threaded_irq(di->dev, vb_lo_irq, NULL,
++					rk818_vb_low_irq,
++					IRQF_TRIGGER_HIGH | IRQF_ONESHOT,
++					"rk818_vb_low", di);
++	if (ret)
++		return dev_err_probe(di->dev, ret,
++				     "failed to request vb_lo IRQ\n");
++
++	enable_irq_wake(vb_lo_irq);
++
++	di->wq = alloc_ordered_workqueue("rk818-bat",
++					 WQ_MEM_RECLAIM | WQ_FREEZABLE);
++	if (!di->wq)
++		return -ENOMEM;
++
++	INIT_DELAYED_WORK(&di->work, rk818_battery_work);
++	queue_delayed_work(di->wq, &di->work, msecs_to_jiffies(di->monitor_ms));
++
++	dev_info(di->dev, "ready: dsoc=%d%% fcc=%d mAh sense=%u mOhm\n",
++		 di->dsoc, di->fcc_mah, di->sense_resist_mohm);
++	return 0;
++}
++
++static void rk818_battery_shutdown(struct platform_device *pdev)
++{
++	struct rk818_battery *di = platform_get_drvdata(pdev);
++
++	cancel_delayed_work_sync(&di->work);
++
++	rk818_save_dsoc(di);
++	rk818_save_remain_cap(di);
++
++	dev_info(di->dev,
++		 "shutdown: dsoc=%d rsoc=%d i=%d mA v=%d mV cap=%d mAh\n",
++		 di->dsoc, di->rsoc, di->current_avg_ma,
++		 di->voltage_avg_mv, di->remain_cap_mah);
++}
++
++static const struct of_device_id rk818_battery_of_match[] = {
++	{ .compatible = "rockchip,rk818-charger" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, rk818_battery_of_match);
++
++static struct platform_driver rk818_battery_driver = {
++	.probe    = rk818_battery_probe,
++	.suspend  = rk818_battery_suspend,
++	.resume   = rk818_battery_resume,
++	.shutdown = rk818_battery_shutdown,
++	.driver   = {
++		.name           = "rk818-charger",
++		.of_match_table = rk818_battery_of_match,
++	},
++};
++module_platform_driver(rk818_battery_driver);
++
++MODULE_LICENSE("GPL");
++MODULE_ALIAS("platform:rk818-charger");
++MODULE_AUTHOR("Ondrej Jirman <megi@xff.cz>");
++MODULE_DESCRIPTION("RK818 battery and charger driver");
+diff --git a/include/linux/mfd/rk808.h b/include/linux/mfd/rk808.h
+index 5353a470128d..05124cf4a523 100644
+--- a/include/linux/mfd/rk808.h
++++ b/include/linux/mfd/rk808.h
+@@ -280,6 +280,8 @@ enum rk818_reg {
+ 	RK818_ID_OTG_SWITCH,
+ };
+ 
++#define RK818_VB_MON_REG		0x21
++#define RK818_THERMAL_REG		0x22
+ #define RK818_DCDC_EN_REG		0x23
+ #define RK818_LDO_EN_REG		0x24
+ #define RK818_SLEEP_SET_OFF_REG1	0x25
+@@ -326,13 +328,90 @@ enum rk818_reg {
+ #define RK818_INT_STS_REG2		0x4e
+ #define RK818_INT_STS_MSK_REG2		0x4f
+ #define RK818_IO_POL_REG		0x50
++#define RK818_OTP_VDD_EN_REG		0x51
+ #define RK818_H5V_EN_REG		0x52
+ #define RK818_SLEEP_SET_OFF_REG3	0x53
+ #define RK818_BOOST_LDO9_ON_VSEL_REG	0x54
+ #define RK818_BOOST_LDO9_SLP_VSEL_REG	0x55
+ #define RK818_BOOST_CTRL_REG		0x56
+-#define RK818_DCDC_ILMAX		0x90
++#define RK818_DCDC_ILMAX_REG		0x90
++#define RK818_CHRG_COMP_REG		0x9a
++#define RK818_SUP_STS_REG		0xa0
+ #define RK818_USB_CTRL_REG		0xa1
++#define RK818_CHRG_CTRL_REG1		0xa3
++#define RK818_CHRG_CTRL_REG2		0xa4
++#define RK818_CHRG_CTRL_REG3		0xa5
++#define RK818_BAT_CTRL_REG		0xa6
++#define RK818_BAT_HTS_TS1_REG		0xa8
++#define RK818_BAT_LTS_TS1_REG		0xa9
++#define RK818_BAT_HTS_TS2_REG		0xaa
++#define RK818_BAT_LTS_TS2_REG		0xab
++#define RK818_TS_CTRL_REG		0xac
++#define RK818_ADC_CTRL_REG		0xad
++#define RK818_ON_SOURCE_REG		0xae
++#define RK818_OFF_SOURCE_REG		0xaf
++#define RK818_GGCON_REG			0xb0
++#define RK818_GGSTS_REG			0xb1
++#define RK818_FRAME_SMP_INTERV_REG	0xb2
++#define RK818_AUTO_SLP_CUR_THR_REG	0xb3
++#define RK818_GASCNT_CAL_REG3		0xb4
++#define RK818_GASCNT_CAL_REG2		0xb5
++#define RK818_GASCNT_CAL_REG1		0xb6
++#define RK818_GASCNT_CAL_REG0		0xb7
++#define RK818_GASCNT3_REG		0xb8
++#define RK818_GASCNT2_REG		0xb9
++#define RK818_GASCNT1_REG		0xba
++#define RK818_GASCNT0_REG		0xbb
++#define RK818_BAT_CUR_AVG_REGH		0xbc
++#define RK818_BAT_CUR_AVG_REGL		0xbd
++#define RK818_TS1_ADC_REGH		0xbe
++#define RK818_TS1_ADC_REGL		0xbf
++#define RK818_TS2_ADC_REGH		0xc0
++#define RK818_TS2_ADC_REGL		0xc1
++#define RK818_BAT_OCV_REGH		0xc2
++#define RK818_BAT_OCV_REGL		0xc3
++#define RK818_BAT_VOL_REGH		0xc4
++#define RK818_BAT_VOL_REGL		0xc5
++#define RK818_RELAX_ENTRY_THRES_REGH	0xc6
++#define RK818_RELAX_ENTRY_THRES_REGL	0xc7
++#define RK818_RELAX_EXIT_THRES_REGH	0xc8
++#define RK818_RELAX_EXIT_THRES_REGL	0xc9
++#define RK818_RELAX_VOL1_REGH		0xca
++#define RK818_RELAX_VOL1_REGL		0xcb
++#define RK818_RELAX_VOL2_REGH		0xcc
++#define RK818_RELAX_VOL2_REGL		0xcd
++#define RK818_BAT_CUR_R_CALC_REGH	0xce
++#define RK818_BAT_CUR_R_CALC_REGL	0xcf
++#define RK818_BAT_VOL_R_CALC_REGH	0xd0
++#define RK818_BAT_VOL_R_CALC_REGL	0xd1
++#define RK818_CAL_OFFSET_REGH		0xd2
++#define RK818_CAL_OFFSET_REGL		0xd3
++#define RK818_NON_ACT_TIMER_CNT_REG	0xd4
++#define RK818_VCALIB0_REGH		0xd5
++#define RK818_VCALIB0_REGL		0xd6
++#define RK818_VCALIB1_REGH		0xd7
++#define RK818_VCALIB1_REGL		0xd8
++#define RK818_IOFFSET_REGH		0xdd
++#define RK818_IOFFSET_REGL		0xde
++#define RK818_SOC_REG			0xe0
++#define RK818_REMAIN_CAP_REG3		0xe1
++#define RK818_REMAIN_CAP_REG2		0xe2
++#define RK818_REMAIN_CAP_REG1		0xe3
++#define RK818_REMAIN_CAP_REG0		0xe4
++#define RK818_UPDAT_LEVE_REG		0xe5
++#define RK818_NEW_FCC_REG3		0xe6
++#define RK818_NEW_FCC_REG2		0xe7
++#define RK818_NEW_FCC_REG1		0xe8
++#define RK818_NEW_FCC_REG0		0xe9
++#define RK818_NON_ACT_TIMER_CNT_SAVE_REG 0xea
++#define RK818_OCV_VOL_VALID_REG		0xeb
++#define RK818_REBOOT_CNT_REG		0xec
++#define RK818_POFFSET_REG		0xed
++#define RK818_MISC_MARK_REG		0xee
++#define RK818_HALT_CNT_REG		0xef
++#define RK818_CALC_REST_REGH		0xf0
++#define RK818_CALC_REST_REGL		0xf1
++#define RK818_SAVE_DATA19		0xf2
+ 
+ #define RK818_H5V_EN			BIT(0)
+ #define RK818_REF_RDY_CTRL		BIT(1)
+-- 
+2.47.3
+

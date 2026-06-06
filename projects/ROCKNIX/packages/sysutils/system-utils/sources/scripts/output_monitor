@@ -1,0 +1,74 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2025 ROCKNIX (https://github.com/ROCKNIX)
+#
+# Monitors external display outputs (DP, HDMI) via sway IPC and powers
+# internal panels (DSI, eDP) off/on accordingly.
+#
+# The sway IPC subscription is used rather than udev because the actions
+# (wlr-randr, swaymsg) require sway to be running and to have already
+# processed the new output. Subscribing to sway output events is
+# inherently synchronized with sway's internal state, avoiding the need
+# for retry logic after a kernel hotplug uevent.
+
+. /etc/profile
+
+# Exit if this device has no external display connectors at all
+ls /sys/class/drm/card*-DP-* /sys/class/drm/card*-HDMI-A-* 2>/dev/null | grep -q . || exit 0
+
+_LAST_STATE="init"
+
+_get_active_externals() {
+    wlr-randr 2>/dev/null | awk '
+        /^(DP|HDMI|DisplayPort)-/ { name=$1; in_ext=1; next }
+        /^[A-Za-z]/ { in_ext=0 }
+        in_ext && /Enabled: yes/ { print name }
+    '
+}
+
+_get_all_internals() {
+    wlr-randr 2>/dev/null | awk '/^(DSI|eDP|LVDS)-/ { print $1 }'
+}
+
+_apply() {
+    local state="internal"
+    [ -n "$(_get_active_externals)" ] && state="external"
+    [ "$_LAST_STATE" = "$state" ] && return
+    local prev="$_LAST_STATE"
+    _LAST_STATE="$state"
+
+    if [ "$state" = "external" ]; then
+        local ext_out
+        ext_out=$(_get_active_externals | head -1)
+        while IFS= read -r out; do
+            wlr-randr --output "$out" --off 2>/dev/null
+        done < <(_get_all_internals)
+        if [ -n "$ext_out" ]; then
+            swaymsg "[app_id=\"emulationstation\"] move output ${ext_out}" 2>/dev/null || true
+        fi
+        # Stop USB gadget: its data lanes conflict with DP Alt Mode on RK3576
+        systemctl is-active --quiet usbgadget && systemctl stop usbgadget
+    else
+        # Only re-enable internal panels on actual disconnect, not first-boot
+        if [ "$prev" != "init" ]; then
+            while IFS= read -r out; do
+                wlr-randr --output "$out" --preferred --on 2>/dev/null
+            done < <(_get_all_internals)
+        fi
+    fi
+
+
+}
+
+# Allow sway to finish initialising outputs before first check
+sleep 3
+
+while true; do
+    _apply
+    # Block until sway reports an output event (or 10s timeout).
+    # The timeout acts as a periodic retry to catch events missed when sway
+    # fires before finishing output configuration (e.g. boot-time hotplug).
+    # grep -q exits on first '"change"' match, terminating swaymsg cleanly.
+    timeout 10 swaymsg -t subscribe '["output"]' 2>/dev/null | grep -q '"change"' || true
+    sleep 0.3
+done

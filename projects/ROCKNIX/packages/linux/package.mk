@@ -25,8 +25,8 @@ case ${DEVICE} in
     PKG_GIT_CLONE_BRANCH="rk-6.1-rkr3"
     PKG_PATCH_DIRS="${LINUX} ${DEVICE} default"
     ;;
-  H700|SM8250|SM8650|SM8750|SM8550|SM6115)
-    PKG_VERSION="7.0.10"
+  H700|S922X|SM8250|SM8650|SM8750|SM8550|SM6115)
+    PKG_VERSION="7.0.11"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     PKG_PATCH_DIRS+=" 7.0"
     ;;
@@ -34,10 +34,6 @@ case ${DEVICE} in
     PKG_VERSION="7.0.2"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     PKG_PATCH_DIRS+=" 7.0"
-    ;;
-  S922X)
-    PKG_VERSION="6.18.31"
-    PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     ;;
   *)
     PKG_VERSION="6.12.79"

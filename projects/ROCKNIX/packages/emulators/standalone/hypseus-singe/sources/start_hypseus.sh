@@ -4,6 +4,9 @@
 # Copyright (C) 2021-present Shanti Gilbert (https://github.com/shantigilbert)
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
+. /etc/profile
+set_kill set "-9 hypseus"
+
 dir="${1}"
 name=${dir##*/}
 name=${name%.*}

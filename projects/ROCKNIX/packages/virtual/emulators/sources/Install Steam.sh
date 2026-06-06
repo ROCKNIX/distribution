@@ -23,7 +23,7 @@ PROTON_DIR="${STEAM}/steamapps/common/${PROTON_NAME}"
 RUNTIME_TAR_URL="https://repo.steampowered.com/steamrt3c/images/latest-public-beta/steam-runtime-steamrt-arm64.tar.xz"
 STEAM_MANIFEST_URL="https://client-update.fastly.steamstatic.com/steam_client_publicbeta_linuxarm64"
 STEAM_CDN="https://client-update.steamstatic.com"
-PROTON_CACHYOS_VERSION_FULL="11.0-20260506-slr"
+PROTON_CACHYOS_VERSION_FULL="11.0-20260521-slr"
 PROTON_CACHYOS_TAR="proton-cachyos-${PROTON_CACHYOS_VERSION_FULL}-arm64.tar.xz"
 PROTON_CACHYOS_DIR="proton-cachyos-${PROTON_CACHYOS_VERSION_FULL}-arm64"
 PROTON_CACHYOS_URL="https://github.com/CachyOS/proton-cachyos/releases/download/cachyos-${PROTON_CACHYOS_VERSION_FULL}/${PROTON_CACHYOS_TAR}"
@@ -127,6 +127,16 @@ install_proton_cachyos() {
   local tar_path="${dest_dir}/${PROTON_CACHYOS_TAR}"
   local extracted_dir="${dest_dir}/${PROTON_CACHYOS_DIR}"
   local manifest_file="${extracted_dir}/toolmanifest.vdf"
+
+  if [ -d "${dest_dir}" ]; then
+    for old_dir in "${dest_dir}"/proton-cachyos-*-arm64; do
+      [ -d "${old_dir}" ] || continue
+      if [ "${old_dir}" != "${extracted_dir}" ]; then
+        log_info "Removing old Proton-CachyOS: $(basename "${old_dir}")"
+        rm -rf "${old_dir}"
+      fi
+    done
+  fi
 
   if [ -d "${extracted_dir}" ]; then
     log_info "Proton-CachyOS already installed. Skipping download."
