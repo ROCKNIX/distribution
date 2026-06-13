@@ -263,6 +263,19 @@ pre_make_target() {
     mkdir -p ${PKG_BUILD}/external-firmware/qcom/sm8750
       cp -Lv $(get_build_dir kernel-firmware)/.copied-firmware/qcom/sm8750/gen80000_zap.mbn ${PKG_BUILD}/external-firmware/qcom/sm8750
 
+    # KONKR Pocket FIT Elite: AW88261 speaker-amp ACF (vendor cal/profile blob,
+    # extracted from the stock Android image). The aw88261 driver requests the
+    # blob; the amp nodes point at it with firmware-name. Built-in so the codec
+    # probe never depends on the rootfs firmware overlay.
+    mkdir -p ${PKG_BUILD}/external-firmware/qcom/sm8750/konkr/pfe
+      cp -Lv $(get_build_dir extra-firmware)/SM8750/qcom/sm8750/konkr/pfe/aw88261_acf.bin ${PKG_BUILD}/external-firmware/qcom/sm8750/konkr/pfe
+
+    # KONKR Pocket FIT Elite: QUAT-MI2S audio topology (the AYN tplg with its
+    # MI2S backend retargeted SECONDARY->QUATERNARY — the konkr's speaker amps
+    # are on QUATERNARY MI2S). Built-in firmware is searched before the rootfs,
+    # so this also overrides any stale copy in the SYSTEM overlay.
+      cp -Lv $(get_build_dir extra-firmware)/SM8750/qcom/sm8750/SM8750-KONKR-tplg.bin ${PKG_BUILD}/external-firmware/qcom/sm8750
+
     FW_LIST="$(find ${PKG_BUILD}/external-firmware -type f | sed 's|.*external-firmware/||' | sort | xargs)"
 
     ${PKG_BUILD}/scripts/config --set-str CONFIG_EXTRA_FIRMWARE "${FW_LIST}"
