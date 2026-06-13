@@ -89,6 +89,13 @@ elif [ "${DEVICE}" = "SM8250" -o "${DEVICE}" = "H700" -o "${DEVICE}" = "SM8650" 
   PKG_DEPENDS_UNPACK+=" kernel-firmware"
 fi
 
+# SM8750 builds the board audio topology and the speaker-amp calibration blob
+# into the kernel, so the firmware package must be unpacked before the kernel
+# is built.
+if [ "${DEVICE}" = "SM8750" ]; then
+  PKG_DEPENDS_UNPACK+=" extra-firmware"
+fi
+
 post_patch() {
   # linux was already built and its build dir autoremoved - prepare it again for kernel packages
   if [ -d ${PKG_INSTALL}/.image ]; then
