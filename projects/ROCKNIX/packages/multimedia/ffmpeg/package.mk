@@ -88,14 +88,6 @@ if [ "${DISPLAYSERVER}" != "wl" ]; then
   PKG_FFMPEG_VAAPI=" --enable-libdrm"
 fi
 
-if [ "${VDPAU_SUPPORT}" = "yes" -a "${DISPLAYSERVER}" = "wl" ]; then
-  PKG_DEPENDS_TARGET+=" libvdpau"
-  PKG_NEED_UNPACK+=" $(get_pkg_directory libvdpau)"
-  PKG_FFMPEG_VDPAU="--enable-vdpau"
-else
-  PKG_FFMPEG_VDPAU="--disable-vdpau"
-fi
-
 if build_with_debug; then
   PKG_FFMPEG_DEBUG="--enable-debug --disable-stripping"
 else
@@ -187,7 +179,7 @@ configure_target() {
               --disable-crystalhd \
               ${PKG_FFMPEG_V4L2} \
               ${PKG_FFMPEG_VAAPI} \
-              ${PKG_FFMPEG_VDPAU} \
+              --disable-vdpau \
               --enable-runtime-cpudetect \
               --disable-hardcoded-tables \
               --disable-encoders \
