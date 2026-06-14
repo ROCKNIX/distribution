@@ -14,6 +14,7 @@ if [ "${ARCH}" = "aarch64" ]; then
   PKG_TOOLCHAIN="manual"
 else
   PKG_TOOLCHAIN="cmake"
+  PKG_CMAKE_OPTS_TARGET+=" -DARM=ON"
 fi
 
 if [ "${OPENGL_SUPPORT}" = "yes" ]; then
@@ -22,20 +23,24 @@ elif [ "${OPENGLES_SUPPORT}" = yes ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGLES}"
 fi
 
+post_unpack() {
+  sed -i '46s/message\s*(\s*/message("/; 46s/\s*)/")/' ${PKG_BUILD}/Source/CMakeLists.txt
+}
+
 makeinstall_target() {
-  if [ "${ARCH}" = "aarch64" ]
-  then
+  if [ "${ARCH}" = "aarch64" ]; then
     mkdir -p ${INSTALL}/usr
-    cp -r ${ROOT}/build.${DISTRO}-${DEVICE}.arm/install_pkg/daedalusx64-sa-${PKG_VERSION}/usr/* ${INSTALL}/usr/
-    chmod +x ${INSTALL}/usr/bin/*
+      cp -r ${ROOT}/build.${DISTRO}-${DEVICE}.arm/install_pkg/daedalusx64-sa-${PKG_VERSION}/usr/* ${INSTALL}/usr/
+      chmod +x ${INSTALL}/usr/bin/*
   else
     mkdir -p ${INSTALL}/usr/bin
+      cp ${PKG_DIR}/scripts/* ${INSTALL}/usr/bin
+      chmod +x ${INSTALL}/usr/bin/*
+
     mkdir -p ${INSTALL}/usr/config/DaedalusX64
-    cp ${PKG_BUILD}/.${TARGET_NAME}/Source/daedalus ${INSTALL}/usr/config/DaedalusX64/daedalus
-    cp ${PKG_DIR}/scripts/* ${INSTALL}/usr/bin
-    cp ${PKG_DIR}/config/* ${INSTALL}/usr/config/DaedalusX64
-    cp -r ${PKG_BUILD}/Data/* ${INSTALL}/usr/config/DaedalusX64
-    cp -r ${PKG_BUILD}/Source/SysGL/HLEGraphics/n64.psh ${INSTALL}/usr/config/DaedalusX64
-    chmod +x ${INSTALL}/usr/bin/*
+      cp ${PKG_BUILD}/.${TARGET_NAME}/Source/daedalus ${INSTALL}/usr/config/DaedalusX64/daedalus
+      cp ${PKG_DIR}/config/* ${INSTALL}/usr/config/DaedalusX64
+      cp -r ${PKG_BUILD}/Data/* ${INSTALL}/usr/config/DaedalusX64
+      cp -r ${PKG_BUILD}/Source/SysGL/HLEGraphics/n64.psh ${INSTALL}/usr/config/DaedalusX64
   fi
 }
