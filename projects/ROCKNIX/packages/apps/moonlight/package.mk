@@ -4,29 +4,30 @@
 PKG_NAME="moonlight"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/moonlight-stream/moonlight-"
-PKG_DEPENDS_TARGET="toolchain opus SDL2 libevdev alsa curl enet avahi libvdpau ffmpeg"
+PKG_DEPENDS_TARGET="toolchain opus SDL2 libevdev alsa curl enet avahi ffmpeg"
 PKG_LONGDESC="Moonlight is an open source implementation of NVIDIA's GameStream, as used by the NVIDIA Shield, but built for Linux."
-GET_HANDLER_SUPPORT="git"
 PKG_PATCH_DIRS+="${DEVICE}"
 
-if [ "${TARGET_ARCH}" = "null" ]
-then
+if [ "${TARGET_ARCH}" = "null" ]; then
   PKG_SITE+="qt"
   PKG_URL="${PKG_SITE}.git"
   PKG_VERSION="8a87a09947f27dd2fe4bee7ae9faabe86873a5c4"
   PKG_DEPENDS_TARGET+=" qt6"
   PKG_TOOLCHAIN="manual"
+
   make_target() {
     qmake6 "CONFIG+=embedded" moonlight-qt.pro
     make release
   }
+
   post_makeinstall_target() {
     mkdir -p ${INSTALL}/usr/bin
+      cp ${PKG_BUILD}/app/moonlight ${INSTALL}/usr/bin/
+      cp ${PKG_BUILD}/start_moonlight.sh ${INSTALL}/usr/bin/
+      chmod +x ${INSTALL}/usr/bin/*
+
     mkdir -p ${INSTALL}/usr/config/modules
-    cp ${PKG_BUILD}/app/moonlight ${INSTALL}/usr/bin/
-    cp ${PKG_BUILD}/start_moonlight.sh ${INSTALL}/usr/bin/
-    chmod +x ${INSTALL}/usr/bin/*
-    mv ${INSTALL}/usr/bin/start_moonlight.sh ${INSTALL}/usr/config/modules/Start\ Moonlight.sh
+      mv ${INSTALL}/usr/bin/start_moonlight.sh ${INSTALL}/usr/config/modules/Start\ Moonlight.sh
   }
 else
   PKG_SITE+="embedded"
@@ -38,14 +39,13 @@ else
 
   post_makeinstall_target() {
     mkdir -p ${INSTALL}/usr/config/moonlight
-    cp -R ${PKG_BUILD}/moonlight.conf ${INSTALL}/usr/config/moonlight
-    rm ${INSTALL}/usr/etc/moonlight.conf
-    rm ${INSTALL}/usr/share/moonlight/gamecontrollerdb.txt
+      cp -R ${PKG_BUILD}/moonlight.conf ${INSTALL}/usr/config/moonlight
+      rm ${INSTALL}/usr/etc/moonlight.conf
+      rm ${INSTALL}/usr/share/moonlight/gamecontrollerdb.txt
   }
 fi
 
-if [[ "${DEVICE}" == RK* ]]
-then
+if [[ "${DEVICE}" == RK* ]]; then
   PKG_DEPENDS_TARGET+=" librga rkmpp"
 fi
 
@@ -57,7 +57,6 @@ if [ "${OPENGLES_SUPPORT}" = yes ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGLES}"
 fi
 
-if [ "${VULKAN_SUPPORT}" = "yes" ]
-  then
+if [ "${VULKAN_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${VULKAN}"
 fi
