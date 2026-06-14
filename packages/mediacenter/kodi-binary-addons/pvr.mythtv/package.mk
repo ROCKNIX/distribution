@@ -3,11 +3,11 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="pvr.mythtv"
-PKG_VERSION="67196eb8baaa35adeeccf9ea0a2c605fddc25f68"
-PKG_SHA256="15d0aa4102163c2e7088df25c6f2718aa19641c451e63a31edb3a2907820dcd4"
-PKG_REV="4"
+PKG_VERSION="22.3.4-Piers"
+PKG_SHA256="80cc8707b6fa6615678e3ca5dcc3770f2a5d96b102bd0d2e145610c23e213cde"
+PKG_REV="2"
 PKG_ARCH="any"
-PKG_LICENSE="GPL"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/janbar/pvr.mythtv"
 PKG_URL="https://github.com/janbar/pvr.mythtv/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain kodi-platform zlib"

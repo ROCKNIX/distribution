@@ -3,9 +3,9 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="mesa"
-PKG_VERSION="25.1.5"
-PKG_SHA256="3c4f6b10ff6ee950d0ec6ea733cc6e6d34c569454e3d39a9b276de9115a3b363"
-PKG_LICENSE="OSS"
+PKG_VERSION="26.1.2"
+PKG_SHA256="bac2bca9121897a2b8162e79636b50ac998fca799c8e6cf914edd85962babdf0"
+PKG_LICENSE="MIT"
 PKG_SITE="http://www.mesa3d.org/"
 PKG_URL="https://mesa.freedesktop.org/archive/mesa-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_HOST="toolchain:host expat:host libclc:host libdrm:host Mako:host pyyaml:host spirv-tools:host"
@@ -19,13 +19,19 @@ if [ "${DEVICE}" = "Dragonboard" ]; then
 fi
 
 PKG_MESON_OPTS_HOST="-Dglvnd=disabled \
-                     -Dgallium-drivers=iris \
-                     -Dgallium-vdpau=disabled \
+                     -Dgallium-drivers= \
                      -Dplatforms= \
                      -Dglx=disabled \
                      -Dvulkan-drivers= \
                      -Dshared-llvm=disabled \
-                     -Dtools=panfrost"
+                     -Dtools=panfrost \
+                     -Dvideo-codecs= \
+                     -Dbuild-tests=false \
+                     -Denable-glcpp-tests=false \
+                     -Dmesa-clc=enabled \
+                     -Dinstall-mesa-clc=true \
+                     -Dprecomp-compiler=enabled \
+                     -Dinstall-precomp-compiler=true"
 
 PKG_MESON_OPTS_TARGET="-Dgallium-drivers=${GALLIUM_DRIVERS// /,} \
                        -Dgallium-extra-hud=false \
@@ -38,7 +44,6 @@ PKG_MESON_OPTS_TARGET="-Dgallium-drivers=${GALLIUM_DRIVERS// /,} \
                        -Dlibunwind=disabled \
                        -Dlmsensors=disabled \
                        -Dbuild-tests=false \
-                       -Ddraw-use-llvm=false \
                        -Dmicrosoft-clc=disabled"
 
 if [ "${DISPLAYSERVER}" = "x11" ]; then
@@ -57,6 +62,12 @@ fi
 
 if listcontains "${GRAPHIC_DRIVERS}" "etnaviv"; then
   PKG_DEPENDS_TARGET+=" pycparser:host"
+fi
+
+if listcontains "${GRAPHIC_DRIVERS}" "(i915|r300)"; then
+  PKG_MESON_OPTS_TARGET+=" -Ddraw-use-llvm=true"
+else
+  PKG_MESON_OPTS_TARGET+=" -Ddraw-use-llvm=false"
 fi
 
 if listcontains "${GRAPHIC_DRIVERS}" "(iris|panfrost)"; then
@@ -83,25 +94,12 @@ else
   PKG_MESON_OPTS_TARGET+=" -Dllvm=disabled"
 fi
 
-if [ "${VDPAU_SUPPORT}" = "yes" -a "${DISPLAYSERVER}" = "x11" ]; then
-  PKG_DEPENDS_TARGET+=" libvdpau"
-  PKG_MESON_OPTS_TARGET+=" -Dgallium-vdpau=enabled"
-else
-  PKG_MESON_OPTS_TARGET+=" -Dgallium-vdpau=disabled"
-fi
-
 if [ "${VAAPI_SUPPORT}" = "yes" ] && listcontains "${GRAPHIC_DRIVERS}" "(r600|radeonsi)"; then
   PKG_DEPENDS_TARGET+=" libva"
   PKG_MESON_OPTS_TARGET+=" -Dgallium-va=enabled \
                            -Dvideo-codecs=vc1dec,h264dec,h264enc,h265dec,h265enc,av1dec,av1enc,vp9dec"
 else
   PKG_MESON_OPTS_TARGET+=" -Dgallium-va=disabled"
-fi
-
-if listcontains "${GRAPHIC_DRIVERS}" "vmware"; then
-  PKG_MESON_OPTS_TARGET+=" -Dgallium-xa=enabled"
-else
-  PKG_MESON_OPTS_TARGET+=" -Dgallium-xa=disabled"
 fi
 
 if [ "${OPENGLES_SUPPORT}" = "yes" ]; then

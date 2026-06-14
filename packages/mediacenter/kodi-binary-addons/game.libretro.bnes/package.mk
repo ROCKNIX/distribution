@@ -1,12 +1,12 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="game.libretro.bnes"
-PKG_VERSION="0.83.0.33-Omega"
-PKG_SHA256="843632dc041f71341f4cef46d4b0da884edab4c9f4253745d906073c634bf98f"
-PKG_REV="3"
+PKG_VERSION="0.83.0.34-Omega"
+PKG_SHA256="5f363a8588251e6b0abdcc5525a0cd2923af1d9bf69f7a75d4144fa94ef1f6b2"
+PKG_REV="4"
 PKG_ARCH="any"
-PKG_LICENSE="GPL"
+PKG_LICENSE="GPL-3.0-only"
 PKG_SITE="https://github.com/kodi-game/game.libretro.bnes"
 PKG_URL="https://github.com/kodi-game/game.libretro.bnes/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain kodi-platform libretro-bnes"

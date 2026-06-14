@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2009-2016 Stephan Raue (stephan@openelec.tv)
+# Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="m4"
-PKG_VERSION="1.4.20"
-PKG_SHA256="ac6989ee5d2aed81739780630cc2ce097e2a6546feb96a4a54db37d46a1452e4"
-PKG_LICENSE="GPL"
+PKG_VERSION="1.4.21"
+PKG_SHA256="dc487e11d2f0c9e01555bb1af26be4eae983ec8f0726746505b4327186eb21fc"
+PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="http://www.gnu.org/software/m4/"
 PKG_URL="https://ftpmirror.gnu.org/m4/${PKG_NAME}-${PKG_VERSION}.tar.bz2"
 PKG_DEPENDS_HOST="ccache:host"

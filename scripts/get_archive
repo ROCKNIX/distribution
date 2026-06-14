@@ -1,9 +1,9 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 _get_file_already_downloaded() {
-  [ ! -f "${PACKAGE}" -o ! -f "${STAMP_URL}" -o ! -f "${STAMP_SHA}" ] && return 1
-  [ -n "${PKG_SHA256}" -a "$(cat ${STAMP_SHA} 2>/dev/null)" != "${PKG_SHA256}" ] && return 1
+  { [ ! -f "${PACKAGE}" ] || [ ! -f "${STAMP_URL}" ] || [ ! -f "${STAMP_SHA}" ]; } && return 1
+  { [ -n "${PKG_SHA256}" ] && [ "$(cat ${STAMP_SHA} 2>/dev/null)" != "${PKG_SHA256}" ]; } && return 1
   return 0
 }
 
@@ -21,36 +21,42 @@ build_msg "CLR_GET" "GET" "${1} (archive)" "indent"
 pkg_lock_status "GETPKG" "${PKG_NAME}" "unpack" "downloading package..."
 
 PACKAGE_MIRROR="${DISTRO_MIRROR}/${PKG_SOURCE_NAME}"
-[ "${VERBOSE}" != "yes" ] && WGET_OPT=-q
-WGET_CMD="wget --secure-protocol=TLSv1_2 --output-file=- --timeout=30 --tries=3 --passive-ftp --no-check-certificate -c ${WGET_OPT} --progress=bar:force --retry-connrefused --waitretry=5 --retry-on-http-error=429,500,502,503,504 --show-progress -O ${PACKAGE}"
+
+[ "${VERBOSE}" != "yes" ] && GET_OPT=-q
+GET_CMD="wget --secure-protocol=TLSv1_2 --output-file=- --timeout=30 --tries=3 --passive-ftp --no-check-certificate -c ${GET_OPT} --progress=bar:force --retry-connrefused --waitretry=5 --retry-on-http-error=429,500,502,503,504 --show-progress -O ${PACKAGE}"
 
 # unset LD_LIBRARY_PATH to stop wget from using toolchain/lib and loading libssl.so/libcrypto.so instead of host libraries
 unset LD_LIBRARY_PATH
 
 rm -f "${STAMP_URL}" "${STAMP_SHA}"
 
-PKG_URLS="${PKG_URL}"
-if [ -n "${PACKAGE_MIRROR}" ]
-then
-  PKG_URLS="${PKG_URL} ${PACKAGE_MIRROR}"
-fi
-
-NBWGET=10
-while [ ${NBWGET} -gt 0 ]; do
-  for url in ${PKG_URLS}; do
+NBGET=10
+NBCHKS=2
+while [ ${NBGET} -gt 0 ] && [ ${NBCHKS} -gt 0 ]; do
+  for url in "${PKG_URL}" "${PACKAGE_MIRROR}"; do
     rm -f "${PACKAGE}"
-    if ${WGET_CMD} "${url}"; then
+    if ${GET_CMD} "${url}"; then
       CALC_SHA256=$(sha256sum "${PACKAGE}" | cut -d" " -f1)
 
-      [ -z "${PKG_SHA256}" -o "${PKG_SHA256}" = "${CALC_SHA256}" ] && break 2
+      { [ -z "${PKG_SHA256}" ] || [ "${PKG_SHA256}" = "${CALC_SHA256}" ]; } && break 2
 
-      build_msg "CLR_WARNING" "WARNING" "Incorrect checksum calculated on downloaded file: got ${CALC_SHA256} wanted ${PKG_SHA256}"
+      if [ "${CHANGE_HASH}" = "yes" ]; then
+        if [[ "${PKG_NAME}" == "linux" ]]; then
+          sed -e "/^\s*\*)/,/^\s*;;/ s|^\(\s*PKG_SHA256=\).*|\1\"${CALC_SHA256}\"|" -i "${PKG_DIR}/package.mk"
+        else
+          sed -e "s|^PKG_SHA256=.*|PKG_SHA256=\"${CALC_SHA256}\"|" -i "${PKG_DIR}/package.mk"
+        fi
+        break 2
+      else
+        build_msg "CLR_WARNING" "WARNING" "Incorrect checksum calculated on downloaded file: got ${CALC_SHA256} wanted ${PKG_SHA256}"
+        NBCHKS=$((NBCHKS - 1))
+      fi
     fi
   done
-  NBWGET=$((NBWGET - 1))
+  NBGET=$((NBGET - 1))
 done
 
-if [ ${NBWGET} -eq 0 ]; then
+if [ ${NBGET} -eq 0 ] || [ ${NBCHKS} -eq 0 ]; then
   die "\nCannot get ${1} sources : ${PKG_URL}\nTry later!"
 else
   build_msg "CLR_INFO" "INFO" "Calculated checksum: ${CALC_SHA256}"

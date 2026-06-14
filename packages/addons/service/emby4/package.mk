@@ -1,11 +1,11 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="emby4"
 PKG_VERSION="bootstrap"
 PKG_REV="0"
 PKG_ARCH="any"
-PKG_LICENSE="prop."
+PKG_LICENSE="LicenseRef-nonfree"
 PKG_SITE="http://emby.media"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_SECTION="service"

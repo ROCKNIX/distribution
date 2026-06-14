@@ -1,10 +1,10 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="udpxy"
-PKG_VERSION="1.0-25.1"
-PKG_SHA256="a1a16e60895c6b2fd151321db47f5d5373843116f1b98ed9749e6c25a6c44497"
-PKG_LICENSE="GPLv3"
+PKG_VERSION="31d4bcfabaade59d3efdee015df7979febf76bae"
+PKG_SHA256="75e5548044a40544c050abfad0dedef8748ede1725d8011d6afc811554b80b92"
+PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="http://www.udpxy.com"
 PKG_URL="https://github.com/pcherenkov/udpxy/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"

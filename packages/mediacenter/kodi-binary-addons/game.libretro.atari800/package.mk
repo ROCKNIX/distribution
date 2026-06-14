@@ -1,12 +1,12 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2020-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="game.libretro.atari800"
-PKG_VERSION="3.1.0.38-Omega"
-PKG_SHA256="6d02201613662a56d98ee83acf138ee9622872c79112593ed87eb1e3eff43198"
-PKG_REV="3"
+PKG_VERSION="3.1.0.43-Omega"
+PKG_SHA256="e6c4800cae40d08f10cfd1ad96636f49bc73218816bf388b27373bc232b686b6"
+PKG_REV="1"
 PKG_ARCH="any"
-PKG_LICENSE="GPL"
+PKG_LICENSE="GPL-2.0-only"
 PKG_SITE="https://github.com/kodi-game/game.libretro.atari800"
 PKG_URL="https://github.com/kodi-game/game.libretro.atari800/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain kodi-platform libretro-atari800"

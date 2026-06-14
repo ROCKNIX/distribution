@@ -1,10 +1,10 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="unrar"
-PKG_VERSION="7.1.8"
-PKG_SHA256="9ec7765a948140758af12ed29e3e47db425df79a9c5cbb71b28769b256a7a014"
-PKG_LICENSE="free"
+PKG_VERSION="7.2.6"
+PKG_SHA256="d1afa67ef4121ebc5986815699e05db0ce8648499e5dca854f282a4c3f72c003"
+PKG_LICENSE="UnRAR"
 PKG_SITE="https://www.rarlab.com/rar_add.htm"
 PKG_URL="https://www.rarlab.com/rar/unrarsrc-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"

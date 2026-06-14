@@ -1,12 +1,12 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="game.libretro.dosbox"
-PKG_VERSION="0.74.0.31-Omega"
-PKG_SHA256="d6f7ee212350912aeb47ca7ab8a1e796671f94ea492ab6a318ff2e23f895f951"
-PKG_REV="3"
+PKG_VERSION="0.74.0.33-Omega"
+PKG_SHA256="ae1e9e3935d80c6d0ef112062d82b95b7ffe5e5a5d395d448298365fafd3cf80"
+PKG_REV="1"
 PKG_ARCH="any"
-PKG_LICENSE="GPL"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/kodi-game/game.libretro.dosbox"
 PKG_URL="https://github.com/kodi-game/game.libretro.dosbox/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain kodi-platform libretro-dosbox"

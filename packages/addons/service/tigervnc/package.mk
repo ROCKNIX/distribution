@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="tigervnc"
@@ -6,7 +6,7 @@ PKG_VERSION="1.10.1"
 PKG_SHA256="19fcc80d7d35dd58115262e53cac87d8903180261d94c2a6b0c19224f50b58c4"
 PKG_REV="0"
 PKG_ARCH="x86_64"
-PKG_LICENSE="GPLv2"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="http://www.tigervnc.org"
 PKG_URL="https://github.com/TigerVNC/tigervnc/archive/v${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain cmake:host libX11 libXdamage libXext libXtst zlib libjpeg-turbo"
@@ -16,6 +16,7 @@ PKG_LONGDESC="${PKG_ADDON_NAME} (${PKG_VERSION}) is a high-performance, platform
 
 PKG_IS_ADDON="yes"
 PKG_ADDON_NAME="TigerVNC"
+PKG_ADDON_ICON_NAME="TIGER VNC"
 PKG_ADDON_TYPE="xbmc.service"
 
 PKG_CMAKE_OPTS_TARGET="-DBUILD_VIEWER=off -Wno-dev"

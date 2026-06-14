@@ -1,13 +1,13 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="libimobiledevice"
-PKG_VERSION="73b6fd183872096f20e6d1007429546a317a7cb1"
-PKG_SHA256="854cb9e2671fdf5a2fca609e5e247ab498218b1659a2e5e2b47cf7c1392cec46"
-PKG_LICENSE="GPL"
+PKG_VERSION="1.4.0"
+PKG_SHA256="23cc0077e221c7d991bd0eb02150a0d49199bcca1ddf059edccee9ffd914939d"
+PKG_LICENSE="LGPL-2.1-or-later"
 PKG_SITE="http://www.libimobiledevice.org"
-PKG_URL="https://github.com/libimobiledevice/libimobiledevice/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain libimobiledevice-glue libplist libusbmuxd openssl"
+PKG_URL="https://github.com/libimobiledevice/libimobiledevice/releases/download/${PKG_VERSION}/libimobiledevice-${PKG_VERSION}.tar.bz2"
+PKG_DEPENDS_TARGET="toolchain libimobiledevice-glue libplist libtatsu libusbmuxd openssl"
 PKG_LONGDESC="A cross-platform software library that talks the protocols to support Apple devices."
 PKG_TOOLCHAIN="autotools"
 

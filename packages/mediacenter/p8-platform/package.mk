@@ -3,16 +3,15 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="p8-platform"
-PKG_VERSION="cee64e9dc0b69e8d286dc170a78effaabfa09c44"
-PKG_SHA256="8d2c3c2e2951a3f202aadd774ce52e2096468a6470ef4c926dbb13bb564ea378"
-PKG_LICENSE="GPL"
+PKG_VERSION="p8-platform-20260129"
+PKG_SHA256="216b10c8d8f6d99c34e89be8a400449ad205b57f40b24e750b804922ed5afba1"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="http://www.kodi.tv"
 PKG_URL="https://github.com/xbmc/platform/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Platform support library used by libCEC and binary add-ons for Kodi"
 
 PKG_CMAKE_OPTS_TARGET="-DCMAKE_INSTALL_LIBDIR:STRING=lib \
-                       -DCMAKE_INSTALL_PREFIX_TOOLCHAIN=${SYSROOT_PREFIX}/usr \
                        -DBUILD_SHARED_LIBS=0"
 
 post_makeinstall_target() {

@@ -1,16 +1,15 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="grub"
-PKG_VERSION="2.12"
-PKG_SHA256="af4d58df3024988799225e94bc1cfaccdeaa9d5725b4ad5517f3b6cf2ee9ed78"
+PKG_VERSION="2.14"
+PKG_SHA256="bc8d3c73535b8838d8c8e2654d73edc4e6ae8c8acdb45d5df5dc9a1547446d43"
 PKG_ARCH="x86_64"
-PKG_LICENSE="GPLv3"
+PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://www.gnu.org/software/grub/index.html"
-PKG_URL="http://git.savannah.gnu.org/cgit/grub.git/snapshot/${PKG_NAME}-${PKG_VERSION}.tar.gz"
+PKG_URL="https://ftp.gnu.org/gnu/grub/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_HOST="toolchain:host"
 PKG_DEPENDS_TARGET="toolchain flex freetype:host gettext:host grub:host"
-PKG_DEPENDS_UNPACK="gnulib"
 PKG_LONGDESC="GRUB is a Multiboot boot loader."
 PKG_TOOLCHAIN="configure"
 PKG_BUILD_FLAGS="-cfg-libs -cfg-libs:host"
@@ -21,13 +20,6 @@ pre_configure_host() {
   unset CXXFLAGS
   unset LDFLAGS
   unset CPP
-
-  cd ${PKG_BUILD}
-    # keep grub synced with gnulib
-    ./bootstrap --gnulib-srcdir=$(get_build_dir gnulib) --copy --no-git --no-bootstrap-sync --skip-po
-
-  mkdir -p .${HOST_NAME}
-    cd .${HOST_NAME}
 }
 
 pre_configure_target() {
@@ -40,13 +32,6 @@ pre_configure_target() {
   unset CXXFLAGS
   unset LDFLAGS
   unset CPP
-
-  cd ${PKG_BUILD}
-    # keep grub synced with gnulib
-    ./bootstrap --gnulib-srcdir=$(get_build_dir gnulib) --copy --no-git --no-bootstrap-sync --skip-po
-
-  mkdir -p .${TARGET_NAME}
-    cd .${TARGET_NAME}
 
   # configure requires explicit TARGET_PREFIX binaries when cross compiling.
   export TARGET_CC="${TARGET_PREFIX}gcc"

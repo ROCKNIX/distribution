@@ -1,9 +1,9 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2022-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="gst-plugins-bad"
-PKG_VERSION="1.27.1"
-PKG_SHA256="9730381c718b7d99042a5e02e33ca5eccad0c8a5c5325aca66491728de9ba64e"
+PKG_VERSION="1.29.1"
+PKG_SHA256="629d70cdf75faca70805dbd5fa4db819f30c1f775b599f2d578d04eeb626ade5"
 PKG_LICENSE="LGPL-2.1-or-later"
 PKG_SITE="https://gstreamer.freedesktop.org/modules/gst-plugins-bad.html"
 PKG_URL="https://gstreamer.freedesktop.org/src/gst-plugins-bad/${PKG_NAME}-${PKG_VERSION}.tar.xz"

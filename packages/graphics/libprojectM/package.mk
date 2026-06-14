@@ -5,7 +5,7 @@
 PKG_NAME="libprojectM"
 PKG_VERSION="3.1.12"
 PKG_SHA256="62b5b1b543b25cb8ad392d879378cfdc5c129165cf4d4f33fb159e364d42f135"
-PKG_LICENSE="GPL"
+PKG_LICENSE="LGPL-2.1-or-later"
 PKG_SITE="https://github.com/projectM-visualizer/projectm"
 PKG_URL="https://github.com/projectM-visualizer/projectm/archive/v${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain freetype glm"
@@ -39,7 +39,10 @@ fi
 pre_configure_target() {
   ./autogen.sh
 
-  if [ "${OPENGLES_SUPPORT}" = "yes" ]; then
+  if [ "${DISPLAYSERVER}" = "no" -a "${OPENGL_SUPPORT}" = "yes" ]; then
+    export CFLAGS+=" -DSOIL_EGL"
+    export GL_LIBS="-lOpenGL"
+  elif [ "${OPENGLES_SUPPORT}" = "yes" ]; then
     export CFLAGS+=" -DSOIL_GLES2"
   fi
 }

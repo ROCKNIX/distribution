@@ -340,6 +340,12 @@ setup_toolchain() {
     TARGET_CXXFLAGS+=" $CXXFLAGS_OPTIM_DEFAULT"
   fi
 
+  # Only build host binaries with native when BUILD_REUSABLE is not set
+  if [ -z "${BUILD_REUSABLE}" ]; then
+    HOST_CFLAGS+=" $HOST_CFLAGS_OPTIM_NATIVE"
+    HOST_CXXFLAGS+=" $HOST_CFLAGS_OPTIM_NATIVE"
+  fi
+
   # position-independent code
   if flag_enabled "pic" "no"; then
     TARGET_CFLAGS+=" $CFLAGS_OPTIM_PIC"
@@ -375,6 +381,12 @@ setup_toolchain() {
     MAKEFLAGS+=" V=1 VERBOSE=1"
   fi
 
+  # NDEBUG flag
+  if [ "${BUILD_WITH_DEBUG}" != "yes" ] && flag_enabled "ndebug" "yes"; then
+    TARGET_CFLAGS+=" -DNDEBUG"
+    TARGET_CXXFLAGS+=" -DNDEBUG"
+  fi
+
   # average load limit
   if [ "${CONCURRENCY_LOAD}" != "0" ]; then
     NINJA_OPTS+=" -l${CONCURRENCY_LOAD}"
@@ -396,7 +408,6 @@ setup_toolchain() {
       export RANLIB="ranlib"
       export OBJCOPY="objcopy"
       export OBJDUMP="objdump"
-      export STRIP="strip"
       export CPPFLAGS="$HOST_CPPFLAGS"
       export CFLAGS="$HOST_CFLAGS"
       export CXXFLAGS="$HOST_CXXFLAGS"
@@ -405,7 +416,6 @@ setup_toolchain() {
       export TARGET_CC="${TARGET_PREFIX}gcc"
       export TARGET_CXX="${TARGET_PREFIX}g++"
       export TARGET_AR="${TARGET_PREFIX}ar"
-      export TARGET_STRIP="${TARGET_PREFIX}strip"
       export TARGET_CFLAGS="$TARGET_CFLAGS"
       export TARGET_CXXFLAGS="$TARGET_CXXFLAGS"
       export TARGET_LDFLAGS="$TARGET_LDFLAGS"
@@ -420,6 +430,11 @@ setup_toolchain() {
       export _python_sysroot="$SYSROOT_PREFIX"
       export _python_prefix=/usr
       export _python_exec_prefix=/usr
+      # STRIP is used outside meson and is supposed to
+      # point to target version. Meson doesn't use this
+      # environment variable anyway.
+      export STRIP="${TARGET_PREFIX}strip"
+      export HOST_STRIP="strip"
       ;;
 
     target:*|init:*)
@@ -450,9 +465,9 @@ setup_toolchain() {
         echo "SET(CMAKE_C_COMPILER   $CC)"  >> $CMAKE_CONF
         echo "SET(CMAKE_CXX_COMPILER $CXX)" >> $CMAKE_CONF
         echo "SET(CMAKE_CPP_COMPILER $CPP)" >> $CMAKE_CONF
-        echo "SET(CMAKE_ASM_FLAGS_MINSIZEREL -DDUMMYOPT)" >> $CMAKE_CONF
-        echo "SET(CMAKE_CXX_FLAGS_MINSIZEREL -DDUMMYOPT)" >> $CMAKE_CONF
-        echo "SET(CMAKE_C_FLAGS_MINSIZEREL -DDUMMYOPT)" >> $CMAKE_CONF
+        echo "SET(CMAKE_ASM_FLAGS_RELEASE \"\")" >> $CMAKE_CONF
+        echo "SET(CMAKE_CXX_FLAGS_RELEASE \"\")" >> $CMAKE_CONF
+        echo "SET(CMAKE_C_FLAGS_RELEASE \"\")" >> $CMAKE_CONF
         echo "SET(CMAKE_FIND_ROOT_PATH  $SYSROOT_PREFIX)"   >> $CMAKE_CONF
         echo "SET(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)" >> $CMAKE_CONF
         echo "SET(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)"  >> $CMAKE_CONF
@@ -521,9 +536,9 @@ setup_toolchain() {
         echo "SET(CMAKE_C_COMPILER   $CC)"  >> $CMAKE_CONF
         echo "SET(CMAKE_CXX_COMPILER $CXX)" >> $CMAKE_CONF
         echo "SET(CMAKE_CPP_COMPILER $CXX)" >> $CMAKE_CONF
-        echo "SET(CMAKE_ASM_FLAGS_RELEASE -DDUMMYOPT)" >> $CMAKE_CONF
-        echo "SET(CMAKE_CXX_FLAGS_RELEASE -DDUMMYOPT)" >> $CMAKE_CONF
-        echo "SET(CMAKE_C_FLAGS_RELEASE -DDUMMYOPT)" >> $CMAKE_CONF
+        echo "SET(CMAKE_ASM_FLAGS_RELEASE \"\")" >> $CMAKE_CONF
+        echo "SET(CMAKE_CXX_FLAGS_RELEASE \"\")" >> $CMAKE_CONF
+        echo "SET(CMAKE_C_FLAGS_RELEASE \"\")" >> $CMAKE_CONF
         echo "SET(CMAKE_AR $AR CACHE FILEPATH "Archiver")" >> $CMAKE_CONF # hum?
         echo "SET(CMAKE_FIND_ROOT_PATH  $TOOLCHAIN)" >> $CMAKE_CONF
         echo "SET(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM BOTH)" >> $CMAKE_CONF
@@ -572,7 +587,7 @@ create_meson_conf_host() {
 c = '$CC'
 cpp = '$CXX'
 ar = '$AR'
-strip = '$STRIP'
+strip = '$HOST_STRIP'
 pkg-config = '$PKG_CONFIG'
 llvm-config = '$TOOLCHAIN/bin/llvm-config'
 libgcrypt-config = '$SYSROOT_PREFIX/usr/bin/libgcrypt-config'
@@ -596,7 +611,9 @@ $(python3 -c "import os; print('cpp_args = {}'.format([x for x in os.getenv('CXX
 $(python3 -c "import os; print('cpp_link_args = {}'.format([x for x in os.getenv('LDFLAGS').split()]))")
 
 [properties]
-root = '$TOOLCHAIN'
+root = '${TOOLCHAIN}'
+sys_root = ''
+pkg_config_libdir = '${TOOLCHAIN}/lib/pkgconfig:${TOOLCHAIN}/share/pkgconfig'
 ${!properties}
 EOF
 }
@@ -613,7 +630,7 @@ c_ld = '$linker'
 cpp = '$TARGET_CXX'
 cpp_ld = '$linker'
 ar = '$TARGET_AR'
-strip = '$TARGET_STRIP'
+strip = '$STRIP'
 pkg-config = '$PKG_CONFIG'
 llvm-config = '$SYSROOT_PREFIX/usr/bin/llvm-config'
 libgcrypt-config = '$SYSROOT_PREFIX/usr/bin/libgcrypt-config'
@@ -640,8 +657,9 @@ $(python3 -c "import os; print('cpp_link_args = {}'.format([x for x in os.getenv
 [properties]
 ipc_rmid_deferred_release = true
 needs_exe_wrapper = true
-root = '$SYSROOT_PREFIX/usr'
-sys_root = '$SYSROOT_PREFIX'
+root = '${SYSROOT_PREFIX}/usr'
+sys_root = '${SYSROOT_PREFIX}'
+pkg_config_libdir = '${SYSROOT_PREFIX}/usr/lib/pkgconfig:${SYSROOT_PREFIX}/usr/share/pkgconfig'
 ${!properties}
 EOF
 }

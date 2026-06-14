@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2019-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="ttyd"
@@ -24,7 +24,7 @@ addon() {
 
   mkdir -p ${ADDON_BUILD}/${PKG_ADDON_ID}/lib.private
     cp -p $(get_install_dir json-c)/usr/lib/libjson-c.so.5 ${ADDON_BUILD}/${PKG_ADDON_ID}/lib.private
-    cp -p $(get_install_dir libwebsockets)/usr/lib/libwebsockets.so.19 ${ADDON_BUILD}/${PKG_ADDON_ID}/lib.private
+    cp -p $(get_install_dir libwebsockets)/usr/lib/libwebsockets.so.21 ${ADDON_BUILD}/${PKG_ADDON_ID}/lib.private
     cp -p $(get_install_dir libwebsockets)/usr/lib/libwebsockets-evlib_uv.so ${ADDON_BUILD}/${PKG_ADDON_ID}/lib.private
     cp -p $(get_install_dir libuv)/usr/lib/libuv.so.1 ${ADDON_BUILD}/${PKG_ADDON_ID}/lib.private
 }

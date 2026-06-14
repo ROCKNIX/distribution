@@ -1,12 +1,12 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="game.libretro.mrboom"
-PKG_VERSION="5.5.0.162-Omega"
-PKG_SHA256="c80cba5535f0364a3bb554498173e4d933846083a2df9c6d664c795c9410a036"
-PKG_REV="3"
+PKG_VERSION="5.5.0.164-Omega"
+PKG_SHA256="16e416e6063cd952974a6a1ca661239d655aca89d929ea4b1617d8408ded7760"
+PKG_REV="4"
 PKG_ARCH="any"
-PKG_LICENSE="GPL"
+PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/kodi-game/game.libretro.mrboom"
 PKG_URL="https://github.com/kodi-game/game.libretro.mrboom/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain kodi-platform libretro-mrboom"

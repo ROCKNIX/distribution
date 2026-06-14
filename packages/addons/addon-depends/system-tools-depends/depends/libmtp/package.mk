@@ -1,10 +1,10 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="libmtp"
-PKG_VERSION="1.1.22"
-PKG_SHA256="c3fcf411aea9cb9643590cbc9df99fa5fe30adcac695024442973d76fa5f87bc"
-PKG_LICENSE="GPL"
+PKG_VERSION="1.1.23"
+PKG_SHA256="74a2b6e8cb4a0304e95b995496ea3ac644c29371649b892b856e22f12a0bdeed"
+PKG_LICENSE="LGPL-2.1-or-later"
 PKG_SITE="http://libmtp.sourceforge.net/"
 PKG_URL="${SOURCEFORGE_SRC}/project/${PKG_NAME}/${PKG_NAME}/${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain libusb gettext"

@@ -1,12 +1,12 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="game.libretro.vbam"
-PKG_VERSION="2.1.11.51-Omega"
-PKG_SHA256="4a93031df0d4464c0eaa80d04ed45e2248c828af0659e25d8b70ed7d0e294d59"
-PKG_REV="3"
+PKG_VERSION="2.2.3.68-Omega"
+PKG_SHA256="f1aea373a4814731b61c19a2fa5688c47f00ae3b980a3a610dce3e4d216dba58"
+PKG_REV="1"
 PKG_ARCH="any"
-PKG_LICENSE="GPL"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/kodi-game/game.libretro.vbam"
 PKG_URL="https://github.com/kodi-game/game.libretro.vbam/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain kodi-platform libretro-vbam"

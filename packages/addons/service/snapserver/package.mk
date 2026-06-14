@@ -1,11 +1,11 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="snapserver"
-PKG_VERSION="0.31.0"
-PKG_REV="0"
+PKG_VERSION="0.35.0"
+PKG_REV="1"
 PKG_ARCH="any"
-PKG_LICENSE="GPLv3"
+PKG_LICENSE="GPL-3.0-or-later"
 PKG_DEPENDS_TARGET="toolchain nqptp shairport-sync snapcast"
 PKG_SECTION="service"
 PKG_SHORTDESC="Snapserver: Synchronous multi-room audio server"

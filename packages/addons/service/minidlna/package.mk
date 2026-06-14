@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="minidlna"
@@ -6,7 +6,7 @@ PKG_VERSION="1.3.3"
 PKG_SHA256="39026c6d4a139b9180192d1c37225aa3376fdf4f1a74d7debbdbb693d996afa4"
 PKG_REV="0"
 PKG_ARCH="any"
-PKG_LICENSE="BSD-3c/GPLv2"
+PKG_LICENSE="GPL-2.0-only AND BSD-3-Clause"
 PKG_SITE="https://sourceforge.net/projects/minidlna/"
 PKG_URL="https://downloads.sourceforge.net/project/minidlna/minidlna/${PKG_VERSION}/minidlna-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain ffmpeg flac libexif libiconv libid3tag libjpeg-turbo libogg libvorbis sqlite"
@@ -18,6 +18,7 @@ PKG_BUILD_FLAGS="-sysroot -cfg-libs"
 
 PKG_IS_ADDON="yes"
 PKG_ADDON_NAME="MiniDLNA (ReadyMedia)"
+PKG_ADDON_ICON_NAME="DLNA"
 PKG_ADDON_TYPE="xbmc.service"
 
 PKG_CONFIGURE_OPTS_TARGET="--disable-static \

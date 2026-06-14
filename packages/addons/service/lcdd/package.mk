@@ -1,13 +1,13 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="lcdd"
 PKG_VERSION="71877ee059a238400b5f6b41cee7c43a3df00334"
 PKG_SHA256="e910c7d748b58cc57543dc8845f8b2bcd0592dddd58bd72a55a58e90e6bfd861"
 PKG_VERSION_DATE="0.5dev+2024-12-14"
-PKG_REV="1"
+PKG_REV="0"
 PKG_ARCH="any"
-PKG_LICENSE="GPL"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="http://lcdproc.org/"
 PKG_URL="https://github.com/lcdproc/lcdproc/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain freetype libftdi1 libgpiod libhid libugpio libusb ncurses serdisplib"
@@ -63,5 +63,4 @@ addon() {
 
   sed -e "s/@DRIVERS@/${drivers}/" \
       -i ${ADDON_BUILD}/${PKG_ADDON_ID}/resources/settings.xml
-
 }

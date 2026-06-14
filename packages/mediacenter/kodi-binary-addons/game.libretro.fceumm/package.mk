@@ -1,12 +1,12 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="game.libretro.fceumm"
-PKG_VERSION="0.0.1.57-Omega"
-PKG_SHA256="4abaecd52f59674910673dab7c091b30e8b7a95451dee86bde1ad63b39bafb82"
-PKG_REV="3"
+PKG_VERSION="0.0.1.62-Omega"
+PKG_SHA256="4e39e5f63ac7cecdc136ca2b1cca67221c101e6fc8e749e2fe2ca54082b0b313"
+PKG_REV="1"
 PKG_ARCH="any"
-PKG_LICENSE="GPL"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/kodi-game/game.libretro.fceumm"
 PKG_URL="https://github.com/kodi-game/game.libretro.fceumm/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain kodi-platform libretro-fceumm"

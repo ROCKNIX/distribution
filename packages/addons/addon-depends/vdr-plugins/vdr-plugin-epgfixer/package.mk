@@ -3,9 +3,9 @@
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="vdr-plugin-epgfixer"
-PKG_VERSION="e88b67b9e9c8ed98b78a6214ab54247020d3b302"
-PKG_SHA256="80ae82ec568781e84baa753b522309a76f239da1e02eba3d73c59422345bd7a9"
-PKG_LICENSE="GPL"
+PKG_VERSION="9bbf438eb031ef377ca2b8e08376be9368a8df0f"
+PKG_SHA256="c0be61b7540c660c0cffa9b8096ce1890b84f8e0648a25ba081855dd2259f97b"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="http://projects.vdr-developer.org/projects/plg-epgfixer"
 PKG_URL="https://github.com/vdr-projects/vdr-plugin-epgfixer/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain vdr pcre2"

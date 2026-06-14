@@ -1,12 +1,12 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="game.libretro.hatari"
-PKG_VERSION="1.8.0.41-Omega"
-PKG_SHA256="16e1fc14a166487d82e0c6d401e25d5dc8ad725e0c4f05166aab373521526022"
-PKG_REV="3"
+PKG_VERSION="1.8.0.43-Omega"
+PKG_SHA256="a749441e199b3eb88e8ac15ae7d7bbe8112bda7165eb1bd72759b0cc8e782e03"
+PKG_REV="1"
 PKG_ARCH="any"
-PKG_LICENSE="GPL"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/kodi-game/game.libretro.hatari"
 PKG_URL="https://github.com/kodi-game/game.libretro.hatari/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain kodi-platform libretro-hatari"

@@ -1,0 +1,143 @@
+From 5e541035a75269057fdbee21030cd8a1b4e556d9 Mon Sep 17 00:00:00 2001
+From: Matthias Reichl <hias@horus.com>
+Date: Sat, 12 Aug 2017 11:03:10 +0200
+Subject: [PATCH] disable python
+
+diff --git a/Makefile.am b/Makefile.am
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -5,7 +5,9 @@ ACLOCAL_AMFLAGS         = -I m4
+ AUTOMAKE_OPTIONS        = 1.5 check-news dist-bzip2 -Wno-portability \
+                           subdir-objects
+ 
++if HAVE_PYTHON
+ include                 pylint.mak
++endif
+ 
+ GIT_COMMIT      = $(shell git log -1 --pretty=format:%h || echo UNKNOWN)
+ GIT_DATE        = $(shell git log -1 --pretty=format:%cd || echo UNKNOWN)
+@@ -39,13 +41,17 @@ MANTAINERCLEANFILES     = config.sub ins
+ AM_DISTCHECK_CONFIGURE_FLAGS = \
+     --with-systemdsystemunitdir=$${dc_install_base}/lib/systemd/system
+ 
++if HAVE_PYTHON
+ BUILT_SOURCES           = paths.h python-pkg/lirc/config.py python-pkg/VERSION
++else
++BUILT_SOURCES           = paths.h
++endif
+ 
+ if WITH_SYSTEMDSYSTEMUNITDIR
+     SYSTEMD_DIR         = systemd
+ endif
+ 
+-SUBDIRS                 = lib daemons tools plugins configs doc $(SYSTEMD_DIR)
++SUBDIRS                 = lib daemons tools plugins $(SYSTEMD_DIR)
+ 
+ if INSTALL_ETC
+ 
+@@ -66,7 +72,9 @@ endif
+ 
+ dist_doc_DATA           = VERSION
+ 
++if HAVE_PYTHON
+ nodist_pkgdata_DATA     = $(PYTHON_TARBALL)
++endif
+ 
+ pkgconfigdir            = $(libdir)/pkgconfig
+ dist_pkgconfig_DATA     = lirc.pc lirc-driver.pc
+@@ -78,6 +86,7 @@ header_HEADERS          = include/linux/
+ mediadir                = $(includedir)/lirc/media
+ media_HEADERS           = include/media/lirc.h
+ 
++if HAVE_PYTHON
+ py_pkgdir               = $(pkgdatadir)/python-pkg
+ dist_py_pkg_DATA        = python-pkg/setup.py \
+                           python-pkg/README.rst
+@@ -143,6 +152,8 @@ all-local:
+ 	    $(PYTHON) setup.py $(if $(VERBOSE),,-q) build
+ endif
+ 
++endif
++
+ install-data-hook:
+ 	$(SED) -i -e '/^plugindir/s|/usr/lib|$(libdir)|' \
+ 	    $(DESTDIR)$(lirc_confdir)/lirc_options.conf
+@@ -177,6 +188,7 @@ fix-version: .phony
+ 	$(SED) -i '/DATE/s/=.*/="$(GIT_DATE)"/' $(distdir)/VERSION
+ 	$(SED) -i '/REFS/s|=.*|="$(GIT_REFS)"|' $(distdir)/VERSION
+ 
++if HAVE_PYTHON
+ $(abs_builddir)/python-pkg/setup.py:
+ 	cp -ar $(top_srcdir)/python-pkg  $(abs_builddir)
+ 	chmod -R u+w  python-pkg
+@@ -202,6 +214,7 @@ python-pkg/lirc/config.py: Makefile  $(a
+ 	@echo 'DOCDIR="$(docdir)"' >>$@
+ 	@echo 'MODINFO="$(MODINFO)"' >>$@
+ 	@echo 'VERSION="$(VERSION)"' >>$@
++endif
+ 
+ paths.h: Makefile
+ 	@echo "#ifndef PATHS_H"          >paths.h
+diff --git a/configure.ac b/configure.ac
+--- a/configure.ac
++++ b/configure.ac
+@@ -47,7 +47,8 @@ AC_CHECK_PROG([DOXYGEN],[doxygen],[yes],
+ AM_CONDITIONAL(HAVE_DOXYGEN, test x$DOXYGEN = xyes)
+ LT_INIT([disable-static])
+ 
+-AM_PATH_PYTHON([3.1],,)
++AM_PATH_PYTHON([3.1],,[:])
++AM_CONDITIONAL([HAVE_PYTHON], [test "$PYTHON" != :])
+ PKG_CHECK_MODULES([PYTHON],[python-${PYTHON_VERSION}m],,[true])
+ test -z "$PYTHON_CFLAGS" && \
+     PKG_CHECK_MODULES([PYTHON], [python-$PYTHON_VERSION],,[true])
+@@ -138,11 +139,7 @@ test -d "/var/lock/lockdev" || lockdir_d
+ enable_uinput_default="no"
+ test -e "/dev/uinput" && enable_uinput_default="yes"
+ 
+-version_nodots=$( $PYTHON << EOF
+-v = "$VERSION".split("rc").pop(0).split("-").pop(0).split(".")
+-print(int(v.pop(0)) * 10000 + int(v.pop(0)) * 100 + int(v.pop(0)))
+-EOF
+-)
++version_nodots=$( echo $VERSION|tr '.' ' '|(read m v r;echo $((m*10000+v*100+r))) )
+ AC_DEFINE_UNQUOTED(VERSION_NODOTS, [$version_nodots])
+ 
+ AC_MSG_CHECKING([for linux kernel])
+@@ -572,6 +569,7 @@ AX_REPORT_CONDITIONAL([DEVEL])
+ AX_REPORT_CONDITIONAL([LINUX_KERNEL])
+ AX_REPORT_CONDITIONAL([HAVE_DEVINPUT])
+ AX_REPORT_CONDITIONAL([WITH_SYSTEMDSYSTEMUNITDIR])
++AX_REPORT_CONDITIONAL([HAVE_PYTHON])
+ AX_REPORT_CONDITIONAL([HAVE_PYTHON35])
+ 
+ AS_IF([test x$HAVE_PYMOD_YAML != xyes], AC_MSG_WARN([
+diff --git a/tools/Makefile.am b/tools/Makefile.am
+--- a/tools/Makefile.am
++++ b/tools/Makefile.am
+@@ -71,12 +71,17 @@ xmode2_SOURCES          = xmode2.cpp
+ xmode2_LDADD            = @X_LIBS@ @X_PRE_LIBS@ -lX11 @X_EXTRA_LIBS@ \
+                           $(LIRC_LIBS)
+ 
++if HAVE_PYTHON
+ dist_bin_SCRIPTS        = lirc-config-tool lirc-init-db
++else
++dist_bin_SCRIPTS	=
++endif
+ 
+ if HAVE_DEVINPUT
+ dist_bin_SCRIPTS        += lirc-make-devinput
+ endif
+ 
++if HAVE_PYTHON
+ dist_bin_SCRIPTS        += pronto2lirc irdb-get irtext2udp lirc-postinstall
+ dist_sbin_SCRIPTS       = lircd-setup
+ dist_noinst_SCRIPTS     = make_rel_symlink.py check_configs.py
+@@ -122,6 +127,7 @@ install-data-hook:
+ 	$(PYTHON) $(srcdir)/make_rel_symlink.py \
+ 	    $(DESTDIR)/$(pkgdatadir)/configs \
+ 	        $(DESTDIR)/$(setupdir)/configs
++endif
+ 
+ uninstall-hook:
+ 	rm -f $(DESTDIR)/$(bindir)/lirc-setup \
