@@ -3,18 +3,12 @@
 
 PKG_NAME="gamescope"
 PKG_VERSION="428688779e481681ddf6e2ea346987889527a0b7"
-PKG_GIT_CLONE_BRANCH="master"
 PKG_LICENSE="BSD-2-Clause"
 PKG_SITE="https://github.com/ValveSoftware/gamescope"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain wayland wayland-protocols libdrm libinput libxkbcommon pixman systemd \
-                    libcap luajit libdecor libX11 libXext libXfixes libXdamage libXcomposite \
-                    libXrender libXxf86vm libXtst libXi libXcursor libXmu libXres libxcb \
-                    xcb-util-wm seatd hwdata SDL2 pipewire"
+PKG_DEPENDS_TARGET="toolchain pipewire wayland-protocols libXdamage libXcomposite libXcursor libXxf86vm \
+                    libXtst libXres libXmu libxkbcommon SDL2 libdecor luajit hwdata:host"
 PKG_LONGDESC="SteamOS session compositing window manager (micro-compositor for games / nested Wayland)."
-GET_HANDLER_SUPPORT="git"
-PKG_TOOLCHAIN="meson"
-PKG_DEPENDS_HOST="toolchain:host wayland:host wayland-protocols:host glslang:host"
 
 configure_package() {
   if [ "${VULKAN_SUPPORT}" = "yes" ]; then
