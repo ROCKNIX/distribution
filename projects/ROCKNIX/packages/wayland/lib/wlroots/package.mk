@@ -4,7 +4,7 @@
 PKG_NAME="wlroots"
 PKG_LICENSE="MIT"
 PKG_SITE="https://gitlab.freedesktop.org/wlroots/wlroots/"
-PKG_DEPENDS_TARGET="toolchain libinput libxkbcommon pixman libdrm wayland wayland-protocols seatd xwayland hwdata libxcb xcb-util-wm"
+PKG_DEPENDS_TARGET="toolchain libinput libxkbcommon pixman libdrm wayland wayland-protocols seatd xwayland hwdata:host libxcb xcb-util-wm"
 PKG_LONGDESC="A modular Wayland compositor library"
 PKG_TOOLCHAIN="meson"
 
