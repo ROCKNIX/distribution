@@ -9,6 +9,15 @@ STEAM_FLAVOR=arm64
 source /etc/profile
 set_kill set "gamescope steam FEX"
 
+if [ -f /storage/.config/steam-native ]; then
+    killall gamescope steam 2>/dev/null
+    sleep 1
+    SDL_VIDEODRIVER=x11 LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ \
+      /storage/.local/share/Steam/steamrtarm64/steam -steamdeck -steamos3 -gamepadui \
+      -noverifyfiles -nobootstrapupdate -skipinitialbootstrap -norepairfiles -noshaders "$@"
+    exit 0
+fi
+
 # shellcheck source=start_steam.sh
 . /usr/bin/start_steam.sh
 
