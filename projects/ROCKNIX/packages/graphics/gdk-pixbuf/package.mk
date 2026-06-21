@@ -26,11 +26,8 @@ pre_configure_target() {
                          -Dman=false \
                          -Drelocatable=false \
                          -Dinstalled_tests=false \
-                         -Dtests=false"
-
-  if [ "${DISPLAYSERVER}" != "x11" ]; then
-    PKG_MESON_OPTS_TARGET+=" -Dbuiltin_loaders=all"
-  fi
+                         -Dtests=false \
+                         -Dbuiltin_loaders=all"
 
   export TARGET_LDFLAGS="-L${SYSROOT_PREFIX}/usr/lib -lz"
 }

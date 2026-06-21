@@ -5,6 +5,7 @@ PKG_NAME="heroic"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://heroicgameslauncher.com"
 PKG_LONGDESC="Heroic Games Launcher runtime scripts for ROCKNIX"
+PKG_DEPENDS_TARGET="librsvg adwaita-icon-theme"
 PKG_TOOLCHAIN="manual"
 
 makeinstall_target() {
