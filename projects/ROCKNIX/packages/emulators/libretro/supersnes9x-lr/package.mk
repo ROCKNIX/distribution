@@ -34,6 +34,7 @@ make_target() {
     CXXFLAGS="${CXXFLAGS} -DARM"
   fi
 
+  rm -f libretro/*.o libretro/*.so
   make -C libretro
 }
 
