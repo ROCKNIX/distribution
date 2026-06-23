@@ -17,6 +17,7 @@ HIRES3D=$(get_setting hires_3d "${PLATFORM}" "${GAME}")
 THREADED3D=$(get_setting threaded_3d "${PLATFORM}" "${GAME}")
 FOLLOW3D=$(get_setting follow_3d_renderer "${PLATFORM}" "${GAME}")
 MICTHRESH=$(get_setting microphone_sensitivity "${PLATFORM}" "${GAME}")
+SHADER=$(get_setting shader "${PLATFORM}" "${GAME}")
 
 #load gptokeyb support files
 control-gen_init.sh
@@ -87,5 +88,6 @@ $GPTOKEYB "drastic" -c "drastic.gptk" &
 export LD_PRELOAD="/usr/lib/libdrastouch.so"
 export SDL_TOUCH_MOUSE_EVENTS="0"
 export DSHOOK_MIC_THRESH="${MICTHRESH}"
+export DSHOOK_SHADER="${SHADER:-none}"
 ./drastic "$1"
 kill -9 $(pidof gptokeyb)

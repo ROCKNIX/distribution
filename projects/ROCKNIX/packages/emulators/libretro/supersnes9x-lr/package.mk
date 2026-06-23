@@ -20,7 +20,7 @@
 ################################################################################
 
 PKG_NAME="supersnes9x-lr"
-PKG_VERSION="d39f1a24efb3351cab9118b87412f8ffc8e4555e"
+PKG_VERSION="d7561a84555a6edcdcb2dc098824b89dab1d8c38"
 PKG_LICENSE="Non-commercial"
 PKG_SITE="https://github.com/shanytc/snes9x"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
@@ -39,5 +39,5 @@ make_target() {
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp libretro/snes9x_libretro.so ${INSTALL}/usr/lib/libretro/supersnes9x_libretro.so
+  cp libretro/supersnes9x_libretro.so ${INSTALL}/usr/lib/libretro/
 }

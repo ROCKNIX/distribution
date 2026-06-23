@@ -6,6 +6,79 @@
 #include <string.h>
 #include <math.h>
 
+// --- Minimal GLES2 types and constants (no libGLESv2 header dependency) ---
+typedef unsigned int  GLenum;
+typedef unsigned int  GLuint;
+typedef int           GLint;
+typedef int           GLsizei;
+typedef unsigned char GLboolean;
+typedef float         GLfloat;
+typedef char          GLchar;
+typedef void          GLvoid;
+
+#define GL_FALSE                0
+#define GL_FRAGMENT_SHADER      0x8B30
+#define GL_VERTEX_SHADER        0x8B31
+#define GL_COMPILE_STATUS       0x8B81
+#define GL_LINK_STATUS          0x8B82
+#define GL_TEXTURE_2D           0x0DE1
+#define GL_TEXTURE_MIN_FILTER   0x2801
+#define GL_TEXTURE_MAG_FILTER   0x2800
+#define GL_NEAREST              0x2600
+#define GL_LINEAR               0x2601
+#define GL_VIEWPORT             0x0BA2
+#define GL_CURRENT_PROGRAM      0x8B8D
+#define GL_ARRAY_BUFFER         0x8892
+#define GL_ARRAY_BUFFER_BINDING 0x8894
+#define GL_FLOAT                0x1406
+#define GL_TRIANGLE_STRIP       0x0005
+#define GL_BLEND                0x0BE2
+#define GL_SCISSOR_TEST         0x0C11
+
+// --- GLES2 function pointers resolved at runtime ---
+static GLuint (*p_glCreateShader)(GLenum) = NULL;
+static void (*p_glShaderSource)(GLuint, GLsizei, const GLchar *const *, const GLint *) = NULL;
+static void (*p_glCompileShader)(GLuint) = NULL;
+static void (*p_glGetShaderiv)(GLuint, GLenum, GLint *) = NULL;
+static void (*p_glDeleteShader)(GLuint) = NULL;
+static GLuint (*p_glCreateProgram)(void) = NULL;
+static void (*p_glAttachShader)(GLuint, GLuint) = NULL;
+static void (*p_glBindAttribLocation)(GLuint, GLuint, const GLchar *) = NULL;
+static void (*p_glLinkProgram)(GLuint) = NULL;
+static void (*p_glGetProgramiv)(GLuint, GLenum, GLint *) = NULL;
+static void (*p_glDeleteProgram)(GLuint) = NULL;
+static GLint (*p_glGetUniformLocation)(GLuint, const GLchar *) = NULL;
+static void (*p_glUniform1i)(GLint, GLint) = NULL;
+static void (*p_glUniform2f)(GLint, GLfloat, GLfloat) = NULL;
+static void (*p_glTexParameteri)(GLenum, GLenum, GLint) = NULL;
+static void (*p_glGetIntegerv)(GLenum, GLint *) = NULL;
+static void (*p_glViewport)(GLint, GLint, GLsizei, GLsizei) = NULL;
+static void (*p_glUseProgram)(GLuint) = NULL;
+static void (*p_glBindBuffer)(GLenum, GLuint) = NULL;
+static void (*p_glEnableVertexAttribArray)(GLuint) = NULL;
+static void (*p_glDisableVertexAttribArray)(GLuint) = NULL;
+static void (*p_glVertexAttribPointer)(GLuint, GLint, GLenum, GLboolean, GLsizei, const GLvoid *) = NULL;
+static void (*p_glDrawArrays)(GLenum, GLint, GLsizei) = NULL;
+static void (*p_glEnable)(GLenum) = NULL;
+static void (*p_glDisable)(GLenum) = NULL;
+
+// --- Shader state ---
+#define SHADER_NONE 0 // No shader; use GL's built-in bilinear filtering (default)
+#define SHADER_SHARP_BILINEAR 1
+#define SHADER_SHARP_SHIMMERLESS 2
+#define SHADER_QUILEZ 3
+#define SHADER_SCANLINES 4
+#define SHADER_LCD3X 5
+
+static int shader_mode = SHADER_NONE;
+static int gl_renderer_desktop = 0; // 1 when SDL uses "opengl" renderer (not "opengles2")
+static GLuint shader_program = 0;
+static GLint loc_texture = -1;
+static GLint loc_texture_size = -1;
+static GLint loc_output_size = -1; // sharp-bilinear only
+static int shader_frame_calls = 0;
+
+// --- DS / window state (declared before all functions that use them) ---
 static int ds_screen_width = 256;
 static int ds_screen_height = 192;
 static int last_x = -1;
@@ -29,6 +102,8 @@ static SDL_Texture* screens[4];
 static SDL_Texture* stylus_tex[2];
 static SDL_Rect touch_rect_storage = {0};
 static SDL_Rect* touch_rect = NULL;
+
+// --- SDL2 real function pointers ---
 static SDL_Renderer* renderer = NULL;
 static SDL_Window* (*real_SDL_CreateWindow)(const char*, int, int, int, int, Uint32) = NULL;
 static void (*real_SDL_SetWindowSize)(SDL_Window* window, int w, int h) = NULL;
@@ -45,8 +120,396 @@ static void (*real_SDL_PauseAudioDevice)(SDL_AudioDeviceID, int) = NULL;
 static void (*real_SDL_CloseAudioDevice)(SDL_AudioDeviceID) = NULL;
 static int (*real_SDL_GetNumAudioDevices)(int) = NULL;
 static const char* (*real_SDL_GetAudioDeviceName)(int, int) = NULL;
+static void (*real_SDL_RenderPresent)(SDL_Renderer*) = NULL;
 
-SDL_Window* SDL_CreateWindow(const char* title, int x, int y, int w, int h, Uint32 flags) {
+// ---------------------------------------------------------------------------
+// GLES2 runtime loader
+// ---------------------------------------------------------------------------
+
+static void init_gl_funcs(void) {
+    // SDL_GL_GetProcAddress resolves against the GL context SDL is actually using.
+    // This works on both libmali (GLES2) and Mesa/panfrost regardless of whether
+    // SDL picked the GLES2 or OpenGL renderer, unlike dlsym on libGLESv2.so.2
+    // which can return stubs that dispatch to the wrong EGL API on Mesa.
+#define GLSYM(name) p_##name = (void *)SDL_GL_GetProcAddress(#name)
+    GLSYM(glCreateShader);
+    GLSYM(glShaderSource);
+    GLSYM(glCompileShader);
+    GLSYM(glGetShaderiv);
+    GLSYM(glDeleteShader);
+    GLSYM(glCreateProgram);
+    GLSYM(glAttachShader);
+    GLSYM(glBindAttribLocation);
+    GLSYM(glLinkProgram);
+    GLSYM(glGetProgramiv);
+    GLSYM(glDeleteProgram);
+    GLSYM(glGetUniformLocation);
+    GLSYM(glUniform1i);
+    GLSYM(glUniform2f);
+    GLSYM(glTexParameteri);
+    GLSYM(glGetIntegerv);
+    GLSYM(glViewport);
+    GLSYM(glUseProgram);
+    GLSYM(glBindBuffer);
+    GLSYM(glEnableVertexAttribArray);
+    GLSYM(glDisableVertexAttribArray);
+    GLSYM(glVertexAttribPointer);
+    GLSYM(glDrawArrays);
+    GLSYM(glEnable);
+    GLSYM(glDisable);
+#undef GLSYM
+    if (!p_glCreateShader) {
+        // SDL_GL_GetProcAddress failed (no GL context yet, or software renderer).
+        // Fall back to RTLD_DEFAULT to catch any GLES2 symbols already in process.
+#define GLSYM(name) if (!p_##name) p_##name = (void *)dlsym(RTLD_DEFAULT, #name)
+        GLSYM(glCreateShader);
+        GLSYM(glShaderSource);
+        GLSYM(glCompileShader);
+        GLSYM(glGetShaderiv);
+        GLSYM(glDeleteShader);
+        GLSYM(glCreateProgram);
+        GLSYM(glAttachShader);
+        GLSYM(glBindAttribLocation);
+        GLSYM(glLinkProgram);
+        GLSYM(glGetProgramiv);
+        GLSYM(glDeleteProgram);
+        GLSYM(glGetUniformLocation);
+        GLSYM(glUniform1i);
+        GLSYM(glUniform2f);
+        GLSYM(glTexParameteri);
+        GLSYM(glGetIntegerv);
+        GLSYM(glViewport);
+        GLSYM(glUseProgram);
+        GLSYM(glBindBuffer);
+        GLSYM(glEnableVertexAttribArray);
+        GLSYM(glDisableVertexAttribArray);
+        GLSYM(glVertexAttribPointer);
+        GLSYM(glDrawArrays);
+        GLSYM(glEnable);
+        GLSYM(glDisable);
+#undef GLSYM
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Shader GLSL sources
+// ---------------------------------------------------------------------------
+
+// Vertex shader shared by both filter shaders
+static const char *VERT_SRC =
+    "attribute vec2 a_position;\n"
+    "attribute vec2 a_texcoord;\n"
+    "varying vec2 v_texcoord;\n"
+    "void main() {\n"
+    "    gl_Position = vec4(a_position, 0.0, 1.0);\n"
+    "    v_texcoord = a_texcoord;\n"
+    "}\n";
+
+// Themaister sharp-bilinear with minimum prescale of 2.
+// Minimum of 2 ensures correct behaviour with Hi-Res 3D (512×384→640×480)
+// where floor(scale)=1 would otherwise fall back to pure bilinear.
+static const char *FRAG_SHARP_BILINEAR =
+    "precision mediump float;\n"
+    "varying vec2 v_texcoord;\n"
+    "uniform sampler2D u_texture;\n"
+    "uniform vec2 u_texture_size;\n"
+    "uniform vec2 u_output_size;\n"
+    "void main() {\n"
+    "    vec2 scale = max(vec2(2.0), floor(u_output_size / u_texture_size));\n"
+    "    vec2 texel = v_texcoord * u_texture_size;\n"
+    "    vec2 texel_floored = floor(texel);\n"
+    "    vec2 s = fract(texel);\n"
+    "    vec2 region_range = 0.5 - 0.5 / scale;\n"
+    "    vec2 center_dist = s - 0.5;\n"
+    "    vec2 f = (center_dist - clamp(center_dist, -region_range, region_range)) * scale + 0.5;\n"
+    "    vec2 mod_texel = texel_floored + f;\n"
+    "    gl_FragColor = SWIZ(texture2D(u_texture, mod_texel / u_texture_size));\n"
+    "}\n";
+
+// Scanlines: sharp-bilinear-2x base with every other output row darkened
+static const char *FRAG_SCANLINES =
+    "precision mediump float;\n"
+    "varying vec2 v_texcoord;\n"
+    "uniform sampler2D u_texture;\n"
+    "uniform vec2 u_texture_size;\n"
+    "uniform vec2 u_output_size;\n"
+    "void main() {\n"
+    "    vec2 scale = max(vec2(2.0), floor(u_output_size / u_texture_size));\n"
+    "    vec2 texel = v_texcoord * u_texture_size;\n"
+    "    vec2 texel_floored = floor(texel);\n"
+    "    vec2 s = fract(texel);\n"
+    "    vec2 region_range = 0.5 - 0.5 / scale;\n"
+    "    vec2 center_dist = s - 0.5;\n"
+    "    vec2 f = (center_dist - clamp(center_dist, -region_range, region_range)) * scale + 0.5;\n"
+    "    vec2 mod_texel = texel_floored + f;\n"
+    "    vec4 color = SWIZ(texture2D(u_texture, mod_texel / u_texture_size));\n"
+    "    float scan = mod(floor(gl_FragCoord.y), 2.0);\n"
+    "    color.rgb *= mix(1.0, 0.65, scan);\n"
+    "    gl_FragColor = color;\n"
+    "}\n";
+
+// LCD3x: sharp-bilinear-2x base with RGB subpixel columns and pixel gap rows.
+// Simulates the NDS LCD panel's visible subpixel structure.
+// Branchless mask selection via step/mix; *2.0+clamp compensates for the ~50%
+// average brightness loss the subpixel mask would otherwise cause.
+static const char *FRAG_LCD3X =
+    "precision mediump float;\n"
+    "varying vec2 v_texcoord;\n"
+    "uniform sampler2D u_texture;\n"
+    "uniform vec2 u_texture_size;\n"
+    "uniform vec2 u_output_size;\n"
+    "void main() {\n"
+    "    vec2 scale = max(vec2(2.0), floor(u_output_size / u_texture_size));\n"
+    "    vec2 texel = v_texcoord * u_texture_size;\n"
+    "    vec2 texel_floored = floor(texel);\n"
+    "    vec2 s = fract(texel);\n"
+    "    vec2 region_range = 0.5 - 0.5 / scale;\n"
+    "    vec2 center_dist = s - 0.5;\n"
+    "    vec2 f = (center_dist - clamp(center_dist, -region_range, region_range)) * scale + 0.5;\n"
+    "    vec2 mod_texel = texel_floored + f;\n"
+    "    vec4 color = SWIZ(texture2D(u_texture, mod_texel / u_texture_size));\n"
+    "    float px = mod(floor(gl_FragCoord.x), 3.0);\n"
+    "    vec3 col_r = vec3(1.0, 0.25, 0.25);\n"
+    "    vec3 col_g = vec3(0.25, 1.0, 0.25);\n"
+    "    vec3 col_b = vec3(0.25, 0.25, 1.0);\n"
+    "    vec3 mask = mix(col_r, col_g, step(1.0, px));\n"
+    "    mask = mix(mask, col_b, step(2.0, px));\n"
+    "    float py = mod(floor(gl_FragCoord.y), 3.0);\n"
+    "    mask *= mix(0.5, 1.0, step(1.0, py));\n"
+    "    color.rgb = min(color.rgb * mask * 2.0, vec3(1.0));\n"
+    "    gl_FragColor = color;\n"
+    "}\n";
+
+// Sharp-shimmerless: nearest-neighbor within source texels; boundary-crossing output
+// pixels sample a fixed sub-texel position so blend ratios don't drift with sub-pixel
+// scroll, eliminating shimmer.
+static const char *FRAG_SHARP_SHIMMERLESS =
+    "precision mediump float;\n"
+    "varying vec2 v_texcoord;\n"
+    "uniform sampler2D u_texture;\n"
+    "uniform vec2 u_texture_size;\n"
+    "uniform vec2 u_output_size;\n"
+    "void main() {\n"
+    "    vec2 pixel = v_texcoord * u_output_size;\n"
+    "    vec2 scale = u_output_size / u_texture_size;\n"
+    "    vec2 invscale = u_texture_size / u_output_size;\n"
+    "    vec2 pixel_tl = floor(pixel);\n"
+    "    vec2 pixel_br = floor(pixel + vec2(1.0));\n"
+    "    vec2 texel_tl = floor(invscale * pixel_tl);\n"
+    "    vec2 texel_br = floor(invscale * pixel_br);\n"
+    "    vec2 mod_texel = texel_br + vec2(0.5);\n"
+    "    mod_texel -=\n"
+    "        (vec2(1.0) - step(texel_br, texel_tl))\n"
+    "        * (scale * texel_br - pixel_tl);\n"
+    "    gl_FragColor = SWIZ(texture2D(u_texture, mod_texel / u_texture_size));\n"
+    "}\n";
+
+// Inigo Quilez smooth Hermite interpolation (smootherstep)
+static const char *FRAG_QUILEZ =
+    "precision mediump float;\n"
+    "varying vec2 v_texcoord;\n"
+    "uniform sampler2D u_texture;\n"
+    "uniform vec2 u_texture_size;\n"
+    "void main() {\n"
+    "    vec2 p = v_texcoord * u_texture_size + vec2(0.5);\n"
+    "    vec2 i = floor(p);\n"
+    "    vec2 f = p - i;\n"
+    "    f = f * f * f * (f * (f * 6.0 - vec2(15.0)) + vec2(10.0));\n"
+    "    p = i + f;\n"
+    "    p = (p - vec2(0.5)) / u_texture_size;\n"
+    "    gl_FragColor = SWIZ(texture2D(u_texture, p));\n"
+    "}\n";
+
+// ---------------------------------------------------------------------------
+// Shader program helpers
+// ---------------------------------------------------------------------------
+
+static GLuint make_gl_shader(GLenum type, const char *preamble, const char *src) {
+    if (!p_glCreateShader) return 0;
+    GLuint s = p_glCreateShader(type);
+    if (!s) return 0;
+    const GLchar *srcs[] = { preamble, src };
+    p_glShaderSource(s, 2, (const GLchar *const *)srcs, NULL);
+    p_glCompileShader(s);
+    GLint ok = GL_FALSE;
+    p_glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
+    if (!ok) { p_glDeleteShader(s); return 0; }
+    return s;
+}
+
+static GLuint make_gl_program(const char *vert_src, const char *frag_src) {
+    // GLSL ES 1.00 (GLES2) shaders need two tweaks to compile under desktop OpenGL:
+    //   - Prepend "#version 120" so attribute/varying/texture2D are available
+    //   - Drop "precision mediump float;" which is GLES2-only and invalid in desktop GLSL
+    static const char FRAG_ES_PREFIX[] = "precision mediump float;\n";
+    // SDL's desktop OpenGL renderer stores textures as GL_RGBA → no swizzle needed.
+    // SDL's GLES2 renderer (both libmali and Mesa/Panfrost) uses GL_BGRA_EXT when the
+    // GL_EXT_texture_format_BGRA8888 extension is available, so .bgra corrects channels.
+    const char *vpreamble = gl_renderer_desktop
+        ? "#version 120\n#define SWIZ(c) (c)\n"
+        : "#define SWIZ(c) (c).bgra\n";
+    const char *fpreamble = gl_renderer_desktop
+        ? "#version 120\n#define SWIZ(c) (c)\n"
+        : "#define SWIZ(c) (c).bgra\n";
+    const char *fbody     = frag_src;
+    if (gl_renderer_desktop &&
+            strncmp(frag_src, FRAG_ES_PREFIX, sizeof(FRAG_ES_PREFIX) - 1) == 0)
+        fbody = frag_src + sizeof(FRAG_ES_PREFIX) - 1;
+
+    GLuint vert = make_gl_shader(GL_VERTEX_SHADER, vpreamble, vert_src);
+    if (!vert) return 0;
+    GLuint frag = make_gl_shader(GL_FRAGMENT_SHADER, fpreamble, fbody);
+    if (!frag) { p_glDeleteShader(vert); return 0; }
+    GLuint prog = p_glCreateProgram();
+    if (!prog) { p_glDeleteShader(vert); p_glDeleteShader(frag); return 0; }
+    p_glAttachShader(prog, vert);
+    p_glAttachShader(prog, frag);
+    // Pin attribute locations before linking so we can use constants
+    p_glBindAttribLocation(prog, 0, "a_position");
+    p_glBindAttribLocation(prog, 1, "a_texcoord");
+    p_glLinkProgram(prog);
+    p_glDeleteShader(vert);
+    p_glDeleteShader(frag);
+    GLint ok = GL_FALSE;
+    p_glGetProgramiv(prog, GL_LINK_STATUS, &ok);
+    if (!ok) { p_glDeleteProgram(prog); return 0; }
+    return prog;
+}
+
+// Called from SDL_CreateRenderer once the GLES2 context is live
+static void init_shader_program(void) {
+    if (shader_mode == SHADER_NONE) return;
+    init_gl_funcs();
+    fprintf(stderr, "[drastouch] init_shader: mode=%d glCreateShader=%s\n",
+            shader_mode, p_glCreateShader ? "ok" : "NULL");
+    if (!p_glCreateShader) { shader_mode = SHADER_NONE; return; }
+    const char *frag;
+    switch (shader_mode) {
+        case SHADER_SHARP_SHIMMERLESS: frag = FRAG_SHARP_SHIMMERLESS; break;
+        case SHADER_QUILEZ:            frag = FRAG_QUILEZ;            break;
+        case SHADER_SCANLINES:         frag = FRAG_SCANLINES;         break;
+        case SHADER_LCD3X:             frag = FRAG_LCD3X;             break;
+        default:                       frag = FRAG_SHARP_BILINEAR;    break;
+    }
+    shader_program = make_gl_program(VERT_SRC, frag);
+    fprintf(stderr, "[drastouch] shader_program=%u\n", shader_program);
+    if (!shader_program) { shader_mode = SHADER_NONE; return; }
+    loc_texture      = p_glGetUniformLocation(shader_program, "u_texture");
+    loc_texture_size = p_glGetUniformLocation(shader_program, "u_texture_size");
+    loc_output_size  = p_glGetUniformLocation(shader_program, "u_output_size");
+}
+
+// ---------------------------------------------------------------------------
+// Per-frame shader render pass
+// ---------------------------------------------------------------------------
+
+// Replace SDL_RenderCopy for a single DS screen texture with a GLES2 shader pass
+static int run_shader_copy(SDL_Renderer *r, SDL_Texture *texture,
+                           const SDL_Rect *srcrect, const SDL_Rect *dstrect) {
+    // Actual source texture dimensions
+    int tex_w = 0, tex_h = 0;
+    SDL_QueryTexture(texture, NULL, NULL, &tex_w, &tex_h);
+    if (tex_w == 0 || tex_h == 0) goto fallback;
+
+    // Flush SDL's batched commands before issuing raw GL
+    SDL_RenderFlush(r);
+
+    // Convert dstrect from logical SDL coords to physical GL pixels
+    int out_w, out_h;
+    SDL_GetRendererOutputSize(r, &out_w, &out_h);
+    float sx = (logical_width  > 0) ? (float)out_w / logical_width  : 1.0f;
+    float sy = (logical_height > 0) ? (float)out_h / logical_height : 1.0f;
+    int gl_w = (int)(dstrect->w * sx);
+    int gl_h = (int)(dstrect->h * sy);
+    // GL origin is bottom-left; SDL origin is top-left
+    int gl_x = (int)(dstrect->x * sx);
+    int gl_y = out_h - (int)(dstrect->y * sy) - gl_h;
+
+    if (gl_w < 32 || gl_h < 32) goto fallback;
+
+    // Bind source texture to GL_TEXTURE_2D via SDL
+    GLfloat texw = 1.0f, texh = 1.0f;
+    if (SDL_GL_BindTexture(texture, &texw, &texh) != 0) {
+        static int bind_fail_logged = 0;
+        if (!bind_fail_logged) {
+            fprintf(stderr, "[drastouch] SDL_GL_BindTexture failed: %s\n", SDL_GetError());
+            bind_fail_logged = 1;
+        }
+        goto fallback;
+    }
+
+    // Save GL state we will modify
+    GLint saved_viewport[4], saved_program, saved_abuf, saved_blend, saved_scissor;
+    p_glGetIntegerv(GL_VIEWPORT,             saved_viewport);
+    p_glGetIntegerv(GL_CURRENT_PROGRAM,      &saved_program);
+    p_glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &saved_abuf);
+    p_glGetIntegerv(GL_BLEND,                &saved_blend);
+    p_glGetIntegerv(GL_SCISSOR_TEST,         &saved_scissor);
+    // Our draw is always fully opaque; disable blending and clipping
+    p_glDisable(GL_BLEND);
+    p_glDisable(GL_SCISSOR_TEST);
+
+    p_glViewport(gl_x, gl_y, gl_w, gl_h);
+    p_glUseProgram(shader_program);
+    if (loc_texture >= 0) p_glUniform1i(loc_texture, 0);
+    if (loc_texture_size >= 0)
+        p_glUniform2f(loc_texture_size, (float)tex_w, (float)tex_h);
+    if (loc_output_size >= 0)
+        p_glUniform2f(loc_output_size, (float)gl_w, (float)gl_h);
+
+    // UV sub-rectangle within the source texture
+    float u0 = 0.0f, v0 = 0.0f, u1 = texw, v1 = texh;
+    if (srcrect) {
+        u0 = (float)srcrect->x / tex_w * texw;
+        v0 = (float)srcrect->y / tex_h * texh;
+        u1 = (float)(srcrect->x + srcrect->w) / tex_w * texw;
+        v1 = (float)(srcrect->y + srcrect->h) / tex_h * texh;
+    }
+
+    // SDL2/GLES2 stores textures with row-0 at the top in memory; GL has V=0 at bottom.
+    // We flip V so the image appears right-way-up after the GL y-flipped viewport.
+    // pos(x,y) | uv(u,v)
+    GLfloat verts[] = {
+        -1.0f, -1.0f,  u0, v1,   // bottom-left  -> texture bottom-left
+         1.0f, -1.0f,  u1, v1,   // bottom-right -> texture bottom-right
+        -1.0f,  1.0f,  u0, v0,   // top-left     -> texture top-left
+         1.0f,  1.0f,  u1, v0,   // top-right    -> texture top-right
+    };
+
+    p_glBindBuffer(GL_ARRAY_BUFFER, 0);
+    p_glEnableVertexAttribArray(0);
+    p_glEnableVertexAttribArray(1);
+    p_glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat), verts);
+    p_glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat), verts + 2);
+    p_glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    // SDL2's GLES2 renderer caches whether attrib arrays 0/1 are enabled and skips
+    // re-enabling them when it thinks they're already on.  Leaving them enabled here
+    // keeps that cache consistent on libmali (opengles2 renderer).
+    // SDL2's desktop OpenGL renderer does NOT cache this state — leaving attribs
+    // enabled with stale stack pointers corrupts its subsequent rendering (black menu).
+    if (gl_renderer_desktop) {
+        p_glDisableVertexAttribArray(0);
+        p_glDisableVertexAttribArray(1);
+    }
+
+    SDL_GL_UnbindTexture(texture);
+
+    p_glUseProgram(saved_program);
+    p_glViewport(saved_viewport[0], saved_viewport[1], saved_viewport[2], saved_viewport[3]);
+    p_glBindBuffer(GL_ARRAY_BUFFER, saved_abuf);
+    if (saved_blend)   p_glEnable(GL_BLEND);   else p_glDisable(GL_BLEND);
+    if (saved_scissor) p_glEnable(GL_SCISSOR_TEST); else p_glDisable(GL_SCISSOR_TEST);
+    return 0;
+
+fallback:
+    return real_SDL_RenderCopy(r, texture, srcrect, dstrect);
+}
+
+// ---------------------------------------------------------------------------
+// SDL2 hooks
+// ---------------------------------------------------------------------------
+
+SDL_Window* SDL_CreateWindow(const char *title, int x, int y, int w, int h, Uint32 flags) {
     int num_displays = SDL_GetNumVideoDisplays();
     int total_width = 0;
     int total_height = 0;
@@ -110,38 +573,51 @@ void SDL_SetWindowSize(SDL_Window* window, int w, int h) {
 
 SDL_Renderer* SDL_CreateRenderer(SDL_Window* window, int index, Uint32 flags) {
     renderer = real_SDL_CreateRenderer(window, index, flags);
-    // Just in case it's already set
-    SDL_RenderGetLogicalSize(renderer, &logical_width, &logical_height);
+    if (renderer) {
+        // Just in case it's already set
+        SDL_RenderGetLogicalSize(renderer, &logical_width, &logical_height);
+        SDL_RendererInfo info;
+        if (SDL_GetRendererInfo(renderer, &info) == 0) {
+            fprintf(stderr, "[drastouch] SDL renderer: %s (flags=0x%x)\n", info.name, info.flags);
+            gl_renderer_desktop = (strcmp(info.name, "opengl") == 0);
+        }
+        init_shader_program();  // GLES2 context is live at this point
+    }
     return renderer;
 }
 
 int SDL_RenderSetLogicalSize(SDL_Renderer* renderer, int w, int h) {
     int result = real_SDL_RenderSetLogicalSize(renderer, w, h);
-    // Otherwise store it here
+    // Also store it here so run_shader_copy can convert logical→physical coords
     logical_width = w;
     logical_height = h;
     return result;
 }
 
+void SDL_RenderPresent(SDL_Renderer *r) {
+    shader_frame_calls = 0;
+    real_SDL_RenderPresent(r);
+}
+
 SDL_Texture* SDL_CreateTexture(SDL_Renderer *renderer, Uint32 format, int type, int w, int h) {
-	SDL_Texture* texture = real_SDL_CreateTexture(renderer, format, type, w, h);
-	// Identify DS screen and stylus textures
-	if (type == SDL_TEXTUREACCESS_STREAMING) {
-		if (w == 512 && h == 384) {
+    SDL_Texture* texture = real_SDL_CreateTexture(renderer, format, type, w, h);
+    // Identify DS screen and stylus textures
+    if (type == SDL_TEXTUREACCESS_STREAMING) {
+        if (w == 512 && h == 384) {
             ds_screen_width = 512;
             ds_screen_height = 384;
-			if (!screens[0]) screens[0] = texture;
-			else if (!screens[1]) screens[1] = texture;
+            if (!screens[0]) screens[0] = texture;
+            else if (!screens[1]) screens[1] = texture;
         } else if (w == 256 && h == 192 && !screens[0]) {
-		    if (!screens[2]) screens[2] = texture;
-		    else if (!screens[3]) screens[3] = texture;
+            if (!screens[2]) screens[2] = texture;
+            else if (!screens[3]) screens[3] = texture;
         }
     }
     if (w == 32 && h == 32) {
-		if (!stylus_tex[0]) stylus_tex[0] = texture;
-		else if (!stylus_tex[1]) stylus_tex[1] = texture;
+        if (!stylus_tex[0]) stylus_tex[0] = texture;
+        else if (!stylus_tex[1]) stylus_tex[1] = texture;
     }
-	return texture;
+    return texture;
 }
 
 int SDL_RenderCopy(SDL_Renderer *renderer, SDL_Texture *texture, const SDL_Rect *srcrect, const SDL_Rect *dstrect) {
@@ -171,7 +647,21 @@ int SDL_RenderCopy(SDL_Renderer *renderer, SDL_Texture *texture, const SDL_Rect 
     // Make stylus fully transparent for actual touchscreens
     if (actual_touch && (texture == stylus_tex[0] || texture == stylus_tex[1]))
         SDL_SetTextureAlphaMod(texture, 0);
-    
+
+    // Apply pixel shader to DS screen textures when one is configured.
+    // Cap at 2 shader passes per frame so menu overlays (drawn after the two NDS
+    // screens) fall through to normal SDL rendering without breaking blending.
+    // Skip when rendering into a texture target — viewport math uses screen size.
+    if (shader_program && dstrect && shader_frame_calls < 2 &&
+        SDL_GetRenderTarget(renderer) == NULL) {
+        for (int i = 0; i < 4; i++) {
+            if (screens[i] && texture == screens[i]) {
+                shader_frame_calls++;
+                return run_shader_copy(renderer, texture, srcrect, dstrect);
+            }
+        }
+    }
+
     return real_SDL_RenderCopy(renderer, texture, srcrect, dstrect);
 }
 
@@ -233,6 +723,8 @@ int SDL_PollEvent(SDL_Event* event) {
                 if (!actual_touch)
                     actual_touch = 1;
 
+                if (!touch_rect) return 0;
+
                 int x = (int)(event->tfinger.x * phys_width);
                 int y = (int)(event->tfinger.y * phys_height);
                 if (xy_idx == 1)
@@ -269,6 +761,8 @@ int SDL_PollEvent(SDL_Event* event) {
                 break;
             }
             case SDL_FINGERMOTION: {
+                if (!touch_rect) return 0;
+
                 int x = (int)(event->tfinger.x * phys_width);
                 int y = (int)(event->tfinger.y * phys_height);
                 if (xy_idx == 1)
@@ -327,6 +821,21 @@ static void init(void) {
     real_SDL_CloseAudioDevice = dlsym(RTLD_NEXT, "SDL_CloseAudioDevice");
     real_SDL_GetNumAudioDevices = dlsym(RTLD_NEXT, "SDL_GetNumAudioDevices");
     real_SDL_GetAudioDeviceName = dlsym(RTLD_NEXT, "SDL_GetAudioDeviceName");
+    real_SDL_RenderPresent = dlsym(RTLD_NEXT, "SDL_RenderPresent");
+
+    const char *shader_str = getenv("DSHOOK_SHADER");
+    if (shader_str) {
+        if (strcmp(shader_str, "sharp-bilinear") == 0)
+            shader_mode = SHADER_SHARP_BILINEAR;
+        else if (strcmp(shader_str, "quilez") == 0)
+            shader_mode = SHADER_QUILEZ;
+        else if (strcmp(shader_str, "scanlines") == 0)
+            shader_mode = SHADER_SCANLINES;
+        else if (strcmp(shader_str, "lcd3x") == 0)
+            shader_mode = SHADER_LCD3X;
+        else if (strcmp(shader_str, "sharp-shimmerless") == 0)
+            shader_mode = SHADER_SHARP_SHIMMERLESS;
+    }
 
     const char* threshold_str = getenv("DSHOOK_MIC_THRESH");
     if (threshold_str) {
@@ -372,6 +881,10 @@ __attribute__((destructor))
 static void cleanup(void) {
     if (mic_device > 0 && real_SDL_CloseAudioDevice) {
         real_SDL_CloseAudioDevice(mic_device);
+    }
+    if (shader_program && p_glDeleteProgram) {
+        p_glDeleteProgram(shader_program);
+        shader_program = 0;
     }
 }
 
