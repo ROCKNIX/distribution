@@ -30,6 +30,37 @@ _get_all_internals() {
     wlr-randr 2>/dev/null | awk '/^(DSI|eDP|LVDS)-/ { print $1 }'
 }
 
+_wp_audio_card() {
+    wpctl status 2>/dev/null | awk -F'[.[:space:]]+' '
+        /\[alsa\]/ { for (i = 1; i <= NF; i++) if ($i ~ /^[0-9]+$/) { print $i; exit } }'
+}
+
+_wp_profile_index() {
+    pw-cli enum-params "$1" EnumProfile 2>/dev/null | awk -v want="$2" '
+        /Param:Profile:index/ { getline; idx = $2 }
+        /Param:Profile:name/  { getline; gsub(/"/, "", $2); if ($2 == want) { print idx; exit } }'
+}
+
+_switch_audio() {
+    local card target i
+    card=$(_wp_audio_card); [ -n "$card" ] || return 0
+    if [ "$1" = "external" ]; then
+        target=$(_wp_profile_index "$card" "HDMI")
+        if [ -z "$target" ]; then
+            systemctl restart wireplumber 2>/dev/null || true
+            for i in $(seq 1 20); do
+                sleep 0.5
+                card=$(_wp_audio_card)
+                [ -n "$card" ] && target=$(_wp_profile_index "$card" "HDMI")
+                [ -n "$target" ] && break
+            done
+        fi
+    else
+        target=$(_wp_profile_index "$card" "HiFi")
+    fi
+    [ -n "$card" ] && [ -n "$target" ] && wpctl set-profile "$card" "$target" 2>/dev/null || true
+}
+
 _apply() {
     local state="internal"
     [ -n "$(_get_active_externals)" ] && state="external"
@@ -44,16 +75,20 @@ _apply() {
             wlr-randr --output "$out" --off 2>/dev/null
         done < <(_get_all_internals)
         if [ -n "$ext_out" ]; then
+            wlr-randr --output "$ext_out" --mode 1920x1080@60 2>/dev/null \
+                || wlr-randr --output "$ext_out" --mode 1920x1080 2>/dev/null || true
             swaymsg "[app_id=\"emulationstation\"] move output ${ext_out}" 2>/dev/null || true
         fi
         # Stop USB gadget: its data lanes conflict with DP Alt Mode on RK3576
         systemctl is-active --quiet usbgadget && systemctl stop usbgadget
+        _switch_audio external
     else
         # Only re-enable internal panels on actual disconnect, not first-boot
         if [ "$prev" != "init" ]; then
             while IFS= read -r out; do
                 wlr-randr --output "$out" --preferred --on 2>/dev/null
             done < <(_get_all_internals)
+            _switch_audio internal
         fi
     fi
 
