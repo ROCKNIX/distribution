@@ -17,6 +17,7 @@ PKG_PATCH_DIRS="${LINUX} mainline ${DEVICE} default"
 
 [[ "${DEVICE}" == RK* ]] && PKG_PATCH_DIRS+=" mainline-rockchip"
 [[ "${DEVICE}" == SM* ]] && PKG_DEPENDS_TARGET+=" mkbootimg:host"
+[[ "${ROCKNIX_JOYPAD}" == "yes" ]] && PKG_PATCH_DIRS+=" rocknix-joypad"
 
 case ${DEVICE} in
   RK3588)
