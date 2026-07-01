@@ -1,0 +1,160 @@
+From: jaewun <jaewun@users.noreply.github.com>
+Subject: [PATCH] phy: qcom-qmp-ufs: allow UFS hosts to control RX LineCfg
+
+Qualcomm downstream UFS hosts keep PHY RX LineCfg enabled for link startup and
+disable it immediately afterward. The downstream comment says some UFS devices
+send incorrect LineCfg during power-mode-change, which can put the host PHY in
+an invalid state.
+
+Add a QMP UFS helper for the host driver to toggle the PCS LINECFG_DISABLE bit
+and call it from the existing Qualcomm link-startup PRE/POST hooks.
+
+This keeps RX LineCfg enabled while the link starts, then disables host RX
+LineCfg before post-startup power-mode-change traffic.
+
+Signed-off-by: jaewun <jaewun@users.noreply.github.com>
+
+--- a/drivers/phy/qualcomm/phy-qcom-qmp-ufs.c
++++ b/drivers/phy/qualcomm/phy-qcom-qmp-ufs.c
+@@ -14,5 +14,6 @@
+ #include <linux/of_address.h>
+ #include <linux/phy/phy.h>
++#include <linux/phy/phy-qcom-qmp-ufs.h>
+ #include <linux/platform_device.h>
+ #include <linux/regulator/consumer.h>
+ #include <linux/reset.h>
+@@ -40,12 +41,16 @@
+ #define NUM_OVERLAY				2
+ 
++/* QPHY LINECFG_DISABLE bit */
++#define RX_LINECFG_DISABLE			BIT(1)
++
+ /* set of registers with offsets different per-PHY */
+ enum qphy_reg_layout {
+ 	/* PCS registers */
+ 	QPHY_SW_RESET,
+ 	QPHY_START_CTRL,
+ 	QPHY_PCS_READY_STATUS,
+ 	QPHY_PCS_POWER_DOWN_CONTROL,
++	QPHY_LINECFG_DISABLE,
+ 	/* Keep last to ensure regs_layout arrays are properly initialized */
+ 	QPHY_LAYOUT_SIZE
+ };
+@@ -66,6 +71,7 @@ static const unsigned int ufsphy_v4_regs_layout[QPHY_LAYOUT_SIZE] = {
+ 	[QPHY_PCS_READY_STATUS]		= QPHY_V4_PCS_UFS_READY_STATUS,
+ 	[QPHY_SW_RESET]			= QPHY_V4_PCS_UFS_SW_RESET,
+ 	[QPHY_PCS_POWER_DOWN_CONTROL]	= QPHY_V4_PCS_UFS_POWER_DOWN_CONTROL,
++	[QPHY_LINECFG_DISABLE]		= QPHY_V4_PCS_UFS_LINECFG_DISABLE,
+ };
+ 
+ static const unsigned int ufsphy_v5_regs_layout[QPHY_LAYOUT_SIZE] = {
+@@ -81,6 +87,7 @@ static const unsigned int ufsphy_v6_regs_layout[QPHY_LAYOUT_SIZE] = {
+ 	[QPHY_PCS_READY_STATUS]		= QPHY_V6_PCS_UFS_READY_STATUS,
+ 	[QPHY_SW_RESET]			= QPHY_V6_PCS_UFS_SW_RESET,
+ 	[QPHY_PCS_POWER_DOWN_CONTROL]	= QPHY_V6_PCS_UFS_POWER_DOWN_CONTROL,
++	[QPHY_LINECFG_DISABLE]		= QPHY_V6_PCS_UFS_LINECFG_DISABLE,
+ };
+ 
+ static const struct qmp_phy_init_tbl milos_ufsphy_serdes[] = {
+@@ -1920,6 +1927,39 @@ static void qmp_ufs_init(struct qmp_ufs *qmp)
+ 		qmp_ufs_init_all(qmp, &cfg->tbls_hs_b);
+ }
+ 
++int qcom_qmp_ufs_ctrl_rx_linecfg(struct phy *phy, bool enable)
++{
++	struct qmp_ufs *qmp;
++	const struct qmp_phy_cfg *cfg;
++	u32 offset;
++	u32 before;
++	u32 after;
++
++	if (!phy)
++		return -ENODEV;
++
++	qmp = phy_get_drvdata(phy);
++	if (!qmp || !qmp->pcs)
++		return -ENODEV;
++
++	cfg = qmp->cfg;
++	offset = cfg->regs[QPHY_LINECFG_DISABLE];
++	if (!offset)
++		return -EOPNOTSUPP;
++
++	before = readl(qmp->pcs + offset);
++	after = enable ? before & ~RX_LINECFG_DISABLE :
++			 before | RX_LINECFG_DISABLE;
++	writel(after, qmp->pcs + offset);
++	after = readl(qmp->pcs + offset);
++
++	dev_dbg(qmp->dev, "UFS PHY RX LineCfg %s: reg=0x%x -> 0x%x\n",
++		 enable ? "enabled" : "disabled", before, after);
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(qcom_qmp_ufs_ctrl_rx_linecfg);
++
+ static int qmp_ufs_power_on(struct phy *phy)
+ {
+ 	struct qmp_ufs *qmp = phy_get_drvdata(phy);
+--- /dev/null
++++ b/include/linux/phy/phy-qcom-qmp-ufs.h
+@@ -0,0 +1,20 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef __PHY_QCOM_QMP_UFS_H__
++#define __PHY_QCOM_QMP_UFS_H__
++
++#include <linux/errno.h>
++#include <linux/kconfig.h>
++#include <linux/types.h>
++
++struct phy;
++
++#if IS_ENABLED(CONFIG_PHY_QCOM_QMP_UFS)
++int qcom_qmp_ufs_ctrl_rx_linecfg(struct phy *phy, bool enable);
++#else
++static inline int qcom_qmp_ufs_ctrl_rx_linecfg(struct phy *phy, bool enable)
++{
++	return -EOPNOTSUPP;
++}
++#endif
++
++#endif
+--- a/drivers/ufs/host/ufs-qcom.c
++++ b/drivers/ufs/host/ufs-qcom.c
+@@ -13,6 +13,7 @@
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/phy/phy.h>
++#include <linux/phy/phy-qcom-qmp-ufs.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm_domain.h>
+ #include <linux/reset-controller.h>
+@@ -715,9 +716,16 @@ static int ufs_qcom_link_startup_notify(struct ufs_hba *hba,
+ 					enum ufs_notify_change_status status)
+ {
++	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
+ 	int err = 0;
++	int linecfg_err;
+ 
+ 	switch (status) {
+ 	case PRE_CHANGE:
++		linecfg_err = qcom_qmp_ufs_ctrl_rx_linecfg(host->generic_phy, true);
++		if (linecfg_err && linecfg_err != -EOPNOTSUPP)
++			dev_warn(hba->dev, "failed to enable RX LineCfg: %d\n",
++				 linecfg_err);
++
+ 		if (ufs_qcom_cfg_timers(hba, false, ULONG_MAX)) {
+ 			dev_err(hba->dev, "%s: ufs_qcom_cfg_timers() failed\n",
+ 				__func__);
+@@ -738,5 +746,11 @@ static int ufs_qcom_link_startup_notify(struct ufs_hba *hba,
+ 		err = ufshcd_disable_host_tx_lcc(hba);
+ 
+ 		break;
++	case POST_CHANGE:
++		linecfg_err = qcom_qmp_ufs_ctrl_rx_linecfg(host->generic_phy, false);
++		if (linecfg_err && linecfg_err != -EOPNOTSUPP)
++			dev_warn(hba->dev, "failed to disable RX LineCfg: %d\n",
++				 linecfg_err);
++		break;
+ 	default:
+ 		break;
