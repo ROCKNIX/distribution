@@ -1,0 +1,55 @@
+From: jaewun <jaewun@users.noreply.github.com>
+Subject: [PATCH] scsi: ufs: qcom: balance the IRQ disable on host_reset error exits
+
+ufs_qcom_host_reset() snapshots whether the IRQ was enabled, calls
+ufshcd_disable_irq(), and only re-enables it on the success path. The two
+error returns (reset_control_assert / reset_control_deassert failure) leave
+the IRQ disabled, leaking the disable depth and leaving the controller IRQ
+masked for the rest of the controller's life.
+
+The relink path can now mask the IRQ with disable_irq_nosync() while PM is in
+progress, so these error exits must preserve IRQ depth as well. Route both
+failures through a common exit that re-enables the IRQ when it was enabled on
+entry.
+
+Signed-off-by: jaewun <jaewun@users.noreply.github.com>
+---
+diff --git a/drivers/ufs/host/ufs-qcom.c b/drivers/ufs/host/ufs-qcom.c
+index 375fd24..61a5b3a 100644
+--- a/drivers/ufs/host/ufs-qcom.c
++++ b/drivers/ufs/host/ufs-qcom.c
+@@ -449,7 +449,7 @@ static int ufs_qcom_host_reset(struct ufs_hba *hba)
+ 	if (ret) {
+ 		dev_err(hba->dev, "%s: core_reset assert failed, err = %d\n",
+ 				 __func__, ret);
+-		return ret;
++		goto out;
+ 	}
+
+ 	/*
+@@ -463,15 +463,23 @@ static int ufs_qcom_host_reset(struct ufs_hba *hba)
+ 	if (ret) {
+ 		dev_err(hba->dev, "%s: core_reset deassert failed, err = %d\n",
+ 				 __func__, ret);
+-		return ret;
++		goto out;
+ 	}
+
+ 	usleep_range(1000, 1100);
+
++	ret = 0;
++out:
++	/*
++	 * Re-enable the IRQ on the error exits too, otherwise a reset
++	 * assert/deassert failure leaks the disable and leaves the controller
++	 * IRQ masked. (This path became reachable once ufshcd_disable_irq() stops
++	 * synchronizing during PM resume.)
++	 */
+ 	if (reenable_intr)
+ 		ufshcd_enable_irq(hba);
+
+-	return 0;
++	return ret;
+ }
+
+ static u32 ufs_qcom_get_hs_gear(struct ufs_hba *hba)
