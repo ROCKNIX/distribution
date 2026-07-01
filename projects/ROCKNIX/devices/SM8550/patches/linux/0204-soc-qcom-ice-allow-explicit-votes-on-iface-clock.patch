@@ -1,0 +1,72 @@
+From 5f93b127bc17fda3fbd2ca4d9a7d8cae82624022 Mon Sep 17 00:00:00 2001
+From: Harshal Dev <harshal.dev@oss.qualcomm.com>
+Date: Thu, 16 Apr 2026 17:29:19 +0530
+Subject: [PATCH] soc: qcom: ice: allow explicit votes on iface clock
+
+Since Qualcomm inline-crypto engine (ICE) is now a dedicated driver
+de-coupled from the QCOM UFS driver, it explicitly votes for its required
+clocks during probe. For scenarios where the clk_ignore_unused flag is not
+passed on the kernel command line, avoid potential unclocked ICE hardware
+register access during probe by also voting the iface clock.
+
+Also update the suspend and resume callbacks to handle un-voting and voting
+the iface clock.
+---
+ drivers/soc/qcom/ice.c | 17 +++++++++++++++--
+ 1 file changed, 15 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/soc/qcom/ice.c b/drivers/soc/qcom/ice.c
+index 9b4e167925fd..e37d6985e10e 100644
+--- a/drivers/soc/qcom/ice.c
++++ b/drivers/soc/qcom/ice.c
+@@ -108,6 +108,7 @@ struct qcom_ice {
+ 	void __iomem *base;
+ 
+ 	struct clk *core_clk;
++	struct clk *iface_clk;
+ 	bool use_hwkm;
+ 	bool hwkm_init_complete;
+ 	u8 hwkm_version;
+@@ -312,8 +313,13 @@ int qcom_ice_resume(struct qcom_ice *ice)
+ 
+ 	err = clk_prepare_enable(ice->core_clk);
+ 	if (err) {
+-		dev_err(dev, "failed to enable core clock (%d)\n",
+-			err);
++		dev_err(dev, "Failed to enable core clock: %d\n", err);
++		return err;
++	}
++
++	err = clk_prepare_enable(ice->iface_clk);
++	if (err) {
++		dev_err(dev, "Failed to enable iface clock: %d\n", err);
+ 		return err;
+ 	}
+ 	qcom_ice_hwkm_init(ice);
+@@ -323,6 +329,7 @@ EXPORT_SYMBOL_GPL(qcom_ice_resume);
+ 
+ int qcom_ice_suspend(struct qcom_ice *ice)
+ {
++	clk_disable_unprepare(ice->iface_clk);
+ 	clk_disable_unprepare(ice->core_clk);
+ 	ice->hwkm_init_complete = false;
+ 
+@@ -579,9 +586,15 @@ static struct qcom_ice *qcom_ice_create(struct device *dev,
+ 	engine->core_clk = devm_clk_get_optional_enabled(dev, "ice_core_clk");
+ 	if (!engine->core_clk)
+ 		engine->core_clk = devm_clk_get_optional_enabled(dev, "ice");
++	if (!engine->core_clk)
++		engine->core_clk = devm_clk_get_optional_enabled(dev, "core");
+ 	if (!engine->core_clk)
+ 		engine->core_clk = devm_clk_get_enabled(dev, NULL);
+ 	if (IS_ERR(engine->core_clk))
+ 		return ERR_CAST(engine->core_clk);
+ 
++	engine->iface_clk = devm_clk_get_optional_enabled(dev, "iface");
++	if (IS_ERR(engine->iface_clk))
++		return ERR_CAST(engine->iface_clk);
++
+ 	if (!qcom_ice_check_supported(engine))
+ 		return ERR_PTR(-EOPNOTSUPP);
+-- 
+2.51.0
