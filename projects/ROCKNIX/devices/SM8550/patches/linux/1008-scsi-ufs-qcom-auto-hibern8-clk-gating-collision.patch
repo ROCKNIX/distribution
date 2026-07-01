@@ -1,0 +1,38 @@
+From: jaewun <jaewun@users.noreply.github.com>
+Subject: [PATCH] scsi: ufs: qcom: disable HW auto-hibern8 with clk-gating hibern8
+
+The qcom host sets UFSHCD_CAP_HIBERN8_WITH_CLK_GATING, so ufshcd_gate_work()
+parks the link with a SW DME_HIBERNATE_ENTER before gating clocks. The core also
+defaults HW auto-hibern8 on (ahit = 150 ms). On idle the HW can park the M-PHY
+first; ufshcd_gate_work() then issues a redundant SW hibern8-enter on the
+already-parked link. That can time out waiting for power-mode-change
+completion and mark the link broken.
+
+HW auto-hibern8 and SW clk-gating hibern8 are mutually exclusive ways to park
+the link. Keep the SW clk-gating path, which runs in ufshcd_gate_work() with
+the IRQ still enabled, and disable HW auto-hibern8 via
+UFSHCD_QUIRK_BROKEN_AUTO_HIBERN8.
+
+Signed-off-by: jaewun <jaewun@users.noreply.github.com>
+---
+--- a/drivers/ufs/host/ufs-qcom.c
++++ b/drivers/ufs/host/ufs-qcom.c
+@@ -1157,6 +1157,18 @@
+ 
+ 	if (drvdata && drvdata->quirks)
+ 		hba->quirks |= drvdata->quirks;
++
++	/*
++	 * This host uses UFSHCD_CAP_HIBERN8_WITH_CLK_GATING, i.e. ufshcd_gate_work()
++	 * issues a SW DME_HIBERNATE_ENTER to park the link before gating clocks.
++	 * Leaving HW auto-hibern8 enabled too makes the HW park the link first;
++	 * gate_work then issues a redundant SW hibern8-enter on the already-parked
++	 * link, which can time out waiting for power-mode-change completion.
++	 * The two mechanisms are mutually exclusive; keep the SW clk-gating
++	 * path and disable HW auto-hibern8.
++	 */
++	if (hba->caps & UFSHCD_CAP_HIBERN8_WITH_CLK_GATING)
++		hba->quirks |= UFSHCD_QUIRK_BROKEN_AUTO_HIBERN8;
+ }
+ 
+ static void ufs_qcom_set_phy_gear(struct ufs_qcom_host *host)
