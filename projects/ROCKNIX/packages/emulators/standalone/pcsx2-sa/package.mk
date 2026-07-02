@@ -2,7 +2,7 @@
 # Copyright (C) 2025-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="pcsx2-sa"
-PKG_VERSION="68aa19fcb90c306d72b2192fca35d7b5af51ffb3"
+PKG_VERSION="13873a50bd5e1c955f92b305254cb02b803c806c"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://git.sr.ht/~bmdhacks/pcsx2"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
