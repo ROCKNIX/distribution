@@ -43,7 +43,6 @@ case "${DISPLAYSERVER}" in
     ;;
 esac
 
-ZIPDIRNAME="libmali"
 # new repo base from jeffycn mirror
 case "${DEVICE}" in
   RK3566|RK3576)
@@ -56,12 +55,17 @@ case "${DEVICE}" in
     PLATFORM=""
     ZIPDIRNAME="mirrors"
     PKG_PATCH_DIRS+=" next"
+    OPTS=" -Dwrappers=true "
+  ;;
+  *)
+    OPTS=" -Dwrappers=enabled "
+    ZIPDIRNAME="libmali"
   ;;
 esac
 
 
 PKG_MESON_OPTS_TARGET+=" -Darch=${ARCH} -Dgpu=${MALI_FAMILY} -Dversion=${DRIVER_VERSION} -Dplatform=${PLATFORM} \
-                       -Dkhr-header=false -Dvendor-package=true -Dhooks=true"
+                       -Dkhr-header=false -Dvendor-package=true -Dhooks=true ${OPTS}"
 
 
 unpack() {
@@ -97,7 +101,7 @@ post_makeinstall_target() {
   if [[ "${DEVICE}" =~ S922X|RK3566|RK3576 ]] && [ "${ARCH}" = "aarch64" ]; then
     mv "${INSTALL}"/usr/lib/mali/libMaliVulkan.* "${INSTALL}"/usr/lib/
   fi
-  if [[ "${DEVICE}" =~ S922X|RK3566|RK3576 ]] && [ "${ARCH}" = "arm" ]; then
+  if [[ "${DEVICE}" =~ RK3566|RK3576 ]] && [ "${ARCH}" = "arm" ]; then
     mv "${INSTALL}"/usr/lib32/mali/libMaliVulkan.* "${INSTALL}"/usr/lib32/
   fi
 }
