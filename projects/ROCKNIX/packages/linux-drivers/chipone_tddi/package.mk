@@ -2,9 +2,9 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="chipone_tddi"
-PKG_VERSION="ad4e075903c0c02728d22c3e87cc9f9e9a53be43"
+PKG_VERSION="af27029fa2b27c4a77d16809298ed5d03c9da5a6"
 PKG_LICENSE="GPL"
-PKG_SITE="https://github.com/kevinkreiser/chipone_tddi"
+PKG_SITE="https://github.com/ROCKNIX/chipone_tddi"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_LONGDESC="chipone_tddi: ChipOne ICNL9922C TDDI touchscreen driver (KONKR Pocket FIT)"
 PKG_TOOLCHAIN="manual"
