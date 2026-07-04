@@ -99,7 +99,7 @@ pre_configure_host() {
 }
 
 post_make_host() {
-  ninja ${NINJA_OPTS} llvm-config llvm-objcopy llvm-tblgen
+  ninja ${NINJA_OPTS} llvm-config llvm-objcopy llvm-tblgen llvm-min-tblgen
 
   if listcontains "${GRAPHIC_DRIVERS}" "iris"; then
     ninja ${NINJA_OPTS} llvm-as llvm-link llvm-spirv opt
@@ -111,6 +111,7 @@ post_makeinstall_host() {
     cp -a bin/llvm-config ${TOOLCHAIN}/bin
     cp -a bin/llvm-objcopy ${TOOLCHAIN}/bin
     cp -a bin/llvm-tblgen ${TOOLCHAIN}/bin
+    cp -a bin/llvm-min-tblgen ${TOOLCHAIN}/bin
     cp -a bin/lld ${TOOLCHAIN}/bin
     cp -a bin/ld.lld ${TOOLCHAIN}/bin
 
@@ -124,12 +125,11 @@ pre_configure_target() {
   cd ${PKG_BUILD}/.${TARGET_NAME}
   PKG_CMAKE_OPTS_TARGET="${PKG_CMAKE_OPTS_COMMON} \
                          -DCMAKE_BINARY_DIR=${PKG_BUILD}/.${TARGET_NAME} \
-                         -DLLVM_NATIVE_BUILD=${PKG_BUILD}/.${TARGET_NAME}/native \
                          -DCMAKE_CROSSCOMPILING=ON \
                          -DLLVM_ENABLE_PROJECTS='' \
                          -DLLVM_TARGETS_TO_BUILD=AMDGPU \
                          -DLLVM_TARGET_ARCH="${TARGET_ARCH}" \
-                         -DLLVM_TABLEGEN=${TOOLCHAIN}/bin/llvm-tblgen"
+                         -DLLVM_NATIVE_TOOL_DIR=${TOOLCHAIN}/bin"
 }
 
 post_makeinstall_target() {

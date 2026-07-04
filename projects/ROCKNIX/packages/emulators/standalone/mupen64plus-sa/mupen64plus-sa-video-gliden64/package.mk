@@ -14,7 +14,7 @@ PKG_LONGDESC="Mupen64Plus Standalone GLide64 Video Driver"
 PKG_TOOLCHAIN="manual"
 
 case ${DEVICE} in
-  RK3588|S922X|RK3399|RK3566*|SM8250|SM8550|SM8650|SM8750)
+  RK3588|S922X|RK3399|RK3566*|SM8250|SM8550|SM8650|SM8750|AMD64)
     PKG_DEPENDS_TARGET+=" mupen64plus-sa-simplecore"
   ;;
 esac
@@ -52,6 +52,7 @@ make_target() {
   export CROSS_COMPILE="${TARGET_PREFIX}"
 
   sed -i 's/\-O[23]/-Ofast/' ${PKG_BUILD}/src/CMakeLists.txt
+  sed -i '/#ifndef TXHIRESLOADER_H/a #include <cstdint>' ${PKG_BUILD}/src/GLideNHQ/TxHiResLoader.h
 
   ./src/getRevision.sh
   cmake ${PKG_MAKE_OPTS_TARGET} -DAPIDIR=${APIDIR} -DMUPENPLUSAPI=On -DGLIDEN64_BUILD_TYPE=Release -DCMAKE_C_COMPILER="${CC}" -DCMAKE_CXX_COMPILER="${CXX}" -DCMAKE_C_FLAGS="${CFLAGS}" -DCMAKE_CXX_FLAGS="${CXXFLAGS} -pthread" -S src -B projects/cmake

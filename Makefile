@@ -34,6 +34,10 @@ kconfig-olddefconfig-%:
 kconfig-menuconfig-%:
 	DEVICE=$* ./tools/adjust_kernel_config menuconfig
 
+AMD64:
+	unset DEVICE_ROOT
+	PROJECT=ROCKNIX DEVICE=AMD64 ARCH=x86_64 ./scripts/build_distro
+
 RK3588:
 	unset DEVICE_ROOT
 	PROJECT=ROCKNIX DEVICE=RK3588 ARCH=arm ./scripts/build_distro

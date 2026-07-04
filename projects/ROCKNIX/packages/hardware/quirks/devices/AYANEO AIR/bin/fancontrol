@@ -1,0 +1,110 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+
+. /etc/profile
+
+### Enable logging
+case $(get_setting system.loglevel) in
+  verbose)
+    DEBUG=true
+  ;;
+  *)
+    DEBUG=false
+  ;;
+esac
+
+COOLING_PROFILE=$(get_setting "cooling.profile")
+FAN_PWM="${DEVICE_PWM_FAN}"
+
+log $0 "Setting profile to ${COOLING_PROFILE}"
+
+function set_control() {
+  log $0 "Set fan control to ${1}"
+  if [ -e "${DEVICE_PWM_FAN}_enable" ]
+  then
+    echo ${1} >${DEVICE_PWM_FAN}_enable
+  fi
+}
+
+trap "set_control 0 && exit 0" SIGHUP SIGINT SIGQUIT SIGABRT
+
+if [ -e "/storage/.config/fancontrol.conf" ] && [ "${COOLING_PROFILE}" = "custom" ]
+then
+  $DEBUG && log $0 "Loading configuration file" 2>/dev/null
+  source /storage/.config/fancontrol.conf
+  if [ ! $? = 0 ]
+  then
+    WARN="Custom fan profile could not be loaded, defaulting to auto."
+    log $0 "${WARN}"
+    COOLING_PROFILE="auto"
+    set_setting cooling.profile auto
+  fi
+fi
+
+if [ ! "${COOLING_PROFILE}" = "custom" ]
+then
+  if [ "${COOLING_PROFILE}" = "aggressive" ]
+  then
+    SPEEDS=(192 225 255)
+    TEMPS=(45000 75000 85000)
+  elif [ "${COOLING_PROFILE}" = "moderate" ]
+  then
+    SPEEDS=(48 64 96 128 192 255)
+    TEMPS=(50000 55000 60000 70000 80000 90000)
+  elif [ "${COOLING_PROFILE}" = "quiet" ]
+  then
+    # Quiet.
+    SPEEDS=(32 48 64 96 128 192 255)
+    TEMPS=(50000 55000 60000 65000 70000 80000 90000)
+  else
+    # auto
+    set_control 0 >/dev/null 2>&1
+    exit 0
+  fi
+fi
+
+log $0 "Enabling fan control."
+set_control 1 >/dev/null 2>&1
+
+CURRENTSPEED=0
+TEMP=${TEMPS[0]}
+declare -a HISTORY
+while true
+do
+  INDEX=0
+  CPU_TEMP=$(awk '{total += $1; count++} END {printf "%d", total/count}' ${DEVICE_TEMP_SENSOR})
+
+  ### Keep a rolling history of CPU temps.
+  HISTORY+=(${CPU_TEMP})
+  while (( ${#HISTORY[@]} > 10 ))
+  do
+    unset HISTORY[-0]
+    PRIOR_HISTORY=( ${HISTORY[*]} )
+    HISTORY=( ${PRIOR_HISTORY[*]} )
+    unset PRIOR_HISTORY
+  done
+  AVERAGE=$(echo $(IFS=+; echo "$((${HISTORY[*]}))") / ${#HISTORY[@]} | bc)
+
+  $DEBUG && log $0 "Current/Average/Ceiling (Speed): ${CPU_TEMP}/${AVERAGE}/${TEMP} (${CURRENTSPEED})."
+  for TEMP in "${TEMPS[@]}"
+  do
+    if (( "${CPU_TEMP}" >= "90000" )) || \
+       (( "${AVERAGE}" <= "${TEMP}" ))
+    then
+      if (( ${CURRENTSPEED} != ${SPEEDS[${INDEX}]} ))
+      then
+        CURRENTSPEED=${SPEEDS[${INDEX}]}
+        echo ${SPEEDS[${INDEX}]} >${FAN_PWM}
+        $DEBUG && log $0 "Set fan to ${CURRENTSPEED}."
+      fi
+      break
+    else
+      INDEX=$(( $INDEX + 1 ))
+    fi
+  done
+  sleep 2
+done
+
+log $0 "Disabling fan control."
+set_control 0 >/dev/null 2>&1
