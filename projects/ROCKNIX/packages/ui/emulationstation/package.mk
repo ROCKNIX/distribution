@@ -111,7 +111,7 @@ EOF
   #Delete all vulkan options from es_features when vulkan is not present
   if [ ! "${VULKAN_SUPPORT}" = "yes" ]
     then
-      sed -i '/vulkan/d' ${INSTALL}/usr/config/emulationstation/es_features.cfg
+      xmlstarlet ed --inplace -d '//choice[contains(@name, "vulkan")]' ${INSTALL}/usr/config/emulationstation/es_features.cfg
   fi
 }
 
