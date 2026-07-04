@@ -14,6 +14,7 @@ PKG_DEPENDS_HOST="toolchain:host"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_DEPENDS_UNPACK="spirv-headers"
 PKG_LONGDESC="The SPIR-V Tools project provides an API and commands for processing SPIR-V modules."
+PKG_CMAKE_OPTS_HOST="-DSPIRV_WERROR=OFF"
 
 post_unpack() {
   mkdir -p ${PKG_BUILD}/external/spirv-headers
