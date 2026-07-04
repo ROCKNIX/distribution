@@ -11,6 +11,12 @@ PKG_DEPENDS_TARGET="toolchain qt6:host openssl libjpeg-turbo libpng pcre2 sqlite
 PKG_DEPENDS_HOST="gcc:host llvm:host mesa:host"
 PKG_LONGDESC="A cross-platform application and UI framework"
 
+# Mali devices require pinning to v6.8.3 or azahar-sa will segfault
+if [[ "${DEVICE}" =~ RK3566|RK3576|RK3588|S922X ]]; then
+  PKG_VERSION_MAJOR="6.8"
+  PKG_VERSION="${PKG_VERSION_MAJOR}.3"
+fi
+
 # Apply project-specific patches
 PKG_PATCH_DIRS="${PROJECT}"
 
