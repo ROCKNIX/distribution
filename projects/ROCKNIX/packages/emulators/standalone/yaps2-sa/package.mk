@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2025-present ROCKNIX (https://github.com/ROCKNIX)
 
-PKG_NAME="pcsx2-sa"
-PKG_VERSION="8fb3bc617caffbdaa2b9e49f0cec0ab099387df2"
+PKG_NAME="yaps2-sa"
+PKG_VERSION="6e468c07e0276f17d15502aca31d92e57407681c"
 PKG_LICENSE="GPLv3"
-PKG_SITE="https://git.sr.ht/~bmdhacks/pcsx2"
+PKG_SITE="https://github.com/yaps2/yaps2"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_LONGDESC="PCSX2 is a free and open-source PlayStation 2 (PS2) emulator."
+PKG_LONGDESC="yaps2 is an ARM64-focused PlayStation 2 (PS2) emulator, a fork of PCSX2."
 PKG_DEPENDS_TARGET="toolchain llvm:host SDL3 libpng zlib libjpeg-turbo zstd lz4 libwebp freetype plutosvg curl libpcap ffmpeg libX11 libXext qt6 shaderc"
 PKG_TOOLCHAIN="manual"
 
@@ -70,11 +70,11 @@ makeinstall_target() {
   cp -rf ${PKG_DIR}/scripts/* ${INSTALL}/usr/bin
   chmod 755 ${INSTALL}/usr/bin/*
 
-  mkdir -p ${INSTALL}/usr/share/pcsx2-sa
-  cp -rf ${PKG_BUILD}/.${TARGET_NAME}/bin/* ${INSTALL}/usr/share/pcsx2-sa
+  mkdir -p ${INSTALL}/usr/share/yaps2-sa
+  cp -rf ${PKG_BUILD}/.${TARGET_NAME}/bin/* ${INSTALL}/usr/share/yaps2-sa
 
   mkdir -p ${INSTALL}/usr/config
-  cp -rf ${PKG_DIR}/config/PCSX2 ${INSTALL}/usr/config
+  cp -rf ${PKG_DIR}/config/YAPS2 ${INSTALL}/usr/config
 }
 
 post_install() {
@@ -88,5 +88,5 @@ post_install() {
   esac
 
   sed -e "s/@GRAPHICS@/${GRAPHICS}/g" \
-        -i ${INSTALL}/usr/bin/start_pcsx2.sh
+        -i ${INSTALL}/usr/bin/start_yaps2.sh
 }

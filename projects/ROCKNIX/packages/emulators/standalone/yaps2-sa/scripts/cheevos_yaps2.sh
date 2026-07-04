@@ -5,8 +5,8 @@
 
 . /etc/profile
 
-PCSX2_CFG="/storage/.config/PCSX2/inis/PCSX2.ini"
-PCSX2_TOKEN="/storage/.config/PCSX2/inis/security.ini"
+PCSX2_CFG="/storage/.config/YAPS2/inis/PCSX2.ini"
+PCSX2_TOKEN="/storage/.config/YAPS2/inis/security.ini"
 LOG_FILE="/var/log/cheevos.log"
 
 # Extract username, password, token, if enabled, and hardcore mode from system.cfg

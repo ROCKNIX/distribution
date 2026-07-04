@@ -123,7 +123,7 @@
 |SNK|Neo Geo Pocket (ngp)|1998|`ngp`|.ngp .ngc .zip .7z|**retroarch:** beetle_ngp (default)<br>**retroarch:** race<br>**mednafen:** ngp<br>**ares:** ares-sa<br>|
 |SNK|Neo Geo Pocket Color (ngpc)|1999|`ngpc`|.ngp .ngc .zip .7z|**retroarch:** beetle_ngp (default)<br>**retroarch:** race<br>**mednafen:** ngp<br>**ares:** ares-sa<br>|
 |Sony|PlayStation (psx)|1994|`psx`|.bin .cue .img .mdf .pbp .toc .cbn .m3u .ccd .chd .iso|**retroarch:** pcsx_rearmed (default)<br>**retroarch:** beetle_psx<br>**mednafen:** psx<br>**duckstation:** duckstation-sa<br>**retroarch:** swanstation<br>**retroarch:** duckstation<br>|
-|Sony|PlayStation 2 (ps2)|2000|`ps2`|.iso .mdf .nrg .bin .img .dump .gz .cso .chd|**aethersx2:** aethersx2-sa (default)<br>**pcsx2:** pcsx2-sa<br>|
+|Sony|PlayStation 2 (ps2)|2000|`ps2`|.iso .mdf .nrg .bin .img .dump .gz .cso .chd|**aethersx2:** aethersx2-sa (default)<br>**yaps2:** yaps2-sa<br>|
 |Sony|PlayStation 3 (ps3)|2006|`ps3`|.ps3 .psn .m3u|**rpcs3:** rpcs3-sa (default)<br>|
 |Sony|PlayStation Portable (psp)|2004|`psp`|.iso .cso .pbp .chd|**ppsspp:** ppsspp-sa (default)<br>**retroarch:** ppsspp<br>|
 |Sony|PlayStation Vita (psvita)|2011|`psvita`|.pkg .psvita .zip|**vita3k:** vita3k-sa (default)<br>|

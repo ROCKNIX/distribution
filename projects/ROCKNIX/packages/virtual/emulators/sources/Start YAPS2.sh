@@ -5,18 +5,18 @@
 
 source /etc/profile
 
-#Check if PCSX2 exists in .config
-if [ ! -d "/storage/.config/PCSX2" ]; then
-    mkdir -p "/storage/.config/PCSX2"
-        cp -r "/usr/config/PCSX2" "/storage/.config/"
+#Check if YAPS2 exists in .config
+if [ ! -d "/storage/.config/YAPS2" ]; then
+    mkdir -p "/storage/.config/YAPS2"
+        cp -r "/usr/config/YAPS2" "/storage/.config/"
 fi
 
-#Make PCSX2 bios folder
+#Make YAPS2 bios folder
 if [ ! -d "/storage/roms/bios/pcsx2" ]; then
     mkdir -p "/storage/roms/bios/pcsx2"
 fi
 
-set_kill set "pcsx2-qt"
+set_kill set "yaps2-qt"
 
 #Set OpenGL 3.3 on panfrost
   export MESA_GL_VERSION_OVERRIDE=3.3
@@ -25,6 +25,6 @@ set_kill set "pcsx2-qt"
 #Set QT enviornment to wayland
   export QT_QPA_PLATFORM=wayland
 
-sway_fullscreen "pcsx2-qt" &
+sway_fullscreen "yaps2-qt" &
 
-/usr/share/pcsx2-sa/pcsx2-qt >/dev/null 2>&1
+/usr/share/yaps2-sa/yaps2-qt >/dev/null 2>&1
