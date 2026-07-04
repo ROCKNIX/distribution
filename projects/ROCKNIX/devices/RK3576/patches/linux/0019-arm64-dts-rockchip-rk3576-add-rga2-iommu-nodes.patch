@@ -1,0 +1,95 @@
+From: Felix Jones <felix@felixjones.co.uk>
+Date: Sun, 5 Jul 2026 00:14:55 +0200
+Subject: [PATCH] arm64: dts: rockchip: rk3576: add RGA2 nodes with IOMMU for
+ hardware rotation
+
+The RK3576 has two RGA2-Pro cores (reported hw_version 3.e.19357) at
+0x27920000 and 0x27930000. Mainline does not describe them. Add the two
+rga@ nodes so the rockchip multi-RGA driver (packages/linux-drivers/rga3)
+can bind and expose /dev/rga for hardware-accelerated rotate/scale/blit
+(used to rotate the gamescope output for the 90deg-mounted panel in
+hardware, instead of on the GPU compute composite).
+
+Each RGA2-Pro core has an embedded 40-bit rockchip iommu-v2 MMU at
+core_base + 0xf00, with a register block identical to the standalone
+rk3568/rk3576 iommu. Describe each as a rockchip,rk3576-iommu node and
+wire it to its core via the iommus property, so the rga3 driver runs in
+RGA_IOMMU mode and can rotate non-contiguous (GPU/dma-buf) memory -- not
+just physically-contiguous CMA. The mainline rockchip-iommu driver
+already provides the v2 (40-bit) ops via the rockchip,rk3568-iommu match
+(used by vop_mmu/vdec_mmu on this SoC).
+
+Notes:
+ * The core reg is shrunk from 0x1000 to 0xf00 so the mmu node owns the
+   MMU register page (0xf00-0xfff) without overlapping the core mapping.
+ * The MMU shares the core's GIC SPI (328/329); both rga3 and rk_iommu
+   request it with IRQF_SHARED, so the shared line is fine.
+ * Pairs with the rga3 driver change setting rga2p_iommu_data.mmu =
+   RGA_IOMMU (packages/linux-drivers/rga3, patch 0003).
+
+diff --git a/arch/arm64/boot/dts/rockchip/rk3576.dtsi b/arch/arm64/boot/dts/rockchip/rk3576.dtsi
+index 58f2215..9b493c6 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3576.dtsi
++++ b/arch/arm64/boot/dts/rockchip/rk3576.dtsi
+@@ -1279,6 +1279,61 @@
+ 			status = "disabled";
+ 		};
+ 
++			/* ROCKNIX: RGA2E 2D accelerator (two cores) for hardware rotation.
++			 * Each RGA2-Pro core has an embedded 40-bit rockchip iommu-v2 MMU at
++			 * core_base + 0xf00 (register block identical to the standalone
++			 * rk3568/rk3576 iommu). The core reg is shrunk to 0xf00 so the mmu
++			 * node owns the MMU page. The MMU shares the core GIC SPI (both the
++			 * rga3 and rk_iommu drivers request it IRQF_SHARED). Requires the rga3
++			 * driver hw_data rga2p_iommu_data.mmu = RGA_IOMMU. */
++			rga2_core0: rga@27920000 {
++				compatible = "rockchip,rga2";
++				reg = <0x0 0x27920000 0x0 0xf00>;
++				interrupts = <GIC_SPI 328 IRQ_TYPE_LEVEL_HIGH>;
++				interrupt-names = "rga2_core0_irq";
++				clocks = <&cru ACLK_RGA2E_0>, <&cru HCLK_RGA2E_0>, <&cru CLK_CORE_RGA2E_0>;
++				clock-names = "aclk_rga", "hclk_rga", "clk_rga";
++				power-domains = <&power RK3576_PD_VPU>;
++				iommus = <&rga2_core0_mmu>;
++				status = "okay";
++			};
++
++			rga2_core0_mmu: iommu@27920f00 {
++				compatible = "rockchip,rk3576-iommu", "rockchip,rk3568-iommu";
++				reg = <0x0 0x27920f00 0x0 0x100>;
++				interrupts = <GIC_SPI 328 IRQ_TYPE_LEVEL_HIGH>;
++				interrupt-names = "rga2_0_mmu";
++				clocks = <&cru ACLK_RGA2E_0>, <&cru HCLK_RGA2E_0>;
++				clock-names = "aclk", "iface";
++				power-domains = <&power RK3576_PD_VPU>;
++				#iommu-cells = <0>;
++				status = "okay";
++			};
++
++			rga2_core1: rga@27930000 {
++				compatible = "rockchip,rga2";
++				reg = <0x0 0x27930000 0x0 0xf00>;
++				interrupts = <GIC_SPI 329 IRQ_TYPE_LEVEL_HIGH>;
++				interrupt-names = "rga2_core1_irq";
++				clocks = <&cru ACLK_RGA2E_1>, <&cru HCLK_RGA2E_1>, <&cru CLK_CORE_RGA2E_1>;
++				clock-names = "aclk_rga", "hclk_rga", "clk_rga";
++				power-domains = <&power RK3576_PD_VPU>;
++				iommus = <&rga2_core1_mmu>;
++				status = "okay";
++			};
++
++			rga2_core1_mmu: iommu@27930f00 {
++				compatible = "rockchip,rk3576-iommu", "rockchip,rk3568-iommu";
++				reg = <0x0 0x27930f00 0x0 0x100>;
++				interrupts = <GIC_SPI 329 IRQ_TYPE_LEVEL_HIGH>;
++				interrupt-names = "rga2_1_mmu";
++				clocks = <&cru ACLK_RGA2E_1>, <&cru HCLK_RGA2E_1>;
++				clock-names = "aclk", "iface";
++				power-domains = <&power RK3576_PD_VPU>;
++				#iommu-cells = <0>;
++				status = "okay";
++			};
++
+ 		vdec: video-codec@27b00000 {
+ 			compatible = "rockchip,rk3576-vdec";
+ 			reg = <0x0 0x27b00100 0x0 0x500>,
