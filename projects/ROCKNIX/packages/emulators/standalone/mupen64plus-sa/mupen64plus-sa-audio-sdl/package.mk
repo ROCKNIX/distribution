@@ -14,7 +14,7 @@ PKG_LONGDESC="Mupen64Plus Standalone Audio SDL"
 PKG_TOOLCHAIN="manual"
 
 case ${DEVICE} in
-  RK3588|S922X|RK3399|RK3566*|SM8250|SM8550|SM8650|SM8750)
+  RK3588|S922X|RK3399|RK3566*|SM8250|SM8550|SM8650|SM8750|AMD64)
     PKG_DEPENDS_TARGET+=" mupen64plus-sa-simplecore"
   ;;
 esac
@@ -49,13 +49,13 @@ make_target() {
   sed -i 's/\-O[23]/-Ofast/' ${PKG_BUILD}/projects/unix/Makefile
 
   make -C projects/unix clean
-  make -C projects/unix all ${PKG_MAKE_OPTS_TARGET}
+  make -C projects/unix all NO_SRC=1 ${PKG_MAKE_OPTS_TARGET}
   cp ${PKG_BUILD}/projects/unix/mupen64plus-audio-sdl.so ${PKG_BUILD}/projects/unix/mupen64plus-audio-sdl-base.so
 
   case ${DEVICE} in
-    RK3588|S922X|RK3399|RK3566*)
+    RK3588|S922X|RK3399|RK3566*|AMD64)
       export APIDIR=$(get_build_dir mupen64plus-sa-simplecore)/src/api
-      make -C projects/unix all ${PKG_MAKE_OPTS_TARGET}
+      make -C projects/unix NO_SRC=1 all ${PKG_MAKE_OPTS_TARGET}
       cp ${PKG_BUILD}/projects/unix/mupen64plus-audio-sdl.so ${PKG_BUILD}/projects/unix/mupen64plus-audio-sdl-simple.so
     ;;
   esac

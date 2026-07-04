@@ -19,6 +19,11 @@ elif [ "${OPENGLES_SUPPORT}" = yes ]; then
   PKG_MAKE_OPTS_TARGET+=" GLES=1 GL_LIB=\"-lGLESv2\""
 fi
 
+if [ "${VULKAN_SUPPORT}" = "yes" ] && [ ${DEVICE} = "AMD64" ]; then
+  PKG_DEPENDS_TARGET+=" vulkan-loader vulkan-headers"
+  PKG_MAKE_OPTS_TARGET+=" HAVE_PARALLEL=1"
+fi
+
 pre_configure_target() {
   if [ "${ARCH}" = "aarch64" ]; then
     # This is only needed for armv8.2-a targets where we don't use this flag
@@ -26,6 +31,13 @@ pre_configure_target() {
     export CFLAGS="${CFLAGS} -mno-outline-atomics -std=gnu17"
     export CXXFLAGS="${CXXFLAGS} -mno-outline-atomics"
     PKG_MAKE_OPTS_TARGET+=" platform=${DEVICE}"
+  fi
+}
+
+pre_build_target() {
+  if [ "${ARCH}" = "x86_64" ]; then
+    grep -rl '\bfsqrt\b' "${PKG_BUILD}/mupen64plus-core/src/r4300/hacktarux_dynarec/" \
+      | xargs sed -i 's/\bfsqrt\b/dynarec_fsqrt/g'
   fi
 }
 

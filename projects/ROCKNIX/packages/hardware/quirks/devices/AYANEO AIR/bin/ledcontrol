@@ -1,0 +1,199 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+
+#
+# A simple tool to manipulate the controller LEDs using ectool, thanks to
+# Maya Matuszczyk (https://github.com/Maccraft123) for reverse engineering.
+#
+# Schema:
+#
+# 0x6d - LED PWM control (0x03)
+#
+# 0xb1 - Support for 4 zones and RGB color
+#
+#   RGB colors:
+#
+#   1 - Red
+#   2 - Green
+#   3 - Blue
+#
+#   Zones:
+#
+#   Right (2), Down (5), Left (8) , Up (11)
+#
+#   Note: Set 0xb1 to 02 for off.
+#
+# 0xb2 - Sets brightness, requires b1 to be set at the same time.
+#
+#   00-ff - brightness from 0-255.  Not noticeable to me above 128.
+#
+# 0xbf - Set expected mode
+#
+#   0x10 - Enable
+#   0xe2 - Tint (+ Red for Purple, + Green for Teal)
+#   0xe3-0e5 - Tint + blink (unused)
+#
+#   0xff - Close channel
+#
+
+# Minimal OS variable loading for performance
+. /etc/profile.d/001-functions
+
+ECTOOL="/usr/sbin/ectool"
+DEBUG=false
+
+function debug_out() {
+  $DEBUG && echo "ledcontrol: $*"
+}
+
+function ec_writecmd() {
+  ${ECTOOL} -w 0x6d -z 0x03 >/dev/null 2>&1
+}
+
+function mode() {
+  debug_out "Set mode ${1}"
+  ${ECTOOL} -w 0xbf -z ${1} >/dev/null 2>&1
+}
+
+function close_channel() {
+  debug_out "Set close channel"
+  ${ECTOOL} -w 0xbf -z 0xFF >/dev/null 2>&1
+}
+
+function off() {
+  ec_writecmd
+  for twice in 1 2
+  do
+    ### RGB off command
+    ${ECTOOL} -w 0xb1 -z 0x02 >/dev/null 2>&1
+    ${ECTOOL} -w 0xb2 -z 0xc0 >/dev/null 2>&1
+    mode 0x10
+  done
+  close_channel
+}
+
+function brightness() {
+  debug_out "Set brightness ${1}"
+  ${ECTOOL} -w 0xb2 -z 0x${1}  >/dev/null 2>&1
+  mode 0x10
+}
+
+function color() {
+  ## Writing twice seems more reliable than inserting a delay.
+  for twice in 1 2
+  do
+    for zone in 2 5 8 11
+    do
+      zone=$(( ${zone} + ${1} ))
+      zone=$(printf '%02x' ${zone})
+      debug_out "Set color 0x${zone}"
+      ${ECTOOL} -w 0xb1 -z 0x${zone} >/dev/null 2>&1
+      brightness ${2}
+    done
+  done
+  close_channel
+}
+
+GETBRIGHTNESS=$(get_setting led.brightness)
+if [ ! -z "${2}" ]
+then
+  LEDBRIGHTNESS=${2}
+  debug_out "Arg[2]: ${2}"
+elif [ ! -z "${GETBRIGHTNESS}" ]
+then
+  LEDBRIGHTNESS=${GETBRIGHTNESS}
+  debug_out "GETBRIGHTESS: ${GETBRIGHTNESS}"
+else
+  debug_out "NO SETTING: min"
+  LEDBRIGHTNESS=min
+  set_setting led.brightness min
+fi
+
+case ${LEDBRIGHTNESS} in
+  max)
+    LEDBRIGHTNESS=ff
+    set_setting led.brightness max
+  ;;
+  mid)
+    LEDBRIGHTNESS=a8
+    set_setting led.brightness mid
+  ;;
+  min)
+    LEDBRIGHTNESS=54
+    set_setting led.brightness min
+  ;;
+esac
+
+debug_out "led brightness: ${LEDBRIGHTNESS}"
+
+case $1 in
+  red)
+    off
+    mode 0xe0
+    color 1 ${LEDBRIGHTNESS}
+    set_setting led.color red
+  ;;
+  green)
+    off
+    mode 0xe0
+    color 2 ${LEDBRIGHTNESS}
+    set_setting led.color green
+  ;;
+  blue)
+    off
+    mode 0xe2
+    color 3 ${LEDBRIGHTNESS}
+    set_setting led.color blue
+  ;;
+  teal)
+    off
+    mode 0xe2
+    color 2 ${LEDBRIGHTNESS}
+    set_setting led.color teal
+  ;;
+  purple)
+    off
+    mode 0xe2
+    color 1 ${LEDBRIGHTNESS}
+    set_setting led.color purple
+  ;;
+  poweroff)
+    off
+  ;;
+  off)
+    off
+    set_setting led.color off
+  ;;
+  default)
+    del_setting led.color
+    del_setting led.brightness
+  ;;
+  brightness)
+    COLOR=$(get_setting led.color)
+    if [ ! -z "${COLOR}" ]
+    then
+      off
+      ledcontrol ${COLOR} ${LEDBRIGHTNESS}
+    fi
+  ;;
+  list)
+    cat <<EOF
+default
+off
+red
+green
+blue
+teal
+purple
+EOF
+  ;;
+  *)
+    COLOR=$(get_setting led.color)
+    if [ ! -z "${COLOR}" ]
+    then
+      off
+      ledcontrol ${COLOR} ${LEDBRIGHTNESS}
+    fi
+  ;;
+esac

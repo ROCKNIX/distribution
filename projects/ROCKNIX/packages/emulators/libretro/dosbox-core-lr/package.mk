@@ -31,10 +31,19 @@ PKG_LONGDESC="Upstream port of DOSBox to libretro"
 PKG_BUILD_FLAGS="-lto"
 PKG_TOOLCHAIN="make"
 
+  case ${TARGET_ARCH} in
+    x86_64)
+      BUILD_ARCH=amd64
+    ;;
+    aarch64)
+      BUILD_ARCH=arm64
+    ;;
+  esac
+
 make_target() {
   #export PKG_CONFIG_DEBUG_SPEW=1
-  make -C libretro target=arm64 platform=unix WITH_FAKE_SDL=1 STATIC_LIBCXX=0 \
-	WITH_DYNAREC=arm64 WITH_FLUIDSYNTH=0 BUNDLED_AUDIO_CODECS=0 BUNDLED_GLIB=0 \
+  make -C libretro target=${BUILD_ARCH} platform=unix WITH_FAKE_SDL=1 STATIC_LIBCXX=0 \
+	WITH_DYNAREC=${BUILD_ARCH} WITH_FLUIDSYNTH=0 BUNDLED_AUDIO_CODECS=0 BUNDLED_GLIB=0 \
 	BUNDLED_LIBSNDFILE=0 WITH_PINHACK=0 WITH_VOODOO=0 WITH_BASSMIDI=0
 }
 

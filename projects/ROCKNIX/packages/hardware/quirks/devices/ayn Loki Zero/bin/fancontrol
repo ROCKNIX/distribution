@@ -1,0 +1,78 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+
+. /etc/profile
+
+DEBUG=false
+COOLING_PROFILE=$(get_setting "cooling.profile")
+
+log $0 "Setting profile to ${COOLING_PROFILE}"
+
+function set_control() {
+  log $0 "Set fan control to ${1}"
+  ectool -w 0x10 -z ${1} >/dev/null 2>&1
+}
+
+trap "set_control 0x01 && exit 0" SIGHUP SIGINT SIGQUIT SIGABRT
+
+if [ -e "/storage/.config/fancontrol.conf" ] && [ "${COOLING_PROFILE}" = "custom" ]
+then
+  log $0 "Loading configuration file" 2>/dev/null
+  source /storage/.config/fancontrol.conf
+  if [ ! $? = 0 ]
+  then
+    WARN="Custom fan profile could not be loaded, defaulting to auto."
+    log $0 "${WARN}"
+    COOLING_PROFILE="auto"
+    set_setting cooling.profile auto
+  fi
+fi
+
+
+if [ ! "${COOLING_PROFILE}" = "custom" ]
+then
+  if [ "${COOLING_PROFILE}" = "aggressive" ]
+  then
+    SPEEDS=(128 96 72)
+    TEMPS=(70000 65000 0)
+  elif [ "${COOLING_PROFILE}" = "moderate" ]
+  then
+    SPEEDS=(128 96 72 64 48)
+    TEMPS=(70000 65000 60000 55000 0)
+  elif [ "${COOLING_PROFILE}" = "quiet" ]
+  then
+    SPEEDS=(128 96 64 48 32)
+    TEMPS=(70000 65000 60000 55000 0)
+  else
+    # auto
+    set_control 0x01 >/dev/null 2>&1
+    exit 0
+  fi
+fi
+
+log $0 "Enabling fan control."
+set_control 0x00 >/dev/null 2>&1
+
+while true
+do
+  INDEX=0
+  CPU_TEMP=$(printf "%.0f" $(awk '{ total += $1; count++ } END { print total/count }' ${DEVICE_TEMP_SENSOR}))
+  $DEBUG && log $0 "CPU TEMP: ${CPU_TEMP}" 2>/dev/null
+  for TEMP in "${TEMPS[@]}"
+  do
+    if (( "${CPU_TEMP}" > "${TEMP}" )) && \
+       [ ! "${LASTSPEED}" = "${SPEEDS[${INDEX}]}" ]
+    then
+      $DEBUG && log $0 "Setting PWM FAN to ${SPEEDS[${INDEX}]} (${TEMP})" 2>/dev/null
+      ectool -w 0x11 -z $(printf '%x\n' ${SPEEDS[${INDEX}]}) >/dev/null 2>&1
+      LASTSPEED=${SPEEDS[${INDEX}]}
+      break
+    fi
+    INDEX=$(( $INDEX + 1 ))
+  done
+  sleep 2
+done
+
+log $0 "Disabling fan control."
+set_control 0x01 >/dev/null 2>&1
