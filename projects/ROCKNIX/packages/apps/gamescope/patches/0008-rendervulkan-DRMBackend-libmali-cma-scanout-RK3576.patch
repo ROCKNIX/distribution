@@ -1,0 +1,267 @@
+From: Felix "Xilefian" Jones
+Subject: [PATCH] rendervulkan, DRMBackend: libMali CMA scanout on RK3576
+
+The proprietary ARM libMali Vulkan blob lacks VK_EXT_physical_device_drm and cannot export dma-bufs. Accept the device and find a DRM node via libdrm; drop the DRM master libMaliVulkan grabs on card0 before the KMS backend opens it; allocate the output images from the CMA dma-heap as LINEAR and import them for compositing and scanout (flippable/exported images crash on libMali); and open a read-only advertisement fd so wlroots binds wl_drm / zwp_linux_dmabuf_v1. Automatic via absence of VK_EXT_physical_device_drm; Mesa/PanVK keep the exported path.
+
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index 108333e..2ec0f5a 100644
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -6,6 +6,7 @@
+ #include <sys/stat.h>
+ #include <fcntl.h>
+ #include <unistd.h>
++#include <dirent.h>
+ #include <errno.h>
+ #include <stdlib.h>
+ #include <poll.h>
+@@ -1266,6 +1267,30 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
+ 		drm_log.infof("warning: picking an arbitrary DRM device");
+ 	}
+ 
++	if ( drm->device_name )
++	{
++		struct stat targetSt = {};
++		if ( stat( drm->device_name, &targetSt ) == 0 )
++		{
++			if ( DIR *pFdDir = opendir( "/proc/self/fd" ) )
++			{
++				struct dirent *pEnt;
++				while ( ( pEnt = readdir( pFdDir ) ) != nullptr )
++				{
++					int nFd = atoi( pEnt->d_name );
++					if ( nFd <= 2 )
++						continue;
++					struct stat fdSt = {};
++					if ( fstat( nFd, &fdSt ) != 0 || !S_ISCHR( fdSt.st_mode ) )
++						continue;
++					if ( fdSt.st_rdev != targetSt.st_rdev )
++						continue;
++					drmDropMaster( nFd );
++				}
++				closedir( pFdDir );
++			}
++		}
++	}
+ 	drm->fd = wlsession_open_kms( drm->device_name );
+ 	if ( drm->fd < 0 )
+ 	{
+@@ -3500,7 +3525,7 @@ namespace gamescope
+         }
+ 		virtual bool ValidPhysicalDevice( VkPhysicalDevice pVkPhysicalDevice ) const override
+ 		{
+-			return vulkan_has_drm_props();
++			return true;
+ 		}
+ 
+ 		virtual int Present( const FrameInfo_t *pFrameInfo, bool bAsync )
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+index a7bb6b1..581054d 100644
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -11,6 +11,8 @@
+ #include <bitset>
+ #include <thread>
+ #include <dlfcn.h>
++#include <sys/ioctl.h>
++#include <linux/dma-heap.h>
+ #include "vulkan_include.h"
+ #include "Utils/Algorithm.h"
+ 
+@@ -460,11 +462,62 @@ bool CVulkanDevice::createDevice()
+ 
+ 	vk_log.infof( "physical device %s DRM format modifiers", m_bSupportsModifiers ? "supports" : "does not support" );
+ 
+-	if ( !hasDrmProps ) {
+-		// This could happen when e.g. running the lavapipe driver
+-		// (without an actual physical device)
++	if ( !hasDrmProps )
++	{
+ 		vk_log.warnf( "physical device doesn't support VK_EXT_physical_device_drm" );
+-	} else {
++#if HAVE_DRM
++		drmDevicePtr devices[16] = {};
++		int nDevs = drmGetDevices2( 0, devices, 16 );
++		if ( nDevs <= 0 )
++		{
++			vk_log.errorf( "libmali fallback: drmGetDevices2() returned %d", nDevs );
++			return false;
++		}
++		for ( int pass = 0; pass < 2 && m_drmRendererFd < 0; pass++ )
++		{
++			int wantedNodeBit = ( pass == 0 ) ? DRM_NODE_RENDER : DRM_NODE_PRIMARY;
++			for ( int i = 0; i < nDevs && m_drmRendererFd < 0; i++ )
++			{
++				drmDevicePtr dev = devices[i];
++				if ( !( dev->available_nodes & ( 1 << wantedNodeBit ) ) )
++					continue;
++				const char *nodeName = dev->nodes[wantedNodeBit];
++				if ( wantedNodeBit == DRM_NODE_PRIMARY )
++				{
++					struct stat st = {};
++					if ( stat( nodeName, &st ) == 0 )
++					{
++						m_bHasDrmPrimaryDevId = true;
++						m_drmPrimaryDevId = st.st_rdev;
++					}
++					if ( m_drmAdvertiseFd < 0 )
++					{
++						int advFd = open( nodeName, O_RDONLY | O_CLOEXEC );
++						if ( advFd >= 0 )
++						{
++							m_drmAdvertiseFd = advFd;
++						}
++					}
++					continue;
++				}
++				int fd = open( nodeName, O_RDWR | O_CLOEXEC );
++				if ( fd < 0 )
++				{
++					continue;
++				}
++				m_drmRendererFd = fd;
++			}
++		}
++		drmFreeDevices( devices, nDevs );
++		if ( m_drmRendererFd < 0 && !m_bHasDrmPrimaryDevId )
++		{
++			vk_log.errorf( "libmali fallback: no DRM render or primary node available" );
++			return false;
++		}
++#endif
++	}
++	else
++	{
+ #if HAVE_DRM
+ 		VkPhysicalDeviceDrmPropertiesEXT drmProps = {
+ 			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRM_PROPERTIES_EXT,
+@@ -2038,6 +2091,8 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
+ 	m_drmFormat = drmFormat;
+ 	VkResult res = VK_ERROR_INITIALIZATION_FAILED;
+ 
++	if ( flags.bFlippable && pDMA == nullptr && !vulkan_has_drm_props() )
++		flags.bFlippable = false;
+ 	VkImageTiling tiling = (flags.bMappable || flags.bLinear) ? VK_IMAGE_TILING_LINEAR : VK_IMAGE_TILING_OPTIMAL;
+ 	VkImageUsageFlags usage = 0;
+ 	VkMemoryPropertyFlags properties;
+@@ -3110,6 +3165,8 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_flat_texture( uint32_t width,
+ 	flags.bFlippable = true;
+ 	flags.bSampled = true;
+ 	flags.bTransferDst = true;
++	if ( !vulkan_has_drm_props() )
++		flags.bFlippable = false;
+ 
+ 	gamescope::OwningRc<CVulkanTexture> texture = new CVulkanTexture();
+ 	bool bRes = texture->BInit( width, height, 1u, VulkanFormatToDRM( VK_FORMAT_B8G8R8A8_UNORM ), flags );
+@@ -3287,6 +3344,58 @@ bool vulkan_remake_swapchain( void )
+ 	return bRet;
+ }
+ 
++namespace rxnix_cma {
++    static int g_DmaHeapFd = -1;
++    static int dmaheap_alloc( size_t bytes ) {
++        if ( g_DmaHeapFd < 0 ) {
++            g_DmaHeapFd = open( "/dev/dma_heap/default_cma_region", O_RDWR | O_CLOEXEC );
++            if ( g_DmaHeapFd < 0 ) { vk_log.errorf_errno( "rxnix_cma: open dma_heap default_cma_region" ); return -1; }
++        }
++        struct dma_heap_allocation_data a = {};
++        a.len = bytes;
++        a.fd_flags = O_RDWR | O_CLOEXEC;
++        if ( ioctl( g_DmaHeapFd, DMA_HEAP_IOCTL_ALLOC, &a ) < 0 ) {
++            vk_log.errorf_errno( "rxnix_cma: DMA_HEAP_IOCTL_ALLOC %zu", bytes );
++            return -1;
++        }
++        return (int)a.fd;
++    }
++    static bool make_output_image( gamescope::OwningRc<CVulkanTexture> &outTex,
++                                   uint32_t width, uint32_t height, uint32_t drmFormat ) {
++        uint32_t stride_bytes = ( ( width * 4u ) + 255u ) & ~255u; // aligned pitch (import + VOP2 scanout)
++        size_t size = (size_t)stride_bytes * height;
++        int fd = dmaheap_alloc( size );
++        if ( fd < 0 ) return false;
++        struct wlr_dmabuf_attributes attrs = {};
++        attrs.width = (int)width;
++        attrs.height = (int)height;
++        attrs.format = drmFormat;
++        attrs.modifier = DRM_FORMAT_MOD_LINEAR;
++        attrs.n_planes = 1;
++        attrs.fd[0] = fd;
++        attrs.stride[0] = stride_bytes;
++        attrs.offset[0] = 0;
++        gamescope::OwningRc<gamescope::IBackendFb> pBackendFb = GetBackend()->ImportDmabufToBackend( &attrs );
++        if ( !pBackendFb ) {
++            vk_log.errorf( "rxnix_cma: ImportDmabufToBackend failed (%ux%u stride=%u fmt=0x%x)", width, height, stride_bytes, drmFormat );
++            close( fd );
++            return false;
++        }
++        CVulkanTexture::createFlags flags;
++        flags.bSampled = true;
++        flags.bStorage = true;
++        flags.bOutputImage = true;
++        flags.bTransferSrc = true;
++        gamescope::OwningRc<CVulkanTexture> pTex = new CVulkanTexture();
++        if ( !pTex->BInit( width, height, 1u, drmFormat, flags, &attrs, 0, 0, nullptr, std::move( pBackendFb ) ) ) {
++            vk_log.errorf( "rxnix_cma: BInit failed on CMA dma-buf (%ux%u stride=%u fmt=0x%x)", width, height, stride_bytes, drmFormat );
++            close( fd );
++            return false;
++        }
++        outTex = std::move( pTex );
++        return true;
++    }
++} // namespace rxnix_cma
+ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
+ {
+ 	CVulkanTexture::createFlags outputImageflags;
+@@ -3308,6 +3417,20 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
+ 
+ 	uint32_t uDRMFormat = pOutput->uOutputFormat;
+ 
++	if ( !vulkan_has_drm_props() )
++	{
++		uint32_t fmt = ( uDRMFormat != DRM_FORMAT_INVALID ) ? uDRMFormat : DRM_FORMAT_ABGR8888;
++		for ( int i = 0; i < 3; i++ )
++		{
++			if ( !rxnix_cma::make_output_image( pOutput->outputImages[i], outputWidth, outputHeight, fmt ) )
++			{
++				vk_log.errorf( "rxnix_cma: output image %d alloc failed", i );
++				return false;
++			}
++		}
++		pOutput->temporaryHackyBlankImage = vulkan_create_debug_blank_texture( outputWidth, outputHeight );
++		return true;
++	}
+ 	pOutput->outputImages[0] = new CVulkanTexture();
+ 	bool bSuccess = pOutput->outputImages[0]->BInit( g_nOutputWidth, g_nOutputHeight, 1u, uDRMFormat, outputImageflags );
+ 	if ( bSuccess != true )
+@@ -4312,7 +4435,10 @@ static const struct wlr_drm_format_set *renderer_get_texture_formats( struct wlr
+ 
+ static int renderer_get_drm_fd( struct wlr_renderer *wlr_renderer )
+ {
+-	return g_device.drmRenderFd();
++	int fd = g_device.drmRenderFd();
++	if ( fd < 0 )
++		fd = g_device.drmAdvertiseFd();
++	return fd;
+ }
+ 
+ static struct wlr_texture *renderer_texture_from_buffer( struct wlr_renderer *wlr_renderer, struct wlr_buffer *buf )
+diff --git a/src/rendervulkan.hpp b/src/rendervulkan.hpp
+index b0ee208..0035641 100644
+--- a/src/rendervulkan.hpp
++++ b/src/rendervulkan.hpp
+@@ -802,6 +802,7 @@ public:
+ 	inline VkBuffer uploadBuffer() {return m_uploadBuffer;}
+ 	inline VkPipelineLayout pipelineLayout() {return m_pipelineLayout;}
+ 	inline int drmRenderFd() {return m_drmRendererFd;}
++	inline int drmAdvertiseFd() {return m_drmAdvertiseFd;}
+ 	inline bool supportsModifiers() {return m_bSupportsModifiers;}
+ 	inline bool hasDrmPrimaryDevId() {return m_bHasDrmPrimaryDevId;}
+ 	inline dev_t primaryDevId() {return m_drmPrimaryDevId;}
+@@ -865,6 +866,7 @@ protected:
+ 	uint32_t m_generalQueueFamily = -1;
+ 
+ 	int m_drmRendererFd = -1;
++	int m_drmAdvertiseFd = -1;
+ 	dev_t m_drmPrimaryDevId = 0;
+ 
+ 	bool m_bSupportsFp16 = false;
