@@ -299,6 +299,61 @@ set timeout_style=menu
 set lang=en_US
 loadfont /boot/grub/dejavu-mono.pf2
 set rotation=${GRUB_ROTATION:-270}
+EOF
+
+  # per-device rotation and default entry from a match
+  local DETECT_PARTS PART
+  DETECT_PARTS=$(xmlstarlet sel -t -m "//rocknix/${DEVICE}/file[@detect_match and @detect_part and @rotation]" \
+    -v "@detect_part" -n "${CONFIGXML}" 2>/dev/null | sort -u)
+
+  [ -n "${DETECT_PARTS}" ] && cat << EOF
+set detected=
+EOF
+
+  for PART in ${DETECT_PARTS}; do
+
+  cat << EOF
+if partfind --set=detect_dev ${PART}; then
+EOF
+
+    # first match wins; check longest tokens first to avoid collision
+    xmlstarlet sel -t -m "//rocknix/${DEVICE}/file[@detect_match and @detect_part and @rotation]" \
+      -v "concat(@short, '|', @rotation, '|', @detect_match, '|', @detect_part)" -n "${CONFIGXML}" 2>/dev/null | while IFS='|' read -r SHORT ROT TOKEN DEVPART; do
+    [ "${DEVPART}" = "${PART}" ] || continue
+    printf '%s\t%s|%s|%s\n' "${#TOKEN}" "${SHORT}" "${ROT}" "${TOKEN}"
+    done | sort -rn -k1,1 | cut -f2- | while IFS='|' read -r SHORT ROT TOKEN; do
+
+  cat << EOF
+  if [ -z "\${detected}" ]; then if strsearch "(\${detect_dev})" "${TOKEN}"; then
+    set detected='${SHORT}'
+    set rotation=$(((360 - ROT * 90) % 360))
+    if [ "\${saved_entry}" != "${SHORT}" ]; then set default='${SHORT}'; set timeout=2; fi
+  fi; fi
+EOF
+    done
+
+  cat << EOF
+fi
+EOF
+  done
+
+  # per-device rotation from config.xml
+  xmlstarlet sel -t -m "//rocknix/${DEVICE}/file[@rotation]" \
+    -v "concat(@short, '|', @rotation, '|', boolean(@detect_match))" -n "${CONFIGXML}" 2>/dev/null | while IFS='|' read -r SHORT ROT DETECTABLE; do
+
+  if [ "${DETECTABLE}" = "true" ]; then
+  # fall back to default behavior if no match
+  cat << EOF
+if [ "\${saved_entry}" = "${SHORT}" ]; then if [ -z "\${detected}" ]; then set default=0; set timeout=-1; fi; fi
+EOF
+  else
+  cat << EOF
+if [ "\${saved_entry}" = "${SHORT}" ]; then if [ -z "\${detected}" ]; then set rotation=$(((360 - ROT * 90) % 360)); fi; fi
+EOF
+  fi
+  done
+
+  cat << EOF
 set gfxmode=auto
 insmod efi_gop
 insmod gfxterm

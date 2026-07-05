@@ -1,0 +1,309 @@
+diff --git a/grub-core/Makefile.core.def b/grub-core/Makefile.core.def
+index fa4bc54..60ccff4 100644
+--- a/grub-core/Makefile.core.def
++++ b/grub-core/Makefile.core.def
+@@ -1115,6 +1115,11 @@ module = {
+   common = commands/probe.c;
+ };
+ 
++module = {
++  name = rawsearch;
++  common = commands/rawsearch.c;
++};
++
+ module = {
+   name = read;
+   common = commands/read.c;
+diff --git a/grub-core/commands/rawsearch.c b/grub-core/commands/rawsearch.c
+new file mode 100644
+index 0000000..5c17a71
+--- /dev/null
++++ b/grub-core/commands/rawsearch.c
+@@ -0,0 +1,287 @@
++/* SPDX-License-Identifier: GPL-3.0-or-later */
++/* rawsearch.c - locate partitions by GPT name and search raw contents */
++
++#include <grub/dl.h>
++#include <grub/disk.h>
++#include <grub/device.h>
++#include <grub/partition.h>
++#include <grub/gpt_partition.h>
++#include <grub/file.h>
++#include <grub/types.h>
++#include <grub/misc.h>
++#include <grub/mm.h>
++#include <grub/env.h>
++#include <grub/extcmd.h>
++#include <grub/i18n.h>
++
++GRUB_MOD_LICENSE ("GPLv3+");
++
++static const struct grub_arg_option partfind_options[] = {
++  {"set", 's', 0, N_("Set a variable to the first device found."),
++   N_("VARNAME"), ARG_TYPE_STRING},
++  {0, 0, 0, 0, 0, 0}
++};
++
++struct partfind_ctx
++{
++  const char *name;
++  char *found;
++};
++
++static int
++partfind_hook (const char *name, void *data)
++{
++  struct partfind_ctx *ctx = data;
++  grub_device_t dev;
++  grub_disk_t parent;
++  struct grub_partition *p;
++  struct grub_gpt_partentry entry;
++  grub_size_t i, tlen;
++
++  dev = grub_device_open (name);
++  if (! dev)
++    {
++      grub_errno = GRUB_ERR_NONE;
++      return 0;
++    }
++
++  if (! dev->disk || ! dev->disk->partition
++      || grub_strcmp (dev->disk->partition->partmap->name, "gpt") != 0)
++    {
++      grub_device_close (dev);
++      return 0;
++    }
++
++  p = dev->disk->partition;
++  parent = grub_disk_open (dev->disk->name);
++  if (! parent)
++    {
++      grub_device_close (dev);
++      grub_errno = GRUB_ERR_NONE;
++      return 0;
++    }
++
++  if (grub_disk_read (parent, p->offset, p->index, sizeof (entry), &entry))
++    {
++      grub_disk_close (parent);
++      grub_device_close (dev);
++      grub_errno = GRUB_ERR_NONE;
++      return 0;
++    }
++
++  grub_disk_close (parent);
++  grub_device_close (dev);
++
++  tlen = grub_strlen (ctx->name);
++  if (tlen > sizeof (entry.name) / 2)
++    return 0;
++
++  for (i = 0; i < tlen; i++)
++    {
++      grub_uint16_t c;
++
++      c = grub_le_to_cpu16 (grub_get_unaligned16 (entry.name + 2 * i));
++      if (c != (grub_uint16_t) (grub_uint8_t) ctx->name[i])
++	return 0;
++    }
++
++  if (tlen < sizeof (entry.name) / 2
++      && grub_le_to_cpu16 (grub_get_unaligned16 (entry.name + 2 * tlen)) != 0)
++    return 0;
++
++  ctx->found = grub_strdup (name);
++  return 1;
++}
++
++static grub_err_t
++grub_cmd_partfind (grub_extcmd_context_t ctxt, int argc, char **args)
++{
++  struct grub_arg_list *state = ctxt->state;
++  struct partfind_ctx ctx = { NULL, NULL };
++
++  if (argc != 1)
++    return grub_error (GRUB_ERR_BAD_ARGUMENT, N_("partition name expected"));
++
++  ctx.name = args[0];
++  grub_device_iterate (partfind_hook, &ctx);
++
++  if (! ctx.found)
++    return grub_error (GRUB_ERR_TEST_FAILURE, N_("false"));
++
++  if (state[0].set)
++    grub_env_set (state[0].arg, ctx.found);
++  else
++    grub_printf ("%s\n", ctx.found);
++
++  grub_free (ctx.found);
++  return GRUB_ERR_NONE;
++}
++
++static const char *
++find_bytes (const char *hay, grub_size_t haylen,
++	    const char *needle, grub_size_t nlen)
++{
++  const char *p;
++
++  if (nlen == 0 || nlen > haylen)
++    return NULL;
++
++  for (p = hay; p <= hay + haylen - nlen; p++)
++    if (p[0] == needle[0] && grub_memcmp (p, needle, nlen) == 0)
++      return p;
++
++  return NULL;
++}
++
++#define STRSEARCH_BUFSZ	(GRUB_DISK_SECTOR_SIZE * 128)
++
++static grub_err_t
++strsearch_disk (const char *devname, const char *needle)
++{
++  grub_disk_t disk;
++  char *buf;
++  grub_uint64_t total, pos = 0;
++  grub_size_t nlen = grub_strlen (needle);
++  grub_size_t keep = nlen - 1, have = 0;
++  int found = 0;
++
++  disk = grub_disk_open (devname);
++  if (! disk)
++    return grub_errno;
++
++  if (disk->partition)
++    total = (grub_uint64_t) disk->partition->len << GRUB_DISK_SECTOR_BITS;
++  else
++    total = grub_disk_native_sectors (disk) << disk->log_sector_size;
++
++  buf = grub_malloc (STRSEARCH_BUFSZ);
++  if (! buf)
++    {
++      grub_disk_close (disk);
++      return grub_errno;
++    }
++
++  while (pos < total && ! found)
++    {
++      grub_size_t n = STRSEARCH_BUFSZ - have;
++
++      if (n > total - pos)
++	n = total - pos;
++
++      if (grub_disk_read (disk, pos >> GRUB_DISK_SECTOR_BITS,
++			  pos & (GRUB_DISK_SECTOR_SIZE - 1), n, buf + have))
++	break;
++
++      if (find_bytes (buf, have + n, needle, nlen))
++	found = 1;
++
++      pos += n;
++      if (! found && keep && have + n >= keep)
++	{
++	  grub_memmove (buf, buf + have + n - keep, keep);
++	  have = keep;
++	}
++      else if (! found)
++	have += n;
++    }
++
++  grub_free (buf);
++  grub_disk_close (disk);
++  grub_errno = GRUB_ERR_NONE;
++
++  return found ? GRUB_ERR_NONE
++	       : grub_error (GRUB_ERR_TEST_FAILURE, N_("false"));
++}
++
++static grub_err_t
++strsearch_file (const char *path, const char *needle)
++{
++  grub_file_t file;
++  char *buf;
++  grub_ssize_t n;
++  grub_size_t nlen = grub_strlen (needle);
++  grub_size_t keep = nlen - 1, have = 0;
++  int found = 0;
++
++  file = grub_file_open (path, GRUB_FILE_TYPE_HEXCAT);
++  if (! file)
++    return grub_errno;
++
++  buf = grub_malloc (STRSEARCH_BUFSZ);
++  if (! buf)
++    {
++      grub_file_close (file);
++      return grub_errno;
++    }
++
++  while (! found
++	 && (n = grub_file_read (file, buf + have,
++				 STRSEARCH_BUFSZ - have)) > 0)
++    {
++      if (find_bytes (buf, have + n, needle, nlen))
++	found = 1;
++
++      if (! found && keep && have + n >= keep)
++	{
++	  grub_memmove (buf, buf + have + n - keep, keep);
++	  have = keep;
++	}
++      else if (! found)
++	have += n;
++    }
++
++  grub_free (buf);
++  grub_file_close (file);
++  grub_errno = GRUB_ERR_NONE;
++
++  return found ? GRUB_ERR_NONE
++	       : grub_error (GRUB_ERR_TEST_FAILURE, N_("false"));
++}
++
++static grub_err_t
++grub_cmd_strsearch (grub_extcmd_context_t ctxt __attribute__ ((unused)),
++		    int argc, char **args)
++{
++  int namelen;
++
++  if (argc != 2)
++    return grub_error (GRUB_ERR_BAD_ARGUMENT,
++		       N_("device or file and string expected"));
++
++  if (grub_strlen (args[1]) == 0)
++    return grub_error (GRUB_ERR_BAD_ARGUMENT, N_("empty search string"));
++
++  namelen = grub_strlen (args[0]);
++  if (args[0][0] == '(' && args[0][namelen - 1] == ')')
++    {
++      grub_err_t err;
++
++      args[0][namelen - 1] = 0;
++      err = strsearch_disk (args[0] + 1, args[1]);
++      args[0][namelen - 1] = ')';
++      return err;
++    }
++
++  return strsearch_file (args[0], args[1]);
++}
++
++static grub_extcmd_t cmd_partfind, cmd_strsearch;
++
++GRUB_MOD_INIT (rawsearch)
++{
++  cmd_partfind =
++    grub_register_extcmd ("partfind", grub_cmd_partfind, 0, N_("NAME"),
++			  N_("Find a partition by its GPT partition name."),
++			  partfind_options);
++  cmd_strsearch =
++    grub_register_extcmd ("strsearch", grub_cmd_strsearch, 0,
++			  N_("DEVICE|FILE STRING"),
++			  N_("Search a raw device or file for a byte string."),
++			  0);
++}
++
++GRUB_MOD_FINI (rawsearch)
++{
++  grub_unregister_extcmd (cmd_partfind);
++  grub_unregister_extcmd (cmd_strsearch);
++}
