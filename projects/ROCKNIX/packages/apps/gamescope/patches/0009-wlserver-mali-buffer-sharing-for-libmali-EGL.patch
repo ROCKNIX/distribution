@@ -1,0 +1,145 @@
+From: Felix "Xilefian" Jones
+Subject: [PATCH] wlserver: mali_buffer_sharing protocol for libMali EGL clients
+
+libMali EGL requires the mali_buffer_sharing global for eglInitialize to succeed; without it GLES clients (glmark2-es2-wayland) fail with EGL_NOT_INITIALIZED. Implement the server side in wlserver, backed by the existing wlr dmabuf buffer factory. Registered automatically when the Vulkan driver lacks VK_EXT_physical_device_drm (libMali); Mesa/PanVK unaffected.
+
+diff --git a/src/wlserver.cpp b/src/wlserver.cpp
+index 34cd5ae..f143c6a 100644
+--- a/src/wlserver.cpp
++++ b/src/wlserver.cpp
+@@ -33,6 +33,7 @@
+ #include <wlr/render/wlr_renderer.h>
+ #include <wlr/types/wlr_compositor.h>
+ #include <wlr/types/wlr_keyboard.h>
++#include <wlr/types/wlr_linux_dmabuf_v1.h>
+ #include <wlr/types/wlr_keyboard_group.h>
+ #include <wlr/types/wlr_pointer.h>
+ #include <wlr/types/wlr_seat.h>
+@@ -2053,6 +2054,73 @@ bool wlserver_init( void ) {
+ 	// Someday, he will be purged.
+ 	wlr_drm_create(wlserver.display, wlserver.wlr.renderer);
+ 
++	extern bool vulkan_has_drm_props();
++	if ( !vulkan_has_drm_props() )
++	{
++		static const struct wl_interface *mali_create_buffer_types[] = {
++			&wl_buffer_interface, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
++		};
++		static const struct wl_message mali_buffer_sharing_requests[] = {
++			{ "create_buffer", "niiiuuuh", mali_create_buffer_types },
++		};
++		static const struct wl_interface mali_buffer_sharing_interface = {
++			"mali_buffer_sharing", 5, 1, mali_buffer_sharing_requests, 0, NULL,
++		};
++		struct mali_buffer_sharing_state {
++			struct wl_global *global;
++		};
++		static const struct wl_interface *s_iface = &mali_buffer_sharing_interface;
++		static auto mali_create_buffer_handler = [](
++				struct wl_client *client, struct wl_resource *resource,
++				uint32_t buffer_id,
++				int32_t width, int32_t height, int32_t stride,
++				uint32_t format, uint32_t modifier_hi, uint32_t modifier_lo,
++				int32_t fd) {
++			uint64_t modifier = ((uint64_t)modifier_hi << 32) | modifier_lo;
++			bool isAFBC = (modifier != 0);
++			wl_log.infof("mali_buffer_sharing: create_buffer %dx%d stride=%d fmt=0x%x mod=0x%x_%x fd=%d%s",
++				width, height, stride, format, modifier_hi, modifier_lo, fd,
++				isAFBC ? " [AFBC]" : " [LINEAR]");
++			struct wlr_dmabuf_attributes attribs = {};
++			attribs.width = width;
++			attribs.height = height;
++			attribs.format = format;
++			attribs.modifier = modifier;
++			attribs.n_planes = 1;
++			attribs.offset[0] = 0;
++			attribs.stride[0] = stride;
++			attribs.fd[0] = fd;
++			for (int i = 1; i < WLR_DMABUF_MAX_PLANES; i++)
++				attribs.fd[i] = -1;
++			struct wl_resource *buf = wlr_dmabuf_v1_buffer_create_immed(
++				client, buffer_id, &attribs);
++			if (!buf) {
++				wl_resource_post_error(resource, 0,
++					"mali_buffer_sharing: create_buffer failed");
++			}
++		};
++		typedef void (*mali_create_buffer_fn)(
++			struct wl_client *, struct wl_resource *,
++			uint32_t, int32_t, int32_t, int32_t,
++			uint32_t, uint32_t, uint32_t, int32_t);
++		struct mali_buffer_sharing_impl {
++			mali_create_buffer_fn create_buffer;
++		};
++		static const struct mali_buffer_sharing_impl mali_impl = {
++			.create_buffer = mali_create_buffer_handler,
++		};
++		static auto mali_bind = [](struct wl_client *client, void *data,
++				uint32_t version, uint32_t id) {
++			struct wl_resource *resource = wl_resource_create(client,
++				s_iface, version, id);
++			if (!resource) {
++				wl_client_post_no_memory(client);
++				return;
++			}
++			wl_resource_set_implementation(resource, &mali_impl, data, NULL);
++		};
++		wl_global_create(wlserver.display, s_iface, 5, NULL, mali_bind);
++	}
+ 	if ( GetBackend()->SupportsExplicitSync() )
+ 	{
+ 		create_explicit_sync();
+diff --git a/subprojects/wlroots/include/wlr/types/wlr_linux_dmabuf_v1.h b/subprojects/wlroots/include/wlr/types/wlr_linux_dmabuf_v1.h
+index cf967f9..53605fa 100644
+--- a/subprojects/wlroots/include/wlr/types/wlr_linux_dmabuf_v1.h
++++ b/subprojects/wlroots/include/wlr/types/wlr_linux_dmabuf_v1.h
+@@ -134,4 +134,7 @@ struct wlr_linux_dmabuf_feedback_v1_init_options {
+ bool wlr_linux_dmabuf_feedback_v1_init_with_options(struct wlr_linux_dmabuf_feedback_v1 *feedback,
+ 	const struct wlr_linux_dmabuf_feedback_v1_init_options *options);
+ 
++struct wl_resource *wlr_dmabuf_v1_buffer_create_immed(
++		struct wl_client *client, uint32_t buffer_id,
++		struct wlr_dmabuf_attributes *attribs);
+ #endif
+diff --git a/subprojects/wlroots/types/wlr_linux_dmabuf_v1.c b/subprojects/wlroots/types/wlr_linux_dmabuf_v1.c
+index bfd9763..85bc46a 100644
+--- a/subprojects/wlroots/types/wlr_linux_dmabuf_v1.c
++++ b/subprojects/wlroots/types/wlr_linux_dmabuf_v1.c
+@@ -1171,3 +1171,37 @@ error:
+ 	wlr_linux_dmabuf_feedback_v1_finish(feedback);
+ 	return false;
+ }
++struct wl_resource *wlr_dmabuf_v1_buffer_create_immed(
++		struct wl_client *client, uint32_t buffer_id,
++		struct wlr_dmabuf_attributes *attribs) {
++	if (attribs->width < 1 || attribs->height < 1) {
++		wlr_log(WLR_ERROR, "wlr_dmabuf_v1_buffer_create_immed: invalid dimensions %dx%d",
++			attribs->width, attribs->height);
++		wlr_dmabuf_attributes_finish(attribs);
++		return NULL;
++	}
++	if (attribs->n_planes < 1 || attribs->fd[0] < 0) {
++		wlr_log(WLR_ERROR, "wlr_dmabuf_v1_buffer_create_immed: no valid plane fd");
++		wlr_dmabuf_attributes_finish(attribs);
++		return NULL;
++	}
++	struct wlr_dmabuf_v1_buffer *buffer = calloc(1, sizeof(*buffer));
++	if (!buffer) {
++		wlr_dmabuf_attributes_finish(attribs);
++		return NULL;
++	}
++	wlr_buffer_init(&buffer->base, &buffer_impl, attribs->width, attribs->height);
++	buffer->resource = wl_resource_create(client, &wl_buffer_interface,
++		1, buffer_id);
++	if (!buffer->resource) {
++		wlr_dmabuf_attributes_finish(attribs);
++		free(buffer);
++		return NULL;
++	}
++	wl_resource_set_implementation(buffer->resource,
++		&wl_buffer_impl, buffer, buffer_handle_resource_destroy);
++	buffer->attributes = *attribs;
++	buffer->release.notify = buffer_handle_release;
++	wl_signal_add(&buffer->base.events.release, &buffer->release);
++	return buffer->resource;
++}
