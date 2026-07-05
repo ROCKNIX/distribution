@@ -1,0 +1,107 @@
+From: Felix "Xilefian" Jones
+Subject: [PATCH] DRMBackend,rendervulkan: scan out on the KMS display node with CMA output images
+
+gamescope derives its KMS/scanout device from the Vulkan render device's DRM
+node (vulkan_primary_dev_id) and allocates its output images on that render
+device. On a split render/display SoC that breaks two ways at once. On RK3576
+with panfrost the GPU is /dev/dri/card1 (render-only, no KMS) while the display
+is the rockchip VOP2 on /dev/dri/card0:
+
+  1. gamescope opens card1 for KMS, logs "is not a KMS device",
+     GetPreferredOutputFormat() returns nothing and vulkan_make_output aborts
+     ("failed to find Vulkan format suitable for KMS").
+  2. Even once scanning out on card0, the output images live in panfrost's GEM
+     space and cannot be turned into VOP2 framebuffers, so nothing is presented
+     (black screen; drmModeRmFB EBADF spam on teardown).
+
+Fix both: after picking the device, if it is not KMS-capable, enumerate DRM
+devices and switch scanout to the first KMS-capable primary node (the VOP2), and
+raise g_bGamescopeForeignScanout. When that flag is set, allocate the output
+images from the CMA dma-heap as LINEAR and import them for scanout (the same
+device-agnostic path already used for libMali via rxnix_cma) so the VOP2 can
+scan them out. No effect on unified render/display GPUs (device is already KMS,
+flag stays false) or on libMali (already takes the CMA path via absence of
+VK_EXT_physical_device_drm).
+
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index 2a3b4c5..6d7e8f9 100644
+--- a/src/Backends/DRMBackend.cpp
++++ /home/felixjones/rocknix/build.ROCKNIX-RK3576.aarch64/build/gamescope-61c74c18af1aaa4a2593f73b409a0c22b9314db4/src/Backends/DRMBackend.cpp	2026-07-05 15:18:57.387424763 +0200
+@@ -584,6 +584,7 @@
+ 
+ bool g_bSupportsAsyncFlips = false;
+ bool g_bSupportsSyncObjs = false;
++bool g_bGamescopeForeignScanout = false;
+ 
+ extern gamescope::GamescopeModeGeneration g_eGamescopeModeGeneration;
+ extern GamescopePanelOrientation g_DesiredInternalOrientation;
+@@ -1293,6 +1294,50 @@
+ 		drm_log.infof("warning: picking an arbitrary DRM device");
+ 	}
+ 
++
++	// The Vulkan render device is not necessarily the KMS/display device. On split
++	// render/display SoCs (e.g. panfrost render GPU + rockchip VOP2 display) the node
++	// selected above is render-only and not a KMS device; find the KMS-capable
++	// display node and scan out through that instead.
++	{
++		bool bDeviceIsKMS = false;
++		if ( drm->device_name )
++		{
++			int nCheckFd = open( drm->device_name, O_RDWR | O_CLOEXEC );
++			if ( nCheckFd >= 0 )
++			{
++				bDeviceIsKMS = drmIsKMS( nCheckFd );
++				close( nCheckFd );
++			}
++		}
++		if ( !bDeviceIsKMS )
++		{
++			drmDevicePtr devices[16] = {};
++			int nDevs = drmGetDevices2( 0, devices, 16 );
++			for ( int i = 0; i < nDevs; i++ )
++			{
++				if ( !( devices[i]->available_nodes & ( 1 << DRM_NODE_PRIMARY ) ) )
++					continue;
++				const char *pszNode = devices[i]->nodes[DRM_NODE_PRIMARY];
++				int nFd = open( pszNode, O_RDWR | O_CLOEXEC );
++				if ( nFd < 0 )
++					continue;
++				bool bKMS = drmIsKMS( nFd );
++				close( nFd );
++				if ( bKMS )
++				{
++					free( drm->device_name );
++					drm->device_name = strdup( pszNode );
++					drm_log.infof( "using KMS display node '%s' (render device is not a KMS device)", drm->device_name );
++					g_bGamescopeForeignScanout = true;
++					break;
++				}
++			}
++			if ( nDevs > 0 )
++				drmFreeDevices( devices, nDevs );
++		}
++	}
++
+ 	if ( drm->device_name )
+ 	{
+ 		struct stat targetSt = {};
+--- a/src/rendervulkan.cpp
++++ /home/felixjones/rocknix/build.ROCKNIX-RK3576.aarch64/build/gamescope-61c74c18af1aaa4a2593f73b409a0c22b9314db4/src/rendervulkan.cpp	2026-07-05 15:18:57.387663026 +0200
+@@ -3416,6 +3416,7 @@
+         return true;
+     }
+ } // namespace rxnix_cma
++extern bool g_bGamescopeForeignScanout;
+ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
+ {
+ 	CVulkanTexture::createFlags outputImageflags;
+@@ -3454,7 +3455,7 @@
+ 		}
+ 	}
+ 
+-	if ( !vulkan_has_drm_props() )
++	if ( !vulkan_has_drm_props() || g_bGamescopeForeignScanout )
+ 	{
+ 		uint32_t fmt = ( uDRMFormat != DRM_FORMAT_INVALID ) ? uDRMFormat : DRM_FORMAT_ABGR8888;
+ 		for ( int i = 0; i < 3; i++ )
