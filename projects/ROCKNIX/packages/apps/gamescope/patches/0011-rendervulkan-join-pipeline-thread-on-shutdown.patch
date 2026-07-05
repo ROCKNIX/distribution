@@ -1,0 +1,84 @@
+From: Felix "Xilefian" Jones
+Subject: [PATCH] rendervulkan,steamcompmgr: join pipeline-compile thread on shutdown
+
+compileAllPipelines() runs on a detached background thread. On shutdown gamescope tears down the Vulkan device (steamcompmgr_exit) while that thread is still calling vkCreateComputePipelines, faulting inside the driver (seen on libMali) - a SIGSEGV during exit. Make the thread joinable, have its loop bail as soon as g_bRun is cleared by the signal handler, and join it at the start of steamcompmgr_exit before any device teardown. Shutdown is then clean (at most one in-flight pipeline compile is awaited).
+
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+index 0851089..e283db5 100644
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -319,8 +319,7 @@ bool CVulkanDevice::BInit(VkInstance instance, VkSurfaceKHR surface)
+ 
+ 	m_bInitialized = true;
+ 
+-	std::thread piplelineThread([this](){compileAllPipelines();});
+-	piplelineThread.detach();
++	m_pipelineThread = std::thread([this](){compileAllPipelines();});
+ 
+ 	g_reshadeManager.init(this);
+ 
+@@ -1266,6 +1265,8 @@ void CVulkanDevice::compileAllPipelines()
+ 							continue;
+ 						if (blur_layers > layerCount)
+ 							continue;
++						if (!g_bRun)
++							return;
+ 
+ 						VkPipeline newPipeline = compilePipeline(layerCount, ycbcrMask, info.shaderType, blur_layers, info.compositeDebug, info.colorspaceMask, info.outputEOTF, info.itmEnable, rotation);
+ 						{
+@@ -1282,6 +1283,12 @@ void CVulkanDevice::compileAllPipelines()
+ 	}
+ }
+ 
++void CVulkanDevice::waitPipelines()
++{
++	if ( m_pipelineThread.joinable() )
++		m_pipelineThread.join();
++}
++
+ extern bool g_bSteamIsActiveWindow;
+ 
+ VkPipeline CVulkanDevice::pipeline(ShaderType type, uint32_t layerCount, uint32_t ycbcrMask, uint32_t blur_layers, uint32_t colorspace_mask, uint32_t output_eotf, bool itm_enable, uint32_t rotation)
+diff --git a/src/rendervulkan.hpp b/src/rendervulkan.hpp
+index ca1dcfa..ed34ddd 100644
+--- a/src/rendervulkan.hpp
++++ b/src/rendervulkan.hpp
+@@ -10,6 +10,7 @@
+ #include <array>
+ #include <bitset>
+ #include <mutex>
++#include <thread>
+ #include <optional>
+ 
+ #include "main.hpp"
+@@ -810,6 +811,7 @@ public:
+ 	inline int drmRenderFd() {return m_drmRendererFd;}
+ 	inline int drmAdvertiseFd() {return m_drmAdvertiseFd;}
+ 	inline bool supportsModifiers() {return m_bSupportsModifiers;}
++	void waitPipelines();
+ 	inline bool hasDrmPrimaryDevId() {return m_bHasDrmPrimaryDevId;}
+ 	inline dev_t primaryDevId() {return m_drmPrimaryDevId;}
+ 	inline bool supportsFp16() {return m_bSupportsFp16;}
+@@ -887,6 +889,7 @@ protected:
+ 	std::array<VkShaderModule, SHADER_TYPE_COUNT> m_shaderModules;
+ 	std::unordered_map<PipelineInfo_t, VkPipeline> m_pipelineMap;
+ 	std::mutex m_pipelineMutex;
++	std::thread m_pipelineThread;
+ 
+ 	static constexpr uint32_t k_uMaxConcurrentSubmits = 8;
+ 
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+index 72d9909..ab4c47c 100644
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -6698,6 +6698,10 @@ error(Display *dpy, XErrorEvent *ev)
+ static void
+ steamcompmgr_exit(void)
+ {
++	// Stop the async pipeline-precompile thread before tearing down the Vulkan
++	// device, or it faults mid-compile inside the driver.
++	g_device.waitPipelines();
++
+ 	g_ImageWaiter.Shutdown();
+ 
+ 	// Clean up any commits.
