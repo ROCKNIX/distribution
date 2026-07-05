@@ -18,6 +18,7 @@ PCSX2_CMAKE_BASE=(
   -DUSE_OPENGL=ON
   -DUSE_BACKTRACE=OFF
   -DENABLE_QT_UI=ON
+  -DENABLE_QT_DEBUGGER=OFF
   -DWAYLAND_API=ON
   -DX11_API=ON
 )
@@ -25,9 +26,18 @@ PCSX2_CMAKE_BASE=(
 PATCHES_URL="https://github.com/PCSX2/pcsx2_patches/archive/refs/tags/latest.zip"
 
 make_target() {
-  for _v in CFLAGS CXXFLAGS LDFLAGS; do
-    export ${_v}="$(echo ${!_v} | sed 's/-mabi=lp64//g; s/-mtune=[^ ]*//g')"
-  done
+  case ${TARGET_ARCH} in
+    aarch64)
+      for _v in CFLAGS CXXFLAGS LDFLAGS; do
+        export ${_v}="$(echo ${!_v} | sed 's/-march=[^ ]*//g; s/-mabi=lp64//g; s/-mtune=[^ ]*//g')"
+      done
+    ;;
+    x86_64)
+      for _v in CFLAGS CXXFLAGS LDFLAGS; do
+        export ${_v}="$(echo ${!_v} | sed 's/-mabi=lp64//g; s/-mtune=[^ ]*//g')"
+      done
+    ;;
+  esac
 
   mkdir -p "${PKG_BUILD}/.${TARGET_NAME}"
   cd "${PKG_BUILD}/.${TARGET_NAME}"
@@ -48,15 +58,18 @@ make_target() {
     -DCMAKE_MODULE_LINKER_FLAGS_INIT="-fuse-ld=lld"
     -DCMAKE_SHARED_LINKER_FLAGS_INIT="-fuse-ld=lld"
     -DCMAKE_SYSTEM_NAME=Linux
-    -DCMAKE_SYSTEM_PROCESSOR=aarch64
-    -DCMAKE_C_COMPILER_TARGET=aarch64-rocknix-linux-gnu
-    -DCMAKE_CXX_COMPILER_TARGET=aarch64-rocknix-linux-gnu
+    -DCMAKE_SYSTEM_PROCESSOR=${TARGET_ARCH}
+    -DCMAKE_C_COMPILER_TARGET=${TARGET_NAME}
+    -DCMAKE_CXX_COMPILER_TARGET=${TARGET_NAME}
     -DCMAKE_SYSROOT="${SYSROOT_PREFIX}"
     -DCMAKE_FIND_ROOT_PATH="${SYSROOT_PREFIX}"
     -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY
     -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY
     -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY
     -DLLVM_DIR="${TOOLCHAIN}/lib/cmake/llvm"
+    -DCMAKE_AR="${TOOLCHAIN}/bin/llvm-ar"
+    -DCMAKE_RANLIB="${TOOLCHAIN}/bin/llvm-ranlib"
+    -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER
     "${PCSX2_CMAKE_BASE[@]}"
   )
   cmake "${tgt_opts[@]}"
