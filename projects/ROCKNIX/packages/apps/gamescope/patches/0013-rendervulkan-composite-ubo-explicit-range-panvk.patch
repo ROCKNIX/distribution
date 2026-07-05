@@ -1,0 +1,57 @@
+From: Felix "Xilefian" Jones
+Subject: [PATCH] rendervulkan: bind the composite UBO with an explicit range (PanVK)
+
+The compute composite path binds its per-dispatch constants (scale, offset,
+opacity, CTM, colour-management) as the binding-0 uniform buffer, using
+VkDescriptorBufferInfo.range = VK_WHOLE_SIZE.
+
+On PanVK (Mesa panfrost Vulkan, e.g. Mali-G52 / RK3576) VK_WHOLE_SIZE is
+miscomputed for a uniform-buffer descriptor: the effective hardware UBO size
+ends up as 0, so every uniform read in the composite compute shader returns
+zero. The shader therefore sees scale=0, offset=0, opacity=0, CTM=0 and renders
+a solid black screen, even though the upload buffer at the bound offset holds
+the correct values. The compositor runs and page-flips normally (no crash, no
+KMS/IOMMU fault) so the panel is simply black; verified on RK3576 by mapping the
+CMA scanout dma-buf on the CPU (all-zero before this fix, ~29% non-zero after).
+
+Fix: remember the size of the last uploaded constants block and bind the UBO
+with an explicit range == that size instead of VK_WHOLE_SIZE. Falls back to
+VK_WHOLE_SIZE only for dispatches that did not upload any constants. Harmless on
+drivers that compute VK_WHOLE_SIZE correctly (libMali, desktop) since the
+explicit range is exactly the data the shader reads.
+
+--- a/src/rendervulkan.hpp
++++ b/src/rendervulkan.hpp
+@@ -1000,6 +1000,7 @@
+ 	std::vector<VulkanTimelinePoint_t> m_ExternalSignals;
+ 
+ 	uint32_t m_renderBufferOffset = 0;
++	uint32_t m_renderBufferSize = 0;
+ };
+ 
+ uint32_t VulkanFormatToDRM( VkFormat vkFormat, std::optional<bool> obHasAlphaOverride = std::nullopt );
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -1698,6 +1698,7 @@
+ 
+ 	auto [ptr, offset] = m_device->uploadBufferData(sizeof(data));
+ 	m_renderBufferOffset = offset;
++	m_renderBufferSize = sizeof(data);
+ 	memcpy(ptr, &data, sizeof(data));
+ }
+ 
+@@ -1799,7 +1800,13 @@
+ 
+ 	scratchDescriptor.buffer = m_device->m_uploadBuffer;
+ 	scratchDescriptor.offset = m_renderBufferOffset;
+-	scratchDescriptor.range = VK_WHOLE_SIZE;
++	// PanVK (Mali) miscomputes VK_WHOLE_SIZE for a uniform-buffer descriptor: the
++	// effective hardware UBO size becomes 0, so every composite uniform (scale,
++	// offset, opacity, CTM, colour-management) reads back as zero and the compute
++	// composite renders solid black. Bind an explicit range equal to the uploaded
++	// constants size so the shader reads the real values; fall back to
++	// VK_WHOLE_SIZE only for dispatches that uploaded no constants.
++	scratchDescriptor.range = m_renderBufferSize ? (VkDeviceSize)m_renderBufferSize : VK_WHOLE_SIZE;
+ 
+ 	// Mali GPU drivers (libMali, PanVK) do not implement VK_EXT_robustness2, so a
+ 	// null combined-image-sampler faults them. Bind a valid blank view to every
