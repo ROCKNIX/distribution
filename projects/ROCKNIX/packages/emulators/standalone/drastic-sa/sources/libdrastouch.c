@@ -249,10 +249,10 @@ static const char *FRAG_SCANLINES =
     "    gl_FragColor = color;\n"
     "}\n";
 
-// LCD3x: sharp-bilinear-2x base with RGB subpixel columns and pixel gap rows.
+// LCD3x: sharp-bilinear base with RGB subpixel columns and scanline rows.
 // Simulates the NDS LCD panel's visible subpixel structure.
-// Branchless mask selection via step/mix; *2.0+clamp compensates for the ~50%
-// average brightness loss the subpixel mask would otherwise cause.
+// Branchless mask selection via step/mix; *(4.0/3.0)+clamp compensates for the
+// ~34% average brightness loss the subpixel mask would otherwise cause.
 static const char *FRAG_LCD3X =
     "precision mediump float;\n"
     "varying vec2 v_texcoord;\n"
@@ -270,14 +270,14 @@ static const char *FRAG_LCD3X =
     "    vec2 mod_texel = texel_floored + f;\n"
     "    vec4 color = SWIZ(texture2D(u_texture, mod_texel / u_texture_size));\n"
     "    float px = mod(floor(gl_FragCoord.x), 3.0);\n"
-    "    vec3 col_r = vec3(1.0, 0.25, 0.25);\n"
-    "    vec3 col_g = vec3(0.25, 1.0, 0.25);\n"
-    "    vec3 col_b = vec3(0.25, 0.25, 1.0);\n"
+    "    vec3 col_r = vec3(0.75, 0.50, 0.50);\n"
+    "    vec3 col_g = vec3(0.50, 0.75, 0.50);\n"
+    "    vec3 col_b = vec3(0.50, 0.50, 0.75);\n"
     "    vec3 mask = mix(col_r, col_g, step(1.0, px));\n"
     "    mask = mix(mask, col_b, step(2.0, px));\n"
     "    float py = mod(floor(gl_FragCoord.y), 3.0);\n"
-    "    mask *= mix(0.5, 1.0, step(1.0, py));\n"
-    "    color.rgb = min(color.rgb * mask * 2.0, vec3(1.0));\n"
+    "    mask *= mix(0.7, 1.0, step(1.0, py));\n"
+    "    color.rgb = min(color.rgb * mask * (4.0 / 3.0), vec3(1.0));\n"
     "    gl_FragColor = color;\n"
     "}\n";
 
