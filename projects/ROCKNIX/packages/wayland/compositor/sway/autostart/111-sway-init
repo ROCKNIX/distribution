@@ -26,7 +26,7 @@ else
     systemctl unmask essway.service
 fi
 # get the card number, this may not be a safe way to derive it...
-card_no=$(ls /sys/class/drm/ | grep -E "DP|HDMI|DSI" | head -n 1 | cut -b 5)
+card_no=$(ls /sys/class/drm/ | grep -E "DP|HDMI|DSI|eDP" | head -n 1 | cut -b 5)
 
 env_file=/storage/.config/profile.d/095-sway
 
@@ -42,10 +42,10 @@ for connector in ${card}/card${card_no}*/
 do
     status=$(cat ${connector}/status)
     if [ "$status" = "connected" ]; then
-        # If device has a connected DSI port, store that device.
-        if [[ $connector  == *"DSI"* ]]; then
-            dsi=$(basename $connector)
-            dsi=${dsi: +6}
+        # If device has a connected DSI or eDP port, store that device.
+        if [[ $connector == *"DSI"* || $connector == *"eDP"* ]]; then
+            internal=$(basename "$connector")
+            internal=${internal: +6}
         fi
     # Simply prioritize later connectors, meaning HDMI/DP priority
 	con=$(basename $connector)
@@ -54,8 +54,8 @@ do
     fi
 done
 
-# If dsi check rotation
-if [[ $con  == "DSI"* ]]; then
+# If dsi / eDP check rotation
+if [[ $con == DSI* || $con == eDP* ]]; then
     rot=$(cat /sys/class/graphics/fbcon/rotate)
     case $rot in
         1) angle="90";;
@@ -64,10 +64,10 @@ if [[ $con  == "DSI"* ]]; then
         *) angle="0";;
     esac
 else
-    # Main output not DSI and DSI is connected, then disable it
-    if [ ! -z $dsi ]; then
-	echo $dsi
-        echo "output ${dsi} disable" >> $SWAY_HOME/config
+    # Main output not internal and internal display is connected, then disable it
+    if [[ -n $internal ]]; then
+        echo "$internal"
+        echo "output ${internal} disable" >> "$SWAY_HOME/config"
     fi
     angle="0"
 fi
@@ -80,6 +80,10 @@ fi
 output="output ${con}"
 echo "${output} transform ${angle}" >> $SWAY_HOME/config
 echo "WLR_CON=${con}" >> ${env_file}
+# Force HDMI to 1080p60hz
+if [[ $con == HDMI* ]]; then
+    echo "${output} mode 1920x1080@60Hz" >> "$SWAY_HOME/config"
+fi
 # check refresh rate
 DISPLAY_MODE=$(get_setting system.display_mode)
 if [ "${DISPLAY_MODE}" ]; then
@@ -191,8 +195,8 @@ fi
 # AYANEO Pocket S: force primary output to the internal DSI panel.
 # Some panel stacks expose extra connectors and sway can pick the wrong one.
 if [ "${QUIRK_DEVICE}" = "AYANEO Pocket S 2K" ]; then
-  if [ -n "${dsi}" ]; then
-    con="${dsi}"
+  if [ -n "${internal}" ]; then
+    con="${internal}"
     echo "output ${con} transform ${angle}" >> $SWAY_HOME/config
     echo "output ${con} bg #000000 solid_color" >> $SWAY_HOME/config
     echo "output ${con} allow_tearing yes" >> $SWAY_HOME/config
