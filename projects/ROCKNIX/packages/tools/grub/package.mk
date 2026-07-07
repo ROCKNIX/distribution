@@ -5,7 +5,8 @@ PKG_NAME="grub"
 PKG_VERSION="2.14-rc1"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://www.gnu.org/software/grub/index.html"
-PKG_URL="http://git.savannah.gnu.org/cgit/grub.git/snapshot/${PKG_NAME}-${PKG_VERSION}.tar.gz"
+PKG_URL="https://gitlab.freedesktop.org/gnu-grub/grub/-/archive/${PKG_NAME}-${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tar.gz"
+PKG_SOURCE_DIR="${PKG_NAME}-${PKG_NAME}-${PKG_VERSION}-*"
 PKG_DEPENDS_HOST="toolchain:host"
 PKG_DEPENDS_TARGET="toolchain flex freetype:host gettext:host grub:host"
 PKG_DEPENDS_UNPACK="gnulib"
@@ -14,6 +15,7 @@ PKG_TOOLCHAIN="configure"
 
 PKG_NEED_UNPACK="${PROJECT_DIR}/${PROJECT}/bootloader ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/bootloader"
 PKG_NEED_UNPACK+=" ${PROJECT_DIR}/${PROJECT}/options ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/options"
+PKG_NEED_UNPACK+=" ${PROJECT_DIR}/${PROJECT}/config.xml ${DISTRO_DIR}/${DISTRO}/config/functions"
 
 pre_configure_host() {
   unset CFLAGS
@@ -71,7 +73,7 @@ make_target() {
 makeinstall_target() {
   ${PKG_BUILD}/.${HOST_NAME}/grub-mkimage -d grub-core -o bootaa64.efi -O arm64-efi -p /boot/grub \
     boot linux ext2 fat squash4 part_msdos part_gpt normal search search_fs_file search_fs_uuid \
-    search_label chain reboot loadenv test gfxterm efi_gop
+    search_label chain reboot loadenv test gfxterm efi_gop rawsearch
 
   mkdir -p ${INSTALL}/usr/share/bootloader/boot/grub
     cp -av ${PKG_DIR}/config/* ${INSTALL}/usr/share/bootloader/boot/grub
