@@ -808,10 +808,16 @@ function set_autosave() {
         ;;
     esac
 
-    add_setting "none" "savestate_directory" "${SNAPSHOTS}/${PLATFORM}"
-    if [ ! -d "${SNAPSHOTS}/${PLATFORM}" ]
+    # add_setting "none" "savestate_directory" "${SNAPSHOTS}/${PLATFORM}"
+    # if [ ! -d "${SNAPSHOTS}/${PLATFORM}" ]
+    # then
+    #     mkdir "${SNAPSHOTS}/${PLATFORM}"
+    # fi
+
+    add_setting "none" "savestate_directory" "${SNAPSHOTS}/_rstates"
+    if [ ! -d "${SNAPSHOTS}/_rstates" ]
     then
-        mkdir "${SNAPSHOTS}/${PLATFORM}"
+        mkdir "${SNAPSHOTS}/_rstates"
     fi
 
     if [ ! -z "${SNAPSHOT}" ]
