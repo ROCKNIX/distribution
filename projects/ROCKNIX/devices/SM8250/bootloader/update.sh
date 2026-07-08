@@ -53,11 +53,13 @@ if [ -f "$SYSTEM_ROOT/usr/share/bootloader/boot/grub/dejavu-mono.pf2" ]; then
 fi
 
 if [ -f "$SYSTEM_ROOT/usr/share/bootloader/boot/grub/grubenv" ]; then
-  if [ ! -f "$BOOT_ROOT/boot/grub/grubenv" ]; then
-    mkdir -p $BOOT_ROOT/boot/grub
+  mkdir -p $BOOT_ROOT/boot/grub
+  if [ -f "$BOOT_ROOT/boot/grub/grubenv" ]; then
+    echo "Resetting grubenv ..."
+  else
     echo "Installing grubenv..."
-    cp $SYSTEM_ROOT/usr/share/bootloader/boot/grub/grubenv $BOOT_ROOT/boot/grub
   fi
+  cp $SYSTEM_ROOT/usr/share/bootloader/boot/grub/grubenv $BOOT_ROOT/boot/grub
 fi
 
 # mount $BOOT_ROOT ro
