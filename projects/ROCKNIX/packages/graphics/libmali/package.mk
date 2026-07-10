@@ -47,7 +47,7 @@ esac
 case "${DEVICE}" in
   RK3566|RK3576)
     PKG_SITE="https://github.com/JeffyCN/mirrors"
-    PKG_VERSION="1a082323f1001874a007e4e522029d6c46d75ae9"
+    PKG_VERSION="4233031d818e97a19e8a9cdbbd5c15795ededd93"
     # zip format makes extract very fast (<1s). tgz takes 20 seconds to scan the whole file
     PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.zip"
     PKG_DEPENDS_TARGET+=" mesa vulkan-tools vulkan-headers vulkan-wsi-layer"
@@ -56,6 +56,7 @@ case "${DEVICE}" in
     ZIPDIRNAME="mirrors"
     PKG_PATCH_DIRS+=" next"
     OPTS=" -Dwrappers=true "
+    MALI_G29="yes"
   ;;
   *)
     OPTS=" -Dwrappers=enabled "
@@ -103,5 +104,22 @@ post_makeinstall_target() {
   fi
   if [[ "${DEVICE}" =~ RK3566|RK3576 ]] && [ "${ARCH}" = "arm" ]; then
     mv "${INSTALL}"/usr/lib32/mali/libMaliVulkan.* "${INSTALL}"/usr/lib32/
+  fi
+
+  # Provide RUNPATH for 32bit mali blobs 
+  if [ "${ARCH}" = "arm" ]; then
+    for lib in "${INSTALL}"/usr/lib32/lib*.so.* \
+               "${INSTALL}"/usr/lib32/mali/lib*.so.*; do
+      [ -f "${lib}" ] && [ ! -L "${lib}" ] || continue
+      patchelf --set-rpath '/usr/lib32' "${lib}"
+    done
+  fi
+
+  # Patch libmali to enable 32bit Vulkan
+  if [ -n "${MALI_G29}" ] && [ "${ARCH}" = "arm" ]; then
+    for so in "${INSTALL}"/usr/lib32/libmali.so.*.*; do
+      [ -f "${so}" ] && [ ! -L "${so}" ] || continue
+      python3 "${PKG_DIR}/scripts/note_fullgap.py" "${so}"
+    done
   fi
 }
