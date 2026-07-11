@@ -1,0 +1,52 @@
+From: Felix "Xilefian" Jones
+Subject: [PATCH] steamcompmgr,rendervulkan: skip non-RGA-importable overlay layers on the RGA path
+
+Two always-present overlay layers forced every frame onto the slow Vulkan composite:
+the fully-transparent warm-up placeholder and the hidden cursor parked off-screen.
+Drop the placeholder on the RGA path and skip off-screen non-base layers in the RGA
+composite-blend. Visually identical; an on-screen cursor still composites via Vulkan.
+---
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -2675,7 +2675,14 @@
+ 			if ( overlay == pFocus->inputFocusWindow && pFocus == GetCurrentFocus() )
+ 				update_touch_scaling( &frameInfo );
+ 		}
+-		else if ( !GetBackend()->UsesVulkanSwapchain() && GetBackend()->IsSessionBased() )
++		// ROCKNIX: this inserts a fullscreen, fully-transparent placeholder overlay purely to
++		// keep a Vulkan-swapchain overlay plane warm (avoids a toggle stutter). On the RGA
++		// rotated-panel scanout path there is no such plane, and this n_planes==0 (Vulkan-only)
++		// placeholder makes every streamed frame ineligible for the RGA composite-blend -
++		// forcing a slow libMali Vulkan composite that caps the stream at ~15fps. It is fully
++		// transparent, so dropping it here is visually identical and lets the RGA composite the
++		// real layers (video + UI) with the GPU idle.
++		else if ( !GetBackend()->UsesVulkanSwapchain() && GetBackend()->IsSessionBased() && !vulkan_rxnix_rga_enabled() )
+ 		{
+ 			auto tex = vulkan_get_hacky_blank_texture();
+ 			if ( tex != nullptr )
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -3920,6 +3920,13 @@ namespace rxnix_rga {
+         for ( int i = 0; i < fi->layerCount; i++ ) {
+             const FrameInfo_t::Layer_t *L = &fi->layers[i];
+             if ( !L->tex ) return false;
++            // A non-base layer parked entirely off-screen - notably the cursor, which
++            // gamescope hides by positioning at an infinite offset - contributes no pixels.
++            // Skip it (this also guards the dst-rect maths below against a non-finite offset)
++            // instead of rejecting the whole frame to the slow GPU composite.
++            if ( i > 0 && !( L->offset.x > -1e9f && L->offset.x < 1e9f &&
++                             L->offset.y > -1e9f && L->offset.y < 1e9f ) )
++                continue;
+             if ( L->colorspace != GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR || L->ctm ) return false;
+             if ( L->opacity < 1.0f ) return false;                    // per-pixel alpha only; fades -> GPU
+             if ( L->eAlphaBlendingMode != ALPHA_BLENDING_MODE_PREMULTIPLIED ) return false;
+@@ -3946,6 +3953,9 @@ namespace rxnix_rga {
+         { im_rect full = { 0, 0, (int)comp.w, (int)comp.h }; imfill( dst, full, 0x00000000, 1 ); }
+         for ( int i = 0; i < fi->layerCount; i++ ) {
+             const FrameInfo_t::Layer_t *L = &fi->layers[i];
++            if ( i > 0 && !( L->offset.x > -1e9f && L->offset.x < 1e9f &&
++                             L->offset.y > -1e9f && L->offset.y < 1e9f ) )
++                continue; // hidden/off-screen overlay (e.g. parked cursor): draws nothing
+             const struct wlr_dmabuf_attributes &dma = L->tex->dmabuf();
+             int sfmt, rd;
+             if ( !layer_rga_src_info( L, &sfmt, &rd ) ) return false;
