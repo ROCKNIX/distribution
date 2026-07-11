@@ -1,0 +1,108 @@
+From: Felix "Xilefian" Jones
+Subject: [PATCH] rendervulkan,DRMBackend: RGA direct scanout as the default present mode
+
+Rotate and scale the client buffer straight to the display on the RGA with no
+Vulkan composite, as the default present path. Buffers the RGA cannot import fall
+back to the RGA composite path; integer scaling and forced composition still
+composite.
+---
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -3466,6 +3466,8 @@
+ //
+ // Buffers are LINEAR ABGR8888 allocated from the CMA dma-heap (VOP2-scannable).
+ // ============================================================================
++// --force-composition (disable direct scan-out). Defined in steamcompmgr.cpp.
++extern gamescope::ConVar<bool> cv_composite_force;
+ #if HAVE_LIBRGA
+ namespace rxnix_rga {
+     static bool g_bLibTried = false, g_bLibOk = false;
+@@ -3484,6 +3486,15 @@
+     static CmaImage g_directPool[4];   // direct-scanout ring (client -> native)
+     static int      g_nDirectIdx = 0;
+     static bool     g_bDirectPool = false;
++
++    // Integer scaling (-S integer) is the one mode that must be composited by
++    // Vulkan at the panel native resolution: the RGA scales only bilinearly, which
++    // would destroy the pixel-perfect look of integer upscaling. In that mode the
++    // composite is done at native and the RGA is left to rotate (1:1); the RGA
++    // direct-scanout fast path (which would scale) is also disabled.
++    static bool integer_scaling() {
++        return g_wantedUpscaleScaler == GamescopeUpscaleScaler::INTEGER;
++    }
+ 
+     static bool lib_init() {
+         if ( g_bLibTried ) return g_bLibOk;
+@@ -3658,7 +3669,8 @@
+         // the GPU. Otherwise composite at native (RGA rotate only).
+         g_renderW = g_nativeW;
+         g_renderH = g_nativeH;
+-        if ( g_nNestedWidth >= 64 && g_nNestedHeight >= 64 &&
++        if ( !integer_scaling() &&
++             g_nNestedWidth >= 64 && g_nNestedHeight >= 64 &&
+              (uint32_t)g_nNestedWidth <= g_nativeW && (uint32_t)g_nNestedHeight <= g_nativeH &&
+              (uint64_t)g_nNestedWidth * g_nativeH == (uint64_t)g_nNestedHeight * g_nativeW )
+         {
+@@ -3721,9 +3733,19 @@
+ #endif
+ }
+ 
++// Direct RGA scanout - rotate+scale the client buffer straight to the display
++// with no Vulkan composite - is the DEFAULT present path (best performance: the
++// RGA does both the scale and the rotate in hardware). It is disabled, so the
++// frame is composited by Vulkan and the RGA only rotates, in exactly two cases:
++//   * --force-composition (cv_composite_force): the user explicitly disables
++//     direct scan-out.
++//   * integer scaling (-S integer): the RGA is bilinear-only, so Vulkan must
++//     perform the pixel-perfect integer upscale.
+ bool vulkan_rxnix_rga_direct_enabled() {
+ #if HAVE_LIBRGA
+-    return rxnix_rga::g_bEnabled;
++    return rxnix_rga::g_bEnabled &&
++           !rxnix_rga::integer_scaling() &&
++           !cv_composite_force.Get();
+ #else
+     return false;
+ #endif
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -3676,12 +3676,15 @@
+ 			bNeedsFullComposite |= !!(g_uCompositeDebug & CompositeDebugFlag::Heatmap);
+ 			bNeedsFullComposite |= rotationShaderOrientation != GAMESCOPE_PANEL_ORIENTATION_0;
+ 
+-			// ROCKNIX RGA direct-scanout fast path: when the base layer is
+-			// a single fullscreen client buffer, hand it to the RGA 2D engine to
+-			// rotate (and scale to the panel native resolution) directly into a
+-			// scanout buffer, skipping the Vulkan composite entirely. Overlays are
+-			// dropped in this path; on any unsupported buffer direct_rotate returns
+-			// nullptr and we fall back to the RGA composite path below.
++			// ROCKNIX RGA direct scanout is the DEFAULT (best-performance) present
++			// path: when the base layer is a single fullscreen client buffer, hand
++			// it to the RGA 2D engine to rotate and scale to the panel native
++			// resolution directly into a scanout buffer, skipping the Vulkan
++			// compositor entirely. vulkan_rxnix_rga_direct_enabled() is false only
++			// for --force-composition and integer scaling, which fall through to the
++			// composite path below. Overlays are dropped in the direct path; on any
++			// client buffer the RGA cannot import directly, direct_rotate returns
++			// nullptr and we likewise fall back to the RGA composite path.
+ 			const FrameInfo_t *pScanoutFrameInfo = pFrameInfo;
+ 			FrameInfo_t rxnixDirectFrameInfo;
+ 			bool bRxnixDirect = false;
+@@ -3708,9 +3711,12 @@
+ 					}
+ 				}
+ 			}
+-			// RGA composite path: force a full composite every frame so the RGA
+-			// rotation/scaling is applied to the composited output - unless the
+-			// direct fast path above already produced a scanout buffer.
++			// RGA composite path (used when direct scanout is disabled by
++			// --force-composition / integer scaling, or the client buffer could not
++			// be imported directly): force a full composite so the RGA rotation
++			// (and scale, for the nested-composite case) is applied to the
++			// composited output - unless the default direct path above already
++			// produced a scanout buffer.
+ 			bNeedsFullComposite |= ( vulkan_rxnix_rga_enabled() && !bRxnixDirect );
+ 
+ 			bool bDoComposite = true;
