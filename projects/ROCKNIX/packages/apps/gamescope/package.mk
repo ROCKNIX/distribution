@@ -20,6 +20,17 @@ configure_package() {
   if [ "${VULKAN_SUPPORT}" = "yes" ]; then
     PKG_DEPENDS_TARGET+=" ${VULKAN}"
   fi
+
+  # Rockchip arm/aarch64 targets ship the RGA2 2D engine; link
+  # librga so gamescope can offload panel rotation + nested->native upscaling to
+  # it (see patches 0014/0015). librga only builds for arm/aarch64, and the RGA
+  # path is additionally gated at runtime on /dev/rga, so this is a no-op on
+  # hardware without an RGA.
+  case "${TARGET_ARCH}" in
+    arm|aarch64)
+      PKG_DEPENDS_TARGET+=" librga"
+      ;;
+  esac
 }
 
 pre_configure_target() {
