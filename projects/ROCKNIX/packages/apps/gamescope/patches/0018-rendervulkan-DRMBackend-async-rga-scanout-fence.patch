@@ -1,0 +1,143 @@
+From: Felix "Xilefian" Jones
+Subject: [PATCH] rendervulkan,DRMBackend: async RGA scanout via release fence
+
+Issue the composite-path RGA rotate non-blocking and hand its release fence to the
+scanout plane IN_FENCE_FD, so the VOP2 waits on the RGA in hardware while the present
+thread proceeds. Falls back to a synchronous blit where the kernel lacks RGA async
+support.
+---
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index b4fd0ad..cc6e60b 100644
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -2745,6 +2745,11 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
+ 
+ 	bool bSinglePlane = frameInfo->layerCount < 2 && cv_drm_single_plane_optimizations;
+ 
++	// Async RGA scanout: if the RGA rotate for this frame was issued non-blocking,
++	// use its release fence as the base scanout plane IN_FENCE_FD so the VOP2 waits
++	// on the RGA in hardware. rxnix_rga owns/closes the fence; we only read the fd.
++	const int nRxnixFence = ( !cv_drm_debug_disable_in_fence_fd && vulkan_rxnix_rga_enabled() ) ? vulkan_rxnix_scanout_fence() : -1;
++
+ 	for ( int i = 0; i < k_nMaxLayers; i++ )
+ 	{
+ 		if ( i < frameInfo->layerCount )
+@@ -2758,7 +2763,9 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
+ 				return -EINVAL;
+ 			}
+ 
+-			const int nFence = cv_drm_debug_disable_in_fence_fd ? -1 : g_nAlwaysSignalledSyncFile;
++			int nFence = cv_drm_debug_disable_in_fence_fd ? -1 : g_nAlwaysSignalledSyncFile;
++			if ( nRxnixFence >= 0 && pLayer->zpos == g_zposBase )
++				nFence = nRxnixFence;
+ 
+ 
+ 			liftoff_layer_set_property( drm->lo_layers[ i ], "FB_ID", pDrmFb->GetFbId());
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+index 3f48d7f..93b6ba2 100644
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -3550,9 +3550,15 @@ namespace rxnix_rga {
+     }
+ 
+     // RGA rotate (g_nRotation) with implicit scale when src/dst differ in size.
++    // Release fence of the last async RGA scanout blit; owned here, closed on the next
++    // blit (its KMS commit has consumed it by then). -1 = last blit was synchronous.
++    static int g_nScanoutFence = -1;
++    // The Rockchip RGA async/fence mode needs CONFIG_ROCKCHIP_RGA_ASYNC in the kernel.
++    // Probe it once; if the driver rejects it, fall back to synchronous blits for good.
++    static bool g_bAsyncOk = true;
+     static bool rotate_blit( int src_fd, uint32_t src_w, uint32_t src_h, uint32_t src_stride,
+                              int dst_fd, uint32_t dst_w, uint32_t dst_h, uint32_t dst_stride,
+-                             uint32_t srcDrmFormat, uint32_t dstDrmFormat, int srcRdMode = 0 ) {
++                             uint32_t srcDrmFormat, uint32_t dstDrmFormat, int srcRdMode = 0, bool bAsync = false ) {
+         int srcRgaFmt = drm_to_rga_format( srcDrmFormat );
+         int dstRgaFmt = drm_to_rga_format( dstDrmFormat );
+         if ( srcRgaFmt < 0 || dstRgaFmt < 0 ) return false;
+@@ -3566,7 +3572,28 @@ namespace rxnix_rga {
+         rga_buffer_t src = wrapbuffer_handle_t( sh, (int)src_w, (int)src_h, (int)src_ws, (int)src_h, srcRgaFmt );
+         rga_buffer_t dst = wrapbuffer_handle_t( dh, (int)dst_w, (int)dst_h, (int)dst_ws, (int)dst_h, dstRgaFmt );
+         if ( srcRdMode ) src.rd_mode = srcRdMode;
+-        IM_STATUS st = imrotate_t( src, dst, g_nRotation, 1 );
++        // The previous async release fence has been consumed by its KMS commit by now
++        // (presents are serialised); close it before issuing the next blit.
++        if ( g_nScanoutFence >= 0 ) { close( g_nScanoutFence ); g_nScanoutFence = -1; }
++        IM_STATUS st;
++        if ( bAsync && g_bAsyncOk ) {
++            // Non-blocking rotate: hand the release fence to the scanout plane IN_FENCE_FD
++            // so the VOP2 waits on the RGA in hardware while the present thread and GPU
++            // proceed to the next frame.
++            int fence = -1;
++            st = imrotate( src, dst, g_nRotation, 0, &fence );
++            if ( st == IM_STATUS_SUCCESS && fence >= 0 ) {
++                g_nScanoutFence = fence;
++            } else {
++                // Kernel lacks CONFIG_ROCKCHIP_RGA_ASYNC (or async failed): disable async
++                // permanently and do a synchronous blit for this frame instead.
++                if ( fence >= 0 ) close( fence );
++                g_bAsyncOk = false;
++                st = imrotate_t( src, dst, g_nRotation, 1 );
++            }
++        } else {
++            st = imrotate_t( src, dst, g_nRotation, 1 );
++        }
+         if ( st != IM_STATUS_SUCCESS ) {
+             static bool s_bLogged = false;
+             if ( !s_bLogged ) {
+@@ -3597,6 +3624,7 @@ namespace rxnix_rga {
+     // serialising the present thread; skipping it in steady state is a large win and
+     // was verified to leave the scanned-out content unchanged.
+     static std::unordered_map<int,int> g_flushed;
++    static bool scanout_synced( int fd ) { auto it = g_flushed.find( fd ); return it != g_flushed.end() && it->second >= 3; }
+     static void flush_for_scanout( int fd, size_t sz ) {
+         int &n = g_flushed[fd];
+         if ( n >= 3 ) return;
+@@ -3654,6 +3682,17 @@ namespace rxnix_rga {
+         return true;
+     }
+ } // namespace rxnix_rga
++
++// The release fence of the last async RGA scanout blit (or -1). The DRM backend
++// hands it to the scanout plane IN_FENCE_FD so the VOP2 waits on the RGA in
++// hardware. Ownership stays in rxnix_rga (it closes the fence on the next blit).
++int vulkan_rxnix_scanout_fence() {
++#if HAVE_LIBRGA
++    return rxnix_rga::g_nScanoutFence;
++#else
++    return -1;
++#endif
++}
+ #endif // HAVE_LIBRGA
+ 
+ // Allocate RGA composite + scanout images. Returns true if the RGA path is active
+@@ -3778,10 +3817,16 @@ gamescope::Rc<CVulkanTexture> vulkan_rxnix_rotate_output_for_present() {
+     CmaImage &src = g_composite[nOut];
+     CmaImage &dst = g_scanout[nOut];
+     if ( src.fd < 0 || dst.fd < 0 ) return nullptr;
++    // Async only for the (triple-buffered) composite buffers, and only once the buffer
++    // no longer needs the initial CPU cache flush (which requires the RGA complete).
++    // The direct path stays synchronous: its source is the client buffer, which may be
++    // released/reused before an async read finishes.
++    bool bAsync = scanout_synced( dst.fd ) && g_bAsyncOk;
+     if ( !rotate_blit( src.fd, src.w, src.h, src.stride,
+-                       dst.fd, dst.w, dst.h, dst.stride, src.drmFormat, dst.drmFormat ) )
++                       dst.fd, dst.w, dst.h, dst.stride, src.drmFormat, dst.drmFormat, 0, bAsync ) )
+         return nullptr;
+-    flush_for_scanout( dst.fd, (size_t)dst.stride * dst.h );
++    if ( !bAsync )
++        flush_for_scanout( dst.fd, (size_t)dst.stride * dst.h );
+     return g_output.rxnixScanoutImages[nOut];
+ #else
+     return nullptr;
+diff --git a/src/rendervulkan.hpp b/src/rendervulkan.hpp
+index 3ef9d80..9852a67 100644
+--- a/src/rendervulkan.hpp
++++ b/src/rendervulkan.hpp
+@@ -578,6 +578,7 @@ extern VulkanOutput_t g_output;
+ // scanout buffer; direct_rotate() rotates+scales a single fullscreen client buffer
+ // straight to the panel native size (skips the Vulkan composite).
+ bool vulkan_rxnix_rga_enabled();
++int vulkan_rxnix_scanout_fence();
+ bool vulkan_rxnix_rga_available();
+ bool vulkan_rxnix_rga_direct_enabled();
+ gamescope::Rc<CVulkanTexture> vulkan_rxnix_rotate_output_for_present();
