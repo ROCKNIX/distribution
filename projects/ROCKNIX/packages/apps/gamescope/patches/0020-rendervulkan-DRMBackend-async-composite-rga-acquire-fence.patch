@@ -1,0 +1,308 @@
+From: Felix "Xilefian" Jones
+Subject: [PATCH] rendervulkan,DRMBackend: async composite-to-RGA scanout via acquire fence
+
+Export the Vulkan composite completion as a sync_file and pass it to the RGA rotate
+as an acquire fence, so the RGA waits on the composite in hardware and the present
+thread no longer stalls on it. Falls back to a synchronous wait when fence export is
+unavailable.
+---
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index cc6e60b..6d54cc3 100644
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -3836,7 +3836,22 @@ namespace gamescope
+ 				return -EINVAL;
+ 			}
+ 
+-			vulkan_wait( *oCompositeResult, true );
++			// libMali RGA composite path: rather than stalling the present thread on the
++			// GPU composite (vulkan_wait) before the RGA rotates it to scanout, hand the
++			// composite completion to the RGA as an in-kernel acquire fence and let the
++			// present thread proceed. vulkan_rxnix_rotate_output_for_present() performs (or
++			// defers) the wait itself; every other path keeps the synchronous CPU wait.
++			[[maybe_unused]] bool bCompositeWaited = false;
++			gamescope::Rc<CVulkanTexture> pRxnixScanout;
++			if ( vulkan_rxnix_rga_enabled() )
++			{
++				pRxnixScanout = vulkan_rxnix_rotate_output_for_present( *oCompositeResult, &bCompositeWaited );
++			}
++			else
++			{
++				vulkan_wait( *oCompositeResult, true );
++				bCompositeWaited = true;
++			}
+ 
+ 			FrameInfo_t presentCompFrameInfo = {};
+ 			presentCompFrameInfo.allowVRR = pFrameInfo->allowVRR;
+@@ -3855,8 +3870,14 @@ namespace gamescope
+ 
+ 				if ( vulkan_rxnix_rga_enabled() )
+ 				{
+-					gamescope::Rc<CVulkanTexture> pRot = vulkan_rxnix_rotate_output_for_present();
+-					baseLayer->tex = pRot ? pRot : vulkan_get_last_output_image( false, false );
++					// If the RGA rotate declined and we never awaited the composite, do so
++					// now before presenting the plain composited output as a fallback.
++					if ( !pRxnixScanout && !bCompositeWaited )
++					{
++						vulkan_wait( *oCompositeResult, true );
++						bCompositeWaited = true;
++					}
++					baseLayer->tex = pRxnixScanout ? pRxnixScanout : vulkan_get_last_output_image( false, false );
+ 				}
+ 				else
+ 					baseLayer->tex = vulkan_get_last_output_image( false, false );
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+index 1b12a69..f8a1f93 100644
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -466,6 +466,9 @@ bool CVulkanDevice::createDevice()
+ 
+ 		if ( strcmp(ext.extensionName, VK_EXT_HDR_METADATA_EXTENSION_NAME) == 0 )
+ 			supportsHDRMetadata = true;
++
++		if ( strcmp(ext.extensionName, VK_KHR_EXTERNAL_FENCE_FD_EXTENSION_NAME) == 0 )
++			m_bSupportsExternalFenceFd = true;
+ 	}
+ 
+ 	vk_log.infof( "physical device %s DRM format modifiers", m_bSupportsModifiers ? "supports" : "does not support" );
+@@ -637,6 +640,11 @@ bool CVulkanDevice::createDevice()
+ 
+ 	enabledExtensions.push_back( VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME );
+ 
++	// Needed to export a composite completion fence as a sync_file for the RGA acquire
++	// fence (async composite -> RGA hand-off). Harmless where unused; guarded on support.
++	if ( m_bSupportsExternalFenceFd )
++		enabledExtensions.push_back( VK_KHR_EXTERNAL_FENCE_FD_EXTENSION_NAME );
++
+ #if 0
+ 	enabledExtensions.push_back( VK_KHR_MAINTENANCE_5_EXTENSION_NAME );
+ #endif
+@@ -1435,6 +1443,77 @@ uint64_t CVulkanDevice::submit( std::unique_ptr<CVulkanCmdBuffer> cmdBuffer)
+ 	return nextSeqNo;
+ }
+ 
++int CVulkanDevice::ExportTimelineSyncFile( uint64_t ulPoint )
++{
++	if ( !m_bSupportsExternalFenceFd || vk.GetFenceFdKHR == nullptr )
++		return -1;
++
++	VkFence &fence = m_exportSyncFences[ m_uExportSyncFenceIndex ];
++	m_uExportSyncFenceIndex = ( m_uExportSyncFenceIndex + 1 ) % k_uExportFencePoolSize;
++
++	if ( fence == VK_NULL_HANDLE )
++	{
++		const VkExportFenceCreateInfo exportInfo = {
++			.sType = VK_STRUCTURE_TYPE_EXPORT_FENCE_CREATE_INFO,
++			.handleTypes = VK_EXTERNAL_FENCE_HANDLE_TYPE_SYNC_FD_BIT,
++		};
++		const VkFenceCreateInfo fenceInfo = {
++			.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
++			.pNext = &exportInfo,
++		};
++		if ( vk.CreateFence( m_device, &fenceInfo, nullptr, &fence ) != VK_SUCCESS )
++		{
++			fence = VK_NULL_HANDLE;
++			m_bSupportsExternalFenceFd = false;
++			return -1;
++		}
++	}
++	else
++	{
++		// This pooled slot was last submitted k_uExportFencePoolSize presents ago. In
++		// the (unexpected) case its signal has not retired yet, skip the async path for
++		// this frame rather than risk resetting an in-flight fence.
++		if ( vk.GetFenceStatus( m_device, fence ) == VK_NOT_READY )
++			return -1;
++		vk.ResetFences( m_device, 1, &fence );
++	}
++
++	// Empty submit: wait until the scratch timeline reaches ulPoint (the composite
++	// completion), then signal the exportable fence. No command buffers, so this only
++	// creates a GPU-side sync point; the present thread does not block.
++	const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
++	const VkTimelineSemaphoreSubmitInfo timelineInfo = {
++		.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
++		.waitSemaphoreValueCount = 1,
++		.pWaitSemaphoreValues = &ulPoint,
++	};
++	const VkSubmitInfo submitInfo = {
++		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
++		.pNext = &timelineInfo,
++		.waitSemaphoreCount = 1,
++		.pWaitSemaphores = &m_scratchTimelineSemaphore,
++		.pWaitDstStageMask = &waitStage,
++	};
++	if ( vk.QueueSubmit( m_queue, 1, &submitInfo, fence ) != VK_SUCCESS )
++		return -1;
++
++	const VkFenceGetFdInfoKHR getFdInfo = {
++		.sType = VK_STRUCTURE_TYPE_FENCE_GET_FD_INFO_KHR,
++		.fence = fence,
++		.handleType = VK_EXTERNAL_FENCE_HANDLE_TYPE_SYNC_FD_BIT,
++	};
++	int nFd = -1;
++	if ( vk.GetFenceFdKHR( m_device, &getFdInfo, &nFd ) != VK_SUCCESS || nFd < 0 )
++	{
++		// Driver advertises the extension but cannot export a SYNC_FD fence; disable
++		// the path permanently so the caller reverts to a CPU wait.
++		m_bSupportsExternalFenceFd = false;
++		return -1;
++	}
++
++	return nFd;
++}
++
+ void CVulkanDevice::garbageCollect( void )
+ {
+ 	uint64_t currentSeqNo;
+@@ -3567,9 +3646,14 @@ namespace rxnix_rga {
+     // The Rockchip RGA async/fence mode needs CONFIG_ROCKCHIP_RGA_ASYNC in the kernel.
+     // Probe it once; if the driver rejects it, fall back to synchronous blits for good.
+     static bool g_bAsyncOk = true;
++    // Hand the Vulkan composite completion to the RGA as an in-kernel acquire fence so
++    // the present thread never blocks on the GPU composite. Disabled permanently if the
++    // RGA job path ever rejects the fence (the caller then falls back to a CPU wait).
++    static bool g_bCompositeAcquireOk = true;
+     static bool rotate_blit( int src_fd, uint32_t src_w, uint32_t src_h, uint32_t src_stride,
+                              int dst_fd, uint32_t dst_w, uint32_t dst_h, uint32_t dst_stride,
+-                             uint32_t srcDrmFormat, uint32_t dstDrmFormat, int srcRdMode = 0, bool bAsync = false ) {
++                             uint32_t srcDrmFormat, uint32_t dstDrmFormat, int srcRdMode = 0, bool bAsync = false,
++                             int acquireFenceFd = -1 ) {
+         int srcRgaFmt = drm_to_rga_format( srcDrmFormat );
+         int dstRgaFmt = drm_to_rga_format( dstDrmFormat );
+         if ( srcRgaFmt < 0 || dstRgaFmt < 0 ) return false;
+@@ -3589,7 +3673,28 @@ namespace rxnix_rga {
+         // (presents are serialised); close it before issuing the next blit.
+         if ( g_nScanoutFence >= 0 ) { close( g_nScanoutFence ); g_nScanoutFence = -1; }
+         IM_STATUS st;
+-        if ( bAsync && g_bAsyncOk ) {
++        if ( acquireFenceFd >= 0 ) {
++            // Async rotate that waits on the Vulkan composite via an in-kernel acquire
++            // fence (the present thread never blocks on the GPU) and hands its release
++            // fence to the scanout plane. The single-task imrotate() entry cannot carry
++            // an acquire fence, so use the RGA job API. The kernel takes its own reference
++            // to the acquire fence during submit and the job path never closes our fd, so
++            // release it here in every case.
++            int fence = -1;
++            im_job_handle_t job = imbeginJob();
++            if ( job != 0 && imrotateTask( job, src, dst, g_nRotation ) == IM_STATUS_SUCCESS ) {
++                st = imendJob( job, IM_ASYNC, acquireFenceFd, &fence );
++            } else {
++                if ( job != 0 ) imcancelJob( job );
++                st = IM_STATUS_FAILED;
++            }
++            close( acquireFenceFd );
++            if ( st == IM_STATUS_SUCCESS ) {
++                if ( fence >= 0 ) g_nScanoutFence = fence;
++            } else if ( fence >= 0 ) {
++                close( fence );
++            }
++        } else if ( bAsync && g_bAsyncOk ) {
+             // Non-blocking rotate: hand the release fence to the scanout plane IN_FENCE_FD
+             // so the VOP2 waits on the RGA in hardware while the present thread and GPU
+             // proceed to the next frame.
+@@ -3821,10 +3926,15 @@ bool vulkan_rxnix_rga_direct_enabled() {
+ 
+ // RGA-rotate the just-composited landscape output into its paired portrait
+ // scanout buffer; returns that buffer for the DRM present, or nullptr to fall
+-// back to the plain composited output.
+-gamescope::Rc<CVulkanTexture> vulkan_rxnix_rotate_output_for_present() {
++// back to the plain composited output. Instead of the caller blocking on the
++// Vulkan composite before this rotate, the composite completion (ulCompositePoint)
++// is handed to the RGA as an in-kernel acquire fence. *pbCompositeWaited is set
++// true iff this function CPU-waited for the composite (so the caller knows whether
++// a plain-output fallback still needs a wait).
++gamescope::Rc<CVulkanTexture> vulkan_rxnix_rotate_output_for_present( uint64_t ulCompositePoint, bool* pbCompositeWaited ) {
+ #if HAVE_LIBRGA
+     using namespace rxnix_rga;
++    if ( pbCompositeWaited ) *pbCompositeWaited = false;
+     if ( !g_bEnabled || g_output.rxnixScanoutImages.size() != 3 ) return nullptr;
+     uint32_t nOut = ( g_output.nOutImage + 2 ) % 3; // mirror vulkan_get_last_output_image(false,false)
+     CmaImage &src = g_composite[nOut];
+@@ -3835,13 +3945,36 @@ gamescope::Rc<CVulkanTexture> vulkan_rxnix_rotate_output_for_present() {
+     // The direct path stays synchronous: its source is the client buffer, which may be
+     // released/reused before an async read finishes.
+     bool bAsync = scanout_synced( dst.fd ) && g_bAsyncOk;
++    // When the RGA blit is async, hand it the composite completion as an in-kernel
++    // acquire fence so the present thread does not block on the GPU. If the driver
++    // cannot export a sync_file, fall back to blocking for the composite here.
++    int acquireFd = -1;
++    if ( bAsync && g_bCompositeAcquireOk )
++        acquireFd = g_device.ExportTimelineSyncFile( ulCompositePoint );
++    if ( acquireFd < 0 ) {
++        vulkan_wait( ulCompositePoint, true );
++        if ( pbCompositeWaited ) *pbCompositeWaited = true;
++    }
+     if ( !rotate_blit( src.fd, src.w, src.h, src.stride,
+-                       dst.fd, dst.w, dst.h, dst.stride, src.drmFormat, dst.drmFormat, 0, bAsync ) )
++                       dst.fd, dst.w, dst.h, dst.stride, src.drmFormat, dst.drmFormat, 0, bAsync, acquireFd ) ) {
++        // rotate_blit consumed/closed acquireFd. If we handed it the composite fence
++        // (and thus skipped the CPU wait), stop using the acquire path and make sure the
++        // composite is complete before the caller presents the plain composited output.
++        if ( acquireFd >= 0 ) {
++            g_bCompositeAcquireOk = false;
++            if ( pbCompositeWaited && !*pbCompositeWaited ) {
++                vulkan_wait( ulCompositePoint, true );
++                *pbCompositeWaited = true;
++            }
++        }
+         return nullptr;
++    }
+     if ( !bAsync )
+         flush_for_scanout( dst.fd, (size_t)dst.stride * dst.h );
+     return g_output.rxnixScanoutImages[nOut];
+ #else
++    (void)ulCompositePoint;
++    if ( pbCompositeWaited ) *pbCompositeWaited = false;
+     return nullptr;
+ #endif
+ }
+diff --git a/src/rendervulkan.hpp b/src/rendervulkan.hpp
+index 9852a67..fdc123c 100644
+--- a/src/rendervulkan.hpp
++++ b/src/rendervulkan.hpp
+@@ -581,7 +581,7 @@ bool vulkan_rxnix_rga_enabled();
+ int vulkan_rxnix_scanout_fence();
+ bool vulkan_rxnix_rga_available();
+ bool vulkan_rxnix_rga_direct_enabled();
+-gamescope::Rc<CVulkanTexture> vulkan_rxnix_rotate_output_for_present();
++gamescope::Rc<CVulkanTexture> vulkan_rxnix_rotate_output_for_present( uint64_t ulCompositePoint, bool* pbCompositeWaited );
+ gamescope::Rc<CVulkanTexture> vulkan_rxnix_rga_direct_rotate( CVulkanTexture *pClient );
+ 
+ struct SamplerState
+@@ -726,6 +726,8 @@ static inline uint32_t div_roundup(uint32_t x, uint32_t y)
+ 	VK_FUNC(CreateSamplerYcbcrConversion) \
+ 	VK_FUNC(CreateSemaphore) \
+ 	VK_FUNC(GetSemaphoreFdKHR) \
++	VK_FUNC(GetFenceFdKHR) \
++	VK_FUNC(GetFenceStatus) \
+ 	VK_FUNC(ImportSemaphoreFdKHR) \
+ 	VK_FUNC(CreateShaderModule) \
+ 	VK_FUNC(CreateSwapchainKHR) \
+@@ -811,6 +813,11 @@ public:
+ 	std::shared_ptr<VulkanTimelineSemaphore_t> CreateTimelineSemaphore( uint64_t ulStartingPoint, bool bShared = false );
+ 	std::shared_ptr<VulkanTimelineSemaphore_t> ImportTimelineSemaphore( gamescope::CTimeline *pTimeline );
+ 
++	// Convert a scratch-timeline point (e.g. a completed composite) into a sync_file fd
++	// that non-Vulkan engines (the RGA) can wait on in-kernel. Returns -1 when the driver
++	// cannot export a SYNC_FD fence, in which case the caller should CPU-wait instead.
++	int ExportTimelineSyncFile( uint64_t ulPoint );
++
+ 	static const uint32_t upload_buffer_size = 1920 * 1080 * 4;
+ 
+ 	inline VkDevice device() { return m_device; }
+@@ -921,6 +928,14 @@ protected:
+ 	uint32_t m_uploadBufferOffset = 0;
+ 
+ 	VkSemaphore m_scratchTimelineSemaphore;
++
++	// Exportable fences used to turn a composite timeline point into a sync_file for the
++	// RGA acquire fence. Pooled so a slot is only reused once its previous signal (issued
++	// several presents ago) has retired. m_bSupportsExternalFenceFd gates the whole path.
++	bool m_bSupportsExternalFenceFd = false;
++	static constexpr uint32_t k_uExportFencePoolSize = 4;
++	std::array<VkFence, k_uExportFencePoolSize> m_exportSyncFences = {};
++	uint32_t m_uExportSyncFenceIndex = 0;
+ 	std::atomic<uint64_t> m_submissionSeqNo = { 0 };
+ 	std::vector<std::unique_ptr<CVulkanCmdBuffer>> m_unusedCmdBufs;
+ 	std::map<uint64_t, std::unique_ptr<CVulkanCmdBuffer>> m_pendingCmdBufs;
