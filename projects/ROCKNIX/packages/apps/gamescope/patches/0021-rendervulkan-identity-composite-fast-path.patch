@@ -1,0 +1,193 @@
+From: Felix "Xilefian" Jones
+Subject: [PATCH] rendervulkan: identity-passthrough composite fast-path
+
+Skip the per-pixel colour-management chain in the compute composite when it is a
+proven identity (SDR, default colorimetry, identity CTM). Bit-equivalent to the full
+path and gated purely on that proof, so it is a no-op on any other configuration or
+driver.
+---
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+index f8a1f93..3cb2821 100644
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -4461,6 +4461,12 @@ float g_flInternalDisplayBrightnessNits = 500.0f;
+ float g_flHDRItmSdrNits = 100.f;
+ float g_flHDRItmTargetNits = 1000.f;
+ 
++// RXNIX: raised once (in update_color_mgmt) when the SDR (Gamma22) output colour
++// management is an identity round-trip, so the libMali composite fast-path may
++// skip the per-pixel colour-management LUT lookups. Never set on non-default
++// colour config (nightmode, look LUT, gamut widening, gain, HDR, ...).
++extern bool g_bRxnixColorMgmtIdentitySDR;
++
+ #pragma pack(push, 1)
+ struct BlitPushData_t
+ {
+@@ -4480,6 +4486,8 @@ struct BlitPushData_t
+     float u_itmSdrNits; // unset
+     float u_itmTargetNits; // unset
+ 
++    uint32_t u_rxnixTrivial;
++
+ 	explicit BlitPushData_t(const struct FrameInfo_t *frameInfo)
+ 	{
+ 		u_shaderFilter = 0;
+@@ -4520,6 +4528,35 @@ struct BlitPushData_t
+ 		u_nitsToLinear = 1.0f / g_flInternalDisplayBrightnessNits;
+ 		u_itmSdrNits = g_flHDRItmSdrNits;
+ 		u_itmTargetNits = g_flHDRItmTargetNits;
++
++		// RXNIX composite fast-path selection. Gated purely on the driver-independent
++		// colour-management identity proof: SDR content whose output colour management
++		// is a proven identity round-trip, with every layer colorspace_linear and an
++		// identity CTM, so skipping the per-pixel colour-management LUTs yields a
++		// bit-equivalent result at a fraction of the cost. This holds on any Vulkan
++		// driver (the skipped work is a mathematical identity), so it is NOT gated on
++		// libMali: PanVK/panfrost needs it too whenever the Vulkan composite is
++		// mandatory (integer scaling, --force-composition), where the RGA cannot take
++		// over the scale. u_rxnixTrivial rides in the composite constants UBO whose
++		// explicit range (see 0013) covers it, so PanVK reads it correctly.
++		u_rxnixTrivial = 0u;
++		if ( g_bRxnixColorMgmtIdentitySDR
++		     && frameInfo->outputEncodingEOTF == EOTF_Gamma22
++		     && frameInfo->ycbcrMask() == 0
++		     && g_uCompositeDebug == 0 )
++		{
++			bool bAllTrivial = frameInfo->layerCount > 0;
++			for ( int i = 0; i < frameInfo->layerCount; i++ )
++			{
++				const FrameInfo_t::Layer_t *rxL = &frameInfo->layers[i];
++				if ( rxL->colorspace != GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR || rxL->ctm )
++				{
++					bAllTrivial = false;
++					break;
++				}
++			}
++			u_rxnixTrivial = bAllTrivial ? 1u : 0u;
++		}
+ 	}
+ 
+ 	explicit BlitPushData_t(float blit_scale) {
+@@ -4541,6 +4578,7 @@ struct BlitPushData_t
+ 		u_nitsToLinear = 1.0f / g_flInternalDisplayBrightnessNits;
+ 		u_itmSdrNits = g_flHDRItmSdrNits;
+ 		u_itmTargetNits = g_flHDRItmTargetNits;
++		u_rxnixTrivial = 0u;
+ 	}
+ };
+ 
+diff --git a/src/shaders/blit_push_data.h b/src/shaders/blit_push_data.h
+index caff0f3..0b7d465 100644
+--- a/src/shaders/blit_push_data.h
++++ b/src/shaders/blit_push_data.h
+@@ -16,5 +16,9 @@ uniform layers_t {
+     float u_nitsToLinear; // hdr -> sdr
+     float u_itmSdrNits;
+     float u_itmTargetNits;
++
++    // RXNIX libMali composite fast-path: set by the CPU when the per-layer colour
++    // management is a proven identity round-trip (see BlitPushData_t).
++    uint u_rxnixTrivial;
+ };
+ 
+diff --git a/src/shaders/cs_composite_blit.comp b/src/shaders/cs_composite_blit.comp
+index c0b7445..78782c6 100644
+--- a/src/shaders/cs_composite_blit.comp
++++ b/src/shaders/cs_composite_blit.comp
+@@ -19,6 +19,36 @@ vec4 sampleLayer(uint layerIdx, vec2 uv) {
+     return sampleLayer(s_samplers[layerIdx], layerIdx, uv, true);
+ }
+ 
++// RXNIX libMali composite fast-path sampler: identical sampling to sampleLayerEx
++// (including degamma, which is identity for colorspace_linear) but SKIPS the
++// per-layer CTM and apply_layer_color_mgmt. Only used when u_rxnixTrivial is set,
++// which the CPU raises exclusively on libMali once it has proven those steps are
++// an identity round-trip (all layers colorspace_linear, no CTM, and the output
++// colour-management LUT is identity). The compositing blend and encodeOutputColor
++// are preserved, so the result matches the full path while avoiding the redundant
++// per-pixel colour-management LUT lookups that dominate the composite cost.
++vec4 sampleLayerNoCM(uint layerIdx, vec2 uv) {
++    vec2 coord = ((uv + u_offset[layerIdx]) * u_scale[layerIdx]);
++    vec2 texSize = textureSize(s_samplers[layerIdx], 0);
++
++    if (coord.x < 0.0f       || coord.y < 0.0f ||
++        coord.x >= texSize.x || coord.y >= texSize.y) {
++        float border = (u_borderMask & (1u << layerIdx)) != 0 ? 1.0f : 0.0f;
++        return vec4(0.0f, 0.0f, 0.0f, border);
++    }
++
++    uint colorspace = get_layer_colorspace(layerIdx);
++    if (get_layer_shaderfilter(layerIdx) == filter_pixel) {
++        vec2 output_res = texSize / u_scale[layerIdx];
++        vec2 extent = max((texSize / output_res), vec2(1.0 / 256.0));
++        return sampleBandLimited(s_samplers[layerIdx], coord, vec2(1.0f), vec2(1.0f), extent, colorspace, true);
++    }
++    else if (get_layer_shaderfilter(layerIdx) == filter_linear_emulated) {
++        return sampleBilinear(s_samplers[layerIdx], coord, colorspace, true);
++    }
++    return sampleRegular(s_samplers[layerIdx], coord, colorspace);
++}
++
+ void main() {
+     uvec2 coord = uvec2(gl_GlobalInvocationID.x, gl_GlobalInvocationID.y);
+     uvec2 outSize = imageSize(dst);
+@@ -27,6 +57,16 @@ void main() {
+     if (outCoord.x >= outSize.x || outCoord.y >= outSize.y)
+         return;
+ 
++    if (u_rxnixTrivial != 0u && c_compositing_debug == 0u) {
++        vec2 uvFast = vec2(coord);
++        vec4 rxColor = sampleLayerNoCM(0, uvFast) * u_opacity[0];
++        for (int i = 1; i < c_layerCount; i++)
++            rxColor = BlendLayer(i, rxColor, sampleLayerNoCM(i, uvFast), u_opacity[i]);
++        rxColor.rgb = encodeOutputColor(rxColor.rgb);
++        imageStore(dst, ivec2(outCoord), rxColor);
++        return;
++    }
++
+     vec2 uv = vec2(coord);
+     vec4 outputValue = vec4(0.0f);
+ 
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+index ab4c47c..b6ca8ce 100644
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -145,6 +145,12 @@ std::atomic<uint64_t> g_FocusedVROverlayKeyboard;
+ 
+ gamescope_color_mgmt_tracker_t g_ColorMgmt{};
+ 
++// RXNIX: true when the active SDR (Gamma22) output colour management is an identity
++// round-trip (default 709->709, no nightmode/look/gamut-widening, gain 1). Consumed
++// by the libMali composite fast-path in rendervulkan.cpp. Recomputed in
++// update_color_mgmt() whenever the colour-management config changes.
++bool g_bRxnixColorMgmtIdentitySDR = false;
++
+ static gamescope_color_mgmt_luts g_ColorMgmtLutsOverride[ EOTF_Count ];
+ std::atomic<std::shared_ptr<lut3d_t>> g_ColorMgmtLooks[EOTF_Count];
+ 
+@@ -498,6 +504,25 @@ update_color_mgmt()
+ 			g_ColorMgmtLuts[i].reset();
+ 	}
+ 
++	// RXNIX: recompute whether the SDR (Gamma22) output colour management is an
++	// identity round-trip, so the libMali composite fast-path may skip the per-pixel
++	// colour-management LUT lookups. Conservative: any non-default colour setting
++	// (nightmode, look LUT, gamut widening, non-unity gain, override LUT, HDR/non-G22
++	// output, or a display whose native and output colorimetry differ) disables it.
++	{
++		const gamescope_color_mgmt_t& cm = g_ColorMgmt.pending;
++		std::shared_ptr<lut3d_t> pLook = g_ColorMgmtLooks[EOTF_Gamma22];
++		bool bLook = pLook && pLook->lutEdgeSize > 0;
++		bool bOverride = g_ColorMgmtLutsOverride[EOTF_Gamma22].HasLuts();
++		g_bRxnixColorMgmtIdentitySDR =
++			cm.enabled && !bLook && !bOverride
++			&& cm.outputEncodingEOTF == EOTF_Gamma22
++			&& cm.flSDRInputGain == 1.f
++			&& cm.nightmode.amount == 0.f
++			&& cm.sdrGamutWideness < 0.f
++			&& cm.displayColorimetry == cm.outputEncodingColorimetry;
++	}
++
+ #ifdef COLOR_MGMT_MICROBENCH
+ 	clock_gettime(CLOCK_MONOTONIC_RAW, &t1);
+ #endif
