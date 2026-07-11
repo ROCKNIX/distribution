@@ -1,0 +1,35 @@
+From: Felix "Xilefian" Jones
+Subject: [PATCH] rendervulkan: flush the RGA scanout buffer once, not per-frame
+
+The scanout CMA dma-buf only needs its initial dirty cache lines invalidated once;
+afterwards the RGA and VOP2 both access it by DMA. Skipping the per-frame ~8MB cache
+flush removes a large present-thread stall in steady state.
+---
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+index 78e1ef7..3f48d7f 100644
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -3584,7 +3584,23 @@ namespace rxnix_rga {
+     // for the VOP2 display engine. Without this the panel scans out stale/black
+     // memory even though the RGA blit succeeded. A dma-buf CPU-access sync performs
+     // the cache maintenance that makes the RGA output visible to VOP2.
++    // The scanout dma-buf is CPU-cached CMA. Right after allocation it holds dirty
++    // (zeroed) CPU cache lines; if those are written back to DRAM after the RGA has
++    // rendered the frame they clobber it and the panel scans out black - which is
++    // why a cache sync is needed at all. But it is needed only ONCE per buffer:
++    // discarding the initial dirty lines (a dma-buf CPU-access sync = cache
++    // invalidate) is enough, because afterwards nothing on the CPU writes the buffer
++    // - the RGA fills it and the VOP2 scans it out, both by DMA - so it stays
++    // coherent with no further maintenance. We therefore sync a buffer only for its
++    // first few uses (also covering any early access while the image is imported).
++    // The previous per-frame sync did an ~8 MB cache flush every frame (~5 ms),
++    // serialising the present thread; skipping it in steady state is a large win and
++    // was verified to leave the scanned-out content unchanged.
++    static std::unordered_map<int,int> g_flushed;
+     static void flush_for_scanout( int fd, size_t sz ) {
++        int &n = g_flushed[fd];
++        if ( n >= 3 ) return;
++        n++;
+         void *m = mmap( nullptr, sz, PROT_READ, MAP_SHARED, fd, 0 );
+         if ( m == MAP_FAILED ) return;
+         struct dma_buf_sync sy = {};
