@@ -1,0 +1,240 @@
+From: Felix "Xilefian" Jones
+Subject: [PATCH] rendervulkan,DRMBackend: RGA multi-layer composite blend offload
+
+When every layer of a composited frame is RGA-expressible, blend the stack on the
+RGA (Porter-Duff src-over) and rotate the result to scanout, leaving the 3D GPU idle.
+Any non-expressible frame falls back to the unchanged Vulkan composite path.
+---
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -3572,6 +3572,9 @@
+ // --force-composition (disable direct scan-out). Defined in steamcompmgr.cpp.
+ extern gamescope::ConVar<bool> cv_composite_force;
+ #if HAVE_LIBRGA
++// ROCKNIX: composite-blend eligibility reads these globals (defined later in this TU).
++extern bool g_bRxnixColorMgmtIdentitySDR;
++extern std::string g_reshade_effect;
+ namespace rxnix_rga {
+     static bool g_bLibTried = false, g_bLibOk = false;
+     static bool g_bEnabled  = false;   // composite rotate/scale path active
+@@ -3848,6 +3851,133 @@
+         vk_log.infof( "rxnix_rga: direct scanout pool %ux%u x4 (LINEAR)", w, h );
+         return true;
+     }
++    // ---- ROCKNIX: multi-layer composite blend offload to the RGA ----
++    // When a frame must be composited because overlays sit over the base (a cursor,
++    // HUD, notification ...) and every layer is expressible by the RGA 2D engine,
++    // blend the layers with the RGA (improcess src-over) instead of the Vulkan
++    // compute compositor, then rotate to scanout. The whole present then runs on the
++    // RGA and the 3D GPU stays idle, so the client keeps the entire core. Any frame
++    // the RGA cannot express (an AFBC client it cannot read, colour management, HDR,
++    // FSR/NIS/blur, integer scaling, per-layer opacity < 1, a scaling nearest/pixel
++    // filter ...) makes composite_eligible() return false and gamescope's Vulkan
++    // composite path runs unchanged. Driver-independent: works on libMali and PanVK.
++    static CmaImage g_blendComp;       // landscape blend scratch (RGA dst, then rotate src)
++    static CmaImage g_blendScan[3];    // portrait KMS scanout ring (RGA rotate dst)
++    static int      g_nBlendIdx = 0;
++    static bool     g_bBlendPool = false;
++
++    static bool ensure_blend_pool() {
++        if ( g_bBlendPool ) return true;
++        uint32_t fmt = cma_drm_format( DRM_FORMAT_INVALID );
++        uint32_t scanW = g_nativeH, scanH = g_nativeW;
++        if ( !make_cma_image( g_blendComp, g_renderW, g_renderH, fmt, true ) ) return false;
++        for ( int i = 0; i < 3; i++ )
++            if ( !make_cma_image( g_blendScan[i], scanW, scanH, fmt, false ) ) return false;
++        g_nBlendIdx = 0; g_bBlendPool = true;
++        vk_log.infof( "rxnix_rga: composite-blend pool ready (comp %ux%u -> scan %ux%u)", g_renderW, g_renderH, scanW, scanH );
++        return true;
++    }
++
++    // Map a layer's client buffer to an RGA source descriptor. Returns false for any
++    // buffer the RGA2P cannot import (bad format, or a non-LINEAR/non-AFBC32x8 modifier
++    // - notably Mali AFBC 16x16, which the RGA cannot decode).
++    static bool layer_rga_src_info( const FrameInfo_t::Layer_t *L, int *pFmt, int *pRdMode ) {
++        const struct wlr_dmabuf_attributes &dma = L->tex->dmabuf();
++        if ( dma.n_planes < 1 || dma.fd[0] < 0 ) return false;
++        int f = drm_to_rga_format( dma.format );
++        if ( f < 0 ) return false;
++        int rd = 0;
++        uint64_t mod = dma.modifier;
++        if ( mod != DRM_FORMAT_MOD_LINEAR && mod != DRM_FORMAT_MOD_INVALID && mod != 0 ) {
++            if ( (uint8_t)( mod >> 56 ) != 0x08 ) return false;   // non-ARM modifier
++            if ( (uint8_t)( mod & 0xf ) != 2 ) return false;      // only AFBC 32x8 decodable
++            rd = IM_AFBC32x8_MODE;
++        }
++        *pFmt = f; *pRdMode = rd;
++        return true;
++    }
++
++    // Destination rect of a layer in composite (landscape) pixels, matching the plane
++    // geometry gamescope computes for hardware planes: dst = ( -offset, texContent/scale ).
++    static void layer_dst_rect( const FrameInfo_t::Layer_t *L, int *x, int *y, int *w, int *h ) {
++        *x = (int)( -L->offset.x );
++        *y = (int)( -L->offset.y );
++        *w = (int)( (float)L->tex->contentWidth()  / L->scale.x + 0.5f );
++        *h = (int)( (float)L->tex->contentHeight() / L->scale.y + 0.5f );
++    }
++
++    static bool composite_eligible( const FrameInfo_t *fi ) {
++        if ( !g_bEnabled || integer_scaling() ) return false;
++        if ( cv_composite_force.Get() ) return false;
++        if ( fi->layerCount < 2 || fi->layerCount > 4 ) return false;  // 1 = other paths; cap RGA passes
++        if ( fi->useFSRLayer0 || fi->useNISLayer0 || fi->blurLayer0 || fi->bFadingOut ) return false;
++        if ( !g_reshade_effect.empty() ) return false;
++        if ( !g_bRxnixColorMgmtIdentitySDR ) return false;            // HDR / colour mgmt / night mode / sliders
++        if ( fi->outputEncodingEOTF != EOTF_Gamma22 ) return false;
++        if ( fi->ycbcrMask() != 0 ) return false;
++        if ( g_uCompositeDebug != 0 ) return false;                   // heatmap / markers
++        for ( int i = 0; i < fi->layerCount; i++ ) {
++            const FrameInfo_t::Layer_t *L = &fi->layers[i];
++            if ( !L->tex ) return false;
++            if ( L->colorspace != GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR || L->ctm ) return false;
++            if ( L->opacity < 1.0f ) return false;                    // per-pixel alpha only; fades -> GPU
++            if ( L->eAlphaBlendingMode != ALPHA_BLENDING_MODE_PREMULTIPLIED ) return false;
++            if ( L->filter != GamescopeUpscaleFilter::LINEAR && !L->isScreenSize() ) return false;
++            int f, rd;
++            if ( !layer_rga_src_info( L, &f, &rd ) ) return false;
++            int dx, dy, dw, dh; layer_dst_rect( L, &dx, &dy, &dw, &dh );
++            if ( dw <= 0 || dh <= 0 ) return false;
++            // Every layer must land fully inside the composite (no clip maths here).
++            // The composite is cleared to black first, so a letterboxed base is fine.
++            if ( dx < 0 || dy < 0 || dx + dw > (int)g_renderW || dy + dh > (int)g_renderH ) return false;
++        }
++        return true;
++    }
++
++    static bool blend_layers( const FrameInfo_t *fi, CmaImage &comp ) {
++        int compFmt = drm_to_rga_format( comp.drmFormat );
++        if ( compFmt < 0 ) return false;
++        rga_buffer_handle_t dhnd = import_cached( comp.fd, comp.stride / 4, comp.h, compFmt );
++        if ( !dhnd ) return false;
++        rga_buffer_t dst = wrapbuffer_handle_t( dhnd, (int)comp.w, (int)comp.h, (int)( comp.stride / 4 ), (int)comp.h, compFmt );
++        // Clear to black so a letterboxed/pillarboxed base leaves black borders and no
++        // stale content shows through any gap between layers.
++        { im_rect full = { 0, 0, (int)comp.w, (int)comp.h }; imfill( dst, full, 0x00000000, 1 ); }
++        for ( int i = 0; i < fi->layerCount; i++ ) {
++            const FrameInfo_t::Layer_t *L = &fi->layers[i];
++            const struct wlr_dmabuf_attributes &dma = L->tex->dmabuf();
++            int sfmt, rd;
++            if ( !layer_rga_src_info( L, &sfmt, &rd ) ) return false;
++            uint32_t sws = dma.stride[0] / 4, shs = (uint32_t)dma.height;
++            if ( rd ) { sws = ( sws + 31u ) & ~31u; shs = ( shs + 7u ) & ~7u; }
++            rga_buffer_handle_t shnd = import_cached( dma.fd[0], sws, shs, sfmt );
++            if ( !shnd ) return false;
++            rga_buffer_t src = wrapbuffer_handle_t( shnd, (int)dma.width, (int)dma.height, (int)sws, (int)shs, sfmt );
++            if ( rd ) src.rd_mode = rd;
++            im_rect srect = { 0, 0, (int)L->tex->contentWidth(), (int)L->tex->contentHeight() };
++            im_rect drect = {};
++            int usage;
++            if ( i == 0 ) {
++                int dx, dy, dw, dhh; layer_dst_rect( L, &dx, &dy, &dw, &dhh );
++                drect.x = dx; drect.y = dy; drect.width = dw; drect.height = dhh; // base at its rect (may be letterboxed)
++                usage = 0;                                            // scaled copy
++            } else {
++                int dx, dy, dw, dhh; layer_dst_rect( L, &dx, &dy, &dw, &dhh );
++                drect.x = dx; drect.y = dy; drect.width = dw; drect.height = dhh;
++                usage = IM_ALPHA_BLEND_SRC_OVER; // premultiplied => NO IM_ALPHA_BLEND_PRE_MUL
++            }
++            im_rect prect = {};
++            rga_buffer_t pat = {};
++            IM_STATUS st = improcess( src, dst, pat, srect, drect, prect, -1, nullptr, nullptr, usage );
++            if ( st != IM_STATUS_SUCCESS ) {
++                static bool s_bLogged = false;
++                if ( !s_bLogged ) { s_bLogged = true;
++                    vk_log.errorf( "rxnix_rga: composite-blend layer %d improcess st=%d[%s]", i, (int)st, imStrError_t( st ) ); }
++                return false;
++            }
++        }
++        return true;
++    }
+ } // namespace rxnix_rga
+ 
+ // The release fence of the last async RGA scanout blit (or -1). The DRM backend
+@@ -3860,6 +3990,37 @@
+     return -1;
+ #endif
+ }
++
++// ROCKNIX: blend a multi-layer frame on the RGA 2D engine and rotate it to
++// a panel-native portrait scanout buffer, with NO Vulkan compute composite - the 3D
++// GPU stays idle so the client keeps the whole core. Returns the scanout buffer to
++// present, or nullptr (the frame is not RGA-expressible; the caller GPU-composites).
++gamescope::Rc<CVulkanTexture> vulkan_rxnix_rga_composite_rotate( const struct FrameInfo_t *fi ) {
++#if HAVE_LIBRGA
++    using namespace rxnix_rga;
++    if ( !fi || !composite_eligible( fi ) ) return nullptr;
++    if ( !ensure_blend_pool() ) return nullptr;
++    CmaImage &comp = g_blendComp;
++    CmaImage &scan = g_blendScan[g_nBlendIdx];
++    if ( comp.fd < 0 || scan.fd < 0 ) return nullptr;
++    if ( !blend_layers( fi, comp ) ) return nullptr;
++    // Rotate the landscape composite into the portrait scanout. Synchronous: the single
++    // landscape scratch is reused next present, so it must be consumed now.
++    if ( !rotate_blit( comp.fd, comp.w, comp.h, comp.stride,
++                       scan.fd, scan.w, scan.h, scan.stride,
++                       comp.drmFormat, scan.drmFormat, 0, false, -1 ) )
++        return nullptr;
++    flush_for_scanout( scan.fd, (size_t)scan.stride * scan.h );
++    g_nBlendIdx = ( g_nBlendIdx + 1 ) % 3;
++    static bool s_bLogged = false;
++    if ( !s_bLogged ) { s_bLogged = true;
++        vk_log.infof( "rxnix_rga: multi-layer COMPOSITE-BLEND active (RGA blends %d layers, GPU idle)", fi->layerCount ); }
++    return scan.tex;
++#else
++    (void)fi;
++    return nullptr;
++#endif
++}
+ #endif // HAVE_LIBRGA
+ 
+ // Allocate RGA composite + scanout images. Returns true if the RGA path is active
+diff --git a/src/rendervulkan.hpp b/src/rendervulkan.hpp
+--- a/src/rendervulkan.hpp
++++ b/src/rendervulkan.hpp
+@@ -583,6 +583,7 @@
+ bool vulkan_rxnix_rga_direct_enabled();
+ gamescope::Rc<CVulkanTexture> vulkan_rxnix_rotate_output_for_present( uint64_t ulCompositePoint, bool* pbCompositeWaited );
+ gamescope::Rc<CVulkanTexture> vulkan_rxnix_rga_direct_rotate( CVulkanTexture *pClient );
++gamescope::Rc<CVulkanTexture> vulkan_rxnix_rga_composite_rotate( const struct FrameInfo_t *fi );
+ 
+ struct SamplerState
+ {
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -3718,6 +3718,33 @@
+ 					}
+ 				}
+ 			}
++			// ROCKNIX: multi-layer composite blend on the RGA. If the direct fast
++			// path did not take the frame (overlays or a cursor sit over the base) but every
++			// layer is RGA-expressible, blend the layers with the RGA 2D engine and rotate to
++			// scanout - the 3D GPU stays idle so the client keeps the whole core. Any frame the
++			// RGA cannot express returns nullptr and falls through to the Vulkan composite below.
++			if ( !bRxnixDirect && vulkan_rxnix_rga_enabled() )
++			{
++				gamescope::Rc<CVulkanTexture> pRgaComposited = vulkan_rxnix_rga_composite_rotate( pFrameInfo );
++				if ( pRgaComposited )
++				{
++					rxnixDirectFrameInfo = *pFrameInfo;
++					rxnixDirectFrameInfo.layerCount = 1; // present the single RGA-composited buffer
++					FrameInfo_t::Layer_t *pCompLayer = &rxnixDirectFrameInfo.layers[0];
++					pCompLayer->tex            = pRgaComposited;
++					pCompLayer->offset         = { 0.0f, 0.0f };
++					pCompLayer->scale          = { 1.0f, 1.0f };
++					pCompLayer->opacity        = 1.0f;
++					pCompLayer->zpos           = g_zposBase;
++					pCompLayer->applyColorMgmt = false;
++					pCompLayer->filter         = GamescopeUpscaleFilter::NEAREST;
++					pCompLayer->ctm            = nullptr;
++					pScanoutFrameInfo          = &rxnixDirectFrameInfo;
++					bRxnixDirect               = true;
++					bNeedsFullComposite        = false; // fully composited by the RGA already
++					bWantsPartialComposite     = false;
++				}
++			}
+ 			// RGA composite path (used when direct scanout is disabled by
+ 			// --force-composition / integer scaling, or the client buffer could not
+ 			// be imported directly): force a full composite so the RGA rotation
