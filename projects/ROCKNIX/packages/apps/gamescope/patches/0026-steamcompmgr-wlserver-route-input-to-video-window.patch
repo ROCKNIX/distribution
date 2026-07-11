@@ -1,0 +1,128 @@
+From: Felix "Xilefian" Jones
+Subject: [PATCH] steamcompmgr,wlserver: route input focus to the subsurface-video window
+
+When a game-id X11 UI window wins paint focus but the video and input live on a
+separate native-Wayland toplevel, route input and keyboard focus to the toplevel that
+owns the captured video subsurface. Focus is re-rolled when the video is first
+captured. Inert unless a video subsurface is live.
+---
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -4330,6 +4330,28 @@ determine_and_apply_focus( global_focus_t *pFocus )
+ 		pFocus->keyboardFocusWindow = pFocus->overrideWindow ? pFocus->overrideWindow : pFocus->focusWindow;
+ 	}
+ 
++	// A client may present its streamed video on a native-Wayland (XDG) toplevel, while its
++	// Qt UI is a separate X11 window that carries a game-id and therefore wins paint focus.
++	// Route input + keyboard focus to the XDG window that owns the video subsurface so the
++	// streaming window receives keyboard/pointer/touch and SDL reports it as focused (which
++	// is what gates the client's controller forwarding). Inert unless a video subsurface is
++	// live, so games / glmark / the pre-stream menu are unaffected.
++	{
++		struct wlr_surface *videoParent = wlserver_get_video_subsurface_parent();
++		if ( videoParent )
++		{
++			for ( auto &xdgwin : g_steamcompmgr_xdg_wins )
++			{
++				if ( xdgwin->main_surface() == videoParent )
++				{
++					pFocus->inputFocusWindow = xdgwin.get();
++					pFocus->keyboardFocusWindow = xdgwin.get();
++					break;
++				}
++			}
++		}
++	}
++
+ 	if ( !gamescope::VirtualConnectorIsSingleOutput() )
+ 	{
+ 		uint64_t ulFocusedKeyboardOverlayVR = g_FocusedVROverlayKeyboard;
+--- a/src/steamcompmgr.hpp
++++ b/src/steamcompmgr.hpp
+@@ -135,6 +135,7 @@ extern uint64_t g_lastWinSeq;
+ 
+ void nudge_steamcompmgr( void );
+ void force_repaint( void );
++void MakeFocusDirty( void );
+ 
+ extern void mangoapp_update( uint64_t visible_frametime, uint64_t app_frametime_ns, uint64_t latency_ns );
+ struct wlr_surface *steamcompmgr_get_server_input_surface( size_t idx );
+--- a/src/wlserver.cpp
++++ b/src/wlserver.cpp
+@@ -64,6 +64,7 @@
+ #include "wlserver.hpp"
+ #include "hdmi.h"
+ #include "main.hpp"
++#include <drm_fourcc.h>
+ #include "steamcompmgr.hpp"
+ #include "color_helpers.h"
+ #include "log.hpp"
+@@ -245,6 +246,33 @@ std::vector<GamescopeSubsurfaceLayer_t> wlserver_lock_all_subsurfaces()
+ 	return out;
+ }
+ 
++struct wlr_surface *wlserver_get_video_subsurface_parent()
++{
++	std::lock_guard<std::mutex> lock( g_SubsurfaceMutex );
++	struct wlr_surface *best = nullptr;
++	int bestw = -1;
++	for ( auto &entry : g_SubsurfaceCommits )
++	{
++		struct wlr_buffer *buf = entry.second.buf;
++		if ( !buf )
++			continue;
++		// The streamed video is the planar-YUV subsurface at any resolution; identify it by
++		// format (not size) so input routing works at e.g. 480p and never picks a UI overlay.
++		struct wlr_dmabuf_attributes vdma;
++		if ( !wlr_buffer_get_dmabuf( buf, &vdma ) )
++			continue;
++		if ( vdma.format != DRM_FORMAT_YUV420 && vdma.format != DRM_FORMAT_YVU420 &&
++		     vdma.format != DRM_FORMAT_NV12 && vdma.format != DRM_FORMAT_NV21 )
++			continue;
++		if ( buf->width > bestw )
++		{
++			bestw = buf->width;
++			best = entry.second.parent;
++		}
++	}
++	return best;
++}
++
+ void wlserver_release_subsurfaces( std::vector<GamescopeSubsurfaceLayer_t> &subs )
+ {
+ 	std::lock_guard<std::mutex> lock( g_SubsurfaceMutex );
+@@ -322,10 +350,22 @@ void xwayland_surface_commit(struct wlr_surface *wlr_surface) {
+ 			// buffer keyed by surface so the paint path can composite it as a layer.
+ 			std::lock_guard<std::mutex> lock( g_SubsurfaceMutex );
+ 			auto existing = g_SubsurfaceCommits.find( wlr_surface );
++			bool bNewSubsurface = ( existing == g_SubsurfaceCommits.end() );
+ 			if ( existing != g_SubsurfaceCommits.end() && existing->second.buf )
+ 				wlr_buffer_unlock( existing->second.buf );
+ 			g_SubsurfaceCommits[ wlr_surface ] = GamescopeSubsurfaceState_t{ subsurface->parent, subsurface->current.x, subsurface->current.y, buf };
+ 			force_repaint();
++			// A newly-appearing video subsurface must re-roll focus so input is routed to the
++			// streaming window; determine_and_apply_focus otherwise may not re-run after capture,
++			// leaving keyboard/pointer/controller input stuck on the Qt UI window.
++			if ( bNewSubsurface )
++			{
++				struct wlr_dmabuf_attributes vdma;
++				if ( wlr_buffer_get_dmabuf( buf, &vdma ) &&
++				     ( vdma.format == DRM_FORMAT_YUV420 || vdma.format == DRM_FORMAT_YVU420 ||
++				       vdma.format == DRM_FORMAT_NV12 || vdma.format == DRM_FORMAT_NV21 ) )
++					MakeFocusDirty();
++			}
+ 		}
+ 		else
+ 		{
+--- a/src/wlserver.hpp
++++ b/src/wlserver.hpp
+@@ -304,6 +304,9 @@ struct GamescopeSubsurfaceLayer_t
+ };
+ std::vector<GamescopeSubsurfaceLayer_t> wlserver_lock_subsurfaces_for( struct wlr_surface *parent );
+ std::vector<GamescopeSubsurfaceLayer_t> wlserver_lock_all_subsurfaces();
++// The toplevel (parent) surface currently carrying a video-sized captured subsurface,
++// or nullptr when none; used to route input focus to the streaming window.
++struct wlr_surface *wlserver_get_video_subsurface_parent();
+ void wlserver_release_subsurfaces( std::vector<GamescopeSubsurfaceLayer_t> &subs );
+ 
+ void wlserver_app_presented( uint32_t app_id, uint64_t frametime_ns );
