@@ -1656,7 +1656,7 @@ makeinstall_target() {
 
   ### Doom
   add_emu_core doom gzdoom gzdoom-sa true
-  add_emu_core doom retroarch prboom true
+  add_emu_core doom retroarch prboom false
   add_es_system doom
 
   ### Media Player
