@@ -1,0 +1,199 @@
+From: Felix "Xilefian" Jones
+Subject: [PATCH] rendervulkan: RGA-convert planar and semi-planar YUV to RGBA
+
+libMali's Vulkan cannot sample YUV dma-bufs, so convert planar (YU12/I420/YV12) and
+semi-planar (NV12/NV21) buffers to RGBA on the RGA before import. Output is drawn from
+a reused 4-deep ring. No-op where /dev/rga is unavailable.
+---
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -2977,6 +2977,11 @@
+   return res == VK_SUCCESS;
+ }
+ 
++#if HAVE_LIBRGA
++bool vulkan_rxnix_rga_yuv_available();
++gamescope::OwningRc<CVulkanTexture> vulkan_rxnix_yuv_to_rgba( const struct wlr_dmabuf_attributes *pDMA );
++#endif
++
+ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
+ {
+ 	// First, check whether the Vulkan format is supported
+@@ -3114,6 +3119,22 @@
+ 			vulkan_init_format(srgbFormat, drmFormat);
+ 	}
+ 
++#if HAVE_LIBRGA
++	// ROCKNIX: advertise planar YUV (YU12/I420, YV12) even though libMali's Vulkan cannot
++	// sample 3-plane YUV - vulkan_create_texture_from_dmabuf RGA-converts it to RGBA on
++	// import. Lets planar-YUV Wayland video clients (e.g. a software
++	// H.264 decode) present their frames; a no-op where /dev/rga is unavailable.
++	// Advertise LINEAR only (NOT MOD_INVALID): wlroots' linux_dmabuf sends only INVALID
++	// for a format whose modifier set is exactly {INVALID, LINEAR} (an XWayland quirk),
++	// but such clients want an explicit "mod 0" (LINEAR) match.
++	if ( vulkan_rxnix_rga_yuv_available() )
++	{
++		wlr_drm_format_set_add( &sampledDRMFormats, DRM_FORMAT_YUV420, DRM_FORMAT_MOD_LINEAR );
++		wlr_drm_format_set_add( &sampledDRMFormats, DRM_FORMAT_YVU420, DRM_FORMAT_MOD_LINEAR );
++		wlr_drm_format_set_add( &sampledShmFormats, DRM_FORMAT_YUV420, DRM_FORMAT_MOD_LINEAR );
++	}
++#endif
++
+ 	vk_log.infof( "supported DRM formats for sampling usage:" );
+ 	for ( size_t i = 0; i < sampledDRMFormats.len; i++ )
+ 	{
+@@ -3579,6 +3600,10 @@
+     static CmaImage g_directPool[4];   // direct-scanout ring (client -> native)
+     static int      g_nDirectIdx = 0;
+     static bool     g_bDirectPool = false;
++    static CmaImage g_yuvPool[4];      // YUV->RGBA convert ring (video clients)
++    static int      g_nYuvIdx = 0;
++    static bool     g_bYuvPool = false;
++    static uint32_t g_yuvW = 0, g_yuvH = 0;
+ 
+     // Integer scaling (-S integer) is the one mode that must be composited by
+     // Vulkan at the panel native resolution: the RGA scales only bilinearly, which
+@@ -3802,6 +3827,31 @@
+         vk_log.infof( "rxnix_rga: direct scanout pool %ux%u x4 (LINEAR)", w, h );
+         return true;
+     }
++
++    // Reused RGBA output ring for the YUV->RGBA convert (video clients). Allocating a
++    // fresh CMA image + Vulkan import per frame was expensive and, because each frame got a
++    // new fd, also defeated the flush_for_scanout skip (an ~8 MB cache flush every frame).
++    // A 4-deep ring (like g_directPool) removes both: reuse-while-in-flight is bounded
++    // exactly as the proven scanout/direct pools.
++    static bool ensure_yuv_pool( uint32_t w, uint32_t h ) {
++        if ( g_bYuvPool && g_yuvW == w && g_yuvH == h ) return true;
++        if ( g_bYuvPool ) {
++            for ( int i = 0; i < 4; i++ ) {
++                if ( g_yuvPool[i].fd >= 0 ) close( g_yuvPool[i].fd );
++                g_yuvPool[i] = CmaImage{};
++            }
++            g_bYuvPool = false;
++        }
++        for ( int i = 0; i < 4; i++ ) {
++            if ( !make_cma_image( g_yuvPool[i], w, h, DRM_FORMAT_XBGR8888, true ) ) {
++                vk_log.errorf( "rxnix_rga: yuv convert pool %d alloc failed (%ux%u)", i, w, h );
++                return false;
++            }
++        }
++        g_yuvW = w; g_yuvH = h; g_nYuvIdx = 0; g_bYuvPool = true;
++        vk_log.infof( "rxnix_rga: YUV->RGBA convert pool %ux%u x4 (LINEAR)", w, h );
++        return true;
++    }
+     // ---- ROCKNIX: multi-layer composite blend offload to the RGA ----
+     // When a frame must be composited because overlays sit over the base (a cursor,
+     // HUD, notification ...) and every layer is expressible by the RGA 2D engine,
+@@ -4181,6 +4231,72 @@
+     return nullptr;
+ #endif
+ }
++// ROCKNIX: libMali's Vulkan cannot sample 3-plane planar YUV (YU12/I420, YV12) buffers,
++// which a Wayland video client's software video decode presents. Convert
++// them to RGBA with the RGA 2D engine (hardware YUV->RGB colour-space conversion) into a
++// fresh CMA image that the compositor samples and rotates like any other client texture.
++// Returns nullptr where /dev/rga is unavailable so the caller falls back to Vulkan import.
++gamescope::OwningRc<CVulkanTexture> vulkan_rxnix_yuv_to_rgba( const struct wlr_dmabuf_attributes *pDMA )
++{
++#if HAVE_LIBRGA
++	using namespace rxnix_rga;
++	if ( !pDMA || pDMA->fd[0] < 0 || !lib_init() )
++		return nullptr;
++	int srcRgaFmt;
++	switch ( pDMA->format )
++	{
++		case DRM_FORMAT_YUV420: srcRgaFmt = RK_FORMAT_YCbCr_420_P; break; // I420 / YU12
++		case DRM_FORMAT_YVU420: srcRgaFmt = RK_FORMAT_YCrCb_420_P; break; // YV12
++		default: return nullptr;
++	}
++	const uint32_t w = (uint32_t)pDMA->width, h = (uint32_t)pDMA->height;
++	const uint32_t srcWs = pDMA->stride[0] ? (uint32_t)pDMA->stride[0] : w;
++	uint32_t srcHs = h;
++	if ( pDMA->n_planes > 1 && (uint32_t)pDMA->offset[1] > (uint32_t)pDMA->offset[0] && srcWs > 0 )
++		srcHs = ( (uint32_t)pDMA->offset[1] - (uint32_t)pDMA->offset[0] ) / srcWs; // Y rows incl. padding, so RGA locates U/V correctly
++
++	if ( !ensure_yuv_pool( w, h ) )
++		return nullptr;
++	CmaImage &rgba = g_yuvPool[ g_nYuvIdx ];
++	g_nYuvIdx = ( g_nYuvIdx + 1 ) % 4;
++
++	im_handle_param_t sp = { srcWs, srcHs, (uint32_t)srcRgaFmt };
++	im_handle_param_t dp = { rgba.stride / 4u, rgba.h, (uint32_t)RK_FORMAT_RGBA_8888 };
++	rga_buffer_handle_t sh = importbuffer_fd( pDMA->fd[0], &sp );
++	rga_buffer_handle_t dh = importbuffer_fd( rgba.fd, &dp );
++	IM_STATUS st = IM_STATUS_FAILED;
++	if ( sh && dh )
++	{
++		rga_buffer_t src = wrapbuffer_handle_t( sh, (int)w, (int)h, (int)srcWs, (int)srcHs, srcRgaFmt );
++		rga_buffer_t dst = wrapbuffer_handle_t( dh, (int)rgba.w, (int)rgba.h, (int)( rgba.stride / 4u ), (int)rgba.h, RK_FORMAT_RGBA_8888 );
++		st = imcvtcolor( src, dst, srcRgaFmt, RK_FORMAT_RGBA_8888, IM_COLOR_SPACE_DEFAULT, 1 );
++	}
++	if ( dh ) releasebuffer_handle( dh );
++	if ( sh ) releasebuffer_handle( sh );
++	if ( st == IM_STATUS_SUCCESS )
++		flush_for_scanout( rgba.fd, (size_t)rgba.stride * rgba.h );
++	gamescope::OwningRc<CVulkanTexture> tex = rgba.tex; // pooled buffer; fd kept open for reuse
++	if ( st != IM_STATUS_SUCCESS )
++	{
++		static bool s_bLogged = false;
++		if ( !s_bLogged ) { s_bLogged = true; vk_log.errorf( "rxnix_rga: YUV->RGBA convert failed st=%d", (int)st ); }
++		return nullptr;
++	}
++	return tex;
++#else
++	(void)pDMA; return nullptr;
++#endif
++}
++
++bool vulkan_rxnix_rga_yuv_available()
++{
++#if HAVE_LIBRGA
++	return rxnix_rga::lib_init();
++#else
++	return false;
++#endif
++}
++
+ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
+ {
+ 	CVulkanTexture::createFlags outputImageflags;
+@@ -4518,6 +4634,17 @@
+ 	//fprintf(stderr, "pDMA->width: %d pDMA->height: %d pDMA->format: 0x%x pDMA->modifier: 0x%lx pDMA->n_planes: %d\n",
+ 	//	pDMA->width, pDMA->height, pDMA->format, pDMA->modifier, pDMA->n_planes);
+ 	
++#if HAVE_LIBRGA
++	// libMali cannot Vulkan-sample 3-plane planar YUV (a Wayland video client's decoded
++	// frames); hand those to the RGA for a hardware colour-convert to an RGBA texture.
++	if ( pDMA->format == DRM_FORMAT_YUV420 || pDMA->format == DRM_FORMAT_YVU420 )
++	{
++		gamescope::OwningRc<CVulkanTexture> pRgba = vulkan_rxnix_yuv_to_rgba( pDMA );
++		if ( pRgba )
++			return pRgba;
++	}
++#endif
++
+ 	if ( pTex->BInit( pDMA->width, pDMA->height, 1u, pDMA->format, texCreateFlags, pDMA, 0, 0, nullptr, pBackendFb ) == false )
+ 		return nullptr;
+ 	
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -4247,6 +4247,8 @@
+ 	{
+ 		case DRM_FORMAT_YUV420: srcRgaFmt = RK_FORMAT_YCbCr_420_P; break; // I420 / YU12
+ 		case DRM_FORMAT_YVU420: srcRgaFmt = RK_FORMAT_YCrCb_420_P; break; // YV12
++		case DRM_FORMAT_NV12:   srcRgaFmt = RK_FORMAT_YCbCr_420_SP; break; // NV12 (V4L2 Request rkvdec HW decode)
++		case DRM_FORMAT_NV21:   srcRgaFmt = RK_FORMAT_YCrCb_420_SP; break; // NV21
+ 		default: return nullptr;
+ 	}
+ 	const uint32_t w = (uint32_t)pDMA->width, h = (uint32_t)pDMA->height;
+@@ -4637,7 +4639,8 @@
+ #if HAVE_LIBRGA
+ 	// libMali cannot Vulkan-sample 3-plane planar YUV (a Wayland video client's decoded
+ 	// frames); hand those to the RGA for a hardware colour-convert to an RGBA texture.
+-	if ( pDMA->format == DRM_FORMAT_YUV420 || pDMA->format == DRM_FORMAT_YVU420 )
++	if ( pDMA->format == DRM_FORMAT_YUV420 || pDMA->format == DRM_FORMAT_YVU420 ||
++	     pDMA->format == DRM_FORMAT_NV12   || pDMA->format == DRM_FORMAT_NV21 )
+ 	{
+ 		gamescope::OwningRc<CVulkanTexture> pRgba = vulkan_rxnix_yuv_to_rgba( pDMA );
+ 		if ( pRgba )
