@@ -1,0 +1,59 @@
+From: Felix "Xilefian" Jones
+Subject: [PATCH] rendervulkan: libMali direct scanout via RGA-safe AFBC-32x8
+
+Advertise only the non-YTR AFBC-32x8 modifier (plus LINEAR) to clients when there is
+no Mesa DRM render node, so libMali renders buffers the RGA can rotate straight to
+scanout instead of forcing a Vulkan composite. No-op on Mesa/PanVK.
+---
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -2991,7 +2991,18 @@
+ 					continue;
+ 			}
+ 
+-			wlr_drm_format_set_add( &sampledDRMFormats, drmFormat, modifier );
++			// ROCKNIX: hide ARM AFBC modifiers from the CLIENT-facing format set on libMali
++			// (no VK_EXT_physical_device_drm). Mali prefers AFBC whenever advertised, but the
++			// VOP2 cannot scan it out and the RK3576 RGA cannot decode Mali AFBC-16x16, so an
++			// AFBC window buffer forces a per-frame Vulkan composite. Advertising only LINEAR
++			// makes a zwp_linux_dmabuf client (MALI_WAYLAND_DMABUF_PROTOCOL=1) allocate a linear
++			// buffer the RGA rotates straight to scanout (direct path, no composite). gamescope's
++			// own AFBC import is unaffected: DRMModifierProps and s_SampledModifierFormats keep the
++			// full list. No-op on Mesa/PanVK (has drm props).
++			const bool bHideAfbcFromClient = !vulkan_has_drm_props() &&
++			    (uint8_t)( modifier >> 56 ) == 0x08 && modifier != 0x0800000000000062ULL;
++			if ( !bHideAfbcFromClient )
++				wlr_drm_format_set_add( &sampledDRMFormats, drmFormat, modifier );
+ 			s_SampledModifierFormats[ drmFormat ].emplace_back( modifier );
+ 		}
+ 
+@@ -3563,13 +3574,15 @@
+         int dstRgaFmt = drm_to_rga_format( dstDrmFormat );
+         if ( srcRgaFmt < 0 || dstRgaFmt < 0 ) return false;
+         uint32_t src_ws = src_stride / 4, dst_ws = dst_stride / 4;
+-        rga_buffer_handle_t sh = import_cached( src_fd, src_ws, src_h, srcRgaFmt );
++        uint32_t src_hs = src_h;
++        if ( srcRdMode ) { src_ws = ( src_ws + 31u ) & ~31u; src_hs = ( src_h + 7u ) & ~7u; }
++        rga_buffer_handle_t sh = import_cached( src_fd, src_ws, src_hs, srcRgaFmt );
+         rga_buffer_handle_t dh = import_cached( dst_fd, dst_ws, dst_h, dstRgaFmt );
+         if ( !sh || !dh ) return false;
+         // NB: wrapbuffer_handle_t (the C entry) takes (handle,w,h,wstride,hstride,format).
+         // The C++ wrapbuffer_handle() overload set has format as the 4th arg, so calling
+         // it with a stride there silently swaps stride/format -> RGA "unsupported".
+-        rga_buffer_t src = wrapbuffer_handle_t( sh, (int)src_w, (int)src_h, (int)src_ws, (int)src_h, srcRgaFmt );
++        rga_buffer_t src = wrapbuffer_handle_t( sh, (int)src_w, (int)src_h, (int)src_ws, (int)src_hs, srcRgaFmt );
+         rga_buffer_t dst = wrapbuffer_handle_t( dh, (int)dst_w, (int)dst_h, (int)dst_ws, (int)dst_h, dstRgaFmt );
+         if ( srcRdMode ) src.rd_mode = srcRdMode;
+         // The previous async release fence has been consumed by its KMS commit by now
+@@ -3865,8 +3878,8 @@
+     static bool s_bLoggedDirect = false;
+     if ( !s_bLoggedDirect ) {
+         s_bLoggedDirect = true;
+-        vk_log.infof( "rxnix_rga: DIRECT rotate/scale ACTIVE (client %ux%u -> scanout %ux%u, RGA does the upscale)",
+-            (uint32_t)dma.width, (uint32_t)dma.height, dst.w, dst.h );
++        vk_log.infof( "rxnix_rga: DIRECT rotate/scale ACTIVE (client %ux%u mod=0x%lx -> scanout %ux%u)",
++            (uint32_t)dma.width, (uint32_t)dma.height, (unsigned long)dma.modifier, dst.w, dst.h );
+     }
+     return dst.tex;
+ #else
