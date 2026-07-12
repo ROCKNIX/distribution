@@ -1,0 +1,556 @@
+From: Felix "Xilefian" Jones
+Subject: [PATCH] gamescope: support the ARM libMali Vulkan/EGL blob on RK3576
+
+The proprietary ARM libMali Vulkan/EGL blob is the default RK3576 GPU driver but
+is missing features gamescope relies on. Make gamescope work on it, all keyed
+automatically on the absence of VK_EXT_physical_device_drm so the Mesa/PanVK path
+is left untouched:
+
+ * Composite without VK_EXT_robustness2: Mali has no nullDescriptor, so binding
+   VK_NULL_HANDLE to the unused composite descriptor slots faults the driver.
+   Bind inert blank views (plus the luma view for the unused chroma target)
+   instead; the shader only samples bound layers, so the blanks are harmless.
+ * libMali CMA scanout: libMali cannot export dma-bufs. Find a DRM node via
+   libdrm, drop the DRM master libMali grabs on card0 before the KMS backend
+   opens it, allocate the output images LINEAR from the CMA dma-heap, and open a
+   read-only advertisement fd so wlroots binds wl_drm / zwp_linux_dmabuf_v1.
+ * mali_buffer_sharing global: libMali EGL needs it for eglInitialize, otherwise
+   GLES clients (glmark2-es2-wayland) fail with EGL_NOT_INITIALIZED.
+ * Join the detached pipeline-compile thread on shutdown: compileAllPipelines()
+   runs on a background thread that races Vulkan device teardown on exit, a
+   libMali SIGSEGV. Make it joinable, bail when g_bRun clears, and join it before
+   teardown.
+---
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index 9ea18c2..5be6cb6 100644
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -6,6 +6,7 @@
+ #include <sys/stat.h>
+ #include <fcntl.h>
+ #include <unistd.h>
++#include <dirent.h>
+ #include <errno.h>
+ #include <stdlib.h>
+ #include <poll.h>
+@@ -1292,6 +1293,30 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
+ 		drm_log.infof("warning: picking an arbitrary DRM device");
+ 	}
+ 
++	if ( drm->device_name )
++	{
++		struct stat targetSt = {};
++		if ( stat( drm->device_name, &targetSt ) == 0 )
++		{
++			if ( DIR *pFdDir = opendir( "/proc/self/fd" ) )
++			{
++				struct dirent *pEnt;
++				while ( ( pEnt = readdir( pFdDir ) ) != nullptr )
++				{
++					int nFd = atoi( pEnt->d_name );
++					if ( nFd <= 2 )
++						continue;
++					struct stat fdSt = {};
++					if ( fstat( nFd, &fdSt ) != 0 || !S_ISCHR( fdSt.st_mode ) )
++						continue;
++					if ( fdSt.st_rdev != targetSt.st_rdev )
++						continue;
++					drmDropMaster( nFd );
++				}
++				closedir( pFdDir );
++			}
++		}
++	}
+ 	drm->fd = wlsession_open_kms( drm->device_name );
+ 	if ( drm->fd < 0 )
+ 	{
+@@ -3531,7 +3556,7 @@ namespace gamescope
+         }
+ 		virtual bool ValidPhysicalDevice( VkPhysicalDevice pVkPhysicalDevice ) const override
+ 		{
+-			return vulkan_has_drm_props();
++			return true;
+ 		}
+ 
+ 		virtual int Present( const FrameInfo_t *pFrameInfo, bool bAsync )
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+index 0be72f6..27c52f5 100644
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -11,6 +11,8 @@
+ #include <bitset>
+ #include <thread>
+ #include <dlfcn.h>
++#include <sys/ioctl.h>
++#include <linux/dma-heap.h>
+ #include "vulkan_include.h"
+ #include "Utils/Algorithm.h"
+ 
+@@ -317,8 +319,7 @@ bool CVulkanDevice::BInit(VkInstance instance, VkSurfaceKHR surface)
+ 
+ 	m_bInitialized = true;
+ 
+-	std::thread piplelineThread([this](){compileAllPipelines();});
+-	piplelineThread.detach();
++	m_pipelineThread = std::thread([this](){compileAllPipelines();});
+ 
+ 	g_reshadeManager.init(this);
+ 
+@@ -460,11 +461,62 @@ bool CVulkanDevice::createDevice()
+ 
+ 	vk_log.infof( "physical device %s DRM format modifiers", m_bSupportsModifiers ? "supports" : "does not support" );
+ 
+-	if ( !hasDrmProps ) {
+-		// This could happen when e.g. running the lavapipe driver
+-		// (without an actual physical device)
++	if ( !hasDrmProps )
++	{
+ 		vk_log.warnf( "physical device doesn't support VK_EXT_physical_device_drm" );
+-	} else {
++#if HAVE_DRM
++		drmDevicePtr devices[16] = {};
++		int nDevs = drmGetDevices2( 0, devices, 16 );
++		if ( nDevs <= 0 )
++		{
++			vk_log.errorf( "libmali fallback: drmGetDevices2() returned %d", nDevs );
++			return false;
++		}
++		for ( int pass = 0; pass < 2 && m_drmRendererFd < 0; pass++ )
++		{
++			int wantedNodeBit = ( pass == 0 ) ? DRM_NODE_RENDER : DRM_NODE_PRIMARY;
++			for ( int i = 0; i < nDevs && m_drmRendererFd < 0; i++ )
++			{
++				drmDevicePtr dev = devices[i];
++				if ( !( dev->available_nodes & ( 1 << wantedNodeBit ) ) )
++					continue;
++				const char *nodeName = dev->nodes[wantedNodeBit];
++				if ( wantedNodeBit == DRM_NODE_PRIMARY )
++				{
++					struct stat st = {};
++					if ( stat( nodeName, &st ) == 0 )
++					{
++						m_bHasDrmPrimaryDevId = true;
++						m_drmPrimaryDevId = st.st_rdev;
++					}
++					if ( m_drmAdvertiseFd < 0 )
++					{
++						int advFd = open( nodeName, O_RDONLY | O_CLOEXEC );
++						if ( advFd >= 0 )
++						{
++							m_drmAdvertiseFd = advFd;
++						}
++					}
++					continue;
++				}
++				int fd = open( nodeName, O_RDWR | O_CLOEXEC );
++				if ( fd < 0 )
++				{
++					continue;
++				}
++				m_drmRendererFd = fd;
++			}
++		}
++		drmFreeDevices( devices, nDevs );
++		if ( m_drmRendererFd < 0 && !m_bHasDrmPrimaryDevId )
++		{
++			vk_log.errorf( "libmali fallback: no DRM render or primary node available" );
++			return false;
++		}
++#endif
++	}
++	else
++	{
+ #if HAVE_DRM
+ 		VkPhysicalDeviceDrmPropertiesEXT drmProps = {
+ 			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRM_PROPERTIES_EXT,
+@@ -576,7 +628,6 @@ bool CVulkanDevice::createDevice()
+ 
+ 	enabledExtensions.push_back( VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME );
+ 
+-	enabledExtensions.push_back( VK_EXT_ROBUSTNESS_2_EXTENSION_NAME );
+ #if 0
+ 	enabledExtensions.push_back( VK_KHR_MAINTENANCE_5_EXTENSION_NAME );
+ #endif
+@@ -666,11 +717,6 @@ bool CVulkanDevice::createDevice()
+ 		.samplerYcbcrConversion = VK_TRUE,
+ 	};
+ 
+-	VkPhysicalDeviceRobustness2FeaturesEXT robustness2Features = {
+-		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
+-		.pNext = std::exchange(features2.pNext, &robustness2Features),
+-		.nullDescriptor = VK_TRUE,
+-	};
+ 
+ 	VkResult res = vk.CreateDevice(physDev(), &deviceCreateInfo, nullptr, &m_device);
+ 	if ( res == VK_ERROR_NOT_PERMITTED_KHR && gamescope::Process::HasCapSysNice() )
+@@ -1216,6 +1262,8 @@ void CVulkanDevice::compileAllPipelines()
+ 							continue;
+ 						if (blur_layers > layerCount)
+ 							continue;
++						if (!g_bRun)
++							return;
+ 
+ 						VkPipeline newPipeline = compilePipeline(layerCount, ycbcrMask, info.shaderType, blur_layers, info.compositeDebug, info.colorspaceMask, info.outputEOTF, info.itmEnable, rotation);
+ 						{
+@@ -1232,6 +1280,12 @@ void CVulkanDevice::compileAllPipelines()
+ 	}
+ }
+ 
++void CVulkanDevice::waitPipelines()
++{
++	if ( m_pipelineThread.joinable() )
++		m_pipelineThread.join();
++}
++
+ extern bool g_bSteamIsActiveWindow;
+ 
+ VkPipeline CVulkanDevice::pipeline(ShaderType type, uint32_t layerCount, uint32_t ycbcrMask, uint32_t blur_layers, uint32_t colorspace_mask, uint32_t output_eotf, bool itm_enable, uint32_t rotation)
+@@ -1744,11 +1798,21 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
+ 	scratchDescriptor.offset = m_renderBufferOffset;
+ 	scratchDescriptor.range = VK_WHOLE_SIZE;
+ 
++	// Mali GPU drivers (libMali, PanVK) do not implement VK_EXT_robustness2, so a
++	// null combined-image-sampler faults them. Bind a valid blank view to every
++	// otherwise-unused composite slot instead (inert: only bound layers are
++	// sampled), so no null descriptor is ever created.
++	VkImageView blankView = VK_NULL_HANDLE;
++	if ( CVulkanTexture *blank = vulkan_get_hacky_blank_texture().get() )
++		blankView = blank->linearView();
++
+ 	for (uint32_t i = 0; i < VKR_SAMPLER_SLOTS; i++)
+ 	{
+ 		imageDescriptors[i].sampler = m_device->sampler(m_samplerState[i]);
+ 		imageDescriptors[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+ 		ycbcrImageDescriptors[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
++		imageDescriptors[i].imageView = blankView;
++		ycbcrImageDescriptors[i].imageView = blankView;
+ 		if (m_boundTextures[i] == nullptr)
+ 			continue;
+ 
+@@ -1773,17 +1837,21 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
+ 		shaperLutDescriptor[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+ 		// TODO(Josh): I hate the fact that srgbView = view *as* raw srgb and treat as linear.
+ 		// I need to change this, it's so utterly stupid and confusing.
+-		shaperLutDescriptor[i].imageView = m_shaperLut[i] ? m_shaperLut[i]->srgbView() : VK_NULL_HANDLE;
++		shaperLutDescriptor[i].imageView = m_shaperLut[i] ? m_shaperLut[i]->srgbView() : blankView;
+ 
+ 		lut3DDescriptor[i].sampler = m_device->sampler(nearestState);
+ 		lut3DDescriptor[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+-		lut3DDescriptor[i].imageView = m_lut3D[i] ? m_lut3D[i]->srgbView() : VK_NULL_HANDLE;
++		lut3DDescriptor[i].imageView = m_lut3D[i] ? m_lut3D[i]->srgbView() : blankView;
+ 	}
+ 
+ 	if (!m_target->isYcbcr())
+ 	{
+ 		targetDescriptors[0].imageView = m_target->srgbView();
+ 		targetDescriptors[0].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
++		// binding 2 (chroma storage image) is unused for non-ycbcr targets; bind the
++		// luma view so it is never a null descriptor.
++		targetDescriptors[1].imageView = m_target->srgbView();
++		targetDescriptors[1].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+ 	}
+ 	else
+ 	{
+@@ -2040,6 +2108,8 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
+ 	m_drmFormat = drmFormat;
+ 	VkResult res = VK_ERROR_INITIALIZATION_FAILED;
+ 
++	if ( flags.bFlippable && pDMA == nullptr && !vulkan_has_drm_props() )
++		flags.bFlippable = false;
+ 	VkImageTiling tiling = (flags.bMappable || flags.bLinear) ? VK_IMAGE_TILING_LINEAR : VK_IMAGE_TILING_OPTIMAL;
+ 	VkImageUsageFlags usage = 0;
+ 	VkMemoryPropertyFlags properties;
+@@ -3112,6 +3182,8 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_flat_texture( uint32_t width,
+ 	flags.bFlippable = true;
+ 	flags.bSampled = true;
+ 	flags.bTransferDst = true;
++	if ( !vulkan_has_drm_props() )
++		flags.bFlippable = false;
+ 
+ 	gamescope::OwningRc<CVulkanTexture> texture = new CVulkanTexture();
+ 	bool bRes = texture->BInit( width, height, 1u, VulkanFormatToDRM( VK_FORMAT_B8G8R8A8_UNORM ), flags );
+@@ -3289,6 +3361,58 @@ bool vulkan_remake_swapchain( void )
+ 	return bRet;
+ }
+ 
++namespace rxnix_cma {
++    static int g_DmaHeapFd = -1;
++    static int dmaheap_alloc( size_t bytes ) {
++        if ( g_DmaHeapFd < 0 ) {
++            g_DmaHeapFd = open( "/dev/dma_heap/default_cma_region", O_RDWR | O_CLOEXEC );
++            if ( g_DmaHeapFd < 0 ) { vk_log.errorf_errno( "rxnix_cma: open dma_heap default_cma_region" ); return -1; }
++        }
++        struct dma_heap_allocation_data a = {};
++        a.len = bytes;
++        a.fd_flags = O_RDWR | O_CLOEXEC;
++        if ( ioctl( g_DmaHeapFd, DMA_HEAP_IOCTL_ALLOC, &a ) < 0 ) {
++            vk_log.errorf_errno( "rxnix_cma: DMA_HEAP_IOCTL_ALLOC %zu", bytes );
++            return -1;
++        }
++        return (int)a.fd;
++    }
++    static bool make_output_image( gamescope::OwningRc<CVulkanTexture> &outTex,
++                                   uint32_t width, uint32_t height, uint32_t drmFormat ) {
++        uint32_t stride_bytes = ( ( width * 4u ) + 255u ) & ~255u; // aligned pitch (import + VOP2 scanout)
++        size_t size = (size_t)stride_bytes * height;
++        int fd = dmaheap_alloc( size );
++        if ( fd < 0 ) return false;
++        struct wlr_dmabuf_attributes attrs = {};
++        attrs.width = (int)width;
++        attrs.height = (int)height;
++        attrs.format = drmFormat;
++        attrs.modifier = DRM_FORMAT_MOD_LINEAR;
++        attrs.n_planes = 1;
++        attrs.fd[0] = fd;
++        attrs.stride[0] = stride_bytes;
++        attrs.offset[0] = 0;
++        gamescope::OwningRc<gamescope::IBackendFb> pBackendFb = GetBackend()->ImportDmabufToBackend( &attrs );
++        if ( !pBackendFb ) {
++            vk_log.errorf( "rxnix_cma: ImportDmabufToBackend failed (%ux%u stride=%u fmt=0x%x)", width, height, stride_bytes, drmFormat );
++            close( fd );
++            return false;
++        }
++        CVulkanTexture::createFlags flags;
++        flags.bSampled = true;
++        flags.bStorage = true;
++        flags.bOutputImage = true;
++        flags.bTransferSrc = true;
++        gamescope::OwningRc<CVulkanTexture> pTex = new CVulkanTexture();
++        if ( !pTex->BInit( width, height, 1u, drmFormat, flags, &attrs, 0, 0, nullptr, std::move( pBackendFb ) ) ) {
++            vk_log.errorf( "rxnix_cma: BInit failed on CMA dma-buf (%ux%u stride=%u fmt=0x%x)", width, height, stride_bytes, drmFormat );
++            close( fd );
++            return false;
++        }
++        outTex = std::move( pTex );
++        return true;
++    }
++} // namespace rxnix_cma
+ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
+ {
+ 	CVulkanTexture::createFlags outputImageflags;
+@@ -3327,6 +3451,20 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
+ 		}
+ 	}
+ 
++	if ( !vulkan_has_drm_props() )
++	{
++		uint32_t fmt = ( uDRMFormat != DRM_FORMAT_INVALID ) ? uDRMFormat : DRM_FORMAT_ABGR8888;
++		for ( int i = 0; i < 3; i++ )
++		{
++			if ( !rxnix_cma::make_output_image( pOutput->outputImages[i], outputWidth, outputHeight, fmt ) )
++			{
++				vk_log.errorf( "rxnix_cma: output image %d alloc failed", i );
++				return false;
++			}
++		}
++		pOutput->temporaryHackyBlankImage = vulkan_create_debug_blank_texture( outputWidth, outputHeight );
++		return true;
++	}
+ 	pOutput->outputImages[0] = new CVulkanTexture();
+ 	bool bSuccess = pOutput->outputImages[0]->BInit( outputWidth, outputHeight, 1u, uDRMFormat, outputImageflags );
+ 	if ( bSuccess != true )
+@@ -4374,7 +4512,10 @@ static const struct wlr_drm_format_set *renderer_get_texture_formats( struct wlr
+ 
+ static int renderer_get_drm_fd( struct wlr_renderer *wlr_renderer )
+ {
+-	return g_device.drmRenderFd();
++	int fd = g_device.drmRenderFd();
++	if ( fd < 0 )
++		fd = g_device.drmAdvertiseFd();
++	return fd;
+ }
+ 
+ static struct wlr_texture *renderer_texture_from_buffer( struct wlr_renderer *wlr_renderer, struct wlr_buffer *buf )
+diff --git a/src/rendervulkan.hpp b/src/rendervulkan.hpp
+index 6791bf6..ed34ddd 100644
+--- a/src/rendervulkan.hpp
++++ b/src/rendervulkan.hpp
+@@ -10,6 +10,7 @@
+ #include <array>
+ #include <bitset>
+ #include <mutex>
++#include <thread>
+ #include <optional>
+ 
+ #include "main.hpp"
+@@ -808,7 +809,9 @@ public:
+ 	inline VkBuffer uploadBuffer() {return m_uploadBuffer;}
+ 	inline VkPipelineLayout pipelineLayout() {return m_pipelineLayout;}
+ 	inline int drmRenderFd() {return m_drmRendererFd;}
++	inline int drmAdvertiseFd() {return m_drmAdvertiseFd;}
+ 	inline bool supportsModifiers() {return m_bSupportsModifiers;}
++	void waitPipelines();
+ 	inline bool hasDrmPrimaryDevId() {return m_bHasDrmPrimaryDevId;}
+ 	inline dev_t primaryDevId() {return m_drmPrimaryDevId;}
+ 	inline bool supportsFp16() {return m_bSupportsFp16;}
+@@ -871,6 +874,7 @@ protected:
+ 	uint32_t m_generalQueueFamily = -1;
+ 
+ 	int m_drmRendererFd = -1;
++	int m_drmAdvertiseFd = -1;
+ 	dev_t m_drmPrimaryDevId = 0;
+ 
+ 	bool m_bSupportsFp16 = false;
+@@ -885,6 +889,7 @@ protected:
+ 	std::array<VkShaderModule, SHADER_TYPE_COUNT> m_shaderModules;
+ 	std::unordered_map<PipelineInfo_t, VkPipeline> m_pipelineMap;
+ 	std::mutex m_pipelineMutex;
++	std::thread m_pipelineThread;
+ 
+ 	static constexpr uint32_t k_uMaxConcurrentSubmits = 8;
+ 
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+index 72d9909..ab4c47c 100644
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -6698,6 +6698,10 @@ error(Display *dpy, XErrorEvent *ev)
+ static void
+ steamcompmgr_exit(void)
+ {
++	// Stop the async pipeline-precompile thread before tearing down the Vulkan
++	// device, or it faults mid-compile inside the driver.
++	g_device.waitPipelines();
++
+ 	g_ImageWaiter.Shutdown();
+ 
+ 	// Clean up any commits.
+diff --git a/src/wlserver.cpp b/src/wlserver.cpp
+index 34cd5ae..f143c6a 100644
+--- a/src/wlserver.cpp
++++ b/src/wlserver.cpp
+@@ -33,6 +33,7 @@
+ #include <wlr/render/wlr_renderer.h>
+ #include <wlr/types/wlr_compositor.h>
+ #include <wlr/types/wlr_keyboard.h>
++#include <wlr/types/wlr_linux_dmabuf_v1.h>
+ #include <wlr/types/wlr_keyboard_group.h>
+ #include <wlr/types/wlr_pointer.h>
+ #include <wlr/types/wlr_seat.h>
+@@ -2053,6 +2054,73 @@ bool wlserver_init( void ) {
+ 	// Someday, he will be purged.
+ 	wlr_drm_create(wlserver.display, wlserver.wlr.renderer);
+ 
++	extern bool vulkan_has_drm_props();
++	if ( !vulkan_has_drm_props() )
++	{
++		static const struct wl_interface *mali_create_buffer_types[] = {
++			&wl_buffer_interface, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
++		};
++		static const struct wl_message mali_buffer_sharing_requests[] = {
++			{ "create_buffer", "niiiuuuh", mali_create_buffer_types },
++		};
++		static const struct wl_interface mali_buffer_sharing_interface = {
++			"mali_buffer_sharing", 5, 1, mali_buffer_sharing_requests, 0, NULL,
++		};
++		struct mali_buffer_sharing_state {
++			struct wl_global *global;
++		};
++		static const struct wl_interface *s_iface = &mali_buffer_sharing_interface;
++		static auto mali_create_buffer_handler = [](
++				struct wl_client *client, struct wl_resource *resource,
++				uint32_t buffer_id,
++				int32_t width, int32_t height, int32_t stride,
++				uint32_t format, uint32_t modifier_hi, uint32_t modifier_lo,
++				int32_t fd) {
++			uint64_t modifier = ((uint64_t)modifier_hi << 32) | modifier_lo;
++			bool isAFBC = (modifier != 0);
++			wl_log.infof("mali_buffer_sharing: create_buffer %dx%d stride=%d fmt=0x%x mod=0x%x_%x fd=%d%s",
++				width, height, stride, format, modifier_hi, modifier_lo, fd,
++				isAFBC ? " [AFBC]" : " [LINEAR]");
++			struct wlr_dmabuf_attributes attribs = {};
++			attribs.width = width;
++			attribs.height = height;
++			attribs.format = format;
++			attribs.modifier = modifier;
++			attribs.n_planes = 1;
++			attribs.offset[0] = 0;
++			attribs.stride[0] = stride;
++			attribs.fd[0] = fd;
++			for (int i = 1; i < WLR_DMABUF_MAX_PLANES; i++)
++				attribs.fd[i] = -1;
++			struct wl_resource *buf = wlr_dmabuf_v1_buffer_create_immed(
++				client, buffer_id, &attribs);
++			if (!buf) {
++				wl_resource_post_error(resource, 0,
++					"mali_buffer_sharing: create_buffer failed");
++			}
++		};
++		typedef void (*mali_create_buffer_fn)(
++			struct wl_client *, struct wl_resource *,
++			uint32_t, int32_t, int32_t, int32_t,
++			uint32_t, uint32_t, uint32_t, int32_t);
++		struct mali_buffer_sharing_impl {
++			mali_create_buffer_fn create_buffer;
++		};
++		static const struct mali_buffer_sharing_impl mali_impl = {
++			.create_buffer = mali_create_buffer_handler,
++		};
++		static auto mali_bind = [](struct wl_client *client, void *data,
++				uint32_t version, uint32_t id) {
++			struct wl_resource *resource = wl_resource_create(client,
++				s_iface, version, id);
++			if (!resource) {
++				wl_client_post_no_memory(client);
++				return;
++			}
++			wl_resource_set_implementation(resource, &mali_impl, data, NULL);
++		};
++		wl_global_create(wlserver.display, s_iface, 5, NULL, mali_bind);
++	}
+ 	if ( GetBackend()->SupportsExplicitSync() )
+ 	{
+ 		create_explicit_sync();
+diff --git a/subprojects/wlroots/include/wlr/types/wlr_linux_dmabuf_v1.h b/subprojects/wlroots/include/wlr/types/wlr_linux_dmabuf_v1.h
+index cf967f9..53605fa 100644
+--- a/subprojects/wlroots/include/wlr/types/wlr_linux_dmabuf_v1.h
++++ b/subprojects/wlroots/include/wlr/types/wlr_linux_dmabuf_v1.h
+@@ -134,4 +134,7 @@ struct wlr_linux_dmabuf_feedback_v1_init_options {
+ bool wlr_linux_dmabuf_feedback_v1_init_with_options(struct wlr_linux_dmabuf_feedback_v1 *feedback,
+ 	const struct wlr_linux_dmabuf_feedback_v1_init_options *options);
+ 
++struct wl_resource *wlr_dmabuf_v1_buffer_create_immed(
++		struct wl_client *client, uint32_t buffer_id,
++		struct wlr_dmabuf_attributes *attribs);
+ #endif
+diff --git a/subprojects/wlroots/types/wlr_linux_dmabuf_v1.c b/subprojects/wlroots/types/wlr_linux_dmabuf_v1.c
+index bfd9763..85bc46a 100644
+--- a/subprojects/wlroots/types/wlr_linux_dmabuf_v1.c
++++ b/subprojects/wlroots/types/wlr_linux_dmabuf_v1.c
+@@ -1171,3 +1171,37 @@ error:
+ 	wlr_linux_dmabuf_feedback_v1_finish(feedback);
+ 	return false;
+ }
++struct wl_resource *wlr_dmabuf_v1_buffer_create_immed(
++		struct wl_client *client, uint32_t buffer_id,
++		struct wlr_dmabuf_attributes *attribs) {
++	if (attribs->width < 1 || attribs->height < 1) {
++		wlr_log(WLR_ERROR, "wlr_dmabuf_v1_buffer_create_immed: invalid dimensions %dx%d",
++			attribs->width, attribs->height);
++		wlr_dmabuf_attributes_finish(attribs);
++		return NULL;
++	}
++	if (attribs->n_planes < 1 || attribs->fd[0] < 0) {
++		wlr_log(WLR_ERROR, "wlr_dmabuf_v1_buffer_create_immed: no valid plane fd");
++		wlr_dmabuf_attributes_finish(attribs);
++		return NULL;
++	}
++	struct wlr_dmabuf_v1_buffer *buffer = calloc(1, sizeof(*buffer));
++	if (!buffer) {
++		wlr_dmabuf_attributes_finish(attribs);
++		return NULL;
++	}
++	wlr_buffer_init(&buffer->base, &buffer_impl, attribs->width, attribs->height);
++	buffer->resource = wl_resource_create(client, &wl_buffer_interface,
++		1, buffer_id);
++	if (!buffer->resource) {
++		wlr_dmabuf_attributes_finish(attribs);
++		free(buffer);
++		return NULL;
++	}
++	wl_resource_set_implementation(buffer->resource,
++		&wl_buffer_impl, buffer, buffer_handle_resource_destroy);
++	buffer->attributes = *attribs;
++	buffer->release.notify = buffer_handle_release;
++	wl_signal_add(&buffer->base.events.release, &buffer->release);
++	return buffer->resource;
++}
