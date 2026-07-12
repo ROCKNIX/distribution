@@ -1,0 +1,1441 @@
+From: Felix "Xilefian" Jones
+Subject: [PATCH] gamescope: Rockchip RGA composite and scanout offload
+
+Offload panel rotation, the nested-to-native upscale and layer compositing onto
+the Rockchip RGA2 2D engine via librga, independent of the 3D GPU so the same
+launch command works on libMali and panfrost. The RK3576 always ships the RGA2,
+so librga is linked unconditionally (meson required) with no build- or run-time
+"no RGA" fallback:
+
+ * Direct scanout is the default present path: rotate+scale the client buffer
+   straight to the display with no Vulkan composite. Disabled only for
+   --force-composition and integer scaling (RGA is bilinear-only), which fall
+   through to the RGA composite path.
+ * Advertise the non-YTR AFBC-32x8 modifier (+LINEAR) when there is no Mesa
+   render node, so libMali renders buffers the RGA can rotate directly to
+   scanout.
+ * RGA composite path: full composite, then RGA-rotate the landscape output into
+   its paired portrait scanout buffer. Async in both directions - the Vulkan
+   composite completion is handed to the RGA as an acquire fence and the RGA
+   release fence to the scanout plane IN_FENCE_FD - so neither the present thread
+   nor the VOP2 blocks on the RGA/GPU.
+ * Flush the scanout CMA buffer once, not per frame.
+ * Multi-layer blend offload (Porter-Duff src-over) when every layer is
+   RGA-expressible, leaving the 3D GPU idle.
+ * Identity-passthrough composite fast-path when the colour-management chain is a
+   proven identity (SDR, default colorimetry, identity CTM).
+ * Convert planar (YU12/I420/YV12) and semi-planar (NV12/NV21) YUV to RGBA on the
+   RGA before import, since libMali's Vulkan cannot sample YUV dma-bufs.
+---
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index fb8d95e..69589f2 100644
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -1814,9 +1814,13 @@ static void update_drm_effective_orientations( struct drm_t *drm, const drmModeM
+ 		// scanout. Rotate in the composite shader instead (plane rotation stays
+ 		// identity) when the panel is mounted at 90/270 degrees.
+ 		GamescopePanelOrientation eInternalOrientation = pDRMInternalConnector->GetCurrentOrientation();
+-		if ( eInternalOrientation == GAMESCOPE_PANEL_ORIENTATION_90 ||
+-		     eInternalOrientation == GAMESCOPE_PANEL_ORIENTATION_270 )
++		if ( ( eInternalOrientation == GAMESCOPE_PANEL_ORIENTATION_90 ||
++		       eInternalOrientation == GAMESCOPE_PANEL_ORIENTATION_270 ) &&
++		     !vulkan_rxnix_rga_available() )
+ 		{
++			// When the Rockchip RGA 2D engine is available it rotates at scanout
++			// (see rendervulkan rxnix_rga), so the composite rotation shader and
++			// its pipeline permutations are skipped entirely.
+ 			g_bRotationShaderRequested = true;
+ 			g_bRotationShaderEnabled = true;
+ 		}
+@@ -2045,7 +2049,7 @@ LiftoffStateCacheEntry FrameInfoToLiftoffStateCacheEntry( struct drm_t *drm, con
+ 		uint64_t crtcW = srcWidth / frameInfo->layers[ i ].scale.x;
+ 		uint64_t crtcH = srcHeight / frameInfo->layers[ i ].scale.y;
+ 
+-		if (g_bRotated && !g_bRotationShaderEnabled)
++		if (g_bRotated && !g_bRotationShaderEnabled && !vulkan_rxnix_rga_enabled())
+ 		{
+ 			int64_t imageH = frameInfo->layers[ i ].tex->contentHeight() / frameInfo->layers[ i ].scale.y;
+ 
+@@ -2741,6 +2745,11 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
+ 
+ 	bool bSinglePlane = frameInfo->layerCount < 2 && cv_drm_single_plane_optimizations;
+ 
++	// Async RGA scanout: if the RGA rotate for this frame was issued non-blocking,
++	// use its release fence as the base scanout plane IN_FENCE_FD so the VOP2 waits
++	// on the RGA in hardware. rxnix_rga owns/closes the fence; we only read the fd.
++	const int nRxnixFence = ( !cv_drm_debug_disable_in_fence_fd && vulkan_rxnix_rga_enabled() ) ? vulkan_rxnix_scanout_fence() : -1;
++
+ 	for ( int i = 0; i < k_nMaxLayers; i++ )
+ 	{
+ 		if ( i < frameInfo->layerCount )
+@@ -2754,7 +2763,9 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
+ 				return -EINVAL;
+ 			}
+ 
+-			const int nFence = cv_drm_debug_disable_in_fence_fd ? -1 : g_nAlwaysSignalledSyncFile;
++			int nFence = cv_drm_debug_disable_in_fence_fd ? -1 : g_nAlwaysSignalledSyncFile;
++			if ( nRxnixFence >= 0 && pLayer->zpos == g_zposBase )
++				nFence = nRxnixFence;
+ 
+ 
+ 			liftoff_layer_set_property( drm->lo_layers[ i ], "FB_ID", pDrmFb->GetFbId());
+@@ -2779,7 +2790,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
+ 			liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_H", entry.layerState[i].srcH );
+ 
+ 			uint64_t ulOrientation = DRM_MODE_ROTATE_0;
+-			if ( !g_bRotationShaderEnabled )
++			if ( !g_bRotationShaderEnabled && !vulkan_rxnix_rga_enabled() )
+ 				switch ( drm->pConnector->GetCurrentOrientation() )
+ 				{
+ 				default:
+@@ -3672,10 +3683,80 @@ namespace gamescope
+ 			bNeedsFullComposite |= !!(g_uCompositeDebug & CompositeDebugFlag::Heatmap);
+ 			bNeedsFullComposite |= rotationShaderOrientation != GAMESCOPE_PANEL_ORIENTATION_0;
+ 
++			// ROCKNIX RGA direct scanout is the DEFAULT (best-performance) present
++			// path: when the base layer is a single fullscreen client buffer, hand
++			// it to the RGA 2D engine to rotate and scale to the panel native
++			// resolution directly into a scanout buffer, skipping the Vulkan
++			// compositor entirely. vulkan_rxnix_rga_direct_enabled() is false only
++			// for --force-composition and integer scaling, which fall through to the
++			// composite path below. Overlays are dropped in the direct path; on any
++			// client buffer the RGA cannot import directly, direct_rotate returns
++			// nullptr and we likewise fall back to the RGA composite path.
++			const FrameInfo_t *pScanoutFrameInfo = pFrameInfo;
++			FrameInfo_t rxnixDirectFrameInfo;
++			bool bRxnixDirect = false;
++			if ( vulkan_rxnix_rga_direct_enabled() && !bNeedsFullComposite && pFrameInfo->layerCount >= 1 )
++			{
++				const FrameInfo_t::Layer_t &rxnixBase = pFrameInfo->layers[0];
++				if ( rxnixBase.zpos == (int)g_zposBase && rxnixBase.opacity >= 1.0f && rxnixBase.tex != nullptr )
++				{
++					gamescope::Rc<CVulkanTexture> pRotated = vulkan_rxnix_rga_direct_rotate( rxnixBase.tex.get() );
++					if ( pRotated )
++					{
++						rxnixDirectFrameInfo = *pFrameInfo;
++						rxnixDirectFrameInfo.layerCount = 1; // drop overlays in the direct fast path
++						FrameInfo_t::Layer_t *pDirectLayer = &rxnixDirectFrameInfo.layers[0];
++						pDirectLayer->tex            = pRotated;
++						pDirectLayer->offset         = { 0.0f, 0.0f };
++						pDirectLayer->scale          = { 1.0f, 1.0f };
++						pDirectLayer->opacity        = 1.0f;
++						pDirectLayer->zpos           = g_zposBase;
++						pDirectLayer->applyColorMgmt = false;
++						pDirectLayer->filter         = GamescopeUpscaleFilter::NEAREST;
++						pScanoutFrameInfo            = &rxnixDirectFrameInfo;
++						bRxnixDirect                 = true;
++					}
++				}
++			}
++			// ROCKNIX: multi-layer composite blend on the RGA. If the direct fast
++			// path did not take the frame (overlays or a cursor sit over the base) but every
++			// layer is RGA-expressible, blend the layers with the RGA 2D engine and rotate to
++			// scanout - the 3D GPU stays idle so the client keeps the whole core. Any frame the
++			// RGA cannot express returns nullptr and falls through to the Vulkan composite below.
++			if ( !bRxnixDirect && vulkan_rxnix_rga_enabled() )
++			{
++				gamescope::Rc<CVulkanTexture> pRgaComposited = vulkan_rxnix_rga_composite_rotate( pFrameInfo );
++				if ( pRgaComposited )
++				{
++					rxnixDirectFrameInfo = *pFrameInfo;
++					rxnixDirectFrameInfo.layerCount = 1; // present the single RGA-composited buffer
++					FrameInfo_t::Layer_t *pCompLayer = &rxnixDirectFrameInfo.layers[0];
++					pCompLayer->tex            = pRgaComposited;
++					pCompLayer->offset         = { 0.0f, 0.0f };
++					pCompLayer->scale          = { 1.0f, 1.0f };
++					pCompLayer->opacity        = 1.0f;
++					pCompLayer->zpos           = g_zposBase;
++					pCompLayer->applyColorMgmt = false;
++					pCompLayer->filter         = GamescopeUpscaleFilter::NEAREST;
++					pCompLayer->ctm            = nullptr;
++					pScanoutFrameInfo          = &rxnixDirectFrameInfo;
++					bRxnixDirect               = true;
++					bNeedsFullComposite        = false; // fully composited by the RGA already
++					bWantsPartialComposite     = false;
++				}
++			}
++			// RGA composite path (used when direct scanout is disabled by
++			// --force-composition / integer scaling, or the client buffer could not
++			// be imported directly): force a full composite so the RGA rotation
++			// (and scale, for the nested-composite case) is applied to the
++			// composited output - unless the default direct path above already
++			// produced a scanout buffer.
++			bNeedsFullComposite |= ( vulkan_rxnix_rga_enabled() && !bRxnixDirect );
++
+ 			bool bDoComposite = true;
+ 			if ( !bNeedsFullComposite && !bWantsPartialComposite )
+ 			{
+-				int ret = drm_prepare( &g_DRM, bAsync, pFrameInfo );
++				int ret = drm_prepare( &g_DRM, bAsync, pScanoutFrameInfo );
+ 				if ( ret == 0 )
+ 					bDoComposite = false;
+ 				else if ( ret == -EACCES )
+@@ -3690,16 +3771,22 @@ namespace gamescope
+ 				// Scanout + Planes Path
+ 				m_bWasPartialCompositing = false;
+ 				m_bWasCompositing = false;
+-				if ( pFrameInfo->layerCount == 2 )
+-					m_nLastSingleOverlayZPos = pFrameInfo->layers[1].zpos;
++				if ( pScanoutFrameInfo->layerCount == 2 )
++					m_nLastSingleOverlayZPos = pScanoutFrameInfo->layers[1].zpos;
+ 
+-				return Commit( pFrameInfo );
++				return Commit( pScanoutFrameInfo );
+ 			}
+ 
+ 			// Composition Path
+ 			if ( kDisablePartialComposition )
+ 				bNeedsFullComposite = true;
+ 
++			// ROCKNIX RGA: the RGA composite path allocates no partial-overlay output
++			// images and RGA rotates/scales the whole composited frame, so always do a
++			// full composite here (never a partial one) when the RGA path is active.
++			if ( vulkan_rxnix_rga_enabled() )
++				bNeedsFullComposite = true;
++
+ 			FrameInfo_t compositeFrameInfo = *pFrameInfo;
+ 
+ 			if ( compositeFrameInfo.layerCount == 1 )
+@@ -3776,7 +3863,22 @@ namespace gamescope
+ 				return -EINVAL;
+ 			}
+ 
+-			vulkan_wait( *oCompositeResult, true );
++			// libMali RGA composite path: rather than stalling the present thread on the
++			// GPU composite (vulkan_wait) before the RGA rotates it to scanout, hand the
++			// composite completion to the RGA as an in-kernel acquire fence and let the
++			// present thread proceed. vulkan_rxnix_rotate_output_for_present() performs (or
++			// defers) the wait itself; every other path keeps the synchronous CPU wait.
++			[[maybe_unused]] bool bCompositeWaited = false;
++			gamescope::Rc<CVulkanTexture> pRxnixScanout;
++			if ( vulkan_rxnix_rga_enabled() )
++			{
++				pRxnixScanout = vulkan_rxnix_rotate_output_for_present( *oCompositeResult, &bCompositeWaited );
++			}
++			else
++			{
++				vulkan_wait( *oCompositeResult, true );
++				bCompositeWaited = true;
++			}
+ 
+ 			FrameInfo_t presentCompFrameInfo = {};
+ 			presentCompFrameInfo.allowVRR = pFrameInfo->allowVRR;
+@@ -3793,7 +3895,19 @@ namespace gamescope
+ 				baseLayer->opacity = 1.0;
+ 				baseLayer->zpos = g_zposBase;
+ 
+-				baseLayer->tex = vulkan_get_last_output_image( false, false );
++				if ( vulkan_rxnix_rga_enabled() )
++				{
++					// If the RGA rotate declined and we never awaited the composite, do so
++					// now before presenting the plain composited output as a fallback.
++					if ( !pRxnixScanout && !bCompositeWaited )
++					{
++						vulkan_wait( *oCompositeResult, true );
++						bCompositeWaited = true;
++					}
++					baseLayer->tex = pRxnixScanout ? pRxnixScanout : vulkan_get_last_output_image( false, false );
++				}
++				else
++					baseLayer->tex = vulkan_get_last_output_image( false, false );
+ 				baseLayer->applyColorMgmt = false;
+ 
+ 				baseLayer->filter = GamescopeUpscaleFilter::NEAREST;
+diff --git a/src/meson.build b/src/meson.build
+index 806fe5d..e4ec55c 100644
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -23,6 +23,9 @@ sdl2_dep = dependency('SDL2', required: get_option('sdl2_backend'))
+ avif_dep = dependency('libavif', version: '>=1.0.0', required: get_option('avif_screenshots'))
+ pixman_dep = dependency('pixman-1')
+ udev_dep = dependency('libudev')
++# ROCKNIX: Rockchip RGA 2D engine (librga) for HW rotate/scale scanout. The
++# RK3576 always ships the RGA2, so link librga unconditionally.
++rga_dep = dependency('librga', required: true)
+ 
+ wlroots_dep = dependency(
+   'wlroots-0.18',
+@@ -198,7 +201,7 @@ gamescope_version = configure_file(
+       xkbcommon, thread_dep, sdl2_dep, wlroots_dep,
+       vulkan_dep, liftoff_dep, dep_xtst, dep_xmu, cap_dep, epoll_dep, pipewire_dep, librt_dep,
+       stb_dep, displayinfo_dep, openvr_dep, dep_xcursor, avif_dep, dep_xi,
+-      libdecor_dep, eis_dep, luajit_dep, libinput_dep, pixman_dep, udev_dep,
++      libdecor_dep, eis_dep, luajit_dep, libinput_dep, pixman_dep, udev_dep, rga_dep,
+     ],
+     install: true,
+     cpp_args: gamescope_cpp_args,
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+index 0e58410..ae0d2d2 100644
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -13,6 +13,13 @@
+ #include <dlfcn.h>
+ #include <sys/ioctl.h>
+ #include <linux/dma-heap.h>
++#include <mutex>
++#include <unordered_map>
++#include <sys/stat.h>
++#include <sys/mman.h>
++#include <linux/dma-buf.h>
++#include <rga/im2d.h>
++#include <rga/rga.h>
+ #include "vulkan_include.h"
+ #include "Utils/Algorithm.h"
+ 
+@@ -457,6 +464,9 @@ bool CVulkanDevice::createDevice()
+ 
+ 		if ( strcmp(ext.extensionName, VK_EXT_HDR_METADATA_EXTENSION_NAME) == 0 )
+ 			supportsHDRMetadata = true;
++
++		if ( strcmp(ext.extensionName, VK_KHR_EXTERNAL_FENCE_FD_EXTENSION_NAME) == 0 )
++			m_bSupportsExternalFenceFd = true;
+ 	}
+ 
+ 	vk_log.infof( "physical device %s DRM format modifiers", m_bSupportsModifiers ? "supports" : "does not support" );
+@@ -628,6 +638,11 @@ bool CVulkanDevice::createDevice()
+ 
+ 	enabledExtensions.push_back( VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME );
+ 
++	// Needed to export a composite completion fence as a sync_file for the RGA acquire
++	// fence (async composite -> RGA hand-off). Harmless where unused; guarded on support.
++	if ( m_bSupportsExternalFenceFd )
++		enabledExtensions.push_back( VK_KHR_EXTERNAL_FENCE_FD_EXTENSION_NAME );
++
+ #if 0
+ 	enabledExtensions.push_back( VK_KHR_MAINTENANCE_5_EXTENSION_NAME );
+ #endif
+@@ -1426,6 +1441,77 @@ uint64_t CVulkanDevice::submit( std::unique_ptr<CVulkanCmdBuffer> cmdBuffer)
+ 	return nextSeqNo;
+ }
+ 
++int CVulkanDevice::ExportTimelineSyncFile( uint64_t ulPoint )
++{
++	if ( !m_bSupportsExternalFenceFd || vk.GetFenceFdKHR == nullptr )
++		return -1;
++
++	VkFence &fence = m_exportSyncFences[ m_uExportSyncFenceIndex ];
++	m_uExportSyncFenceIndex = ( m_uExportSyncFenceIndex + 1 ) % k_uExportFencePoolSize;
++
++	if ( fence == VK_NULL_HANDLE )
++	{
++		const VkExportFenceCreateInfo exportInfo = {
++			.sType = VK_STRUCTURE_TYPE_EXPORT_FENCE_CREATE_INFO,
++			.handleTypes = VK_EXTERNAL_FENCE_HANDLE_TYPE_SYNC_FD_BIT,
++		};
++		const VkFenceCreateInfo fenceInfo = {
++			.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
++			.pNext = &exportInfo,
++		};
++		if ( vk.CreateFence( m_device, &fenceInfo, nullptr, &fence ) != VK_SUCCESS )
++		{
++			fence = VK_NULL_HANDLE;
++			m_bSupportsExternalFenceFd = false;
++			return -1;
++		}
++	}
++	else
++	{
++		// This pooled slot was last submitted k_uExportFencePoolSize presents ago. In
++		// the (unexpected) case its signal has not retired yet, skip the async path for
++		// this frame rather than risk resetting an in-flight fence.
++		if ( vk.GetFenceStatus( m_device, fence ) == VK_NOT_READY )
++			return -1;
++		vk.ResetFences( m_device, 1, &fence );
++	}
++
++	// Empty submit: wait until the scratch timeline reaches ulPoint (the composite
++	// completion), then signal the exportable fence. No command buffers, so this only
++	// creates a GPU-side sync point; the present thread does not block.
++	const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
++	const VkTimelineSemaphoreSubmitInfo timelineInfo = {
++		.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
++		.waitSemaphoreValueCount = 1,
++		.pWaitSemaphoreValues = &ulPoint,
++	};
++	const VkSubmitInfo submitInfo = {
++		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
++		.pNext = &timelineInfo,
++		.waitSemaphoreCount = 1,
++		.pWaitSemaphores = &m_scratchTimelineSemaphore,
++		.pWaitDstStageMask = &waitStage,
++	};
++	if ( vk.QueueSubmit( m_queue, 1, &submitInfo, fence ) != VK_SUCCESS )
++		return -1;
++
++	const VkFenceGetFdInfoKHR getFdInfo = {
++		.sType = VK_STRUCTURE_TYPE_FENCE_GET_FD_INFO_KHR,
++		.fence = fence,
++		.handleType = VK_EXTERNAL_FENCE_HANDLE_TYPE_SYNC_FD_BIT,
++	};
++	int nFd = -1;
++	if ( vk.GetFenceFdKHR( m_device, &getFdInfo, &nFd ) != VK_SUCCESS || nFd < 0 )
++	{
++		// Driver advertises the extension but cannot export a SYNC_FD fence; disable
++		// the path permanently so the caller reverts to a CPU wait.
++		m_bSupportsExternalFenceFd = false;
++		return -1;
++	}
++
++	return nFd;
++}
++
+ void CVulkanDevice::garbageCollect( void )
+ {
+ 	uint64_t currentSeqNo;
+@@ -2421,6 +2507,28 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
+ 					.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
+ 					.fd = fd,
+ 			};
++
++			// ROCKNIX RGA direct-scanout: retain a dup'd copy of the client's
++			// dma-buf so the RGA 2D engine can import and rotate/scale it directly
++			// at scanout time (vulkan_rxnix_rga_direct_rotate). Only when the RGA
++			// offload is active; the dup'd fds are owned by this texture and freed
++			// by wlr_dmabuf_attributes_finish() in the destructor.
++			if ( vulkan_rxnix_rga_enabled() )
++			{
++				m_dmabuf.width    = pDMA->width;
++				m_dmabuf.height   = pDMA->height;
++				m_dmabuf.format   = pDMA->format;
++				m_dmabuf.modifier = pDMA->modifier;
++				m_dmabuf.n_planes = pDMA->n_planes;
++				for ( int i = 0; i < pDMA->n_planes; i++ )
++				{
++					m_dmabuf.offset[i] = pDMA->offset[i];
++					m_dmabuf.stride[i] = pDMA->stride[i];
++					m_dmabuf.fd[i]     = dup( pDMA->fd[i] );
++					if ( m_dmabuf.fd[i] < 0 )
++						vk_log.errorf_errno( "rxnix_rga: dup client dma-buf fd failed" );
++				}
++			}
+ 		}
+ 		
+ 		res = g_device.vk.AllocateMemory( g_device.device(), &allocInfo, nullptr, &memoryHandle );
+@@ -2867,6 +2975,9 @@ static bool is_image_format_modifier_supported(VkFormat format, uint32_t drmForm
+   return res == VK_SUCCESS;
+ }
+ 
++bool vulkan_rxnix_rga_yuv_available();
++gamescope::OwningRc<CVulkanTexture> vulkan_rxnix_yuv_to_rgba( const struct wlr_dmabuf_attributes *pDMA );
++
+ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
+ {
+ 	// First, check whether the Vulkan format is supported
+@@ -2960,7 +3071,18 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
+ 					continue;
+ 			}
+ 
+-			wlr_drm_format_set_add( &sampledDRMFormats, drmFormat, modifier );
++			// ROCKNIX: hide ARM AFBC modifiers from the CLIENT-facing format set on libMali
++			// (no VK_EXT_physical_device_drm). Mali prefers AFBC whenever advertised, but the
++			// VOP2 cannot scan it out and the RK3576 RGA cannot decode Mali AFBC-16x16, so an
++			// AFBC window buffer forces a per-frame Vulkan composite. Advertising only LINEAR
++			// makes a zwp_linux_dmabuf client (MALI_WAYLAND_DMABUF_PROTOCOL=1) allocate a linear
++			// buffer the RGA rotates straight to scanout (direct path, no composite). gamescope's
++			// own AFBC import is unaffected: DRMModifierProps and s_SampledModifierFormats keep the
++			// full list. No-op on Mesa/PanVK (has drm props).
++			const bool bHideAfbcFromClient = !vulkan_has_drm_props() &&
++			    (uint8_t)( modifier >> 56 ) == 0x08 && modifier != 0x0800000000000062ULL;
++			if ( !bHideAfbcFromClient )
++				wlr_drm_format_set_add( &sampledDRMFormats, drmFormat, modifier );
+ 			s_SampledModifierFormats[ drmFormat ].emplace_back( modifier );
+ 		}
+ 
+@@ -2993,6 +3115,20 @@ bool vulkan_init_formats()
+ 			vulkan_init_format(srgbFormat, drmFormat);
+ 	}
+ 
++	// ROCKNIX: advertise planar YUV (YU12/I420, YV12) even though libMali's Vulkan cannot
++	// sample 3-plane YUV - vulkan_create_texture_from_dmabuf RGA-converts it to RGBA on
++	// import. Lets planar-YUV Wayland video clients (e.g. a software
++	// H.264 decode) present their frames; a no-op where /dev/rga is unavailable.
++	// Advertise LINEAR only (NOT MOD_INVALID): wlroots' linux_dmabuf sends only INVALID
++	// for a format whose modifier set is exactly {INVALID, LINEAR} (an XWayland quirk),
++	// but such clients want an explicit "mod 0" (LINEAR) match.
++	if ( vulkan_rxnix_rga_yuv_available() )
++	{
++		wlr_drm_format_set_add( &sampledDRMFormats, DRM_FORMAT_YUV420, DRM_FORMAT_MOD_LINEAR );
++		wlr_drm_format_set_add( &sampledDRMFormats, DRM_FORMAT_YVU420, DRM_FORMAT_MOD_LINEAR );
++		wlr_drm_format_set_add( &sampledShmFormats, DRM_FORMAT_YUV420, DRM_FORMAT_MOD_LINEAR );
++	}
++
+ 	vk_log.infof( "supported DRM formats for sampling usage:" );
+ 	for ( size_t i = 0; i < sampledDRMFormats.len; i++ )
+ 	{
+@@ -3421,6 +3557,695 @@ namespace rxnix_cma {
+     }
+ } // namespace rxnix_cma
+ extern bool g_bGamescopeForeignScanout;
++
++// ============================================================================
++// ROCKNIX RGA hardware rotate/scale scanout (automatic; no env vars).
++//
++// The rockchip VOP2 display planes cannot hardware-rotate, and libMali/PanVK
++// upscaling costs GPU fill. On a physically-rotated internal panel we offload
++// the rotation (and the nested game -> native upscale) to the Rockchip RGA2 2D
++// engine via librga (im2d API). Enabled purely by runtime detection: an internal
++// panel mounted at 90/270 and a usable /dev/rga. Works on BOTH GPU drivers
++// (libMali and panfrost) since the RGA is independent of the 3D GPU. When RGA is
++// unavailable gamescope falls back to the composite rotation shader untouched.
++//
++// Buffers are LINEAR ABGR8888 allocated from the CMA dma-heap (VOP2-scannable).
++// ============================================================================
++// --force-composition (disable direct scan-out). Defined in steamcompmgr.cpp.
++extern gamescope::ConVar<bool> cv_composite_force;
++// ROCKNIX: composite-blend eligibility reads these globals (defined later in this TU).
++extern bool g_bRxnixColorMgmtIdentitySDR;
++extern std::string g_reshade_effect;
++namespace rxnix_rga {
++    static bool g_bLibTried = false, g_bLibOk = false;
++    static bool g_bEnabled  = false;   // composite rotate/scale path active
++    static int  g_nRotation = 0;       // IM_HAL_TRANSFORM_ROT_*
++    static uint32_t g_nativeW = 0, g_nativeH = 0;  // panel native, landscape-oriented
++    static uint32_t g_renderW = 0, g_renderH = 0;  // GPU composite size (may be < native)
++
++    struct CmaImage {
++        gamescope::OwningRc<CVulkanTexture> tex;
++        int fd = -1;
++        uint32_t w = 0, h = 0, stride = 0, drmFormat = 0;
++    };
++    static CmaImage g_composite[3];    // landscape composite targets (RGA src)
++    static CmaImage g_scanout[3];      // portrait scanout buffers   (RGA dst)
++    static CmaImage g_directPool[4];   // direct-scanout ring (client -> native)
++    static int      g_nDirectIdx = 0;
++    static bool     g_bDirectPool = false;
++    static CmaImage g_yuvPool[4];      // YUV->RGBA convert ring (video clients)
++    static int      g_nYuvIdx = 0;
++    static bool     g_bYuvPool = false;
++    static uint32_t g_yuvW = 0, g_yuvH = 0;
++
++    // Integer scaling (-S integer) is the one mode that must be composited by
++    // Vulkan at the panel native resolution: the RGA scales only bilinearly, which
++    // would destroy the pixel-perfect look of integer upscaling. In that mode the
++    // composite is done at native and the RGA is left to rotate (1:1); the RGA
++    // direct-scanout fast path (which would scale) is also disabled.
++    static bool integer_scaling() {
++        return g_wantedUpscaleScaler == GamescopeUpscaleScaler::INTEGER;
++    }
++
++    static bool lib_init() {
++        if ( g_bLibTried ) return g_bLibOk;
++        g_bLibTried = true;
++        if ( access( "/dev/rga", R_OK | W_OK ) != 0 ) {
++            vk_log.infof( "rxnix_rga: /dev/rga not usable; RGA offload disabled (using shader)" );
++            return false;
++        }
++        g_bLibOk = true;
++        return true;
++    }
++
++    static int drm_to_rga_format( uint32_t drmFormat ) {
++        switch ( drmFormat ) {
++            case DRM_FORMAT_ABGR8888: return RK_FORMAT_RGBA_8888;
++            case DRM_FORMAT_XBGR8888: return RK_FORMAT_RGBX_8888;
++            case DRM_FORMAT_ARGB8888: return RK_FORMAT_BGRA_8888;
++            case DRM_FORMAT_XRGB8888: return RK_FORMAT_BGRX_8888;
++            default: return -1;
++        }
++    }
++
++    static uint32_t cma_drm_format( uint32_t uDRMFormat ) {
++        return ( drm_to_rga_format( uDRMFormat ) >= 0 ) ? uDRMFormat : (uint32_t)DRM_FORMAT_ABGR8888;
++    }
++
++    // Per-fd RGA handle cache, validated by dma-buf inode. fd numbers get recycled
++    // as swapchain images are destroyed/recreated; the inode is unique per backing
++    // object, so an inode mismatch means re-import. Avoids a per-frame
++    // importbuffer_fd()/releasebuffer_handle() (ioctl + RGA IOMMU map/unmap each),
++    // which is otherwise the dominant per-frame cost.
++    struct HandleEntry { rga_buffer_handle_t handle; ino_t inode; uint32_t ws, h; int fmt; };
++    static std::mutex g_hmMutex;
++    static std::unordered_map<int, HandleEntry> g_handleCache;
++
++    static rga_buffer_handle_t import_cached( int fd, uint32_t ws, uint32_t h, int rgaFmt ) {
++        struct stat st = {};
++        ino_t inode = ( fstat( fd, &st ) == 0 ) ? st.st_ino : 0;
++        std::lock_guard<std::mutex> lk( g_hmMutex );
++        auto it = g_handleCache.find( fd );
++        if ( it != g_handleCache.end() ) {
++            HandleEntry &e = it->second;
++            if ( e.inode == inode && e.ws == ws && e.h == h && e.fmt == rgaFmt )
++                return e.handle;
++            releasebuffer_handle( e.handle );
++            g_handleCache.erase( it );
++        }
++        im_handle_param_t p = { ws, h, (uint32_t)rgaFmt };
++        rga_buffer_handle_t hnd = importbuffer_fd( fd, &p );
++        if ( hnd )
++            g_handleCache[fd] = HandleEntry{ hnd, inode, ws, h, rgaFmt };
++        return hnd;
++    }
++
++    // RGA rotate (g_nRotation) with implicit scale when src/dst differ in size.
++    // Release fence of the last async RGA scanout blit; owned here, closed on the next
++    // blit (its KMS commit has consumed it by then). -1 = last blit was synchronous.
++    static int g_nScanoutFence = -1;
++    // The Rockchip RGA async/fence mode needs CONFIG_ROCKCHIP_RGA_ASYNC in the kernel.
++    // Probe it once; if the driver rejects it, fall back to synchronous blits for good.
++    static bool g_bAsyncOk = true;
++    // Hand the Vulkan composite completion to the RGA as an in-kernel acquire fence so
++    // the present thread never blocks on the GPU composite. Disabled permanently if the
++    // RGA job path ever rejects the fence (the caller then falls back to a CPU wait).
++    static bool g_bCompositeAcquireOk = true;
++    static bool rotate_blit( int src_fd, uint32_t src_w, uint32_t src_h, uint32_t src_stride,
++                             int dst_fd, uint32_t dst_w, uint32_t dst_h, uint32_t dst_stride,
++                             uint32_t srcDrmFormat, uint32_t dstDrmFormat, int srcRdMode = 0, bool bAsync = false,
++                             int acquireFenceFd = -1 ) {
++        int srcRgaFmt = drm_to_rga_format( srcDrmFormat );
++        int dstRgaFmt = drm_to_rga_format( dstDrmFormat );
++        if ( srcRgaFmt < 0 || dstRgaFmt < 0 ) return false;
++        uint32_t src_ws = src_stride / 4, dst_ws = dst_stride / 4;
++        uint32_t src_hs = src_h;
++        if ( srcRdMode ) { src_ws = ( src_ws + 31u ) & ~31u; src_hs = ( src_h + 7u ) & ~7u; }
++        rga_buffer_handle_t sh = import_cached( src_fd, src_ws, src_hs, srcRgaFmt );
++        rga_buffer_handle_t dh = import_cached( dst_fd, dst_ws, dst_h, dstRgaFmt );
++        if ( !sh || !dh ) return false;
++        // NB: wrapbuffer_handle_t (the C entry) takes (handle,w,h,wstride,hstride,format).
++        // The C++ wrapbuffer_handle() overload set has format as the 4th arg, so calling
++        // it with a stride there silently swaps stride/format -> RGA "unsupported".
++        rga_buffer_t src = wrapbuffer_handle_t( sh, (int)src_w, (int)src_h, (int)src_ws, (int)src_hs, srcRgaFmt );
++        rga_buffer_t dst = wrapbuffer_handle_t( dh, (int)dst_w, (int)dst_h, (int)dst_ws, (int)dst_h, dstRgaFmt );
++        if ( srcRdMode ) src.rd_mode = srcRdMode;
++        // The previous async release fence has been consumed by its KMS commit by now
++        // (presents are serialised); close it before issuing the next blit.
++        if ( g_nScanoutFence >= 0 ) { close( g_nScanoutFence ); g_nScanoutFence = -1; }
++        IM_STATUS st;
++        if ( acquireFenceFd >= 0 ) {
++            // Async rotate that waits on the Vulkan composite via an in-kernel acquire
++            // fence (the present thread never blocks on the GPU) and hands its release
++            // fence to the scanout plane. The single-task imrotate() entry cannot carry
++            // an acquire fence, so use the RGA job API. The kernel takes its own reference
++            // to the acquire fence during submit and the job path never closes our fd, so
++            // release it here in every case.
++            int fence = -1;
++            im_job_handle_t job = imbeginJob();
++            if ( job != 0 && imrotateTask( job, src, dst, g_nRotation ) == IM_STATUS_SUCCESS ) {
++                st = imendJob( job, IM_ASYNC, acquireFenceFd, &fence );
++            } else {
++                if ( job != 0 ) imcancelJob( job );
++                st = IM_STATUS_FAILED;
++            }
++            close( acquireFenceFd );
++            if ( st == IM_STATUS_SUCCESS ) {
++                if ( fence >= 0 ) g_nScanoutFence = fence;
++            } else if ( fence >= 0 ) {
++                close( fence );
++            }
++        } else if ( bAsync && g_bAsyncOk ) {
++            // Non-blocking rotate: hand the release fence to the scanout plane IN_FENCE_FD
++            // so the VOP2 waits on the RGA in hardware while the present thread and GPU
++            // proceed to the next frame.
++            int fence = -1;
++            st = imrotate( src, dst, g_nRotation, 0, &fence );
++            if ( st == IM_STATUS_SUCCESS && fence >= 0 ) {
++                g_nScanoutFence = fence;
++            } else {
++                // Kernel lacks CONFIG_ROCKCHIP_RGA_ASYNC (or async failed): disable async
++                // permanently and do a synchronous blit for this frame instead.
++                if ( fence >= 0 ) close( fence );
++                g_bAsyncOk = false;
++                st = imrotate_t( src, dst, g_nRotation, 1 );
++            }
++        } else {
++            st = imrotate_t( src, dst, g_nRotation, 1 );
++        }
++        if ( st != IM_STATUS_SUCCESS ) {
++            static bool s_bLogged = false;
++            if ( !s_bLogged ) {
++                s_bLogged = true;
++                vk_log.errorf( "rxnix_rga: imrotate failed st=%d[%s] (src %ux%u -> dst %ux%u)",
++                    (int)st, imStrError_t( st ), src_w, src_h, dst_w, dst_h );
++            }
++            return false;
++        }
++        return true;
++    }
++
++    // RGA (unlike the Vulkan compositor, which does a foreign-queue release that
++    // flushes GPU caches) does not flush its destination to the point of coherency
++    // for the VOP2 display engine. Without this the panel scans out stale/black
++    // memory even though the RGA blit succeeded. A dma-buf CPU-access sync performs
++    // the cache maintenance that makes the RGA output visible to VOP2.
++    // The scanout dma-buf is CPU-cached CMA. Right after allocation it holds dirty
++    // (zeroed) CPU cache lines; if those are written back to DRAM after the RGA has
++    // rendered the frame they clobber it and the panel scans out black - which is
++    // why a cache sync is needed at all. But it is needed only ONCE per buffer:
++    // discarding the initial dirty lines (a dma-buf CPU-access sync = cache
++    // invalidate) is enough, because afterwards nothing on the CPU writes the buffer
++    // - the RGA fills it and the VOP2 scans it out, both by DMA - so it stays
++    // coherent with no further maintenance. We therefore sync a buffer only for its
++    // first few uses (also covering any early access while the image is imported).
++    // The previous per-frame sync did an ~8 MB cache flush every frame (~5 ms),
++    // serialising the present thread; skipping it in steady state is a large win and
++    // was verified to leave the scanned-out content unchanged.
++    static std::unordered_map<int,int> g_flushed;
++    static bool scanout_synced( int fd ) { auto it = g_flushed.find( fd ); return it != g_flushed.end() && it->second >= 3; }
++    static void flush_for_scanout( int fd, size_t sz ) {
++        int &n = g_flushed[fd];
++        if ( n >= 3 ) return;
++        n++;
++        void *m = mmap( nullptr, sz, PROT_READ, MAP_SHARED, fd, 0 );
++        if ( m == MAP_FAILED ) return;
++        struct dma_buf_sync sy = {};
++        sy.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ; ioctl( fd, DMA_BUF_IOCTL_SYNC, &sy );
++        sy.flags = DMA_BUF_SYNC_END   | DMA_BUF_SYNC_READ; ioctl( fd, DMA_BUF_IOCTL_SYNC, &sy );
++        munmap( m, sz );
++    }
++
++    static bool make_cma_image( CmaImage &out, uint32_t width, uint32_t height,
++                                uint32_t drmFormat, bool bComposite ) {
++        uint32_t stride_bytes = ( ( width * 4u ) + 255u ) & ~255u; // aligned pitch (import + VOP2)
++        size_t size = (size_t)stride_bytes * height;
++        int fd = rxnix_cma::dmaheap_alloc( size );
++        if ( fd < 0 ) return false;
++        struct wlr_dmabuf_attributes attrs = {};
++        attrs.width = (int)width; attrs.height = (int)height;
++        attrs.format = drmFormat; attrs.modifier = DRM_FORMAT_MOD_LINEAR;
++        attrs.n_planes = 1; attrs.fd[0] = fd;
++        attrs.stride[0] = stride_bytes; attrs.offset[0] = 0;
++        gamescope::OwningRc<gamescope::IBackendFb> pBackendFb;
++        if ( !bComposite ) { // scanned-out buffers need a KMS framebuffer
++            pBackendFb = GetBackend()->ImportDmabufToBackend( &attrs );
++            if ( !pBackendFb ) {
++                vk_log.errorf( "rxnix_rga: ImportDmabufToBackend failed (%ux%u)", width, height );
++                close( fd ); return false;
++            }
++        }
++        CVulkanTexture::createFlags flags;
++        flags.bSampled = true;
++        if ( bComposite ) { flags.bStorage = true; flags.bOutputImage = true; flags.bTransferSrc = true; }
++        gamescope::OwningRc<CVulkanTexture> pTex = new CVulkanTexture();
++        if ( !pTex->BInit( width, height, 1u, drmFormat, flags, &attrs, 0, 0, nullptr, std::move( pBackendFb ) ) ) {
++            vk_log.errorf( "rxnix_rga: BInit failed on CMA dma-buf (%ux%u)", width, height );
++            close( fd ); return false;
++        }
++        out.tex = pTex; out.fd = fd;
++        out.w = width; out.h = height; out.stride = stride_bytes; out.drmFormat = drmFormat;
++        return true;
++    }
++
++    static bool ensure_direct_pool( uint32_t w, uint32_t h, uint32_t fmt ) {
++        if ( g_bDirectPool ) return true;
++        for ( int i = 0; i < 4; i++ ) {
++            if ( !make_cma_image( g_directPool[i], w, h, fmt, false ) ) {
++                vk_log.errorf( "rxnix_rga: direct pool %d alloc failed (%ux%u)", i, w, h );
++                return false;
++            }
++        }
++        g_nDirectIdx = 0; g_bDirectPool = true;
++        vk_log.infof( "rxnix_rga: direct scanout pool %ux%u x4 (LINEAR)", w, h );
++        return true;
++    }
++
++    // Reused RGBA output ring for the YUV->RGBA convert (video clients). Allocating a
++    // fresh CMA image + Vulkan import per frame was expensive and, because each frame got a
++    // new fd, also defeated the flush_for_scanout skip (an ~8 MB cache flush every frame).
++    // A 4-deep ring (like g_directPool) removes both: reuse-while-in-flight is bounded
++    // exactly as the proven scanout/direct pools.
++    static bool ensure_yuv_pool( uint32_t w, uint32_t h ) {
++        if ( g_bYuvPool && g_yuvW == w && g_yuvH == h ) return true;
++        if ( g_bYuvPool ) {
++            for ( int i = 0; i < 4; i++ ) {
++                if ( g_yuvPool[i].fd >= 0 ) close( g_yuvPool[i].fd );
++                g_yuvPool[i] = CmaImage{};
++            }
++            g_bYuvPool = false;
++        }
++        for ( int i = 0; i < 4; i++ ) {
++            if ( !make_cma_image( g_yuvPool[i], w, h, DRM_FORMAT_XBGR8888, true ) ) {
++                vk_log.errorf( "rxnix_rga: yuv convert pool %d alloc failed (%ux%u)", i, w, h );
++                return false;
++            }
++        }
++        g_yuvW = w; g_yuvH = h; g_nYuvIdx = 0; g_bYuvPool = true;
++        vk_log.infof( "rxnix_rga: YUV->RGBA convert pool %ux%u x4 (LINEAR)", w, h );
++        return true;
++    }
++    // ---- ROCKNIX: multi-layer composite blend offload to the RGA ----
++    // When a frame must be composited because overlays sit over the base (a cursor,
++    // HUD, notification ...) and every layer is expressible by the RGA 2D engine,
++    // blend the layers with the RGA (improcess src-over) instead of the Vulkan
++    // compute compositor, then rotate to scanout. The whole present then runs on the
++    // RGA and the 3D GPU stays idle, so the client keeps the entire core. Any frame
++    // the RGA cannot express (an AFBC client it cannot read, colour management, HDR,
++    // FSR/NIS/blur, integer scaling, per-layer opacity < 1, a scaling nearest/pixel
++    // filter ...) makes composite_eligible() return false and gamescope's Vulkan
++    // composite path runs unchanged. Driver-independent: works on libMali and PanVK.
++    static CmaImage g_blendComp;       // landscape blend scratch (RGA dst, then rotate src)
++    static CmaImage g_blendScan[3];    // portrait KMS scanout ring (RGA rotate dst)
++    static int      g_nBlendIdx = 0;
++    static bool     g_bBlendPool = false;
++
++    static bool ensure_blend_pool() {
++        if ( g_bBlendPool ) return true;
++        uint32_t fmt = cma_drm_format( DRM_FORMAT_INVALID );
++        uint32_t scanW = g_nativeH, scanH = g_nativeW;
++        if ( !make_cma_image( g_blendComp, g_renderW, g_renderH, fmt, true ) ) return false;
++        for ( int i = 0; i < 3; i++ )
++            if ( !make_cma_image( g_blendScan[i], scanW, scanH, fmt, false ) ) return false;
++        g_nBlendIdx = 0; g_bBlendPool = true;
++        vk_log.infof( "rxnix_rga: composite-blend pool ready (comp %ux%u -> scan %ux%u)", g_renderW, g_renderH, scanW, scanH );
++        return true;
++    }
++
++    // Map a layer's client buffer to an RGA source descriptor. Returns false for any
++    // buffer the RGA2P cannot import (bad format, or a non-LINEAR/non-AFBC32x8 modifier
++    // - notably Mali AFBC 16x16, which the RGA cannot decode).
++    static bool layer_rga_src_info( const FrameInfo_t::Layer_t *L, int *pFmt, int *pRdMode ) {
++        const struct wlr_dmabuf_attributes &dma = L->tex->dmabuf();
++        if ( dma.n_planes < 1 || dma.fd[0] < 0 ) return false;
++        int f = drm_to_rga_format( dma.format );
++        if ( f < 0 ) return false;
++        int rd = 0;
++        uint64_t mod = dma.modifier;
++        if ( mod != DRM_FORMAT_MOD_LINEAR && mod != DRM_FORMAT_MOD_INVALID && mod != 0 ) {
++            if ( (uint8_t)( mod >> 56 ) != 0x08 ) return false;   // non-ARM modifier
++            if ( (uint8_t)( mod & 0xf ) != 2 ) return false;      // only AFBC 32x8 decodable
++            rd = IM_AFBC32x8_MODE;
++        }
++        *pFmt = f; *pRdMode = rd;
++        return true;
++    }
++
++    // Destination rect of a layer in composite (landscape) pixels, matching the plane
++    // geometry gamescope computes for hardware planes: dst = ( -offset, texContent/scale ).
++    static void layer_dst_rect( const FrameInfo_t::Layer_t *L, int *x, int *y, int *w, int *h ) {
++        *x = (int)( -L->offset.x );
++        *y = (int)( -L->offset.y );
++        *w = (int)( (float)L->tex->contentWidth()  / L->scale.x + 0.5f );
++        *h = (int)( (float)L->tex->contentHeight() / L->scale.y + 0.5f );
++    }
++
++    static bool composite_eligible( const FrameInfo_t *fi ) {
++        if ( !g_bEnabled || integer_scaling() ) return false;
++        if ( cv_composite_force.Get() ) return false;
++        if ( fi->layerCount < 2 || fi->layerCount > 4 ) return false;  // 1 = other paths; cap RGA passes
++        if ( fi->useFSRLayer0 || fi->useNISLayer0 || fi->blurLayer0 || fi->bFadingOut ) return false;
++        if ( !g_reshade_effect.empty() ) return false;
++        if ( !g_bRxnixColorMgmtIdentitySDR ) return false;            // HDR / colour mgmt / night mode / sliders
++        if ( fi->outputEncodingEOTF != EOTF_Gamma22 ) return false;
++        if ( fi->ycbcrMask() != 0 ) return false;
++        if ( g_uCompositeDebug != 0 ) return false;                   // heatmap / markers
++        for ( int i = 0; i < fi->layerCount; i++ ) {
++            const FrameInfo_t::Layer_t *L = &fi->layers[i];
++            if ( !L->tex ) return false;
++            if ( L->colorspace != GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR || L->ctm ) return false;
++            if ( L->opacity < 1.0f ) return false;                    // per-pixel alpha only; fades -> GPU
++            if ( L->eAlphaBlendingMode != ALPHA_BLENDING_MODE_PREMULTIPLIED ) return false;
++            if ( L->filter != GamescopeUpscaleFilter::LINEAR && !L->isScreenSize() ) return false;
++            int f, rd;
++            if ( !layer_rga_src_info( L, &f, &rd ) ) return false;
++            int dx, dy, dw, dh; layer_dst_rect( L, &dx, &dy, &dw, &dh );
++            if ( dw <= 0 || dh <= 0 ) return false;
++            // Every layer must land fully inside the composite (no clip maths here).
++            // The composite is cleared to black first, so a letterboxed base is fine.
++            if ( dx < 0 || dy < 0 || dx + dw > (int)g_renderW || dy + dh > (int)g_renderH ) return false;
++        }
++        return true;
++    }
++
++    static bool blend_layers( const FrameInfo_t *fi, CmaImage &comp ) {
++        int compFmt = drm_to_rga_format( comp.drmFormat );
++        if ( compFmt < 0 ) return false;
++        rga_buffer_handle_t dhnd = import_cached( comp.fd, comp.stride / 4, comp.h, compFmt );
++        if ( !dhnd ) return false;
++        rga_buffer_t dst = wrapbuffer_handle_t( dhnd, (int)comp.w, (int)comp.h, (int)( comp.stride / 4 ), (int)comp.h, compFmt );
++        // Clear to black so a letterboxed/pillarboxed base leaves black borders and no
++        // stale content shows through any gap between layers.
++        { im_rect full = { 0, 0, (int)comp.w, (int)comp.h }; imfill( dst, full, 0x00000000, 1 ); }
++        for ( int i = 0; i < fi->layerCount; i++ ) {
++            const FrameInfo_t::Layer_t *L = &fi->layers[i];
++            const struct wlr_dmabuf_attributes &dma = L->tex->dmabuf();
++            int sfmt, rd;
++            if ( !layer_rga_src_info( L, &sfmt, &rd ) ) return false;
++            uint32_t sws = dma.stride[0] / 4, shs = (uint32_t)dma.height;
++            if ( rd ) { sws = ( sws + 31u ) & ~31u; shs = ( shs + 7u ) & ~7u; }
++            rga_buffer_handle_t shnd = import_cached( dma.fd[0], sws, shs, sfmt );
++            if ( !shnd ) return false;
++            rga_buffer_t src = wrapbuffer_handle_t( shnd, (int)dma.width, (int)dma.height, (int)sws, (int)shs, sfmt );
++            if ( rd ) src.rd_mode = rd;
++            im_rect srect = { 0, 0, (int)L->tex->contentWidth(), (int)L->tex->contentHeight() };
++            im_rect drect = {};
++            int usage;
++            if ( i == 0 ) {
++                int dx, dy, dw, dhh; layer_dst_rect( L, &dx, &dy, &dw, &dhh );
++                drect.x = dx; drect.y = dy; drect.width = dw; drect.height = dhh; // base at its rect (may be letterboxed)
++                usage = 0;                                            // scaled copy
++            } else {
++                int dx, dy, dw, dhh; layer_dst_rect( L, &dx, &dy, &dw, &dhh );
++                drect.x = dx; drect.y = dy; drect.width = dw; drect.height = dhh;
++                usage = IM_ALPHA_BLEND_SRC_OVER; // premultiplied => NO IM_ALPHA_BLEND_PRE_MUL
++            }
++            im_rect prect = {};
++            rga_buffer_t pat = {};
++            IM_STATUS st = improcess( src, dst, pat, srect, drect, prect, -1, nullptr, nullptr, usage );
++            if ( st != IM_STATUS_SUCCESS ) {
++                static bool s_bLogged = false;
++                if ( !s_bLogged ) { s_bLogged = true;
++                    vk_log.errorf( "rxnix_rga: composite-blend layer %d improcess st=%d[%s]", i, (int)st, imStrError_t( st ) ); }
++                return false;
++            }
++        }
++        return true;
++    }
++} // namespace rxnix_rga
++
++// The release fence of the last async RGA scanout blit (or -1). The DRM backend
++// hands it to the scanout plane IN_FENCE_FD so the VOP2 waits on the RGA in
++// hardware. Ownership stays in rxnix_rga (it closes the fence on the next blit).
++int vulkan_rxnix_scanout_fence() {
++    return rxnix_rga::g_nScanoutFence;
++}
++
++// ROCKNIX: blend a multi-layer frame on the RGA 2D engine and rotate it to
++// a panel-native portrait scanout buffer, with NO Vulkan compute composite - the 3D
++// GPU stays idle so the client keeps the whole core. Returns the scanout buffer to
++// present, or nullptr (the frame is not RGA-expressible; the caller GPU-composites).
++gamescope::Rc<CVulkanTexture> vulkan_rxnix_rga_composite_rotate( const struct FrameInfo_t *fi ) {
++    using namespace rxnix_rga;
++    if ( !fi || !composite_eligible( fi ) ) return nullptr;
++    if ( !ensure_blend_pool() ) return nullptr;
++    CmaImage &comp = g_blendComp;
++    CmaImage &scan = g_blendScan[g_nBlendIdx];
++    if ( comp.fd < 0 || scan.fd < 0 ) return nullptr;
++    if ( !blend_layers( fi, comp ) ) return nullptr;
++    // Rotate the landscape composite into the portrait scanout. Synchronous: the single
++    // landscape scratch is reused next present, so it must be consumed now.
++    if ( !rotate_blit( comp.fd, comp.w, comp.h, comp.stride,
++                       scan.fd, scan.w, scan.h, scan.stride,
++                       comp.drmFormat, scan.drmFormat, 0, false, -1 ) )
++        return nullptr;
++    flush_for_scanout( scan.fd, (size_t)scan.stride * scan.h );
++    g_nBlendIdx = ( g_nBlendIdx + 1 ) % 3;
++    static bool s_bLogged = false;
++    if ( !s_bLogged ) { s_bLogged = true;
++        vk_log.infof( "rxnix_rga: multi-layer COMPOSITE-BLEND active (RGA blends %d layers, GPU idle)", fi->layerCount ); }
++    return scan.tex;
++}
++
++// Allocate RGA composite + scanout images. Returns true if the RGA path is active
++// (rotated internal panel + usable /dev/rga); false to fall back to shader/normal.
++static bool rxnix_setup_output( VulkanOutput_t *pOutput, uint32_t uDRMFormat ) {
++    using namespace rxnix_rga;
++    extern int g_nNestedWidth;
++    extern int g_nNestedHeight;
++    auto *pConn = GetBackend()->GetCurrentConnector();
++    if ( !pConn ) return g_bEnabled;
++    GamescopePanelOrientation eOrient = pConn->GetCurrentOrientation();
++    bool bRotated = ( eOrient == GAMESCOPE_PANEL_ORIENTATION_90 || eOrient == GAMESCOPE_PANEL_ORIENTATION_270 );
++
++    // One-time allocation of the persistent CMA composite + scanout images.
++    if ( !g_bEnabled )
++    {
++        if ( !bRotated || !lib_init() )
++            return false;
++        // RGA rotates the content by the inverse of the panel mounting angle so
++        // it lands upright on the physically-rotated panel.
++        g_nRotation = ( eOrient == GAMESCOPE_PANEL_ORIENTATION_90 ) ? IM_HAL_TRANSFORM_ROT_270 : IM_HAL_TRANSFORM_ROT_90;
++        g_nativeW = g_nOutputWidth;
++        g_nativeH = g_nOutputHeight;
++
++        // GPU composite (render) size. When the game runs at a smaller nested
++        // (-w/-h) size with the same aspect as the panel, composite at that size
++        // and let the RGA hardware upscale to native - offloading the scale from
++        // the GPU. Otherwise composite at native (RGA rotate only).
++        g_renderW = g_nativeW;
++        g_renderH = g_nativeH;
++        if ( !integer_scaling() &&
++             g_nNestedWidth >= 64 && g_nNestedHeight >= 64 &&
++             (uint32_t)g_nNestedWidth <= g_nativeW && (uint32_t)g_nNestedHeight <= g_nativeH &&
++             (uint64_t)g_nNestedWidth * g_nativeH == (uint64_t)g_nNestedHeight * g_nativeW )
++        {
++            g_renderW = (uint32_t)g_nNestedWidth;
++            g_renderH = (uint32_t)g_nNestedHeight;
++        }
++
++        uint32_t fmt   = cma_drm_format( uDRMFormat );
++        uint32_t scanW = g_nativeH, scanH = g_nativeW;  // portrait scanout (panel native)
++        for ( int i = 0; i < 3; i++ )
++            if ( !make_cma_image( g_scanout[i], scanW, scanH, fmt, false ) ) return false;
++        for ( int i = 0; i < 3; i++ )
++            if ( !make_cma_image( g_composite[i], g_renderW, g_renderH, fmt, true ) ) return false;
++        g_bEnabled = true;
++        vk_log.infof( "rxnix_rga: ENABLED - composite %ux%u -> RGA rotate%s -> scanout %ux%u (orient=%d rot=%d)",
++            g_renderW, g_renderH,
++            ( g_renderW != g_nativeW || g_renderH != g_nativeH ) ? "+scale" : "",
++            scanW, scanH, (int)eOrient, g_nRotation );
++    }
++
++    // (Re)populate the output vectors on EVERY call. vulkan_make_output_images
++    // clears pOutput->outputImages and is re-invoked at runtime via
++    // vulkan_remake_output_images() (e.g. when a client establishes its surface),
++    // so we must always hand back our persistent CMA composite/scanout images or
++    // the next composite targets a null image.
++    g_bRotationShaderEnabled = false; // RGA performs the rotation instead of the shader
++    // Composite at the (possibly reduced) render resolution; RGA upscales to native.
++    g_nOutputWidth  = g_renderW;
++    g_nOutputHeight = g_renderH;
++    pOutput->rxnixScanoutImages.resize( 3 );
++    for ( int i = 0; i < 3; i++ )
++        pOutput->rxnixScanoutImages[i] = g_scanout[i].tex;
++    for ( int i = 0; i < 3; i++ )
++        pOutput->outputImages[i] = g_composite[i].tex;
++    pOutput->temporaryHackyBlankImage = vulkan_create_debug_blank_texture( g_renderW, g_renderH );
++    return true;
++}
++
++bool vulkan_rxnix_rga_enabled() {
++    return rxnix_rga::g_bEnabled;
++}
++
++// Lightweight probe (usable before the Vulkan device exists) used by the DRM
++// backend to decide whether to request the composite rotation shader: when the
++// RGA 2D engine is present it will do the rotation, so the shader (and its
++// pipeline permutations) can be skipped entirely.
++bool vulkan_rxnix_rga_available() {
++    return rxnix_rga::lib_init();
++}
++
++// Direct RGA scanout - rotate+scale the client buffer straight to the display
++// with no Vulkan composite - is the DEFAULT present path (best performance: the
++// RGA does both the scale and the rotate in hardware). It is disabled, so the
++// frame is composited by Vulkan and the RGA only rotates, in exactly two cases:
++//   * --force-composition (cv_composite_force): the user explicitly disables
++//     direct scan-out.
++//   * integer scaling (-S integer): the RGA is bilinear-only, so Vulkan must
++//     perform the pixel-perfect integer upscale.
++bool vulkan_rxnix_rga_direct_enabled() {
++    return rxnix_rga::g_bEnabled &&
++           !rxnix_rga::integer_scaling() &&
++           !cv_composite_force.Get();
++}
++
++// RGA-rotate the just-composited landscape output into its paired portrait
++// scanout buffer; returns that buffer for the DRM present, or nullptr to fall
++// back to the plain composited output. Instead of the caller blocking on the
++// Vulkan composite before this rotate, the composite completion (ulCompositePoint)
++// is handed to the RGA as an in-kernel acquire fence. *pbCompositeWaited is set
++// true iff this function CPU-waited for the composite (so the caller knows whether
++// a plain-output fallback still needs a wait).
++gamescope::Rc<CVulkanTexture> vulkan_rxnix_rotate_output_for_present( uint64_t ulCompositePoint, bool* pbCompositeWaited ) {
++    using namespace rxnix_rga;
++    if ( pbCompositeWaited ) *pbCompositeWaited = false;
++    if ( !g_bEnabled || g_output.rxnixScanoutImages.size() != 3 ) return nullptr;
++    uint32_t nOut = ( g_output.nOutImage + 2 ) % 3; // mirror vulkan_get_last_output_image(false,false)
++    CmaImage &src = g_composite[nOut];
++    CmaImage &dst = g_scanout[nOut];
++    if ( src.fd < 0 || dst.fd < 0 ) return nullptr;
++    // Async only for the (triple-buffered) composite buffers, and only once the buffer
++    // no longer needs the initial CPU cache flush (which requires the RGA complete).
++    // The direct path stays synchronous: its source is the client buffer, which may be
++    // released/reused before an async read finishes.
++    bool bAsync = scanout_synced( dst.fd ) && g_bAsyncOk;
++    // When the RGA blit is async, hand it the composite completion as an in-kernel
++    // acquire fence so the present thread does not block on the GPU. If the driver
++    // cannot export a sync_file, fall back to blocking for the composite here.
++    int acquireFd = -1;
++    if ( bAsync && g_bCompositeAcquireOk )
++        acquireFd = g_device.ExportTimelineSyncFile( ulCompositePoint );
++    if ( acquireFd < 0 ) {
++        vulkan_wait( ulCompositePoint, true );
++        if ( pbCompositeWaited ) *pbCompositeWaited = true;
++    }
++    if ( !rotate_blit( src.fd, src.w, src.h, src.stride,
++                       dst.fd, dst.w, dst.h, dst.stride, src.drmFormat, dst.drmFormat, 0, bAsync, acquireFd ) ) {
++        // rotate_blit consumed/closed acquireFd. If we handed it the composite fence
++        // (and thus skipped the CPU wait), stop using the acquire path and make sure the
++        // composite is complete before the caller presents the plain composited output.
++        if ( acquireFd >= 0 ) {
++            g_bCompositeAcquireOk = false;
++            if ( pbCompositeWaited && !*pbCompositeWaited ) {
++                vulkan_wait( ulCompositePoint, true );
++                *pbCompositeWaited = true;
++            }
++        }
++        return nullptr;
++    }
++    if ( !bAsync )
++        flush_for_scanout( dst.fd, (size_t)dst.stride * dst.h );
++    return g_output.rxnixScanoutImages[nOut];
++}
++
++// Rotate+scale a single fullscreen client buffer straight into a panel-native
++// portrait scanout buffer (skips the Vulkan composite). Returns nullptr (fall
++// back to the composite path) for any buffer the RGA2 cannot import directly.
++gamescope::Rc<CVulkanTexture> vulkan_rxnix_rga_direct_rotate( CVulkanTexture *pClient ) {
++    using namespace rxnix_rga;
++    if ( !g_bEnabled || !pClient ) return nullptr;
++    const struct wlr_dmabuf_attributes &dma = pClient->dmabuf();
++    if ( dma.n_planes < 1 || dma.fd[0] < 0 ) return nullptr;
++    if ( drm_to_rga_format( dma.format ) < 0 ) return nullptr;
++    int srcRdMode = 0;
++    if ( dma.modifier != DRM_FORMAT_MOD_LINEAR && dma.modifier != DRM_FORMAT_MOD_INVALID && dma.modifier != 0 ) {
++        uint8_t vendor = (uint8_t)( dma.modifier >> 56 );
++        if ( vendor != 0x08 ) return nullptr;           // non-ARM modifier: fall back
++        uint8_t block = (uint8_t)( dma.modifier & 0xf );
++        if ( block == 2 ) srcRdMode = IM_AFBC32x8_MODE;  // AFBC 32x8 (RGA2P-decodable)
++        else return nullptr;                             // AFBC 16x16 etc: fall back
++    }
++    // Destination is always the panel native portrait size, so a game rendered at
++    // a smaller nested (-w/-h) resolution is upscaled by the RGA hardware.
++    uint32_t dstW = g_nativeH, dstH = g_nativeW;
++    uint32_t fmt  = cma_drm_format( DRM_FORMAT_INVALID );
++    if ( !ensure_direct_pool( dstW, dstH, fmt ) ) return nullptr;
++    CmaImage &dst = g_directPool[g_nDirectIdx];
++    if ( !rotate_blit( dma.fd[0], (uint32_t)dma.width, (uint32_t)dma.height, dma.stride[0],
++                       dst.fd, dst.w, dst.h, dst.stride, dma.format, dst.drmFormat, srcRdMode ) )
++        return nullptr;
++    flush_for_scanout( dst.fd, (size_t)dst.stride * dst.h );
++    g_nDirectIdx = ( g_nDirectIdx + 1 ) % 4;
++    static bool s_bLoggedDirect = false;
++    if ( !s_bLoggedDirect ) {
++        s_bLoggedDirect = true;
++        vk_log.infof( "rxnix_rga: DIRECT rotate/scale ACTIVE (client %ux%u mod=0x%lx -> scanout %ux%u)",
++            (uint32_t)dma.width, (uint32_t)dma.height, (unsigned long)dma.modifier, dst.w, dst.h );
++    }
++    return dst.tex;
++}
++// ROCKNIX: libMali's Vulkan cannot sample 3-plane planar YUV (YU12/I420, YV12) buffers,
++// which a Wayland video client's software video decode presents. Convert
++// them to RGBA with the RGA 2D engine (hardware YUV->RGB colour-space conversion) into a
++// fresh CMA image that the compositor samples and rotates like any other client texture.
++// Returns nullptr where /dev/rga is unavailable so the caller falls back to Vulkan import.
++gamescope::OwningRc<CVulkanTexture> vulkan_rxnix_yuv_to_rgba( const struct wlr_dmabuf_attributes *pDMA )
++{
++	using namespace rxnix_rga;
++	if ( !pDMA || pDMA->fd[0] < 0 || !lib_init() )
++		return nullptr;
++	int srcRgaFmt;
++	switch ( pDMA->format )
++	{
++		case DRM_FORMAT_YUV420: srcRgaFmt = RK_FORMAT_YCbCr_420_P; break; // I420 / YU12
++		case DRM_FORMAT_YVU420: srcRgaFmt = RK_FORMAT_YCrCb_420_P; break; // YV12
++		case DRM_FORMAT_NV12:   srcRgaFmt = RK_FORMAT_YCbCr_420_SP; break; // NV12 (V4L2 Request rkvdec HW decode)
++		case DRM_FORMAT_NV21:   srcRgaFmt = RK_FORMAT_YCrCb_420_SP; break; // NV21
++		default: return nullptr;
++	}
++	const uint32_t w = (uint32_t)pDMA->width, h = (uint32_t)pDMA->height;
++	const uint32_t srcWs = pDMA->stride[0] ? (uint32_t)pDMA->stride[0] : w;
++	uint32_t srcHs = h;
++	if ( pDMA->n_planes > 1 && (uint32_t)pDMA->offset[1] > (uint32_t)pDMA->offset[0] && srcWs > 0 )
++		srcHs = ( (uint32_t)pDMA->offset[1] - (uint32_t)pDMA->offset[0] ) / srcWs; // Y rows incl. padding, so RGA locates U/V correctly
++
++	if ( !ensure_yuv_pool( w, h ) )
++		return nullptr;
++	CmaImage &rgba = g_yuvPool[ g_nYuvIdx ];
++	g_nYuvIdx = ( g_nYuvIdx + 1 ) % 4;
++
++	im_handle_param_t sp = { srcWs, srcHs, (uint32_t)srcRgaFmt };
++	im_handle_param_t dp = { rgba.stride / 4u, rgba.h, (uint32_t)RK_FORMAT_RGBA_8888 };
++	rga_buffer_handle_t sh = importbuffer_fd( pDMA->fd[0], &sp );
++	rga_buffer_handle_t dh = importbuffer_fd( rgba.fd, &dp );
++	IM_STATUS st = IM_STATUS_FAILED;
++	if ( sh && dh )
++	{
++		rga_buffer_t src = wrapbuffer_handle_t( sh, (int)w, (int)h, (int)srcWs, (int)srcHs, srcRgaFmt );
++		rga_buffer_t dst = wrapbuffer_handle_t( dh, (int)rgba.w, (int)rgba.h, (int)( rgba.stride / 4u ), (int)rgba.h, RK_FORMAT_RGBA_8888 );
++		st = imcvtcolor( src, dst, srcRgaFmt, RK_FORMAT_RGBA_8888, IM_COLOR_SPACE_DEFAULT, 1 );
++	}
++	if ( dh ) releasebuffer_handle( dh );
++	if ( sh ) releasebuffer_handle( sh );
++	if ( st == IM_STATUS_SUCCESS )
++		flush_for_scanout( rgba.fd, (size_t)rgba.stride * rgba.h );
++	gamescope::OwningRc<CVulkanTexture> tex = rgba.tex; // pooled buffer; fd kept open for reuse
++	if ( st != IM_STATUS_SUCCESS )
++	{
++		static bool s_bLogged = false;
++		if ( !s_bLogged ) { s_bLogged = true; vk_log.errorf( "rxnix_rga: YUV->RGBA convert failed st=%d", (int)st ); }
++		return nullptr;
++	}
++	return tex;
++}
++
++bool vulkan_rxnix_rga_yuv_available()
++{
++	return rxnix_rga::lib_init();
++}
++
+ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
+ {
+ 	CVulkanTexture::createFlags outputImageflags;
+@@ -3445,6 +4270,11 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
+ 	uint32_t outputWidth = g_nOutputWidth;
+ 	uint32_t outputHeight = g_nOutputHeight;
+ 
++	// ROCKNIX: if the RGA 2D engine can drive the (rotated) panel, allocate
++	// CMA composite + scanout images and let RGA rotate/scale at present time.
++	if ( rxnix_setup_output( pOutput, uDRMFormat ) )
++		return true;
++
+ 	if ( g_bRotationShaderEnabled )
+ 	{
+ 		switch ( GetBackend()->GetCurrentConnector()->GetCurrentOrientation() )
+@@ -3753,6 +4583,16 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_dmabuf( struct wl
+ 	//fprintf(stderr, "pDMA->width: %d pDMA->height: %d pDMA->format: 0x%x pDMA->modifier: 0x%lx pDMA->n_planes: %d\n",
+ 	//	pDMA->width, pDMA->height, pDMA->format, pDMA->modifier, pDMA->n_planes);
+ 	
++	// libMali cannot Vulkan-sample 3-plane planar YUV (a Wayland video client's decoded
++	// frames); hand those to the RGA for a hardware colour-convert to an RGBA texture.
++	if ( pDMA->format == DRM_FORMAT_YUV420 || pDMA->format == DRM_FORMAT_YVU420 ||
++	     pDMA->format == DRM_FORMAT_NV12   || pDMA->format == DRM_FORMAT_NV21 )
++	{
++		gamescope::OwningRc<CVulkanTexture> pRgba = vulkan_rxnix_yuv_to_rgba( pDMA );
++		if ( pRgba )
++			return pRgba;
++	}
++
+ 	if ( pTex->BInit( pDMA->width, pDMA->height, 1u, pDMA->format, texCreateFlags, pDMA, 0, 0, nullptr, pBackendFb ) == false )
+ 		return nullptr;
+ 	
+@@ -3857,6 +4697,12 @@ float g_flInternalDisplayBrightnessNits = 500.0f;
+ float g_flHDRItmSdrNits = 100.f;
+ float g_flHDRItmTargetNits = 1000.f;
+ 
++// RXNIX: raised once (in update_color_mgmt) when the SDR (Gamma22) output colour
++// management is an identity round-trip, so the libMali composite fast-path may
++// skip the per-pixel colour-management LUT lookups. Never set on non-default
++// colour config (nightmode, look LUT, gamut widening, gain, HDR, ...).
++extern bool g_bRxnixColorMgmtIdentitySDR;
++
+ #pragma pack(push, 1)
+ struct BlitPushData_t
+ {
+@@ -3876,6 +4722,8 @@ struct BlitPushData_t
+     float u_itmSdrNits; // unset
+     float u_itmTargetNits; // unset
+ 
++    uint32_t u_rxnixTrivial;
++
+ 	explicit BlitPushData_t(const struct FrameInfo_t *frameInfo)
+ 	{
+ 		u_shaderFilter = 0;
+@@ -3916,6 +4764,35 @@ struct BlitPushData_t
+ 		u_nitsToLinear = 1.0f / g_flInternalDisplayBrightnessNits;
+ 		u_itmSdrNits = g_flHDRItmSdrNits;
+ 		u_itmTargetNits = g_flHDRItmTargetNits;
++
++		// RXNIX composite fast-path selection. Gated purely on the driver-independent
++		// colour-management identity proof: SDR content whose output colour management
++		// is a proven identity round-trip, with every layer colorspace_linear and an
++		// identity CTM, so skipping the per-pixel colour-management LUTs yields a
++		// bit-equivalent result at a fraction of the cost. This holds on any Vulkan
++		// driver (the skipped work is a mathematical identity), so it is NOT gated on
++		// libMali: PanVK/panfrost needs it too whenever the Vulkan composite is
++		// mandatory (integer scaling, --force-composition), where the RGA cannot take
++		// over the scale. u_rxnixTrivial rides in the composite constants UBO whose
++		// explicit range (see 0013) covers it, so PanVK reads it correctly.
++		u_rxnixTrivial = 0u;
++		if ( g_bRxnixColorMgmtIdentitySDR
++		     && frameInfo->outputEncodingEOTF == EOTF_Gamma22
++		     && frameInfo->ycbcrMask() == 0
++		     && g_uCompositeDebug == 0 )
++		{
++			bool bAllTrivial = frameInfo->layerCount > 0;
++			for ( int i = 0; i < frameInfo->layerCount; i++ )
++			{
++				const FrameInfo_t::Layer_t *rxL = &frameInfo->layers[i];
++				if ( rxL->colorspace != GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR || rxL->ctm )
++				{
++					bAllTrivial = false;
++					break;
++				}
++			}
++			u_rxnixTrivial = bAllTrivial ? 1u : 0u;
++		}
+ 	}
+ 
+ 	explicit BlitPushData_t(float blit_scale) {
+@@ -3937,6 +4814,7 @@ struct BlitPushData_t
+ 		u_nitsToLinear = 1.0f / g_flInternalDisplayBrightnessNits;
+ 		u_itmSdrNits = g_flHDRItmSdrNits;
+ 		u_itmTargetNits = g_flHDRItmTargetNits;
++		u_rxnixTrivial = 0u;
+ 	}
+ };
+ 
+diff --git a/src/rendervulkan.hpp b/src/rendervulkan.hpp
+index cd1de00..41f6ddb 100644
+--- a/src/rendervulkan.hpp
++++ b/src/rendervulkan.hpp
+@@ -536,6 +536,10 @@ struct VulkanOutput_t
+ 	uint32_t nOutImage; // swapchain index in nested mode, or ping/pong between two RTs
+ 	std::vector<gamescope::OwningRc<CVulkanTexture>> outputImages;
+ 	std::vector<gamescope::OwningRc<CVulkanTexture>> outputImagesPartialOverlay;
++
++	// ROCKNIX RGA rotate/scale scanout: portrait CMA buffers that the RGA
++	// 2D engine rotates/scales the composited landscape output into for scanout.
++	std::vector<gamescope::OwningRc<CVulkanTexture>> rxnixScanoutImages;
+ 	gamescope::OwningRc<CVulkanTexture> temporaryHackyBlankImage;
+ 
+ 	uint32_t uOutputFormat = DRM_FORMAT_INVALID;
+@@ -568,6 +572,19 @@ enum ShaderType {
+ 
+ extern VulkanOutput_t g_output;
+ 
++// ROCKNIX RGA hardware rotate/scale scanout (automatic; no env vars).
++// enabled() is true on a rotated internal panel with a usable /dev/rga, on either
++// GPU driver. rotate_output_for_present() RGA-rotates the composited output into a
++// scanout buffer; direct_rotate() rotates+scales a single fullscreen client buffer
++// straight to the panel native size (skips the Vulkan composite).
++bool vulkan_rxnix_rga_enabled();
++int vulkan_rxnix_scanout_fence();
++bool vulkan_rxnix_rga_available();
++bool vulkan_rxnix_rga_direct_enabled();
++gamescope::Rc<CVulkanTexture> vulkan_rxnix_rotate_output_for_present( uint64_t ulCompositePoint, bool* pbCompositeWaited );
++gamescope::Rc<CVulkanTexture> vulkan_rxnix_rga_direct_rotate( CVulkanTexture *pClient );
++gamescope::Rc<CVulkanTexture> vulkan_rxnix_rga_composite_rotate( const struct FrameInfo_t *fi );
++
+ struct SamplerState
+ {
+ 	bool bNearest : 1;
+@@ -710,6 +727,8 @@ static inline uint32_t div_roundup(uint32_t x, uint32_t y)
+ 	VK_FUNC(CreateSamplerYcbcrConversion) \
+ 	VK_FUNC(CreateSemaphore) \
+ 	VK_FUNC(GetSemaphoreFdKHR) \
++	VK_FUNC(GetFenceFdKHR) \
++	VK_FUNC(GetFenceStatus) \
+ 	VK_FUNC(ImportSemaphoreFdKHR) \
+ 	VK_FUNC(CreateShaderModule) \
+ 	VK_FUNC(CreateSwapchainKHR) \
+@@ -795,6 +814,11 @@ public:
+ 	std::shared_ptr<VulkanTimelineSemaphore_t> CreateTimelineSemaphore( uint64_t ulStartingPoint, bool bShared = false );
+ 	std::shared_ptr<VulkanTimelineSemaphore_t> ImportTimelineSemaphore( gamescope::CTimeline *pTimeline );
+ 
++	// Convert a scratch-timeline point (e.g. a completed composite) into a sync_file fd
++	// that non-Vulkan engines (the RGA) can wait on in-kernel. Returns -1 when the driver
++	// cannot export a SYNC_FD fence, in which case the caller should CPU-wait instead.
++	int ExportTimelineSyncFile( uint64_t ulPoint );
++
+ 	static const uint32_t upload_buffer_size = 1920 * 1080 * 4;
+ 
+ 	inline VkDevice device() { return m_device; }
+@@ -905,6 +929,14 @@ protected:
+ 	uint32_t m_uploadBufferOffset = 0;
+ 
+ 	VkSemaphore m_scratchTimelineSemaphore;
++
++	// Exportable fences used to turn a composite timeline point into a sync_file for the
++	// RGA acquire fence. Pooled so a slot is only reused once its previous signal (issued
++	// several presents ago) has retired. m_bSupportsExternalFenceFd gates the whole path.
++	bool m_bSupportsExternalFenceFd = false;
++	static constexpr uint32_t k_uExportFencePoolSize = 4;
++	std::array<VkFence, k_uExportFencePoolSize> m_exportSyncFences = {};
++	uint32_t m_uExportSyncFenceIndex = 0;
+ 	std::atomic<uint64_t> m_submissionSeqNo = { 0 };
+ 	std::vector<std::unique_ptr<CVulkanCmdBuffer>> m_unusedCmdBufs;
+ 	std::map<uint64_t, std::unique_ptr<CVulkanCmdBuffer>> m_pendingCmdBufs;
+diff --git a/src/shaders/blit_push_data.h b/src/shaders/blit_push_data.h
+index caff0f3..0b7d465 100644
+--- a/src/shaders/blit_push_data.h
++++ b/src/shaders/blit_push_data.h
+@@ -16,5 +16,9 @@ uniform layers_t {
+     float u_nitsToLinear; // hdr -> sdr
+     float u_itmSdrNits;
+     float u_itmTargetNits;
++
++    // RXNIX libMali composite fast-path: set by the CPU when the per-layer colour
++    // management is a proven identity round-trip (see BlitPushData_t).
++    uint u_rxnixTrivial;
+ };
+ 
+diff --git a/src/shaders/cs_composite_blit.comp b/src/shaders/cs_composite_blit.comp
+index c0b7445..78782c6 100644
+--- a/src/shaders/cs_composite_blit.comp
++++ b/src/shaders/cs_composite_blit.comp
+@@ -19,6 +19,36 @@ vec4 sampleLayer(uint layerIdx, vec2 uv) {
+     return sampleLayer(s_samplers[layerIdx], layerIdx, uv, true);
+ }
+ 
++// RXNIX libMali composite fast-path sampler: identical sampling to sampleLayerEx
++// (including degamma, which is identity for colorspace_linear) but SKIPS the
++// per-layer CTM and apply_layer_color_mgmt. Only used when u_rxnixTrivial is set,
++// which the CPU raises exclusively on libMali once it has proven those steps are
++// an identity round-trip (all layers colorspace_linear, no CTM, and the output
++// colour-management LUT is identity). The compositing blend and encodeOutputColor
++// are preserved, so the result matches the full path while avoiding the redundant
++// per-pixel colour-management LUT lookups that dominate the composite cost.
++vec4 sampleLayerNoCM(uint layerIdx, vec2 uv) {
++    vec2 coord = ((uv + u_offset[layerIdx]) * u_scale[layerIdx]);
++    vec2 texSize = textureSize(s_samplers[layerIdx], 0);
++
++    if (coord.x < 0.0f       || coord.y < 0.0f ||
++        coord.x >= texSize.x || coord.y >= texSize.y) {
++        float border = (u_borderMask & (1u << layerIdx)) != 0 ? 1.0f : 0.0f;
++        return vec4(0.0f, 0.0f, 0.0f, border);
++    }
++
++    uint colorspace = get_layer_colorspace(layerIdx);
++    if (get_layer_shaderfilter(layerIdx) == filter_pixel) {
++        vec2 output_res = texSize / u_scale[layerIdx];
++        vec2 extent = max((texSize / output_res), vec2(1.0 / 256.0));
++        return sampleBandLimited(s_samplers[layerIdx], coord, vec2(1.0f), vec2(1.0f), extent, colorspace, true);
++    }
++    else if (get_layer_shaderfilter(layerIdx) == filter_linear_emulated) {
++        return sampleBilinear(s_samplers[layerIdx], coord, colorspace, true);
++    }
++    return sampleRegular(s_samplers[layerIdx], coord, colorspace);
++}
++
+ void main() {
+     uvec2 coord = uvec2(gl_GlobalInvocationID.x, gl_GlobalInvocationID.y);
+     uvec2 outSize = imageSize(dst);
+@@ -27,6 +57,16 @@ void main() {
+     if (outCoord.x >= outSize.x || outCoord.y >= outSize.y)
+         return;
+ 
++    if (u_rxnixTrivial != 0u && c_compositing_debug == 0u) {
++        vec2 uvFast = vec2(coord);
++        vec4 rxColor = sampleLayerNoCM(0, uvFast) * u_opacity[0];
++        for (int i = 1; i < c_layerCount; i++)
++            rxColor = BlendLayer(i, rxColor, sampleLayerNoCM(i, uvFast), u_opacity[i]);
++        rxColor.rgb = encodeOutputColor(rxColor.rgb);
++        imageStore(dst, ivec2(outCoord), rxColor);
++        return;
++    }
++
+     vec2 uv = vec2(coord);
+     vec4 outputValue = vec4(0.0f);
+ 
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+index ab4c47c..b6ca8ce 100644
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -145,6 +145,12 @@ std::atomic<uint64_t> g_FocusedVROverlayKeyboard;
+ 
+ gamescope_color_mgmt_tracker_t g_ColorMgmt{};
+ 
++// RXNIX: true when the active SDR (Gamma22) output colour management is an identity
++// round-trip (default 709->709, no nightmode/look/gamut-widening, gain 1). Consumed
++// by the libMali composite fast-path in rendervulkan.cpp. Recomputed in
++// update_color_mgmt() whenever the colour-management config changes.
++bool g_bRxnixColorMgmtIdentitySDR = false;
++
+ static gamescope_color_mgmt_luts g_ColorMgmtLutsOverride[ EOTF_Count ];
+ std::atomic<std::shared_ptr<lut3d_t>> g_ColorMgmtLooks[EOTF_Count];
+ 
+@@ -498,6 +504,25 @@ update_color_mgmt()
+ 			g_ColorMgmtLuts[i].reset();
+ 	}
+ 
++	// RXNIX: recompute whether the SDR (Gamma22) output colour management is an
++	// identity round-trip, so the libMali composite fast-path may skip the per-pixel
++	// colour-management LUT lookups. Conservative: any non-default colour setting
++	// (nightmode, look LUT, gamut widening, non-unity gain, override LUT, HDR/non-G22
++	// output, or a display whose native and output colorimetry differ) disables it.
++	{
++		const gamescope_color_mgmt_t& cm = g_ColorMgmt.pending;
++		std::shared_ptr<lut3d_t> pLook = g_ColorMgmtLooks[EOTF_Gamma22];
++		bool bLook = pLook && pLook->lutEdgeSize > 0;
++		bool bOverride = g_ColorMgmtLutsOverride[EOTF_Gamma22].HasLuts();
++		g_bRxnixColorMgmtIdentitySDR =
++			cm.enabled && !bLook && !bOverride
++			&& cm.outputEncodingEOTF == EOTF_Gamma22
++			&& cm.flSDRInputGain == 1.f
++			&& cm.nightmode.amount == 0.f
++			&& cm.sdrGamutWideness < 0.f
++			&& cm.displayColorimetry == cm.outputEncodingColorimetry;
++	}
++
+ #ifdef COLOR_MGMT_MICROBENCH
+ 	clock_gettime(CLOCK_MONOTONIC_RAW, &t1);
+ #endif
