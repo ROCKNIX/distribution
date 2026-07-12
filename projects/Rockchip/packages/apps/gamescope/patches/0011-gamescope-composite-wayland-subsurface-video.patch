@@ -1,0 +1,410 @@
+From: Felix "Xilefian" Jones
+Subject: [PATCH] gamescope: composite Wayland subsurface video on-panel
+
+Present video that a native-Wayland client puts on a wl_subsurface, which
+gamescope (painting only the root surface) would otherwise never display:
+
+ * Advertise the wp_viewporter, wl_subcompositor and wp_single_pixel_buffer
+   globals some Wayland video clients require to start; harmless to clients that
+   do not bind them.
+ * Capture each subsurface's latest buffer and composite the video subsurface
+   (identified by its planar-YUV format, at any resolution) as a full-screen top
+   layer, regardless of focus.
+ * When a game-id X11 UI window wins paint focus but the video and input live on
+   a separate native-Wayland toplevel, route input and keyboard focus to the
+   toplevel that owns the captured video subsurface.
+
+Inert for clients with no video subsurface.
+---
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index 69589f2..71508be 100644
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -3695,7 +3695,7 @@ namespace gamescope
+ 			const FrameInfo_t *pScanoutFrameInfo = pFrameInfo;
+ 			FrameInfo_t rxnixDirectFrameInfo;
+ 			bool bRxnixDirect = false;
+-			if ( vulkan_rxnix_rga_direct_enabled() && !bNeedsFullComposite && pFrameInfo->layerCount >= 1 )
++			if ( vulkan_rxnix_rga_direct_enabled() && !bNeedsFullComposite && pFrameInfo->layerCount == 1 )
+ 			{
+ 				const FrameInfo_t::Layer_t &rxnixBase = pFrameInfo->layers[0];
+ 				if ( rxnixBase.zpos == (int)g_zposBase && rxnixBase.opacity >= 1.0f && rxnixBase.tex != nullptr )
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+index b6ca8ce..7f7e5fc 100644
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -2262,6 +2262,48 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
+ 	return layer;
+ }
+ 
++// Some Wayland clients present streamed video on a wl_subsurface of
++// their toplevel. gamescope's compositor only draws a window's root surface, so walk
++// the window's captured subsurfaces and add each committed buffer as an extra layer at
++// its surface-relative offset, inheriting the root layer's scale/colour so it tracks
++// window scaling and the panel rotation shader. Clients without subsurfaces contribute
++// nothing here, so this is inert on the normal (game) path.
++static void
++paint_window_subsurfaces( steamcompmgr_win_t *w, FrameInfo_t::Layer_t *base, struct FrameInfo_t *frameInfo )
++{
++	if ( !w || !base )
++		return;
++
++	struct wlr_surface *root = w->main_surface();
++	if ( !root )
++		return;
++
++	std::vector<GamescopeSubsurfaceLayer_t> subs = wlserver_lock_subsurfaces_for( root );
++	for ( GamescopeSubsurfaceLayer_t &sub : subs )
++	{
++		if ( !sub.buf || frameInfo->layerCount >= k_nMaxLayers )
++			continue;
++
++		gamescope::OwningRc<CVulkanTexture> tex = vulkan_create_texture_from_wlr_buffer( sub.buf, {} );
++		if ( tex == nullptr )
++			continue;
++
++		int curLayer = frameInfo->layerCount++;
++		FrameInfo_t::Layer_t *layer = &frameInfo->layers[ curLayer ];
++		*layer = *base;
++
++		layer->tex = tex;
++		// base->scale holds 1/ratio and base->offset the negated on-screen origin, so
++		// shift by the subsurface's surface-local position scaled into output space.
++		layer->offset.x = base->offset.x - (float)sub.x / base->scale.x;
++		layer->offset.y = base->offset.y - (float)sub.y / base->scale.y;
++		layer->zpos = g_zposBase;
++		layer->blackBorder = false;
++	}
++
++	wlserver_release_subsurfaces( subs );
++}
++
+ static void
+ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo_t *frameInfo,
+ 			  MouseCursor *cursor, PaintWindowFlags flags = 0, float flOpacityScale = 1.0f, steamcompmgr_win_t *fit = nullptr )
+@@ -2294,6 +2336,8 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
+ 
+ 	FrameInfo_t::Layer_t *layer = paint_window_commit( lastCommit, w, scaleW, frameInfo, cursor, flags, flOpacityScale, fit );
+ 
++	paint_window_subsurfaces( w, layer, frameInfo );
++
+ 	if ( layer && ( flags & PaintWindowFlag::BasePlane ) )
+ 	{
+ 		BaseLayerInfo_t basePlane = {};
+@@ -2685,6 +2729,48 @@ paint_all( global_focus_t *pFocus, bool async )
+ 		//update_touch_scaling( &frameInfo );
+ 	}
+ 
++	// A client presents its streamed video on a full-screen wl_subsurface of its own SDL
++	// native-Wayland toplevel, which gamescope does not focus or paint (its Qt UI is a
++	// separate X11 window). Composite the largest captured native-Wayland subsurface as a
++	// full-screen top layer so the streamed video is displayed regardless of focus. Inert
++	// for clients without captured subsurfaces (games / glmark / the pre-stream menu).
++	{
++		std::vector<GamescopeSubsurfaceLayer_t> videoLayers = wlserver_lock_all_subsurfaces();
++		for ( GamescopeSubsurfaceLayer_t &vs : videoLayers )
++		{
++			if ( !vs.buf || frameInfo.layerCount >= k_nMaxLayers )
++				continue;
++			// Composite only the streamed video (a planar-YUV subsurface), never the small ARGB
++			// status overlays. Identifying it by pixel format rather than size keeps this working
++			// at any stream resolution - a size threshold skipped the video entirely at e.g. 480p.
++			struct wlr_dmabuf_attributes vdma;
++			if ( !wlr_buffer_get_dmabuf( vs.buf, &vdma ) ||
++			     ( vdma.format != DRM_FORMAT_YUV420 && vdma.format != DRM_FORMAT_YVU420 &&
++			       vdma.format != DRM_FORMAT_NV12 && vdma.format != DRM_FORMAT_NV21 ) )
++				continue;
++			gamescope::OwningRc<CVulkanTexture> vtex = vulkan_create_texture_from_wlr_buffer( vs.buf, {} );
++			if ( vtex == nullptr )
++				continue;
++			int curLayer = frameInfo.layerCount++;
++			FrameInfo_t::Layer_t *layer = &frameInfo.layers[ curLayer ];
++			layer->scale.x = g_nOutputWidth == vtex->width() ? 1.0f : vtex->width() / (float)g_nOutputWidth;
++			layer->scale.y = g_nOutputHeight == vtex->height() ? 1.0f : vtex->height() / (float)g_nOutputHeight;
++			layer->offset.x = 0.0f;
++			layer->offset.y = 0.0f;
++			layer->opacity = 1.0f;
++			layer->zpos = g_zposOverlay;
++			layer->applyColorMgmt = g_ColorMgmt.pending.enabled;
++			layer->eAlphaBlendingMode = ALPHA_BLENDING_MODE_PREMULTIPLIED;
++			layer->colorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR;
++			layer->hdr_metadata_blob = nullptr;
++			layer->ctm = nullptr;
++			layer->tex = vtex;
++			layer->filter = GamescopeUpscaleFilter::LINEAR;
++			layer->blackBorder = true;
++		}
++		wlserver_release_subsurfaces( videoLayers );
++	}
++
+ 	// If we have any layers that aren't a cursor or overlay, then we have valid contents for presentation.
+ 	const bool bValidContents = frameInfo.layerCount > 0;
+ 
+@@ -4244,6 +4330,28 @@ determine_and_apply_focus( global_focus_t *pFocus )
+ 		pFocus->keyboardFocusWindow = pFocus->overrideWindow ? pFocus->overrideWindow : pFocus->focusWindow;
+ 	}
+ 
++	// A client may present its streamed video on a native-Wayland (XDG) toplevel, while its
++	// Qt UI is a separate X11 window that carries a game-id and therefore wins paint focus.
++	// Route input + keyboard focus to the XDG window that owns the video subsurface so the
++	// streaming window receives keyboard/pointer/touch and SDL reports it as focused (which
++	// is what gates the client's controller forwarding). Inert unless a video subsurface is
++	// live, so games / glmark / the pre-stream menu are unaffected.
++	{
++		struct wlr_surface *videoParent = wlserver_get_video_subsurface_parent();
++		if ( videoParent )
++		{
++			for ( auto &xdgwin : g_steamcompmgr_xdg_wins )
++			{
++				if ( xdgwin->main_surface() == videoParent )
++				{
++					pFocus->inputFocusWindow = xdgwin.get();
++					pFocus->keyboardFocusWindow = xdgwin.get();
++					break;
++				}
++			}
++		}
++	}
++
+ 	if ( !gamescope::VirtualConnectorIsSingleOutput() )
+ 	{
+ 		uint64_t ulFocusedKeyboardOverlayVR = g_FocusedVROverlayKeyboard;
+diff --git a/src/steamcompmgr.hpp b/src/steamcompmgr.hpp
+index 6734c15..65f9f13 100644
+--- a/src/steamcompmgr.hpp
++++ b/src/steamcompmgr.hpp
+@@ -135,6 +135,7 @@ extern uint64_t g_lastWinSeq;
+ 
+ void nudge_steamcompmgr( void );
+ void force_repaint( void );
++void MakeFocusDirty( void );
+ 
+ extern void mangoapp_update( uint64_t visible_frametime, uint64_t app_frametime_ns, uint64_t latency_ns );
+ struct wlr_surface *steamcompmgr_get_server_input_surface( size_t idx );
+diff --git a/src/wlserver.cpp b/src/wlserver.cpp
+index f143c6a..b385bed 100644
+--- a/src/wlserver.cpp
++++ b/src/wlserver.cpp
+@@ -45,8 +45,14 @@
+ #include <wlr/types/wlr_relative_pointer_v1.h>
+ #include <wlr/types/wlr_pointer_constraints_v1.h>
+ #include <wlr/types/wlr_layer_shell_v1.h>
++#include <wlr/types/wlr_viewporter.h>
++#include <wlr/types/wlr_subcompositor.h>
++#include <wlr/types/wlr_single_pixel_buffer_v1.h>
+ #include <wlr/util/region.h>
+ #include "wlr_end.hpp"
++#include <mutex>
++#include <unordered_map>
++#include <vector>
+ 
+ #include "gamescope-xwayland-protocol.h"
+ #include "gamescope-pipewire-protocol.h"
+@@ -58,6 +64,7 @@
+ #include "wlserver.hpp"
+ #include "hdmi.h"
+ #include "main.hpp"
++#include <drm_fourcc.h>
+ #include "steamcompmgr.hpp"
+ #include "color_helpers.h"
+ #include "log.hpp"
+@@ -202,6 +209,81 @@ struct PendingCommit_t
+ 
+ std::list<PendingCommit_t> g_PendingCommits;
+ 
++// Some Wayland clients render streamed video onto a wl_subsurface
++// of their toplevel. gamescope's compositor only draws a window's root surface, so
++// these commits fall through xwayland_surface_commit()'s x11/xdg role dispatch. Keep
++// the latest committed buffer for each subsurface here (keyed by its wl_surface, with
++// parent + surface-relative position) so the paint path can composite them as extra
++// layers. Empty for clients with no subsurfaces, so this is inert on the normal path.
++struct GamescopeSubsurfaceState_t
++{
++	struct wlr_surface *parent;
++	int32_t x, y;
++	struct wlr_buffer *buf; // locked; released on replace / surface destroy
++};
++static std::mutex g_SubsurfaceMutex;
++static std::unordered_map<struct wlr_surface *, GamescopeSubsurfaceState_t> g_SubsurfaceCommits;
++
++std::vector<GamescopeSubsurfaceLayer_t> wlserver_lock_subsurfaces_for( struct wlr_surface *parent )
++{
++	std::vector<GamescopeSubsurfaceLayer_t> out;
++	std::lock_guard<std::mutex> lock( g_SubsurfaceMutex );
++	for ( auto &entry : g_SubsurfaceCommits )
++	{
++		if ( entry.second.parent == parent && entry.second.buf )
++			out.push_back( GamescopeSubsurfaceLayer_t{ wlr_buffer_lock( entry.second.buf ), entry.second.x, entry.second.y } );
++	}
++	return out;
++}
++
++std::vector<GamescopeSubsurfaceLayer_t> wlserver_lock_all_subsurfaces()
++{
++	std::vector<GamescopeSubsurfaceLayer_t> out;
++	std::lock_guard<std::mutex> lock( g_SubsurfaceMutex );
++	for ( auto &entry : g_SubsurfaceCommits )
++		if ( entry.second.buf )
++			out.push_back( GamescopeSubsurfaceLayer_t{ wlr_buffer_lock( entry.second.buf ), entry.second.x, entry.second.y } );
++	return out;
++}
++
++struct wlr_surface *wlserver_get_video_subsurface_parent()
++{
++	std::lock_guard<std::mutex> lock( g_SubsurfaceMutex );
++	struct wlr_surface *best = nullptr;
++	int bestw = -1;
++	for ( auto &entry : g_SubsurfaceCommits )
++	{
++		struct wlr_buffer *buf = entry.second.buf;
++		if ( !buf )
++			continue;
++		// The streamed video is the planar-YUV subsurface at any resolution; identify it by
++		// format (not size) so input routing works at e.g. 480p and never picks a UI overlay.
++		struct wlr_dmabuf_attributes vdma;
++		if ( !wlr_buffer_get_dmabuf( buf, &vdma ) )
++			continue;
++		if ( vdma.format != DRM_FORMAT_YUV420 && vdma.format != DRM_FORMAT_YVU420 &&
++		     vdma.format != DRM_FORMAT_NV12 && vdma.format != DRM_FORMAT_NV21 )
++			continue;
++		if ( buf->width > bestw )
++		{
++			bestw = buf->width;
++			best = entry.second.parent;
++		}
++	}
++	return best;
++}
++
++void wlserver_release_subsurfaces( std::vector<GamescopeSubsurfaceLayer_t> &subs )
++{
++	std::lock_guard<std::mutex> lock( g_SubsurfaceMutex );
++	for ( GamescopeSubsurfaceLayer_t &sub : subs )
++	{
++		if ( sub.buf )
++			wlr_buffer_unlock( sub.buf );
++	}
++	subs.clear();
++}
++
+ void wlserver_xdg_commit(struct wlr_surface *surf, struct wlr_buffer *buf)
+ {
+ 	std::optional<ResListEntry_t> oEntry = PrepareCommit( surf, buf );
+@@ -261,7 +343,34 @@ void xwayland_surface_commit(struct wlr_surface *wlr_surface) {
+ 	}
+ 	else
+ 	{
+-		g_PendingCommits.push_back(PendingCommit_t{ wlr_surface, buf });
++		struct wlr_subsurface *subsurface = wlr_subsurface_try_from_wlr_surface( wlr_surface );
++		if ( subsurface && subsurface->parent )
++		{
++			// A client presents its streamed video on a wl_subsurface; keep the latest
++			// buffer keyed by surface so the paint path can composite it as a layer.
++			std::lock_guard<std::mutex> lock( g_SubsurfaceMutex );
++			auto existing = g_SubsurfaceCommits.find( wlr_surface );
++			bool bNewSubsurface = ( existing == g_SubsurfaceCommits.end() );
++			if ( existing != g_SubsurfaceCommits.end() && existing->second.buf )
++				wlr_buffer_unlock( existing->second.buf );
++			g_SubsurfaceCommits[ wlr_surface ] = GamescopeSubsurfaceState_t{ subsurface->parent, subsurface->current.x, subsurface->current.y, buf };
++			force_repaint();
++			// A newly-appearing video subsurface must re-roll focus so input is routed to the
++			// streaming window; determine_and_apply_focus otherwise may not re-run after capture,
++			// leaving keyboard/pointer/controller input stuck on the Qt UI window.
++			if ( bNewSubsurface )
++			{
++				struct wlr_dmabuf_attributes vdma;
++				if ( wlr_buffer_get_dmabuf( buf, &vdma ) &&
++				     ( vdma.format == DRM_FORMAT_YUV420 || vdma.format == DRM_FORMAT_YVU420 ||
++				       vdma.format == DRM_FORMAT_NV12 || vdma.format == DRM_FORMAT_NV21 ) )
++					MakeFocusDirty();
++			}
++		}
++		else
++		{
++			g_PendingCommits.push_back(PendingCommit_t{ wlr_surface, buf });
++		}
+ 	}
+ }
+ 
+@@ -604,6 +713,23 @@ static void handle_wl_surface_destroy( struct wl_listener *l, void *data )
+ 
+ 	wlserver.current_dropdown_surfaces.erase( surf->wlr );
+ 
++	{
++		// Drop any captured subsurface buffers for this surface (as subsurface or
++		// as a destroyed parent) so we never composite a stale/freed buffer.
++		std::lock_guard<std::mutex> lock( g_SubsurfaceMutex );
++		for ( auto it = g_SubsurfaceCommits.begin(); it != g_SubsurfaceCommits.end(); )
++		{
++			if ( it->first == surf->wlr || it->second.parent == surf->wlr )
++			{
++				if ( it->second.buf )
++					wlr_buffer_unlock( it->second.buf );
++				it = g_SubsurfaceCommits.erase( it );
++			}
++			else
++				it++;
++		}
++	}
++
+ 	for (auto it = g_PendingCommits.begin(); it != g_PendingCommits.end();)
+ 	{
+ 		if (it->surf == surf->wlr)
+@@ -2030,6 +2156,29 @@ bool wlserver_init( void ) {
+ 
+ 	wl_signal_add( &wlserver.wlr.compositor->events.new_surface, &new_surface_listener );
+ 
++	// wp_viewporter: some Wayland video clients
++	// require the viewporter global for their video output and abort with "Missing
++	// wayland viewporter" when it is absent. The bundled wlroots implements it but
++	// wlserver_init never created the global; advertise it. Standard/optional protocol,
++	// harmless to clients that do not use it, and unconditional so the same launch works
++	// on every GPU driver.
++	wlr_viewporter_create( wlserver.display );
++
++	// wl_subcompositor: a Wayland video backend such as SDL3
++	// binds wl_subcompositor at init and calls wl_subcompositor_get_subsurface(); when
++	// the global is absent it dereferences a NULL proxy in wl_proxy_get_version() and
++	// crashes. wlroots implements subcompositor/subsurface on wlr_surface; advertise it.
++	// Standard core-adjacent protocol, harmless to clients that do not use it.
++	wlr_subcompositor_create( wlserver.display );
++
++	// wp_single_pixel_buffer_manager: a Wayland video client's output
++	// creates a 1x1 solid-colour wl_buffer (the letterbox/background fill) via
++	// wp_single_pixel_buffer_manager_v1.create_u32_rgba_buffer(); without the global it
++	// dereferences a NULL manager proxy in wl_proxy_get_version() and segfaults right
++	// after "Video initialized: wayland". gamescope's own Wayland backend uses the very
++	// same pattern for its black fill; advertise the global so nested clients can too.
++	wlr_single_pixel_buffer_manager_v1_create( wlserver.display );
++
+ 	create_ime_manager( &wlserver );
+ 
+ 	create_reshade();
+diff --git a/src/wlserver.hpp b/src/wlserver.hpp
+index 8e8715d..fb21652 100644
+--- a/src/wlserver.hpp
++++ b/src/wlserver.hpp
+@@ -292,6 +292,23 @@ void wlserver_presentation_feedback_discard( struct wlr_surface *surface, std::v
+ void wlserver_past_present_timing( struct wlr_surface *surface, uint32_t present_id, uint64_t desired_present_time, uint64_t actual_present_time, uint64_t earliest_present_time, uint64_t present_margin );
+ void wlserver_refresh_cycle( struct wlr_surface *surface, uint64_t refresh_cycle );
+ 
++// Some Wayland clients present video on a wl_subsurface of their
++// toplevel; gamescope composites these as extra layers. wlserver_lock_subsurfaces_for
++// returns the latest buffer (locked) and surface-relative position for every
++// subsurface of `parent`; the caller must return the vector to
++// wlserver_release_subsurfaces once the buffers have been turned into textures.
++struct GamescopeSubsurfaceLayer_t
++{
++	struct wlr_buffer *buf;
++	int32_t x, y;
++};
++std::vector<GamescopeSubsurfaceLayer_t> wlserver_lock_subsurfaces_for( struct wlr_surface *parent );
++std::vector<GamescopeSubsurfaceLayer_t> wlserver_lock_all_subsurfaces();
++// The toplevel (parent) surface currently carrying a video-sized captured subsurface,
++// or nullptr when none; used to route input focus to the streaming window.
++struct wlr_surface *wlserver_get_video_subsurface_parent();
++void wlserver_release_subsurfaces( std::vector<GamescopeSubsurfaceLayer_t> &subs );
++
+ void wlserver_app_presented( uint32_t app_id, uint64_t frametime_ns );
+ 
+ void wlserver_shutdown();
