@@ -35,7 +35,9 @@ PKG_CMAKE_OPTS_TARGET+=" -DVULKAN_CXX_INCLUDE=${SYSROOT_PREFIX}/usr \
 }
 
 makeinstall_target() {
+  # Install to arch libdirs using a bare soname manifest.
+  mkdir -p ${INSTALL}/usr/lib
+  cp -r ${PKG_BUILD}/.${TARGET_NAME}/libVkLayer_window_system_integration.so ${INSTALL}/usr/lib/
   mkdir -p ${INSTALL}/usr/share/vulkan/implicit_layer.d
-  cp -r ${PKG_BUILD}/.${TARGET_NAME}/libVkLayer_window_system_integration.so ${INSTALL}/usr/share/vulkan/
   cp -r ${PKG_BUILD}/.${TARGET_NAME}/VkLayer_window_system_integration.json ${INSTALL}/usr/share/vulkan/implicit_layer.d
 }
