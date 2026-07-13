@@ -25,6 +25,7 @@ PCSX2_CMAKE_BASE=(
   -DENABLE_QT_DEBUGGER=OFF
   -DWAYLAND_API=ON
   -DX11_API=ON
+  -DCMAKE_LINKER_TYPE=LLD
 )
 
 PATCHES_URL="https://github.com/PCSX2/pcsx2_patches/archive/refs/tags/latest.zip"
