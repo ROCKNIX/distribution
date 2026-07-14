@@ -27,6 +27,10 @@ PROTON_CACHYOS_VERSION_FULL="11.0-20260702-slr"
 PROTON_CACHYOS_TAR="proton-cachyos-${PROTON_CACHYOS_VERSION_FULL}-arm64.tar.xz"
 PROTON_CACHYOS_DIR="proton-cachyos-${PROTON_CACHYOS_VERSION_FULL}-arm64"
 PROTON_CACHYOS_URL="https://github.com/CachyOS/proton-cachyos/releases/download/cachyos-${PROTON_CACHYOS_VERSION_FULL}/${PROTON_CACHYOS_TAR}"
+PROTON_GE_VERSION_FULL="GE-Proton11-1"
+PROTON_GE_TAR="${PROTON_GE_VERSION_FULL}-aarch64.tar.gz"
+PROTON_GE_DIR="${PROTON_GE_VERSION_FULL}-aarch64"
+PROTON_GE_URL="https://github.com/GloriousEggroll/proton-ge-custom/releases/download/${PROTON_GE_VERSION_FULL}/${PROTON_GE_TAR}"
 unset MESA_LOADER_DRIVER_OVERRIDE
 
 # --- Logging & Error Handling Helpers ---
@@ -121,37 +125,60 @@ install_bundled_proton_files() {
   cp -f "/usr/share/steam/registry.vdf" "${STEAM_DOT}" || die "Failed to copy registry.vdf."
 }
 
-install_proton_cachyos() {
-  local url="$PROTON_CACHYOS_URL"
+install_proton_variant() {
+  local display_name="$1"
+  local url="$2"
+  local tar_name="$3"
+  local dir_name="$4"
+  local cleanup_glob="$5"
+
   local dest_dir="${STEAM}/compatibilitytools.d"
-  local tar_path="${dest_dir}/${PROTON_CACHYOS_TAR}"
-  local extracted_dir="${dest_dir}/${PROTON_CACHYOS_DIR}"
+  local tar_path="${dest_dir}/${tar_name}"
+  local extracted_dir="${dest_dir}/${dir_name}"
   local manifest_file="${extracted_dir}/toolmanifest.vdf"
 
   if [ -d "${dest_dir}" ]; then
-    for old_dir in "${dest_dir}"/proton-cachyos-*-arm64; do
+    for old_dir in "${dest_dir}"/${cleanup_glob}; do
       [ -d "${old_dir}" ] || continue
       if [ "${old_dir}" != "${extracted_dir}" ]; then
-        log_info "Removing old Proton-CachyOS: $(basename "${old_dir}")"
+        log_info "Removing old ${display_name}: $(basename "${old_dir}")"
         rm -rf "${old_dir}"
       fi
     done
   fi
 
   if [ -d "${extracted_dir}" ]; then
-    log_info "Proton-CachyOS already installed. Skipping download."
+    log_info "${display_name} already installed. Skipping download."
     return 0
   fi
 
-  log_info "Downloading and installing Proton-CachyOS..."
+  log_info "Downloading and installing ${display_name}..."
   mkdir -p "${dest_dir}"
-  wget -c -t 5 -O "${tar_path}" "$url" || die "Failed to download Proton-CachyOS."
-  tar -xvf "${tar_path}" -C "${dest_dir}" || die "Failed to extract Proton-CachyOS."
+  wget -c -t 5 -O "${tar_path}" "$url" || die "Failed to download ${display_name}."
+  tar -xvf "${tar_path}" -C "${dest_dir}" || die "Failed to extract ${display_name}."
   rm -f "${tar_path}"
 
   if [ -f "${manifest_file}" ]; then
     sed -i '/require_tool_appid/d' "${manifest_file}" || die "Failed to patch toolmanifest.vdf."
   fi
+}
+
+install_proton_cachyos() {
+  install_proton_variant \
+    "Proton-CachyOS" \
+    "${PROTON_CACHYOS_URL}" \
+    "${PROTON_CACHYOS_TAR}" \
+    "${PROTON_CACHYOS_DIR}" \
+    "proton-cachyos-*-arm64"
+}
+
+install_proton_ge() {
+  install_proton_variant \
+    "Proton-GE" \
+    "${PROTON_GE_URL}" \
+    "${PROTON_GE_TAR}" \
+    "${PROTON_GE_DIR}" \
+    "GE-Proton*-aarch64"
 }
 
 run_steam_first_launch() {
@@ -186,6 +213,7 @@ install_steam_runtime_arm64
 install_steam_client_arm64
 install_bundled_proton_files
 install_proton_cachyos
+install_proton_ge
 run_steam_first_launch
 
 echo ""
