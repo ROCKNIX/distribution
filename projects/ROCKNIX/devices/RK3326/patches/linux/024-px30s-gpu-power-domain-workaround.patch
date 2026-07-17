@@ -1,0 +1,106 @@
+Ported from two rockchip-linux/kernel commits, combined here since the
+second is a direct fix to the first:
+
+commit 41f9bdf3cf406a768dce672ab2c0c9a6d2d6c1a1
+Author: Liang Chen <cl@rock-chips.com>
+Date:   Tue, 15 Mar 2022 02:07:59 +0000
+Subject: soc: rockchip: power-domain: keep pd_gpu always on for px30s
+
+    Change-Id: Ieb81bdd80aaabb24d490c13be147cb3e1a1417dd
+    Signed-off-by: Liang Chen <cl@rock-chips.com>
+
+commit 480163a87a56c277f3fb9153a2333499a7b918cf
+Author: Zhen Chen <chenzhen@rock-chips.com>
+Date:   Tue, 20 Sep 2022 08:21:43 +0000
+Subject: soc: rockchip: power-domain: correct name of pd_gpu for px30s
+
+    Fixes: 41f9bdf3cf40 ("soc: rockchip: power-domain: keep pd_gpu always on for px30s")
+    Change-Id: I9af58d9471204c4540cf491b206c6c6f5d318a7f
+    Signed-off-by: Zhen Chen <chenzhen@rock-chips.com>
+
+Ported to mainline 6.12 using the shared soc_is_px30s() runtime-detection
+helper (see 026-px30s-cpuinfo-soc-detection.patch) instead of an inline
+per-file check.
+
+That workaround alone turned out to be insufficient - real hardware
+testing (a live dmesg capture through an actual suspend/resume cycle)
+caught the exact "Enabling unprepared clk_gpu" warning this comment
+already describes, firing from inside genpd_resume_noirq() ->
+pm_clk_resume() during the real resume path, followed immediately by
+"mali ff400000.gpu: __pm_clk_enable: failed to enable clk ..., error
+-108" (-ESHUTDOWN). The mechanism: rockchip_pd_attach_dev() (this same
+file) unconditionally scans each attaching device's own devicetree
+clocks and feeds them into genpd's generic GENPD_FLAG_PM_CLK tracking
+via pm_clk_add_clk() - for the GPU device this is the same "bus" clock
+(SCLK_GPU) that mali_kbase's own driver *also* directly manages via its
+own clk_prepare_enable()/clk_disable_unprepare() calls
+(power_control_init() in mali_kbase_core_linux.c). Two independent,
+uncoordinated consumers tracking prepare/enable state for the same
+underlying clk_core drift out of sync across suspend/resume, regardless
+of whether the domain's hardware power state ever actually toggles -
+so the power-off workaround below doesn't prevent it. Second part of
+the fix: skip GENPD_FLAG_PM_CLK for this domain entirely, so mali_kbase
+remains the sole manager of its own clock.
+
+---
+--- a/drivers/pmdomain/rockchip/pm-domains.c
++++ b/drivers/pmdomain/rockchip/pm-domains.c
+@@ -35,6 +35,7 @@
+ #include <dt-bindings/power/rk3568-power.h>
+ #include <dt-bindings/power/rockchip,rk3576-power.h>
+ #include <dt-bindings/power/rk3588-power.h>
++#include <linux/rockchip/cpu.h>
+
+ struct rockchip_domain_info {
+ 	const char *name;
+@@ -574,6 +575,19 @@
+ 	struct rockchip_pmu *pmu = pd->pmu;
+ 	int ret;
+
++	/*
++	 * Ported from vendor commit 41f9bdf3cf40 ("keep pd_gpu always on for
++	 * px30s"), corrected per follow-up fix 480163a87a56: the vendor's
++	 * check compared against genpd name "pd_gpu", but this driver's
++	 * actual name is just "gpu", so it never matched. Powering the GPU
++	 * domain off via genpd on PX30S is erratic and can corrupt the GPU
++	 * clock's enable refcount ("Enabling unprepared clk_gpu" / -ESHUTDOWN
++	 * on a later resume), so just never power it off.
++	 */
++	if (!power_on && soc_is_px30s() &&
++	    pd->genpd.name && !strcmp(pd->genpd.name, "gpu"))
++		return 0;
++
+ 	mutex_lock(&pmu->mutex);
+
+ 	if (rockchip_pmu_domain_is_on(pd) != power_on) {
+@@ -790,7 +804,29 @@
+ 	pd->genpd.power_on = rockchip_pd_power_on;
+ 	pd->genpd.attach_dev = rockchip_pd_attach_dev;
+ 	pd->genpd.detach_dev = rockchip_pd_detach_dev;
+-	pd->genpd.flags = GENPD_FLAG_PM_CLK;
++	/*
++	 * rockchip_pd_attach_dev() (below) unconditionally scans each
++	 * attaching device's own devicetree clocks and feeds them into
++	 * genpd's generic GENPD_FLAG_PM_CLK tracking (pm_clk_add_clk()) -
++	 * separate from and uncoordinated with whatever clock management
++	 * that device's own driver does directly. On PX30S, mali_kbase
++	 * already does its own complete clk_prepare_enable()/
++	 * disable_unprepare() on the GPU's "bus" clock - having genpd
++	 * *also* independently track prepare/enable state for the same
++	 * underlying clk_core is exactly what produces "Enabling
++	 * unprepared clk_gpu" / -ESHUTDOWN (confirmed via a live dmesg
++	 * capture showing the failure inside genpd_resume_noirq() ->
++	 * pm_clk_resume(), the same failure this file's power-off
++	 * workaround above was written to prevent, but doesn't - the
++	 * refcount desync happens independently of whether the domain's
++	 * hardware power state ever actually toggles). Skip
++	 * GENPD_FLAG_PM_CLK for this domain so mali_kbase remains the
++	 * sole manager of its own clock.
++	 */
++	if (soc_is_px30s() && pd->genpd.name && !strcmp(pd->genpd.name, "gpu"))
++		pd->genpd.flags = 0;
++	else
++		pd->genpd.flags = GENPD_FLAG_PM_CLK;
+ 	if (pd_info->active_wakeup)
+ 		pd->genpd.flags |= GENPD_FLAG_ACTIVE_WAKEUP;
+ 	pm_genpd_init(&pd->genpd, NULL,
