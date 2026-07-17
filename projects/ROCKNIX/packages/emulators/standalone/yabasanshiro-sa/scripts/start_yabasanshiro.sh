@@ -40,7 +40,7 @@ then
 
   # Handle inputplumber platforms first
   if [[ "${HW_DEVICE}" =~ RK3576|SM6115|SM8550|SM8650|SM8750|SM8250 ]]; then
-    GAMEPAD="'InputPlumber GameController'"
+    GAMEPAD="'Sony Interactive Entertainment DualSense Wireless Controller'"
   else
     # Check for js0, else fall back to joypad
     if grep -q "js0" /proc/bus/input/devices; then
