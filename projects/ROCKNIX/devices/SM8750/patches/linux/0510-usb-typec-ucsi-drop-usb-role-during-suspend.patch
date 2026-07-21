@@ -1,0 +1,206 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:01 2001
+From: Anze <aanzdev@gmail.com>
+Date: Mon, 21 Jul 2026 13:30:00 +0200
+Subject: [PATCH] usb: typec: ucsi: quiesce USB data roles over system suspend
+
+The charger-unplug wedge fix (0509) only clears the USB data role for
+partners that advertise no USB data. A dock DOES advertise USB data, so
+the role stays attached across suspend, the USB power island stays up,
+and the SM8750 firmware power-collapse hard-hangs on cable events while
+asleep, exactly like the charger case.
+
+Quiesce the USB role on every connector at suspend entry and re-derive
+it from fresh PPM state at resume:
+
+- Per-instance state: the PM notifier block lives in struct ucsi
+  (container_of in the callback), no globals, any number of UCSI
+  instances and connectors.
+- Symmetric teardown: the notifier is registered in ucsi_register() and
+  synchronously unregistered first thing in ucsi_unregister(), which is
+  exactly the path the pmic_glink PDR/SSR teardown takes, so an ADSP
+  restart cannot leave a notifier pointing at freed connectors.
+  ucsi->connector is also NULLed after the kfree so the re-registered
+  instance cannot iterate a stale pointer before init completes.
+- Synchronization: role changes are made under con->lock, the same
+  mutex the connector event handler and partner tasks hold, and
+  ucsi->usb_role_suspended makes every role-setting path compute
+  USB_ROLE_NONE while suspend is in progress, so a connector event
+  racing suspend entry cannot re-raise the role.
+- No blind restore: nothing is saved. At PM_POST_SUSPEND a partner task
+  re-reads GET_CONNECTOR_STATUS and re-derives the role from fresh
+  state (ucsi_check_connection() plus an explicit ucsi_partner_change()
+  for the state-unchanged case), covering partners that stayed,
+  vanished or appeared while the system was asleep.
+
+A PM notifier is used instead of dev_pm_ops on purpose: at
+PM_SUSPEND_PREPARE the system is fully awake, so the USB controller
+processes the switch to USB_ROLE_NONE and drops the power island before
+any device suspends; a device PM callback would give no ordering
+guarantee against the USB controller's own suspend.
+
+Device-tested on AYN Odin 3: dock attached -> suspend -> dock unplugged
+while asleep -> clean resume (previously a hard wedge).
+
+Signed-off-by: Anze <aanzdev@gmail.com>
+---
+--- a/drivers/usb/typec/ucsi/ucsi.c
++++ b/drivers/usb/typec/ucsi/ucsi.c
+@@ -12,6 +12,7 @@
+ #include <linux/module.h>
+ #include <linux/delay.h>
+ #include <linux/slab.h>
++#include <linux/suspend.h>
+ #include <linux/usb/typec_dp.h>
+ #include <linux/usb/typec_tbt.h>
+ 
+@@ -1200,6 +1201,10 @@
+ 	if (!(UCSI_CONSTAT(con, PARTNER_FLAG_USB)))
+ 		u_role = USB_ROLE_NONE;
+ 
++	/* USB roles are quiesced over system suspend, see ucsi_pm_notify() */
++	if (READ_ONCE(con->ucsi->usb_role_suspended))
++		u_role = USB_ROLE_NONE;
++
+ 	ret = usb_role_switch_set_role(con->usb_role_sw, u_role);
+ 	if (ret)
+ 		dev_err(con->ucsi->dev, "con:%d: failed to set usb role:%d\n",
+@@ -1781,6 +1786,10 @@
+ 	if (!(UCSI_CONSTAT(con, PARTNER_FLAG_USB)))
+ 		u_role = USB_ROLE_NONE;
+ 
++	/* USB roles are quiesced over system suspend, see ucsi_pm_notify() */
++	if (READ_ONCE(ucsi->usb_role_suspended))
++		u_role = USB_ROLE_NONE;
++
+ 	ret = usb_role_switch_set_role(con->usb_role_sw, u_role);
+ 	if (ret) {
+ 		dev_err(ucsi->dev, "con:%d: failed to set usb role:%d\n",
+@@ -1954,6 +1963,79 @@
+ 	return ret;
+ }
+ 
++/*
++ * On Qualcomm SM8750 the firmware hangs in power collapse when a cable
++ * event arrives while a USB data role is still attached: the active role
++ * keeps the USB power island up across suspend, and losing the partner
++ * while the SoC is asleep wedges the firmware (hard hang, forced reset).
++ *
++ * Quiesce the USB role on every connector at suspend entry.  A PM
++ * notifier is used instead of a device PM callback on purpose: it runs
++ * while the system is still fully awake, so the USB controller processes
++ * the switch to USB_ROLE_NONE and drops the power island before any
++ * device starts suspending (a dev_pm_ops callback would give no ordering
++ * guarantee against the USB controller's own suspend).
++ *
++ * Nothing is saved or blindly restored: ucsi->usb_role_suspended makes
++ * every role-setting path compute USB_ROLE_NONE while set, and at resume
++ * the connector status is re-read from the PPM so the role is re-derived
++ * from fresh state.  That covers partners that stayed, vanished or
++ * appeared while the system was asleep.
++ */
++static int ucsi_pm_resync_connection(struct ucsi_connector *con)
++{
++	bool was_connected = UCSI_CONSTAT(con, CONNECTED);
++	int ret;
++
++	ret = ucsi_check_connection(con);
++	if (ret)
++		return ret;
++
++	/*
++	 * ucsi_check_connection() leaves the USB role alone when the
++	 * connection state did not change; the role was quiesced for
++	 * suspend, so re-apply it from the fresh status here as well.
++	 */
++	if (was_connected && UCSI_CONSTAT(con, CONNECTED))
++		ucsi_partner_change(con);
++
++	return 0;
++}
++
++static int ucsi_pm_notify(struct notifier_block *nb, unsigned long action,
++			  void *data)
++{
++	struct ucsi *ucsi = container_of(nb, struct ucsi, pm_nb);
++	struct ucsi_connector *connector = READ_ONCE(ucsi->connector);
++	struct ucsi_connector *con;
++
++	if (!connector)
++		return NOTIFY_DONE;
++
++	switch (action) {
++	case PM_SUSPEND_PREPARE:
++		WRITE_ONCE(ucsi->usb_role_suspended, true);
++		for (con = connector; con->port; con++) {
++			mutex_lock(&con->lock);
++			if (con->usb_role_sw)
++				usb_role_switch_set_role(con->usb_role_sw,
++							 USB_ROLE_NONE);
++			mutex_unlock(&con->lock);
++		}
++		break;
++	case PM_POST_SUSPEND:
++		WRITE_ONCE(ucsi->usb_role_suspended, false);
++		for (con = connector; con->port; con++) {
++			mutex_lock(&con->lock);
++			ucsi_partner_task(con, ucsi_pm_resync_connection, 1, 0);
++			mutex_unlock(&con->lock);
++		}
++		break;
++	}
++
++	return NOTIFY_DONE;
++}
++
+ static void ucsi_resume_work(struct work_struct *work)
+ {
+ 	struct ucsi *ucsi = container_of(work, struct ucsi, resume_work);
+@@ -2123,6 +2205,9 @@
+ 		UCSI_BCD_GET_MINOR(ucsi->version),
+ 		UCSI_BCD_GET_SUBMINOR(ucsi->version));
+ 
++	ucsi->pm_nb.notifier_call = ucsi_pm_notify;
++	register_pm_notifier(&ucsi->pm_nb);
++
+ 	queue_delayed_work(system_long_wq, &ucsi->work, 0);
+ 
+ 	ucsi_debugfs_register(ucsi);
+@@ -2141,6 +2226,9 @@
+ 	u64 cmd = UCSI_SET_NOTIFICATION_ENABLE;
+ 	int i;
+ 
++	/* Synchronous: no PM notifier runs beyond this point */
++	unregister_pm_notifier(&ucsi->pm_nb);
++
+ 	/* Make sure that we are not in the middle of driver initialization */
+ 	cancel_delayed_work_sync(&ucsi->work);
+ 	cancel_work_sync(&ucsi->resume_work);
+@@ -2183,6 +2271,7 @@
+ 	}
+ 
+ 	kfree(ucsi->connector);
++	ucsi->connector = NULL;
+ }
+ EXPORT_SYMBOL_GPL(ucsi_unregister);
+ 
+--- a/drivers/usb/typec/ucsi/ucsi.h
++++ b/drivers/usb/typec/ucsi/ucsi.h
+@@ -7,6 +7,7 @@
+ #include <linux/bitmap.h>
+ #include <linux/completion.h>
+ #include <linux/device.h>
++#include <linux/notifier.h>
+ #include <linux/power_supply.h>
+ #include <linux/types.h>
+ #include <linux/usb/typec.h>
+@@ -477,6 +478,10 @@
+ 	struct work_struct resume_work;
+ 	struct delayed_work work;
+ 	int work_count;
++
++	/* USB roles are quiesced over system suspend, see ucsi_pm_notify() */
++	struct notifier_block pm_nb;
++	bool usb_role_suspended;
+ #define UCSI_ROLE_SWITCH_RETRY_PER_HZ	10
+ #define UCSI_ROLE_SWITCH_INTERVAL	(HZ / UCSI_ROLE_SWITCH_RETRY_PER_HZ)
+ #define UCSI_ROLE_SWITCH_WAIT_COUNT	(10 * UCSI_ROLE_SWITCH_RETRY_PER_HZ)
