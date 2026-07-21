@@ -2,7 +2,7 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="emulationstation"
-PKG_VERSION="26ded87813e47f24a116923bdd1fc783ec796f04"
+PKG_VERSION="c415efc8801a219169d33ea46376a7cf2369f3ba"
 PKG_GIT_CLONE_BRANCH="master"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/ROCKNIX/emulationstation-next"
@@ -30,6 +30,8 @@ PKG_CMAKE_OPTS_TARGET+=" -DROCKNIX=1 \
                          -DCEC=0 \
                          -DENABLE_PULSE=1 \
                          -DUSE_SYSTEM_PUGIXML=1"
+
+[ "${DEVICE}" = "S922X" ] && PKG_CMAKE_OPTS_TARGET+=" -DBATTERYPLUS=1"
 
 pre_configure_target() {
   for key in SCREENSCRAPER_DEV_LOGIN \
