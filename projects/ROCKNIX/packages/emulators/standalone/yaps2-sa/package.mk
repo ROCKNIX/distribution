@@ -11,39 +11,40 @@ PKG_DEPENDS_TARGET="toolchain llvm:host SDL3 libpng zlib libjpeg-turbo zstd lz4 
 PKG_TOOLCHAIN="manual"
 PKG_BUILD_FLAGS="speed"
 
-PCSX2_CMAKE_BASE=(
-  -DCMAKE_BUILD_TYPE=Release
-  # Full-tree IPO stays off for Qt (not worth it)...
-  -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF
-  # ...but stays on for just the recompiler/VU/EE/IOP core:
-  -DLTO_PCSX2_CORE=ON
-  -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
-  -DUSE_VULKAN=ON
-  -DUSE_OPENGL=ON
-  -DUSE_BACKTRACE=OFF
-  -DENABLE_QT_UI=ON
-  -DENABLE_QT_DEBUGGER=OFF
-  -DWAYLAND_API=ON
-  -DX11_API=ON
-  -DCMAKE_LINKER_TYPE=LLD
-)
-
 PATCHES_URL="https://github.com/PCSX2/pcsx2_patches/archive/refs/tags/latest.zip"
 
-make_target() {
-  case ${TARGET_ARCH} in
-    aarch64)
-      for _v in CFLAGS CXXFLAGS LDFLAGS; do
-        export ${_v}="$(echo ${!_v} | sed 's/-march=[^ ]*//g; s/-mabi=lp64//g; s/-mtune=[^ ]*//g')"
-      done
-    ;;
-    x86_64)
-      for _v in CFLAGS CXXFLAGS LDFLAGS; do
-        export ${_v}="$(echo ${!_v} | sed 's/-mabi=lp64//g; s/-mtune=[^ ]*//g')"
-      done
-    ;;
-  esac
+get_graphicdrivers() {
+  if listcontains "${GRAPHIC_DRIVERS}" "(panfrost)"; then
+    GRAPHICS_DRIVER="panfrost"
+  elif listcontains "${GRAPHIC_DRIVERS}" "(freedreno)"; then
+    GRAPHICS_DRIVER="freedreno"
+  fi
+}
 
+pre_configure_target() {
+  PCSX2_CMAKE_BASE=(
+    -DCMAKE_BUILD_TYPE=Release
+    # Full-tree IPO stays off for Qt (not worth it)...
+    -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF
+    # ...but stays on for just the recompiler/VU/EE/IOP core:
+    -DLTO_PCSX2_CORE=ON
+    -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
+    -DUSE_VULKAN=ON
+    -DUSE_OPENGL=ON
+    -DUSE_BACKTRACE=OFF
+    -DENABLE_QT_UI=ON
+    -DENABLE_QT_DEBUGGER=OFF
+    -DWAYLAND_API=ON
+    -DX11_API=ON
+    -DCMAKE_LINKER_TYPE=LLD
+  )
+
+  for _v in CFLAGS CXXFLAGS LDFLAGS; do
+    export ${_v}="$(echo ${!_v} | sed 's/-mabi=lp64//g; s/-mtune=[^ ]*//g')"
+  done
+}
+
+make_target() {
   mkdir -p "${PKG_BUILD}/.${TARGET_NAME}"
   cd "${PKG_BUILD}/.${TARGET_NAME}"
 
