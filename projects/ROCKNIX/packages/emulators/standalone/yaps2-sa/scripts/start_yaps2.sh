@@ -17,7 +17,7 @@ if [ ! -f "/storage/.config/YAPS2/inis/PCSX2.ini" ]; then
 fi
 
 #Check if secrets ini exists in .config
-if [ ! -f "/storage/.config/YAPS2/inis/PCSX2.ini" ]; then
+if [ ! -f "/storage/.config/YAPS2/inis/secrets.ini" ]; then
         cp -r "/usr/config/YAPS2/inis/secrets.ini" "/storage/.config/YAPS2/inis/"
 fi
 
