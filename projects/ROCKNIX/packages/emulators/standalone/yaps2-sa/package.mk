@@ -93,7 +93,16 @@ makeinstall_target() {
   cp -rf ${PKG_BUILD}/.${TARGET_NAME}/bin/* ${INSTALL}/usr/share/yaps2-sa
 
   mkdir -p ${INSTALL}/usr/config
-  cp -rf ${PKG_DIR}/config/YAPS2 ${INSTALL}/usr/config
+  cp -rf ${PKG_DIR}/config/common/YAPS2 ${INSTALL}/usr/config
+
+  case ${DEVICE} in
+    S922X)
+      cp -rf ${PKG_DIR}/config/S922X/YAPS2 ${INSTALL}/usr/config
+    ;;
+    *)
+      cp -rf ${PKG_DIR}/config/inputplumber/YAPS2 ${INSTALL}/usr/config
+    ;;
+  esac
 }
 
 post_install() {
