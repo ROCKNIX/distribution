@@ -15,7 +15,7 @@
 ################################################################################
 
 PKG_NAME="gearlynx-lr"
-PKG_VERSION="393994c04b5c0d2cfcc2a9f7903609e9c602be3a"
+PKG_VERSION="db285e112b47993dcdeedb66e3229bbe279c00b9"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/drhelius/Gearlynx"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
