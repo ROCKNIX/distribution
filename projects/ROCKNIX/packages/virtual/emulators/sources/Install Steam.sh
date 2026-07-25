@@ -20,7 +20,8 @@ RUNTIME_DIR="${STEAM}/steam-runtime-steamrt-arm64"
 CLIENT_DIR="${STEAM}/steamrtarm64"
 PROTON_NAME="Proton 11.0 (ARM64)"
 PROTON_DIR="${STEAM}/steamapps/common/${PROTON_NAME}"
-RUNTIME_TAR_URL="https://repo.steampowered.com/steamrt3c/images/latest-public-beta/steam-runtime-steamrt-arm64.tar.xz"
+RUNTIME_TAR_BASE="https://repo.steampowered.com/steamrt3c/images"
+RUNTIME_TAR_VERSION_URL="${RUNTIME_TAR_BASE}/latest-public-stable.txt"
 STEAM_MANIFEST_URL="https://client-update.fastly.steamstatic.com/steam_client_publicbeta_linuxarm64"
 STEAM_CDN="https://client-update.steamstatic.com"
 PROTON_CACHYOS_VERSION_FULL="11.0-20260702-slr"
@@ -74,6 +75,12 @@ install_steam_runtime_arm64() {
   fi
   log_info "Downloading and installing Steam runtime (ARM64)..."
   local tar_path="${STEAM}/steam-runtime-steamrt-arm64.tar.xz"
+
+  local runtime_version
+  runtime_version=$(curl -fsSL "${RUNTIME_TAR_VERSION_URL}" | tr -d '[:space:]') || die "Failed to fetch Steam runtime version."
+  [ -n "${runtime_version}" ] || die "Steam runtime version string is empty."
+  local RUNTIME_TAR_URL="${RUNTIME_TAR_BASE}/${runtime_version}/steam-runtime-steamrt-arm64.tar.xz"
+  log_info "Steam runtime URL: ${RUNTIME_TAR_URL}"
 
   wget -c -t 5 -O "${tar_path}" "${RUNTIME_TAR_URL}" || die "Failed to download Steam runtime."
   tar xvf "${tar_path}" -C "${STEAM}" || die "Failed to extract Steam runtime."
