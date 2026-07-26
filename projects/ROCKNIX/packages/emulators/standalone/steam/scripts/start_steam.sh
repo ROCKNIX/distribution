@@ -135,6 +135,8 @@ steam_launch_bigpicture() {
     force_orientation="right"
   elif [ "${TRANSFORM}" = "270" ]; then
     force_orientation="left"
+  elif [ "${TRANSFORM}" = "normal" ]; then
+    force_orientation="normal"
   fi
 
   if [[ "$1" == *.desktop && -f "$1" && "$(basename "$1")" != "Steam.desktop" ]]; then
