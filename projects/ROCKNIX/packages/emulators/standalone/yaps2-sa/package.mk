@@ -13,13 +13,12 @@ PKG_BUILD_FLAGS="speed"
 
 PATCHES_URL="https://github.com/PCSX2/pcsx2_patches/archive/refs/tags/latest.zip"
 
-get_graphicdrivers() {
+get_graphicdrivers
   if listcontains "${GRAPHIC_DRIVERS}" "(panfrost)"; then
     GRAPHICS_DRIVER="panfrost"
   elif listcontains "${GRAPHIC_DRIVERS}" "(freedreno)"; then
     GRAPHICS_DRIVER="freedreno"
   fi
-}
 
 pre_configure_target() {
   PCSX2_CMAKE_BASE=(
