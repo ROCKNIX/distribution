@@ -98,9 +98,9 @@ read_controller_input() {
         echo "left"
     elif [[ "$event_output" =~ BTN_DPAD_RIGHT.*value[[:space:]]+1 ]] || [[ "$event_output" =~ ABS_HAT0X.*value[[:space:]]+1 ]]; then
         echo "right"
-    elif [[ "$event_output" =~ BTN_SOUTH.*value[[:space:]]+1 ]] || [[ "$event_output" =~ BTN_A.*value[[:space:]]+1 ]] || [[ "$event_output" =~ "code 0.*value[[:space:]]+1" ]] || [[ "$event_output" =~ BTN_EAST.*value[[:space:]]+1 ]]; then
+    elif [[ "$event_output" =~ BTN_SOUTH.*value[[:space:]]+1 ]] || [[ "$event_output" =~ BTN_A.*value[[:space:]]+1 ]] || [[ "$event_output" =~ BTN_EAST.*value[[:space:]]+1 ]]; then
         echo "confirm"
-    elif [[ "$event_output" =~ BTN_B.*value[[:space:]]+1 ]] || [[ "$event_output" =~ "code 1.*value[[:space:]]+1" ]]; then
+    elif [[ "$event_output" =~ BTN_B.*value[[:space:]]+1 ]]; then
         echo "cancel"
     elif [[ "$event_output" =~ BTN_START.*value[[:space:]]+1 ]]; then
         echo "start"
@@ -306,7 +306,7 @@ report_rclone_error() {
         6) log_message "${operation} failed: Less serious errors (e.g. partly transferred)" "true" "WARN" ;;
         7) log_message "${operation} failed: Fatal error - rclone giving up" "true" "ERROR" ;;
         8) log_message "${operation} failed: Transfer exceeded - limits exceeded" "true" "ERROR" ;;
-        9) log_message "${operation} failed: Operation failed - no retry" "true" "ERROR" ;;
+        9) log_message "${operation} completed: no files transferred" "true" ;;
         *) log_message "${operation} failed with unknown error code: $exit_code" "true" "ERROR" ;;
     esac
 }
@@ -379,7 +379,7 @@ backup_game_saves() {
     log_message "Ensuring remote sync path exists: ${REMOTENAME}${SYNCPATH}" "false"
     rclone mkdir "${REMOTENAME}${SYNCPATH}" 2>/dev/null
     
-    # Set log level to DEBUG when INFO is selected for enhanced logging
+    # Pass an explicit --log-level INFO when LOG_LEVEL is INFO
     local rclone_debug=""
     local filtered_opts=("${RCLONE_OPTS_ARRAY[@]}")
     
@@ -407,11 +407,17 @@ backup_game_saves() {
 
     # Add exclusions
     all_opts+=(
+        "--stats-one-line"
         "--exclude=${BACKUPFOLDER}/**"
         "--exclude=backups/**"
         "--exclude=bios/**"
         "--exclude=*.zip"
     )
+
+    # Check if the rclone version supports the terminal width flag
+    if rclone help | grep -q progress-terminal-width; then
+        all_opts+=("--progress-terminal-width=80")
+    fi
 
     # Execute rclone with enhanced error handling
     execute_rclone_with_error_handling \
@@ -424,6 +430,15 @@ backup_game_saves() {
 
     # Report the result with detailed error information
     report_rclone_error $BACKUP_STATUS "Game saves backup"
+
+    # RSYNCRMDIR: after a successful backup, remove orphaned empty directories on
+    # the remote (--leave-root keeps the sync root itself). Exit code 9 means
+    # "success, no files transferred", so tidy on that too.
+    if [ "${RSYNCRMDIR}" == "yes" ] && { [ $BACKUP_STATUS -eq 0 ] || [ $BACKUP_STATUS -eq 9 ]; }; then
+        log_message "Removing orphaned empty directories on remote: ${REMOTENAME}${SYNCPATH}" "false"
+        rclone rmdirs "${REMOTENAME}${SYNCPATH}" --leave-root --log-file /var/log/cloud_sync.log 2>/dev/null \
+            || log_message "Empty-directory cleanup failed (non-fatal)" "true" "WARN"
+    fi
 
     return $BACKUP_STATUS
 }
@@ -470,6 +485,11 @@ backup_system_files() {
             "--include=*.zip"
             "--stats-one-line"
         )
+
+        # Check if the rclone version supports the terminal width flag
+        if rclone help | grep -q progress-terminal-width; then
+            backup_opts+=("--progress-terminal-width=80")
+        fi
         
         # Add any additional options from RESTORE_RCLONEOPTS
         if [ -n "$RESTORE_RCLONEOPTS" ]; then
