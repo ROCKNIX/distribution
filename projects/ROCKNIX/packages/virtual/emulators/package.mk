@@ -59,7 +59,7 @@ case "${DEVICE}" in
     PKG_EMUS+=" aethersx2-sa azahar-sa dolphin-sa drastic-sa mednafen melonds-sa supermodel-sa vita3k-sa"
     LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr uae4arm-lr"
     ;;
-  SM6115)
+  SM4450|SM6115)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 desmume-lr gpsp-lr pcsx_rearmed-lr"
     PKG_EMUS+=" aethersx2-sa azahar-sa dolphin-sa drastic-sa mednafen melonds-sa supermodel-sa vita3k-sa armsx2-sa"
     LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr uae4arm-lr"
