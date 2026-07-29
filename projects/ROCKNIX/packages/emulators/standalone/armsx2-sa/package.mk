@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2025-present ROCKNIX (https://github.com/ROCKNIX)
 
-PKG_NAME="yaps2-sa"
-PKG_VERSION="dbb7eade69c1befc6410fe636811010d340ef886"
+PKG_NAME="armsx2-sa"
+PKG_VERSION="37ce96996c56cf9e3d635e7f4f36b987fbd4197a"
 PKG_LICENSE="GPLv3"
-PKG_SITE="https://github.com/yaps2/yaps2"
+PKG_SITE="https://github.com/ARMSX2/ARMSX2"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_LONGDESC="yaps2 is an ARM64-focused PlayStation 2 (PS2) emulator, a fork of PCSX2."
+PKG_LONGDESC="ARMSX2 is a native ARM64 PlayStation 2 (PS2) emulator, a fork of PCSX2 that ports the EE/IOP/VU JIT recompilers to ARM64."
 PKG_DEPENDS_TARGET="toolchain llvm:host SDL3 libpng zlib libjpeg-turbo zstd lz4 libwebp freetype plutosvg curl libpcap ffmpeg libX11 libXext qt6 shaderc"
 PKG_TOOLCHAIN="manual"
 PKG_BUILD_FLAGS="speed"
@@ -88,18 +88,18 @@ makeinstall_target() {
   cp -rf ${PKG_DIR}/scripts/* ${INSTALL}/usr/bin
   chmod 755 ${INSTALL}/usr/bin/*
 
-  mkdir -p ${INSTALL}/usr/share/yaps2-sa
-  cp -rf ${PKG_BUILD}/.${TARGET_NAME}/bin/* ${INSTALL}/usr/share/yaps2-sa
+  mkdir -p ${INSTALL}/usr/share/armsx2-sa
+  cp -rf ${PKG_BUILD}/.${TARGET_NAME}/bin/* ${INSTALL}/usr/share/armsx2-sa
 
   mkdir -p ${INSTALL}/usr/config
-  cp -rf ${PKG_DIR}/config/common/YAPS2 ${INSTALL}/usr/config
+  cp -rf ${PKG_DIR}/config/common/ARMSX2 ${INSTALL}/usr/config
 
   case ${DEVICE} in
     S922X)
-      cp -rf ${PKG_DIR}/config/S922X/YAPS2 ${INSTALL}/usr/config
+      cp -rf ${PKG_DIR}/config/S922X/ARMSX2 ${INSTALL}/usr/config
     ;;
     *)
-      cp -rf ${PKG_DIR}/config/inputplumber/YAPS2 ${INSTALL}/usr/config
+      cp -rf ${PKG_DIR}/config/inputplumber/ARMSX2 ${INSTALL}/usr/config
     ;;
   esac
 }
@@ -115,5 +115,5 @@ post_install() {
   esac
 
   sed -e "s/@GRAPHICS@/${GRAPHICS}/g" \
-        -i ${INSTALL}/usr/bin/start_yaps2.sh
+        -i ${INSTALL}/usr/bin/start_armsx2.sh
 }
