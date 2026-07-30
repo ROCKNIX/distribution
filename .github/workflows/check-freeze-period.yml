@@ -1,0 +1,63 @@
+name: Check freeze period
+
+on:
+  workflow_call:
+
+permissions:
+  pull-requests: read
+
+jobs:
+  check-freeze-period:
+    runs-on: self-hosted
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Check if freeze is active
+        run: |
+          DAY=$(date +%d)
+          LAST_DAY=$(date -d "$(date +%Y-%m-01) +1 month -1 day" +%d)
+          FREEZE_START=$((LAST_DAY - 6))
+          if [ "$DAY" -ge "$FREEZE_START" ]; then
+            echo "Freeze is active (last 7 days of the month)."
+            echo "FREEZE=true" >> "$GITHUB_ENV"
+          else
+            echo "No freeze active."
+            echo "FREEZE=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Get PR number
+        if: env.FREEZE == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MG_HEAD_REF: ${{ github.event.merge_group.head_ref }}
+        run: |
+          if [[ "${{ github.event_name }}" == "merge_group" ]]; then
+            PR_NUMBER=$(grep -oE 'pr-[0-9]+' <<< "$MG_HEAD_REF" | cut -d- -f2)
+            if [[ -z "$PR_NUMBER" ]]; then
+              echo "Could not extract PR number from ref: $MG_HEAD_REF"
+              exit 1
+            fi
+          else
+            PR_NUMBER="${{ github.event.pull_request.number }}"
+          fi
+          echo "PR_NUMBER=$PR_NUMBER" >> "$GITHUB_ENV"
+
+      - name: Validate bugfix label
+        if: env.FREEZE == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LABELS=$(gh pr view "$PR_NUMBER" \
+            --repo "${{ github.repository }}" \
+            --json labels \
+            --jq '[.labels[].name] | join(",")')
+          if [[ "$LABELS" != *"bugfix"* ]]; then
+            echo "Freeze is active. PR must have the 'bugfix' label."
+            echo "Labels found: $LABELS"
+            exit 1
+          fi
+          echo "PR complies with freeze policy (has 'bugfix' label)."
+
+
