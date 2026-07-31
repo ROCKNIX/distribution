@@ -84,6 +84,11 @@ quirks() {
 case $1 in
   pre)
     if [ "$(get_setting wifi.enabled)" == "1" ]; then
+      # while still associated, so resume rejoins this network and not
+      # whichever saved profile NM happens to pick first
+      log $0 "Preferring the active WIFI network on reconnect."
+      wifictl pin >${EVENTLOG} 2>&1
+
       log $0 "Disabling WIFI."
       nohup wifictl disable >${EVENTLOG} 2>&1
     fi

@@ -115,6 +115,35 @@ destroy_adhoc() {
   "${NMCLI}" device set "${WIFI_DEV}" managed yes >/dev/null 2>&1
 }
 
+# Prefer the network currently in use for the next automatic connection. On
+# resume the radio is only rfkill-unblocked, so NetworkManager autoconnect
+# chooses among every saved profile and can join a different access point than
+# the one in use -- often on another subnet, silently moving the device and
+# dropping whatever was connected. The same applies at boot. Raising the
+# priority of the active profile makes NM try that one first.
+#
+# Priority only, deliberately: every profile keeps autoconnect enabled, so a
+# preferred network that is out of range just loses to whatever is in range.
+# Turning autoconnect off on the others would pin harder but strand the device
+# on a network it can no longer see. With no active connection there is nothing
+# to prefer, and the priorities from the previous call still stand.
+pin_wifi() {
+  local active name
+
+  active=$("${NMCLI}" -t -f GENERAL.CONNECTION device show "${WIFI_DEV}" 2>/dev/null | cut -d: -f2-)
+  [ -z "${active}" ] && return 0
+
+  "${NMCLI}" -t -f NAME,TYPE connection show 2>/dev/null |
+    awk -F: '$2 ~ /wireless/ {print $1}' |
+    while IFS= read -r name; do
+      if [ "${name}" = "${active}" ]; then
+        "${NMCLI}" connection modify "${name}" connection.autoconnect-priority 100 >/dev/null 2>&1
+      else
+        "${NMCLI}" connection modify "${name}" connection.autoconnect-priority 0 >/dev/null 2>&1
+      fi
+    done
+}
+
 has_ap_mode() {
   wait_for_wifi
 
@@ -132,6 +161,9 @@ case "${1}" in
     ;;
   disable)
     rfkill block wifi
+    ;;
+  pin)
+    pin_wifi
     ;;
   connect)
     if [ "${WIFI_TYPE}" = "1" ] && \
