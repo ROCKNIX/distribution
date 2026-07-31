@@ -2,10 +2,13 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="emulationstation"
-PKG_VERSION="c415efc8801a219169d33ea46376a7cf2369f3ba"
-PKG_GIT_CLONE_BRANCH="master"
+PKG_VERSION="30c29490c8d676bb6d8f666f8949738742c9d216"
+PKG_GIT_CLONE_BRANCH="wifi-quote-ssid-and-key"
 PKG_LICENSE="GPL"
-PKG_SITE="https://github.com/ROCKNIX/emulationstation-next"
+# Testing branch: shell-quotes the SSID/passphrase handed to wifictl, so a
+# passphrase containing $, ` or \ no longer reaches it mangled. Point back at
+# ROCKNIX/emulationstation-next once that fix is merged there.
+PKG_SITE="https://github.com/slaide/emulationstation-next"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="boost toolchain SDL2 freetype curl freeimage bash rapidjson SDL2_mixer fping p7zip alsa vlc drm_tool pugixml"
 PKG_NEED_UNPACK="busybox"
