@@ -29,7 +29,7 @@ DEFAULT_CHAN="6"
 
 SSID="${2:-$(get_setting wifi.ssid 2>/dev/null)}"
 PSK="${3:-$(get_setting wifi.key 2>/dev/null)}"
-COUNTRY="${4:-$(get_setting wifi.country | tr -d '[:space:]' 2>/dev/null)}"
+COUNTRY="${4:-$(get_setting wifi.country 2>/dev/null | tr -d '[:space:]')}"
 
 if [ "${WIFI_TYPE}" = "1" ]; then
   SSID="NETPLAY_AP"
@@ -52,7 +52,55 @@ wait_for_wifi() {
     iwctl device list | grep -q "${WIFI_DEV}" && break
     sleep 1
   done
-  [ -n "${COUNTRY}" ] && iw reg set "${COUNTRY}"
+
+  return 0
+}
+
+# Put the radio on the configured country, and record it where iw's udev hook
+# (60-iw-regdomain.rules -> /usr/lib/iw/setregdomain) will find it on the next
+# boot. That hook runs on ieee80211 "add", which is the only correct moment:
+# the phy exists, nothing is associated yet, and it costs nothing on devices
+# with no Wi-Fi at all. Applying the domain later rebuilds the channel list and
+# drops any active link, so this is a no-op unless the country really changed.
+#
+# Not called from the scan or connect path either: emptying the scan cache
+# immediately before "device wifi connect" makes the connect fail with the SSID
+# not found -- it breaks the connection it is meant to enable.
+apply_regdomain() {
+  local current
+
+  [ -z "${COUNTRY}" ] && return 0
+
+  # regdomain.conf below is sourced by setregdomain as root at every boot,
+  # and iw only takes ISO 3166-1 alpha-2 codes: refuse anything that is not
+  # exactly two letters.
+  case "${COUNTRY}" in
+    [A-Za-z][A-Za-z]) COUNTRY="$(echo "${COUNTRY}" | tr '[:lower:]' '[:upper:]')" ;;
+    *) return 0 ;;
+  esac
+
+  mkdir -p /storage/.cache
+  echo "REGDOMAIN=${COUNTRY}" >/storage/.cache/regdomain.conf
+
+  # Already there: don't touch the radio, re-applying would drop the link.
+  # Self-managed drivers (ath12k) report their country in a phy# section;
+  # everything else only has the global domain.
+  current="$(iw reg get 2>/dev/null | sed -n '/^phy#/,$p' |
+             awk '/^country/ { print substr($2, 1, 2); exit }')"
+  [ -z "${current}" ] &&
+    current="$(iw reg get 2>/dev/null |
+               awk '/^country/ { print substr($2, 1, 2); exit }')"
+  [ "${current}" = "${COUNTRY}" ] && return 0
+
+  # cfg80211 is built into the kernel, so its single attempt at loading
+  # regulatory.db happens before a rootfs exists and fails with -ENOENT. The
+  # failure is cached and every hint afterwards is answered from an empty
+  # database and dropped, which pins the domain at 00 whatever wifi.country
+  # says. Reloading first is what makes the setting take effect.
+  iw reg reload
+  iw reg set "${COUNTRY}"
+
+  return 0
 }
 
 # lists all wifi networks
@@ -71,8 +119,15 @@ connect_wifi() {
     "${NMCLI}" -t -f DEVICE,STATE dev status 2>/dev/null | grep -q "^${WIFI_DEV}:connected" && return 0
     sleep 1
   done
-  "${NMCLI}" dev wifi rescan ifname "${WIFI_DEV}" 2>/dev/null
-  sleep 2
+  # "device wifi connect" fails outright when the SSID isn't in the scan cache,
+  # which is normal for a radio that has only just come up. Rescan until it
+  # appears rather than assuming one pass is enough.
+  for i in $(seq 1 5); do
+    "${NMCLI}" dev wifi rescan ifname "${WIFI_DEV}" 2>/dev/null
+    sleep 2
+    "${NMCLI}" -t -f SSID dev wifi list ifname "${WIFI_DEV}" 2>/dev/null |
+      grep -qxF "${SSID}" && break
+  done
   # If a keyfile profile for this SSID already exists but is incomplete (e.g. missing
   # 802-11-wireless-security.key-mgmt), NM fails connection-update with "key-mgmt: property is missing".
   # Drop the stale profile so "device wifi connect" creates a clean one.
@@ -129,6 +184,7 @@ has_ap_mode() {
 case "${1}" in
   enable)
     rfkill unblock wifi
+    apply_regdomain
     ;;
   disable)
     rfkill block wifi
