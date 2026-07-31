@@ -7,11 +7,16 @@ exposes the analog-stick RGB as a multicolor LED ("konkr:rgb:joysticks",
 F7 01 R G B frames). Resends the enable frame on system resume.
 sysfs key_{lc,rc}_{shoulder,back}: GET/SET_KEY_CFG remap of the grip and
 shoulder-2 buttons over the same UART ("<funcbyte> <target>", MCU-persisted).
+sysfs effect (on the LED device): picks the lighting mode, which
+brightness/multi_intensity cannot express — they always mean the static
+frame. "breath" and "rainbow" are rendered by the MCU itself from one
+frame, so they cost no host CPU and outlive whoever set them.
 pm: a PM notifier blanks the stick LEDs at PM_SUSPEND_PREPARE (the MCU
-stays powered and would keep them lit) and re-enables + relights at
-PM_POST_SUSPEND; all UART TX is inhibited in between — a frame written
-during the device-suspend window never drains ("Unable to drain
-transmitter") and wedges the geni SE TX engine until reboot.
+stays powered and would keep them lit, effect and all) and re-enables +
+replays the active mode at PM_POST_SUSPEND; all UART TX is inhibited in
+between — a frame written during the device-suspend window never drains
+("Unable to drain transmitter") and wedges the geni SE TX engine until
+reboot.
 
 ---
 diff --git a/drivers/input/misc/Kconfig b/drivers/input/misc/Kconfig
@@ -49,7 +54,7 @@ diff --git a/drivers/input/misc/Makefile b/drivers/input/misc/Makefile
 diff --git a/drivers/input/misc/konkr_sysbtn.c b/drivers/input/misc/konkr_sysbtn.c
 --- /dev/null
 +++ b/drivers/input/misc/konkr_sysbtn.c
-@@ -0,0 +1,498 @@
+@@ -0,0 +1,686 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * konkr_sysbtn - KONKR Pocket FIT Elite MCU UART client: the five "system"
@@ -64,9 +69,11 @@ diff --git a/drivers/input/misc/konkr_sysbtn.c b/drivers/input/misc/konkr_sysbtn
 + *    trailer). High nibble = button id 1..5, low nibble = 1 press, 0 release.
 + *    These are the KONKR/Home/Shoulder-2-pair/front-top-right buttons, which
 + *    are not part of the SPI gamepad.
-+ *  - Stick RGB (one zone, both sticks): F7 01 R G B 00 00 00 00 CK ED,
-+ *    CK = sum of bytes 1..8 (mod 256). The vendor app writes each frame
-+ *    4 times, 40 ms apart; a single write occasionally gets dropped.
++ *  - Stick lighting (one zone, both sticks): F7 <mode> <7 payload bytes>
++ *    CK ED, CK = sum of bytes 1..8 (mod 256). Mode 01 is a static colour,
++ *    payload R G B 00 00 00 00; the MCU renders two further effects itself,
++ *    see konkr_light_modes[]. The vendor app writes each frame 4 times,
++ *    40 ms apart; a single write occasionally gets dropped.
 + *
 + * The same UART carries the version frame (F7/E7 55 AA xx ED) and the
 + * controller-config protocols; none of those bytes form a valid 8-run, so
@@ -86,8 +93,9 @@ diff --git a/drivers/input/misc/konkr_sysbtn.c b/drivers/input/misc/konkr_sysbtn
 +#define KONKR_BAUD		115200
 +#define KONKR_NBTN		5
 +#define KONKR_RXBUF_SZ		32
-+#define KONKR_RGB_REPEAT	4
-+#define KONKR_RGB_GAP_MS	40
++#define KONKR_LIGHT_REPEAT	4
++#define KONKR_LIGHT_GAP_MS	40
++#define KONKR_LIGHT_PAYLOAD	7	/* frame bytes 2..8 */
 +
 +/*
 + * Remappable-button ("key config") protocol, same UART: raw 64-byte packets,
@@ -111,12 +119,47 @@ diff --git a/drivers/input/misc/konkr_sysbtn.c b/drivers/input/misc/konkr_sysbtn
 +	0xf7, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xed
 +};
 +
++/*
++ * Lighting modes, from the vendor app's frame builders. 01 is the plain
++ * static colour the LED core drives; 02 and 03 are rendered by the MCU
++ * itself, so they cost no host CPU and keep running once whoever set them
++ * is gone. Named in the "effect" attr, payload = frame bytes 2..8.
++ *
++ * These three are exactly what the vendor UI offers here (its mode list is
++ * {0,1,3,6}), and the app's other modes are all dead ends on this board:
++ * "scan" and "wave" send no frame at all, RGB-cycle-breath exists only over
++ * the 27-byte variant-A register transport this board doesn't speak, and
++ * mode 07 "reactive" (F7 55, stick-tracking, brightness + a background and
++ * foreground colour) is built with no device gate but this MCU ignores the
++ * frame outright — verified on hardware 2026-07-31 from both a static and an
++ * effect starting state, the previous mode just keeps running. Not exposed:
++ * a knob whose write succeeds while the rings do nothing is worse than none.
++ * (0x55 is also the mode byte of the 5-byte version frame F7 55 AA xx ED, so
++ * a length-based collision in the MCU parser is one plausible reason.)
++ */
++enum konkr_light {
++	KONKR_LIGHT_STATIC, KONKR_LIGHT_BREATH, KONKR_LIGHT_RAINBOW
++};
++
++static const struct konkr_light_mode {
++	const char *name;
++	u8 mode;	/* frame byte 1 */
++	u8 nargs;
++} konkr_light_modes[] = {
++	/* colour comes from brightness/multi_intensity, so no arguments */
++	[KONKR_LIGHT_STATIC]  = { "static",  0x01, 0 },
++	[KONKR_LIGHT_BREATH]  = { "breath",  0x02, 3 },	/* R G B, MCU pulses */
++	[KONKR_LIGHT_RAINBOW] = { "rainbow", 0x03, 0 },	/* hue cycle + pulse */
++};
++
++#define konkr_light_static	(&konkr_light_modes[KONKR_LIGHT_STATIC])
++
 +struct konkr_sysbtn {
 +	struct serdev_device *serdev;
 +	struct input_dev *input;
 +	struct led_classdev_mc mc;
 +	struct mc_subled subled[3];
-+	struct mutex tx_lock;	/* serializes RGB frames vs enable resends */
++	struct mutex tx_lock;	/* serializes all TX; guards light_* below */
 +	u8 rx[KONKR_RXBUF_SZ];
 +	int rxlen;
 +
@@ -128,9 +171,15 @@ diff --git a/drivers/input/misc/konkr_sysbtn.c b/drivers/input/misc/konkr_sysbtn
 +	u8 cfg_reply[KONKR_CFG_REPLY_FULL + 16];
 +	int cfg_reply_len;
 +
-+	/* last RGB written, to blank the (MCU-powered) LEDs across suspend */
-+	u8 last_rgb[3];
-+	bool rgb_valid;
++	/*
++	 * Last lighting frame written, to blank the (MCU-powered) LEDs across
++	 * suspend and put back what was running afterwards — replaying the
++	 * mode, not just a colour, or an effect would die on every sleep.
++	 * Under tx_lock, which also orders the frames themselves.
++	 */
++	const struct konkr_light_mode *light;	/* never NULL, set in probe */
++	u8 light_payload[KONKR_LIGHT_PAYLOAD];
++	bool light_valid;
 +
 +	/*
 +	 * TX is forbidden from PM_SUSPEND_PREPARE to PM_POST_SUSPEND: a frame
@@ -225,26 +274,39 @@ diff --git a/drivers/input/misc/konkr_sysbtn.c b/drivers/input/misc/konkr_sysbtn
 +	.write_wakeup = serdev_device_write_wakeup,
 +};
 +
-+static void konkr_send_rgb(struct konkr_sysbtn *kb, u8 r, u8 g, u8 b)
++/* build and write one lighting frame; caller holds tx_lock */
++static void konkr_tx_light(struct konkr_sysbtn *kb, u8 mode, const u8 *payload)
 +{
-+	u8 frame[11] = { 0xf7, 0x01, r, g, b };
++	u8 frame[11] = { 0xf7, mode };
 +	unsigned int sum = 0;
 +	int i;
 +
++	if (kb->tx_inhibited)
++		return;
++
++	memcpy(frame + 2, payload, KONKR_LIGHT_PAYLOAD);
 +	frame[10] = 0xed;
 +	for (i = 1; i <= 8; i++)
 +		sum += frame[i];
 +	frame[9] = sum & 0xff;
 +
-+	mutex_lock(&kb->tx_lock);
-+	if (kb->tx_inhibited)
-+		goto out;
-+	for (i = 0; i < KONKR_RGB_REPEAT; i++) {
++	for (i = 0; i < KONKR_LIGHT_REPEAT; i++) {
 +		serdev_device_write_buf(kb->serdev, frame, sizeof(frame));
-+		if (i < KONKR_RGB_REPEAT - 1)
-+			msleep(KONKR_RGB_GAP_MS);
++		if (i < KONKR_LIGHT_REPEAT - 1)
++			msleep(KONKR_LIGHT_GAP_MS);
 +	}
-+out:
++}
++
++/* write a lighting frame and remember it as the state to restore on resume */
++static void konkr_send_light(struct konkr_sysbtn *kb,
++			     const struct konkr_light_mode *m,
++			     const u8 *payload)
++{
++	mutex_lock(&kb->tx_lock);
++	kb->light = m;
++	memcpy(kb->light_payload, payload, KONKR_LIGHT_PAYLOAD);
++	kb->light_valid = true;
++	konkr_tx_light(kb, m->mode, payload);
 +	mutex_unlock(&kb->tx_lock);
 +}
 +
@@ -253,16 +315,118 @@ diff --git a/drivers/input/misc/konkr_sysbtn.c b/drivers/input/misc/konkr_sysbtn
 +{
 +	struct led_classdev_mc *mc = lcdev_to_mccdev(cdev);
 +	struct konkr_sysbtn *kb = container_of(mc, struct konkr_sysbtn, mc);
++	u8 payload[KONKR_LIGHT_PAYLOAD] = {};
++	int i;
 +
 +	led_mc_calc_color_components(mc, brightness);
-+	kb->last_rgb[0] = mc->subled_info[0].brightness;
-+	kb->last_rgb[1] = mc->subled_info[1].brightness;
-+	kb->last_rgb[2] = mc->subled_info[2].brightness;
-+	kb->rgb_valid = true;
-+	konkr_send_rgb(kb, kb->last_rgb[0], kb->last_rgb[1], kb->last_rgb[2]);
++	for (i = 0; i < 3; i++)
++		payload[i] = mc->subled_info[i].brightness;
++	konkr_send_light(kb, konkr_light_static, payload);
 +
 +	return 0;
 +}
++
++/*
++ * sysfs, on the LED device: "effect" selects the lighting mode, since
++ * brightness/multi_intensity can only ever mean mode 01. Read gives the
++ * active mode and its arguments, write takes "<name> [args...]" with one
++ * argument per konkr_light_modes[].nargs, e.g.
++ *
++ *	echo breath 0 128 255 > effect
++ *	echo rainbow > effect
++ *	echo static > effect		# back under brightness/multi_intensity
++ *
++ * Arguments go on the wire as given: unlike multi_intensity the LED core
++ * does not scale them by brightness, and the vendor app's ~60 % cap does
++ * not apply. While an effect other than "static" runs, the core's cached
++ * brightness/multi_intensity no longer describe the rings.
++ *
++ * Deliberately not an led_pattern trigger: only "breath" is a brightness
++ * pattern at all, and its timing lives in MCU firmware where that ABI wants
++ * host-supplied deltas.
++ */
++static struct konkr_sysbtn *konkr_from_led_dev(struct device *dev)
++{
++	struct led_classdev *cdev = dev_get_drvdata(dev);
++
++	return container_of(lcdev_to_mccdev(cdev), struct konkr_sysbtn, mc);
++}
++
++static const struct konkr_light_mode *konkr_light_mode_by_name(const char *name)
++{
++	const struct konkr_light_mode *m;
++
++	for (m = konkr_light_modes;
++	     m < konkr_light_modes + ARRAY_SIZE(konkr_light_modes); m++)
++		if (sysfs_streq(name, m->name))
++			return m;
++	return NULL;
++}
++
++static ssize_t effect_show(struct device *dev, struct device_attribute *a,
++			   char *buf)
++{
++	struct konkr_sysbtn *kb = konkr_from_led_dev(dev);
++	const struct konkr_light_mode *m;
++	u8 payload[KONKR_LIGHT_PAYLOAD];
++	int len, i;
++
++	mutex_lock(&kb->tx_lock);
++	m = kb->light;
++	memcpy(payload, kb->light_payload, sizeof(payload));
++	mutex_unlock(&kb->tx_lock);
++
++	len = sysfs_emit(buf, "%s", m->name);
++	for (i = 0; i < m->nargs; i++)
++		len += sysfs_emit_at(buf, len, " %u", payload[i]);
++	return len + sysfs_emit_at(buf, len, "\n");
++}
++
++static ssize_t effect_store(struct device *dev, struct device_attribute *a,
++			    const char *buf, size_t count)
++{
++	struct led_classdev *cdev = dev_get_drvdata(dev);
++	struct konkr_sysbtn *kb = konkr_from_led_dev(dev);
++	const struct konkr_light_mode *m;
++	u8 payload[KONKR_LIGHT_PAYLOAD] = {};
++	unsigned int v[KONKR_LIGHT_PAYLOAD];
++	char name[16];
++	int nargs, i;
++
++	nargs = sscanf(buf, "%15s %u %u %u %u %u %u %u", name, &v[0], &v[1],
++		       &v[2], &v[3], &v[4], &v[5], &v[6]);
++	if (nargs < 1)
++		return -EINVAL;
++	nargs--;
++
++	m = konkr_light_mode_by_name(name);
++	if (!m || nargs != m->nargs)
++		return -EINVAL;
++
++	for (i = 0; i < nargs; i++) {
++		if (v[i] > 255)
++			return -EINVAL;
++		payload[i] = v[i];
++	}
++
++	/* "static" hands the rings back to the LED core's current colour */
++	if (m == konkr_light_static)
++		konkr_rgb_set(cdev, cdev->brightness);
++	else
++		konkr_send_light(kb, m, payload);
++
++	return count;
++}
++static DEVICE_ATTR_RW(effect);
++
++static struct attribute *konkr_led_attrs[] = {
++	&dev_attr_effect.attr,
++	NULL
++};
++
++static const struct attribute_group konkr_led_group = {
++	.attrs = konkr_led_attrs,
++};
 +
 +/*
 + * One key-config exchange: build + send the 64-byte packet, wait for the
@@ -416,18 +580,22 @@ diff --git a/drivers/input/misc/konkr_sysbtn.c b/drivers/input/misc/konkr_sysbtn
 +static int konkr_pm_notify(struct notifier_block *nb, unsigned long action,
 +			   void *data)
 +{
++	static const u8 blank[KONKR_LIGHT_PAYLOAD] = {};
 +	struct konkr_sysbtn *kb = container_of(nb, struct konkr_sysbtn, pm_nb);
 +
 +	switch (action) {
 +	case PM_SUSPEND_PREPARE:
 +		/* the MCU stays powered in suspend and would keep the stick
-+		 * LEDs lit; drain fully so nothing sits in the SE over suspend */
-+		konkr_send_rgb(kb, 0, 0, 0);
-+		serdev_device_wait_until_sent(kb->serdev,
-+					      msecs_to_jiffies(100));
++		 * LEDs lit (and keep animating an effect); blank without
++		 * touching light_*, so POST_SUSPEND can put it back. Inhibit
++		 * before dropping the lock so nothing slips in behind the
++		 * blank, then drain: nothing may sit in the SE over suspend */
 +		mutex_lock(&kb->tx_lock);
++		konkr_tx_light(kb, konkr_light_static->mode, blank);
 +		kb->tx_inhibited = true;
 +		mutex_unlock(&kb->tx_lock);
++		serdev_device_wait_until_sent(kb->serdev,
++					      msecs_to_jiffies(100));
 +		break;
 +	case PM_POST_SUSPEND:
 +		mutex_lock(&kb->tx_lock);
@@ -437,11 +605,13 @@ diff --git a/drivers/input/misc/konkr_sysbtn.c b/drivers/input/misc/konkr_sysbtn
 +		/* harmless if the MCU kept power; required if it lost it */
 +		konkr_send_enable(kb);
 +
-+		/* relight the sticks as they were before suspend; if we never
-+		 * set them (pre-suspend state unknown) leave the blank */
-+		if (kb->rgb_valid)
-+			konkr_send_rgb(kb, kb->last_rgb[0], kb->last_rgb[1],
-+				       kb->last_rgb[2]);
++		/* put back the mode that was running before suspend, effect
++		 * and all; if we never set one (pre-suspend state unknown)
++		 * leave the blank */
++		mutex_lock(&kb->tx_lock);
++		if (kb->light_valid)
++			konkr_tx_light(kb, kb->light->mode, kb->light_payload);
++		mutex_unlock(&kb->tx_lock);
 +		break;
 +	}
 +
@@ -453,6 +623,13 @@ diff --git a/drivers/input/misc/konkr_sysbtn.c b/drivers/input/misc/konkr_sysbtn
 +	struct konkr_sysbtn *kb = data;
 +
 +	unregister_pm_notifier(&kb->pm_nb);
++}
++
++static void konkr_remove_led_group(void *data)
++{
++	struct konkr_sysbtn *kb = data;
++
++	device_remove_group(kb->mc.led_cdev.dev, &konkr_led_group);
 +}
 +
 +static int konkr_sysbtn_probe(struct serdev_device *serdev)
@@ -499,12 +676,28 @@ diff --git a/drivers/input/misc/konkr_sysbtn.c b/drivers/input/misc/konkr_sysbtn
 +		kb->subled[i].intensity = 255;
 +	kb->mc.subled_info = kb->subled;
 +	kb->mc.num_colors = 3;
++	kb->light = konkr_light_static;
 +	cdev = &kb->mc.led_cdev;
 +	cdev->name = "konkr:rgb:joysticks";
 +	cdev->max_brightness = 255;
 +	cdev->brightness_set_blocking = konkr_rgb_set;
 +
 +	error = devm_led_classdev_multicolor_register(dev, &kb->mc);
++	if (error)
++		return error;
++
++	/*
++	 * "effect" goes on after registration, not via cdev->groups:
++	 * led_classdev_multicolor_register_ext() overwrites that field with
++	 * the multicolor group. The devm action is registered against the
++	 * serdev device after the LED's own, so it unwinds first and removes
++	 * the attr while the class device is still alive.
++	 */
++	error = device_add_group(cdev->dev, &konkr_led_group);
++	if (error)
++		return error;
++
++	error = devm_add_action_or_reset(dev, konkr_remove_led_group, kb);
 +	if (error)
 +		return error;
 +
