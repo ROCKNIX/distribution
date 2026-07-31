@@ -57,6 +57,10 @@ case ${DEVICE} in
     ;;
 esac
 
+# 7.2 reports the DualSense Edge Fn buttons and back paddles itself (ds->is_edge
+# + DS_EDGE_BUTTONS_*), so the backport is only applied to older kernels.
+[[ "${PKG_VERSION}" =~ ^(6\.|7\.[01][.-]) ]] && PKG_PATCH_DIRS+=" pre-7.2"
+
 PKG_KERNEL_CFG_FILE=$(kernel_config_path) || die
 
 if [ -n "${KERNEL_TOOLCHAIN}" ]; then
