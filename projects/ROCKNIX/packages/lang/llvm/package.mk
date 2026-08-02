@@ -3,8 +3,8 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="llvm"
-PKG_VERSION="20.1.8"
-PKG_SHA256="6898f963c8e938981e6c4a302e83ec5beb4630147c7311183cf61069af16333d"
+PKG_VERSION="22.1.8"
+PKG_SHA256="922f1817a0df7b1489272d18134ee0087a8b068828f87ac63b9861b1a9965888"
 PKG_LICENSE="Apache-2.0"
 PKG_SITE="http://llvm.org/"
 PKG_URL="https://github.com/llvm/llvm-project/releases/download/llvmorg-${PKG_VERSION}/llvm-project-${PKG_VERSION/-/}.src.tar.xz"
@@ -121,13 +121,29 @@ post_makeinstall_host() {
 }
 
 pre_configure_target() {
+  # Native codegen backend is required by JIT
+  case "${TARGET_ARCH}" in
+    "aarch64")
+      LLVM_TARGET_BACKENDS="AArch64"
+      ;;
+    "arm")
+      LLVM_TARGET_BACKENDS="ARM"
+      ;;
+    "x86_64")
+      LLVM_TARGET_BACKENDS="X86\;AMDGPU"
+      ;;
+    *)
+      LLVM_TARGET_BACKENDS="AMDGPU"
+      ;;
+  esac
+
   mkdir -p ${PKG_BUILD}/.${TARGET_NAME}
   cd ${PKG_BUILD}/.${TARGET_NAME}
   PKG_CMAKE_OPTS_TARGET="${PKG_CMAKE_OPTS_COMMON} \
                          -DCMAKE_BINARY_DIR=${PKG_BUILD}/.${TARGET_NAME} \
                          -DCMAKE_CROSSCOMPILING=ON \
                          -DLLVM_ENABLE_PROJECTS='' \
-                         -DLLVM_TARGETS_TO_BUILD=AMDGPU \
+                         -DLLVM_TARGETS_TO_BUILD=${LLVM_TARGET_BACKENDS} \
                          -DLLVM_TARGET_ARCH="${TARGET_ARCH}" \
                          -DLLVM_NATIVE_TOOL_DIR=${TOOLCHAIN}/bin"
 }
