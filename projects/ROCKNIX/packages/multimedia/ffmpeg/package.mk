@@ -8,9 +8,10 @@ PKG_SITE="https://ffmpeg.org"
 PKG_DEPENDS_TARGET="toolchain zlib bzip2 openssl speex"
 PKG_LONGDESC="FFmpeg is a complete, cross-platform solution to record, convert and stream audio and video."
 
-PKG_VERSION="6.0.1"
+PKG_VERSION="7.1.1"
+PKG_SHA256="733984395e0dbbe5c046abda2dc49a5544e7e0e1e2366bba849222ae9e3a03b1"
 PKG_URL="http://ffmpeg.org/releases/ffmpeg-${PKG_VERSION}.tar.xz"
-PKG_PATCH_DIRS="rocknix"
+PKG_PATCH_DIRS="libreelec"
 
 PKG_PATCH_DIRS+=" v4l2-request v4l2-drmprime"
 
@@ -54,14 +55,6 @@ if [ "${V4L2_SUPPORT}" = "yes" ]; then
       PKG_V4L2_REQUEST="no"
     ;;
   esac
-
-  if [ "${PKG_V4L2_REQUEST}" = "yes" ]; then
-    PKG_DEPENDS_TARGET+=" systemd"
-    PKG_NEED_UNPACK+=" $(get_pkg_directory systemd)"
-    PKG_FFMPEG_V4L2+=" --enable-libudev --enable-v4l2-request"
-  else
-    PKG_FFMPEG_V4L2+=" --disable-libudev --disable-v4l2-request"
-  fi
 
   if [ "${PKG_V4L2_REQUEST}" = "yes" ]; then
     PKG_DEPENDS_TARGET+=" systemd"
@@ -180,11 +173,6 @@ configure_target() {
               --disable-gray \
               --enable-swscale-alpha \
               --disable-small \
-              --enable-dct \
-              --enable-fft \
-              --enable-mdct \
-              --enable-rdft \
-              --disable-crystalhd \
               ${PKG_FFMPEG_V4L2} \
               ${PKG_FFMPEG_VAAPI} \
               ${PKG_FFMPEG_VDPAU} \
