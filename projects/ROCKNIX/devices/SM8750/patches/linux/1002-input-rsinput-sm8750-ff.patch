@@ -21,69 +21,66 @@ Signed-off-by: Adapted for ROCKNIX next rsinput rewrite
  1 file changed, 42 insertions(+)
 
 diff --git a/drivers/input/joystick/rsinput.c b/drivers/input/joystick/rsinput.c
-index 913c499ad30a..000000000000 100644
 --- a/drivers/input/joystick/rsinput.c
 +++ b/drivers/input/joystick/rsinput.c
-@@ -14,6 +14,7 @@
+@@ -17,6 +17,7 @@
+ #include <linux/regulator/consumer.h>
  #include <linux/serdev.h>
  #include <linux/slab.h>
- #include <linux/uapi/linux/sched/types.h>
-+#include <linux/input.h>
++#include <linux/soc/qcom/qcom_hv_haptics.h>
+ #include <uapi/linux/sched/types.h>
  
- #define FRAME_HEAD_1 0xA5
- #define FRAME_HEAD_2 0xD3
-@@ -57,6 +58,9 @@ struct rsinput_driver {
- 	ktime_t resume_time;
+ static int update_params=0;
+@@ -137,6 +138,9 @@
+     uint8_t rx_buf[1024];
+     uint8_t sequence_number;
  };
- 
++
 +static bool rumble_enable = true;
 +module_param(rumble_enable, bool, 0660);
-+
- static const unsigned int keymap[] = {
- 	BTN_DPAD_UP, BTN_DPAD_DOWN, BTN_DPAD_LEFT, BTN_DPAD_RIGHT,
- 	BTN_NORTH,   BTN_WEST,	    BTN_EAST,	   BTN_SOUTH,
-@@ -324,6 +328,34 @@ static const struct serdev_device_ops rsinput_rx_ops = {
- 	.receive_buf = rsinput_rx,
- };
  
-+extern int qcom_spmi_haptics_global_upload(struct ff_effect *effect);
-+extern int qcom_spmi_haptics_global_playback(int effect_id, int val);
+ static const unsigned int keymap[] = {
+     BTN_DPAD_UP, BTN_DPAD_DOWN, BTN_DPAD_LEFT, BTN_DPAD_RIGHT,
+@@ -401,7 +405,24 @@
+ static const struct serdev_device_ops rsinput_rx_ops = {
+     .receive_buf = rsinput_rx,
+ };
 +
 +static int rsinput_rumble_upload(struct input_dev *dev, struct ff_effect *effect,
-+				 struct ff_effect *old)
++                                 struct ff_effect *old)
 +{
-+	if (!rumble_enable)
-+		return 0;
++    if (!rumble_enable)
++        return 0;
 +
-+	return qcom_spmi_haptics_global_upload(effect);
++    return qcom_spmi_haptics_global_upload(effect);
 +}
 +
 +static int rsinput_rumble_play(struct input_dev *dev, int effect_id, int val)
 +{
-+	if (!rumble_enable)
-+		return 0;
-+
-+	return qcom_spmi_haptics_global_playback(effect_id, val);
++    if (!rumble_enable)
++        return 0;
+ 
++    return qcom_spmi_haptics_global_playback(effect_id, val);
 +}
 +
  static int rsinput_probe(struct serdev_device *serdev) {
- 	struct rsinput_driver *drv;
- 	u32 gamepad_bus = 0;
-@@ -440,6 +472,16 @@ static int rsinput_probe(struct serdev_device *serdev) {
- 	input_set_abs_params(drv->input, ABS_Z, 0, trigger_left_max - trigger_left_antideadzone, 0, 30);
- 	input_set_abs_params(drv->input, ABS_RZ, 0, trigger_right_max - trigger_right_antideadzone, 0, 30);
+     struct rsinput_driver *drv;
+     u32 gamepad_bus = 0;
+@@ -528,6 +549,17 @@
+     input_set_abs_params(drv->input, ABS_Z, 0, trigger_left_max - trigger_left_antideadzone, 0, 30);
+     input_set_abs_params(drv->input, ABS_RZ, 0, trigger_right_max - trigger_right_antideadzone, 0, 30);
  
-+	input_set_capability(drv->input, EV_FF, FF_PERIODIC);
++    input_set_capability(drv->input, EV_FF, FF_PERIODIC);
 +
-+	error = input_ff_create(drv->input, 1);
-+	if (error) {
-+		dev_err(&serdev->dev, "Unable to create force feedback device: %d\n", error);
-+		return error;
-+	}
++    error = input_ff_create(drv->input, 1);
++    if (error) {
++        dev_err(&serdev->dev, "Unable to create force feedback device: %d\n", error);
++        return error;
++    }
 +
-+	drv->input->ff->upload = rsinput_rumble_upload;
-+	drv->input->ff->playback = rsinput_rumble_play;
++    drv->input->ff->upload = rsinput_rumble_upload;
++    drv->input->ff->playback = rsinput_rumble_play;
 +
- 	error = input_register_device(drv->input);
- 	if (error)
- 		return error;
+     error = input_register_device(drv->input);
+     if (error)
+         return error;
