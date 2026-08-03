@@ -2,7 +2,7 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="batteryplus"
-PKG_VERSION="0c9d9566c96e8d2c823b44231c16a2290c2a00d4"
+PKG_VERSION="1c31e89ec1828d51710ad35a607bdfad7e18464e"
 PKG_GIT_CLONE_BRANCH="main"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/Mikhailzrick/knubat.components"
@@ -19,6 +19,8 @@ pre_make_target() {
 makeinstall_target() {
 	mkdir -p ${INSTALL}/usr/bin
 	cp ${PKG_BUILD}/batteryplus ${INSTALL}/usr/bin
+	cp ${PKG_DIR}/sources/scripts/* ${INSTALL}/usr/bin
+	chmod 0755 ${INSTALL}/usr/bin/*
 
 	mkdir -p ${INSTALL}/etc/batteryplus
 	cp -f ${PKG_DIR}/config/batteryplus.conf ${INSTALL}/etc/batteryplus
@@ -33,5 +35,5 @@ makeinstall_target() {
 }
 
 post_install() {
-  enable_service batteryplus.service
+	enable_service batteryplus.service
 }
