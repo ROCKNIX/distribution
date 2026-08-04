@@ -19,6 +19,9 @@ if [ "${VULKAN_SUPPORT}" = "yes" ]; then
 fi
 
 pre_configure_target() {
+  # llvm is linked from the sysroot, drop its build tree to free disk for rpcs3
+  rm -rf "$(get_build_dir llvm)"
+
   export CFLAGS="${CFLAGS} -DGLEW_EGL"
   export CXXFLAGS="${CXXFLAGS} -DGLEW_EGL"
 
