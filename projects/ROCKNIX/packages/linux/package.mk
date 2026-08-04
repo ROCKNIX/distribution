@@ -37,7 +37,7 @@ case ${DEVICE} in
     PKG_PATCH_DIRS+=" 7.0"
     ;;
   SM8750)
-    PKG_VERSION="7.1.3"
+    PKG_VERSION="7.1.8"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     PKG_PATCH_DIRS+=" 7.0"
     ;;
