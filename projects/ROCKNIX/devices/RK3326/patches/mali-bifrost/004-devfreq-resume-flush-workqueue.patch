@@ -1,0 +1,41 @@
+Subject: [PATCH] mali_kbase: wait for devfreq resume work on system resume
+
+kbase_device_suspend() enqueues DEVFREQ_WORK_SUSPEND and then calls
+flush_workqueue() to block until it actually runs. kbase_device_resume()
+enqueues the mirror-image DEVFREQ_WORK_RESUME but never waits for it -
+system resume (and rendering) can complete before the queued work item
+gets around to calling devfreq_resume_device(), which is what restarts
+the GPU's DVFS governor polling. Until that catches up, the GPU can be
+left at whatever (low) frequency it was at across suspend while already
+being asked to render - observed as an FPS drop right after suspend/
+resume from freeze/idle that self-corrects once the governor's next
+poll fires.
+
+Make resume symmetric with suspend by flushing the workqueue before
+returning.
+
+---
+--- a/product/kernel/drivers/gpu/arm/midgard/mali_kbase_core_linux.c
++++ b/product/kernel/drivers/gpu/arm/midgard/mali_kbase_core_linux.c
+@@ -5976,8 +5976,20 @@
+ 
+ #ifdef CONFIG_MALI_DEVFREQ
+ 	dev_dbg(dev, "Callback %s\n", __func__);
+-	if (kbdev->devfreq)
++	if (kbdev->devfreq) {
+ 		kbase_devfreq_enqueue_work(kbdev, DEVFREQ_WORK_RESUME);
++		/*
++		 * Unlike kbase_device_suspend() above, this used to return
++		 * without waiting for the enqueued DEVFREQ_WORK_RESUME to
++		 * actually run devfreq_resume_device(). System resume (and
++		 * therefore rendering) could complete before the GPU's DVFS
++		 * governor was told to resume polling, leaving the GPU at
++		 * whatever low frequency it was left at across suspend -
++		 * seen as a real FPS drop right after suspend/resume from
++		 * freeze/idle until the governor caught up on its own.
++		 */
++		flush_workqueue(kbdev->devfreq_queue.workq);
++	}
+ #endif
+ 	return 0;
+ }
