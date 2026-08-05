@@ -89,10 +89,9 @@ elif [ "${DEVICE}" = "SM8250" -o "${DEVICE}" = "H700" -o "${DEVICE}" = "SM8650" 
   PKG_DEPENDS_UNPACK+=" kernel-firmware"
 fi
 
-# SM8750 builds the board audio topology and the speaker-amp calibration blob
-# into the kernel, so the firmware package must be unpacked before the kernel
-# is built.
-if [ "${DEVICE}" = "SM8750" ]; then
+# SM8650/SM8750 build device-specific firmware blobs into the kernel, so the
+# extra-firmware package must be unpacked before the kernel is built.
+if [ "${DEVICE}" = "SM8650" -o "${DEVICE}" = "SM8750" ]; then
   PKG_DEPENDS_UNPACK+=" extra-firmware"
 fi
 
@@ -248,7 +247,7 @@ pre_make_target() {
       cp -Lv $(get_build_dir kernel-firmware)/.copied-firmware/qcom/gen70900_sqe.fw ${PKG_BUILD}/external-firmware/qcom
       cp -Lv $(get_build_dir kernel-firmware)/.copied-firmware/qcom/gmu_gen70900.bin ${PKG_BUILD}/external-firmware/qcom
     mkdir -p ${PKG_BUILD}/external-firmware/qcom/sm8650/ayaneo/ps2
-      cp -Lv $(get_build_dir kernel-firmware)/.copied-firmware/qcom/sm8650/ayaneo/ps2/gen70900_zap.mbn ${PKG_BUILD}/external-firmware/qcom/sm8650/ayaneo/ps2
+      cp -Lv $(get_build_dir extra-firmware)/SM8650/qcom/sm8650/ayaneo/ps2/gen70900_zap.mbn ${PKG_BUILD}/external-firmware/qcom/sm8650/ayaneo/ps2
 
     FW_LIST="$(find ${PKG_BUILD}/external-firmware -type f | sed 's|.*external-firmware/||' | sort | xargs)"
 
