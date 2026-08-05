@@ -1,0 +1,24 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026 ROCKNIX (https://github.com/ROCKNIX)
+
+# Toggle the USB role across suspend: left untouched, the dwc3/type-c
+# stack renegotiates on resume and holds dwc3+ufshcd resume ~10s each.
+# TCPM/pmic_glink reverts the written value within ~300ms - the forced
+# re-resolution is the operative part, so verify + re-assert once and
+# log reverts to kmsg. The post hook restores the saved role.
+
+for r in /sys/class/usb_role/*-role-switch/role; do
+  [ -f "$r" ] || continue
+  cat "$r" > "/run/.usb-role.$(basename "$(dirname "$r")")"
+  echo none > "$r" 2>/dev/null || true
+  sleep 0.3
+  if [ "$(cat "$r")" != "none" ]; then
+    echo "sleep: usb role reverted by typec stack; re-asserting" > /dev/kmsg
+    echo none > "$r" 2>/dev/null || true
+    sleep 0.2
+    [ "$(cat "$r")" != "none" ] && \
+      echo "sleep: usb role re-assert lost; suspending with role=$(cat "$r")" > /dev/kmsg
+  fi
+done
+exit 0
