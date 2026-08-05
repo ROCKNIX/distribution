@@ -244,11 +244,11 @@ pre_make_target() {
     ${PKG_BUILD}/scripts/config --set-str CONFIG_EXTRA_FIRMWARE_DIR "external-firmware"
   elif [ "${TARGET_ARCH}" = "aarch64" -a "${DEVICE}" = "SM8650" ]; then
     mkdir -p ${PKG_BUILD}/external-firmware/qcom
-      cp -Lv ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/filesystem/usr/lib/kernel-overlays/base/lib/firmware/qcom/gen70900_aqe.fw ${PKG_BUILD}/external-firmware/qcom
-      cp -Lv ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/filesystem/usr/lib/kernel-overlays/base/lib/firmware/qcom/gen70900_sqe.fw ${PKG_BUILD}/external-firmware/qcom
-      cp -Lv ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/filesystem/usr/lib/kernel-overlays/base/lib/firmware/qcom/gmu_gen70900.bin ${PKG_BUILD}/external-firmware/qcom
+      cp -Lv $(get_build_dir kernel-firmware)/.copied-firmware/qcom/gen70900_aqe.fw ${PKG_BUILD}/external-firmware/qcom
+      cp -Lv $(get_build_dir kernel-firmware)/.copied-firmware/qcom/gen70900_sqe.fw ${PKG_BUILD}/external-firmware/qcom
+      cp -Lv $(get_build_dir kernel-firmware)/.copied-firmware/qcom/gmu_gen70900.bin ${PKG_BUILD}/external-firmware/qcom
     mkdir -p ${PKG_BUILD}/external-firmware/qcom/sm8650/ayaneo/ps2
-      cp -Lv ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/filesystem/usr/lib/kernel-overlays/base/lib/firmware/qcom/sm8650/ayaneo/ps2/gen70900_zap.mbn ${PKG_BUILD}/external-firmware/qcom/sm8650/ayaneo/ps2
+      cp -Lv $(get_build_dir kernel-firmware)/.copied-firmware/qcom/sm8650/ayaneo/ps2/gen70900_zap.mbn ${PKG_BUILD}/external-firmware/qcom/sm8650/ayaneo/ps2
 
     FW_LIST="$(find ${PKG_BUILD}/external-firmware -type f | sed 's|.*external-firmware/||' | sort | xargs)"
 
