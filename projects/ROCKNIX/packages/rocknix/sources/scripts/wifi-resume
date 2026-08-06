@@ -1,0 +1,57 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026 ROCKNIX (https://github.com/ROCKNIX)
+
+# Bring the radio back after a resume, once NetworkManager is actually awake.
+#
+# NetworkManager learns of the wake only after the sleep hooks finish, and it
+# reports STATE=asleep until then. Unblocking the radio inside that gap lets
+# iwd associate behind NM's back; NM then tears the fresh association down
+# ("deauthenticating by local choice") and strands the chip in a state where
+# scans fail and association never starts again. Waiting for NM to leave the
+# asleep state closes the gap instead of betting on how long it lasts.
+
+. /etc/profile.d/001-functions
+
+WAIT_SECONDS=30
+
+nm_state() { nmcli -t -f STATE general 2>/dev/null; }
+
+WAITED=0
+TIMED_OUT=0
+while :; do
+  STATE="$(nm_state)"
+  # Anything other than asleep means NM has processed the wake. An empty
+  # reply means NM is not answering yet, which is also not ready.
+  [ -n "${STATE}" ] && [ "${STATE}" != "asleep" ] && break
+  if [ "${WAITED}" -ge "$((WAIT_SECONDS * 5))" ]; then
+    TIMED_OUT=1
+    break
+  fi
+  WAITED=$((WAITED + 1))
+  sleep 0.2
+done
+
+if [ "${TIMED_OUT}" = "1" ]; then
+  # NM asleep at timeout means a new suspend owns the radio: unblocking now
+  # would hand the freezer a chip mid-bring-up, the wedge this exists to
+  # prevent. Stay blocked; the next resume runs a fresh instance.
+  if [ "${STATE}" = "asleep" ]; then
+    log $0 "NetworkManager still asleep after ${WAIT_SECONDS}s, leaving WIFI blocked."
+    exit 0
+  fi
+  log $0 "NetworkManager unresponsive after ${WAIT_SECONDS}s, enabling anyway."
+else
+  log $0 "NetworkManager awake after $((WAITED * 200))ms, enabling WIFI."
+fi
+/usr/bin/wifictl enable
+
+WLAN="$(ls /sys/class/net 2>/dev/null | grep -m1 ^wlan)"
+[ -z "${WLAN}" ] && exit 0
+
+# The firmware reloads on unblock and iwd's first scans fail against it, after
+# which its retry backoff wastes a minute. Kick one once the chip has settled.
+sleep 4
+iwctl station "${WLAN}" scan >/dev/null 2>&1 ||:
+
+exit 0
