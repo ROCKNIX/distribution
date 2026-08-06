@@ -12,13 +12,75 @@
 #include <filesystem>
 #include <map>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <csignal>
+#include <cerrno>
+#include <cstddef>
+#include <ctime>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 
 // -------------------- Config Helpers --------------------
-std::filesystem::path get_config_file() {
-    std::filesystem::path cfgDir = std::filesystem::path(std::getenv("HOME")) / ".config" / "sdl2text";
-    std::filesystem::create_directories(cfgDir);
-    return cfgDir / "sdl2text.conf";
+static std::filesystem::path get_home_dir() {
+    const char* h = std::getenv("HOME");
+    return std::filesystem::path(h ? h : "/storage");
 }
+
+static std::filesystem::path get_config_dir() {
+    std::filesystem::path cfgDir = get_home_dir() / ".config" / "sdl2text";
+    std::error_code ec;
+    std::filesystem::create_directories(cfgDir, ec);
+    return cfgDir;
+}
+
+std::filesystem::path get_config_file() {
+    return get_config_dir() / "sdl2text.conf";
+}
+
+// -------------------- Single instance --------------------
+// An abstract-namespace UNIX socket. The name lives in a kernel namespace, not
+// on any filesystem: nothing to orphan, no pid to recycle, no $HOME to
+// disagree about, no permissions to get wrong. The kernel frees the name the
+// moment this process dies -- normal exit, SIGKILL, battery pull, all of it --
+// so it can never go stale. bind() is atomic, so two launches racing in the
+// same millisecond cannot both win.
+static const char* LOCK_NAME = "sdl2text-single-instance";
+static int g_lockSock = -1;   // held open for the life of the process
+
+// How long to keep holding the name after the window is gone. A hotkey press
+// delivered in the instant the guide closes would otherwise relaunch it; this
+// makes that press lose the race and get dropped.
+static const long EXIT_GRACE_NS = 1200L * 1000000L;   // 1.2s
+
+enum LockResult { LOCK_ACQUIRED, LOCK_BUSY, LOCK_UNAVAILABLE };
+
+static LockResult acquire_single_instance() {
+    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if(fd < 0) return LOCK_UNAVAILABLE;
+
+    struct sockaddr_un addr;
+    std::memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    addr.sun_path[0] = '\0';                      // leading NUL = abstract namespace
+    std::strncpy(addr.sun_path + 1, LOCK_NAME, sizeof(addr.sun_path) - 2);
+    socklen_t len = offsetof(struct sockaddr_un, sun_path) + 1 + std::strlen(LOCK_NAME);
+
+    if(bind(fd, (struct sockaddr*)&addr, len) < 0) {
+        int err = errno;
+        close(fd);
+        return (err == EADDRINUSE) ? LOCK_BUSY : LOCK_UNAVAILABLE;
+    }
+    g_lockSock = fd;
+    return LOCK_ACQUIRED;
+}
+
+// -------------------- Graceful shutdown --------------------
+// Set by SIGTERM/SIGINT so the main loop can exit cleanly and still save the
+// scroll position, instead of being torn down mid-frame.
+static volatile sig_atomic_t g_quitSignal = 0;
+static void handle_signal(int) { g_quitSignal = 1; }
 
 struct FileConfig { int scroll = 0; int fontSize = 40; }; // default font size 40
 
@@ -41,6 +103,9 @@ std::map<std::string, FileConfig> load_config() {
                     font = std::stoi(val.substr(comma+1));
                 } catch(...) { }
             }
+            if(font < 8) font = 8;
+            if(font > 200) font = 200;
+            if(scroll < 0) scroll = 0;
             cfg[key] = {scroll,font};
         }
     }
@@ -60,7 +125,11 @@ std::vector<std::string> load_file_lines(const std::string& path) {
     std::vector<std::string> lines;
     std::ifstream file(path);
     std::string line;
-    while (std::getline(file, line)) lines.push_back(line);
+    while (std::getline(file, line)) {
+        // Strip trailing CR so CRLF files don't turn every blank line into junk
+        if(!line.empty() && line.back() == '\r') line.pop_back();
+        lines.push_back(line);
+    }
     return lines;
 }
 
@@ -99,7 +168,12 @@ std::string filter_invalid_chars(const std::string& s, TTF_Font* font) {
     size_t i = 0;
     while (i < s.size()) {
         unsigned char c = static_cast<unsigned char>(s[i]);
-        if (c < 0x80) { if (font_can_render_codepoint(font, c)) out.push_back(static_cast<char>(c)); ++i; continue; }
+        if (c < 0x80) {
+            // Expand tabs so indented guides don't collapse
+            if (c == '\t') { out.append("    "); ++i; continue; }
+            if (font_can_render_codepoint(font, c)) out.push_back(static_cast<char>(c));
+            ++i; continue;
+        }
         uint32_t cp = 0; size_t seqLen = 0;
 
         if ((c & 0xE0) == 0xC0) { if (i+1 >= s.size()) { ++i; continue; } unsigned char c1 = s[i+1]; if ((c1 & 0xC0) != 0x80) { ++i; continue; } cp = ((c & 0x1F)<<6)|(c1&0x3F); seqLen=2; if(cp<0x80){i+=2;continue;} }
@@ -115,9 +189,12 @@ std::string filter_invalid_chars(const std::string& s, TTF_Font* font) {
 }
 
 // -------------------- Line wrapping --------------------
+// Binary-search the widest chunk that fits, then back off to a UTF-8 boundary
+// and, where possible, to a word boundary.
 std::vector<std::string> wrap_line(const std::string& line, TTF_Font* font, int maxWidth) {
     std::vector<std::string> result;
     size_t start=0,len=line.length();
+    if(len==0) { result.push_back(""); return result; }
     while(start<len) {
         size_t lo=1,hi=len-start,best=1;
         while(lo<=hi) {
@@ -127,52 +204,55 @@ std::vector<std::string> wrap_line(const std::string& line, TTF_Font* font, int 
             if(w>maxWidth) hi=mid-1;
             else { best=mid; lo=mid+1; }
         }
-        std::string chunk=line.substr(start,best);
-        if(chunk.empty()) chunk=line.substr(start,1);
-        result.push_back(chunk);
-        start+=chunk.length();
+
+        // Never cut in the middle of a multi-byte UTF-8 sequence
+        while(best>1 && start+best<len &&
+              (static_cast<unsigned char>(line[start+best]) & 0xC0) == 0x80)
+            --best;
+
+        // Prefer breaking at whitespace if we're mid-word
+        if(start+best<len && line[start+best]!=' ') {
+            size_t sp = line.rfind(' ', start+best-1);
+            if(sp != std::string::npos && sp > start) best = sp - start + 1;
+        }
+
+        if(best==0) best=1;
+        result.push_back(line.substr(start,best));
+        start+=best;
     }
     return result;
 }
 
-// -------------------- Pre-render textures --------------------
-struct LineTexture { SDL_Texture* tex; int w,h; };
-
-std::vector<LineTexture> create_textures(SDL_Renderer* ren, TTF_Font* font, const std::vector<std::string>& wrapped, SDL_Color color) {
-    std::vector<LineTexture> textures;
-    for(auto &line:wrapped) {
-        // Handle empty lines
-        if(line.empty()) {
-            int lineHeight = TTF_FontHeight(font);
-            textures.push_back({nullptr, 0, lineHeight});
-            continue;
-        }
-        
-        SDL_Surface* surf=TTF_RenderUTF8_Blended(font,line.c_str(),color);
-        if(!surf) {
-            // If render fails, still add a placeholder for the line height
-            int lineHeight = TTF_FontHeight(font);
-            textures.push_back({nullptr, 0, lineHeight});
-            continue;
-        }
-        
-        SDL_Texture* tex=SDL_CreateTextureFromSurface(ren,surf);
-        textures.push_back({tex,surf->w,surf->h});
-        SDL_FreeSurface(surf);
-    }
-    return textures;
-}
-
 // -------------------- Main --------------------
 int main(int argc,char* argv[]) {
-    if(argc<2) { std::cout << "Usage: " << argv[0] << " <textfile>\n"; return 1; }
-    {
-        std::filesystem::path cfgDir =
-            std::filesystem::path(std::getenv("HOME")) / ".config" / "sdl2text";
-        std::filesystem::create_directories(cfgDir);
+    std::string fileArg;
+
+    for(int i=1;i<argc;i++) {
+        std::string a=argv[i];
+        if(a=="--help" || a=="-h") {
+            std::cout << "Usage: " << argv[0] << " <textfile>\n";
+            return 0;
+        }
+        else if(fileArg.empty()) fileArg=a;
     }
 
-    std::filesystem::path textFilePath=std::filesystem::absolute(argv[1]);
+    if(fileArg.empty()) { std::cout << "Usage: " << argv[0] << " <textfile>\n"; return 1; }
+
+    // -------- Refuse to be a second instance --------
+    LockResult lock = acquire_single_instance();
+    if(lock == LOCK_BUSY) return 0;   // the guide is already on screen, nothing to do
+    if(lock == LOCK_UNAVAILABLE)
+        std::cerr << "sdl2text: single-instance check unavailable, continuing\n";
+
+    // Exit cleanly on SIGTERM/SIGINT so the scroll position still gets saved.
+    struct sigaction sa;
+    std::memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = handle_signal;
+    sigaction(SIGTERM, &sa, nullptr);
+    sigaction(SIGINT,  &sa, nullptr);
+    sigaction(SIGHUP,  &sa, nullptr);
+
+    std::filesystem::path textFilePath=std::filesystem::absolute(fileArg);
     std::string textFile=textFilePath.string();
     auto lines=load_file_lines(textFile);
     if(lines.empty()) { std::cout << "Failed to load file\n"; return 1; }
@@ -193,36 +273,102 @@ int main(int argc,char* argv[]) {
     SDL_Window* win=SDL_CreateWindow("Text Viewer",SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,0,0,SDL_WINDOW_FULLSCREEN_DESKTOP|SDL_WINDOW_BORDERLESS);
     if(!win) { std::cerr<<"SDL_CreateWindow error\n"; TTF_CloseFont(font); TTF_Quit(); SDL_Quit(); return 1; }
     SDL_Renderer* ren=SDL_CreateRenderer(win,-1,SDL_RENDERER_ACCELERATED);
-    if(!ren) { SDL_DestroyWindow(win); TTF_CloseFont(font); TTF_Quit(); SDL_Quit(); return 1; }
+    if(!ren) {
+        std::cerr<<"Accelerated renderer failed ("<<SDL_GetError()<<"), trying software\n";
+        ren=SDL_CreateRenderer(win,-1,SDL_RENDERER_SOFTWARE);
+    }
+    if(!ren) { std::cerr<<"SDL_CreateRenderer error: "<<SDL_GetError()<<"\n"; SDL_DestroyWindow(win); TTF_CloseFont(font); TTF_Quit(); SDL_Quit(); return 1; }
 
     int WINDOW_W=0,WINDOW_H=0; SDL_GetWindowSize(win,&WINDOW_W,&WINDOW_H);
+    // A zero/garbage window size would make the wrap width negative, which wraps
+    // every single character onto its own line and explodes the line count.
+    if(WINDOW_W<200) WINDOW_W=640;
+    if(WINDOW_H<200) WINDOW_H=480;
+    const int WRAP_W = (WINDOW_W-20 < 50) ? 50 : WINDOW_W-20;
     SDL_Color white={255,255,255,255};
     int scroll_y=fcfg.scroll;
     const int SCROLL_SPEED=15,SKIP_LINES=5;
     int lineHeight=TTF_FontHeight(font);
+    if(lineHeight<1) lineHeight=1;
 
     SDL_GameController* pad=nullptr;
     for(int i=0;i<SDL_NumJoysticks();i++) { if(SDL_IsGameController(i)) { pad=SDL_GameControllerOpen(i); if(pad) break; } }
 
-    // Wrap lines while preserving empty lines
+    // -------------------- Wrapped text (strings only, no textures) --------------------
     std::vector<std::string> wrapped;
-    for(auto &line:lines) {
-        if(line.empty()) {
-            // Preserve empty lines
-            wrapped.push_back("");
-        } else {
+
+    auto rewrap=[&]() {
+        wrapped.clear();
+        wrapped.reserve(lines.size()*2);
+        for(auto &line:lines) {
+            if(line.empty()) { wrapped.push_back(""); continue; }
             std::string clean=filter_invalid_chars(line,font);
-            auto chunks=wrap_line(clean,font,WINDOW_W-20);
-            wrapped.insert(wrapped.end(),chunks.begin(),chunks.end());
+            if(clean.empty()) { wrapped.push_back(""); continue; }
+            auto chunks=wrap_line(clean,font,WRAP_W);
+            if(chunks.empty()) wrapped.push_back("");
+            else wrapped.insert(wrapped.end(),chunks.begin(),chunks.end());
         }
-    }
-    auto textures=create_textures(ren,font,wrapped,white);
+        if(wrapped.empty()) wrapped.push_back("");
+    };
+    rewrap();
+
+    // -------------------- Lazy texture cache --------------------
+    // Only lines currently on screen (plus a small margin) ever become textures.
+    // This is the difference between ~25 live textures and ~50,000 of them.
+    struct LineTexture { SDL_Texture* tex=nullptr; int w=0,h=0; };
+    std::map<int, LineTexture> texCache;
+
+    auto clearCache=[&]() {
+        for(auto &kv:texCache) if(kv.second.tex) SDL_DestroyTexture(kv.second.tex);
+        texCache.clear();
+    };
+
+    auto getLine=[&](int idx)->const LineTexture& {
+        auto it=texCache.find(idx);
+        if(it!=texCache.end()) return it->second;
+
+        LineTexture lt;
+        lt.h=lineHeight;
+        const std::string& s=wrapped[idx];
+        if(!s.empty()) {
+            SDL_Surface* surf=TTF_RenderUTF8_Blended(font,s.c_str(),white);
+            if(surf) {
+                lt.tex=SDL_CreateTextureFromSurface(ren,surf);
+                lt.w=surf->w;
+                lt.h=surf->h;
+                SDL_FreeSurface(surf);
+            }
+        }
+        return texCache.emplace(idx,lt).first->second;
+    };
+
+    auto changeFontSize=[&](int delta) {
+        int newSize=fontSize+delta;
+        if(newSize<8) newSize=8;
+        if(newSize>200) newSize=200;
+        TTF_Font* nf=loadFont(newSize);
+        if(!nf) return;
+
+        // Keep the reader roughly where they were
+        double frac = 0.0;
+        int oldTotal = (int)wrapped.size()*lineHeight;
+        if(oldTotal>0) frac = (double)scroll_y/(double)oldTotal;
+
+        clearCache();
+        TTF_CloseFont(font);
+        font=nf;
+        fontSize=newSize;
+        lineHeight=TTF_FontHeight(font);
+        if(lineHeight<1) lineHeight=1;
+        rewrap();
+        scroll_y=(int)(frac*(double)wrapped.size()*lineHeight);
+        if(scroll_y<0) scroll_y=0;
+    };
 
     bool upPressed=false,downPressed=false,l1Pressed=false,r1Pressed=false,startPressed=false;
-    // Analog joystick axis state (left stick Y and right stick Y)
     int16_t axisLeftY=0, axisRightY=0;
     const int16_t AXIS_DEADZONE=8000;
-    const float AXIS_SCROLL_SCALE=0.002f; // pixels per frame at full deflection
+    const float AXIS_SCROLL_SCALE=0.002f;
 
     bool running=true,showHelp=false;
     SDL_Event e;
@@ -232,8 +378,19 @@ int main(int argc,char* argv[]) {
     SDL_Color helpColor={255,255,255,255}, boxColor={0,0,0,200};
 
     while(running) {
+        if(g_quitSignal) { running=false; break; }
+
         while(SDL_PollEvent(&e)) {
             if(e.type==SDL_QUIT) { running=false; break; }
+
+            if(e.type==SDL_CONTROLLERDEVICEADDED && !pad) {
+                if(SDL_IsGameController(e.cdevice.which)) pad=SDL_GameControllerOpen(e.cdevice.which);
+            }
+            if(e.type==SDL_CONTROLLERDEVICEREMOVED && pad) {
+                SDL_GameControllerClose(pad); pad=nullptr;
+                upPressed=downPressed=l1Pressed=r1Pressed=startPressed=false;
+                axisLeftY=axisRightY=0;
+            }
 
             if(e.type==SDL_CONTROLLERAXISMOTION) {
                 if(e.caxis.axis==SDL_CONTROLLER_AXIS_LEFTY)  axisLeftY  = e.caxis.value;
@@ -247,40 +404,8 @@ int main(int argc,char* argv[]) {
                     case SDL_CONTROLLER_BUTTON_LEFTSHOULDER: l1Pressed=true; break;
                     case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: r1Pressed=true; break;
                     case SDL_CONTROLLER_BUTTON_START: startPressed=true; break;
-                    case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
-                        fontSize+=2; TTF_CloseFont(font); font=loadFont(fontSize); if(!font){fontSize-=2; font=loadFont(fontSize);}
-                        // Re-wrap with new font size, preserving empty lines
-                        wrapped.clear();
-                        for(auto &line:lines) {
-                            if(line.empty()) {
-                                wrapped.push_back("");
-                            } else {
-                                std::string clean=filter_invalid_chars(line,font);
-                                auto chunks=wrap_line(clean,font,WINDOW_W-20);
-                                wrapped.insert(wrapped.end(),chunks.begin(),chunks.end());
-                            }
-                        }
-                        for(auto &lt:textures) if(lt.tex) SDL_DestroyTexture(lt.tex);
-                        textures=create_textures(ren,font,wrapped,white); 
-                        lineHeight=TTF_FontHeight(font); 
-                        break;
-                    case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
-                        fontSize-=2; if(fontSize<8) fontSize=8; TTF_CloseFont(font); font=loadFont(fontSize); if(!font){fontSize+=2; font=loadFont(fontSize);}
-                        // Re-wrap with new font size, preserving empty lines
-                        wrapped.clear();
-                        for(auto &line:lines) {
-                            if(line.empty()) {
-                                wrapped.push_back("");
-                            } else {
-                                std::string clean=filter_invalid_chars(line,font);
-                                auto chunks=wrap_line(clean,font,WINDOW_W-20);
-                                wrapped.insert(wrapped.end(),chunks.begin(),chunks.end());
-                            }
-                        }
-                        for(auto &lt:textures) if(lt.tex) SDL_DestroyTexture(lt.tex);
-                        textures=create_textures(ren,font,wrapped,white); 
-                        lineHeight=TTF_FontHeight(font); 
-                        break;
+                    case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: changeFontSize(+2); break;
+                    case SDL_CONTROLLER_BUTTON_DPAD_LEFT:  changeFontSize(-2); break;
                     case SDL_CONTROLLER_BUTTON_A: running=false; break;
                     case SDL_CONTROLLER_BUTTON_B: running=false; break;
                     case SDL_CONTROLLER_BUTTON_BACK: showHelp=!showHelp; break;
@@ -308,8 +433,6 @@ int main(int argc,char* argv[]) {
         if(l1Pressed) scroll_y-=SKIP_LINES*lineHeight;
         if(r1Pressed) scroll_y+=SKIP_LINES*lineHeight;
 
-        // Analog joystick scrolling (left stick or right stick, whichever is deflected)
-        // Apply deadzone, then scale linearly to scroll pixels
         auto applyAxis = [&](int16_t raw) {
             if(raw > AXIS_DEADZONE)
                 scroll_y += (int)((raw - AXIS_DEADZONE) * AXIS_SCROLL_SCALE);
@@ -319,38 +442,42 @@ int main(int argc,char* argv[]) {
         applyAxis(axisLeftY);
         applyAxis(axisRightY);
 
-        // Secret kill combo: L1 + START + SELECT
-        if(l1Pressed && startPressed && SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_BACK)) running=false;
+        // Secret kill combo: L1 + START + SELECT  (pad may be null)
+        if(pad && l1Pressed && startPressed && SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_BACK)) running=false;
 
-        // Clamp
-        int total_height=0;
-        for(const auto& tex : textures) total_height += tex.h;
-        if(total_height<WINDOW_H) total_height=WINDOW_H;
+        // Clamp -- O(1) now that every line is the same height
+        int totalLines=(int)wrapped.size();
+        int total_height=totalLines*lineHeight;
+        int maxScroll=total_height-WINDOW_H;
+        if(maxScroll<0) maxScroll=0;
         if(scroll_y<0) scroll_y=0;
-        if(scroll_y>total_height-WINDOW_H) scroll_y=total_height-WINDOW_H;
+        if(scroll_y>maxScroll) scroll_y=maxScroll;
 
         // Render
         SDL_SetRenderDrawColor(ren,0,0,0,255); SDL_RenderClear(ren);
-        
-        // Find starting line based on scroll position
-        int firstLine=0;
-        int accumulatedHeight=0;
-        for(size_t i=0;i<textures.size();i++) {
-            if(accumulatedHeight + textures[i].h > scroll_y) {
-                firstLine=i;
-                break;
+
+        int firstLine=scroll_y/lineHeight;
+        int offsetY=-(scroll_y%lineHeight);
+        int lastLine=firstLine;
+
+        for(int i=firstLine;i<totalLines && offsetY<WINDOW_H;++i) {
+            const LineTexture& lt=getLine(i);
+            if(lt.tex) {
+                SDL_Rect dst={10,offsetY,lt.w,lt.h};
+                SDL_RenderCopy(ren,lt.tex,nullptr,&dst);
             }
-            accumulatedHeight += textures[i].h;
+            lastLine=i;
+            offsetY+=lineHeight;
         }
-        
-        int offsetY = - (scroll_y - accumulatedHeight);
-        
-        for(size_t i=firstLine;i<textures.size() && offsetY<WINDOW_H;i++) {
-            if(textures[i].tex) {
-                SDL_Rect dst={10,offsetY,textures[i].w,textures[i].h};
-                SDL_RenderCopy(ren,textures[i].tex,nullptr,&dst);
+
+        // Evict anything well off-screen so the cache stays tiny
+        if(texCache.size()>256) {
+            for(auto it=texCache.begin();it!=texCache.end();) {
+                if(it->first < firstLine-64 || it->first > lastLine+64) {
+                    if(it->second.tex) SDL_DestroyTexture(it->second.tex);
+                    it=texCache.erase(it);
+                } else ++it;
             }
-            offsetY += textures[i].h;
         }
 
         // Help overlay
@@ -366,9 +493,8 @@ int main(int argc,char* argv[]) {
                 "A / B           - Exit"
             };
 
-            // Calculate box height based on content
-            int lineHeight=TTF_FontLineSkip(font); // Get typical line height
-            int boxH=40+(helpLines.size()*(lineHeight+8)); // Top margin + all lines with spacing
+            int helpLineHeight=TTF_FontLineSkip(font);
+            int boxH=40+((int)helpLines.size()*(helpLineHeight+8));
             int boxW=WINDOW_W/2;
             int boxX=(WINDOW_W-boxW)/2, boxY=(WINDOW_H-boxH)/2;
 
@@ -390,29 +516,29 @@ int main(int argc,char* argv[]) {
                     if(surf1) {
                         SDL_Texture* tex1=SDL_CreateTextureFromSurface(ren,surf1);
                         SDL_Rect dst1={boxX+20,ty,surf1->w,surf1->h};
-                        SDL_RenderCopy(ren,tex1,nullptr,&dst1);
-                        int lineHeight=surf1->h;
-                        SDL_DestroyTexture(tex1);
+                        if(tex1) SDL_RenderCopy(ren,tex1,nullptr,&dst1);
+                        int h1=surf1->h;
+                        if(tex1) SDL_DestroyTexture(tex1);
                         SDL_FreeSurface(surf1);
 
                         SDL_Surface* surf2=TTF_RenderUTF8_Blended(font,rightPart.c_str(),helpColor);
                         if(surf2) {
                             SDL_Texture* tex2=SDL_CreateTextureFromSurface(ren,surf2);
                             SDL_Rect dst2={boxX+20+columnSplit,ty,surf2->w,surf2->h};
-                            SDL_RenderCopy(ren,tex2,nullptr,&dst2);
-                            SDL_DestroyTexture(tex2);
+                            if(tex2) SDL_RenderCopy(ren,tex2,nullptr,&dst2);
+                            if(tex2) SDL_DestroyTexture(tex2);
                             SDL_FreeSurface(surf2);
                         }
-                        ty+=lineHeight+8;
+                        ty+=h1+8;
                     }
                 } else {
                     SDL_Surface* surf=TTF_RenderUTF8_Blended(font,line.c_str(),helpColor);
                     if(surf) {
                         SDL_Texture* tex=SDL_CreateTextureFromSurface(ren,surf);
                         SDL_Rect dst={boxX+20,ty,surf->w,surf->h};
-                        SDL_RenderCopy(ren,tex,nullptr,&dst);
+                        if(tex) SDL_RenderCopy(ren,tex,nullptr,&dst);
                         ty+=surf->h+8;
-                        SDL_DestroyTexture(tex);
+                        if(tex) SDL_DestroyTexture(tex);
                         SDL_FreeSurface(surf);
                     }
                 }
@@ -421,24 +547,11 @@ int main(int argc,char* argv[]) {
 
         // ---- Line Counter (bottom-right) ----
         {
-            // Calculate current line number based on scroll position
-            int currentLine = 1;
-            int accumulatedHeight = 0;
-            for(size_t i=0;i<textures.size();i++) {
-                if(accumulatedHeight + textures[i].h > scroll_y) {
-                    currentLine = i + 1;
-                    break;
-                }
-                accumulatedHeight += textures[i].h;
-            }
-            
-            int totalLines = (int)textures.size();
-
-            if (currentLine < 1) currentLine = 1;
-            if (currentLine > totalLines) currentLine = totalLines;
+            int currentLine=firstLine+1;
+            if(currentLine<1) currentLine=1;
+            if(currentLine>totalLines) currentLine=totalLines;
 
             std::string lcText = std::to_string(currentLine) + "/" + std::to_string(totalLines);
-
             SDL_Color lcColor = {255,255,255,255};
 
             SDL_Surface* lcSurf = TTF_RenderUTF8_Blended(font, lcText.c_str(), lcColor);
@@ -451,7 +564,6 @@ int main(int argc,char* argv[]) {
                     textRect.x = WINDOW_W - textRect.w - 15;
                     textRect.y = WINDOW_H - textRect.h - 10;
 
-                    // transparent background box
                     SDL_Rect bgRect;
                     bgRect.x = textRect.x - 8;
                     bgRect.y = textRect.y - 4;
@@ -463,7 +575,6 @@ int main(int argc,char* argv[]) {
                     SDL_RenderFillRect(ren, &bgRect);
 
                     SDL_RenderCopy(ren, lcTex, nullptr, &textRect);
-
                     SDL_DestroyTexture(lcTex);
                 }
                 SDL_FreeSurface(lcSurf);
@@ -478,12 +589,17 @@ int main(int argc,char* argv[]) {
     cfg[textFile]={scroll_y,fontSize};
     save_config(cfg);
 
-    for(auto &lt:textures) if(lt.tex) SDL_DestroyTexture(lt.tex);
+    clearCache();
     if(pad) SDL_GameControllerClose(pad);
     if(font) TTF_CloseFont(font);
     if(ren) SDL_DestroyRenderer(ren);
     if(win) SDL_DestroyWindow(win);
     TTF_Quit();
     SDL_Quit();
+
+    // Screen is clear; keep the name a moment longer to swallow a press that
+    // landed as the guide was closing.
+    struct timespec grace = {0, EXIT_GRACE_NS};
+    nanosleep(&grace, nullptr);
     return 0;
 }
