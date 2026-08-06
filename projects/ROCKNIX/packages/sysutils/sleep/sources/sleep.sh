@@ -77,8 +77,29 @@ modules() {
 quirks() {
   for QUIRK in /usr/lib/autostart/quirks/platforms/"${HW_DEVICE}"/sleep.d/${1}/* \
                /usr/lib/autostart/quirks/devices/"${QUIRK_DEVICE}"/sleep.d/${1}/*; do
+    [ -x "${QUIRK}" ] || continue
     "${QUIRK}" >${EVENTLOG} 2>&1
   done
+}
+
+# rfkill returns as soon as the block is queued and the driver tears down
+# asynchronously, so the freezer otherwise races it. ath12k cares: its resume
+# path only does its work when the radio was already down. Skipped where no
+# wlan rfkill switch is registered, since the block did nothing to wait for.
+wifi_wait_down() {
+  local dev flags tries
+
+  dev=$(ls /sys/class/net 2>/dev/null | grep -m1 ^wlan)
+  [ -z "${dev}" ] && return 0
+  grep -qx wlan /sys/class/rfkill/*/type 2>/dev/null || return 0
+
+  for tries in $(seq 1 30); do
+    flags=$(cat "/sys/class/net/${dev}/flags" 2>/dev/null) || return 0
+    [ -z "${flags}" ] && return 0
+    (( flags & 1 )) || return 0
+    sleep .1
+  done
+  log $0 "WIFI interface ${dev} still up after 3s, suspending anyway."
 }
 
 case $1 in
@@ -90,7 +111,8 @@ case $1 in
       wifictl pin >${EVENTLOG} 2>&1
 
       log $0 "Disabling WIFI."
-      nohup wifictl disable >${EVENTLOG} 2>&1
+      wifictl disable >${EVENTLOG} 2>&1
+      wifi_wait_down
     fi
 
     headphones stop
@@ -110,8 +132,14 @@ case $1 in
     bluetooth start
 
     if [ "$(get_setting wifi.enabled)" == "1" ]; then
-      log $0 "Enabling WIFI."
-      nohup wifictl enable >${EVENTLOG} 2>&1
+      # NetworkManager only learns the system is awake after these hooks
+      # finish, so the radio has to stay blocked until it does. Detached
+      # because that wait must not hold up the rest of the resume.
+      log $0 "Enabling WIFI once NetworkManager reports it is awake."
+      # A helper from an earlier resume can still be waiting, and its unit name
+      # would make this systemd-run fail silently, leaving the radio blocked.
+      systemctl stop wifi-resume.service >${EVENTLOG} 2>&1
+      systemd-run --no-block --collect --unit=wifi-resume /usr/bin/wifi-resume >${EVENTLOG} 2>&1
     fi
 
     DEVICE_VOLUME=$(get_setting "audio.volume" 2>/dev/null)
