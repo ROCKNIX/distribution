@@ -2,10 +2,10 @@
 # Copyright (C) 2025-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="armsx2-sa"
-PKG_VERSION="37ce96996c56cf9e3d635e7f4f36b987fbd4197a"
+PKG_VERSION="2.6.6"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/ARMSX2/ARMSX2"
-PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
+PKG_URL="${PKG_SITE}/archive/refs/tags/${PKG_VERSION}.tar.gz"
 PKG_LONGDESC="ARMSX2 is a native ARM64 PlayStation 2 (PS2) emulator, a fork of PCSX2 that ports the EE/IOP/VU JIT recompilers to ARM64."
 PKG_DEPENDS_TARGET="toolchain llvm:host SDL3 libpng zlib libjpeg-turbo zstd lz4 libwebp freetype plutosvg curl libpcap ffmpeg libX11 libXext qt6 shaderc"
 PKG_TOOLCHAIN="manual"
@@ -22,6 +22,8 @@ get_graphicdrivers
 
 pre_configure_target() {
   PCSX2_CMAKE_BASE=(
+    # Reported version
+    -DARMSX2_VERSION=${PKG_VERSION}
     -DCMAKE_BUILD_TYPE=Release
     # Full-tree IPO stays off for Qt (not worth it)...
     -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF
