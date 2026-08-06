@@ -31,6 +31,36 @@ steam_load_es_thunk_settings() {
   GL_LIB=$(get_setting gl_host_library "${PLATFORM}" "${GAME}")
   GL_LIB=${GL_LIB:-0}
   GAMESCOPE=$(get_setting gamescope "${PLATFORM}" "${GAME}")
+  LSFG_ENABLE=$(get_setting lsfg_enable "${PLATFORM}" "${GAME}")
+  LSFG_ENABLE=${LSFG_ENABLE:-0}
+  LSFG_MULTIPLIER=$(get_setting lsfg_multiplier "${PLATFORM}" "${GAME}")
+  LSFG_MULTIPLIER=${LSFG_MULTIPLIER:-2}
+  LSFG_FLOW_SCALE=$(get_setting lsfg_flow_scale "${PLATFORM}" "${GAME}")
+  LSFG_FLOW_SCALE=${LSFG_FLOW_SCALE:-0.30}
+  LSFG_PERFORMANCE_MODE=$(get_setting lsfg_performance_mode "${PLATFORM}" "${GAME}")
+  LSFG_PERFORMANCE_MODE=${LSFG_PERFORMANCE_MODE:-1}
+  FPS_LIMIT=$(get_setting fps_limit "${PLATFORM}" "${GAME}")
+  FPS_LIMIT=${FPS_LIMIT:-0}
+}
+
+steam_apply_fps_limit() {
+  if [ "${FPS_LIMIT}" != "0" ]; then
+    export DXVK_CONFIG="dxgi.maxFrameRate = ${FPS_LIMIT}"
+    export VKD3D_FRAME_RATE=${FPS_LIMIT}
+  fi
+}
+
+steam_apply_lsfg_settings() {
+  if [ "${LSFG_ENABLE}" = "1" ]; then
+    unset DISABLE_LSFGVK
+    export LSFGVK_ENV=1
+    export LSFGVK_DLL_PATH="/storage/.local/share/Steam/steamapps/common/Lossless Scaling/Lossless.dll"
+    export LSFGVK_MULTIPLIER="${LSFG_MULTIPLIER}"
+    export LSFGVK_FLOW_SCALE="${LSFG_FLOW_SCALE}"
+    export LSFGVK_PERFORMANCE_MODE="${LSFG_PERFORMANCE_MODE}"
+  else
+    export DISABLE_LSFGVK=1
+  fi
 }
 
 steam_write_fex_config_json() {
@@ -75,6 +105,11 @@ steam_debug_print() {
   echo "WAYLAND HOST LIB set to: ${WAYLAND_LIB}"
   echo "GL HOST LIB set to: ${GL_LIB}"
   echo "GAMESCOPE set to: ${GAMESCOPE}"
+  echo "LSFG ENABLE set to: ${LSFG_ENABLE}"
+  echo "LSFG MULTIPLIER set to: ${LSFG_MULTIPLIER}"
+  echo "LSFG FLOW SCALE set to: ${LSFG_FLOW_SCALE}"
+  echo "LSFG PERFORMANCE MODE set to: ${LSFG_PERFORMANCE_MODE}"
+  echo "LSFG FPS LIMIT set to: ${FPS_LIMIT}"
   echo "VSYNC set to: ${VSYNC}"
 }
 

@@ -16,6 +16,8 @@ steam_ensure_fex_config_template
 steam_prepare_storage_and_vdf
 steam_load_es_thunk_settings "$@"
 steam_write_fex_config_json
+steam_apply_lsfg_settings
+steam_apply_fps_limit
 steam_set_cpu_affinity
 steam_debug_print
 
