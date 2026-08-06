@@ -23,6 +23,10 @@ FEX_CMAKE_BASE=(
   -DCMAKE_MAKE_PROGRAM=ninja
   -DCMAKE_C_COMPILER="${FEX_CLANG}"
   -DCMAKE_CXX_COMPILER="${FEX_CLANGXX}"
+  
+  # Make sure we pick up teh right llvm-ar and llvm-ranlib
+  -DCMAKE_AR="${FEX_LLVM_BIN}/llvm-ar"
+  -DCMAKE_RANLIB="${FEX_LLVM_BIN}/llvm-ranlib"
   -DCMAKE_C_COMPILER_AR="${FEX_LLVM_BIN}/llvm-ar"
   -DCMAKE_CXX_COMPILER_AR="${FEX_LLVM_BIN}/llvm-ar"
   -DCMAKE_ASM_COMPILER_AR="${FEX_LLVM_BIN}/llvm-ar"
