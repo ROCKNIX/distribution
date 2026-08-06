@@ -1,0 +1,324 @@
+Subject: [PATCH] frontend: release the native surface before the window system destroys it
+
+On Wayland, Qt destroys and recreates the render widget wl_surface when
+the compositor unmaps or reparents the window. Renderer threads kept using the freed
+wl_surface and OpenGL shared contexts handed to worker threads were bound to the same native
+window. NotifySurfaceChanged was Android-only, so the desktop frontend
+had no way to react.
+
+Upstreaming as azahar-emu/azahar#1155 fix
+
+---
+diff --git a/src/citra_qt/bootmanager.cpp b/src/citra_qt/bootmanager.cpp
+--- a/src/citra_qt/bootmanager.cpp
++++ b/src/citra_qt/bootmanager.cpp
+@@ -211,7 +211,14 @@ public:
+             LOG_ERROR(Frontend, "Unable to create shared OpenGL context");
+         }
+ 
+-        surface = main_surface;
++        if (main_surface != nullptr) {
++            surface = main_surface;
++        } else {
++            offscreen_surface = std::make_unique<QOffscreenSurface>(nullptr);
++            offscreen_surface->setFormat(context->format());
++            offscreen_surface->create();
++            surface = offscreen_surface.get();
++        }
+     }
+ 
+     ~OpenGLSharedContext() {
+@@ -261,12 +268,35 @@ class DummyContext : public Frontend::GraphicsContext {};
+ 
+ class RenderWidget : public QWidget {
+ public:
+-    RenderWidget(GRenderWindow* parent) : QWidget(parent) {
++    RenderWidget(GRenderWindow* parent) : QWidget(parent), render_window(parent) {
+         setMouseTracking(true);
+         update();
+     }
+ 
+     virtual ~RenderWidget() = default;
++
++    bool event(QEvent* ev) override {
++        if (ev->type() == QEvent::PlatformSurface) {
++            const auto type = static_cast<QPlatformSurfaceEvent*>(ev)->surfaceEventType();
++            if (type == QPlatformSurfaceEvent::SurfaceAboutToBeDestroyed) {
++                native_surface_valid = false;
++                render_window->OnNativeSurfaceAboutToBeDestroyed();
++            } else if (type == QPlatformSurfaceEvent::SurfaceCreated) {
++                native_surface_valid = true;
++                render_window->OnNativeSurfaceCreated();
++            }
++        }
++        return QWidget::event(ev);
++    }
++
++protected:
++    bool IsNativeSurfaceValid() const {
++        return native_surface_valid;
++    }
++
++private:
++    GRenderWindow* render_window;
++    bool native_surface_valid = true;
+ };
+ 
+ #ifdef ENABLE_OPENGL
+@@ -287,7 +317,7 @@ public:
+     }
+ 
+     void Present() {
+-        if (!isVisible()) {
++        if (!isVisible() || !IsNativeSurfaceValid()) {
+             return;
+         }
+         if (!system.IsPoweredOn()) {
+@@ -646,6 +676,9 @@ bool GRenderWindow::InitRenderTarget() {
+         const RenderWidget dummy_widget{this};
+     }
+ 
++    // Create the top-level native window before the render child creates its own.
++    window()->winId();
++
+     first_frame = false;
+ 
+     const auto graphics_api = Settings::GetWorkingGraphicsAPI();
+@@ -703,6 +736,21 @@ bool GRenderWindow::InitRenderTarget() {
+     return true;
+ }
+ 
++void GRenderWindow::OnNativeSurfaceAboutToBeDestroyed() {
++    if (!system.IsPoweredOn()) {
++        return;
++    }
++    system.GPU().Renderer().NotifySurfaceAboutToBeDestroyed(is_secondary);
++}
++
++void GRenderWindow::OnNativeSurfaceCreated() {
++    if (!child_widget || !child_widget->windowHandle() || !system.IsPoweredOn()) {
++        return;
++    }
++    window_info = GetWindowSystemInfo(child_widget->windowHandle());
++    system.GPU().Renderer().NotifySurfaceChanged(is_secondary);
++}
++
+ void GRenderWindow::ReleaseRenderTarget() {
+     if (child_widget) {
+         layout()->removeWidget(child_widget);
+@@ -755,8 +803,11 @@ bool GRenderWindow::InitializeOpenGL() {
+         main_context = std::make_unique<OpenGLSharedContext>();
+     }
+ 
+-    auto child_context = CreateSharedContext();
+-    child->SetContext(std::move(child_context));
++    // The presentation context is only used from the GUI thread, which owns the native
++    // window, so it is the one context allowed to bind it.
++    auto gl_context = static_cast<OpenGLSharedContext*>(main_context.get());
++    child->SetContext(std::make_unique<OpenGLSharedContext>(gl_context->GetShareContext(),
++                                                            child_widget->windowHandle()));
+ 
+     auto format = child_widget->windowHandle()->format();
+     format.setSwapInterval(Settings::values.use_vsync.GetValue());
+@@ -838,10 +889,10 @@ std::unique_ptr<Frontend::GraphicsContext> GRenderWindow::CreateSharedContext()
+     const auto graphics_api = Settings::GetWorkingGraphicsAPI();
+     if (graphics_api == Settings::GraphicsAPI::OpenGL) {
+         auto gl_context = static_cast<OpenGLSharedContext*>(main_context.get());
+-        // Bind the shared contexts to the main surface in case the backend wants to take over
+-        // presentation
+-        return std::make_unique<OpenGLSharedContext>(gl_context->GetShareContext(),
+-                                                     child_widget->windowHandle());
++        // Shared contexts are used from other threads (async shader compilation, frame
++        // dumping), so they render to their own offscreen surface instead of the native
++        // window, whose surface can be destroyed at any time.
++        return std::make_unique<OpenGLSharedContext>(gl_context->GetShareContext(), nullptr);
+     }
+ #endif
+     return std::make_unique<DummyContext>();
+diff --git a/src/citra_qt/bootmanager.h b/src/citra_qt/bootmanager.h
+--- a/src/citra_qt/bootmanager.h
++++ b/src/citra_qt/bootmanager.h
+@@ -124,6 +124,10 @@ public:
+     GRenderWindow(QWidget* parent, EmuThread* emu_thread, Core::System& system, bool is_secondary);
+     ~GRenderWindow() override;
+ 
++    /// Native surface lifecycle notifications routed from the render widget.
++    void OnNativeSurfaceAboutToBeDestroyed();
++    void OnNativeSurfaceCreated();
++
+     // EmuWindow implementation.
+     void MakeCurrent() override;
+     void DoneCurrent() override;
+diff --git a/src/video_core/renderer_base.h b/src/video_core/renderer_base.h
+--- a/src/video_core/renderer_base.h
++++ b/src/video_core/renderer_base.h
+@@ -64,6 +64,10 @@ public:
+     // if second == true then it is the second screen
+     virtual void NotifySurfaceChanged(bool second) {}
+ 
++    /// This is called to notify the rendering backend that the native surface is about to be
++    /// destroyed and must no longer be presented.
++    virtual void NotifySurfaceAboutToBeDestroyed(bool second) {}
++
+     /// Returns the resolution scale factor relative to the native 3DS screen resolution
+     u32 GetResolutionScaleFactor();
+ 
+diff --git a/src/video_core/renderer_vulkan/renderer_vulkan.cpp b/src/video_core/renderer_vulkan/renderer_vulkan.cpp
+--- a/src/video_core/renderer_vulkan/renderer_vulkan.cpp
++++ b/src/video_core/renderer_vulkan/renderer_vulkan.cpp
+@@ -1492,4 +1492,14 @@ void RendererVulkan::NotifySurfaceChanged(bool is_second_window) {
+     }
+ }
+ 
++void RendererVulkan::NotifySurfaceAboutToBeDestroyed(bool is_second_window) {
++    if (is_second_window) {
++        if (secondary_present_window_ptr) {
++            secondary_present_window_ptr->NotifySurfaceAboutToBeDestroyed();
++        }
++    } else {
++        main_present_window.NotifySurfaceAboutToBeDestroyed();
++    }
++}
++
+ } // namespace Vulkan
+diff --git a/src/video_core/renderer_vulkan/renderer_vulkan.h b/src/video_core/renderer_vulkan/renderer_vulkan.h
+--- a/src/video_core/renderer_vulkan/renderer_vulkan.h
++++ b/src/video_core/renderer_vulkan/renderer_vulkan.h
+@@ -79,6 +79,7 @@ public:
+     }
+ 
+     void NotifySurfaceChanged(bool second) override;
++    void NotifySurfaceAboutToBeDestroyed(bool second) override;
+ 
+     void SwapBuffers() override;
+     void TryPresent(int timeout_ms, bool is_secondary) override {}
+diff --git a/src/video_core/renderer_vulkan/vk_present_window.cpp b/src/video_core/renderer_vulkan/vk_present_window.cpp
+--- a/src/video_core/renderer_vulkan/vk_present_window.cpp
++++ b/src/video_core/renderer_vulkan/vk_present_window.cpp
+@@ -278,7 +278,10 @@ Frame* PresentWindow::GetRenderFrame() {
+ void PresentWindow::Present(Frame* frame) {
+     if (!use_present_thread) {
+         scheduler.WaitWorker();
+-        CopyToSwapchain(frame);
++        {
++            std::scoped_lock lock{swapchain_mutex};
++            CopyToSwapchain(frame);
++        }
+         free_queue.push(frame);
+         return;
+     }
+@@ -342,9 +345,34 @@ void PresentWindow::NotifySurfaceChanged() {
+     std::scoped_lock lock{recreate_surface_mutex};
+     next_surface = CreateSurface(instance.GetInstance(), emu_window);
+     recreate_surface_cv.notify_one();
++#else
++    std::scoped_lock lock{swapchain_mutex};
++    if (surface_ok) {
++        return;
++    }
++    surface = CreateSurface(instance.GetInstance(), emu_window);
++    next_surface = surface;
++    surface_ok = true;
++    swapchain_dirty = true;
+ #endif
+ }
+ 
++void PresentWindow::NotifySurfaceAboutToBeDestroyed() {
++    std::scoped_lock lock{swapchain_mutex};
++    if (!surface_ok) {
++        return;
++    }
++    {
++        std::scoped_lock submit_lock{scheduler.submit_mutex};
++        instance.GetDevice().waitIdle();
++    }
++    swapchain.OnSurfaceLost();
++    instance.GetInstance().destroySurfaceKHR(surface);
++    surface = VK_NULL_HANDLE;
++    next_surface = VK_NULL_HANDLE;
++    surface_ok = false;
++}
++
+ void PresentWindow::CopyToSwapchain(Frame* frame) {
+     const auto recreate_swapchain = [&] {
+ #ifdef ANDROID
+@@ -360,6 +388,14 @@ void PresentWindow::CopyToSwapchain(Frame* frame) {
+     };
+ 
+ #ifndef ANDROID
++    if (!surface_ok) {
++        return;
++    }
++    if (swapchain_dirty) [[unlikely]] {
++        vsync_enabled = Settings::values.use_vsync.GetValue();
++        recreate_swapchain();
++        swapchain_dirty = false;
++    }
+     const bool use_vsync = Settings::values.use_vsync.GetValue();
+     const bool size_changed =
+         swapchain.GetWidth() != frame->width || swapchain.GetHeight() != frame->height;
+diff --git a/src/video_core/renderer_vulkan/vk_present_window.h b/src/video_core/renderer_vulkan/vk_present_window.h
+--- a/src/video_core/renderer_vulkan/vk_present_window.h
++++ b/src/video_core/renderer_vulkan/vk_present_window.h
+@@ -55,6 +55,9 @@ public:
+     /// This is called to notify the rendering backend of a surface change
+     void NotifySurfaceChanged();
+ 
++    /// Called from the UI thread right before the native surface is destroyed.
++    void NotifySurfaceAboutToBeDestroyed();
++
+     [[nodiscard]] vk::RenderPass Renderpass() const noexcept {
+         return present_renderpass;
+     }
+@@ -100,6 +103,9 @@ private:
+     bool blit_supported;
+     bool use_present_thread{true};
+     void* last_render_surface{};
++    // Guarded by swapchain_mutex
++    bool surface_ok{true};
++    bool swapchain_dirty{};
+ };
+ 
+ } // namespace Vulkan
+diff --git a/src/video_core/renderer_vulkan/vk_swapchain.cpp b/src/video_core/renderer_vulkan/vk_swapchain.cpp
+--- a/src/video_core/renderer_vulkan/vk_swapchain.cpp
++++ b/src/video_core/renderer_vulkan/vk_swapchain.cpp
+@@ -258,15 +258,22 @@ void Swapchain::SetSurfaceProperties() {
+     }
+ }
+ 
++void Swapchain::OnSurfaceLost() {
++    Destroy();
++    surface = VK_NULL_HANDLE;
++}
++
+ void Swapchain::Destroy() {
+     vk::Device device = instance.GetDevice();
+     if (swapchain) {
+         device.destroySwapchainKHR(swapchain);
+         swapchain = VK_NULL_HANDLE;
+     }
+-    for (u32 i = 0; i < image_count; i++) {
+-        device.destroySemaphore(image_acquired[i]);
+-        device.destroySemaphore(present_ready[i]);
++    for (const vk::Semaphore semaphore : image_acquired) {
++        device.destroySemaphore(semaphore);
++    }
++    for (const vk::Semaphore semaphore : present_ready) {
++        device.destroySemaphore(semaphore);
+     }
+     image_acquired.clear();
+     present_ready.clear();
+diff --git a/src/video_core/renderer_vulkan/vk_swapchain.h b/src/video_core/renderer_vulkan/vk_swapchain.h
+--- a/src/video_core/renderer_vulkan/vk_swapchain.h
++++ b/src/video_core/renderer_vulkan/vk_swapchain.h
+@@ -23,6 +23,9 @@ public:
+     /// Creates (or recreates) the swapchain with a given size.
+     void Create(u32 width, u32 height, vk::SurfaceKHR surface, bool low_refresh_rate);
+ 
++    /// Destroys the swapchain and forgets the surface when the native window is going away.
++    void OnSurfaceLost();
++
+     /// Acquires the next image in the swapchain.
+     bool AcquireNextImage();
+ 
