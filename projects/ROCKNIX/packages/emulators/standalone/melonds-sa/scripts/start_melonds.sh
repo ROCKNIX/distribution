@@ -147,7 +147,7 @@ fi
 if [ "$VSYNC" = "1" ]; then
 	sed -i '/^ScreenVSync=/c\ScreenVSync=1' "${CONF_DIR}/${MELONDS_INI}"
 else
-	sed -i '/^ScreenVSync=/c\ScreenVSync=1' "${CONF_DIR}/${MELONDS_INI}"
+	sed -i '/^ScreenVSync=/c\ScreenVSync=0' "${CONF_DIR}/${MELONDS_INI}"
 fi
 
 # Extract archive to /tmp/melonds
