@@ -37,7 +37,6 @@ make_target() {
          VC=0 \
          OSD=0
 
-  export BINUTILS="$(get_build_dir binutils)/.${TARGET_NAME}"
   export SDL_CFLAGS="-I${SYSROOT_PREFIX}/usr/include/SDL2 -pthread -D_REENTRANT"
   export SDL_LDLIBS="-lSDL2_net -lSDL2"
   export CROSS_COMPILE="${TARGET_PREFIX}"

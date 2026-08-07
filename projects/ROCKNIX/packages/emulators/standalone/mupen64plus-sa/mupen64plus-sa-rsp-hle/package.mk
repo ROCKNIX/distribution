@@ -37,7 +37,6 @@ make_target() {
          VC=0 \
          OSD=0
 
-  export BINUTILS="$(get_build_dir binutils)/.${TARGET_NAME}"
   export APIDIR=$(get_build_dir mupen64plus-sa-core)/src/api
   export SDL_CFLAGS="-I${SYSROOT_PREFIX}/usr/include/SDL2 -pthread -D_REENTRANT"
   export SDL_LDLIBS="-lSDL2_net -lSDL2"
