@@ -7,6 +7,7 @@ PKG_LICENSE="MIT"
 PKG_SITE="https://gitlab.freedesktop.org/mesa/vulkan-wsi-layer"
 PKG_URL="${PKG_SITE}/-/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain libdrm wayland-protocols ${VULKAN}"
+PKG_DEPENDS_UNPACK="linux"
 PKG_LONGDESC="Implements Vulkan extensions for Window System Integration inside a Vulkan layer."
 PKG_TOOLCHAIN="cmake"
 

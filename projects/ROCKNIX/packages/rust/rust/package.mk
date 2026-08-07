@@ -84,7 +84,7 @@ mandir = "${TOOLCHAIN}/share/man"
 
 END
 
-  CARGO_HOME="${PKG_BUILD}/cargo_home"
+  CARGO_HOME="${TOOLCHAIN}/cargo_home"
   mkdir -p "${CARGO_HOME}"
 
   cat >${CARGO_HOME}/config.toml <<END
