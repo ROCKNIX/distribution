@@ -7,6 +7,7 @@ PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/hatari/hatari"
 PKG_URL="https://github.com/hatari/hatari/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain linux glibc systemd alsa-lib SDL2 portaudio zlib capsimg libpng"
+PKG_DEPENDS_UNPACK="capsimg"
 PKG_LONGDESC="Hatari is an Atari ST/STE/TT/Falcon emulator"
 
 post_unpack() {
