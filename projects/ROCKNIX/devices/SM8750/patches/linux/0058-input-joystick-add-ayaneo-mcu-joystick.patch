@@ -2,6 +2,16 @@ From: ROCKNIX <noreply@rocknix.org>
 Date: Thu, 5 Jun 2026 00:00:00 +0000
 Subject: [PATCH] input: joystick: add AYANEO SPI MCU gamepad driver
 
+Reverse-engineered from the stock tc_mcu_joystick.ko. The wire
+protocol is the MCU's to dictate: a frame is eleven one-word SPI
+messages, each under its own chip select, ~20 us apart. Shorter gaps
+(0-15 us) survive a gentle 8-frame probe and then corrupt the stream
+within a second of sustained 250 Hz traffic, and a whole frame sent
+under one chip select gets no answer at any clock from 1 MHz down to
+250 kHz. The gap is spun instead of slept (saves ~2500 hrtimer
+interrupts/s) and the MCU is told to slow to ~37 frames/s once the
+pad has sat untouched for 10 s, so an idle pad costs ~450
+interrupts/s instead of ~5500; any input restores 250 Hz at once.
 ---
 diff --git a/drivers/input/joystick/Kconfig b/drivers/input/joystick/Kconfig
 index 0da3c0f44..edfdad333 100644
@@ -34,10 +44,9 @@ index 3de503e29..3b7688cda 100644
 +obj-$(CONFIG_JOYSTICK_MCU)		+= mcu_joystick.o
 diff --git a/drivers/input/joystick/mcu_joystick.c b/drivers/input/joystick/mcu_joystick.c
 new file mode 100644
-index 0000000..f66adc811
 --- /dev/null
 +++ b/drivers/input/joystick/mcu_joystick.c
-@@ -0,0 +1,675 @@
+@@ -0,0 +1,822 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * AYANEO SPI MCU gamepad driver (KONKR Pocket FIT Elite / AYN AYANEO SM8750 family)
@@ -120,6 +129,23 @@ index 0000000..f66adc811
 +					 * at power-up) */
 +
 +/*
++ * The rate byte of MCU_CMD_IRQ_RATE stretches the MCU's frame period.
++ * Measured: period ~= 3.3 ms + N * 0.24 ms, so 0 is the native 250 Hz,
++ * 0x32 gives ~67 frames/s, 0xfa ~16/s. It kicks in right away and rate
++ * 0 undoes it. Even a controller nobody is holding costs ~3000
++ * interrupts/s at 250 Hz (GPIO edge + the per-word SPI completions), so
++ * once the pad has been quiet for a while we send 0x64 and run at
++ * ~37 frames/s. That 27 ms period sits well inside MCU_IRQ_OK_MS, so
++ * the poll fallback stays put. The price is one late frame: the first
++ * press after idling can take up to ~27 ms to show up, and that same
++ * frame puts the rate back to 250 Hz.
++ */
++#define MCU_CMD_IDLE_RATE	(MCU_CMD_IRQ_RATE | 0x64)
++#define MCU_IDLE_AFTER_MS	10000
++#define MCU_STICK_DEADBAND	256	/* raw stick counts (~0.8% of range) */
++#define MCU_STICK_NEUTRAL	2048	/* "released" threshold for idle entry */
++
++/*
 + * Rumble: the stock driver's ff path writes the (u16>>8) strong/weak FF
 + * magnitudes to two 7-bit write registers (a write word = (reg << 8) | val,
 + * bit15 clear; cf. the keepalive 0x7f01 = write reg 0x7f val 0x01).
@@ -192,6 +218,11 @@ index 0000000..f66adc811
 +	struct work_struct ff_work;	/* rumble: deferred SPI write (play is atomic) */
 +	u8 ff_strong;
 +	u8 ff_weak;
++	bool gap_sleep;			/* watchdog fallback: sleep the inter-word gap */
++	u16 last_frame[MCU_NREGS];	/* previous frame, for change detection */
++	bool have_last;
++	unsigned long last_change;	/* jiffies of the last detected change */
++	bool rate_idle;			/* MCU slowed to MCU_CMD_IDLE_RATE */
 +	int irq;
 +	unsigned long last_irq_frame;	/* jiffies of the last frame read by mcu_irq */
 +	unsigned int bad_frames;
@@ -242,7 +273,21 @@ index 0000000..f66adc811
 +			break;
 +		if (i > 0)
 +			out[i - 1] = rx;
-+		usleep_range(MCU_XFER_GAP_US, MCU_XFER_GAP_US + 2);
++		/*
++		 * Don't sleep the gap, spin it. usleep_range() here costs
++		 * an hrtimer interrupt per word, ~2500/s at the full frame
++		 * rate, and the wire looks the same either way. The 20 us
++		 * has to stay though: shorter gaps hold up for a few
++		 * frames, then the stream corrupts under real traffic. A
++		 * whole frame under one chip select gets no answer at all,
++		 * at any SPI clock we tried. If frames go bad anyway the
++		 * watchdog sets gap_sleep and we sleep like stock again,
++		 * permanently.
++		 */
++		if (mcu->gap_sleep)
++			usleep_range(MCU_XFER_GAP_US, MCU_XFER_GAP_US + 2);
++		else
++			udelay(MCU_XFER_GAP_US);
 +	}
 +	mutex_unlock(&mcu->io_lock);
 +	return ret;
@@ -322,7 +367,107 @@ index 0000000..f66adc811
 +{
 +	mcu_write_word(mcu, MCU_CMD_IRQ_RATE);
 +	mcu_write_word(mcu, MCU_CMD_START);
++	/* rate is back at 250 Hz now, reset the idle tracking */
++	mcu->rate_idle = false;
++	mcu->have_last = false;
++	mcu->last_change = jiffies;
 +}
++
++/*
++ * Decides when to slow the MCU down and when to bring it back. A frame
++ * is "activity" if buttons, dpad or triggers changed at all, or a stick
++ * moved more than a small deadband. Nothing changed for
++ * MCU_IDLE_AFTER_MS and the pad fully released -> drop the rate; the
++ * first frame that differs -> back to full rate. The released check is
++ * there because holding a stick at full tilt for a minute straight is
++ * still playing, that must never idle. Only the frame paths call this
++ * (threaded IRQ and poll work, both process context), so a race just
++ * means one extra rate command. Harmless.
++ */
++static const int mcu_stick_regs[] = {
++	MCU_FRAME_X, MCU_FRAME_Y, MCU_FRAME_Z, MCU_FRAME_RZ,
++};
++
++static bool mcu_frame_changed(struct mcu_joystick *mcu,
++			      const u16 regs[MCU_NREGS])
++{
++	int i;
++
++	if (!mcu->have_last)
++		return true;
++	if (regs[MCU_FRAME_KEY] != mcu->last_frame[MCU_FRAME_KEY] ||
++	    regs[MCU_FRAME_TRIG] != mcu->last_frame[MCU_FRAME_TRIG])
++		return true;
++	for (i = 0; i < ARRAY_SIZE(mcu_stick_regs); i++)
++		if (abs((s16)regs[mcu_stick_regs[i]] -
++			(s16)mcu->last_frame[mcu_stick_regs[i]]) > MCU_STICK_DEADBAND)
++			return true;
++	return false;
++}
++
++static bool mcu_frame_neutral(const u16 regs[MCU_NREGS])
++{
++	int i;
++
++	if (regs[MCU_FRAME_KEY] || regs[MCU_FRAME_TRIG])
++		return false;
++	for (i = 0; i < ARRAY_SIZE(mcu_stick_regs); i++)
++		if (abs((s16)regs[mcu_stick_regs[i]]) > MCU_STICK_NEUTRAL)
++			return false;
++	return true;
++}
++
++static void mcu_rate_update(struct mcu_joystick *mcu, const u16 regs[MCU_NREGS])
++{
++	bool changed = mcu_frame_changed(mcu, regs);
++
++	memcpy(mcu->last_frame, regs, sizeof(mcu->last_frame));
++	mcu->have_last = true;
++
++	if (changed) {
++		mcu->last_change = jiffies;
++		if (mcu->rate_idle) {
++			mcu->rate_idle = false;
++			mcu_write_word(mcu, MCU_CMD_IRQ_RATE);
++		}
++		return;
++	}
++
++	if (!mcu->rate_idle && mcu_frame_neutral(regs) &&
++	    time_after(jiffies, mcu->last_change +
++		       msecs_to_jiffies(MCU_IDLE_AFTER_MS))) {
++		mcu->rate_idle = true;
++		mcu_write_word(mcu, MCU_CMD_IDLE_RATE);
++	}
++}
++
++/*
++ * Debug knob: poke a raw command word at the MCU from userspace. The
++ * 0x7000|rate experiments were all done through this. Root-only,
++ * write-only. A bad word might wedge the MCU; the poll watchdog picks
++ * that up.
++ */
++static ssize_t cmd_store(struct device *dev, struct device_attribute *attr,
++			 const char *buf, size_t count)
++{
++	struct mcu_joystick *mcu = spi_get_drvdata(to_spi_device(dev));
++	u16 word;
++	int ret;
++
++	ret = kstrtou16(buf, 0, &word);
++	if (ret)
++		return ret;
++	dev_info(dev, "debug cmd word 0x%04x\n", word);
++	ret = mcu_write_word(mcu, word);
++	return ret ?: count;
++}
++static DEVICE_ATTR_WO(cmd);
++
++static struct attribute *mcu_attrs[] = {
++	&dev_attr_cmd.attr,
++	NULL
++};
++ATTRIBUTE_GROUPS(mcu);
 +
 +/*
 + * Power-on sequence, transcribed from the stock mcu_joystick_power() "on"
@@ -424,6 +569,7 @@ index 0000000..f66adc811
 +	}
 +
 +	mcu_report(mcu, regs);
++	mcu_rate_update(mcu, regs);
 +	return true;
 +}
 +
@@ -473,7 +619,16 @@ index 0000000..f66adc811
 +			mcu->dead = true;
 +			mcu_report_idle(mcu);
 +		}
-+		if (mcu->reinit_fails++ < MCU_REINITS_BEFORE_DANCE) {
++		if (!mcu->gap_sleep) {
++			/*
++			 * Maybe the busy-wait gap broke the stream: go
++			 * back to sleeping it (for good) before assuming
++			 * the MCU itself is wedged.
++			 */
++			mcu->gap_sleep = true;
++			dev_warn(&mcu->spi->dev,
++				 "frames went bad; sleeping the inter-word gap\n");
++		} else if (mcu->reinit_fails++ < MCU_REINITS_BEFORE_DANCE) {
 +			dev_warn_ratelimited(&mcu->spi->dev,
 +					     "MCU silent; re-sending init commands (%u)\n",
 +					     mcu->reinit_fails);
@@ -705,6 +860,7 @@ index 0000000..f66adc811
 +		.name = "mcu-joystick",
 +		.of_match_table = mcu_joystick_of_match,
 +		.pm = pm_sleep_ptr(&mcu_joystick_pm_ops),
++		.dev_groups = mcu_groups,
 +	},
 +	.probe = mcu_joystick_probe,
 +	.remove = mcu_joystick_remove,
