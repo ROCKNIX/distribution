@@ -31,4 +31,6 @@ makeinstall_target() {
   cp -rf ${PKG_DIR}/resources/compatibilitytool.vdf ${INSTALL}/usr/share/steam
   cp -rf ${PKG_DIR}/resources/toolmanifest.vdf ${INSTALL}/usr/share/steam
   cp -rf ${PKG_DIR}/resources/registry.vdf ${INSTALL}/usr/share/steam
+  mkdir -p ${INSTALL}/usr/lib/sysctl.d
+  install -m 0644 ${PKG_DIR}/config/50-max-map-count.conf ${INSTALL}/usr/lib/sysctl.d/
 }
