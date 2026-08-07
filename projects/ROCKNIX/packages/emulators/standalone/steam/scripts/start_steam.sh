@@ -118,7 +118,9 @@ steam_read_sway_geometry() {
     .[] | select(.focused == true) |
     "W=\(.current_mode.width) H=\(.current_mode.height) TRANSFORM=\(.transform) REFRESH=\(.current_mode.refresh // 60000)"
   ')"
-  REFRESH_HZ=$((REFRESH / 1000))
+  # Round to nearest (119990 mHz -> 120) to match the mode's integer vrefresh,
+  # which gamescope's -r must hit exactly or it falls back to the preferred mode.
+  REFRESH_HZ=$(((REFRESH + 500) / 1000))
 }
 
 steam_setup_environment() {
