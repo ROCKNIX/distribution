@@ -66,7 +66,9 @@ makeinstall_target() {
 
       mkdir -p ${INSTALL}/usr/bin
         cp -vP ${ROOT}/build.${DISTRO}-${DEVICE}.arm/install_pkg/${PKG_NAME}-*/usr/bin/* ${INSTALL}/usr/bin
-        cp -vP ${ROOT}/build.${DISTRO}-${DEVICE}.arm/build/${PKG_NAME}-*/tests/bash ${INSTALL}/usr/bin/bash-x86
+
+      mkdir -p ${INSTALL}/usr/config
+        cp -vP ${ROOT}/build.${DISTRO}-${DEVICE}.arm/install_pkg/${PKG_NAME}-*/usr/config/box86.box86rc ${INSTALL}/usr/config/box86.box86rc
 
       ;;
   esac

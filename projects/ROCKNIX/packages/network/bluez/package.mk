@@ -84,5 +84,5 @@ post_makeinstall_target() {
   # libbluetooth required for bluez-alsa
   #  sed -i 's/-lbluetooth//g' ${PKG_BUILD}/lib/bluez.pc
     cp -P ${PKG_BUILD}/lib/bluez.pc ${SYSROOT_PREFIX}/usr/lib/pkgconfig
-    cp -P -r ${PKG_BUILD}/lib/bluetooth ${SYSROOT_PREFIX}/usr/include/
+    cp -rL ${PKG_BUILD}/lib/bluetooth ${SYSROOT_PREFIX}/usr/include/
 }
