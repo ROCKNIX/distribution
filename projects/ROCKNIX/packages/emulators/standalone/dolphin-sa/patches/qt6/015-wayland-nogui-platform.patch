@@ -1,0 +1,449 @@
+diff --git a/Source/Core/DolphinNoGUI/CMakeLists.txt b/Source/Core/DolphinNoGUI/CMakeLists.txt
+index 9dad1b5f86..1b8e16ce45 100644
+--- a/Source/Core/DolphinNoGUI/CMakeLists.txt
++++ b/Source/Core/DolphinNoGUI/CMakeLists.txt
+@@ -10,6 +10,32 @@ if(X11_FOUND)
+   target_link_libraries(dolphin-nogui PRIVATE PkgConfig::XRANDR PkgConfig::X11)
+ endif()
+ 
++if(ENABLE_WAYLAND AND WAYLAND_FOUND)
++  # Generate the xdg-shell and xdg-decoration client protocols at build time.
++  set(WAYLAND_PROTOCOL_SRCS "")
++  function(dolphin_add_wayland_protocol xml basename)
++    set(header "${CMAKE_CURRENT_BINARY_DIR}/wayland-${basename}-client-protocol.h")
++    set(code "${CMAKE_CURRENT_BINARY_DIR}/wayland-${basename}-protocol.c")
++    add_custom_command(OUTPUT "${header}"
++      COMMAND "${WAYLAND_SCANNER_EXECUTABLE}" client-header "${xml}" "${header}"
++      DEPENDS "${xml}" VERBATIM)
++    add_custom_command(OUTPUT "${code}"
++      COMMAND "${WAYLAND_SCANNER_EXECUTABLE}" private-code "${xml}" "${code}"
++      DEPENDS "${xml}" VERBATIM)
++    set(WAYLAND_PROTOCOL_SRCS ${WAYLAND_PROTOCOL_SRCS} "${header}" "${code}" PARENT_SCOPE)
++  endfunction()
++
++  dolphin_add_wayland_protocol(
++    "${WAYLAND_PROTOCOLS_DIR}/stable/xdg-shell/xdg-shell.xml" xdg-shell)
++  dolphin_add_wayland_protocol(
++    "${WAYLAND_PROTOCOLS_DIR}/unstable/xdg-decoration/xdg-decoration-unstable-v1.xml"
++    xdg-decoration)
++
++  target_sources(dolphin-nogui PRIVATE PlatformWayland.cpp ${WAYLAND_PROTOCOL_SRCS})
++  target_include_directories(dolphin-nogui PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
++  target_link_libraries(dolphin-nogui PRIVATE PkgConfig::WAYLAND)
++endif()
++
+ if(WIN32)
+   target_sources(dolphin-nogui PRIVATE PlatformWin32.cpp)
+ endif()
+diff --git a/Source/Core/DolphinNoGUI/MainNoGUI.cpp b/Source/Core/DolphinNoGUI/MainNoGUI.cpp
+index 1e1ff6e39f..a4d0828cb5 100644
+--- a/Source/Core/DolphinNoGUI/MainNoGUI.cpp
++++ b/Source/Core/DolphinNoGUI/MainNoGUI.cpp
+@@ -155,6 +155,11 @@ static std::unique_ptr<Platform> GetPlatform(const optparse::Values& options)
+ {
+   std::string platform_name = static_cast<const char*>(options.get("platform"));
+ 
++#ifdef HAVE_WAYLAND
++  if (platform_name == "wayland")
++    return Platform::CreateWaylandPlatform();
++#endif
++
+ #if HAVE_X11
+   if (platform_name == "x11" || platform_name.empty())
+     return Platform::CreateX11Platform();
+@@ -200,6 +205,10 @@ int main(const int argc, char* argv[])
+                 ,
+                 "x11"
+ #endif
++#ifdef HAVE_WAYLAND
++                ,
++                "wayland"
++#endif
+ #ifdef _WIN32
+                 ,
+                 "win32"
+diff --git a/Source/Core/DolphinNoGUI/Platform.h b/Source/Core/DolphinNoGUI/Platform.h
+index f4dc8a9474..95ac128499 100644
+--- a/Source/Core/DolphinNoGUI/Platform.h
++++ b/Source/Core/DolphinNoGUI/Platform.h
+@@ -35,6 +35,10 @@ public:
+   static std::unique_ptr<Platform> CreateX11Platform();
+ #endif
+ 
++#ifdef HAVE_WAYLAND
++  static std::unique_ptr<Platform> CreateWaylandPlatform();
++#endif
++
+ #ifdef __linux__
+   static std::unique_ptr<Platform> CreateFBDevPlatform();
+ #endif
+diff --git a/Source/Core/DolphinNoGUI/PlatformWayland.cpp b/Source/Core/DolphinNoGUI/PlatformWayland.cpp
+new file mode 100644
+index 0000000000..4afd73caee
+--- /dev/null
++++ b/Source/Core/DolphinNoGUI/PlatformWayland.cpp
+@@ -0,0 +1,364 @@
++// Copyright 2018 Dolphin Emulator Project
++// Licensed under GPLv2+
++// Refer to the license.txt file included.
++
++#include <unistd.h>
++
++#include "DolphinNoGUI/Platform.h"
++
++#include "Common/MsgHandler.h"
++#include "Core/Config/MainSettings.h"
++#include "Core/Core.h"
++#include "Core/State.h"
++#include "Core/System.h"
++
++#include "Core/HW/GCPad.h"
++#include "InputCommon/GCPadStatus.h"
++#include <fmt/format.h>
++#include "Core/Config/GraphicsSettings.h"
++#include "VideoCommon/VideoConfig.h"
++#include "VideoCommon/OnScreenDisplay.h"
++
++#include <chrono>
++#include <climits>
++#include <cstdio>
++#include <cstring>
++#include <thread>
++
++#include <wayland-client-protocol.h>
++#include "wayland-xdg-decoration-client-protocol.h"
++#include "wayland-xdg-shell-client-protocol.h"
++
++#include "VideoCommon/Present.h"
++
++namespace
++{
++class PlatformWayland : public Platform
++{
++public:
++  ~PlatformWayland() override;
++
++  bool Init() override;
++  void SetTitle(const std::string& string) override;
++  void MainLoop() override;
++
++  WindowSystemInfo GetWindowSystemInfo() const override;
++
++private:
++  void ProcessEvents();
++
++  static void GlobalRegistryHandler(void* data, wl_registry* registry, uint32_t id,
++                                    const char* interface, uint32_t version);
++  static void GlobalRegistryRemover(void* data, wl_registry* registry, uint32_t id);
++  static void XDGWMBasePing(void* data, struct xdg_wm_base* xdg_wm_base, uint32_t serial);
++  static void XDGSurfaceConfigure(void* data, struct xdg_surface* xdg_surface, uint32_t serial);
++  static void TopLevelConfigure(void* data, struct xdg_toplevel* xdg_toplevel, int32_t width,
++                                int32_t height, struct wl_array* states);
++  static void TopLevelClose(void* data, struct xdg_toplevel* xdg_toplevel);
++
++  wl_display* m_display = nullptr;
++  wl_registry* m_registry = nullptr;
++  wl_compositor* m_compositor = nullptr;
++  xdg_wm_base* m_xdg_wm_base = nullptr;
++  wl_surface* m_surface = nullptr;
++  wl_region* m_region = nullptr;
++  xdg_surface* m_xdg_surface = nullptr;
++  xdg_toplevel* m_xdg_toplevel = nullptr;
++  zxdg_decoration_manager_v1* m_decoration_manager = nullptr;
++  zxdg_toplevel_decoration_v1* m_toplevel_decoration = nullptr;
++
++  int m_surface_width = 0;
++  int m_surface_height = 0;
++};
++
++PlatformWayland::~PlatformWayland()
++{
++  if (m_xdg_toplevel)
++    xdg_toplevel_destroy(m_xdg_toplevel);
++  if (m_xdg_surface)
++    xdg_surface_destroy(m_xdg_surface);
++  if (m_surface)
++    wl_surface_destroy(m_surface);
++  if (m_region)
++    wl_region_destroy(m_region);
++  if (m_xdg_wm_base)
++    xdg_wm_base_destroy(m_xdg_wm_base);
++  if (m_compositor)
++    wl_compositor_destroy(m_compositor);
++  if (m_registry)
++    wl_registry_destroy(m_registry);
++  if (m_display)
++    wl_display_disconnect(m_display);
++}
++
++void PlatformWayland::GlobalRegistryHandler(void* data, wl_registry* registry, uint32_t id,
++                                            const char* interface, uint32_t version)
++{
++  PlatformWayland* platform = static_cast<PlatformWayland*>(data);
++  if (std::strcmp(interface, wl_compositor_interface.name) == 0)
++  {
++    platform->m_compositor = static_cast<wl_compositor*>(
++        wl_registry_bind(platform->m_registry, id, &wl_compositor_interface, 1));
++  }
++  else if (std::strcmp(interface, xdg_wm_base_interface.name) == 0)
++  {
++    platform->m_xdg_wm_base = static_cast<xdg_wm_base*>(
++        wl_registry_bind(platform->m_registry, id, &xdg_wm_base_interface, 1));
++  }
++  else if (std::strcmp(interface, zxdg_decoration_manager_v1_interface.name) == 0)
++  {
++    platform->m_decoration_manager = static_cast<zxdg_decoration_manager_v1*>(
++        wl_registry_bind(platform->m_registry, id, &zxdg_decoration_manager_v1_interface, 1));
++  }
++}
++
++void PlatformWayland::GlobalRegistryRemover(void* data, wl_registry* registry, uint32_t id)
++{
++}
++
++void PlatformWayland::XDGWMBasePing(void* data, struct xdg_wm_base* xdg_wm_base, uint32_t serial)
++{
++  xdg_wm_base_pong(xdg_wm_base, serial);
++}
++
++void PlatformWayland::XDGSurfaceConfigure(void* data, struct xdg_surface* xdg_surface,
++                                          uint32_t serial)
++{
++  xdg_surface_ack_configure(xdg_surface, serial);
++}
++
++void PlatformWayland::TopLevelConfigure(void* data, struct xdg_toplevel* xdg_toplevel,
++                                        int32_t width, int32_t height, struct wl_array* states)
++{
++  // If this is zero, it's asking us to set the size.
++  if (width == 0 || height == 0)
++    return;
++
++  PlatformWayland* platform = static_cast<PlatformWayland*>(data);
++  platform->m_surface_width = width;
++  platform->m_surface_height = height;
++  if (g_presenter)
++    g_presenter->ResizeSurface(width, height);
++}
++
++void PlatformWayland::TopLevelClose(void* data, struct xdg_toplevel* xdg_toplevel)
++{
++  PlatformWayland* platform = static_cast<PlatformWayland*>(data);
++  platform->Stop();
++}
++
++bool PlatformWayland::Init()
++{
++  m_display = wl_display_connect(nullptr);
++  if (!m_display)
++  {
++    //PanicAlert("Failed to connect to Wayland display.");
++    return false;
++  }
++
++  static const wl_registry_listener registry_listener = {GlobalRegistryHandler,
++                                                         GlobalRegistryRemover};
++  m_registry = wl_display_get_registry(m_display);
++  wl_registry_add_listener(m_registry, &registry_listener, this);
++
++  // Call back to registry listener to get compositor/shell.
++  wl_display_dispatch(m_display);
++  wl_display_roundtrip(m_display);
++
++  // We need a shell/compositor, or at least one we understand.
++  if (!m_compositor || !m_display || !m_xdg_wm_base)
++  {
++    std::fprintf(stderr, "Missing Wayland shell/compositor\n");
++    return false;
++  }
++
++  // Create the compositor and shell surface.
++  if (!(m_surface = wl_compositor_create_surface(m_compositor)) ||
++      !(m_xdg_surface = xdg_wm_base_get_xdg_surface(m_xdg_wm_base, m_surface)) ||
++      !(m_xdg_toplevel = xdg_surface_get_toplevel(m_xdg_surface)))
++  {
++    std::fprintf(stderr, "Failed to create compositor/shell surfaces\n");
++    return false;
++  }
++
++  static const xdg_wm_base_listener xdg_wm_base_listener = {XDGWMBasePing};
++  xdg_wm_base_add_listener(m_xdg_wm_base, &xdg_wm_base_listener, this);
++
++  static const xdg_surface_listener shell_surface_listener = {XDGSurfaceConfigure};
++  xdg_surface_add_listener(m_xdg_surface, &shell_surface_listener, this);
++
++  static const xdg_toplevel_listener toplevel_listener = {TopLevelConfigure, TopLevelClose};
++  xdg_toplevel_add_listener(m_xdg_toplevel, &toplevel_listener, this);
++
++  // Create region in the surface to draw into.
++  m_surface_width = Config::Get(Config::MAIN_RENDER_WINDOW_WIDTH);
++  m_surface_height = Config::Get(Config::MAIN_RENDER_WINDOW_HEIGHT);
++  m_region = wl_compositor_create_region(m_compositor);
++  wl_region_add(m_region, 0, 0, m_surface_width, m_surface_height);
++  wl_surface_set_opaque_region(m_surface, m_region);
++  wl_surface_commit(m_surface);
++
++  // This doesn't seem to have any effect on kwin...
++  xdg_surface_set_window_geometry(m_xdg_surface, Config::Get(Config::MAIN_RENDER_WINDOW_XPOS),
++                                  Config::Get(Config::MAIN_RENDER_WINDOW_YPOS),
++                                  Config::Get(Config::MAIN_RENDER_WINDOW_WIDTH),
++                                  Config::Get(Config::MAIN_RENDER_WINDOW_HEIGHT));
++
++  if (m_decoration_manager)
++  {
++    m_toplevel_decoration =
++        zxdg_decoration_manager_v1_get_toplevel_decoration(m_decoration_manager, m_xdg_toplevel);
++    if (m_toplevel_decoration)
++      zxdg_toplevel_decoration_v1_set_mode(m_toplevel_decoration,
++                                           ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
++  }
++
++  return true;
++}
++
++void PlatformWayland::SetTitle(const std::string& string)
++{
++  xdg_toplevel_set_title(m_xdg_toplevel, string.c_str());
++}
++
++void PlatformWayland::MainLoop()
++{
++  while (IsRunning())
++  {
++    static int hotkey = 0;
++    static int slot = 0;
++    static int fps = 0;
++    static int aspect = 0;
++    static int fforward = 0;
++    static int ires = 0;
++
++    UpdateRunningFlag();
++    Core::HostDispatchJobs(Core::System::GetInstance());
++    ProcessEvents();
++
++    if(Pad::IsInitialized()) {
++      GCPadStatus x = Pad::GetStatus(0);
++
++      if( (x.button & PAD_BUTTON_HOTKEY) == PAD_BUTTON_HOTKEY) { // hotkey pressed
++       if(hotkey == 1) {
++         hotkey = 2;
++       }
++      } else {
++       hotkey = 1; // assure hotkey is released between actions
++      }
++
++      if(hotkey == 2) { // hotkey pressed
++       if( (x.button & PAD_BUTTON_START) == PAD_BUTTON_START) {
++         RequestShutdown();
++         hotkey = 0;
++       }
++
++       if( (x.button & PAD_TRIGGER_L) == PAD_TRIGGER_L) {
++         State::Load(Core::System::GetInstance(), slot);
++         hotkey = 0;
++       }
++       if( (x.button & PAD_TRIGGER_R) == PAD_TRIGGER_R) {
++         State::Save(Core::System::GetInstance(), slot);
++         hotkey = 0;
++       }
++       if( (x.button & PAD_BUTTON_DOWN) == PAD_BUTTON_DOWN) {
++         if(slot > 0) slot--;
++         Core::DisplayMessage(fmt::format("Slot {} selected", slot), 4000);
++         hotkey = 0;
++       }
++       if( (x.button & PAD_BUTTON_UP) == PAD_BUTTON_UP) {
++         if(slot < 10) slot++;
++         Core::DisplayMessage(fmt::format("Slot {} selected", slot), 4000);
++         hotkey = 0;
++       }
++       if( (x.button & PAD_BUTTON_A) == PAD_BUTTON_A) {
++         Core::SaveScreenShot();
++         hotkey = 0;
++       }
++       if( (x.button & PAD_BUTTON_Y) == PAD_BUTTON_Y) {
++         if(fps == 0) {
++           Config::SetCurrent(Config::GFX_SHOW_FPS, true);
++           fps = 1;
++         } else {
++           Config::SetCurrent(Config::GFX_SHOW_FPS, false);
++           fps = 0;
++         }
++         hotkey = 0;
++       }
++       if( (x.button & PAD_BUTTON_X) == PAD_BUTTON_X) {
++         if(aspect == 0) {
++           Config::SetCurrent(Config::GFX_ASPECT_RATIO, AspectMode::Stretch);
++           aspect = 1;
++         } else {
++           Config::SetCurrent(Config::GFX_ASPECT_RATIO, AspectMode::Auto);
++           aspect = 0;
++         }
++         hotkey = 0;
++       }
++       if( (x.button & PAD_BUTTON_B) == PAD_BUTTON_B) {
++         if(ires == 0) {
++           Config::SetCurrent(Config::GFX_EFB_SCALE, 2);
++           OSD::AddMessage("Internal Resolution: 480P");
++           ires = 2;
++         }
++         else if(ires == 2) {
++           Config::SetCurrent(Config::GFX_EFB_SCALE, 4);
++           OSD::AddMessage("Internal Resolution: 720P");
++           ires = 4;
++         }
++         else if(ires == 4) {
++           Config::SetCurrent(Config::GFX_EFB_SCALE, 6);
++           OSD::AddMessage("Internal Resolution: 1080P");
++           ires = 6;
++         } else {
++           Config::SetCurrent(Config::GFX_EFB_SCALE, 1);
++           OSD::AddMessage("Internal Resolution: 240P");
++           ires = 0;
++         }
++         hotkey = 0;
++       }
++       if( (x.button & PAD_TRIGGER_Z) == PAD_TRIGGER_Z) {
++        if(fforward == 0) {
++          auto speed = Config::Get(Config::MAIN_EMULATION_SPEED) + 1.0;
++          speed = (speed >= 0.95 && speed <= 1.05) ? 1.0 : speed;
++          Config::SetCurrent(Config::MAIN_EMULATION_SPEED, speed);
++          OSD::AddMessage("Fast Forward: ON");
++          fforward = 1;
++        } else {
++          auto speed = Config::Get(Config::MAIN_EMULATION_SPEED) - 1.0;
++          speed = (speed <= 0 || (speed >= 0.95 && speed <= 1.05)) ? 1.0 : speed;
++          Config::SetCurrent(Config::MAIN_EMULATION_SPEED, speed);
++          OSD::AddMessage("Fast Forward: OFF");
++          fforward = 0;
++        }
++        hotkey = 0;
++       }
++    }
++    }
++
++    // TODO: Is this sleep appropriate?
++    std::this_thread::sleep_for(std::chrono::milliseconds(1));
++  }
++}
++
++WindowSystemInfo PlatformWayland::GetWindowSystemInfo() const
++{
++  WindowSystemInfo wsi;
++  wsi.type = WindowSystemType::Wayland;
++  wsi.display_connection = static_cast<void*>(m_display);
++  wsi.render_surface = reinterpret_cast<void*>(m_surface);
++  wsi.render_surface_width = m_surface_width;
++  wsi.render_surface_height = m_surface_height;
++  return wsi;
++}
++
++void PlatformWayland::ProcessEvents()
++{
++  wl_display_dispatch_pending(m_display);
++}
++}  // namespace
++
++std::unique_ptr<Platform> Platform::CreateWaylandPlatform()
++{
++  return std::make_unique<PlatformWayland>();
++}

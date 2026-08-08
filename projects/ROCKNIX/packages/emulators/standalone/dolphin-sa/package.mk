@@ -8,25 +8,26 @@ PKG_DEPENDS_TARGET="toolchain libevdev libdrm ffmpeg zlib libpng lzo libusb zstd
 PKG_LONGDESC="Dolphin is a GameCube / Wii / Triforce emulator, allowing you to play games for these two platforms on PC with improvements. "
 PKG_TOOLCHAIN="cmake"
 
+PKG_VERSION="6094cfcf7b8fba733b3116fdf3414d51c1c0e4a4" #2606
+PKG_DOLPHIN_VERSION_MAJOR="2606"
+PKG_DOLPHIN_VERSION_MINOR="1"
+PKG_SITE="https://github.com/dolphin-emu/dolphin"
+PKG_URL="${PKG_SITE}.git"
+PKG_PATCH_DIRS+=" qt6"
+
 case ${DEVICE} in
   SM6115|SM8250|SM8550|RK3399|SM8650|SM8750|AMD64)
-    PKG_VERSION="6094cfcf7b8fba733b3116fdf3414d51c1c0e4a4" #2606
-    PKG_DOLPHIN_VERSION_MAJOR="2606"
-    PKG_DOLPHIN_VERSION_MINOR="1"
-    PKG_SITE="https://github.com/dolphin-emu/dolphin"
-    PKG_URL="${PKG_SITE}.git"
+    # Capable enough for the Qt frontend.
     PKG_DEPENDS_TARGET+=" qt6"
-    PKG_PATCH_DIRS+=" qt6"
     PKG_CMAKE_OPTS_TARGET+=" -DENABLE_QT=ON \
+                             -DENABLE_WAYLAND=OFF \
                              -DUSE_RETRO_ACHIEVEMENTS=ON \
                              -DENABLE_HEADLESS=OFF \
                              -DCMAKE_EXE_LINKER_FLAGS=-flto=$(nproc)"
   ;;
   *)
-    PKG_VERSION="e6583f8bec814d8f3748f1d7738457600ce0de56"
-    PKG_SITE="https://github.com/dolphin-emu/dolphin"
-    PKG_URL="${PKG_SITE}.git"
-    PKG_PATCH_DIRS+=" wayland"
+    # Everything else runs nogui on a bare Wayland compositor.
+    PKG_DEPENDS_TARGET+=" wayland wayland-protocols"
     PKG_CMAKE_OPTS_TARGET+=" -DENABLE_QT=OFF \
                              -DENABLE_WAYLAND=ON \
                              -DUSE_RETRO_ACHIEVEMENTS=OFF \
