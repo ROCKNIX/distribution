@@ -145,6 +145,7 @@ pre_configure_target() {
                          -DLLVM_ENABLE_PROJECTS='' \
                          -DLLVM_TARGETS_TO_BUILD=${LLVM_TARGET_BACKENDS} \
                          -DLLVM_TARGET_ARCH="${TARGET_ARCH}" \
+                         -DLLVM_HOST_TRIPLE=${TARGET_NAME} \
                          -DLLVM_NATIVE_TOOL_DIR=${TOOLCHAIN}/bin"
 }
 
