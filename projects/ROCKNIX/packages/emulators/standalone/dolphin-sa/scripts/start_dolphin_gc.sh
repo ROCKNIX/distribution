@@ -15,7 +15,7 @@ fi
 
 set_kill set "-9 ${DOLPHIN_CORE}"
 
-# Load gptokeyb support files
+# control-gen supplies param_device and the SDL controller database
 control-gen_init.sh
 source /storage/.config/gptokeyb/control.ini
 get_controls
@@ -25,6 +25,10 @@ CONF_DIR="/storage/.config/dolphin-emu"
 DOLPHIN_INI="Dolphin.ini"
 GFX_INI="GFX.ini"
 CONTROLLER_INI="GCPadNew.ini"
+
+# Dolphin writes its shader and pipeline caches here but will not create the
+# directory itself, so an orderly shutdown had nothing to flush into.
+mkdir -p "/storage/.cache/dolphin-emu"
 
 # Check if dolphin-emu exists in .config
 if [ ! -d "${CONF_DIR}" ]; then
@@ -43,14 +47,16 @@ if [ ! -d "${CONF_DIR}/GamecubeControllerProfiles" ]; then
         cp -r "/usr/config/dolphin-emu/GamecubeControllerProfiles" "${CONF_DIR}/"
 fi
 
-# Check if GC custom east profile exists in .config/dolphin-emu/GamecubeControllerProfiles
-if [ ! -f "${CONF_DIR}/GamecubeControllerProfiles/GCPadNew.ini.east" ]; then
-        cp -r "/usr/config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.east" "${CONF_DIR}/GamecubeControllerProfiles/GCPadNew.ini.east"
-fi
+# Check if each stock profile exists in .config/dolphin-emu/GamecubeControllerProfiles
+for PROFILE in east.stacked east.inline south.stacked south.inline; do
+        if [ ! -f "${CONF_DIR}/GamecubeControllerProfiles/GCPadNew.ini.${PROFILE}" ]; then
+                cp -r "/usr/config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.${PROFILE}" "${CONF_DIR}/GamecubeControllerProfiles/GCPadNew.ini.${PROFILE}"
+        fi
+done
 
 # Check if GC custom controller profile exists in .config/dolphin-emu/GamecubeControllerProfiles
 if [ ! -f "${CONF_DIR}/GamecubeControllerProfiles/GCPadNew.ini.custom" ]; then
-        cp -r "/usr/config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.south" "${CONF_DIR}/GamecubeControllerProfiles/GCPadNew.ini.custom"
+        cp -r "/usr/config/dolphin-emu/GamecubeControllerProfiles/GCPadNew.ini.south.stacked" "${CONF_DIR}/GamecubeControllerProfiles/GCPadNew.ini.custom"
 fi
 
 # Link Save States to /roms/savestates/gamecube
@@ -118,6 +124,7 @@ GRENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
 IRES=$(get_setting internal_resolution "${PLATFORM}" "${GAME}")
 FPS=$(get_setting show_fps "${PLATFORM}" "${GAME}")
 CON=$(get_setting gamecube_controller_profile "${PLATFORM}" "${GAME}")
+SWAPSHOULDER=$(get_setting swap_shoulders "${PLATFORM}" "${GAME}")
 HKEY=$(get_setting hotkey_enable_button "${PLATFORM}" "${GAME}")
 SAVETYPE=$(get_setting save_type "${PLATFORM}" "${GAME}")
 SAVEREG=$(get_setting save_gci_region "${PLATFORM}" "${GAME}")
@@ -347,12 +354,20 @@ fi
   fi
 
   # GC Controller Profile
+  # Devices with inline shoulders want L/R on the bumpers and Z on the analog
+  # trigger, which is the reverse of the stacked layout actual hardware uses.
+  if [ "$SWAPSHOULDER" = "true" ]; then
+    SHOULDERS="inline"
+  else
+    SHOULDERS="stacked"
+  fi
+
   if [ "$CON" = "east" ]; then
-    cp -r ${CONF_DIR}/GamecubeControllerProfiles/GCPadNew.ini.east ${CONF_DIR}/${CONTROLLER_INI}
+    cp -r ${CONF_DIR}/GamecubeControllerProfiles/GCPadNew.ini.east.${SHOULDERS} ${CONF_DIR}/${CONTROLLER_INI}
   elif [ "$CON" = "custom" ]; then
     cp -r ${CONF_DIR}/GamecubeControllerProfiles/GCPadNew.ini.custom ${CONF_DIR}/${CONTROLLER_INI}
   else
-    cp -r ${CONF_DIR}/GamecubeControllerProfiles/GCPadNew.ini.south ${CONF_DIR}/${CONTROLLER_INI}
+    cp -r ${CONF_DIR}/GamecubeControllerProfiles/GCPadNew.ini.south.${SHOULDERS} ${CONF_DIR}/${CONTROLLER_INI}
   fi
 
   # GC Controller Rumble
@@ -362,9 +377,19 @@ fi
 
   # GC Controller Hotkey Enable
   if [ "$HKEY" = "mode" ]; then
-    sed -i '/^Buttons\/Hotkey =/c\Buttons\/Hotkey = Button 8' ${CONF_DIR}/${CONTROLLER_INI}
+    sed -i '/^Buttons\/Hotkey =/c\Buttons\/Hotkey = Guide' ${CONF_DIR}/${CONTROLLER_INI}
   else
-    sed -i '/^Buttons\/Hotkey =/c\Buttons\/Hotkey = Button 6' ${CONF_DIR}/${CONTROLLER_INI}
+    sed -i '/^Buttons\/Hotkey =/c\Buttons\/Hotkey = Back' ${CONF_DIR}/${CONTROLLER_INI}
+  fi
+
+  # Qt reads its combos from Hotkeys.ini instead of Buttons/Hotkey, so the same
+  # setting has to be swapped into the modifier half of every binding there.
+  if [ -f "${CONF_DIR}/Hotkeys.ini" ]; then
+    if [ "$HKEY" = "mode" ]; then
+      sed -i 's/`Back`/`Guide`/g' ${CONF_DIR}/Hotkeys.ini
+    else
+      sed -i 's/`Guide`/`Back`/g' ${CONF_DIR}/Hotkeys.ini
+    fi
   fi
 
   # Vsync
@@ -373,6 +398,50 @@ fi
   else
     sed -i '/VSync =/c\VSync = False' ${CONF_DIR}/${GFX_INI}
   fi
+
+# SDL names a gamepad after the mapping it resolves, which is not always the
+# joystick name control-gen reports.
+SDL_DB="${SDL_GAMECONTROLLERCONFIG_FILE:-/storage/.config/gptokeyb/gamecontrollerdb.txt}"
+SDL_DEVICE="${param_device}"
+MAPLINE=""
+if [ -n "${DEVICE}" ] && [ -f "${SDL_DB}" ]; then
+  GUID_KEY="$(echo "${DEVICE}" | cut -c1-4)0000$(echo "${DEVICE}" | cut -c9-)"
+  MAPLINE="$(awk -F, -v k="${GUID_KEY}" '!/^#/ && NF>1 {
+      g = substr($1,1,4) "0000" substr($1,9)
+      if (g == k) { print; exit }
+    }' "${SDL_DB}")"
+  MAPPED="$(echo "${MAPLINE}" | cut -d, -f2)"
+  [ -n "${MAPPED}" ] && SDL_DEVICE="${MAPPED}"
+fi
+
+# Some SDL strings are set for XBox-style, even though they're physically Nintendo-style
+# so we need to check for that and set a flag if so.
+FACE_SWAP="no"
+if [ -n "${MAPLINE}" ]; then
+  A_BTN="$(echo "${MAPLINE}" | tr ',' '\n' | sed -n 's/^a:b\([0-9]\{1,\}\)$/\1/p')"
+  B_BTN="$(echo "${MAPLINE}" | tr ',' '\n' | sed -n 's/^b:b\([0-9]\{1,\}\)$/\1/p')"
+  if [ -n "${A_BTN}" ] && [ -n "${B_BTN}" ] && [ "${A_BTN}" -gt "${B_BTN}" ]; then
+    FACE_SWAP="yes"
+  fi
+fi
+
+for CFG in "${CONF_DIR}/Hotkeys.ini" "${CONF_DIR}/GCPadNew.ini" "${CONF_DIR}/WiimoteNew.ini"; do
+  [ -f "${CFG}" ] || continue
+  sed -i "/^Device = /c\\Device = SDL/0/${SDL_DEVICE}" "${CFG}"
+
+  # A custom profile is whatever the user bound in Dolphin's own UI, which
+  # already records what the pad really reports; only the shipped profiles are
+  # written positionally and need correcting.
+  if [ "${FACE_SWAP}" = "yes" ] && \
+     ! { [ "${CON}" = "custom" ] && [ "${CFG}" = "${CONF_DIR}/${CONTROLLER_INI}" ]; }; then
+    sed -i -e 's/`Button S`/`Button %`/g' \
+           -e 's/`Button E`/`Button S`/g' \
+           -e 's/`Button %`/`Button E`/g' \
+           -e 's/`Button W`/`Button %`/g' \
+           -e 's/`Button N`/`Button W`/g' \
+           -e 's/`Button %`/`Button N`/g' "${CFG}"
+  fi
+done
 
 # Link  .config/dolphin-emu to .local
 rm -rf /storage/.local/share/dolphin-emu
@@ -407,6 +476,7 @@ fi
   echo "IRES set to: ${IRES}"
   echo "FPS set to: ${FPS}"
   echo "CON set to: ${CON}"
+  echo "SWAPSHOULDER set to: ${SWAPSHOULDER}"
   echo "HKEY set to: ${HKEY}"
   echo "SAVETYPE set to: ${SAVETYPE}"
   echo "SAVEREG set to: ${SAVEREG}"
@@ -424,6 +494,4 @@ fi
   echo "Launching /usr/bin/${DOLPHIN_CORE} ${CMD} -e ${1}"
 
 # Run Dolphin emulator
-  ${GPTOKEYB} ${DOLPHIN_CORE} xbox360 &
   ${EMUPERF} /usr/bin/${DOLPHIN_CORE} ${CMD} -e "${1}"
-  kill -9 "$(pidof gptokeyb)"

@@ -636,16 +636,11 @@ makeinstall_target() {
 
   ### Nintendo GameCube
   case ${DEVICE} in
-    RK3399|SM6115|SM8250|SM8550|SM8650|SM8750|AMD64)
-      add_emu_core gamecube dolphin dolphin-qt-gc true
-      add_emu_core gamecube dolphin dolphin-sa-gc false
+    RK3399|RK3576|RK3566|RK3588|SM6115|SM8250|SM8550|SM8650|SM8750|S922X|AMD64)
+      add_emu_core gamecube dolphin dolphin-sa-gc true
+      add_emu_core gamecube dolphin dolphin-qt-gc false
       add_emu_core gamecube retroarch dolphin false
       install_script "Start Dolphin.sh"
-      add_es_system gamecube
-      ;;
-    RK3576|RK3566|RK3588|S922X)
-      add_emu_core gamecube dolphin dolphin-sa-gc true
-      add_emu_core gamecube retroarch dolphin false
       add_es_system gamecube
       ;;
   esac
@@ -653,7 +648,8 @@ makeinstall_target() {
   ### Nintendo Triforce
   case ${DEVICE} in
     RK3399|SM6115|SM8250|SM8550|SM8650|SM8750|AMD64)
-      add_emu_core triforce dolphin dolphin-qt-gc true
+      add_emu_core triforce dolphin dolphin-sa-gc true
+      add_emu_core triforce dolphin dolphin-qt-gc false
       install_script "Start Dolphin.sh"
       add_es_system triforce
       ;;
@@ -661,19 +657,11 @@ makeinstall_target() {
 
   ### Nintendo Wii/ware
   case ${DEVICE} in
-    RK3399|SM6115|SM8250|SM8550|SM8650|SM8750|AMD64)
-      add_emu_core wii dolphin dolphin-qt-wii true
-      add_emu_core wiiware dolphin dolphin-qt-wii true
-      add_emu_core wii dolphin dolphin-sa-wii false
-      add_emu_core wiiware dolphin dolphin-sa-wii false
-      add_emu_core wii retroarch dolphin false
-      add_emu_core wiiware retroarch dolphin false
-      add_es_system wii
-      add_es_system wiiware
-      ;;
-    RK3576|RK3566|RK3588|S922X)
+    RK3399|RK3576|RK3566|RK3588|SM6115|SM8250|SM8550|SM8650|SM8750|S922X|AMD64)
       add_emu_core wii dolphin dolphin-sa-wii true
       add_emu_core wiiware dolphin dolphin-sa-wii true
+      add_emu_core wii dolphin dolphin-qt-wii false
+      add_emu_core wiiware dolphin dolphin-qt-wii false
       add_emu_core wii retroarch dolphin false
       add_emu_core wiiware retroarch dolphin false
       add_es_system wii

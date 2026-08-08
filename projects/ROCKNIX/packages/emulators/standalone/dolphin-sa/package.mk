@@ -8,31 +8,20 @@ PKG_DEPENDS_TARGET="toolchain libevdev libdrm ffmpeg zlib libpng lzo libusb zstd
 PKG_LONGDESC="Dolphin is a GameCube / Wii / Triforce emulator, allowing you to play games for these two platforms on PC with improvements. "
 PKG_TOOLCHAIN="cmake"
 
-case ${DEVICE} in
-  SM6115|SM8250|SM8550|RK3399|SM8650|SM8750|AMD64)
-    PKG_VERSION="6094cfcf7b8fba733b3116fdf3414d51c1c0e4a4" #2606
-    PKG_DOLPHIN_VERSION_MAJOR="2606"
-    PKG_DOLPHIN_VERSION_MINOR="1"
-    PKG_SITE="https://github.com/dolphin-emu/dolphin"
-    PKG_URL="${PKG_SITE}.git"
-    PKG_DEPENDS_TARGET+=" qt6"
-    PKG_PATCH_DIRS+=" qt6"
-    PKG_CMAKE_OPTS_TARGET+=" -DENABLE_QT=ON \
-                             -DUSE_RETRO_ACHIEVEMENTS=ON \
-                             -DENABLE_HEADLESS=OFF \
-                             -DCMAKE_EXE_LINKER_FLAGS=-flto=$(nproc)"
-  ;;
-  *)
-    PKG_VERSION="e6583f8bec814d8f3748f1d7738457600ce0de56"
-    PKG_SITE="https://github.com/dolphin-emu/dolphin"
-    PKG_URL="${PKG_SITE}.git"
-    PKG_PATCH_DIRS+=" wayland"
-    PKG_CMAKE_OPTS_TARGET+=" -DENABLE_QT=OFF \
-                             -DENABLE_WAYLAND=ON \
-                             -DUSE_RETRO_ACHIEVEMENTS=OFF \
-                             -DENABLE_HEADLESS=ON"
-  ;;
-esac
+PKG_VERSION="6094cfcf7b8fba733b3116fdf3414d51c1c0e4a4" #2606
+PKG_DOLPHIN_VERSION_MAJOR="2606"
+PKG_DOLPHIN_VERSION_MINOR="1"
+PKG_SITE="https://github.com/dolphin-emu/dolphin"
+PKG_URL="${PKG_SITE}.git"
+
+# Every device builds both frontends: nogui plays games, Qt provides the settings
+# UI from the Tools menu. RetroAchievements lives in Core (AchievementManager) and
+# is driven entirely by RetroAchievements.ini, so it is not tied to either one.
+PKG_DEPENDS_TARGET+=" qt6"
+PKG_CMAKE_OPTS_TARGET+=" -DENABLE_QT=ON \
+                         -DUSE_RETRO_ACHIEVEMENTS=ON \
+                         -DENABLE_HEADLESS=OFF \
+                         -DCMAKE_EXE_LINKER_FLAGS=-flto=$(nproc)"
 
 if [ "${OPENGL_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
@@ -42,11 +31,16 @@ elif [ "${OPENGLES_SUPPORT}" = yes ]; then
   PKG_CMAKE_OPTS_TARGET+=" -DENABLE_EGL=ON"
 fi
 
+# Both frontends can render straight to the compositor. X11 stays compiled in as an
+# XWayland fallback; the frontend selects a path at runtime from the window system
+# type, so building both only widens what a given image can do.
 if [ "${DISPLAYSERVER}" = "wl" ]; then
-  PKG_DEPENDS_TARGET+=" wayland ${WINDOWMANAGER} xwayland xrandr libXi"
-  PKG_CMAKE_OPTS_TARGET+="       -DENABLE_X11=ON"
+  PKG_DEPENDS_TARGET+=" wayland wayland-protocols ${WINDOWMANAGER} xwayland xrandr libXi"
+  PKG_CMAKE_OPTS_TARGET+="       -DENABLE_X11=ON \
+                                 -DENABLE_WAYLAND=ON"
 else
-    PKG_CMAKE_OPTS_TARGET+="     -DENABLE_X11=OFF"
+    PKG_CMAKE_OPTS_TARGET+="     -DENABLE_X11=OFF \
+                                 -DENABLE_WAYLAND=OFF"
 fi
 
 if [ "${VULKAN_SUPPORT}" = "yes" ]
@@ -109,20 +103,13 @@ makeinstall_target() {
 }
 
 post_install() {
-    case ${DEVICE} in
-      RK3588)
-        DOLPHIN_BACKEND="\${DOLPHIN_BACKEND}"
-        EXPORTS="if [ ! -z 'lsmod | grep panthor' ]; then LD_LIBRARY_PATH='\/usr\/lib\/libmali-valhall-g610-g13p0-x11-gbm.so' DOLPHIN_BACKEND='wayland'; else DOLPHIN_BACKEND='x11'; fi"
-      ;;
-      SM6115|SM8250|SM8550|RK3399|SM8650|SM8750|AMD64)
-        DOLPHIN_BACKEND="x11"
-        EXPORTS="export QT_QPA_PLATFORM=xcb"
-      ;;
-      *)
-        DOLPHIN_BACKEND="wayland"
-        EXPORTS=""
-      ;;
-    esac
+    # The Qt frontend renders straight to the compositor on every device. Patch 016 is
+    # what makes this take effect; upstream otherwise rewrites the value back to xcb.
+    EXPORTS="export QT_QPA_PLATFORM=wayland"
+
+    # nogui is the default player, so its -p platform is Wayland everywhere.
+    DOLPHIN_BACKEND="wayland"
+
     sed -e "s/@DOLPHIN_BACKEND@/${DOLPHIN_BACKEND}/g" -i ${INSTALL}/usr/bin/start_dolphin_gc.sh
     sed -e "s/@DOLPHIN_BACKEND@/${DOLPHIN_BACKEND}/g" -i  ${INSTALL}/usr/bin/start_dolphin_wii.sh
 
