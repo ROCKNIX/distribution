@@ -59,6 +59,9 @@ makeinstall_target() {
         cp ${PKG_BUILD}/.${TARGET_NAME}/box86 ${INSTALL}/usr/bin/
         cp ${PKG_BUILD}/tests/bash ${INSTALL}/usr/bin/bash-x86
 
+      mkdir -p ${INSTALL}/usr/config
+        cp ${PKG_BUILD}/system/box86.box86rc ${INSTALL}/usr/config/box86.box86rc
+
       ;;
     aarch64)
       mkdir -p ${INSTALL}/usr/share/box86/lib
@@ -72,9 +75,6 @@ makeinstall_target() {
 
       ;;
   esac
-
-  mkdir -p ${INSTALL}/usr/config
-    cp ${ROOT}/build.${DISTRO}-${DEVICE}.arm/build/${PKG_NAME}-*/system/box86.box86rc ${INSTALL}/usr/config/box86.box86rc
 
   mkdir -p ${INSTALL}/etc
     ln -sf /storage/.config/box86.box86rc ${INSTALL}/etc/box86.box86rc
