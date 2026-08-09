@@ -3,13 +3,21 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
 
-# Simple script to watch the battery capacity and
-# turn the power LED orange when it reaches 30%, red at 20%, and blinking red at 10%
+# Simple script to watch the battery capacity and ramp the power LED
+# from red at empty through yellow at half to green at full, blinking
+# red once critically low.
 
 # Minimal OS variable loading for performance
 . /etc/profile.d/001-functions
 
 LED_PATH="/sys/class/leds"
+BAT_PATH="/sys/class/power_supply/battery"
+
+# Trims green where the green die reads brighter than red. 100 is no trim.
+GREEN_SCALE=100
+
+CRITICAL_CAP=10
+POLL=15
 
 function led_brightness() {
   echo ${2} >${LED_PATH}/${1}/brightness
@@ -24,85 +32,65 @@ function bat_led_off() {
   led_rgb power-led 0 0 0
 }
 
-function bat_led_green() {
+function bat_led_on() {
   led_brightness power-led 255
-  led_rgb power-led 0 255 0
+  led_rgb power-led ${1} ${2} ${3}
 }
 
-function bat_led_red() {
-  led_brightness power-led 255
-  led_rgb power-led 255 0 0
+# Sweeps hue 0deg to 120deg, keeping one channel pinned at full so total
+# output stays constant instead of dipping in the middle of the range.
+function bat_led_ramp() {
+  local cap=${1} r g
+
+  (( cap > 100 )) && cap=100
+
+  if (( cap <= 50 ))
+  then
+    r=255
+    g=$(( 255 * cap / 50 ))
+  else
+    r=$(( 255 * (100 - cap) / 50 ))
+    g=255
+  fi
+
+  bat_led_on ${r} $(( g * GREEN_SCALE / 100 )) 0
 }
 
-function bat_led_orange() {
-  led_brightness power-led 255
-  led_rgb power-led 255 20 0
-}
-
-function bat_led_yellow() {
-  led_brightness power-led 255
-  led_rgb power-led 255 125 0
-}
-
-PREV_BATCAP="null"
+PREV_CAP="null"
 while true
   do
   BAT_LED_STATE=$(get_setting led.color)
-  if [ ! ${BAT_LED_STATE} == "battery" ]; then
+  if [ ! "${BAT_LED_STATE}" == "battery" ]; then
     break
   fi
-  
-  CAP=$(cat /sys/class/power_supply/battery/capacity)
-  STAT=$(cat /sys/class/power_supply/battery/status)
 
-  if [ ${STAT} == "Discharging" ]; then
-    if (( ${CAP} <= 10 ))
-      then
-        for ctr in $(seq 1 1 5)
-      do
-        bat_led_red
-        sleep .5
-        bat_led_off
-        sleep .5
-      done
+  CAP=$(cat ${BAT_PATH}/capacity)
+  STAT=$(cat ${BAT_PATH}/status)
+
+  # A missing or garbled sysfs read would abort the arithmetic below.
+  case ${CAP} in
+    ''|*[!0-9]*)
+      sleep ${POLL}
       continue
-    elif (( ${CAP} <= 20 ))
-    then
-      BATCAP="D_RED"
-      if [ ! ${BATCAP} = ${PREV_BATCAP} ]; then
-        bat_led_red
-      fi
-    elif (( ${CAP} <=  30 ))
-    then
-      BATCAP="D_ORANGE"
-      if [ ! ${BATCAP} = ${PREV_BATCAP} ]; then
-        bat_led_orange
-      fi
-    elif (( ${CAP} <=  40 ))
-    then
-      BATCAP="D_YELLOW"
-      if [ ! ${BATCAP} = ${PREV_BATCAP} ]; then
-        bat_led_yellow
-      fi
-    else
-      BATCAP="D_GREEN"
-      if [ ! ${BATCAP} = ${PREV_BATCAP} ]; then
-        bat_led_green
-      fi
-    fi
-  elif (( ${CAP} <= 94 ))
+    ;;
+  esac
+
+  if [ "${STAT}" == "Discharging" ] && (( ${CAP} <= ${CRITICAL_CAP} ))
   then
-    BATCAP="C_ORANGE"
-    if [ ! ${BATCAP} = ${PREV_BATCAP} ]; then
-      bat_led_orange
-    fi
-  elif (( ${CAP} >= 95 ))
-  then
-    BATCAP="C_GREEN"
-    if [ ! ${BATCAP} = ${PREV_BATCAP} ]; then
-      bat_led_green
-    fi
+    PREV_CAP="critical"
+    for ctr in $(seq 1 1 5)
+    do
+      bat_led_on 255 0 0
+      sleep .5
+      bat_led_off
+      sleep .5
+    done
+    continue
   fi
-  PREV_BATCAP=${BATCAP}
-  sleep 15
+
+  if [ ! "${CAP}" == "${PREV_CAP}" ]; then
+    bat_led_ramp ${CAP}
+  fi
+  PREV_CAP=${CAP}
+  sleep ${POLL}
 done
