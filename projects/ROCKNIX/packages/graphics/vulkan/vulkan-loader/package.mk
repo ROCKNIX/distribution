@@ -9,6 +9,7 @@ PKG_SITE="https://github.com/KhronosGroup/Vulkan-Loader"
 PKG_URL="https://github.com/KhronosGroup/Vulkan-Loader/archive/v${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain Python3:host vulkan-headers libxcb libX11 libXrandr wayland"
 PKG_LONGDESC="Vulkan Installable Client Driver (ICD) Loader."
+PKG_BUILD_FLAGS="+lto +speed"
 
 pre_configure_target() {
   PKG_CMAKE_OPTS_TARGET="-DBUILD_TESTS=OFF \
