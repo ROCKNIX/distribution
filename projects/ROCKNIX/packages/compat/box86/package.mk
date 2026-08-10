@@ -9,8 +9,6 @@ PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain ncurses SDL2 libXdmcp libXft libXcomposite cups libogg"
 PKG_LONGDESC="Box86 lets you run x86 Linux programs (such as games) on non-x86 Linux systems, like ARM."
 PKG_TOOLCHAIN="cmake"
-# mold lacks -Ttext-segment, which box86 needs to stay out of guest space
-PKG_BUILD_FLAGS="-mold"
 
 PKG_CMAKE_OPTS_TARGET="-DCMAKE_BUILD_TYPE=Release \
                        -DARM_DYNAREC=On \
@@ -64,6 +62,10 @@ makeinstall_target() {
 
       mkdir -p ${INSTALL}/etc/binfmt.d
       cp ${PKG_BUILD}/.${TARGET_NAME}/system/box86.conf ${INSTALL}/etc/binfmt.d
+
+      mkdir -p ${INSTALL}/usr/config
+        cp ${PKG_BUILD}/system/box86.box86rc ${INSTALL}/usr/config/box86.box86rc
+
       ;;
     aarch64)
       mkdir -p ${INSTALL}/usr/share/box86/lib
@@ -79,9 +81,6 @@ makeinstall_target() {
         cp -vP ${ROOT}/build.${DISTRO}-${DEVICE}.arm/install_pkg/${PKG_NAME}-*/etc/binfmt.d/box86.conf ${INSTALL}/etc/binfmt.d
       ;;
   esac
-
-  mkdir -p ${INSTALL}/usr/config
-    cp ${ROOT}/build.${DISTRO}-${DEVICE}.arm/build/${PKG_NAME}-*/system/box86.box86rc ${INSTALL}/usr/config/box86.box86rc
 
   mkdir -p ${INSTALL}/etc
     ln -sf /storage/.config/box86.box86rc ${INSTALL}/etc/box86.box86rc
