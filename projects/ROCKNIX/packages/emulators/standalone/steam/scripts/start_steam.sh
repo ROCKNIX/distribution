@@ -158,8 +158,10 @@ steam_dual_screen_end() {
 }
 
 steam_arm64_binfmt_and_proton_prep() {
-  echo 0 >/proc/sys/fs/binfmt_misc/x86_64
   echo 0 >/proc/sys/fs/binfmt_misc/x86
+  echo 0 > /proc/sys/fs/binfmt_misc/box32
+  echo 0 > /proc/sys/fs/binfmt_misc/box64
+
   mkdir -p "/storage/.local/share/Steam/steamapps/common/Proton 11.0 (ARM64)/"
   cp -f "/usr/share/steam/toolmanifest.vdf" "/storage/.local/share/Steam/steamapps/common/Proton 11.0 (ARM64)/"
 }

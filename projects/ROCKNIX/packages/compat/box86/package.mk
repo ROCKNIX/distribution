@@ -59,6 +59,9 @@ makeinstall_target() {
         cp ${PKG_BUILD}/.${TARGET_NAME}/box86 ${INSTALL}/usr/bin/
         cp ${PKG_BUILD}/tests/bash ${INSTALL}/usr/bin/bash-x86
 
+      mkdir -p ${INSTALL}/etc/binfmt.d
+      cp ${PKG_BUILD}/.${TARGET_NAME}/system/box86.conf ${INSTALL}/etc/binfmt.d
+
       ;;
     aarch64)
       mkdir -p ${INSTALL}/usr/share/box86/lib
@@ -70,6 +73,9 @@ makeinstall_target() {
       mkdir -p ${INSTALL}/usr/config
         cp -vP ${ROOT}/build.${DISTRO}-${DEVICE}.arm/install_pkg/${PKG_NAME}-*/usr/config/box86.box86rc ${INSTALL}/usr/config/box86.box86rc
 
+      mkdir -p ${INSTALL}/etc/binfmt.d
+        cp -vP ${ROOT}/build.${DISTRO}-${DEVICE}.arm/install_pkg/${PKG_NAME}-*/etc/binfmt.d/box86.conf ${INSTALL}/etc/binfmt.d
+
       ;;
   esac
 
@@ -78,9 +84,6 @@ makeinstall_target() {
 
   mkdir -p ${INSTALL}/etc
     ln -sf /storage/.config/box86.box86rc ${INSTALL}/etc/box86.box86rc
-
-  mkdir -p ${INSTALL}/etc/binfmt.d
-    cp -f ${PKG_DIR}/config/box86.conf ${INSTALL}/etc/binfmt.d/box86.conf
 }
 
 if [ ! "${ENABLE_32BIT}" == "true" ]; then
