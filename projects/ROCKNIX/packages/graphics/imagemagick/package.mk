@@ -27,6 +27,7 @@ pre_configure_target() {
   else
     PKG_CONFIGURE_OPTS_TARGET+=" --with-x=no"
   fi
+  export CFLAGS+=" -Wno-error=incompatible-pointer-types"
   export LDFLAGS+=" -lsharpyuv -lwebp"
 }
 
