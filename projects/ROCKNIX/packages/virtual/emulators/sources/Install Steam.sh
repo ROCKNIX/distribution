@@ -190,8 +190,9 @@ install_proton_ge() {
 
 run_steam_first_launch() {
   log_info "Running Steam first launch routine..."
-  echo 0 > /proc/sys/fs/binfmt_misc/x86_64 || true
   echo 0 > /proc/sys/fs/binfmt_misc/x86 || true
+  echo 0 > /proc/sys/fs/binfmt_misc/box32 || true
+  echo 0 > /proc/sys/fs/binfmt_misc/box64 || true
 
   if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
     swaymsg 'seat seat1 fallback true' || log_info "Swaymsg dual screen setup failed, ignoring."
