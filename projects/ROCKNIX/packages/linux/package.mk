@@ -89,6 +89,12 @@ if [ "${DEVICE}" = "SM8650" -o "${DEVICE}" = "SM8750" ]; then
   PKG_DEPENDS_UNPACK+=" extra-firmware"
 fi
 
+# A built-in cfg80211 needs regulatory.db inside the kernel image (see
+# pre_make_target), so unpack wireless-regdb before the kernel is built.
+if grep -q '^CONFIG_CFG80211=y' ${PKG_KERNEL_CFG_FILE}; then
+  PKG_DEPENDS_UNPACK+=" wireless-regdb"
+fi
+
 post_patch() {
   # linux was already built and its build dir autoremoved - prepare it again for kernel packages
   if [ -d ${PKG_INSTALL}/.image ]; then
@@ -272,6 +278,27 @@ pre_make_target() {
     FW_LIST="$(find ${PKG_BUILD}/external-firmware -type f | sed 's|.*external-firmware/||' | sort | xargs)"
 
     ${PKG_BUILD}/scripts/config --set-str CONFIG_EXTRA_FIRMWARE "${FW_LIST}"
+    ${PKG_BUILD}/scripts/config --set-str CONFIG_EXTRA_FIRMWARE_DIR "external-firmware"
+  fi
+
+  # cfg80211 requests regulatory.db as soon as it initialises. Built in (=y on
+  # every device but AMD64) that is during kernel init, while /usr/lib/firmware
+  # is still a dangling symlink to the kernel-overlay tmpfs that
+  # kernel-overlays-setup only populates later (scripts/image) - so the request
+  # fails with -ENOENT, the failure is cached, and the radio stays in domain 00
+  # with 5 GHz no-IR. Build the db into the kernel instead. The .p7s signature
+  # goes with it because CONFIG_CFG80211_REQUIRE_SIGNED_REGDB is set. Appends to
+  # whatever the per-device blocks above already listed (~7 KB in the image).
+  if grep -q '^CONFIG_CFG80211=y' ${PKG_BUILD}/.config; then
+    mkdir -p ${PKG_BUILD}/external-firmware
+      cp -Lv $(get_build_dir wireless-regdb)/regulatory.db ${PKG_BUILD}/external-firmware
+      cp -Lv $(get_build_dir wireless-regdb)/regulatory.db.p7s ${PKG_BUILD}/external-firmware
+
+    FW_LIST="$(${PKG_BUILD}/scripts/config --state CONFIG_EXTRA_FIRMWARE)"
+    [ "${FW_LIST}" = "undef" ] && FW_LIST=""
+
+    ${PKG_BUILD}/scripts/config --set-str CONFIG_EXTRA_FIRMWARE \
+      "$(echo ${FW_LIST} regulatory.db regulatory.db.p7s | xargs)"
     ${PKG_BUILD}/scripts/config --set-str CONFIG_EXTRA_FIRMWARE_DIR "external-firmware"
   fi
 
