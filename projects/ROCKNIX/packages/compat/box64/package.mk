@@ -2,7 +2,7 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="box64"
-PKG_VERSION="7eeb5016493dab4e143d53da50dd47bfb44a9509" # v0.4.2
+PKG_VERSION="2f130fab1d6e1a4ee8a71dc60cfdfcc839ad192a" # v0.4.4
 PKG_ARCH="aarch64"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/ptitSeb/box64"
@@ -11,7 +11,9 @@ PKG_DEPENDS_TARGET="toolchain ncurses SDL2 cabextract libXss libXdmcp libXft gtk
 PKG_LONGDESC="Box64 lets you run x86_64 Linux programs (such as games) on non-x86_64 Linux systems, like ARM."
 PKG_TOOLCHAIN="cmake"
 
-PKG_CMAKE_OPTS_TARGET="-DCMAKE_BUILD_TYPE=Release"
+PKG_CMAKE_OPTS_TARGET="-DCMAKE_BUILD_TYPE=Release \
+                       -DBOX32=On \
+                       -DBOX32_BINFMT=On"
 
 case ${DEVICE} in
   RK3588)
@@ -29,6 +31,9 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/share/box64/lib
     cp ${PKG_BUILD}/x64lib/* ${INSTALL}/usr/share/box64/lib
 
+  mkdir -p ${INSTALL}/usr/share/box32/lib
+    cp ${PKG_BUILD}/x86lib/* ${INSTALL}/usr/share/box32/lib
+
   mkdir -p ${INSTALL}/usr/bin
     cp ${PKG_BUILD}/.${TARGET_NAME}/box64 ${INSTALL}/usr/bin
     cp ${PKG_BUILD}/tests/box64-bash ${INSTALL}/usr/bin/bash-x64
@@ -40,5 +45,5 @@ makeinstall_target() {
     ln -sf /storage/.config/box64.box64rc ${INSTALL}/etc/box64.box64rc
 
   mkdir -p ${INSTALL}/etc/binfmt.d
-    cp -f ${PKG_DIR}/config/box64.conf ${INSTALL}/etc/binfmt.d/box64.conf
+    cp ${PKG_BUILD}/.${TARGET_NAME}/system/*.conf ${INSTALL}/etc/binfmt.d
 }
