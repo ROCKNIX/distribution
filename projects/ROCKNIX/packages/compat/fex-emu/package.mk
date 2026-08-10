@@ -107,6 +107,10 @@ make_target() {
     -DTUNE_CPU="${TUNE_CPU}"
   )
   cmake "${tgt_opts[@]}"
+  # aarch64 build host: x86_64 thunk descriptor needs the cross prefix, not bare clang
+  if [ "$(uname -m)" = "aarch64" ]; then
+    sed -i 's#/bin/clang)#/bin/x86_64-unknown-linux-gnu-clang)#; s#/bin/clang++)#/bin/x86_64-unknown-linux-gnu-clang++)#' "${PKG_BUILD}/Data/nix/LibraryForwarding/shell.nix"
+  fi
   bash "${PKG_BUILD}/Data/nix/cmake_enable_libfwd.sh"
   ninja
 }
