@@ -22,9 +22,12 @@ elif [ "${OPENGLES_SUPPORT}" = yes ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGLES}"
 fi
 
+pre_configure_target() {
+  sed -i 's|message (${CMAKE_CXX_FLAGS_RELEASE})|message("${CMAKE_CXX_FLAGS_RELEASE}")|g' ${PKG_BUILD}/Source/CMakeLists.txt
+}
+
 makeinstall_target() {
-  if [ "${ARCH}" = "aarch64" ]
-  then
+  if [ "${ARCH}" = "aarch64" ]; then
     mkdir -p ${INSTALL}/usr
     cp -r ${ROOT}/build.${DISTRO}-${DEVICE}.arm/install_pkg/daedalusx64-sa-${PKG_VERSION}/usr/* ${INSTALL}/usr/
     chmod +x ${INSTALL}/usr/bin/*
