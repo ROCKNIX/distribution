@@ -2,7 +2,8 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="shared-mime-info"
-PKG_VERSION="2.4"
+PKG_VERSION="2.5.1"
+PKG_SHA256="b75b420da9b0be9a3d99b1bee6ed87957b56ab54583ac1a97fbd0dc98ddddb25"
 PKG_LICENSE="GPL-2.0-only"
 PKG_SITE="https://freedesktop.org/wiki/Software/shared-mime-info/"
 PKG_URL="https://gitlab.freedesktop.org/xdg/${PKG_NAME}/-/archive/${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tar.bz2"
