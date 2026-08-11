@@ -18,8 +18,14 @@ configure_package() {
   fi
 }
 
-PKG_MESON_OPTS_HOST="-Dupdate-mimedb=false"
-PKG_MESON_OPTS_TARGET="-Dupdate-mimedb=false"
+# build-spec needs xmlto, which we do not ship, and the spec document
+# and tests are of no use in the image
+PKG_MESON_OPTS_COMMON="-Dupdate-mimedb=false \
+                       -Dbuild-spec=false \
+                       -Dbuild-tests=false"
+
+PKG_MESON_OPTS_HOST="${PKG_MESON_OPTS_COMMON}"
+PKG_MESON_OPTS_TARGET="${PKG_MESON_OPTS_COMMON}"
 
 post_makeinstall_target() {
   mkdir -p ${SYSROOT_PREFIX}/usr/lib/pkgconfig
