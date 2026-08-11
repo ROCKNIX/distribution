@@ -9,7 +9,3 @@
 # does not. Content verified as upstream 3.3.3. Drop this once the
 # tarball is on the ROCKNIX sources mirror.
 PKG_SHA256="b0c0f4a599f43723736c8565b8b84337c4195077f07f1bb8bb3252bb13a2306a"
-
-pre_configure_target() {
-  export TARGET_CFLAGS="${TARGET_CFLAGS} -Wno-error=maybe-uninitialized"
-}
