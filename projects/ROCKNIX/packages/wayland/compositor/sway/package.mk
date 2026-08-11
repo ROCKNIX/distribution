@@ -9,14 +9,24 @@ PKG_LONGDESC="i3-compatible Wayland compositor"
 PKG_TOOLCHAIN="meson"
 PKG_PATCH_DIRS+="${DEVICE}"
 
+# the sway version has to match the wlroots ABI the device gets, so this
+# case must mirror the one in the wlroots package
 case ${DEVICE} in
   RK3588)
+    # wlroots 0.17.4-rk
     PKG_VERSION="1.9"
     PKG_URL="https://github.com/swaywm/sway/archive/${PKG_VERSION}.zip"
     ;;
-  *)
+  RK3326|RK3566|RK3576|S922X)
+    # wlroots 0.19.3-rk, the libmali fork
     PKG_VERSION="1.11"
     PKG_SHA256="0e37a55b7c3379230e97e1ad982542b75016a0c7d6676198604e557f9b373dae"
+    PKG_URL="https://github.com/swaywm/sway/releases/download/${PKG_VERSION}/sway-${PKG_VERSION}.tar.gz"
+    ;;
+  *)
+    # pairs with stock wlroots 0.20.x
+    PKG_VERSION="1.12"
+    PKG_SHA256="a7b1becc217433c11c6284d36bcea0687b87b77b0ed26a384565292ec321f2b1"
     PKG_URL="https://github.com/swaywm/sway/releases/download/${PKG_VERSION}/sway-${PKG_VERSION}.tar.gz"
     ;;
 esac
