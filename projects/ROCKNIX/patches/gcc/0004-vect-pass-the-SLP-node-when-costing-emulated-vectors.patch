@@ -1,0 +1,57 @@
+From: ROCKNIX <maintainers@rocknix.org>
+Subject: [PATCH] vect: pass the SLP node when costing emulated vector ops
+
+vectorizable_operation still hands stmt_info to record_stmt_cost on the
+emulated-vector path, so node arrives NULL at the target cost hook. On
+aarch64 that is fatal:
+
+  during GIMPLE pass: vect
+  kernel/module/procfs.c:74:12: internal compiler error: Segmentation fault
+  0x119b424 info_for_reduction(_loop_vec_info*, _slp_tree*)
+  0x12c1920 aarch64_vector_costs::count_ops(...)
+  0x11f186e vect_slp_analyze_operations(vec_info*)
+
+count_ops enters its reduction block on stmt_info alone -
+
+  if (stmt_info
+      && (kind == scalar_stmt || kind == vector_stmt || kind == vec_to_scalar)
+      && vect_is_reduction (stmt_info))
+
+using the stmt_vec_info overload of vect_is_reduction - then passes node
+to aarch64_force_single_cycle, which dereferences it in
+info_for_reduction as node->cycle_info.id. Nothing on that path checks
+node, and the sibling call to aarch64_in_loop_reduction_latency only
+touches node inside "if (sve_costs)", so with +nosve it returns
+harmlessly and execution reaches the deref.
+
+Both call sites here are scalar_stmt on a PLUS_EXPR/MINUS_EXPR/
+NEGATE_EXPR switch, which is precisely a reduction accumulator, and the
+block is guarded by using_emulated_vectors_p - reached when the target
+has no native vectors for the mode, as with the kernel's
+-mgeneral-regs-only. The neighbouring vect_model_simple_cost call four
+lines up already passes slp_node, and slp_node is a parameter of the
+enclosing function, so these two are simply stragglers of the SLP-only
+migration.
+
+Same shape as upstream 3bc63918cec9 ("A few missing SLP node passings to
+vector costing"), which fixed the identical mistake in
+vectorizable_reduction, vectorizable_live_operation, vectorizable_bswap
+and vectorizable_store. Prefer that over a null check in the aarch64
+backend: guarding there would silently cost the reduction as if
+force_single_cycle were false rather than restore the information the
+cost model asked for.
+
+--- a/gcc/tree-vect-stmts.cc
++++ b/gcc/tree-vect-stmts.cc
+@@ -6872,9 +6872,9 @@
+ 	  if (n != 0)
+ 	    {
+ 	      /* We also need to materialize two large constants.  */
+-	      record_stmt_cost (cost_vec, 2, scalar_stmt, stmt_info,
++	      record_stmt_cost (cost_vec, 2, scalar_stmt, slp_node,
+ 				0, vect_prologue);
+-	      record_stmt_cost (cost_vec, n, scalar_stmt, stmt_info,
++	      record_stmt_cost (cost_vec, n, scalar_stmt, slp_node,
+ 				0, vect_body);
+ 	    }
+ 	}
