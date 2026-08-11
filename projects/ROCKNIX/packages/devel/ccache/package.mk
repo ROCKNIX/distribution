@@ -3,8 +3,21 @@
 
 . ${ROOT}/packages/devel/ccache/package.mk
 
-pre_configure_host() {
-  export CXXFLAGS+=" -Wno-error=restrict"
+configure_host() {
+  # custom cmake build to override the LOCAL_CC/CXX
+  cp ${CMAKE_CONF} cmake-ccache.conf
+
+  echo "SET(CMAKE_C_COMPILER   ${CC})"  >>cmake-ccache.conf
+  echo "SET(CMAKE_CXX_COMPILER ${CXX})" >>cmake-ccache.conf
+
+  cmake -DCMAKE_TOOLCHAIN_FILE=cmake-ccache.conf \
+        -DCMAKE_INSTALL_PREFIX=${TOOLCHAIN} \
+        -DCCACHE_DEV_MODE=OFF \
+        -DENABLE_DOCUMENTATION=OFF \
+        -DREDIS_STORAGE_BACKEND=OFF \
+        -DENABLE_TESTING=OFF \
+        -DDEPS=SYSTEM \
+        ..
 }
 
 post_makeinstall_host() {
