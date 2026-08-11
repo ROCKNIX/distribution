@@ -14,7 +14,9 @@ PKG_TOOLCHAIN="meson"
 PKG_BUILD_FLAGS="+speed"
 PKG_PATCH_DIRS+=" ${DEVICE}"
 PKG_VERSION="26.1.6"
-PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
+PKG_SHA256="5296b88a0f1e012e2cb9ada150a2bbadf728ca81e5a4fb2ab43c83a4d2158606"
+# release tarball, as LibreELEC core uses, rather than a git snapshot
+PKG_URL="https://mesa.freedesktop.org/archive/mesa-${PKG_VERSION}.tar.xz"
 
 if listcontains "${GRAPHIC_DRIVERS}" "panfrost" || \
    listcontains "${GRAPHIC_DRIVERS}" "freedreno"; then

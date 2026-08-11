@@ -15,14 +15,18 @@ PKG_PATCH_DIRS+="${DEVICE}"
 case ${DEVICE} in
   H700)
     PKG_VERSION="2.12.0"
+    PKG_SHA256="d95aaf292792c98035910d7e6c64ebfb297c897fef510415db1612f6d39f9223"
   ;;
   *)
     PKG_VERSION="2.10.0"
-    PKG_SHA256="696b8e53923aac4474532da7dd681f0bd044b329732facd65aeabea3e61adca9"
+    PKG_SHA256="6b1d5e89c311c5e7eaeb062713953311464c0378ab3e4ebc7ede72a746964bb1"
     ;;
 esac
 
-PKG_URL="https://github.com/ARM-software/arm-trusted-firmware/archive/v${PKG_VERSION}.tar.gz"
+# Same project as ARM-software/arm-trusted-firmware and byte-identical
+# in content; use the org LibreELEC core does. The archives differ only
+# in their top-level directory name, hence the different checksums.
+PKG_URL="https://github.com/TrustedFirmware-A/trusted-firmware-a/archive/v${PKG_VERSION}.tar.gz"
 
 
 [ -n "${KERNEL_TOOLCHAIN}" ] && PKG_DEPENDS_TARGET+=" gcc-${KERNEL_TOOLCHAIN}:host"
