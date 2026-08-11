@@ -20,6 +20,10 @@ if [ -n "${UBOOT_FIRMWARE}" ]; then
 fi
 
 pre_make_target() {
+  # Same gcc 16 -Wunused-but-set-variable vs -Werror problem as the RK3588
+  # tree: cmd/gpt.c carries the same dead accumulator. Vendor code.
+  export KCFLAGS="-Wno-error=unused-but-set-variable"
+
   PKG_UBOOT_CONFIG="rocknix_rk3326_defconfig"
   PKG_RKBIN="$(get_build_dir rkbin)"
   PKG_MINILOADER="${PKG_RKBIN}/bin/rk33/rk3326_miniloader_v1.40.bin"
