@@ -4,7 +4,7 @@
 PKG_NAME="rpcs3-sa"
 PKG_LICENSE="GPLv2"
 PKG_LONGDESC="PS3 Emulator"
-PKG_VERSION="072c4cb71f76fc3ddba5bc781c00cb92eecaf260"
+PKG_VERSION="2f4034590f261cc2aafbc10139744c68a146b5a4"
 PKG_SITE="https://github.com/RPCS3/rpcs3"
 PKG_URL="${PKG_SITE}.git"
 PKG_TOOLCHAIN="cmake"
