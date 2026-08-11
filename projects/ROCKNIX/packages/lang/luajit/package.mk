@@ -32,7 +32,13 @@ makeinstall_host() {
 
 makeinstall_target() {
   cd .${TARGET_NAME}
-  unset CFLAGS
+  # This builds host tools (minilua, buildvm) alongside the target library,
+  # and folds a bare CFLAGS/LDFLAGS into both - see LDOPTIONS and ASOPTIONS
+  # in src/Makefile. Target link flags are fatal to the host compiler:
+  # ld.mold is installed cross-prefixed, so host gcc reading -fuse-ld=mold
+  # fails with "collect2: cannot find 'ld'". Pass the prefixed pairs only.
+  local target_ldflags="${LDFLAGS}"
+  unset CFLAGS LDFLAGS
   [ "${ARCH}" = "arm" ] && BIT="-m32"
   make PREFIX="/usr" \
 		CC="${CC} -fPIC" \
@@ -40,10 +46,10 @@ makeinstall_target() {
 		TARGET_AR="${AR} rcus" \
 		TARGET_STRIP=true \
 		TARGET_CFLAGS="${TARGET_CFLAGS}" \
-		TARGET_LDFLAGS="${LDFLAGS}" \
+		TARGET_LDFLAGS="${target_ldflags}" \
 		HOST_CC="${HOST_CC} ${BIT}" \
-		HOST_CFLAGS="${CFLAGS}" \
-		HOST_LDFLAGS="${LDFLAGS}" \
+		HOST_CFLAGS="${HOST_CFLAGS}" \
+		HOST_LDFLAGS="${HOST_LDFLAGS}" \
 		XCFLAGS= \
 		${JITARCH} \
 		amalg
