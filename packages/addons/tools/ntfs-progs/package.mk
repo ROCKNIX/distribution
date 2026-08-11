@@ -3,7 +3,7 @@
 
 PKG_NAME="ntfs-progs"
 PKG_REV="0"
-PKG_LICENSE="GPLv3"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_DEPENDS_TARGET="toolchain fuse ntfs-3g_ntfsprogs"
 PKG_SECTION="tools"
 PKG_SHORTDESC="ntfs-3g tools for the NTFS filesystem"
@@ -11,7 +11,7 @@ PKG_LONGDESC="ntfs-3g tools for the NTFS filesystem: mkntfs, ntfs-3g.probe, ntfs
 PKG_TOOLCHAIN="manual"
 
 PKG_IS_ADDON="yes"
-PKG_ADDON_NAME="NTFS Tools"
+PKG_ADDON_NAME="NTFS-PROGS"
 PKG_ADDON_TYPE="xbmc.python.script"
 
 addon() {

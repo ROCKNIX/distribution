@@ -1,15 +1,15 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="vfs.sftp"
-PKG_VERSION="21.0.2-Omega"
-PKG_SHA256="01a23958331cb0cd78fd2e9367d1269d4319c20b84db5b132632f9c1acd5f3c5"
-PKG_REV="2"
+PKG_VERSION="22.0.2-Piers"
+PKG_SHA256="5b1fef08be36ff774ec590635a1bb45069aa27ab2cf1c400f216b2af65555d5f"
+PKG_REV="3"
 PKG_ARCH="any"
-PKG_LICENSE="GPLv2"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/xbmc/vfs.sftp"
 PKG_URL="https://github.com/xbmc/vfs.sftp/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain kodi-platform libssh"
+PKG_DEPENDS_TARGET="toolchain tinyxml ${MEDIACENTER}:host libssh"
 PKG_SECTION=""
 PKG_SHORTDESC="vfs.sftp"
 PKG_LONGDESC="vfs.sftp"

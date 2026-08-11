@@ -1,10 +1,10 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2024-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="tree"
-PKG_VERSION="2.1.1"
-PKG_SHA256="1b70253994dca48a59d6ed99390132f4d55c486bf0658468f8520e7e63666a06"
-PKG_LICENSE="GPL"
+PKG_VERSION="2.3.2"
+PKG_SHA256="22cf32e84e3eb508d97a9e991c2c3cc006b9dcf4afed201d96311c5c57d08fcf"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/Old-Man-Programmer/tree"
 PKG_URL="https://github.com/Old-Man-Programmer/tree/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"

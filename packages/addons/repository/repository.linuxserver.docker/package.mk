@@ -1,11 +1,11 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="repository.linuxserver.docker"
 PKG_VERSION="9.0"
 PKG_REV="0"
 PKG_ARCH="any"
-PKG_LICENSE="GPL"
+PKG_LICENSE="GPL-2.0-only"
 PKG_SITE="https://linuxserver.io"
 PKG_URL=""
 PKG_DEPENDS_TARGET="toolchain"

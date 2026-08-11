@@ -1,9 +1,9 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="u-boot-script"
 PKG_VERSION="1.0"
-PKG_LICENSE="GPL"
+PKG_LICENSE="GPL-2.0-only"
 PKG_DEPENDS_TARGET="u-boot-tools:host"
 PKG_TOOLCHAIN="manual"
 PKG_LONGDESC="Compile scripts for u-boot environment."

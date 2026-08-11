@@ -3,16 +3,17 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="gcc"
-PKG_VERSION="15.1.0"
-PKG_SHA256="e2b09ec21660f01fecffb715e0120265216943f038d0e48a9868713e54f06cea"
-PKG_LICENSE="GPL-2.0-or-later"
+PKG_VERSION="16.2.0"
+PKG_SHA256="e6738e29597f733270731aa90600f37ffdc045079dfc27ec7e8192cc81085c3e"
+PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://gcc.gnu.org/"
-PKG_URL="https://ftpmirror.gnu.org/gcc/${PKG_NAME}-${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tar.xz"
+PKG_URL="https://ftpmirror.gnu.org/gnu/gcc/${PKG_NAME}-${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_BOOTSTRAP="ccache:host autoconf:host binutils:host gmp:host mpfr:host mpc:host zstd:host"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_DEPENDS_HOST="ccache:host autoconf:host binutils:host gmp:host mpfr:host mpc:host zstd:host glibc libxcrypt"
 PKG_DEPENDS_INIT="toolchain"
 PKG_LONGDESC="This package contains the GNU Compiler Collection."
+PKG_BUILD_FLAGS="-cfg-libs:host"
 
 if [ "${MOLD_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_HOST+=" mold:host"
@@ -21,9 +22,11 @@ fi
 case ${TARGET_ARCH} in
   arm | riscv64)
     OPTS_LIBATOMIC="--enable-libatomic"
+    OPTS_STATIC="--enable-static"
     ;;
   *)
     OPTS_LIBATOMIC="--disable-libatomic"
+    OPTS_STATIC="--disable-static"
     ;;
 esac
 
@@ -74,7 +77,7 @@ PKG_CONFIGURE_OPTS_HOST="${GCC_COMMON_CONFIGURE_OPTS} \
                          --enable-decimal-float \
                          --enable-tls \
                          --enable-shared \
-                         --disable-static \
+                         ${OPTS_STATIC} \
                          --enable-long-long \
                          --enable-threads=posix \
                          --disable-libstdcxx-pch \
@@ -168,6 +171,14 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib
     cp -P ${PKG_BUILD}/.${HOST_NAME}/${TARGET_NAME}/libgcc/libgcc_s.so* ${INSTALL}/usr/lib
     cp -P ${PKG_BUILD}/.${HOST_NAME}/${TARGET_NAME}/libstdc++-v3/src/.libs/libstdc++.so* ${INSTALL}/usr/lib
+    if [ "${SANITIZER_SUPPORT}" = "yes" ]; then
+      for f in ${PKG_BUILD}/.${HOST_NAME}/${TARGET_NAME}/libsanitizer/*/.libs/*.so*; do
+        # exclude so.0.0.0T files
+        if [[ ! "${f}" =~ T$ ]]; then
+          cp -P "${f}" ${INSTALL}/usr/lib
+        fi
+      done
+    fi
     if [ "${OPTS_LIBATOMIC}" = "--enable-libatomic" ]; then
       cp -P ${PKG_BUILD}/.${HOST_NAME}/${TARGET_NAME}/libatomic/.libs/libatomic.so* ${INSTALL}/usr/lib
     fi

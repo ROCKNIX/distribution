@@ -3,14 +3,14 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="audiodecoder.ncsf"
-PKG_VERSION="21.0.2-Omega"
-PKG_SHA256="24492f4db00df298f819da1c903c536d0bfe5d2eb6164f81916cd8334b1e198b"
+PKG_VERSION="22.0.2-Piers"
+PKG_SHA256="6857df3cb9e8a48d902218295b34ea79b734bad8dfe8efe3c920ba2486ddd78e"
 PKG_REV="2"
 PKG_ARCH="any"
-PKG_LICENSE="GPL"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/xbmc/audiodecoder.ncsf"
 PKG_URL="https://github.com/xbmc/audiodecoder.ncsf/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain kodi-platform"
+PKG_DEPENDS_TARGET="toolchain tinyxml ${MEDIACENTER}:host"
 PKG_SECTION=""
 PKG_SHORTDESC="audiodecoder.ncsf"
 PKG_LONGDESC="audiodecoder.ncsf"

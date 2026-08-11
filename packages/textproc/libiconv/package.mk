@@ -1,10 +1,10 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="libiconv"
-PKG_VERSION="1.18"
-PKG_SHA256="3b08f5f4f9b4eb82f151a7040bfd6fe6c6fb922efe4b1659c66ea933276965e8"
-PKG_LICENSE="GPL"
+PKG_VERSION="1.19"
+PKG_SHA256="88dd96a8c0464eca144fc791ae60cd31cd8ee78321e67397e25fc095c4a19aa6"
+PKG_LICENSE="LGPL-2.0-or-later AND GPL-3.0-or-later"
 PKG_SITE="https://savannah.gnu.org/projects/libiconv/"
 PKG_URL="https://ftp.gnu.org/pub/gnu/libiconv/${PKG_NAME}-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"

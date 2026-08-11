@@ -3,9 +3,9 @@
 # Copyright (C) 2020-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="apache-ant"
-PKG_VERSION="1.10.15"
-PKG_SHA256="4d5bb20cee34afbad17782de61f4f422c5a03e4d2dffc503bcbd0651c3d3c396"
-PKG_LICENSE="Apache License 2.0"
+PKG_VERSION="1.10.17"
+PKG_SHA256="9553018e2cd5368261c32b2163c802e00de0a1c9707c3cfdd4cf7d6821674b08"
+PKG_LICENSE="Apache-2.0"
 PKG_SITE="https://ant.apache.org/"
 PKG_URL="https://archive.apache.org/dist/ant/binaries/${PKG_NAME}-${PKG_VERSION}-bin.tar.xz"
 PKG_DEPENDS_UNPACK="jdk-${MACHINE_HARDWARE_NAME}-zulu"

@@ -3,14 +3,14 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="audiodecoder.upse"
-PKG_VERSION="21.0.2-Omega"
-PKG_SHA256="f11c7e92d90fa18dc7a2d7ddc69e620ca9eaecb55ac5eac14fd10639c8869d09"
+PKG_VERSION="22.0.2-Piers"
+PKG_SHA256="9c2d3462005fa48b93e92fb4ed42aa30bdab9d2b240016f67ff3e5f78f1314f6"
 PKG_REV="2"
 PKG_ARCH="any"
-PKG_LICENSE="GPL"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/xbmc/audiodecoder.upse"
 PKG_URL="https://github.com/xbmc/audiodecoder.upse/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain kodi-platform"
+PKG_DEPENDS_TARGET="toolchain tinyxml ${MEDIACENTER}:host"
 PKG_SECTION=""
 PKG_SHORTDESC="audiodecoder.upse"
 PKG_LONGDESC="audiodecoder.upse"

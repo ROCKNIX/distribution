@@ -1,15 +1,15 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2017-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="vfs.rar"
-PKG_VERSION="21.0.2-Omega"
-PKG_SHA256="7492cf73d52299218acc982c4b35b020ea801d36d47e40460341f4dde712de50"
-PKG_REV="2"
+PKG_VERSION="22.0.4-Piers"
+PKG_SHA256="dedd32170fae3d9c06e3c1bf2cf4dac6661f550612d9da801220b352b50d82f4"
+PKG_REV="1"
 PKG_ARCH="any"
-PKG_LICENSE="GPL"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/xbmc/vfs.rar"
 PKG_URL="https://github.com/xbmc/vfs.rar/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain kodi-platform"
+PKG_DEPENDS_TARGET="toolchain tinyxml ${MEDIACENTER}:host"
 PKG_SECTION=""
 PKG_SHORTDESC="vfs.rar"
 PKG_LONGDESC="vfs.rar"

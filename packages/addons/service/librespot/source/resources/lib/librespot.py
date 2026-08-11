@@ -7,7 +7,7 @@ import utils
 
 class Librespot:
     @utils.logged_method
-    def __init__(self, target, backend, device):
+    def __init__(self, target, backend, device, zeroconf_port):
         self._target = target
         name = utils.get_setting("name").format(socket.gethostname())
         self._command = [
@@ -18,10 +18,14 @@ class Librespot:
             "--device-type", "tv",
             "--disable-audio-cache",
             "--disable-credential-cache",
+            "--initial-volume", "100",
             "--name", name,
             "--onevent", target.event_handler.get_onevent(),
             "--quiet",
         ]
+        if zeroconf_port != "0":
+            self._command.append("--zeroconf-port")
+            self._command.append(f"{zeroconf_port}")
         self._failures = 0
         self._max_failures = 5
         self._librespot = None

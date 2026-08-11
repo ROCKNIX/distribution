@@ -1,15 +1,15 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2025-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="argononecontrol"
-PKG_VERSION="1.1.12"
-PKG_SHA256="c68b194b4fd3dce6968883282a302fccd705560ce88af243654d505147c61d2c"
-PKG_REV="0"
+PKG_VERSION="1.2.3"
+PKG_SHA256="7b3333054c8399264170806a2972870469804314d2aca52b32cebc6d4420f97d"
+PKG_REV="1"
 PKG_ARCH="aarch64"
 PKG_MAINTAINER="HungerHa"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/HungerHa/libreelec_addon_argononecontrol"
-PKG_URL="https://github.com/HungerHa/libreelec_addon_argononecontrol/archive/refs/tags/v$PKG_VERSION.tar.gz"
+PKG_URL="https://github.com/HungerHa/libreelec_addon_argononecontrol/archive/refs/tags/v${PKG_VERSION}.tar.gz"
 PKG_SECTION="service"
 PKG_SHORTDESC="Argon ONE Control"
 PKG_LONGDESC="Support for RPi4/5 Argon ONE case features including the power button, fan speed, and the Argon IR remote. One-time restart required."

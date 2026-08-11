@@ -1,14 +1,14 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="net-snmp"
-PKG_VERSION="5.9.4"
-PKG_SHA256="8b4de01391e74e3c7014beb43961a2d6d6fa03acc34280b9585f4930745b0544"
+PKG_VERSION="5.9.5.2"
+PKG_SHA256="16707719f833184a4b72835dac359ae188123b06b5e42817c00790d7dc1384bf"
 PKG_REV="0"
 PKG_ARCH="any"
-PKG_LICENSE="BSD"
-PKG_SITE="http://www.net-snmp.org"
-PKG_URL="https://sourceforge.net/projects/net-snmp/files/${PKG_NAME}/${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tar.gz"
+PKG_LICENSE="MIT-CMU AND BSD-3-Clause"
+PKG_SITE="https://www.net-snmp.org"
+PKG_URL="https://downloads.sourceforge.net/project/net-snmp/net-snmp/${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain libnl openssl"
 PKG_SECTION="service"
 PKG_SHORTDESC="Simple Network Management Protocol utilities."
@@ -28,6 +28,7 @@ configure_package() {
         --disable-deprecated \
         --disable-snmptrapd-subagent \
         --disable-scripts \
+        --enable-blumenthal-aes \
         --enable-static=yes \
         --enable-shared=no \
         --with-nl \

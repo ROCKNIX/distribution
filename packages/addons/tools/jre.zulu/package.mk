@@ -4,7 +4,7 @@
 PKG_NAME="jre.zulu"
 PKG_VERSION="1.0"
 PKG_REV="0"
-PKG_LICENSE="GPL2"
+PKG_LICENSE="GPL-2.0-only WITH Classpath-exception-2.0"
 PKG_DEPENDS_TARGET="jre-libbluray libXext libXi libXrender chrome-libXtst jre-libXinerama"
 PKG_DEPENDS_UNPACK="jdk-${TARGET_ARCH}-zulu"
 PKG_SECTION="tools"
@@ -14,6 +14,8 @@ PKG_TOOLCHAIN="manual"
 
 PKG_IS_ADDON="yes"
 PKG_ADDON_NAME="JRE for BD-J menus"
+PKG_ADDON_ICON_NAME="JRE ZULU"
+PKG_ADDON_ICON_SIZE="300"
 PKG_ADDON_TYPE="xbmc.python.script"
 
 # find ${1}.so.[0-9]* in ${2} and copy it to dest

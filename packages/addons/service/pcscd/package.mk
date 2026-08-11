@@ -5,9 +5,9 @@
 
 PKG_NAME="pcscd"
 PKG_VERSION="1.0"
-PKG_REV="0"
+PKG_REV="3"
 PKG_ARCH="any"
-PKG_LICENSE="GPL"
+PKG_LICENSE="GPL-2.0-only"
 PKG_SITE="https://libreelec.tv"
 PKG_URL=""
 PKG_DEPENDS_TARGET="toolchain ccid libusb pcsc-lite"

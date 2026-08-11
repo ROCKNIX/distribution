@@ -1,12 +1,12 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="texturecache.py"
-PKG_VERSION="2.5.4"
-PKG_SHA256="0717c2e62dc3f809e8754be2c83d2c7d0f92188741eb425d5377c1d326d25276"
-PKG_LICENSE="GPL"
-PKG_SITE="https://github.com/MilhouseVH/texturecache.py"
-PKG_URL="https://github.com/MilhouseVH/${PKG_NAME}/archive/${PKG_VERSION}.tar.gz"
+PKG_VERSION="2.5.7"
+PKG_SHA256="94b26eb3bd9e532305a895acd23155e87be4763c612c0404e1f854bf2a4abb11"
+PKG_LICENSE="GPL-2.0-or-later"
+PKG_SITE="https://github.com/xbmc/texturecache"
+PKG_URL="https://github.com/xbmc/texturecache/archive/${PKG_VERSION}.tar.gz"
 PKG_LONGDESC="The Swiss Army knife for Kodi"
 PKG_TOOLCHAIN="manual"
 

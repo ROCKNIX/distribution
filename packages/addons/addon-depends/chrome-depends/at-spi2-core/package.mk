@@ -3,12 +3,12 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="at-spi2-core"
-PKG_VERSION="2.57.0"
-PKG_SHA256="942070eff19155b7d6ce5557f1a020015287b840048536e9ef9a28c4e9ce428c"
-PKG_LICENSE="OSS"
+PKG_VERSION="2.61.1"
+PKG_SHA256="0f88d443b8e3a4f7c701c4f6625032a989b8a0244cb2bdb3d3bd9872f00506f4"
+PKG_LICENSE="LGPL-2.1-or-later"
 PKG_SITE="https://www.gnome.org/"
 PKG_URL="https://download.gnome.org/sources/at-spi2-core/${PKG_VERSION:0:4}/at-spi2-core-${PKG_VERSION}.tar.xz"
-PKG_DEPENDS_TARGET="toolchain atk dbus glib libxml2"
+PKG_DEPENDS_TARGET="toolchain atk dbus glib libxml2 libXtst"
 PKG_LONGDESC="Protocol definitions and daemon for D-Bus at-spi."
 
 configure_package() {

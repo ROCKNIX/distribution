@@ -2,9 +2,9 @@
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="x264"
-PKG_VERSION="ff620d0c3c4f717ab393892983d43458d27e4bed"
-PKG_SHA256="c6945fe9c3cdd7b0d2f89250ae696a51db59e3506af4d28d03616c9edd1e519b"
-PKG_LICENSE="GPL"
+PKG_VERSION="0480cb05fa188d37ae87e8f4fd8f1aea3711f7ee"
+PKG_SHA256="f05c59f2e83d494c36307025dca2d3afc6b4d185f3a3453d06cc4fecd7094057"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="http://www.videolan.org/developers/x264.html"
 PKG_URL="https://code.videolan.org/videolan/x264/-/archive/${PKG_VERSION}/x264-${PKG_VERSION}.tar.bz2"
 PKG_DEPENDS_TARGET="toolchain"
@@ -21,7 +21,7 @@ pre_configure_target() {
   if [ "${TARGET_ARCH}" = "x86_64" ]; then
     export AS="${TOOLCHAIN}/bin/nasm"
   else
-    PKG_X264_ASM="--disable-asm"
+    export AS="${CC}"
   fi
 }
 
@@ -33,7 +33,6 @@ configure_target() {
     --host="${TARGET_NAME}" \
     --prefix="/usr" \
     --sysroot="${SYSROOT_PREFIX}" \
-    ${PKG_X264_ASM} \
     --disable-cli \
     --enable-lto \
     --enable-pic \
