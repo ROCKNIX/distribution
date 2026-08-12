@@ -19,7 +19,7 @@ makeinstall_target() {
   esac
 
   cd ${PKG_BUILD}
-  LIBROOT="${ROOT}/build.${DISTRO}-${DEVICE}.${LIBARCH}/image/system/"
+  LIBROOT="${BUILD_ROOT}/build.${DISTRO}-${DEVICE}.${LIBARCH}/image/system/"
   mkdir -p ${INSTALL}/usr/lib32
   rsync -al ${LIBROOT}/usr/lib/* ${INSTALL}/usr/lib32 >/dev/null 2>&1
   rsync -al ${LIBROOT}/usr/lib32/* ${INSTALL}/usr/lib32 >/dev/null 2>&1
