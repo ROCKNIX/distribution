@@ -3,14 +3,14 @@
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="screensaver.shadertoy"
-PKG_VERSION="21.0.2-Omega"
-PKG_SHA256="90ef1c38afcc6c2d03a06946148a3a87ec01b1ffb5c2bb794af46da0a1309d96"
+PKG_VERSION="22.0.3-Piers"
+PKG_SHA256="74d946061debafe254fb816a89c96e37d9be59827728d6ba22720d554dd0eb4d"
 PKG_REV="2"
 PKG_ARCH="any"
-PKG_LICENSE="GPL"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/xbmc/screensaver.shadertoy"
 PKG_URL="https://github.com/xbmc/screensaver.shadertoy/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain kodi-platform glm"
+PKG_DEPENDS_TARGET="toolchain tinyxml ${MEDIACENTER}:host glm"
 PKG_SECTION=""
 PKG_SHORTDESC="screensaver.shadertoy"
 PKG_LONGDESC="screensaver.shadertoy"

@@ -3,9 +3,9 @@
 # Copyright (C) 2019-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="ninja"
-PKG_VERSION="1.13.1"
-PKG_SHA256="f0055ad0369bf2e372955ba55128d000cfcc21777057806015b45e4accbebf23"
-PKG_LICENSE="Apache"
+PKG_VERSION="1.13.2"
+PKG_SHA256="974d6b2f4eeefa25625d34da3cb36bdcebe7fbce40f4c16ac0835fd1c0cbae17"
+PKG_LICENSE="Apache-2.0"
 PKG_SITE="https://ninja-build.org/"
 PKG_URL="https://github.com/ninja-build/ninja/archive/v${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_HOST="Python3:host"

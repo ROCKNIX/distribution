@@ -1,12 +1,12 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2021-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="jellyfin"
 PKG_VERSION="1.0"
-PKG_VERSION_NUMBER="10.10.7"
-PKG_REV="0"
-PKG_ARCH="any"
-PKG_LICENSE="GPLv2"
+PKG_VERSION_NUMBER="10.11.11"
+PKG_REV="3"
+PKG_ARCH="aarch64 x86_64"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://jellyfin.org/"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_SECTION="service"

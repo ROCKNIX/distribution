@@ -1,19 +1,13 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2021-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="ldacBT"
-PKG_VERSION="2.0.2.3"
-PKG_SHA256="c02998718f9c4620437d7594b4d121b3ab4c5cfeba8d41fa31dd5c71db09edca"
-PKG_LICENSE="Apache"
+PKG_VERSION="2.0.2.6"
+PKG_SHA256="fee05740e86ee66f4540486d92683ee8e8071119907b57ca762c7e5d943ecef0"
+PKG_LICENSE="Apache-2.0"
 PKG_SITE="https://github.com/EHfive/ldacBT"
-PKG_URL="https://github.com/EHfive/ldacBT/archive/v${PKG_VERSION}.tar.gz"
+PKG_URL="https://github.com/EHfive/ldacBT/releases/download/v${PKG_VERSION}/ldacBT-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_DEPENDS_UNPACK="libldac"
 PKG_LONGDESC="LDAC Bluetooth encoder library (build tools)"
 
 PKG_CMAKE_OPTS_TARGET="-DLDAC_SOFT_FLOAT=OFF"
-
-post_unpack() {
-  rm -rf ${PKG_BUILD}/libldac
-  ln -sf $(get_build_dir libldac) ${PKG_BUILD}/libldac
-}

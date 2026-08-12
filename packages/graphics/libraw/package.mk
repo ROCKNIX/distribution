@@ -1,10 +1,10 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="libraw"
-PKG_VERSION="0.21.4"
-PKG_SHA256="6be43f19397e43214ff56aab056bf3ff4925ca14012ce5a1538a172406a09e63"
-PKG_LICENSE="LGPL"
+PKG_VERSION="0.22.2"
+PKG_SHA256="de86b035655accff8d4010f1a221fdf50d353cb7b1422ba26f14a0db92612cfa"
+PKG_LICENSE="LGPL-2.1-only OR CDDL-1.0"
 PKG_SITE="https://www.libraw.org/"
 PKG_URL="https://www.libraw.org/data/LibRaw-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain libjpeg-turbo lcms2"

@@ -1,10 +1,10 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2019-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="brcmfmac_sdio-firmware"
-PKG_VERSION="88e46425ef489513c0b8bf7c2747d262367be1cc"
-PKG_SHA256="53a264536cd9531e94117f8fe2906bcb85efd201612f5f7e467bf4fbf2d6d864"
-PKG_LICENSE="GPL"
+PKG_VERSION="5987820e4ff88a5626536f66257165fe3a781b73"
+PKG_SHA256="764603490351a87fee8cf57ec6c880bb803d9cccd65d4f97e4aed300acfd84df"
+PKG_LICENSE="LicenseRef-firmware-Broadcom"
 PKG_SITE="https://github.com/LibreELEC/brcmfmac_sdio-firmware"
 PKG_URL="https://github.com/LibreELEC/brcmfmac_sdio-firmware/archive/${PKG_VERSION}.tar.gz"
 PKG_LONGDESC="Broadcom SDIO firmware used with LibreELEC"

@@ -2,13 +2,13 @@
 # Copyright (C) 2023-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="bcm2835-utils"
-PKG_VERSION="02e3ffeee7dc8f954271fd42a3ed983567c55eb4"
-PKG_SHA256="1b519e2cb24108c6f4d7e7ef0c046f9bcc92e68c53367a61913136a1096cd2fd"
+PKG_VERSION="5edd399260b5081f9c1c96fc7f369b920d6732d1"
+PKG_SHA256="757a8272957d6082f6cbe1ccc49ceba9871cf215553e496340d67507a995f1f0"
 PKG_ARCH="arm aarch64"
 PKG_LICENSE="BSD-3-Clause"
 PKG_SITE="https://github.com/raspberrypi/utils"
 PKG_URL="https://github.com/raspberrypi/utils/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="cmake:host gcc:host dtc"
+PKG_DEPENDS_TARGET="cmake:host gcc:host dtc ncurses"
 PKG_LONGDESC="Raspberry Pi related collection of scripts and simple applications"
 
 makeinstall_target() {
@@ -18,4 +18,5 @@ makeinstall_target() {
   cp -PRv ${PKG_BUILD}/.${TARGET_NAME}/pinctrl/pinctrl ${INSTALL}/usr/bin
   cp -PRv ${PKG_BUILD}/.${TARGET_NAME}/vcgencmd/vcgencmd ${INSTALL}/usr/bin
   cp -PRv ${PKG_BUILD}/.${TARGET_NAME}/vcmailbox/vcmailbox ${INSTALL}/usr/bin
+  cp -PRv ${PKG_BUILD}/.${TARGET_NAME}/rpi-gpu-usage/rpi-gpu-usage ${INSTALL}/usr/bin
 }

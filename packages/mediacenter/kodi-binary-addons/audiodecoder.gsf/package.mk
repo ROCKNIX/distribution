@@ -3,14 +3,14 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="audiodecoder.gsf"
-PKG_VERSION="21.0.2-Omega"
-PKG_SHA256="024bf9d270a84dc40b020678d8bb8404100a8e83bc59d1c60195e11448b1f13d"
+PKG_VERSION="22.0.2-Piers"
+PKG_SHA256="76d38f90ce1e56c06b6cb7fba63ba815b4a5eb2ce752b0246593102ec9d94836"
 PKG_REV="2"
 PKG_ARCH="any"
-PKG_LICENSE="GPL"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/xbmc/audiodecoder.gsf"
 PKG_URL="https://github.com/xbmc/audiodecoder.gsf/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain kodi-platform"
+PKG_DEPENDS_TARGET="toolchain tinyxml ${MEDIACENTER}:host"
 PKG_SECTION=""
 PKG_SHORTDESC="audiodecoder.gsf"
 PKG_LONGDESC="audiodecoder.gsf"

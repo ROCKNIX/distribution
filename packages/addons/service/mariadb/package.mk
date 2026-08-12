@@ -1,11 +1,11 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="mariadb"
-PKG_VERSION="11.8.2"
-PKG_REV="0"
-PKG_SHA256="b2162cdf5e9317d8a8621cbeda83999324fc0ac8944210e14abb5fe0a9fea3ef"
-PKG_LICENSE="GPL2"
+PKG_VERSION="12.3.2"
+PKG_REV="1"
+PKG_SHA256="82798714baf2f3456ed2f311fc803dc120f2bf3b82358e773847d628cdb4b670"
+PKG_LICENSE="GPL-2.0-only"
 PKG_SITE="https://mariadb.org"
 PKG_URL="https://archive.mariadb.org/${PKG_NAME}-${PKG_VERSION}/source/${PKG_NAME}-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_HOST="toolchain:host ncurses:host openssl:host"
@@ -17,6 +17,8 @@ PKG_BUILD_FLAGS="-gold -sysroot"
 PKG_IS_ADDON="yes"
 PKG_SECTION="service"
 PKG_ADDON_NAME="MariaDB SQL database server"
+PKG_ADDON_ICON_NAME="MariaDB"
+PKG_ADDON_ICON_SIZE="300"
 PKG_ADDON_TYPE="xbmc.service"
 
 configure_package() {

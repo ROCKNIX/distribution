@@ -3,8 +3,8 @@
 # Copyright (C) 2019-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="nspr"
-PKG_VERSION="4.36"
-PKG_LICENSE="Mozilla Public License"
+PKG_VERSION="4.39"
+PKG_LICENSE="MPL-2.0"
 PKG_SITE="http://www.linuxfromscratch.org/blfs/view/svn/general/nspr.html"
 PKG_DEPENDS_HOST="ccache:host"
 PKG_DEPENDS_TARGET="autotools:host gcc:host nss:host nspr:host"

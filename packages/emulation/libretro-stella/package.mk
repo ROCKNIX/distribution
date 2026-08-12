@@ -1,10 +1,10 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="libretro-stella"
-PKG_VERSION="db3a38be7b77d5929daf00c5eba6ead167e974ec"
-PKG_SHA256="f1ddd4826cedb16c3723e798e9b4bb21564080ef561f742d88120f1f999c6888"
-PKG_LICENSE="GPLv2"
+PKG_VERSION="fe8afc9455f7a59f1f2897a54530d4a98ce7de3a"
+PKG_SHA256="e42ead195e6f38ef117db56acac118be692a5016741a3f02b3317c0ecd43b653"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/stella-emu/stella"
 PKG_URL="https://github.com/stella-emu/stella/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"

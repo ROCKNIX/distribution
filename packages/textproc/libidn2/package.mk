@@ -1,10 +1,10 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="libidn2"
 PKG_VERSION="2.3.8"
 PKG_SHA256="f557911bf6171621e1f72ff35f5b1825bb35b52ed45325dcdee931e5d3c0787a"
-PKG_LICENSE="LGPL3"
+PKG_LICENSE="LGPL-3.0-or-later"
 PKG_SITE="https://www.gnu.org/software/libidn/"
 PKG_URL="https://ftpmirror.gnu.org/gnu/libidn/libidn2-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_HOST="autotools:host"

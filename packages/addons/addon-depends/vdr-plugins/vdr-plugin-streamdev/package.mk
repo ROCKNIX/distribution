@@ -3,9 +3,9 @@
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="vdr-plugin-streamdev"
-PKG_VERSION="0.6.4"
-PKG_SHA256="1698afccb5fde1ea4e40794ae187fa42ce7fc38af48c12ecd3fa1d3154c6c794"
-PKG_LICENSE="GPL"
+PKG_VERSION="366a0ce9a8defb50f048983b4ff6c4da22fb19d0"
+PKG_SHA256="24041ad3cb8e83de1c27938984dafd9462359121041f13437c7bf67892c1a498"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="http://projects.vdr-developer.org/projects/plg-streamdev"
 PKG_URL="https://github.com/vdr-projects/vdr-plugin-streamdev/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain vdr openssl"

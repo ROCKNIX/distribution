@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 . $(get_pkg_directory libXfixes)/package.mk
@@ -8,10 +8,6 @@ PKG_LONGDESC="libXfixes for chrome"
 PKG_URL=""
 PKG_DEPENDS_UNPACK+=" libXfixes"
 PKG_BUILD_FLAGS="-sysroot"
-
-PKG_CONFIGURE_OPTS_TARGET="${PKG_CONFIGURE_OPTS_TARGET} \
-                           --disable-static \
-                           --enable-shared"
 
 unpack() {
   mkdir -p ${PKG_BUILD}

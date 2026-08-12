@@ -1,9 +1,9 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2022-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="gst-plugins-bad"
-PKG_VERSION="1.27.1"
-PKG_SHA256="9730381c718b7d99042a5e02e33ca5eccad0c8a5c5325aca66491728de9ba64e"
+PKG_VERSION="1.29.2"
+PKG_SHA256="bf5811da6159e0d2ae0617fd22f354f2f3a15cbc5baea00ca5b4620a8bc3c38c"
 PKG_LICENSE="LGPL-2.1-or-later"
 PKG_SITE="https://gstreamer.freedesktop.org/modules/gst-plugins-bad.html"
 PKG_URL="https://gstreamer.freedesktop.org/src/gst-plugins-bad/${PKG_NAME}-${PKG_VERSION}.tar.xz"
@@ -78,6 +78,7 @@ pre_configure_target() {
                          -Dopencv=disabled \
                          -Dwayland=disabled \
                          -Dx11=disabled \
+                         -Daes=disabled \
                          -Daom=disabled \
                          -Davtp=disabled \
                          -Dandroidmedia=disabled \

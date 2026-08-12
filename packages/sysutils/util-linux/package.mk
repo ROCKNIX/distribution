@@ -3,9 +3,9 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="util-linux"
-PKG_VERSION="2.41"
-PKG_SHA256="81ee93b3cfdfeb7d7c4090cedeba1d7bbce9141fd0b501b686b3fe475ddca4c6"
-PKG_LICENSE="GPL"
+PKG_VERSION="2.42.2"
+PKG_SHA256="03a05d3adf9602ef128f2da05b84b3205ce60c351e5737c0370f74000679ce8a"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_URL="https://www.kernel.org/pub/linux/utils/util-linux/v$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_HOST="ccache:host autoconf:host automake:host intltool:host libtool:host pkg-config:host"
 PKG_DEPENDS_TARGET="autotools:host gcc:host"
@@ -56,6 +56,7 @@ PKG_CONFIGURE_OPTS_TARGET="${UTILLINUX_CONFIG_DEFAULT} \
                            --enable-blkid \
                            --enable-lscpu \
                            --enable-lsfd \
+                           --enable-lsblk \
                            --enable-mount \
                            --enable-nologin"
 
