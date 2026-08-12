@@ -3,8 +3,5 @@
 
 . ${ROOT}/packages/x11/lib/libSM/package.mk
 
-PKG_CONFIGURE_OPTS_TARGET="--disable-static \
-                           --enable-shared \
-                           --with-libuuid \
-                           --without-xmlto \
-                           --without-fop"
+PKG_CONFIGURE_OPTS_TARGET="${PKG_CONFIGURE_OPTS_TARGET/--enable-static/--disable-static}"
+PKG_CONFIGURE_OPTS_TARGET="${PKG_CONFIGURE_OPTS_TARGET/--disable-shared/--enable-shared}"

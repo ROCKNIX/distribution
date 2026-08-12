@@ -5,7 +5,7 @@
 
 PKG_DEPENDS_HOST="toolchain:host util-macros:host libX11:host"
 
-PKG_CONFIGURE_OPTS_HOST="--enable-malloc0returnsnull"
+PKG_CONFIGURE_OPTS_HOST="${PKG_CONFIGURE_OPTS_TARGET}"
 
 post_configure_host() {
   libtool_remove_rpath libtool

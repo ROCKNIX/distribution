@@ -3,4 +3,4 @@
 
 . ${ROOT}/packages/x11/lib/libXinerama/package.mk
 
-PKG_MESON_OPTS_TARGET="-Ddefault_library=shared"
+PKG_MESON_OPTS_TARGET="${PKG_MESON_OPTS_TARGET/-Ddefault_library=static/-Ddefault_library=shared}"

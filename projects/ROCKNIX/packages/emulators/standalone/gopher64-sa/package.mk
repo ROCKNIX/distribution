@@ -6,7 +6,7 @@ PKG_LICENSE="GPLv3"
 PKG_VERSION="ca4a20f52403bb14f819db53f1cb161d41894666"
 PKG_SITE="https://github.com/gopher64/gopher64"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain SDL3 SDL3_ttf cargo:host cargo rust mesa libXss ${VULKAN}"
+PKG_DEPENDS_TARGET="toolchain SDL3 SDL3_ttf cargo:host cargo rust mesa libxss ${VULKAN}"
 PKG_LONGDESC="Gopher64 - Highly compatible N64 emulator"
 PKG_TOOLCHAIN="manual"
 
