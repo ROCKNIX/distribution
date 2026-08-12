@@ -27,6 +27,13 @@ make_target() {
 
   export CMAKE_ARGS="${CMAKE_ARGS} -DALSOFT_BACKEND_JACK=OFF"
 
+  # rustc 1.95 destabilised custom target JSON specs (rust-lang/rust#150151):
+  # loading one now needs -Zunstable-options, and -Z needs a nightly or
+  # bootstrapped compiler. Our TARGET_NAME is a custom triple, so this is
+  # unavoidable - the kernel does the same for its own custom targets.
+  export RUSTC_BOOTSTRAP=1
+  export RUSTFLAGS="${RUSTFLAGS} -Zunstable-options"
+
   cargo build \
     --target ${TARGET_NAME} \
     --release
