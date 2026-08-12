@@ -3,8 +3,9 @@
 # Copyright (C) 2019-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="bluez"
-PKG_VERSION="5.83"
-PKG_LICENSE="GPL"
+PKG_VERSION="5.87"
+PKG_SHA256="26bdcf2cebd7310c6f598850606b037ef0c515fe6608ebc54d22c50c4c32b35f"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="http://www.bluez.org/"
 PKG_URL="https://www.kernel.org/pub/linux/bluetooth/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_TARGET="toolchain dbus glib readline systemd json-c alsa-lib ncurses"
@@ -34,7 +35,6 @@ PKG_CONFIGURE_OPTS_TARGET="--disable-dependency-tracking \
                            --disable-manpages \
                            --disable-experimental \
                            --enable-sixaxis \
-                           --enable-sap \
                            --enable-a2dp \
                            --enable-avrcp \
                            --enable-btpclient \
