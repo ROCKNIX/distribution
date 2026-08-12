@@ -27,10 +27,14 @@ else
   PKG_MESON_OPTS_TARGET+=" -Dwayland=disabled"
 fi
 
-PKG_MESON_OPTS_TARGET+=" -Dsdl2-gamepad=enabled"
 
 # Vulkan has issues on S922X so disable
 [ "${DEVICE}" == "S922X" ] && PKG_MESON_OPTS_TARGET+=" -Dvulkan=disabled"
+
+# 0.41 dropped the -Dsdl2 umbrella and now autodetects SDL2 with
+# required:false, gating the three features on it. Name them so a missing
+# SDL2 is an error rather than three silently absent outputs.
+PKG_MESON_OPTS_TARGET+=" -Dsdl2-audio=enabled -Dsdl2-video=enabled -Dsdl2-gamepad=enabled"
 
 post_makeinstall_target() {
   cp ${PKG_DIR}/scripts/* ${INSTALL}/usr/bin
