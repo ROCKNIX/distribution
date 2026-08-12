@@ -1,0 +1,35 @@
+From: ROCKNIX <maintainers@rocknix.org>
+Subject: [PATCH] celt: vroundf's vcvtaq path is aarch64 only
+
+Building 32-bit ARM with -march=armv8-a fails:
+
+  celt/arm/mathops_arm.h:41:12: error: implicit declaration of function
+  'vcvtaq_s32_f32'; did you mean 'vcvtq_s32_f32'?
+  error: incompatible types when returning type 'int' but 'int32x4_t'
+  was expected
+
+vroundf picks vcvtaq_s32_f32 when __ARM_ARCH >= 8, but that intrinsic
+is AArch64 only. gcc 16.2.0's AArch32 arm_neon.h does not declare it at
+any -mfpu level - neon, neon-fp-armv8 and crypto-neon-fp-armv8 all
+fail - while the AArch64 header does. The architecture version is
+simply the wrong thing to test.
+
+It goes unnoticed on ARMv7 builds because __ARM_ARCH is 7 there, and on
+AArch64 because the first arm of the condition already matches. It only
+bites a 32-bit build targeting ARMv8, which is what ROCKNIX uses for
+its compat leg.
+
+Test __aarch64__ alone and let everything else take the existing
+rounding fallback, which is what ARMv7 has always used.
+
+--- a/celt/arm/mathops_arm.h
++++ b/celt/arm/mathops_arm.h
+@@ -37,7 +37,7 @@
+ 
+ static inline int32x4_t vroundf(float32x4_t x)
+ {
+-#  if defined(__aarch64__) || (defined(__ARM_ARCH) && __ARM_ARCH >= 8)
++#  if defined(__aarch64__)
+     return vcvtaq_s32_f32(x);
+ #  else
+     uint32x4_t sign = vandq_u32(vreinterpretq_u32_f32(x), vdupq_n_u32(0x80000000));
