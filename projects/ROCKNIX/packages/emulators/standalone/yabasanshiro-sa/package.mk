@@ -13,7 +13,7 @@ PKG_ARCH="aarch64"
 PKG_DEPENDS_TARGET="toolchain SDL2 boost openal-soft zlib"
 PKG_LONGDESC="Yabause is a Sega Saturn emulator and took over as Yaba Sanshiro"
 PKG_TOOLCHAIN="cmake-make"
-GET_HANDLER_SUPPORT="git"
+
 PKG_BUILD_FLAGS="+speed"
 
 if [ ! "${OPENGL}" = "no" ]; then

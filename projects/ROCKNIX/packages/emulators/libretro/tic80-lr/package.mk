@@ -8,7 +8,7 @@ PKG_SITE="https://github.com/nesbox/TIC-80"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="TIC-80 is a fantasy computer for making, playing and sharing tiny games."
-GET_HANDLER_SUPPORT="git"
+
 
 PKG_CMAKE_OPTS_TARGET="-DBUILD_DEMO_CARTS=OFF \
                        -DBUILD_EDITORS=OFF \

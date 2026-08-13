@@ -9,7 +9,7 @@ PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain flac libogg libvorbis"
 PKG_LONGDESC="Neo Geo CD emulator for libretro "
 PKG_TOOLCHAIN="make"
-GET_HANDLER_SUPPORT="git"
+
 
 make_target() {
 cd ${PKG_BUILD}

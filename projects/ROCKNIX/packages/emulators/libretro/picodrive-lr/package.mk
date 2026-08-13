@@ -5,7 +5,7 @@ PKG_SITE="https://github.com/libretro/picodrive"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Libretro implementation of PicoDrive. (Sega Megadrive/Genesis/Sega Master System/Sega GameGear/Sega CD/32X)"
-GET_HANDLER_SUPPORT="git"
+
 PKG_BUILD_FLAGS="-gold"
 PKG_TOOLCHAIN="make"
 

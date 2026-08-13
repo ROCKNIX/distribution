@@ -10,7 +10,7 @@ PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain Python3 SDL2 SDL2_image SDL2_ttf"
 PKG_LONGDESC="Touch UI for the second screen of dual-screen handhelds."
 PKG_TOOLCHAIN="manual"
-GET_HANDLER_SUPPORT="git"
+
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/share/lowerdeck

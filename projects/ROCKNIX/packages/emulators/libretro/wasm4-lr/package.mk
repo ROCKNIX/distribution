@@ -9,7 +9,7 @@ PKG_SITE="https://github.com/aduros/wasm4"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="WASM-4 is a low-level fantasy game console for building small games with WebAssembly. Game cartridges (ROMs) are small, self-contained .wasm files that can be built with any programming language that compiles to WebAssembly."
-GET_HANDLER_SUPPORT="git"
+
 PKG_TOOLCHAIN='manual'
 
 make_target() {

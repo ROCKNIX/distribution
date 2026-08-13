@@ -8,7 +8,7 @@ PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="${OPENGL} ${OPENGLES} glu toolchain SDL2 SDL2_net zlib"
 PKG_LONGDESC="Supermodel is a Sega Model 3 arcade emulator"
 PKG_TOOLCHAIN="make"
-GET_HANDLER_SUPPORT="git"
+
 
 case ${TARGET_ARCH} in
   aarch64|arm)

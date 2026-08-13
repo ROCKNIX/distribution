@@ -12,7 +12,7 @@ PKG_DEPENDS_TARGET="toolchain wayland wayland-protocols libdrm libinput libxkbco
                     libXrender libXxf86vm libXtst libXi libXcursor libXmu libXres libxcb \
                     xcb-util-wm seatd hwdata:host SDL2 pipewire"
 PKG_LONGDESC="SteamOS session compositing window manager (micro-compositor for games / nested Wayland)."
-GET_HANDLER_SUPPORT="git"
+
 PKG_TOOLCHAIN="meson"
 PKG_DEPENDS_HOST="toolchain:host wayland:host wayland-protocols:host glslang:host"
 

@@ -10,7 +10,7 @@ CHEAT_DB_VERSION="7c9fe1ae71155626cea767aed53f968de9f4051f" # Update cheat.db (1
 PKG_LICENSE="GPLv2"
 PKG_DEPENDS_TARGET="toolchain libzip SDL2 zlib"
 PKG_LONGDESC="PPSSPPDL"
-GET_HANDLER_SUPPORT="git"
+
 
 ### Note:
 ### This package includes the NotoSansJP-Regular.ttf font.  This font is licensed under

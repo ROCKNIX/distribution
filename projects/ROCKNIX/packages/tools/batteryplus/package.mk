@@ -9,7 +9,7 @@ PKG_SITE="https://github.com/Mikhailzrick/knubat.components"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain systemd"
 PKG_LONGDESC="BatteryPlus — battery percentage daemon for handheld Linux systems"
-GET_HANDLER_SUPPORT="git"
+
 PKG_TOOLCHAIN="make"
 
 pre_make_target() {
