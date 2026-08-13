@@ -6,7 +6,7 @@ PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="FreeChaF is a libretro emulation core for the Fairchild ChannelF / Video Entertainment System designed to be compatible with joypads from the SNES era forward."
 PKG_TOOLCHAIN="make"
-GET_HANDLER_SUPPORT="git"
+
 
 make_target() {
   make

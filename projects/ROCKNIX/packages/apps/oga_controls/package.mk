@@ -10,7 +10,7 @@ PKG_GIT_CLONE_BRANCH="universal"
 PKG_DEPENDS_TARGET="toolchain libevdev SDL2"
 PKG_LONGDESC="Emulated keyboard / mouse / joystick for the RGB10/OGA 1.1 (BE), RG351 P/M/V, RK2020/OGA 1.0, OGS, and the Chi"
 PKG_TOOLCHAIN="make"
-GET_HANDLER_SUPPORT="git"
+
 PKG_PATCH_DIRS+="${DEVICE}"
 
 pre_make_target() {

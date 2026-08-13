@@ -27,7 +27,7 @@ PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Gearsystem is a Sega Master System / Game Gear / SG-1000 emulator written in C++"
 PKG_TOOLCHAIN="make"
-GET_HANDLER_SUPPORT="git"
+
 
 make_target() {
   make -C platforms/libretro/

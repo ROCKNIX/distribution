@@ -11,7 +11,7 @@ PKG_GIT_CLONE_BRANCH="extui-align"
 PKG_DEPENDS_TARGET="toolchain boost zlib"
 PKG_LONGDESC="Kronos is a Sega Saturn emulator forked from yabause."
 PKG_TOOLCHAIN="make"
-GET_HANDLER_SUPPORT="git"
+
 PKG_PATCH_DIRS+="${DEVICE}"
 
 case ${ARCH} in
