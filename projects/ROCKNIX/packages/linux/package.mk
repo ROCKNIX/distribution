@@ -368,6 +368,7 @@ make_target() {
       NO_RUST=1 \
       CROSS_COMPILE="${TARGET_PREFIX}" \
       JOBS="${CONCURRENCY_MAKE_LEVEL}" \
+      EXTRA_CFLAGS="-g -O2 -Wno-error=discarded-qualifiers" \
         make ${PERF_BUILD_ARGS}
       mkdir -p ${INSTALL}/usr/bin
         cp perf ${INSTALL}/usr/bin
