@@ -44,6 +44,9 @@ case ${DEVICE} in
   ;;
 esac
 
+# libudev and v4l2-request are not ffmpeg options, the v4l2-request patch
+# series adds them to configure. RK3588 decodes through rkmpp and does not
+# carry that series, so naming them there fails the configure outright.
 if [ "${V4L2_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" libdrm"
   PKG_NEED_UNPACK+=" $(get_pkg_directory libdrm)"
@@ -62,11 +65,14 @@ if [ "${V4L2_SUPPORT}" = "yes" ]; then
     PKG_DEPENDS_TARGET+=" systemd"
     PKG_NEED_UNPACK+=" $(get_pkg_directory systemd)"
     PKG_FFMPEG_V4L2+=" --enable-libudev --enable-v4l2-request"
-  else
+  elif listcontains "${PKG_PATCH_DIRS}" "v4l2-request"; then
     PKG_FFMPEG_V4L2+=" --disable-libudev --disable-v4l2-request"
   fi
 else
-  PKG_FFMPEG_V4L2="--disable-v4l2_m2m --disable-libudev --disable-v4l2-request"
+  PKG_FFMPEG_V4L2="--disable-v4l2_m2m"
+  if listcontains "${PKG_PATCH_DIRS}" "v4l2-request"; then
+    PKG_FFMPEG_V4L2+=" --disable-libudev --disable-v4l2-request"
+  fi
 fi
 
 if [ "${VAAPI_SUPPORT}" = "yes" ]; then
