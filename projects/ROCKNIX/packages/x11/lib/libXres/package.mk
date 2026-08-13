@@ -9,10 +9,3 @@ PKG_URL="https://xorg.freedesktop.org/archive/individual/lib/${PKG_NAME}-${PKG_V
 PKG_DEPENDS_TARGET="toolchain util-macros libX11 libXext"
 PKG_LONGDESC="X11 library for the X Resource Extension (client resource ID listing)."
 PKG_BUILD_FLAGS="+pic"
-
-# Cross-compile: do not run the malloc(0) runtime probe (same as other libX* packages).
-PKG_CONFIGURE_OPTS_TARGET="--enable-malloc0returnsnull"
-
-post_configure_target() {
-  libtool_remove_rpath libtool
-}
