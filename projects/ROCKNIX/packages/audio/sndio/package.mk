@@ -13,13 +13,9 @@ PKG_TOOLCHAIN="configure"
 
 configure_target() {
   cd ${PKG_BUILD}
-  ./configure \
-    --prefix=/usr \
-    --enable-static
-}
-
-make_target() {
-  make
+    ./configure \
+      --prefix=/usr \
+      --enable-static
 }
 
 makeinstall_target() {

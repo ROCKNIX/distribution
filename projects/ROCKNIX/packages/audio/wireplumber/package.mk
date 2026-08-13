@@ -1,27 +1,11 @@
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2022-present Team LibreELEC (https://libreelec.tv)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
-PKG_NAME="wireplumber"
-PKG_VERSION="0.5.7"
-PKG_LICENSE="MIT"
-PKG_SITE="https://gitlab.freedesktop.org/pipewire/wireplumber"
-PKG_URL="https://gitlab.freedesktop.org/pipewire/wireplumber/-/archive/${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="pipewire glib lua54 glib:host"
-PKG_LONGDESC="Session / policy manager implementation for PipeWire"
-
-PKG_MESON_OPTS_TARGET="-Dintrospection=disabled \
-                       -Ddoc=disabled \
-                       -Dsystem-lua=true \
-                       -Delogind=disabled \
-                       -Dsystemd=enabled \
-                       -Dsystemd-system-service=true \
-                       -Dsystemd-user-service=false \
-                       -Dsystemd-system-unit-dir=/usr/lib/systemd/system \
-                       -Dtests=false"
+. ${ROOT}/packages/audio/wireplumber/package.mk
 
 post_makeinstall_target() {
   mkdir -p ${INSTALL}/etc
-  ln -sf /storage/.config/wireplumber ${INSTALL}/etc/wireplumber
+    ln -sf /storage/.config/wireplumber ${INSTALL}/etc/wireplumber
 
   # connect to the system bus
   sed '/^\[Service\]/a Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket' -i ${INSTALL}/usr/lib/systemd/system/wireplumber.service
@@ -93,8 +77,4 @@ monitor.bluez.rules = [
   }
 ]
 EOF
-}
-
-post_install() {
-  enable_service wireplumber.service
 }

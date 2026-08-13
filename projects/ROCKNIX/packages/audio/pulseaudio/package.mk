@@ -1,14 +1,7 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2009-2016 Stephan Raue (stephan@openelec.tv)
-# Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
-PKG_NAME="pulseaudio"
-PKG_VERSION="17.0"
-PKG_LICENSE="GPL"
-PKG_SITE="http://pulseaudio.org/"
-PKG_URL="http://www.freedesktop.org/software/pulseaudio/releases/${PKG_NAME}-${PKG_VERSION}.tar.xz"
-PKG_DEPENDS_TARGET="toolchain libcap libsndfile libtool soxr speexdsp glib:host glib"
-PKG_LONGDESC="PulseAudio is a sound system for POSIX OSes, meaning that it is a proxy for your sound applications."
+. ${ROOT}/packages/audio/pulseaudio/package.mk
 
 if [ "${AVAHI_DAEMON}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" avahi"
@@ -72,19 +65,14 @@ post_makeinstall_target() {
   safe_remove ${INSTALL}/usr/include
   safe_remove ${INSTALL}/usr/lib/cmake
   safe_remove ${INSTALL}/usr/lib/pkgconfig
+  safe_remove ${INSTALL}/usr/lib/systemd
   safe_remove ${INSTALL}/usr/share/vala
   safe_remove ${INSTALL}/usr/share/zsh
   safe_remove ${INSTALL}/usr/share/bash-completion
 
   cp ${PKG_DIR}/config/system.pa ${INSTALL}/etc/pulse/
-
-  # Sometimes apps cannot load `libpulsecommon`. It is located in ${libdir}/pulseaudio and is not intended to be loaded directly.
-  # Application loads `libpulse.so.0`, `libpulse` has `libpulsecommon` as a dep and RPATH set to ${libdir}/pulseaudio
-  # So, if there is error loading `libpulsecommon`, check RPATH of `libpulse` and `libpulse-simple`
-  # Adding pulseaudio subdir to `/etc/ld.so.conf.d/*.conf` may be a working hack for that, but please check/fix RPATH first
 }
 
-# Deprecated by pipewire
-#post_install() {
-#  enable_service pulseaudio.service
-#}
+post_install() {
+  :
+}

@@ -3,5 +3,4 @@
 
 . ${ROOT}/packages/audio/libogg/package.mk
 
-PKG_CMAKE_OPTS_TARGET="-DBUILD_SHARED_LIBS=ON \
-                       -DINSTALL_DOCS=OFF"
+PKG_CMAKE_OPTS_TARGET+=" -DBUILD_SHARED_LIBS=ON"
