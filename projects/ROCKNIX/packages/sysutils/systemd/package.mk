@@ -3,18 +3,17 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="systemd"
-PKG_VERSION="255.8"
-PKG_LICENSE="LGPL2.1+"
+PKG_VERSION="261.2"
+PKG_SHA256="ed1059ff964f5df35b6056434cc17cc83f86dc913f10489948a0b19b6081c5ec"
+PKG_LICENSE="LGPL-2.1-or-later"
 PKG_SITE="http://www.freedesktop.org/wiki/Software/systemd"
-PKG_URL="https://github.com/systemd/systemd-stable/archive/v${PKG_VERSION}.tar.gz"
+PKG_URL="https://github.com/systemd/systemd/archive/v${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain libcap kmod util-linux libidn2 Python3:host Jinja2:host pcre2 zstd libgcrypt openssl"
 PKG_LONGDESC="A system and session manager for Linux, compatible with SysV and LSB init scripts."
+PKG_BUILD_FLAGS="+lto"
 
 PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
-                       -Drootprefix=/usr \
-                       -Dsplit-usr=false \
                        -Dsplit-bin=true \
-                       -Ddefault-hierarchy=hybrid \
                        -Dtty-gid=5 \
                        -Dtests=false \
                        -Dseccomp=false \
@@ -31,9 +30,7 @@ PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Dmicrohttpd=false \
                        -Dlibcryptsetup=false \
                        -Dlibcurl=false \
-                       -Dlibidn=false \
                        -Dlibidn2=true \
-                       -Dlibiptc=false \
                        -Dqrencode=false \
                        -Dgcrypt=true \
                        -Dgnutls=false \
@@ -93,6 +90,7 @@ PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Dlink-udev-shared=true \
                        -Dlink-systemctl-shared=true \
                        -Dlink-networkd-shared=false \
+                       -Djournal-storage-default=auto \
                        -Dbashcompletiondir=no \
                        -Dzshcompletiondir=no \
                        -Dkmod-path=/usr/bin/kmod \
@@ -117,7 +115,6 @@ pre_configure_target() {
 
 post_makeinstall_target() {
   # remove unneeded stuff
-  safe_remove ${INSTALL}/etc/init.d
   safe_remove ${INSTALL}/etc/systemd/system
   safe_remove ${INSTALL}/etc/xdg
   safe_remove ${INSTALL}/etc/X11
@@ -136,7 +133,6 @@ post_makeinstall_target() {
   safe_remove ${INSTALL}/usr/lib/udev/rules.d/73-seat-late.rules
 
   # remove getty units, we dont want a console
-  safe_remove ${INSTALL}/usr/lib/systemd/system/autovt@.service
   safe_remove ${INSTALL}/usr/lib/systemd/system/console-getty.service
   safe_remove ${INSTALL}/usr/lib/systemd/system/container-getty@.service
   safe_remove ${INSTALL}/usr/lib/systemd/system/getty.target
@@ -156,6 +152,11 @@ post_makeinstall_target() {
 
   # adjust systemd-hwdb-update (we have read-only /etc).
   sed '/^ConditionNeedsUpdate=.*$/d' -i ${INSTALL}/usr/lib/systemd/system/systemd-hwdb-update.service
+
+  # remove systemd-creds, we do not use the credentials/provisioning stack
+  safe_remove ${INSTALL}/usr/bin/systemd-creds
+  safe_remove ${INSTALL}/usr/lib/tmpfiles.d/credstore.conf
+  safe_remove ${INSTALL}/usr/lib/tmpfiles.d/provision.conf
 
   # remove nspawn
   safe_remove ${INSTALL}/usr/bin/systemd-nspawn
