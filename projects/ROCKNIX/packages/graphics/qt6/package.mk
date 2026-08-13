@@ -81,6 +81,7 @@ pre_configure_host() {
                          -DQT_GENERATE_SBOM=OFF \
                          -DQT_FEATURE_icu=OFF \
                          -DQT_FEATURE_wayland=ON \
+                         -DINPUT_opengl=no \
                          -DBUILD_WITH_PCH=OFF"
 }
 
