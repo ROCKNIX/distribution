@@ -24,5 +24,5 @@ PKG_SITE="https://github.com/xiph/speexdsp"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Speex audio processing library"
-GET_HANDLER_SUPPORT="git"
+
 PKG_TOOLCHAIN="autotools"

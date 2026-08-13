@@ -26,7 +26,7 @@ PKG_SITE="https://github.com/hrydgard/ppsspp"
 PKG_URL="https://github.com/hrydgard/ppsspp.git"
 PKG_DEPENDS_TARGET="toolchain SDL2 libzip zstd"
 PKG_LONGDESC="A PSP emulator for Android, Windows, Mac, Linux and Blackberry 10, written in C++."
-GET_HANDLER_SUPPORT="git"
+
 
 
 pre_configure_target() {

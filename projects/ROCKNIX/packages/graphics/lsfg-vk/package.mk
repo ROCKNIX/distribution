@@ -9,7 +9,7 @@ PKG_URL="${PKG_SITE}.git"
 PKG_GIT_CLONE_BRANCH="develop"
 PKG_DEPENDS_TARGET="toolchain ${VULKAN}"
 PKG_LONGDESC="Lossless Scaling Frame Generation Vulkan layer for Linux."
-GET_HANDLER_SUPPORT="git"
+
 PKG_TOOLCHAIN="cmake"
 
 post_unpack() {

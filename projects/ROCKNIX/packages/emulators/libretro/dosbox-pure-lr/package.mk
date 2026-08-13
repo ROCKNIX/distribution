@@ -25,7 +25,7 @@ PKG_SITE="https://github.com/schellingb/dosbox-pure"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="A port of DOSBox to libretro"
-GET_HANDLER_SUPPORT="git"
+
 PKG_TOOLCHAIN="make"
 PKG_PATCH_DIRS+="${DEVICE}"
 

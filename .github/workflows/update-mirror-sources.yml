@@ -1,19 +1,20 @@
 name: Update mirror sources
-
 on:
   schedule:
     - cron: "0 22 * * 0"
   workflow_dispatch:
   workflow_call:
-
 jobs:
-  update-mirror-sources:
+  get-sources:
     if: (github.event_name != 'schedule') || (github.repository == 'ROCKNIX/distribution' && github.ref_name == 'next')
-    name: Update mirror sources
+    name: Get sources (${{ matrix.device }})
     runs-on: ubuntu-24.04
     env:
       SKIP_GIT: true
-      GH_TOKEN: ${{ secrets.GH_PAT }}
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [RK3326, RK3399, RK3566, RK3588, H700, S922X, SM8250, SM8550, SM8650, SM8750, SM6115]
     steps:
       - name: Maximize build space
         uses: justinthelaw/maximize-github-runner-space@v0.9.0
@@ -22,34 +23,55 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: install xmlstarlet
-        run: sudo apt-get install xmlstarlet
-      - name: get sources
+      - name: get sources (${{ matrix.device }})
         uses: corrupt952/actions-retry-command@v1.0.7
         with:
           command: |
-            PROJECT=ROCKNIX DEVICE=RK3326 ./tools/download-tool 
-            PROJECT=ROCKNIX DEVICE=RK3399 ./tools/download-tool 
-            PROJECT=ROCKNIX DEVICE=RK3566 ./tools/download-tool 
-            PROJECT=ROCKNIX DEVICE=RK3588 ./tools/download-tool 
-            PROJECT=ROCKNIX DEVICE=H700 ./tools/download-tool 
-            PROJECT=ROCKNIX DEVICE=S922X ./tools/download-tool 
-            PROJECT=ROCKNIX DEVICE=SM8250 ./tools/download-tool 
-            PROJECT=ROCKNIX DEVICE=SM8550 ./tools/download-tool
-            PROJECT=ROCKNIX DEVICE=SM8650 ./tools/download-tool
-            PROJECT=ROCKNIX DEVICE=SM8750 ./tools/download-tool
-            PROJECT=ROCKNIX DEVICE=SM6115 ./tools/download-tool
+            PROJECT=ROCKNIX DEVICE=${{ matrix.device }} GET_HANDLER_SUPPORT="archive file" ./tools/download-tool > /tmp/download-${{ matrix.device }}.log 2>&1 || (tail -n 200 /tmp/download-${{ matrix.device }}.log; exit 1)
           max_attempts: 6
           retry_interval: 10
+      - name: upload sources artifact (${{ matrix.device }})
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sources-${{ matrix.device }}
+          path: sources/
+          if-no-files-found: error
+          retention-days: 3
+      - name: upload log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: download-log-${{ matrix.device }}
+          path: /tmp/download-${{ matrix.device }}.log
+          if-no-files-found: ignore
+          retention-days: 3
+
+  push-sources:
+    name: Push sources
+    runs-on: ubuntu-24.04
+    needs: get-sources
+    env:
+      GH_TOKEN: ${{ secrets.GH_PAT }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Download all sources artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: sources-*
+          merge-multiple: true
+          path: collected-sources/
       - name: print number of downloaded artifacts
-        run: find sources/ -type f \( -name "*.tar.gz" -o -name "*.tar.xz" -o -name "*.tgz" -o -name "*.tar.bz2" -o -name "*.deb" \) | wc -l
+        run: find collected-sources/ -type f \( -name "*.tar.gz" -o -name "*.tar.xz" -o -name "*.tgz" -o -name "*.tar.bz2" -o -name "*.deb" -o -name "*.tar.zst" \) | wc -l
       - name: Find missing artifacts
         id: find_missing
         run: |
           set -euo pipefail
           EXISTING_FILES=$(gh release view sources --repo ${{ github.repository_owner }}/distribution-sources --json assets --jq '.assets[].name' || true)
-          mapfile -t LOCAL_FILES < <(find sources/ -type f \( -name '*.tar.gz' -o -name '*.tar.xz' -o -name '*.tgz' -o -name '*.tar.bz2' -o -name '*.deb' -o -name '*.tar.zst' \))
-          
+          mapfile -t LOCAL_FILES < <(find collected-sources/ -type f \( -name '*.tar.gz' -o -name '*.tar.xz' -o -name '*.tgz' -o -name '*.tar.bz2' -o -name '*.deb' -o -name '*.tar.zst' \))
+
           MISSING_FILES=()
           for file in "${LOCAL_FILES[@]}"; do
             BASENAME=$(basename "$file")
@@ -58,7 +80,7 @@ jobs:
               MISSING_FILES+=("$file")
             fi
           done
-          
+
           if [ ${#MISSING_FILES[@]} -eq 0 ]; then
             echo "No missing files to upload."
             echo "HAS_MISSING=false" >> $GITHUB_ENV

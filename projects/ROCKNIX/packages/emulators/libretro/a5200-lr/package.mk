@@ -27,7 +27,7 @@ PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Atari 5200 libretro core"
 PKG_TOOLCHAIN="auto"
-GET_HANDLER_SUPPORT="git"
+
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro

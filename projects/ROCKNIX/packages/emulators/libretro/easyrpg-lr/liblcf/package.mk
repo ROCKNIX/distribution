@@ -24,7 +24,7 @@ PKG_SITE="https://github.com/EasyRPG/liblcf"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain expat icu inih"
 PKG_LONGDESC="Library to handle RPG Maker 2000/2003 and EasyRPG projects"
-GET_HANDLER_SUPPORT="git"
+
 
 PKG_CMAKE_OPTS_TARGET="-DCMAKE_BUILD_TYPE=Release"
 

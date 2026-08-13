@@ -9,7 +9,7 @@ PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="A port of QUASI88, a PC-8800 series emulator by Showzoh Fukunaga, to the libretro API"
 PKG_TOOLCHAIN="make"
-GET_HANDLER_SUPPORT="git"
+
 
 pre_configure_target() {
   CFLAGS="${CFLAGS} -std=gnu17"

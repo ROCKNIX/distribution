@@ -9,7 +9,7 @@ PKG_SITE="https://github.com/midwan/amiberry"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain linux glibc bzip2 zlib SDL2 SDL2_image SDL2_ttf capsimg freetype libxml2 flac libogg mpg123 libpng libmpeg2 libserialport"
 PKG_LONGDESC="Amiberry is an optimized Amiga emulator for ARM-based boards."
-GET_HANDLER_SUPPORT="git"
+
 PKG_TOOLCHAIN="make"
 PKG_GIT_CLONE_BRANCH="master"
 PKG_PATCH_DIRS+=" ${DEVICE}"

@@ -8,6 +8,6 @@ PKG_SITE="https://github.com/apitrace/apitrace"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain waffle Python3:host"
 PKG_LONGDESC="A set of tools to trace, replay, and inspect OpenGL calls"
-GET_HANDLER_SUPPORT="git"
+
 
 PKG_CMAKE_OPTS_TARGET=" -DENABLE_GUI=OFF -DENABLE_EGL=ON -DENABLE_WAFFLE=ON "

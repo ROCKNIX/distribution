@@ -27,7 +27,7 @@ PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Port of YabaSanshiro to libretro."
 PKG_TOOLCHAIN="make"
-GET_HANDLER_SUPPORT="git"
+
 
 PKG_MAKE_OPTS_TARGET+=" -C yabause/src/libretro"
 if [ "${OPENGL_SUPPORT}" = "yes" ] && [ ! "${PREFER_GLES}" = "yes" ]; then

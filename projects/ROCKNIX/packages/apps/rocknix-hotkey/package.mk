@@ -8,7 +8,7 @@ PKG_SITE="https://github.com/ROCKNIX/rocknix-hotkey"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain libevdev SDL2 control-gen"
 PKG_TOOLCHAIN="make"
-GET_HANDLER_SUPPORT="git"
+
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin
