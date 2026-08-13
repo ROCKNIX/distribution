@@ -1,0 +1,41 @@
+The ARCH_IS_LINUX sound thread built its wait deadline with time(), which
+takes a time_t and so leaves tv_nsec uninitialised, then handed
+pthread_cond_timedwait the result of ctime() - a char* into a static
+buffer - where a struct timespec was expected. The deadline was therefore
+read out of ASCII text and the wait returned EINVAL immediately, skipping
+the 68k and SCSP stepping that the rtn == 0 branch guards. The ANDROID
+branch a few lines up already does this correctly.
+
+Also normalise tv_nsec, pthread_cond_timedwait requires it below one
+second and adding sleeptime can carry past that.
+
+--- a/yabause/src/scsp.c
++++ b/yabause/src/scsp.c
+@@ -151,6 +151,7 @@
+ #include "sys/resource.h"
+ #include <errno.h>
+ #include <pthread.h>
++#include <time.h>
+ pthread_cond_t  sync_cnd = PTHREAD_COND_INITIALIZER;
+ pthread_mutex_t sync_mutex = PTHREAD_MUTEX_INITIALIZER;
+ #endif
+@@ -5672,14 +5673,14 @@
+         }
+         pthread_mutex_unlock(&sync_mutex);
+ #elif defined(ARCH_IS_LINUX)    
+-        time(&tm);    
+-        long n = tm.tv_nsec;
++        clock_gettime(CLOCK_REALTIME, &tm);
+         tm.tv_nsec += sleeptime;
+-        if( n > tm.tv_nsec){
+-          tm.tv_sec += 1;
++        if (tm.tv_nsec >= 1000000000L) {
++          tm.tv_sec += tm.tv_nsec / 1000000000L;
++          tm.tv_nsec %= 1000000000L;
+         }
+         pthread_mutex_lock(&sync_mutex);
+-        int rtn = pthread_cond_timedwait(&sync_cnd,&sync_mutex,ctime(&tm));
++        int rtn = pthread_cond_timedwait(&sync_cnd,&sync_mutex,&tm);
+         if(rtn == 0){
+           for (i = 0; i < samplecnt; i += step) {
+             MM68KExec(step);
