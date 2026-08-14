@@ -95,7 +95,12 @@ make_target() {
   # libstdc++ passed explicitly since it is not discoverable under a sysroot.
   local cxxdir
   cxxdir=$(ls -d "${TOOLCHAIN}/${TARGET_NAME}/include/c++/"* | sort -V | tail -n1)
-  export THUNKGEN_EXTRA_FLAGS="--sysroot ${SYSROOT_PREFIX} -isystem ${cxxdir} -isystem ${cxxdir}/${TARGET_NAME}"
+  # --target pins the host parse to the device triple: on an aarch64 build
+  # host clang's default target already matches, but on an x86_64 build host
+  # the host parse otherwise reads the aarch64 sysroot as x86_64 - SVE types
+  # in bits/math-vector.h are unknown and every host_layout is generated with
+  # the wrong ABI, which the .inl compiles then reject.
+  export THUNKGEN_EXTRA_FLAGS="--target=${TARGET_NAME} --sysroot ${SYSROOT_PREFIX} -isystem ${cxxdir} -isystem ${cxxdir}/${TARGET_NAME}"
 
   local -a tgt_opts=(
     -G Ninja
