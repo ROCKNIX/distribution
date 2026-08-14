@@ -77,5 +77,9 @@ configure_target() {
 }
 
 post_makeinstall_target() {
-  ln -sf libvpx.so.8.0.1 ${INSTALL}/usr/lib/libvpx.so.6
+  # Steam expects the old libvpx.so.6 name; resolve the library this version
+  # actually installed instead of hardcoding a filename the soname bump removed
+  local vpx_lib=$(basename "$(readlink -f "${INSTALL}/usr/lib/libvpx.so")")
+  [ -f "${INSTALL}/usr/lib/${vpx_lib}" ] || die "libvpx: no installed library to point libvpx.so.6 at"
+  ln -sfv "${vpx_lib}" "${INSTALL}/usr/lib/libvpx.so.6"
 }
