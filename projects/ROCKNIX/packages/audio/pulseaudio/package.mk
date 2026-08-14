@@ -70,8 +70,6 @@ pre_configure_target() {
 
 post_makeinstall_target() {
   safe_remove ${INSTALL}/usr/include
-  safe_remove ${INSTALL}/usr/lib/cmake
-  safe_remove ${INSTALL}/usr/lib/pkgconfig
   safe_remove ${INSTALL}/usr/share/vala
   safe_remove ${INSTALL}/usr/share/zsh
   safe_remove ${INSTALL}/usr/share/bash-completion
