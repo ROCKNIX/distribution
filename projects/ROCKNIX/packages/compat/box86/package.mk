@@ -11,7 +11,8 @@ PKG_LONGDESC="Box86 lets you run x86 Linux programs (such as games) on non-x86 L
 PKG_TOOLCHAIN="cmake"
 
 PKG_CMAKE_OPTS_TARGET="-DCMAKE_BUILD_TYPE=Release \
-                       -DARM_DYNAREC=On"
+                       -DARM_DYNAREC=On \
+                       -DCMAKE_C_FLAGS=\"-w\""
 
 case ${TARGET_ARCH} in
   aarch64)
