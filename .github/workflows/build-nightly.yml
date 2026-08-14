@@ -164,6 +164,10 @@ jobs:
     name: Docker
     needs: set-envs
     uses: ./.github/workflows/build-docker-image.yml
+    permissions:
+      actions: write
+      contents: read
+      packages: write
     with:
       OWNER_LC: ${{ needs.set-envs.outputs.OWNER_LC }}
 
@@ -231,98 +235,3 @@ jobs:
          app-id: ${{ secrets.NIGHTLY_APP_ID }}
          private-key: ${{ secrets.NIGHTLY_APP_PRIVATE_KEY }}
          owner: ${{ github.repository_owner }}
-     - name: create nightlies tag
-       id: create-nightly-tag
-       run: |
-         git remote add distribution-nightly https://x-access-token:${{ steps.app-token.outputs.token }}@github.com/${{ github.repository_owner }}/distribution-nightly.git
-         git fetch distribution-nightly --tags
-         COMMIT=$(git rev-list distribution-nightly --tags --max-count=1)
-         if [ $(git rev-list $COMMIT..HEAD --count) -eq 0 ]; then
-           echo "new_commits=false" >> $GITHUB_ENV
-         else
-           {
-             printf "Changelog since last nightly:\n"
-             bash .github/scripts/generate-changelog.sh "$COMMIT..$GITHUB_SHA" 100
-             printf "\n\nAlternative download site: https://sourceforge.net/projects/rocknix/files/nightly/%s/\n" "$(date +%Y%m%d)"
-           } > release-notes.md
-           git tag -f nightly-${{ env.DATE }}
-           git push -f distribution-nightly nightly-${{ env.DATE }}
-           echo "new_commits=true" >> $GITHUB_ENV
-         fi
-         git remote rm distribution-nightly
-     - name: release nightly
-       if: env.new_commits == 'true'
-       env:
-         GH_TOKEN: ${{ steps.app-token.outputs.token }}
-       run: |
-         gh release create "nightly-${{ env.DATE }}" ROCKNIX-* \
-           --repo "${{ github.repository_owner }}/distribution-nightly" \
-           --title "nightly-${{ env.DATE }}" \
-           --notes-file release-notes.md \
-           --prerelease
-     - name: Set up SSH sourceforge
-       if: env.new_commits == 'true'
-       run: |
-         mkdir -p ~/.ssh
-         echo "${{ secrets.SF_SSH_KEY }}" > ~/.ssh/id_ed25519
-         chmod 600 ~/.ssh/id_ed25519
-         ssh-keyscan frs.sourceforge.net >> ~/.ssh/known_hosts
-     - name: Upload files sourceforge
-       if: env.new_commits == 'true'
-       run: |
-         FILES=$(find . -type f \( -name "*.tar" -o -name "*.img.gz" -o -name "*.sha256" \))
-         for FILE in $FILES; do
-           rsync -e ssh "$FILE" tiopex@frs.sourceforge.net:/home/frs/project/rocknix/nightly/${{ env.DATE }}/
-         done
-
-  release-official:
-    if: ${{ always() && !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && github.repository_owner == 'ROCKNIX' && needs.set-envs.outputs.OFFICIAL == 'yes' }}
-    name: Release official
-    needs: build-devices
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Maximize build space
-        uses: justinthelaw/maximize-github-runner-space@v0.9.0
-        with:
-          skip-components: docker-engine,gh-cli
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      - name: Download artifacts
-        uses: actions/download-artifact@v8
-        with:
-          pattern: ROCKNIX-image*
-          merge-multiple: true
-      - name: Download artifacts
-        uses: actions/download-artifact@v8
-        with:
-          pattern: ROCKNIX-update*
-          merge-multiple: true
-      - name: get date
-        run: echo "DATE=$(date +'%Y%m%d')" >> $GITHUB_ENV
-      - name: get last tag
-        id: get-last-tag
-        run: |
-          echo "TAG=$(git tag --sort=-creatordate | head -n 1)" >> $GITHUB_OUTPUT
-      - name: Generate installation token for GitHub App
-        id: app-token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ secrets.NIGHTLY_APP_ID }}
-          private-key: ${{ secrets.NIGHTLY_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-      - name: Install xmlstarlet
-        run: sudo apt-get install -y xmlstarlet
-      - name: Generate release body
-        run: |
-          bash .github/scripts/generate-release-body.sh "${{ env.DATE }}" "${{ steps.get-last-tag.outputs.TAG }}" > release-body.md
-      - name: release official
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: |
-          gh release create "${{ env.DATE }}" ROCKNIX-* \
-            --target "${{ github.sha }}" \
-            --title "${{ env.DATE }}" \
-            --notes-file release-body.md \
-            --latest
-
