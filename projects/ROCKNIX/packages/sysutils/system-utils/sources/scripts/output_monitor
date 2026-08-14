@@ -6,7 +6,8 @@
 # internal panels (DSI, eDP) off/on accordingly.
 #
 # The external_display.mode setting picks the mode for the external
-# output: "auto" (1080p60, the default) or a fixed WIDTHxHEIGHT@RATE.
+# output: "auto" (1080p60, else 720p60, else the sink's preferred mode) or
+# a fixed WIDTHxHEIGHT@RATE. auto never picks a refresh other than 60.
 #
 # The sway IPC subscription is used rather than udev because the actions
 # (wlr-randr, swaymsg) require sway to be running and to have already
@@ -84,13 +85,13 @@ _wp_profile_index() {
 }
 
 _switch_audio() {
-    # Skip on devices whose external display cannot carry audio (e.g.
-    # AYN Odin 2). Sound stays on the speakers, and the profile churn
-    # that can reset volumes to 100% never happens.
-    [ "${DEVICE_EXTERNAL_DISPLAY_AUDIO}" = "false" ] && return 0
     local card target i
     card=$(_wp_audio_card); [ -n "$card" ] || return 0
     if [ "$1" = "external" ]; then
+        # Gated only in this direction: where the external output carries no
+        # audio (micro HDMI on the AYN Odin 2) there is nothing to switch to,
+        # and the profile probing below can reset sink volumes to 100%.
+        [ "${DEVICE_EXTERNAL_DISPLAY_AUDIO}" = "false" ] && return 0
         target=$(_wp_profile_index "$card" "HDMI")
         if [ -z "$target" ]; then
             systemctl restart wireplumber 2>/dev/null || true
@@ -102,6 +103,16 @@ _switch_audio() {
             done
         fi
     else
+        # Never gated. Restoring the internal route is right whatever the
+        # external output was, and it is the only thing that recovers a stuck
+        # DP jack: on 7.1.2 "DP0 Jack" can stay on after unplug, leaving the
+        # DSP routed to DISPLAY_PORT_RX_0 with the speaker path disconnected,
+        # so playback goes to a dead backend until something re-selects the
+        # profile. Verified on an AYN Odin 2: silent until a reboot without it.
+        #
+        # The card exposes two profiles both named "HiFi"; the first is the one
+        # without the DisplayPort sink, which is why it has to be picked by
+        # index rather than trusted by name.
         target=$(_wp_profile_index "$card" "HiFi")
     fi
     [ -n "$card" ] && [ -n "$target" ] && timeout 3 wpctl set-profile "$card" "$target" 2>/dev/null || true
@@ -224,10 +235,22 @@ _restore_volume() {
                     timeout 2 wpctl set-volume "${def}" \
                         "$(awk "BEGIN { printf \"%.2f\", ${target} / 100 }")" 2>/dev/null
             fi
-            # Single write: the amp applies its own internal fade
-            # (Fade Step register); stepping it from the shell instead
-            # produced audible sound/stop/sound gaps.
-            _set_amp_volume 0
+            # The amp applies its own internal fade (Fade Step register), so
+            # this is one write and not a shell-side ramp, which produced
+            # audible sound/stop/sound gaps.
+            #
+            # Asserted until it sticks: _switch_audio above re-selects the card
+            # profile, which re-initialises the codec and puts these registers
+            # back to their silent 1023 default. That can land after this point,
+            # and a single write then loses the race and leaves the speakers
+            # mute with everything else looking healthy.
+            for a in 1 2 3 4 5; do
+                _set_amp_volume 0
+                sleep 0.4
+                cur=$(timeout 2 amixer -c 0 cget name="SPK_L PCM Playback Volume" 2>/dev/null \
+                      | awk -F= '/: values/ { print $2 }')
+                [ "${cur}" = "0" ] && break
+            done
         fi
     ) </dev/null >/dev/null 2>&1 &
 }
@@ -262,8 +285,12 @@ _apply() {
             wlr-randr --output "$ext_out" --mode "$mode" 2>/dev/null || mode="auto"
         fi
         if [ "$mode" = "auto" ]; then
+            # 60 Hz only. Falling back to 1920x1080 at any refresh let a dock's
+            # own EDID put the output at 100 or 144 Hz, which is not what auto
+            # should mean here. If the sink offers no 60 Hz mode at all, leave it
+            # on its preferred one rather than guessing.
             wlr-randr --output "$ext_out" --mode 1920x1080@60 2>/dev/null \
-                || wlr-randr --output "$ext_out" --mode 1920x1080 2>/dev/null || true
+                || wlr-randr --output "$ext_out" --mode 1280x720@60 2>/dev/null || true
         fi
         swaymsg "[app_id=\"emulationstation\"] move output ${ext_out}" 2>/dev/null || true
         # Stop USB gadget: its data lanes conflict with DP Alt Mode on RK3576
