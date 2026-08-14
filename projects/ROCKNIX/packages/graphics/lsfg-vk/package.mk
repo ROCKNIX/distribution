@@ -7,7 +7,8 @@ PKG_LICENSE="GPL-3.0"
 PKG_SITE="https://github.com/PancakeTAS/lsfg-vk"
 PKG_URL="${PKG_SITE}.git"
 PKG_GIT_CLONE_BRANCH="develop"
-PKG_DEPENDS_TARGET="toolchain ${VULKAN}"
+PKG_DEPENDS_HOST="toolchain:host vulkan-headers:host"
+PKG_DEPENDS_TARGET="toolchain ${VULKAN} lsfg-vk:host"
 PKG_LONGDESC="Lossless Scaling Frame Generation Vulkan layer for Linux."
 
 PKG_TOOLCHAIN="cmake"
@@ -27,12 +28,24 @@ pre_configure_target() {
                            -DLSFGVK_LAYER_LIBRARY_PATH=/usr/lib/liblsfg-vk-layer.so"
 }
 
+pre_configure_host() {
+  PKG_CMAKE_OPTS_HOST+=" -DCMAKE_BUILD_TYPE=Release \
+                         -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF \
+                         -DLSFGVK_BUILD_UI=OFF \
+                         -DLSFGVK_BUILD_CLI=OFF \
+                         -DLSFGVK_INSTALL_DEVELOP=OFF \
+                         -DLSFGVK_INSTALL_XDG_FILES=OFF \
+                         -DLSFGVK_LAYER_LIBRARY_PATH=/usr/lib/liblsfg-vk-layer.so"
+}
+
 makeinstall_target() {
   cd ${PKG_BUILD}/.${TARGET_NAME}
   DESTDIR="${INSTALL}" ninja install
   mkdir -p "${INSTALL}/usr/lib/pressure-vessel/overrides/share/vulkan/implicit_layer.d"
   cp "${INSTALL}/usr/share/vulkan/implicit_layer.d/VkLayer_LSFGVK_frame_generation.json" \
      "${INSTALL}/usr/lib/pressure-vessel/overrides/share/vulkan/implicit_layer.d/"
+  mkdir -p "${INSTALL}/usr/share/fex-emu"
+  cp "${TOOLCHAIN}/lib/liblsfg-vk-layer.so" "${INSTALL}/usr/share/fex-emu"
 }
 
 
