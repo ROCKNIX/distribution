@@ -152,8 +152,13 @@ makeinstall_target() {
   # /etc/mtab is needed by udisks etc...
     ln -sf /proc/self/mounts ${INSTALL}/etc/mtab
 
-  # create /etc/hostname
-    ln -sf /proc/sys/kernel/hostname ${INSTALL}/etc/hostname
+  # deliberately NO /etc/hostname: hostnamed treats it as a static hostname,
+  # and systemd 261 enforces static over the transient device name that
+  # network-base-setup applies from system.hostname. The old symlink to
+  # /proc/sys/kernel/hostname made it worse: whatever fallback PID1 applied
+  # early read back as "static" and could never be overridden again. With no
+  # file, the -Dfallback-hostname names the device ROCKNIX until the real
+  # name lands as a transient hostname.
 
   # create folder for named tables support
     ln -sf /storage/.config/iproute2 ${INSTALL}/etc/iproute2

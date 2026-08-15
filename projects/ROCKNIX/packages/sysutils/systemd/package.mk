@@ -13,6 +13,7 @@ PKG_LONGDESC="A system and session manager for Linux, compatible with SysV and L
 PKG_BUILD_FLAGS="+lto"
 
 PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
+                       -Dfallback-hostname=ROCKNIX \
                        -Dsplit-bin=true \
                        -Dtty-gid=5 \
                        -Dtests=false \
