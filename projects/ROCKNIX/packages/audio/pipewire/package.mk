@@ -115,6 +115,10 @@ post_makeinstall_target() {
   cp ${PKG_DIR}/system.d/pipewire-pulse.service ${PKG_DIR}/system.d/pipewire-pulse.socket \
      ${INSTALL}/usr/lib/systemd/system
 
+  # pipewire-pulse (root, system bus) may own the PulseAudio discovery name
+  mkdir -p ${INSTALL}/usr/share/dbus-1/system.d
+    cp ${PKG_DIR}/config/pipewire-pulse-dbus.conf ${INSTALL}/usr/share/dbus-1/system.d
+
   # Latency floors, per device. Drop-ins are merged key by key onto the
   # shipped configuration, so only the values we care about are named.
   if [ -n "${PKG_PIPEWIRE_QUANTUM}" ]; then
