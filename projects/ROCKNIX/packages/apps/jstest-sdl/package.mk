@@ -6,7 +6,7 @@ PKG_NAME="jstest-sdl"
 PKG_VERSION="f4fdf6daae687d19b303d8ba8809ff5a68bc33a4"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/ROCKNIX/jstest-sdl"
-PKG_URL="${PKG_SITE}.git"
+PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain SDL2 ncurses"
 PKG_LONGDESC="Simple SDL joystick test application for the console"
 PKG_TOOLCHAIN="make"
@@ -18,5 +18,5 @@ pre_configure_target() {
 
 makeinstall_target(){
   mkdir -p ${INSTALL}/usr/bin
-  cp jstest-sdl ${INSTALL}/usr/bin
+    cp -a jstest-sdl ${INSTALL}/usr/bin
 }

@@ -3,21 +3,14 @@
 
 PKG_NAME="lowerdeck"
 PKG_VERSION="ab735114ab318a84e4d28c9c5f1b154e450a579a"
-PKG_GIT_CLONE_BRANCH="main"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/bulzipke/lowerdeck"
-PKG_URL="${PKG_SITE}.git"
+PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain Python3 SDL2 SDL2_image SDL2_ttf"
 PKG_LONGDESC="Touch UI for the second screen of dual-screen handhelds."
 PKG_TOOLCHAIN="manual"
 
-
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/share/lowerdeck
-  cp -a ${PKG_BUILD}/. ${INSTALL}/usr/share/lowerdeck/
-
-  rm -rf ${INSTALL}/usr/share/lowerdeck/devices
-  if [ -d "${PKG_BUILD}/devices/${DEVICE}" ]; then
-    cp -rf ${PKG_BUILD}/devices/${DEVICE}/. ${INSTALL}/usr/share/lowerdeck/
-  fi
+    cp -a ${PKG_BUILD}/* ${INSTALL}/usr/share/lowerdeck
 }

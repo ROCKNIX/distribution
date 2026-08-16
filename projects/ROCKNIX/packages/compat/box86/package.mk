@@ -2,10 +2,10 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="box86"
-PKG_VERSION="0579f8b9c47d87d700724f4cce559b06cbd2b0f5"
+PKG_VERSION="39d3ed203323000c11f47b780f7468fa24a7185d"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/ptitSeb/box86"
-PKG_URL="${PKG_SITE}.git"
+PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain ncurses SDL2 libXdmcp libXft libXcomposite cups libogg"
 PKG_LONGDESC="Box86 lets you run x86 Linux programs (such as games) on non-x86 Linux systems, like ARM."
 PKG_TOOLCHAIN="cmake"
@@ -62,7 +62,6 @@ makeinstall_target() {
 
       mkdir -p ${INSTALL}/etc/binfmt.d
       cp ${PKG_BUILD}/.${TARGET_NAME}/system/box86.conf ${INSTALL}/etc/binfmt.d
-
       ;;
     aarch64)
       mkdir -p ${INSTALL}/usr/share/box86/lib
@@ -76,7 +75,6 @@ makeinstall_target() {
 
       mkdir -p ${INSTALL}/etc/binfmt.d
         cp -vP ${ROOT}/build.${DISTRO}-${DEVICE}.arm/install_pkg/${PKG_NAME}-*/etc/binfmt.d/box86.conf ${INSTALL}/etc/binfmt.d
-
       ;;
   esac
 

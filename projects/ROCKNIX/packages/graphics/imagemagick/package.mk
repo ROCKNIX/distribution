@@ -3,10 +3,10 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="imagemagick"
-PKG_VERSION="f65eba252e3aa387bd99297a750a2ee250664f8c"
+PKG_VERSION="7.1.2-29"
 PKG_LICENSE="http://www.imagemagick.org/script/license.php"
 PKG_SITE="https://github.com/ImageMagick/ImageMagick"
-PKG_URL="${PKG_SITE}.git"
+PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain libpng libjpeg-turbo fontconfig libraw lcms2 libtool libxml2 libzip libwebp"
 PKG_LONGDESC="Software suite to create, edit, compose, or convert bitmap images"
 
@@ -33,5 +33,5 @@ pre_configure_target() {
 
 makeinstall_target() {
   make install DESTDIR=${INSTALL} ${PKG_MAKEINSTALL_OPTS_TARGET}
-  rm ${INSTALL}/usr/bin/*config
+  rm -f ${INSTALL}/usr/bin/*config
 }
