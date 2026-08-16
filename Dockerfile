@@ -32,6 +32,8 @@ RUN apt-get update \
 
 RUN if [ "$(uname -m)" = "aarch64" ]; then \
   apt-get install -y libc6-amd64-cross qemu-user-binfmt --no-install-recommends; \
+  mkdir -p /lib64; \
+  ln -sf /usr/x86_64-linux-gnu/lib/ld-linux-x86-64.so.2 /lib64/ld-linux-x86-64.so.2; \
  fi
 
 RUN rm -rf /var/lib/apt/lists/*
