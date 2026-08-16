@@ -34,8 +34,8 @@ case ${DEVICE} in
     # version. When we move past 7.2, remember to add 7.2 to patch dirs.
     ;;
   RK3326|AMD64)
-    PKG_VERSION="7.1.2"
-    PKG_SHA256="37198c93727be247c9fb5309bb86cd5e496c61e5322cd8c4eca9476bb0b5883f"
+    PKG_VERSION="7.1.9"
+    PKG_SHA256="3271a4ae3897b38352980f2b0975bae61bca81c644d186221c5ae928bcc072b0"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     PKG_PATCH_DIRS+=" 7.0"
     ;;
