@@ -25,9 +25,6 @@ case "${DEVICE}" in
   RK3588)
     DRIVER_VERSION="g13p0"
   ;;
-  RK3326) # RK3326 and RK3566
-    DRIVER_VERSION="g24p0"
-  ;;
 esac
 
 case "${DISPLAYSERVER}" in
