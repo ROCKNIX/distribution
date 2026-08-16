@@ -12,10 +12,17 @@ on:
       OWNER_LC:
         required: true
         type: string
+    outputs:
+      cache-hit:
+        description: "Whether the rust build tree was restored from cache"
+        value: ${{ jobs.build-aarch64-rust.outputs.cache-hit }}
 
 jobs:
   build-aarch64-rust:
     runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+      contents: read
     env:
       JAVA_HOME: /usr
       AUTOREMOVE: "yes"
@@ -23,36 +30,66 @@ jobs:
       DEVICE: ${{ inputs.DEVICE }}
       ARCH: aarch64
       DISABLE_COLORS: yes
+      PACKAGE_LIST: "cargo:host"
+      CACHE_REPO: ${{ github.repository_owner }}/${{ vars.CACHE_REPO || 'distribution-cache' }}
+    outputs:
+      cache-hit: ${{ steps.restore-rust.outputs.hit }}
     steps:
-      - name: Maximize build space
-        uses: justinthelaw/maximize-github-runner-space@v0.9.0
-        with:
-          skip-components: docker-engine
-
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
+      - name: Compute rust dependency hash
+        id: hash
+        uses: ./.github/actions/build-cache/compute-hash
+        with:
+          project: ${{ env.PROJECT }}
+          device: ${{ env.DEVICE }}
+          arch: ${{ env.ARCH }}
+          package-list: ${{ env.PACKAGE_LIST }}
+
+      # Try to restore the whole rust build tree from a previous run first.
+      # On a hit, Build and everything that only makes sense post-build is skipped.
+      - name: Retrieve rust build tree
+        id: restore-rust
+        uses: ./.github/actions/build-cache/download
+        with:
+          hash: ${{ steps.hash.outputs.hash }}
+          device: ${{ env.DEVICE }}
+          artifact-prefix: rust-aarch64
+          tag-name: rust
+          cache-repo: ${{ env.CACHE_REPO }}
+
+      - name: Maximize build space
+        if: steps.restore-rust.outputs.hit != 'true'
+        uses: justinthelaw/maximize-github-runner-space@v0.9.0
+        with:
+          skip-components: docker-engine
+
       - name: Download aarch64-toolchain (${{ inputs.DEVICE }})
+        if: steps.restore-rust.outputs.hit != 'true'
         uses: actions/download-artifact@v8
         with:
           name: aarch64-toolchain (${{ inputs.DEVICE }})
 
       - name: Extract artifact aarch64-toolchain
+        if: steps.restore-rust.outputs.hit != 'true'
         run: |
           tar --zstd -xf build.aarch64-toolchain.tar.zst
 
       - name: Clean up compressed aarch64-toolchain file
+        if: steps.restore-rust.outputs.hit != 'true'
         run: rm build.aarch64-toolchain.tar.zst
 
       - name: Build cargo:host
+        if: steps.restore-rust.outputs.hit != 'true'
         uses: corrupt952/actions-retry-command@v1.0.7
         with:
           command: |
             ./scripts/get_env > .env
             set -e
             { docker run --init --env-file .env --rm --user $(id -u):$(id -g) -v ${PWD}:${PWD} -w ${PWD} "ghcr.io/${{ inputs.OWNER_LC }}/rocknix-build:latest" \
-              bash -c "./scripts/build_mt cargo:host"; echo $? > docker_exit_code; } | tee output.log | grep -E  --color=never --line-buffered "^GET|^UNPACK|^BUILD|^INSTALL" || true
+              bash -c "./scripts/build_mt ${PACKAGE_LIST}"; echo $? > docker_exit_code; } | tee output.log | grep -E  --color=never --line-buffered "^GET|^UNPACK|^BUILD|^INSTALL" || true
             exit_code=$(<docker_exit_code)
             exit $exit_code
           max_attempts: 6
@@ -68,12 +105,36 @@ jobs:
             ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.threads/logs/
 
       - name: Print space
+        if: steps.restore-rust.outputs.hit != 'true'
         run: df -h
 
-      - name: Compress directory
+      - name: Tar and checksum rust build tree
+        id: tar-checksum
+        if: steps.restore-rust.outputs.hit != 'true'
+        uses: ./.github/actions/build-cache/tar-checksum
+        with:
+          hash: ${{ steps.hash.outputs.hash }}
+          device: ${{ env.DEVICE }}
+          artifact-prefix: rust-aarch64
+          paths: |
+            ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/
+
+      - name: Save rust build tree
+        if: steps.restore-rust.outputs.hit != 'true'
+        uses: ./.github/actions/build-cache/upload
+        with:
+          tar-glob: ${{ steps.tar-checksum.outputs.tar-glob }}
+          checksum-path: ${{ steps.tar-checksum.outputs.checksum-path }}
+          tag-name: rust
+          cache-repo: ${{ env.CACHE_REPO }}
+          token: ${{ secrets.GH_PAT }}
+
+      # Unconditional — runs whether we hit cache or built fresh, so downstream
+      # jobs in THIS workflow run always have something to download.
+      - name: Tar rust artifact for same-run consumers
+        if: always()
         run: |
-          tar --zstd --remove-files \
-          -cf build.aarch64-rust.tar.zst ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/
+          tar --zstd -cf build.aarch64-rust.tar.zst ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/
 
       - uses: actions/upload-artifact@v7
         with:
@@ -81,4 +142,3 @@ jobs:
           path: build.aarch64-rust.tar.zst
           compression-level: 0
           if-no-files-found: error
-

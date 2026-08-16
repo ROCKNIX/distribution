@@ -1,0 +1,50 @@
+name: Tar and checksum a build tree
+description: >
+  Compresses the given paths into a hash-named tar.zst, split into <2GB parts
+  (release assets cap at 2GB), with a sha256 manifest covering all parts.
+inputs:
+  hash:
+    required: true
+  device:
+    required: true
+  artifact-prefix:
+    required: true
+  paths:
+    required: true
+  exclude:
+    required: false
+    default: ""
+  split-size:
+    description: "Part size for splitting, e.g. '1900m'. Required — release assets cap at 2GB."
+    required: false
+    default: "1900m"
+outputs:
+  tar-glob:
+    description: Glob matching all tar parts, for passing to the upload action
+    value: ${{ steps.tar.outputs.tar-glob }}
+  checksum-path:
+    value: ${{ steps.tar.outputs.checksum-path }}
+runs:
+  using: composite
+  steps:
+    - id: tar
+      shell: bash
+      run: |
+        BASE="${{ inputs.artifact-prefix }}-${{ inputs.device }}-${{ inputs.hash }}"
+
+        PATHS=()
+        while IFS= read -r line; do
+          [ -n "$line" ] && PATHS+=("$line")
+        done <<< "${{ inputs.paths }}"
+
+        EXCLUDES=()
+        while IFS= read -r pattern; do
+          [ -n "$pattern" ] && EXCLUDES+=("--exclude=$pattern")
+        done <<< "${{ inputs.exclude }}"
+
+        rm -f "${BASE}.tar.zst.part."*
+        sudo tar --zstd "${EXCLUDES[@]}" -cf - ${PATHS[@]} | split -b "${{ inputs.split-size }}" - "${BASE}.tar.zst.part."
+        sha256sum "${BASE}.tar.zst.part."* > "${BASE}.sha256"
+
+        echo "tar-glob=${BASE}.tar.zst.part.*" >> "$GITHUB_OUTPUT"
+        echo "checksum-path=${BASE}.sha256" >> "$GITHUB_OUTPUT"

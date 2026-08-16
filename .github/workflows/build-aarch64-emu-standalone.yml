@@ -12,10 +12,17 @@ on:
       OWNER_LC:
         required: true
         type: string
+    outputs:
+      cache-hit:
+        description: "Whether the emu-standalone build tree was restored from cache"
+        value: ${{ jobs.build-aarch64-emu-standalone.outputs.cache-hit }}
 
 jobs:
   build-aarch64-emu-standalone:
     runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+      contents: read
     env:
       EMULATION_DEVICE: no
       ENABLE_32BIT: no
@@ -25,31 +32,57 @@ jobs:
       PROJECT: ${{ inputs.PROJECT }}
       DEVICE: ${{ inputs.DEVICE }}
       ARCH: aarch64
-      CACHE_KEY: ccache-aarch64-${{ inputs.DEVICE }}-emu-standalone-${{ github.sha }}
       DISABLE_COLORS: yes
       CCACHE_COMPILERCHECK: content
       CCACHE_COMPRESS: 1
       CCACHE_COMPRESSLEVEL: 6
       CCACHE_SLOPPINESS: pch_defines,time_macros,include_file_mtime,include_file_ctime
+      PACKAGE_LIST: "emulators"
+      CACHE_REPO: ${{ github.repository_owner }}/${{ vars.CACHE_REPO || 'distribution-cache' }}
+    outputs:
+      cache-hit: ${{ steps.restore-emu-standalone.outputs.hit }}
     steps:
-      - name: Maximize build space
-        uses: justinthelaw/maximize-github-runner-space@v0.9.0
-        with:
-          skip-components: docker-engine
-
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
+      - name: Compute emu-standalone dependency hash
+        id: hash
+        uses: ./.github/actions/build-cache/compute-hash
+        with:
+          project: ${{ env.PROJECT }}
+          device: ${{ env.DEVICE }}
+          arch: ${{ env.ARCH }}
+          package-list: ${{ env.PACKAGE_LIST }}
+
+      # Try to restore the whole emu-standalone build tree from a previous run first.
+      # On a hit, Build and everything that only makes sense post-build is skipped.
+      - name: Retrieve emu-standalone build tree
+        id: restore-emu-standalone
+        uses: ./.github/actions/build-cache/download
+        with:
+          hash: ${{ steps.hash.outputs.hash }}
+          device: ${{ env.DEVICE }}
+          artifact-prefix: emu-standalone-aarch64
+          tag-name: emu-standalone
+          cache-repo: ${{ env.CACHE_REPO }}
+
+      - name: Maximize build space
+        if: steps.restore-emu-standalone.outputs.hit != 'true'
+        uses: justinthelaw/maximize-github-runner-space@v0.9.0
+        with:
+          skip-components: docker-engine
+
       - name: Retrieve ccache
+        if: steps.restore-emu-standalone.outputs.hit != 'true'
         run: |
-          BASE="https://github.com/${{ github.repository_owner }}/${{ vars.CACHE_REPO || 'distribution-cache' }}/releases/download/ccache"
+          BASE="https://github.com/${{ env.CACHE_REPO }}/releases/download/ccache"
           PREFIX="ccache-aarch64-${{ inputs.DEVICE }}-emu-standalone.tar.part-"
           found_any=0
           for suffix in $(printf "%s\n" {a..z}{a..z}); do
             FILE="${PREFIX}${suffix}"
             URL="${BASE}/${FILE}"
-          
+
             echo "Trying $URL"
             if curl -L --fail --silent --show-error -o "$FILE" "$URL"; then
               echo "Downloaded $FILE"
@@ -68,23 +101,28 @@ jobs:
           rm -f ${PREFIX}* ccache.tar
 
       - name: Download aarch64-toolchain (${{ inputs.DEVICE }})
+        if: steps.restore-emu-standalone.outputs.hit != 'true'
         uses: actions/download-artifact@v8
         with:
           name: aarch64-toolchain (${{ inputs.DEVICE }})
 
       - name: Extract artifact aarch64-toolchain
+        if: steps.restore-emu-standalone.outputs.hit != 'true'
         run: |
           tar --zstd -xf build.aarch64-toolchain.tar.zst
 
       - name: Clean up compressed aarch64-toolchain file
+        if: steps.restore-emu-standalone.outputs.hit != 'true'
         run: rm build.aarch64-toolchain.tar.zst
 
       - name: Download aarch64 (${{ inputs.DEVICE }})
+        if: steps.restore-emu-standalone.outputs.hit != 'true'
         uses: actions/download-artifact@v8
         with:
           name: aarch64 (${{ inputs.DEVICE }})
 
       - name: Extract artifact aarch64
+        if: steps.restore-emu-standalone.outputs.hit != 'true'
         uses: corrupt952/actions-retry-command@v1.0.7
         with:
           command: |
@@ -93,14 +131,17 @@ jobs:
           retry_interval: 10
 
       - name: Clean up compressed aarch64 file
+        if: steps.restore-emu-standalone.outputs.hit != 'true'
         run: rm build.aarch64.tar
 
       - name: Download build aarch64 (${{ inputs.DEVICE }})
+        if: steps.restore-emu-standalone.outputs.hit != 'true'
         uses: actions/download-artifact@v8
         with:
           name: aarch64 build (${{ inputs.DEVICE }})
 
       - name: Extract artifact aarch64 build
+        if: steps.restore-emu-standalone.outputs.hit != 'true'
         uses: corrupt952/actions-retry-command@v1.0.7
         with:
           command: |
@@ -109,46 +150,54 @@ jobs:
           retry_interval: 10
 
       - name: Clean up compressed aarch64 file
+        if: steps.restore-emu-standalone.outputs.hit != 'true'
         run: rm build.build.aarch64.tar
 
       - name: Download aarch64-rust (${{ inputs.DEVICE }})
+        if: steps.restore-emu-standalone.outputs.hit != 'true'
         uses: actions/download-artifact@v8
         with:
           name: aarch64-rust (${{ inputs.DEVICE }})
 
       - name: Extract artifact aarch64-rust
+        if: steps.restore-emu-standalone.outputs.hit != 'true'
         run: |
           tar --zstd -xf build.aarch64-rust.tar.zst
 
       - name: Clean up compressed aarch64-rust file
+        if: steps.restore-emu-standalone.outputs.hit != 'true'
         run: rm build.aarch64-rust.tar.zst
 
       - name: Download qt6 (${{ inputs.DEVICE }})
-        if: ${{ inputs.DEVICE == 'RK3399' || inputs.DEVICE == 'RK3566' || inputs.DEVICE == 'RK3576' || inputs.DEVICE == 'RK3588' ||
-          inputs.DEVICE == 'S922X'  || inputs.DEVICE == 'SM8250' || inputs.DEVICE == 'SM8550' || inputs.DEVICE == 'SM8650' || inputs.DEVICE == 'SM8750' || inputs.DEVICE == 'SM6115' }}
+        if:
+          steps.restore-emu-standalone.outputs.hit != 'true' && (inputs.DEVICE == 'RK3399' || inputs.DEVICE == 'RK3566' || inputs.DEVICE == 'RK3576' || inputs.DEVICE == 'RK3588' ||
+          inputs.DEVICE == 'S922X'  || inputs.DEVICE == 'SM8250' || inputs.DEVICE == 'SM8550' || inputs.DEVICE == 'SM8650' || inputs.DEVICE == 'SM8750' || inputs.DEVICE == 'SM6115')
         uses: actions/download-artifact@v8
         with:
           name: qt6 (${{ inputs.DEVICE }})
 
       - name: Extract artifact qt6
-        if: ${{ inputs.DEVICE == 'RK3399' || inputs.DEVICE == 'RK3566' || inputs.DEVICE == 'RK3576' || inputs.DEVICE == 'RK3588' ||
-          inputs.DEVICE == 'S922X'  || inputs.DEVICE == 'SM8250' || inputs.DEVICE == 'SM8550' || inputs.DEVICE == 'SM8650' || inputs.DEVICE == 'SM8750' || inputs.DEVICE == 'SM6115' }}
+        if:
+          steps.restore-emu-standalone.outputs.hit != 'true' && (inputs.DEVICE == 'RK3399' || inputs.DEVICE == 'RK3566' || inputs.DEVICE == 'RK3576' || inputs.DEVICE == 'RK3588' ||
+          inputs.DEVICE == 'S922X'  || inputs.DEVICE == 'SM8250' || inputs.DEVICE == 'SM8550' || inputs.DEVICE == 'SM8650' || inputs.DEVICE == 'SM8750' || inputs.DEVICE == 'SM6115')
         run: |
           sudo tar --zstd -xf build.qt6.tar.zst --same-owner
 
       - name: Clean up compressed qt6 file
-        if: ${{ inputs.DEVICE == 'RK3399' || inputs.DEVICE == 'RK3566' || inputs.DEVICE == 'RK3576' || inputs.DEVICE == 'RK3588' ||
-          inputs.DEVICE == 'S922X'  || inputs.DEVICE == 'SM8250' || inputs.DEVICE == 'SM8550' || inputs.DEVICE == 'SM8650' || inputs.DEVICE == 'SM8750' || inputs.DEVICE == 'SM6115' }}
+        if:
+          steps.restore-emu-standalone.outputs.hit != 'true' && (inputs.DEVICE == 'RK3399' || inputs.DEVICE == 'RK3566' || inputs.DEVICE == 'RK3576' || inputs.DEVICE == 'RK3588' ||
+          inputs.DEVICE == 'S922X'  || inputs.DEVICE == 'SM8250' || inputs.DEVICE == 'SM8550' || inputs.DEVICE == 'SM8650' || inputs.DEVICE == 'SM8750' || inputs.DEVICE == 'SM6115')
         run: rm build.qt6.tar.zst
 
       - name: Build
+        if: steps.restore-emu-standalone.outputs.hit != 'true'
         uses: corrupt952/actions-retry-command@v1.0.7
         with:
           command: |
             ./scripts/get_env > .env
             set -e
             { docker run --init --env-file .env -e USER=docker --rm --user $(id -u):$(id -g) -v ${PWD}:${PWD} -w ${PWD} "ghcr.io/${{ inputs.OWNER_LC }}/rocknix-build:latest" \
-              bash -c "./scripts/build_mt emulators"; echo $? > docker_exit_code; } | tee output.log | grep -E  --color=never --line-buffered "^GET|^UNPACK|^BUILD|^INSTALL" || true
+              bash -c "./scripts/build_mt ${PACKAGE_LIST}"; echo $? > docker_exit_code; } | tee output.log | grep -E  --color=never --line-buffered "^GET|^UNPACK|^BUILD|^INSTALL" || true
             exit_code=$(<docker_exit_code)
             exit $exit_code
           max_attempts: 6
@@ -164,6 +213,7 @@ jobs:
             ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.threads/logs/
 
       - name: Clean ccache
+        if: steps.restore-emu-standalone.outputs.hit != 'true'
         run: |
           export CCACHE_DIR=./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.ccache
           ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -s -v
@@ -174,12 +224,14 @@ jobs:
           ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain/bin/ccache -z
 
       - name: Tar ccache
+        if: steps.restore-emu-standalone.outputs.hit != 'true'
         run: |
           tar --remove-files -cf - ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.ccache \
             | split -b 1900m - ccache-aarch64-${{ inputs.DEVICE }}-emu-standalone.tar.part-
 
       - name: Save ccache
-        uses: softprops/action-gh-release@v3 
+        if: steps.restore-emu-standalone.outputs.hit != 'true'
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ccache
           files: "ccache-aarch64-${{ inputs.DEVICE }}-emu-standalone.tar.part-*"
@@ -187,18 +239,46 @@ jobs:
           prerelease: true
           body: ccache
           token: ${{ secrets.GH_PAT }}
-          repository: ${{ github.repository_owner }}/${{ vars.CACHE_REPO || 'distribution-cache' }}
+          repository: ${{ env.CACHE_REPO }}
         continue-on-error: true
 
       - name: Print space
+        if: steps.restore-emu-standalone.outputs.hit != 'true'
         run: df -h
 
-      - name: Compress directory
+      - name: Tar and checksum emu-standalone build tree
+        id: tar-checksum
+        if: steps.restore-emu-standalone.outputs.hit != 'true'
+        uses: ./.github/actions/build-cache/tar-checksum
+        with:
+          hash: ${{ steps.hash.outputs.hash }}
+          device: ${{ env.DEVICE }}
+          artifact-prefix: emu-standalone-aarch64
+          paths: |
+            ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/install_*
+            ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.stamps
+            ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain
+
+      - name: Save emu-standalone build tree
+        if: steps.restore-emu-standalone.outputs.hit != 'true'
+        uses: ./.github/actions/build-cache/upload
+        with:
+          tar-glob: ${{ steps.tar-checksum.outputs.tar-glob }}
+          checksum-path: ${{ steps.tar-checksum.outputs.checksum-path }}
+          tag-name: emu-standalone
+          cache-repo: ${{ env.CACHE_REPO }}
+          token: ${{ secrets.GH_PAT }}
+
+      # Unconditional — runs whether we hit cache or built fresh, so downstream
+      # jobs in THIS workflow run always have something to download.
+      - name: Split emu-standalone artifact for same-run consumers
+        if: always()
         run: |
-          sudo tar --remove-files -cf - \
-          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/install_* \
-          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.stamps \
-          ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain  | split -b 2G -  build.emu-standalone.tar.part
+          rm -f build.emu-standalone.tar.part*
+          sudo tar -cf - \
+            ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/install_* \
+            ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.stamps \
+            ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/toolchain | split -b 2G - build.emu-standalone.tar.part
 
       - uses: actions/upload-artifact@v7
         with:

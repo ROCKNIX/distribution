@@ -1,0 +1,41 @@
+name: Compute build-tree dependency hash
+description: >
+  Resolves the full ROCKNIX/LibreELEC package dependency closure for the given
+  trigger packages (via tools/list_deps.sh) and hashes their package.mk/patch/conf
+  files plus stamp-watch paths. Requires the repo to already be checked out.
+inputs:
+  project:
+    required: true
+  device:
+    required: true
+  arch:
+    required: true
+    default: aarch64
+  package-list:
+    description: Space-separated trigger packages, e.g. "toolchain alsa-lib llvm:host"
+    required: true
+outputs:
+  hash:
+    description: sha256 content hash of the resolved package/watch-path closure
+    value: ${{ steps.hash.outputs.hash }}
+runs:
+  using: composite
+  steps:
+    - id: hash
+      shell: bash
+      run: |
+        export PROJECT="${{ inputs.project }}" DEVICE="${{ inputs.device }}" ARCH="${{ inputs.arch }}"
+        OUT=$(bash tools/list_deps.sh ${{ inputs.package-list }})
+        PKG_DIRS=$(echo "$OUT" | sed -n '1,/---WATCH---/p' | grep -v '^---WATCH---$')
+        WATCH_PATHS=$(echo "$OUT" | sed -n '/---WATCH---/,$p' | grep -v '^---WATCH---$')
+
+        HASH=$({
+          for d in $PKG_DIRS; do
+            find "$d" -type f \( -name 'package.mk' -o -name '*.patch' -o -name '*.conf' \)
+          done
+          for d in $WATCH_PATHS; do
+            find "$d" -type f
+          done
+        } | sort | xargs sha256sum | sha256sum | cut -d' ' -f1)
+
+        echo "hash=$HASH" >> "$GITHUB_OUTPUT"

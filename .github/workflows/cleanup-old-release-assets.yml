@@ -1,0 +1,59 @@
+name: Clean up old build-cache assets
+
+on:
+  schedule:
+    - cron: "0 3 * * *" # daily at 03:00 UTC
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Delete assets older than this many days"
+        required: false
+        default: "30"
+      dry_run:
+        description: "List what would be deleted without deleting"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-24.04
+    env:
+      CACHE_REPO: ${{ github.repository_owner }}/${{ vars.CACHE_REPO || 'distribution-cache' }}
+      GH_TOKEN: ${{ secrets.GH_PAT }}
+      DAYS: ${{ inputs.days || '30' }}
+      DRY_RUN: ${{ inputs.dry_run || 'false' }}
+    steps:
+      - name: Delete stale build-cache assets
+        run: |
+          set -euo pipefail
+          CUTOFF=$(date -d "-${DAYS} days" +%s)
+          echo "Deleting assets older than ${DAYS} days (before $(date -d "@$CUTOFF"))"
+          [ "$DRY_RUN" = "true" ] && echo "DRY RUN — no deletions will be made"
+
+          TAGS=(toolchain qt6 rust mame-lr emu-libretro emu-standalone)
+
+          for TAG in "${TAGS[@]}"; do
+            echo "== $TAG =="
+
+            RELEASE_ID=$(gh api "repos/${CACHE_REPO}/releases/tags/${TAG}" --jq '.id' 2>/dev/null) || {
+              echo "  no release for tag $TAG, skipping"
+              continue
+            }
+
+            gh api --paginate "repos/${CACHE_REPO}/releases/${RELEASE_ID}/assets" \
+              --jq '.[] | [.id, .name, .created_at] | @tsv' | \
+            while IFS=$'\t' read -r ASSET_ID NAME CREATED_AT; do
+              CREATED_EPOCH=$(date -d "$CREATED_AT" +%s)
+              if [ "$CREATED_EPOCH" -lt "$CUTOFF" ]; then
+                AGE_DAYS=$(( (CUTOFF - CREATED_EPOCH) / 86400 + DAYS ))
+                if [ "$DRY_RUN" = "true" ]; then
+                  echo "  would delete: $NAME (created $CREATED_AT, ~${AGE_DAYS}d old)"
+                else
+                  echo "  deleting: $NAME (created $CREATED_AT, ~${AGE_DAYS}d old)"
+                  gh api -X DELETE "repos/${CACHE_REPO}/releases/assets/${ASSET_ID}"
+                fi
+              fi
+            done
+          done
