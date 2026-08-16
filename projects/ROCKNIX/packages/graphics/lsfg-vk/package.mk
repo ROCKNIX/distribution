@@ -35,6 +35,11 @@ makeinstall_target() {
   cd ${PKG_BUILD}/.${TARGET_NAME}
     DESTDIR="${INSTALL}" ninja install
 
+  if ! grep -q '"enable_environment"' ${INSTALL}/usr/share/vulkan/implicit_layer.d/VkLayer_LSFGVK_frame_generation.json; then
+    sed -i '/"disable_environment"/i\    "enable_environment": { "LSFGVK_ENV": "1" },' \
+      ${INSTALL}/usr/share/vulkan/implicit_layer.d/VkLayer_LSFGVK_frame_generation.json
+  fi
+
   mkdir -p ${INSTALL}/usr/lib/pressure-vessel/overrides/share/vulkan/implicit_layer.d
     cp ${INSTALL}/usr/share/vulkan/implicit_layer.d/VkLayer_LSFGVK_frame_generation.json \
        ${INSTALL}/usr/lib/pressure-vessel/overrides/share/vulkan/implicit_layer.d
