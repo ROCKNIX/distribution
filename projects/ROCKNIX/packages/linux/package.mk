@@ -25,7 +25,7 @@ case ${DEVICE} in
     PKG_GIT_CLONE_BRANCH="rk-6.1-rkr3"
     PKG_PATCH_DIRS="${LINUX} ${DEVICE} default"
     ;;
-  H700|SM6115|SM8250|SM8550|SM8650|AMD64)
+  H700|RK3326|SM6115|SM8250|SM8550|SM8650|AMD64)
     PKG_VERSION="7.1.2"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     PKG_PATCH_DIRS+=" 7.0"
@@ -42,11 +42,6 @@ case ${DEVICE} in
     ;;
   S922X|RK3399)
     PKG_VERSION="6.18.44"
-    PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
-    ;;
-  *)
-    PKG_VERSION="6.12.79"
-    PKG_PATCH_DIRS+=" 6.12-LTS"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     ;;
 esac

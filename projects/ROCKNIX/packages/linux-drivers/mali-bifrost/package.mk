@@ -8,17 +8,8 @@ PKG_LONGDESC="mali-bifrost: Linux drivers for Mali Bifrost GPUs"
 PKG_TOOLCHAIN="manual"
 PKG_IS_KERNEL_PKG="yes"
 
-case ${DEVICE} in
-  RK3326)
-  PKG_VERSION="r52p0-00eac0"
-  PKG_URL="https://developer.arm.com/-/media/Files/downloads/mali-drivers/kernel/mali-valhall-gpu/VX504X08X-SW-99002-${PKG_VERSION}.tar"
-  PKG_PATCH_DIRS+=" 6.12-LTS"
-  ;;
-  *)
-  PKG_VERSION="39da994bb6fc8819e5e8c1873907dd21d17e53c1"
-  PKG_URL="http://github.com/rocknix/mali_kbase/archive/${PKG_VERSION}.tar.gz"
-  ;;
-esac
+PKG_VERSION="39da994bb6fc8819e5e8c1873907dd21d17e53c1"
+PKG_URL="http://github.com/rocknix/mali_kbase/archive/${PKG_VERSION}.tar.gz"
 
 make_target() {
   # S922X is an actual Amlogic Meson SoC — it requires the meson platform
