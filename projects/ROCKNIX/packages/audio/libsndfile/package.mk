@@ -5,6 +5,7 @@
 
 PKG_NAME="libsndfile"
 PKG_VERSION="e486f20"
+PKG_SHA256="1227bc78df8eece089e6b984ba7c32e74e210f146d2bac1b76bd218baaf35ce5"
 PKG_LICENSE="LGPL-2.1-or-later"
 PKG_SITE="https://libsndfile.github.io/libsndfile/"
 PKG_URL="https://github.com/libsndfile/libsndfile/archive/${PKG_VERSION}.tar.gz"
