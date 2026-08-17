@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2019-present Shanti Gilbert (https://github.com/shantigilbert)
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="mpv"
-PKG_VERSION="02254b92dd237f03aa0a151c2a68778c4ea848f9" # 0.38.0
+PKG_VERSION="41f6a645068483470267271e1d09966ca3b9f413" # 0.41.0
 PKG_LICENSE="GPLv2+"
 PKG_SITE="https://github.com/mpv-player/mpv"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
@@ -26,7 +27,10 @@ else
   PKG_MESON_OPTS_TARGET+=" -Dwayland=disabled"
 fi
 
-PKG_MESON_OPTS_TARGET+=" -Dsdl2=enabled"
+PKG_MESON_OPTS_TARGET+=" -Dsdl2-gamepad=enabled"
+
+# Vulkan has issues on S922X so disable
+[ "${DEVICE}" == "S922X" ] && PKG_MESON_OPTS_TARGET+=" -Dvulkan=disabled"
 
 post_makeinstall_target() {
   cp ${PKG_DIR}/scripts/* ${INSTALL}/usr/bin
