@@ -5,8 +5,9 @@
 PKG_NAME="mesa"
 PKG_LICENSE="OSS"
 PKG_SITE="http://www.mesa3d.org/"
-PKG_DEPENDS_HOST="toolchain:host expat:host glslang:host libclc:host libdrm:host llvm:host Mako:host \
-                  pyyaml:host spirv-tools:host"
+PKG_DEPENDS_HOST="toolchain:host llvm:host libclc:host spirv-tools:host libdrm:host \
+                  spirv-llvm-translator:host wayland-protocols:host libX11:host libXext:host \
+                  libXfixes:host libxshmfence:host libXxf86vm:host xrandr:host glslang:host"
 PKG_DEPENDS_TARGET="toolchain expat libdrm Mako:host pyyaml:host"
 PKG_LONGDESC="Mesa is a 3-D graphics library with an API."
 PKG_TOOLCHAIN="meson"
@@ -24,34 +25,24 @@ fi
 
 get_graphicdrivers
 
-# The host build exists only to produce the shader compilers the target build
-# consumes as -Dmesa-clc=system / -Dprecomp-compiler=system. It was being handed
-# the TARGET driver lists and never given -Dplatforms=, so it also built a full
-# gallium + vulkan stack and an X11/wayland platform layer for the build machine
-# - libGL.so and libEGL.so landed in the toolchain with no consumer, and dragged
-# in 15 X11 host packages. Track core's compiler-only option set instead.
-PKG_MESON_OPTS_HOST="-Dglvnd=disabled \
-                     -Dgallium-drivers= \
-                     -Dplatforms= \
-                     -Dglx=disabled \
-                     -Dvulkan-drivers=imagination \
-                     -Dshared-llvm=disabled \
-                     -Dtools=panfrost \
-                     -Dvideo-codecs= \
-                     -Dbuild-tests=false \
-                     -Denable-glcpp-tests=false \
-                     -Dmesa-clc=enabled \
-                     -Dinstall-mesa-clc=true \
-                     -Dprecomp-compiler=enabled \
-                     -Dinstall-precomp-compiler=true \
-                     -Dimagination-srv=false"
-
 pre_configure_host() {
+  PKG_MESON_OPTS_HOST+=" ${MESA_LIBS_PATH_OPTS} \
+                         -Dgallium-drivers=${GALLIUM_DRIVERS// /,} \
+                         -Dvulkan-drivers=${VULKAN_DRIVERS_MESA// /,}"
+
+  if listcontains "${GRAPHIC_DRIVERS}" "panfrost"; then
+    PKG_MESON_OPTS_HOST+=" -Dmesa-clc=enabled \
+                           -Dinstall-mesa-clc=true \
+                           -Dprecomp-compiler=enabled \
+                           -Dinstall-precomp-compiler=true"
+  fi
+
   if listcontains "${GRAPHIC_DRIVERS}" "freedreno"; then
     export HOST_CFLAGS="${HOST_CFLAGS} -fno-strict-aliasing"
     export HOST_CXXFLAGS="${HOST_CXXFLAGS} -fno-strict-aliasing"
     export CFLAGS="${HOST_CFLAGS}"
     export CXXFLAGS="${HOST_CXXFLAGS}"
+
   fi
 }
 
