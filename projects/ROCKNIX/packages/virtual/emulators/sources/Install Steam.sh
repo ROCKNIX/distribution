@@ -46,6 +46,10 @@ install_fex_config() {
 }
 
 ensure_fex_rootfs() {
+  if [ ! -f "${FEX_DATA}/RootFS/ArchLinux/graphics_provider.json" ]; then
+    rm -rf ${FEX_DATA}/RootFS/ArchLinux* || die "Failed to remove existing FEX RootFS."
+  fi
+
   if [ ! -f "${FEX_DATA}/RootFS/ArchLinux.sqsh" ]; then
     log_info "FEX needs to download rootfs before starting Steam. This may take a while..."
     FEXRootFSFetcher --distro-name=arch --distro-version=rolling -y -x || die "Failed to fetch FEX RootFS."
@@ -122,16 +126,12 @@ install_steam_client_arm64() {
   mkdir -p "${STEAM_DOT}"
   ln -sfn "${STEAM}" "${STEAM_DOT}/steam" || die "Failed to symlink STEAM_DOT/steam."
   ln -sfn "${STEAM}/linuxarm64" "${STEAM_DOT}/sdkarm64" || die "Failed to symlink STEAM_DOT/sdkarm64."
-
   mkdir -p "${STEAM}/compatibilitytools.d/"
-  ln -sfn "${PROTON_DIR}/" "${STEAM}/compatibilitytools.d/Proton11ARM" || die "Failed to symlink Proton11ARM."
-  cp -f "/usr/share/steam/compatibilitytool.vdf" "${STEAM}/compatibilitytools.d/" || die "Failed to copy compatibilitytool.vdf."
 }
 
 install_bundled_proton_files() {
   log_info "Installing bundled Proton files..."
   mkdir -p "${STEAM_DOT}" "${PROTON_DIR}/"
-  cp -f "/usr/share/steam/toolmanifest.vdf" "${PROTON_DIR}/" || die "Failed to copy toolmanifest.vdf."
   cp -f "/usr/share/steam/registry.vdf" "${STEAM_DOT}" || die "Failed to copy registry.vdf."
 }
 
@@ -167,10 +167,6 @@ install_proton_variant() {
   wget -c -t 5 -O "${tar_path}" "$url" || die "Failed to download ${display_name}."
   tar -xvf "${tar_path}" -C "${dest_dir}" || die "Failed to extract ${display_name}."
   rm -f "${tar_path}"
-
-  if [ -f "${manifest_file}" ]; then
-    sed -i '/require_tool_appid/d' "${manifest_file}" || die "Failed to patch toolmanifest.vdf."
-  fi
 }
 
 install_proton_cachyos() {
@@ -201,10 +197,8 @@ run_steam_first_launch() {
     swaymsg 'seat seat1 fallback true' || log_info "Swaymsg dual screen setup failed, ignoring."
   fi
 
-  # Allow FEX / Steam launch commands to fail cleanly if needed, though they shouldn't
-  FEX /usr/bin/steam -steamdeck -exitsteam || log_info "First FEX execution exited with an error."
-  FEX /usr/bin/steam -steamdeck -exitsteam || log_info "Second FEX execution exited with an error."
-  LD_LIBRARY_PATH="${STEAM}/lib/aarch64-linux-gnu/" "${CLIENT_DIR}/steam" -steamdeck -exitsteam || log_info "Native Steam execution exited with an error."
+  # Allow Steam launch commands to fail cleanly if needed, though they shouldn't
+  LD_LIBRARY_PATH="${STEAM}/lib/aarch64-linux-gnu/" "${CLIENT_DIR}/steam" -deckard -exitsteam || log_info "Native Steam execution exited with an error."
 
   if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
     swaymsg 'seat seat1 fallback false' || log_info "Swaymsg dual screen teardown failed, ignoring."

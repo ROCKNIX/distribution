@@ -30,7 +30,6 @@ steam_load_es_thunk_settings() {
   WAYLAND_LIB=${WAYLAND_LIB:-0}
   GL_LIB=$(get_setting gl_host_library "${PLATFORM}" "${GAME}")
   GL_LIB=${GL_LIB:-0}
-  GAMESCOPE=$(get_setting gamescope "${PLATFORM}" "${GAME}")
   LSFG_ENABLE=$(get_setting lsfg_enable "${PLATFORM}" "${GAME}")
   LSFG_ENABLE=${LSFG_ENABLE:-0}
   LSFG_MULTIPLIER=$(get_setting lsfg_multiplier "${PLATFORM}" "${GAME}")
@@ -104,7 +103,6 @@ steam_debug_print() {
   echo "VULKAN HOST LIB set to: ${VULKAN_LIB}"
   echo "WAYLAND HOST LIB set to: ${WAYLAND_LIB}"
   echo "GL HOST LIB set to: ${GL_LIB}"
-  echo "GAMESCOPE set to: ${GAMESCOPE}"
   echo "LSFG ENABLE set to: ${LSFG_ENABLE}"
   echo "LSFG MULTIPLIER set to: ${LSFG_MULTIPLIER}"
   echo "LSFG FLOW SCALE set to: ${LSFG_FLOW_SCALE}"
@@ -161,9 +159,7 @@ steam_arm64_binfmt_and_proton_prep() {
   echo 0 >/proc/sys/fs/binfmt_misc/x86
   echo 0 > /proc/sys/fs/binfmt_misc/box32
   echo 0 > /proc/sys/fs/binfmt_misc/box64
-
-  mkdir -p "/storage/.local/share/Steam/steamapps/common/Proton 11.0 (ARM64)/"
-  cp -f "/usr/share/steam/toolmanifest.vdf" "/storage/.local/share/Steam/steamapps/common/Proton 11.0 (ARM64)/"
+  rm "/storage/.local/share/Steam/compatibilitytools.d/compatibilitytool.vdf"
 }
 
 steam_launch_bigpicture() {
@@ -182,37 +178,27 @@ steam_launch_bigpicture() {
     game_uri="${exec_line#steam } -silent"
   fi
 
-  if [ "${GAMESCOPE}" != "0" ]; then
-    mkdir -p "$(dirname "$gamescope_mode_file")"
-    touch "$gamescope_mode_file"
-  fi
+  mkdir -p "$(dirname "$gamescope_mode_file")"
+  touch "$gamescope_mode_file"
   unset MESA_LOADER_DRIVER_OVERRIDE
   if [ "${STEAM_FLAVOR}" = "arm64" ]; then
-    SDL_VIDEODRIVER=x11 LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} /storage/.local/share/Steam/steamrtarm64/steam -steamdeck -exitsteam
-    if [ "${GAMESCOPE}" = "0" ]; then
-      SDL_VIDEODRIVER=x11 LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} /storage/.local/share/Steam/steamrtarm64/steam -nofriendsui -noverifyfiles -nobootstrapupdate -skipinitialbootstrap -norepairfiles -noshaders ${game_uri:+"$game_uri"}
-      exit 0
-    else
-      systemctl stop sway
-      GAMESCOPE_MODE_SAVE_FILE="${gamescope_mode_file}" GAMESCOPE_FAKE_OUTPUT_MM=508x286 env -u WAYLAND_DISPLAY LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} \
-        gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --mangoapp --backend drm --force-orientation "${force_orientation}" -e -- \
-        /storage/.local/share/Steam/steamrtarm64/steam -steamdeck -steamos3 -gamepadui -noverifyfiles -nobootstrapupdate -skipinitialbootstrap -norepairfiles -noshaders ${game_uri:+"$game_uri"}
-      systemctl start essway
-      exit 0
-    fi
+    export STEAM_COMPAT_GRAPHICS_PROVIDER=//storage/.local/share/fex-emu/RootFS/ArchLinux/graphics_provider.json
+    LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} gamescope -- /storage/.local/share/Steam/steamrtarm64/steam -deckard -steamos3 -exitsteam
+    systemctl stop sway
+    GAMESCOPE_MODE_SAVE_FILE="${gamescope_mode_file}" GAMESCOPE_FAKE_OUTPUT_MM=508x286 \
+    env -u WAYLAND_DISPLAY LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} \
+    gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --mangoapp --backend drm --force-orientation "${force_orientation}" -e -- \
+    /storage/.local/share/Steam/steamrtarm64/steam -steamdeck -steamos3 -gamepadui -noverifyfiles -nobootstrapupdate -skipinitialbootstrap -norepairfiles -noshaders ${game_uri:+"$game_uri"}
+    systemctl start essway
+    exit 0
   else
-    FEX /usr/bin/steam -steamdeck -exitsteam
-    if [ "${GAMESCOPE}" = "0" ]; then
-      ${EMUPERF} FEX /usr/bin/steam -nofriendsui -noverifyfiles -nobootstrapupdate -skipinitialbootstrap -norepairfiles -noshaders ${game_uri:+"$game_uri"}
-      exit 0
-    else
-      systemctl stop sway
-      GAMESCOPE_MODE_SAVE_FILE="${gamescope_mode_file}" GAMESCOPE_FAKE_OUTPUT_MM=508x286 env -u WAYLAND_DISPLAY ${EMUPERF} \
-        gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --mangoapp --backend drm --force-orientation "${force_orientation}" -e -- \
-        FEX /usr/bin/steam -steamdeck -steamos3 -gamepadui -noverifyfiles -nobootstrapupdate -skipinitialbootstrap -norepairfiles -noshaders ${game_uri:+"$game_uri"}
-      systemctl start essway
-      exit 0
-    fi
+    FEX /usr/bin/steam -exitsteam
+    systemctl stop sway
+    GAMESCOPE_MODE_SAVE_FILE="${gamescope_mode_file}" GAMESCOPE_FAKE_OUTPUT_MM=508x286 env -u WAYLAND_DISPLAY ${EMUPERF} \
+      gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --backend drm --force-orientation "${force_orientation}" -- \
+      FEX /usr/bin/steam -nobigpicture -noverifyfiles -nobootstrapupdate -skipinitialbootstrap -norepairfiles -noshaders ${game_uri:+"$game_uri"}
+    systemctl start essway
+    exit 0
   fi
 }
 

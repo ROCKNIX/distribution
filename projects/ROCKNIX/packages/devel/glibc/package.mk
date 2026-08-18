@@ -129,6 +129,27 @@ post_makeinstall_target() {
     cp ${PKG_DIR}/config/host.conf ${INSTALL}/etc
     cp ${PKG_DIR}/config/gai.conf ${INSTALL}/etc
     cp ${PKG_DIR}/config/ld.so.conf ${INSTALL}/etc
+
+  ln -sf /storage/.cache/ld.so.cache ${INSTALL}/etc/ld.so.cache
+  if [ -f ${INSTALL}/usr/bin/ldconfig ]; then
+    mv ${INSTALL}/usr/bin/ldconfig ${INSTALL}/usr/bin/ldconfig.real
+    cat >${INSTALL}/usr/bin/ldconfig <<'EOF'
+#!/bin/sh
+me=$0
+case "$me" in
+  /*) ;;
+  *) me=$(pwd)/$me ;;
+esac
+me=$(readlink -f "$me" 2>/dev/null) || me=$0
+REAL=${me%/*}/ldconfig.real
+[ -x "$REAL" ] || REAL=/usr/bin/ldconfig.real
+case " $* " in
+  *" -C "*|*" -C"*) exec "$REAL" -X "$@" ;;
+esac
+exec "$REAL" -X -C /storage/.cache/ld.so.cache "$@"
+EOF
+    chmod 755 ${INSTALL}/usr/bin/ldconfig
+  fi
 }
 
 configure_init() {
