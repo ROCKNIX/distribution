@@ -28,7 +28,7 @@ pre_configure_host() {
                          -DLSFGVK_BUILD_CLI=OFF \
                          -DLSFGVK_INSTALL_DEVELOP=OFF \
                          -DLSFGVK_INSTALL_XDG_FILES=OFF \
-                         -DLSFGVK_LAYER_LIBRARY_PATH=/usr/lib/liblsfg-vk-layer.so"
+                         -DLSFGVK_LAYER_LIBRARY_PATH=/usr/lib/liblsfg-vk-layer-x86.so"
 }
 
 makeinstall_target() {
@@ -45,7 +45,8 @@ makeinstall_target() {
        ${INSTALL}/usr/lib/pressure-vessel/overrides/share/vulkan/implicit_layer.d
 
   mkdir -p ${INSTALL}/usr/share/fex-emu
-    cp -a ${TOOLCHAIN}/lib/liblsfg-vk-layer.so ${INSTALL}/usr/share/fex-emu
+    cp -a ${TOOLCHAIN}/lib/liblsfg-vk-layer.so ${INSTALL}/usr/share/fex-emu/liblsfg-vk-layer-x86.so
+    cp -a ${TOOLCHAIN}/share/vulkan/implicit_layer.d/VkLayer_LSFGVK_frame_generation.json ${INSTALL}/usr/share/fex-emu/VkLayer_LSFGVK_frame_generation-x86.json
 }
 
 

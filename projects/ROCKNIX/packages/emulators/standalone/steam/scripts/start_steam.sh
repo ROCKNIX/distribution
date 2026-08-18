@@ -20,16 +20,6 @@ steam_prepare_storage_and_vdf() {
 steam_load_es_thunk_settings() {
   GAME=$(echo "${1}" | sed "s#^/.*/##")
   PLATFORM=$(echo "${2}" | sed "s#^/.*/##")
-  ASOUND_LIB=$(get_setting asound_host_library "${PLATFORM}" "${GAME}")
-  ASOUND_LIB=${ASOUND_LIB:-0}
-  DRM_LIB=$(get_setting drm_host_library "${PLATFORM}" "${GAME}")
-  DRM_LIB=${DRM_LIB:-0}
-  VULKAN_LIB=$(get_setting vulkan_host_library "${PLATFORM}" "${GAME}")
-  VULKAN_LIB=${VULKAN_LIB:-0}
-  WAYLAND_LIB=$(get_setting wayland_client_host_library "${PLATFORM}" "${GAME}")
-  WAYLAND_LIB=${WAYLAND_LIB:-0}
-  GL_LIB=$(get_setting gl_host_library "${PLATFORM}" "${GAME}")
-  GL_LIB=${GL_LIB:-0}
   LSFG_ENABLE=$(get_setting lsfg_enable "${PLATFORM}" "${GAME}")
   LSFG_ENABLE=${LSFG_ENABLE:-0}
   LSFG_MULTIPLIER=$(get_setting lsfg_multiplier "${PLATFORM}" "${GAME}")
@@ -62,26 +52,6 @@ steam_apply_lsfg_settings() {
   fi
 }
 
-steam_write_fex_config_json() {
-  local tmp
-  tmp=$(mktemp)
-  jq \
-    --arg asound "$ASOUND_LIB" \
-    --arg drm "$DRM_LIB" \
-    --arg vulkan "$VULKAN_LIB" \
-    --arg wayland "$WAYLAND_LIB" \
-    --arg gl "$GL_LIB" \
-    '.ThunksDB |= {
-      asound: ($asound | tonumber),
-      drm: ($drm | tonumber),
-      Vulkan: ($vulkan | tonumber),
-      WaylandClient: ($wayland | tonumber),
-      GL: ($gl | tonumber)
-    }' \
-    /storage/.config/fex-emu/Config.json >"$tmp" &&
-    mv "$tmp" /storage/.config/fex-emu/Config.json
-}
-
 steam_set_cpu_affinity() {
   local cores
   cores=$(get_setting "cores" "${PLATFORM}" "${GAME}")
@@ -98,11 +68,6 @@ steam_debug_print() {
   echo "GAME set to: ${GAME}"
   echo "PLATFORM set to: ${PLATFORM}"
   echo "CPU CORES set to: ${EMUPERF}"
-  echo "ASOUND HOST LIB set to: ${ASOUND_LIB}"
-  echo "DRM HOST LIB set to: ${DRM_LIB}"
-  echo "VULKAN HOST LIB set to: ${VULKAN_LIB}"
-  echo "WAYLAND HOST LIB set to: ${WAYLAND_LIB}"
-  echo "GL HOST LIB set to: ${GL_LIB}"
   echo "LSFG ENABLE set to: ${LSFG_ENABLE}"
   echo "LSFG MULTIPLIER set to: ${LSFG_MULTIPLIER}"
   echo "LSFG FLOW SCALE set to: ${LSFG_FLOW_SCALE}"
@@ -188,7 +153,7 @@ steam_launch_bigpicture() {
     GAMESCOPE_MODE_SAVE_FILE="${gamescope_mode_file}" GAMESCOPE_FAKE_OUTPUT_MM=508x286 \
     env -u WAYLAND_DISPLAY LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} \
     gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --mangoapp --backend drm --force-orientation "${force_orientation}" -e -- \
-    /storage/.local/share/Steam/steamrtarm64/steam -steamdeck -steamos3 -gamepadui -noverifyfiles -nobootstrapupdate -skipinitialbootstrap -norepairfiles -noshaders ${game_uri:+"$game_uri"}
+    /storage/.local/share/Steam/steamrtarm64/steam -deckard -steamos3 -gamepadui -noverifyfiles -nobootstrapupdate -skipinitialbootstrap -norepairfiles -noshaders ${game_uri:+"$game_uri"}
     systemctl start essway
     exit 0
   else
