@@ -55,9 +55,15 @@ ensure_fex_rootfs() {
     FEXRootFSFetcher --distro-name=arch --distro-version=rolling -y -x || die "Failed to fetch FEX RootFS."
   fi
   cp -f "/usr/share/fex-emu/libvulkan_freedreno.so" "${FEX_ARCH_USR_LIB}" || die "Failed to copy libvulkan_freedreno.so."
-  cp -f "/usr/share/fex-emu/liblsfg-vk-layer.so" "${FEX_ARCH_USR_LIB}"  || die "Failed to copy liblsfg-vk-layer.so."
+  cp -f "/usr/lib/liblsfg-vk-layer.so" "${FEX_ARCH_USR_LIB}"  || die "Failed to copy liblsfg-vk-layer.so."
+  cp -f "/usr/share/fex-emu/liblsfg-vk-layer-x86.so" "${FEX_ARCH_USR_LIB}"  || die "Failed to copy liblsfg-vk-layer-x86.so."
   cp -f "/usr/share/vulkan/implicit_layer.d/VkLayer_LSFGVK_frame_generation.json" \
      "${FEX_ARCH_ROOT}/usr/share/vulkan/implicit_layer.d/" || die "Failed to copy VkLayer_LSFGVK_frame_generation.json to ArchLinux rootfs."
+  cp -f "/usr/share/fex-emu/VkLayer_LSFGVK_frame_generation-x86.json" \
+     "${FEX_ARCH_ROOT}/usr/share/vulkan/implicit_layer.d/" || die "Failed to copy VkLayer_LSFGVK_frame_generation-x86.json to ArchLinux rootfs."
+  sed -i 's/"name": "VK_LAYER_LSFGVK_frame_generation"/"name": "VK_LAYER_LSFGVK_frame_generation_x86"/' "${FEX_ARCH_ROOT}/usr/share/vulkan/implicit_layer.d/VkLayer_LSFGVK_frame_generation-x86.json"
+  sed -i 's|"library_path": "/usr/lib/libvulkan_freedreno.so"|"library_path": "libvulkan_freedreno.so"|' \
+    ${FEX_ARCH_ROOT}/usr/share/vulkan/icd.d/freedreno_icd.x86_64.json
 }
 
 link_steam_library() {
