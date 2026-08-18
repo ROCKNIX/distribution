@@ -1,0 +1,65 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index f07566c044..d399552503 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -67,6 +67,7 @@ set(DOLPHIN_DEFAULT_UPDATE_TRACK "" CACHE STRING "Name of the default update tra
+ 
+ if(UNIX AND NOT APPLE AND NOT ANDROID)
+   option(ENABLE_X11 "Enables X11 Support" ON)
++  option(ENABLE_WAYLAND "Enables Wayland Support" OFF)
+ endif()
+ if(NOT WIN32 AND NOT APPLE AND NOT HAIKU)
+   option(ENABLE_EGL "Enables EGL OpenGL Interface" ON)
+@@ -514,6 +515,22 @@ if(ENABLE_X11)
+   endif()
+ endif()
+ 
++if(ENABLE_WAYLAND)
++  pkg_check_modules(WAYLAND wayland-client wayland-egl IMPORTED_TARGET)
++  pkg_check_modules(WAYLAND_SCANNER wayland-scanner)
++  pkg_check_modules(WAYLAND_PROTOCOLS wayland-protocols>=1.15)
++  if(WAYLAND_FOUND AND WAYLAND_SCANNER_FOUND AND WAYLAND_PROTOCOLS_FOUND)
++    # wayland-scanner is a build-time tool, so this must resolve to a host binary.
++    pkg_get_variable(WAYLAND_SCANNER_EXECUTABLE wayland-scanner wayland_scanner)
++    pkg_get_variable(WAYLAND_PROTOCOLS_DIR wayland-protocols pkgdatadir)
++    add_definitions(-DHAVE_WAYLAND=1)
++    message(STATUS "Wayland support enabled")
++  else()
++    set(WAYLAND_FOUND FALSE)
++    message(WARNING "Wayland support enabled but not found. This build will not support Wayland.")
++  endif()
++endif()
++
+ if(ENABLE_EGL)
+   find_package(EGL)
+   if(EGL_FOUND)
+diff --git a/Source/Core/Common/CMakeLists.txt b/Source/Core/Common/CMakeLists.txt
+index 894fd38128..065ecda662 100644
+--- a/Source/Core/Common/CMakeLists.txt
++++ b/Source/Core/Common/CMakeLists.txt
+@@ -298,11 +298,20 @@ if(ENABLE_EGL AND EGL_FOUND)
+       GL/GLInterface/EGLAndroid.cpp
+       GL/GLInterface/EGLAndroid.h
+     )
+-  elseif(ENABLE_X11 AND X11_FOUND)
+-    target_sources(common PRIVATE
+-      GL/GLInterface/EGLX11.cpp
+-      GL/GLInterface/EGLX11.h
+-    )
++  else()
++    if(ENABLE_X11 AND X11_FOUND)
++      target_sources(common PRIVATE
++        GL/GLInterface/EGLX11.cpp
++        GL/GLInterface/EGLX11.h
++      )
++    endif()
++    if(ENABLE_WAYLAND AND WAYLAND_FOUND)
++      target_sources(common PRIVATE
++        GL/GLInterface/EGLWayland.cpp
++        GL/GLInterface/EGLWayland.h
++      )
++      target_link_libraries(common PRIVATE PkgConfig::WAYLAND)
++    endif()
+   endif()
+   target_include_directories(common PRIVATE ${EGL_INCLUDE_DIRS})
+   target_link_libraries(common PUBLIC ${EGL_LIBRARIES})
