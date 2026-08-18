@@ -28,8 +28,6 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin/steamos-polkit-helpers
   install -m 0755 ${PKG_DIR}/scripts/steamos-polkit-helpers/steamos-set-timezone \
     ${INSTALL}/usr/bin/steamos-polkit-helpers/steamos-set-timezone
-  cp -rf ${PKG_DIR}/resources/compatibilitytool.vdf ${INSTALL}/usr/share/steam
-  cp -rf ${PKG_DIR}/resources/toolmanifest.vdf ${INSTALL}/usr/share/steam
   cp -rf ${PKG_DIR}/resources/registry.vdf ${INSTALL}/usr/share/steam
   mkdir -p ${INSTALL}/usr/lib/sysctl.d
   install -m 0644 ${PKG_DIR}/config/50-max-map-count.conf ${INSTALL}/usr/lib/sysctl.d/
