@@ -45,6 +45,11 @@ pre_configure_target() {
   done
 }
 
+  for _f in "${SYSROOT_PREFIX}"/usr/lib/*.o "${SYSROOT_PREFIX}"/usr/lib/*.a; do
+    [ -f "${_f}" ] || continue
+    "${TOOLCHAIN}/bin/llvm-strip" --strip-debug "${_f}" 2>/dev/null || true
+  done
+
 make_target() {
   mkdir -p "${PKG_BUILD}/.${TARGET_NAME}"
   cd "${PKG_BUILD}/.${TARGET_NAME}"
@@ -61,9 +66,9 @@ make_target() {
     -DCMAKE_CXX_COMPILER_AR="${TOOLCHAIN}/bin/llvm-ar"
     -DCMAKE_C_COMPILER_RANLIB="${TOOLCHAIN}/bin/llvm-ranlib"
     -DCMAKE_CXX_COMPILER_RANLIB="${TOOLCHAIN}/bin/llvm-ranlib"
-    -DCMAKE_EXE_LINKER_FLAGS_INIT="-fuse-ld=lld"
-    -DCMAKE_MODULE_LINKER_FLAGS_INIT="-fuse-ld=lld"
-    -DCMAKE_SHARED_LINKER_FLAGS_INIT="-fuse-ld=lld"
+    -DCMAKE_EXE_LINKER_FLAGS_INIT="-fuse-ld=lld -Wl,--strip-debug"
+    -DCMAKE_MODULE_LINKER_FLAGS_INIT="-fuse-ld=lld -Wl,--strip-debug"
+    -DCMAKE_SHARED_LINKER_FLAGS_INIT="-fuse-ld=lld -Wl,--strip-debug"
     -DCMAKE_SYSTEM_NAME=Linux
     -DCMAKE_SYSTEM_PROCESSOR=${TARGET_ARCH}
     -DCMAKE_C_COMPILER_TARGET=${TARGET_NAME}
