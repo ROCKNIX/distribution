@@ -15,8 +15,7 @@ PKG_PATCH_DIRS+=" ${DEVICE}"
 PKG_VERSION="26.1.6"
 PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
 
-if listcontains "${GRAPHIC_DRIVERS}" "panfrost" || \
-   listcontains "${GRAPHIC_DRIVERS}" "freedreno"; then
+if listcontains "${GRAPHIC_DRIVERS}" "panfrost"; then
   PKG_DEPENDS_TARGET+=" mesa:host"
 fi
 
@@ -32,14 +31,6 @@ pre_configure_host() {
                            -Dinstall-mesa-clc=true \
                            -Dprecomp-compiler=enabled \
                            -Dinstall-precomp-compiler=true"
-  fi
-
-  if listcontains "${GRAPHIC_DRIVERS}" "freedreno"; then
-    export HOST_CFLAGS="${HOST_CFLAGS} -fno-strict-aliasing"
-    export HOST_CXXFLAGS="${HOST_CXXFLAGS} -fno-strict-aliasing"
-    export CFLAGS="${HOST_CFLAGS}"
-    export CXXFLAGS="${HOST_CXXFLAGS}"
-
   fi
 }
 

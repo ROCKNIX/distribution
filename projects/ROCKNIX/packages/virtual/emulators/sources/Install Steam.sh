@@ -46,15 +46,14 @@ install_fex_config() {
 }
 
 ensure_fex_rootfs() {
-  if [ ! -f "${FEX_DATA}/RootFS/ArchLinux/graphics_provider.json" ]; then
-    rm -rf ${FEX_DATA}/RootFS/ArchLinux* || die "Failed to remove existing FEX RootFS."
-  fi
+  rm -rf ${FEX_DATA}/RootFS/ArchLinux* || die "Failed to remove existing FEX RootFS."
 
-  if [ ! -f "${FEX_DATA}/RootFS/ArchLinux.sqsh" ]; then
+  if [ ! -d "${FEX_DATA}/RootFS/ArchLinux" ]; then
     log_info "FEX needs to download rootfs before starting Steam. This may take a while..."
     FEXRootFSFetcher --distro-name=arch --distro-version=rolling -y -x || die "Failed to fetch FEX RootFS."
+    rm -rf ${FEX_DATA}/RootFS/ArchLinux.sqsh || die "Failed to remove FEX RootFS sqsh."
   fi
-  cp -f "/usr/share/fex-emu/libvulkan_freedreno.so" "${FEX_ARCH_USR_LIB}" || die "Failed to copy libvulkan_freedreno.so."
+
   cp -f "/usr/lib/liblsfg-vk-layer.so" "${FEX_ARCH_USR_LIB}"  || die "Failed to copy liblsfg-vk-layer.so."
   cp -f "/usr/share/fex-emu/liblsfg-vk-layer-x86.so" "${FEX_ARCH_USR_LIB}"  || die "Failed to copy liblsfg-vk-layer-x86.so."
   cp -f "/usr/share/vulkan/implicit_layer.d/VkLayer_LSFGVK_frame_generation.json" \
