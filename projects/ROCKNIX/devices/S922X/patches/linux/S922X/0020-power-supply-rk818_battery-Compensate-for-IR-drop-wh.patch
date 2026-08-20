@@ -1,0 +1,116 @@
+From a0368066f1d8a1fb80a575c02363db1a74c3d5a1 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sat, 25 Jul 2026 11:58:18 +0200
+Subject: [PATCH 20/34] power: supply: rk818_battery: Compensate for IR drop
+ when detecting an empty battery
+
+The gauge forced dsoc to 0 as soon as the average terminal voltage
+dropped below voltage-min-design. Under high load the terminal voltage
+of a battery with plenty of charge left dips below that threshold
+(e.g. OCV 3.7V with a ~300mV drop at 2A), making userspace shut the
+system down prematurely.
+
+Estimate OCV by compensating the terminal voltage for the drop on the
+battery internal resistance, like the coulomb counter underflow path
+already does, and require the estimate to stay below the threshold for
+several monitor cycles before reporting the battery as empty.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/power/supply/rk818_battery.c | 45 +++++++++++++++++++++-------
+ 1 file changed, 34 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/power/supply/rk818_battery.c b/drivers/power/supply/rk818_battery.c
+index d9b62d45f114..35eb8f2098af 100644
+--- a/drivers/power/supply/rk818_battery.c
++++ b/drivers/power/supply/rk818_battery.c
+@@ -156,6 +156,8 @@
+ 
+ /* SoC / capacity */
+ #define MIN_FCC				500	/* mAh */
++/* Monitor cycles the OCV estimate must stay below vmin to report empty */
++#define VMIN_EMPTY_CYCLES		3
+ 
+ /*
+  * Coulomb counter LSB denominator.
+@@ -267,6 +269,8 @@ struct rk818_battery {
+ 	int	fcc_mah;
+ 	int	rsoc;
+ 	int	dsoc;
++	/* Monitor cycles with the OCV estimate below the design minimum */
++	int	vmin_cycles;
+ 
+ 	int	chrg_status;
+ 	bool	is_charging;
+@@ -1034,6 +1038,17 @@ static void rk818_periodic_calib(struct rk818_battery *di)
+  * Main monitor work
+  * ------------------------------------------------------------------------- */
+ 
++/*
++ * Estimate OCV from the average terminal voltage by compensating for the
++ * drop on the battery internal resistance (discharge current is negative).
++ */
++static int rk818_est_ocv(struct rk818_battery *di)
++{
++	return di->voltage_avg_mv -
++	       (di->info->factory_internal_resistance_uohm / 1000) *
++	       di->current_avg_ma / 1000;
++}
++
+ /*
+  * rk818_update_soc - recompute rsoc from the coulomb counter and step dsoc
+  * toward it by at most DSOC_DELTA_MAX per call.
+@@ -1041,7 +1056,7 @@ static void rk818_periodic_calib(struct rk818_battery *di)
+  * Special cases:
+  *   - RK818_CHG_STS_TERMINATED: snap remain_cap to fcc so rsoc hits 100 cleanly.
+  *   - Valid relaxed voltage: re-anchor the coulomb counter to the OCV cap.
+- *   - Voltage below shutdown threshold: force dsoc to 0.
++ *   - OCV estimate below shutdown threshold: force dsoc to 0.
+  */
+ static void rk818_update_soc(struct rk818_battery *di)
+ {
+@@ -1070,12 +1085,23 @@ static void rk818_update_soc(struct rk818_battery *di)
+ 	di->remain_cap_mah = rk818_get_coulomb_cap(di);
+ 	di->rsoc = clamp(di->remain_cap_mah * 100 / DIV(di->fcc_mah), 0, 100);
+ 
+-	if (di->voltage_avg_mv < di->info->voltage_min_design_uv / 1000) {
+-		dev_dbg(di->dev,
+-			"voltage %d mV below shutdown threshold %u mV\n",
+-			di->voltage_avg_mv, di->info->voltage_min_design_uv / 1000);
+-		di->dsoc = 0;
+-		return;
++	/*
++	 * Report an empty battery only when the IR compensated OCV estimate
++	 * stays below the design minimum for several monitor cycles.  Bare
++	 * terminal voltage dips below the threshold under high load with
++	 * plenty of charge left in the battery.
++	 */
++	if (rk818_est_ocv(di) < di->info->voltage_min_design_uv / 1000) {
++		if (++di->vmin_cycles >= VMIN_EMPTY_CYCLES) {
++			dev_dbg(di->dev,
++				"OCV estimate %d mV below shutdown threshold %u mV\n",
++				rk818_est_ocv(di),
++				di->info->voltage_min_design_uv / 1000);
++			di->dsoc = 0;
++			return;
++		}
++	} else {
++		di->vmin_cycles = 0;
+ 	}
+ 
+ 	di->dsoc = clamp(di->dsoc +
+@@ -1350,10 +1376,7 @@ static void rk818_battery_work(struct work_struct *work)
+ 		 * Estimate from terminal voltage when the counter underflows.
+ 		 * Subtract the resistive drop to get a rough OCV.
+ 		 */
+-		int est_vol = di->voltage_avg_mv -
+-			      (di->info->factory_internal_resistance_uohm / 1000) *
+-			      di->current_avg_ma / 1000;
+-		int est_cap = max(0, vol_to_cap(di, est_vol));
++		int est_cap = max(0, vol_to_cap(di, rk818_est_ocv(di)));
+ 
+ 		dev_info(di->dev,
+ 			 "counter underflow, voltage estimate: %d mAh\n",
+-- 
+2.47.3
+

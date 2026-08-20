@@ -1,0 +1,82 @@
+From 8bbb3c2cbc8884d9c2f6c416912d0eb397716c33 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sat, 25 Jul 2026 11:44:47 +0200
+Subject: [PATCH 18/34] power: supply: rk818_battery: Scale charge current by
+ the sense resistor value
+
+CHRG_CUR_SEL steps are nominal values for the reference 20 mOhm sense
+resistor design. The CC loop regulates the voltage drop across
+SNSP/SNSN, so with the 10 mOhm resistor used on Pinephone Pro the
+actual charging current is 2x the nominal value. Confirmed by
+measurement on PPP against a lab PSU - 1.76A battery current with the
+register set to the 1A step. Vendor BSP scales by the same factor.
+
+Scale the requested and reported constant charge current by the sense
+resistor value and warn when the requested limit is below the hardware
+minimum (2A actual on 10 mOhm boards).
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/power/supply/rk818_battery.c | 31 ++++++++++++++++++++++++----
+ 1 file changed, 27 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/power/supply/rk818_battery.c b/drivers/power/supply/rk818_battery.c
+index 27da0b1d52e8..bc6d92890405 100644
+--- a/drivers/power/supply/rk818_battery.c
++++ b/drivers/power/supply/rk818_battery.c
+@@ -1764,17 +1764,40 @@ static const struct power_supply_desc rk818_usb_desc = {
+  * Charger / battery supply
+  * ========================================================================= */
+ 
++/*
++ * CHRG_CUR_SEL and CHRG_TERM_SEL step values assume the reference 20 mOhm
++ * sense resistor design.  The charger regulates the voltage drop across
++ * SNSP/SNSN, so on boards with a different sense resistor the actual
++ * current is scaled by 20 mOhm / R_sense (2x on the 10 mOhm Pinephone Pro
++ * design).
++ */
++static int rk818_charger_current_to_nominal(struct rk818_battery *di, int val)
++{
++	return val * (int)di->sense_resist_mohm / 20;
++}
++
++static int rk818_charger_nominal_to_current(struct rk818_battery *di, int val)
++{
++	return val * 20 / (int)di->sense_resist_mohm;
++}
++
+ static int rk818_charger_set_current_max(struct rk818_battery *di, int val)
+ {
+ 	unsigned reg;
+ 	int ret;
+ 
+-	if (val < 1000000)
++	val = rk818_charger_current_to_nominal(di, val);
++
++	if (val < 1000000) {
++		dev_warn(di->dev,
++			 "Requested charge current is below the hardware minimum of %d uA\n",
++			 rk818_charger_nominal_to_current(di, 1000000));
+ 		reg = 0;
+-	else if (val < 3000000)
++	} else if (val < 3000000) {
+ 		reg = (val - 1000000) / 200000;
+-	else
++	} else {
+ 		reg = 10;
++	}
+ 
+ 	ret = regmap_update_bits(di->regmap, RK818_CHRG_CTRL_REG1,
+ 				 RK818_CHRG_CTRL_REG1_CHRG_CUR_SEL_MASK,
+@@ -1801,7 +1824,7 @@ static int rk818_charger_get_current_max(struct rk818_battery *di, int *val)
+ 	reg &= RK818_CHRG_CTRL_REG1_CHRG_CUR_SEL_MASK;
+ 	reg >>= RK818_CHRG_CTRL_REG1_CHRG_CUR_SEL_OFFSET;
+ 
+-	*val = 1000000 + reg * 200000;
++	*val = rk818_charger_nominal_to_current(di, 1000000 + reg * 200000);
+ 
+ 	return 0;
+ }
+-- 
+2.47.3
+
