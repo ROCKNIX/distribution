@@ -1,0 +1,186 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# ROCKNIX AMD64 CPU/GPU frequency profiles
+
+CPU_BOOST="/sys/devices/system/cpu/cpufreq/boost"
+CPU_MAX_CACHE="/run/rocknix_cpu_max_freq"
+
+AMDGPU_DPM="/sys/class/drm/card0/device/power_dpm_force_performance_level"
+
+
+save_cpu_max() {
+    if [ ! -f "${CPU_MAX_CACHE}" ]; then
+        cat /sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq > "${CPU_MAX_CACHE}" 2>/dev/null
+    fi
+}
+
+
+restore_cpu_max() {
+    if [ -f "${CPU_MAX_CACHE}" ]; then
+        for POLICY in /sys/devices/system/cpu/cpufreq/policy*; do
+            [ -e "${POLICY}/scaling_max_freq" ] || continue
+            cat "${CPU_MAX_CACHE}" > "${POLICY}/scaling_max_freq" 2>/dev/null
+        done
+    fi
+}
+
+
+set_cpu_gov_amd64() {
+    for POLICY in /sys/devices/system/cpu/cpufreq/policy*; do
+        [ -e "${POLICY}/scaling_governor" ] || continue
+        echo "$1" > "${POLICY}/scaling_governor" 2>/dev/null
+    done
+}
+
+
+set_cpu_profile_amd64() {
+    save_cpu_max
+
+    case "$1" in
+
+        default|balanced)
+            [ -w "${CPU_BOOST}" ] && echo 0 > "${CPU_BOOST}"
+
+            set_cpu_gov_amd64 powersave
+
+            for POLICY in /sys/devices/system/cpu/cpufreq/policy*; do
+                [ -e "${POLICY}/scaling_max_freq" ] || continue
+
+                MAX=$(cat "${POLICY}/scaling_max_freq")
+                BALANCED=1800000
+
+                if [ "${MAX}" -lt "${BALANCED}" ]; then
+                    BALANCED="${MAX}"
+                fi
+
+                echo "${BALANCED}" > "${POLICY}/scaling_max_freq" 2>/dev/null
+            done
+            ;;
+
+
+        low)
+            [ -w "${CPU_BOOST}" ] && echo 0 > "${CPU_BOOST}"
+
+            set_cpu_gov_amd64 powersave
+
+            for POLICY in /sys/devices/system/cpu/cpufreq/policy*; do
+                [ -e "${POLICY}/scaling_min_freq" ] || continue
+
+                cat "${POLICY}/scaling_min_freq" > "${POLICY}/scaling_max_freq" 2>/dev/null
+            done
+            ;;
+
+
+        high)
+            [ -w "${CPU_BOOST}" ] && echo 0 > "${CPU_BOOST}"
+
+            set_cpu_gov_amd64 performance
+            restore_cpu_max
+            ;;
+
+        boost)
+             [ -w "${CPU_BOOST}" ] && echo 1 > "${CPU_BOOST}"
+
+             set_cpu_gov_amd64 performance
+
+             for POLICY in /sys/devices/system/cpu/cpufreq/policy*; do
+                 [ -e "${POLICY}/cpuinfo_max_freq" ] || continue
+                 [ -e "${POLICY}/scaling_max_freq" ] || continue
+
+                 cat "${POLICY}/cpuinfo_max_freq" > "${POLICY}/scaling_max_freq" 2>/dev/null
+
+             [ -w "${POLICY}/energy_performance_preference" ] &&
+             echo performance > "${POLICY}/energy_performance_preference"
+        done
+    esac
+}
+
+
+set_gpu_profile_amd64() {
+    [ -w "${AMDGPU_DPM}" ] || return
+
+    case "$1" in
+        low)
+            echo low > "${AMDGPU_DPM}"
+            ;;
+
+        high|boost)
+            echo high > "${AMDGPU_DPM}"
+            ;;
+
+        default|balanced)
+            echo auto > "${AMDGPU_DPM}"
+            ;;
+    esac
+}
+
+
+# Called by EmulationStation CPU selector
+
+performance() {
+    set_cpu_profile_amd64 high
+    set_gpu_profile_amd64 high
+}
+
+
+ondemand() {
+    set_cpu_profile_amd64 balanced
+    set_gpu_profile_amd64 balanced
+}
+
+
+schedutil() {
+    set_cpu_profile_amd64 balanced
+    set_gpu_profile_amd64 balanced
+}
+
+
+powersave() {
+    set_cpu_profile_amd64 low
+    set_gpu_profile_amd64 low
+}
+
+
+# GPU menu support
+
+get_gpu_performance_level() {
+    get_setting system.gpuperf
+}
+
+
+gpu_performance_level() {
+    case "$1" in
+        default|balanced|auto)
+            set_gpu_profile_amd64 balanced
+            ;;
+
+        low|powersave)
+            set_gpu_profile_amd64 low
+            ;;
+
+        high|performance)
+            set_gpu_profile_amd64 high
+            ;;
+
+        *)
+            set_gpu_profile_amd64 "$1"
+            ;;
+    esac
+}
+
+
+get_available_gpu_governors() {
+    echo default
+    echo low
+    echo balanced
+    echo high
+}
+
+
+get_available_cpu_governors() {
+    echo default
+    echo low
+    echo balanced
+    echo high
+    echo boost
+}
