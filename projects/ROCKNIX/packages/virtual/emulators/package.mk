@@ -8,6 +8,12 @@ PKG_SECTION="emulation" # Do not change to virtual or makeinstall_target will no
 PKG_LONGDESC="Emulation metapackage."
 PKG_TOOLCHAIN="manual"
 
+case ${ARCH} in
+  aarch64|x86_64)
+    PKG_DEPENDS_TARGET+=" bubblewrap ripgrep"
+    ;;
+esac
+
 PKG_EMUS="amiberry duckstation-sa flycast-sa gzdoom-sa hatarisa hypseus-singe moonlight mupen64plus-sa openbor pico-8   \
           ppsspp-sa scummvmsa touchhle-sa vice-sa wine yabasanshiro-sa"
 
@@ -1707,6 +1713,12 @@ makeinstall_target() {
   add_es_system moonlight
 
   ### Tools
+  case ${ARCH} in
+    aarch64|x86_64)
+      install_script "Install Codex.sh"
+      install_script "Start Codex.sh"
+      ;;
+  esac
   add_es_system tools
 
   ### Screenshots

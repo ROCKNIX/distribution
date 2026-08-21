@@ -6,13 +6,13 @@ PKG_VERSION="1.0"
 PKG_LICENSE="custom"
 PKG_SITE=""
 PKG_URL=""
-PKG_DEPENDS_TARGET="toolchain rclone commander"
+PKG_DEPENDS_TARGET="toolchain rclone commander qterminal"
 PKG_LONGDESC="OS Modules Package"
 PKG_TOOLCHAIN="manual"
 
 case ${DEVICE} in
   RK3399|RK3588|SM8250|SM8550|SM8650|SM8750|SM6115)
-    PKG_DEPENDS_TARGET+=" gamepadtester qterminal"
+    PKG_DEPENDS_TARGET+=" gamepadtester"
     ;;
 esac
 
