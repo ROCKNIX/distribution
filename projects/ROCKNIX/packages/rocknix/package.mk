@@ -100,4 +100,11 @@ EOF
   then
     enable_service hdmi-hotplug.path
   fi
+
+  ### Remove different arch freq functions
+  if [ "${TARGET_ARCH}" = "x86_64" ]; then
+    rm -rf ${INSTALL}/etc/profile.d/099-freqfunctions
+  else
+    rm -rf ${INSTALL}/etc/profile.d/100-amd64-freqfunctions
+  fi
 }
