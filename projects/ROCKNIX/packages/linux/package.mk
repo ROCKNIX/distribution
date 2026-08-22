@@ -39,7 +39,8 @@ case ${DEVICE} in
   SM8750)
     PKG_VERSION="7.2"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
-    PKG_PATCH_DIRS+=" 7.0"
+    # Note that the patch dir 7.2 is automatically added as it matches the
+    # version. When we move past 7.2, remember to add 7.2 to patch dirs.
     ;;
   RK3576|RK3566)
     PKG_VERSION="7.0.2"
@@ -56,10 +57,6 @@ case ${DEVICE} in
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     ;;
 esac
-
-# 7.2 reports the DualSense Edge Fn buttons and back paddles itself (ds->is_edge
-# + DS_EDGE_BUTTONS_*), so the backport is only applied to older kernels.
-[[ "${PKG_VERSION}" =~ ^(6\.|7\.[01][.-]) ]] && PKG_PATCH_DIRS+=" pre-7.2"
 
 PKG_KERNEL_CFG_FILE=$(kernel_config_path) || die
 
