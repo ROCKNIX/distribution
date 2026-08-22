@@ -91,6 +91,51 @@ steam_setup_environment() {
   [ -n "${TZ}" ] && export TZ
 }
 
+steam_touch_calibration_begin() {
+  local orientation="$1"
+  local model=""
+  local name_path
+
+  STEAM_TOUCH_EVENT=""
+  STEAM_TOUCH_RULE=""
+
+  [ "${orientation}" = "upsidedown" ] || return 0
+  if [ -r /proc/device-tree/model ]; then
+    model=$(tr -d '\000' </proc/device-tree/model)
+  fi
+  [ "${model}" = "AYANEO Pocket S Mini" ] || return 0
+
+  for name_path in /sys/class/input/event*/device/name; do
+    if [ "$(cat "${name_path}" 2>/dev/null)" = "Hynitron CST66xx Touchscreen" ]; then
+      STEAM_TOUCH_EVENT="${name_path%/device/name}"
+      break
+    fi
+  done
+  [ -n "${STEAM_TOUCH_EVENT}" ] || return 0
+
+  STEAM_TOUCH_RULE="/run/udev/rules.d/99-steam-touch-calibration.rules"
+  mkdir -p "${STEAM_TOUCH_RULE%/*}"
+  printf '%s\n' \
+    'ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Hynitron CST66xx Touchscreen", ENV{LIBINPUT_CALIBRATION_MATRIX}="-1 0 1 0 -1 1"' \
+    >"${STEAM_TOUCH_RULE}"
+  udevadm control --reload
+  udevadm trigger --action=change "${STEAM_TOUCH_EVENT}"
+  udevadm settle --timeout=3 >/dev/null 2>&1 || true
+}
+
+steam_touch_calibration_end() {
+  [ -n "${STEAM_TOUCH_RULE:-}" ] || return 0
+
+  rm -f "${STEAM_TOUCH_RULE}"
+  udevadm control --reload >/dev/null 2>&1 || true
+  if [ -n "${STEAM_TOUCH_EVENT:-}" ]; then
+    udevadm trigger --action=change "${STEAM_TOUCH_EVENT}" \
+      >/dev/null 2>&1 || true
+  fi
+  STEAM_TOUCH_RULE=""
+  STEAM_TOUCH_EVENT=""
+}
+
 steam_scope_reexec_if_needed() {
   if [ -z "$_STEAM_SCOPE" ]; then
     systemctl stop steam-bigpicture.scope 2>/dev/null || true
@@ -133,6 +178,8 @@ steam_launch_bigpicture() {
   local gamescope_mode_file="/storage/.config/gamescope/modes.cfg"
   if [ "${TRANSFORM}" = "90" ]; then
     force_orientation="right"
+  elif [ "${TRANSFORM}" = "180" ]; then
+    force_orientation="upsidedown"
   elif [ "${TRANSFORM}" = "270" ]; then
     force_orientation="left"
   fi
@@ -150,18 +197,26 @@ steam_launch_bigpicture() {
     export STEAM_COMPAT_GRAPHICS_PROVIDER=//storage/.local/share/fex-emu/RootFS/ArchLinux/graphics_provider.json
     LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} gamescope -- /storage/.local/share/Steam/steamrtarm64/steam -deckard -steamos3 -exitsteam
     systemctl stop sway
+    steam_touch_calibration_begin "${force_orientation}"
+    trap steam_touch_calibration_end EXIT
     GAMESCOPE_MODE_SAVE_FILE="${gamescope_mode_file}" GAMESCOPE_FAKE_OUTPUT_MM=508x286 \
     env -u WAYLAND_DISPLAY LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} \
     gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --mangoapp --backend drm --force-orientation "${force_orientation}" -e -- \
     /storage/.local/share/Steam/steamrtarm64/steam -deckard -steamos3 -gamepadui -noverifyfiles -nobootstrapupdate -skipinitialbootstrap -norepairfiles -noshaders ${game_uri:+"$game_uri"}
+    steam_touch_calibration_end
+    trap - EXIT
     systemctl start essway
     exit 0
   else
     FEX /usr/bin/steam -exitsteam
     systemctl stop sway
+    steam_touch_calibration_begin "${force_orientation}"
+    trap steam_touch_calibration_end EXIT
     GAMESCOPE_MODE_SAVE_FILE="${gamescope_mode_file}" GAMESCOPE_FAKE_OUTPUT_MM=508x286 env -u WAYLAND_DISPLAY ${EMUPERF} \
       gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --backend drm --force-orientation "${force_orientation}" -- \
       FEX /usr/bin/steam -nobigpicture -noverifyfiles -nobootstrapupdate -skipinitialbootstrap -norepairfiles -noshaders ${game_uri:+"$game_uri"}
+    steam_touch_calibration_end
+    trap - EXIT
     systemctl start essway
     exit 0
   fi
