@@ -1,0 +1,30 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026 ROCKNIX (https://github.com/ROCKNIX)
+
+# Clear a stale speaker mute left over from an interrupted suspend.
+#
+# The suspend-grace pre hook mutes the sink and relies on the post hook to
+# unmute, tracked by a flag in /run. wireplumber persists the mute per route
+# on disk, so a power loss while suspended keeps the mute across reboots
+# with the flag gone; the device then boots silent with no UI to recover it.
+# Those hooks are the only sink-mute writers on this platform, so any mute
+# found on the internal speaker at boot is stale by definition.
+#
+# The sink registers a few seconds after wireplumber starts; retry in the
+# background so autostart is not held up. Named sink, not @DEFAULT_SINK@:
+# booting docked makes the display sink the default, and the stale mute
+# still sits on the speaker.
+
+. /etc/profile
+
+(
+  for _ in $(seq 30); do
+    SINK=$(pactl list short sinks 2>/dev/null | awk '/Speaker/ {print $2; exit}')
+    if [ -n "${SINK}" ]; then
+      pactl set-sink-mute "${SINK}" false >/dev/null 2>&1
+      exit 0
+    fi
+    sleep 2
+  done
+) &
