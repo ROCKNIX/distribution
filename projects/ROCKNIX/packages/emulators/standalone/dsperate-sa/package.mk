@@ -18,7 +18,7 @@ makeinstall_target() {
     cp -a ${PKG_DIR}/scripts/* ${INSTALL}/usr/bin
 
   case ${DEVICE} in
-    RK3576|SM4450|SM6115|SM8250|SM8550|SM8650|SM8750) CONFIG="InputPlumber" ;;
+    RK3566|RK3576|SM4450|SM6115|SM8250|SM8550|SM8650|SM8750) CONFIG="InputPlumber" ;;
     *) CONFIG="${DEVICE}" ;;
   esac
 
