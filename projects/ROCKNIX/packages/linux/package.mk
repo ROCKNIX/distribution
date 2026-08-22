@@ -25,19 +25,14 @@ case ${DEVICE} in
     PKG_GIT_CLONE_BRANCH="rk-6.1-rkr3"
     PKG_PATCH_DIRS="${LINUX} ${DEVICE} default"
     ;;
-  H700|SM6115)
+  H700|SM6115|SM8750)
     PKG_VERSION="7.2"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     # Note that the patch dir 7.2 is automatically added as it matches the
     # version. When we move past 7.2, remember to add 7.2 to patch dirs.
-     ;;
+    ;;
   RK3326|SM8250|SM8550|SM8650|AMD64)
     PKG_VERSION="7.1.2"
-    PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
-    PKG_PATCH_DIRS+=" 7.0"
-    ;;
-  SM8750)
-    PKG_VERSION="7.1.3"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     PKG_PATCH_DIRS+=" 7.0"
     ;;
