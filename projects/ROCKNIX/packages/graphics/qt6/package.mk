@@ -79,8 +79,10 @@ pre_configure_host() {
                          -DQT_BUILD_TESTS=OFF \
                          -DQT_USE_CCACHE=ON \
                          -DQT_GENERATE_SBOM=OFF \
+                         -DQT_ALLOW_SYMLINK_IN_PATHS=ON \
                          -DQT_FEATURE_icu=OFF \
                          -DQT_FEATURE_wayland=ON \
+                         -DINPUT_opengl=no \
                          -DBUILD_WITH_PCH=OFF"
 }
 
@@ -118,6 +120,7 @@ pre_configure_target(){
                            -DQT_USE_CCACHE=ON \
                            -DQT_FEATURE_xcb=ON \
                            -DQT_GENERATE_SBOM=OFF \
+                           -DQT_ALLOW_SYMLINK_IN_PATHS=ON \
                            -DBUILD_WITH_PCH=OFF"
 }
 

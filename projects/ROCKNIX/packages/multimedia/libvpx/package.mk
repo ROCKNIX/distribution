@@ -3,10 +3,11 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="libvpx"
-PKG_VERSION="df655cf4fb6c2a23b964544acd015cc715752830" # 1.13.1
-PKG_LICENSE="BSD"
+PKG_VERSION="1.16.0"
+PKG_SHA256="7a479a3c66b9f5d5542a4c6a1b7d3768a983b1e5c14c60a9396edc9b649e015c"
+PKG_LICENSE="BSD-3-Clause"
 PKG_SITE="https://github.com/webmproject/libvpx"
-PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
+PKG_URL="${PKG_SITE}/archive/v${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_HOST="toolchain nasm:host"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="WebM VP8/VP9 Codec"
@@ -76,5 +77,9 @@ configure_target() {
 }
 
 post_makeinstall_target() {
-  ln -sf libvpx.so.8.0.1 ${INSTALL}/usr/lib/libvpx.so.6
+  # Steam expects the old libvpx.so.6 name; resolve the library this version
+  # actually installed instead of hardcoding a filename the soname bump removed
+  local vpx_lib=$(basename "$(readlink -f "${INSTALL}/usr/lib/libvpx.so")")
+  [ -f "${INSTALL}/usr/lib/${vpx_lib}" ] || die "libvpx: no installed library to point libvpx.so.6 at"
+  ln -sfv "${vpx_lib}" "${INSTALL}/usr/lib/libvpx.so.6"
 }

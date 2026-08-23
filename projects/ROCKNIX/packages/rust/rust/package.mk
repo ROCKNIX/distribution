@@ -1,10 +1,10 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2017-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="rust"
-PKG_VERSION="1.94.1"
-PKG_SHA256="4c142a625f12e3cdf716c68ae19f4f60d98ad1482627b08579b15838e95ad514"
-PKG_LICENSE="MIT"
+PKG_VERSION="1.97.1"
+PKG_SHA256="622c2b429c53cbfdc0dd3a51d03554e91cd63ebec1912c1f5709640cdfef1a9d"
+PKG_LICENSE="MIT OR Apache-2.0"
 PKG_SITE="https://www.rust-lang.org"
 PKG_URL="https://static.rust-lang.org/dist/rustc-${PKG_VERSION}-src.tar.gz"
 PKG_DEPENDS_HOST="toolchain llvm:host"
@@ -19,13 +19,14 @@ pre_configure_host() {
 }
 
 configure_host() {
-
+  # rust has no built-in *-rocknix-* targets, so supply them as custom
+  # target specs
   mkdir -p ${PKG_BUILD}/targets
 
   case "${TARGET_ARCH}" in
     "arm")
       # the arm target is special because we specify the subarch. ie armv8a
-      cp -a ${PKG_DIR}/targets/arm-libreelec-linux-gnueabihf.json ${PKG_BUILD}/targets/${TARGET_NAME}.json
+      cp -a ${PKG_DIR}/targets/arm-rocknix-linux-gnueabihf.json ${PKG_BUILD}/targets/${TARGET_NAME}.json
       ;;
     "aarch64" | "x86_64")
       cp -a ${PKG_DIR}/targets/${TARGET_NAME}.json ${PKG_BUILD}/targets/${TARGET_NAME}.json
@@ -33,7 +34,7 @@ configure_host() {
   esac
 
   cat >${PKG_BUILD}/config.toml  <<END
-change-id = 148671
+change-id = 154587
 
 [llvm]
 download-ci-llvm = false

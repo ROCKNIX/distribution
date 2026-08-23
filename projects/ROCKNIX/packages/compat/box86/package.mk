@@ -10,6 +10,11 @@ PKG_DEPENDS_TARGET="toolchain ncurses SDL2 libXdmcp libXft libXcomposite cups li
 PKG_LONGDESC="Box86 lets you run x86 Linux programs (such as games) on non-x86 Linux systems, like ARM."
 PKG_TOOLCHAIN="cmake"
 
+# mold lacks -Ttext-segment, which box86 needs to stay out of guest space.
+# gold is what -mold alone falls through to, and it cannot read armv9a
+# objects from gcc 16 ("unknown CPU architecture" on crtbegin.o). Leaves bfd.
+PKG_BUILD_FLAGS="-mold -gold"
+
 PKG_CMAKE_OPTS_TARGET="-DCMAKE_BUILD_TYPE=Release \
                        -DARM_DYNAREC=On \
                        -DCMAKE_C_FLAGS=\"-w\""
@@ -62,24 +67,26 @@ makeinstall_target() {
 
       mkdir -p ${INSTALL}/etc/binfmt.d
       cp ${PKG_BUILD}/.${TARGET_NAME}/system/box86.conf ${INSTALL}/etc/binfmt.d
+
+      mkdir -p ${INSTALL}/usr/config
+        cp ${PKG_BUILD}/system/box86.box86rc ${INSTALL}/usr/config/box86.box86rc
+
       ;;
     aarch64)
       mkdir -p ${INSTALL}/usr/share/box86/lib
-        cp -vP ${ROOT}/build.${DISTRO}-${DEVICE}.arm/install_pkg/${PKG_NAME}-*/usr/share/box86/lib/* ${INSTALL}/usr/share/box86/lib
+        cp -vP ${BUILD_ROOT}/build.${DISTRO}-${DEVICE}.arm/install_pkg/${PKG_NAME}-*/usr/share/box86/lib/* ${INSTALL}/usr/share/box86/lib
 
       mkdir -p ${INSTALL}/usr/bin
-        cp -vP ${ROOT}/build.${DISTRO}-${DEVICE}.arm/install_pkg/${PKG_NAME}-*/usr/bin/* ${INSTALL}/usr/bin
+        cp -vP ${BUILD_ROOT}/build.${DISTRO}-${DEVICE}.arm/install_pkg/${PKG_NAME}-*/usr/bin/* ${INSTALL}/usr/bin
 
       mkdir -p ${INSTALL}/usr/config
-        cp -vP ${ROOT}/build.${DISTRO}-${DEVICE}.arm/install_pkg/${PKG_NAME}-*/usr/config/box86.box86rc ${INSTALL}/usr/config/box86.box86rc
+        cp -vP ${BUILD_ROOT}/build.${DISTRO}-${DEVICE}.arm/install_pkg/${PKG_NAME}-*/usr/config/box86.box86rc ${INSTALL}/usr/config/box86.box86rc
 
       mkdir -p ${INSTALL}/etc/binfmt.d
-        cp -vP ${ROOT}/build.${DISTRO}-${DEVICE}.arm/install_pkg/${PKG_NAME}-*/etc/binfmt.d/box86.conf ${INSTALL}/etc/binfmt.d
+        cp -vP ${BUILD_ROOT}/build.${DISTRO}-${DEVICE}.arm/install_pkg/${PKG_NAME}-*/etc/binfmt.d/box86.conf ${INSTALL}/etc/binfmt.d
+
       ;;
   esac
-
-  mkdir -p ${INSTALL}/usr/config
-    cp ${ROOT}/build.${DISTRO}-${DEVICE}.arm/build/${PKG_NAME}-*/system/box86.box86rc ${INSTALL}/usr/config/box86.box86rc
 
   mkdir -p ${INSTALL}/etc
     ln -sf /storage/.config/box86.box86rc ${INSTALL}/etc/box86.box86rc

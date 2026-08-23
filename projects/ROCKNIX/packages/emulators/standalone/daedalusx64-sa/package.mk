@@ -29,7 +29,7 @@ pre_configure_target() {
 makeinstall_target() {
   if [ "${ARCH}" = "aarch64" ]; then
     mkdir -p ${INSTALL}/usr
-    cp -r ${ROOT}/build.${DISTRO}-${DEVICE}.arm/install_pkg/daedalusx64-sa-${PKG_VERSION}/usr/* ${INSTALL}/usr/
+    cp -r ${BUILD_ROOT}/build.${DISTRO}-${DEVICE}.arm/install_pkg/daedalusx64-sa-${PKG_VERSION}/usr/* ${INSTALL}/usr/
     chmod +x ${INSTALL}/usr/bin/*
   else
     mkdir -p ${INSTALL}/usr/bin

@@ -73,6 +73,10 @@ make_target() {
   export HOME=${PKG_BUILD}/nix
   curl -L https://nixos.org/nix/install | sh -s -- --no-daemon
   . "${HOME}/.nix-profile/etc/profile.d/nix.sh"
+  # Pin nixpkgs: the thunk toolchain and x86 dev rootfs come from
+  # <nixpkgs>; unpinned, they roll with the channel on every build and
+  # header drift breaks the generated thunks (nixos-unstable 2026-08-05)
+  export NIX_PATH="nixpkgs=https://github.com/NixOS/nixpkgs/archive/ee67c8504dafc87ba63e862d76558384d10e1e8c.tar.gz"
 
   mkdir -p "${PKG_BUILD}/.${TARGET_NAME}"
   cd "${PKG_BUILD}/.${TARGET_NAME}"
@@ -85,6 +89,18 @@ make_target() {
       TUNE_CPU="${TARGET_CPU##*.}"
       ;;
   esac
+
+  # thunkgen host-parse system headers. --sysroot instead of -isystem so the
+  # guest parse's own --sysroot (appended later, last one wins) overrides it;
+  # libstdc++ passed explicitly since it is not discoverable under a sysroot.
+  local cxxdir
+  cxxdir=$(ls -d "${TOOLCHAIN}/${TARGET_NAME}/include/c++/"* | sort -V | tail -n1)
+  # --target pins the host parse to the device triple: on an aarch64 build
+  # host clang's default target already matches, but on an x86_64 build host
+  # the host parse otherwise reads the aarch64 sysroot as x86_64 - SVE types
+  # in bits/math-vector.h are unknown and every host_layout is generated with
+  # the wrong ABI, which the .inl compiles then reject.
+  export THUNKGEN_EXTRA_FLAGS="--target=${TARGET_NAME} --sysroot ${SYSROOT_PREFIX} -isystem ${cxxdir} -isystem ${cxxdir}/${TARGET_NAME}"
 
   local -a tgt_opts=(
     -G Ninja
@@ -107,6 +123,10 @@ make_target() {
     -DTUNE_CPU="${TUNE_CPU}"
   )
   cmake "${tgt_opts[@]}"
+  # aarch64 build host: x86_64 thunk descriptor needs the cross prefix, not bare clang
+  if [ "$(uname -m)" = "aarch64" ]; then
+    sed -i 's#/bin/clang)#/bin/x86_64-unknown-linux-gnu-clang)#; s#/bin/clang++)#/bin/x86_64-unknown-linux-gnu-clang++)#' "${PKG_BUILD}/Data/nix/LibraryForwarding/shell.nix"
+  fi
   bash "${PKG_BUILD}/Data/nix/cmake_enable_libfwd.sh"
   ninja
 }

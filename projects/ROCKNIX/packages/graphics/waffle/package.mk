@@ -2,7 +2,7 @@
 # Copyright (C) 2024-present ROCKNIX (https://rocknix.org)
 PKG_NAME="waffle"
 PKG_LICENSE="BSD"
-PKG_VERSION="5f1f48287e806544d745e9a8f5aed47234c61292"
+PKG_VERSION="3b20e4d7bccc5471fe54db21e1b75022fa47d7d8"
 PKG_SITE="https://waffle.freedesktop.org/"
 PKG_URL="https://gitlab.freedesktop.org/mesa/waffle/-/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain wayland mesa Python3"
@@ -15,3 +15,14 @@ PKG_MESON_OPTS_TARGET+=" -Dwayland=enabled \
                        -Dsurfaceless_egl=enabled \
                        -Dglx=enabled \
                        -Dbuild-examples=false"
+
+pre_configure_target() {
+  # waffle is the only meson package we build that uses import('cmake').
+  # That module wants the cmake root, which meson finds by running
+  # "cmake --system-information". setup_toolchain exports CMAKE as a whole
+  # command line for the cmake toolchain - binary plus -DCMAKE_TOOLCHAIN_FILE
+  # and -DCMAKE_INSTALL_PREFIX - and meson reads $CMAKE as the program, so
+  # the probe fails with "unable to determine cmake root". Drop it and let
+  # meson find the bare binary on PATH.
+  unset CMAKE
+}

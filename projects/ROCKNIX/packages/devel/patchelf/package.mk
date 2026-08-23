@@ -1,14 +1,13 @@
-# SPDX-License-Identifier: GPL-2.0-only
-# Copyright (C) 2023-present Team LibreELEC (https://libreelec.tv)
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
-PKG_NAME="patchelf"
-PKG_VERSION="0.18.0"
-PKG_SHA256="1952b2a782ba576279c211ee942e341748fdb44997f704dd53def46cd055470b"
-PKG_LICENSE="GPL-3.0-or-later"
-PKG_SITE="https://github.com/NixOS/patchelf"
-PKG_URL="https://github.com/NixOS/patchelf/releases/download/${PKG_VERSION}/patchelf-${PKG_VERSION}.tar.bz2"
-PKG_DEPENDS_HOST="autotools:host"
+. ${ROOT}/packages/devel/patchelf/package.mk
+
+# Core declares no PKG_DEPENDS_TARGET, so nothing orders the target build
+# after the cross toolchain. Nothing depends on patchelf:target either -
+# every reference in the tree is patchelf:host, and the target build exists
+# only because patchelf ships in the image - so there is no dependency edge
+# to sequence it. On a fresh tree it gets scheduled before gcc is built and
+# dies with "C compiler cannot create executables". Name the toolchain the
+# way every other target package does.
 PKG_DEPENDS_TARGET="toolchain"
-PKG_LONGDESC="A small utility to modify the dynamic linker and RPATH of ELF executables"
-PKG_TOOLCHAIN="autotools"
-PKG_BUILD_FLAGS="-cfg-libs:host"

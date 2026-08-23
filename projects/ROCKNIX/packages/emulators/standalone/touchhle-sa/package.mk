@@ -6,18 +6,9 @@ PKG_LICENSE="MPLv2"
 PKG_VERSION="3c5850585ba55615b17a58c58331b6d6f52d4a9d"
 PKG_SITE="https://github.com/touchHLE/touchHLE"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain cargo:host cargo rust SDL2 sndio libsamplerate"
+PKG_DEPENDS_TARGET="toolchain cargo:host cargo rust SDL2 openal-soft sndio libsamplerate"
 PKG_LONGDESC="touchHLE: high-level emulator for iPhone OS apps"
 PKG_TOOLCHAIN="manual"
-
-post_unpack() {
-  cd ${PKG_BUILD}/vendor/openal-soft
-  sed -i 's/false,/AL_FALSE_ENUM,/g' alc/backends/sdl2.c 2>/dev/null || true
-  sed -i 's/enum CompatFlags : uint8_t/enum CompatFlags/g' alc/alu.h
-  sed -i 's/enum class UhjQualityType : uint8_t/enum UhjQualityType/g' core/uhjfilter.h
- # Disable JACK backend (avoids needing jack/jack.h in sysroot)
-  sed -i '/build.define("ALSOFT_EXAMPLES", "OFF");/a\  build.define("ALSOFT_BACKEND_JACK", "OFF");' ${PKG_BUILD}/src/audio/openal_soft_wrapper/build.rs
-}
 
 make_target() {
   unset CMAKE
@@ -25,9 +16,18 @@ make_target() {
   export CMAKE_POLICY_VERSION_MINIMUM="3.5"
   export CFLAGS="${CFLAGS} -std=gnu11"
 
-  export CMAKE_ARGS="${CMAKE_ARGS} -DALSOFT_BACKEND_JACK=OFF"
+  # rustc 1.95 destabilised custom target JSON specs (rust-lang/rust#150151):
+  # loading one now needs -Zunstable-options, and -Z needs a nightly or
+  # bootstrapped compiler. Our TARGET_NAME is a custom triple, so this is
+  # unavoidable - the kernel does the same for its own custom targets.
+  export RUSTC_BOOTSTRAP=1
+  export RUSTFLAGS="${RUSTFLAGS} -Zunstable-options"
 
+  # touchHLE defaults to the "static" feature, which bundles its own SDL2 and
+  # openal-soft. The vendored SDL2 predates pipewire 1.6 and no longer builds,
+  # and we already ship both libraries, so link the system ones instead.
   cargo build \
+    --no-default-features \
     --target ${TARGET_NAME} \
     --release
 }

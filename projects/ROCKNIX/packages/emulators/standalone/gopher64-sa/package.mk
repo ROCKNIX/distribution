@@ -40,6 +40,13 @@ make_target() {
   "
   export SKIA_BINARIES_URL="https://github.com/rust-skia/skia-binaries/releases/download/0.90.0/skia-binaries-da4579b39b75fa2187c5-aarch64-unknown-linux-gnu-gl-pdf-textlayout-vulkan.tar.gz"
 
+  # rustc 1.95 destabilised custom target JSON specs (rust-lang/rust#150151):
+  # loading one now needs -Zunstable-options, and -Z needs a nightly or
+  # bootstrapped compiler. Our TARGET_NAME is a custom triple, so this is
+  # unavoidable - the kernel does the same for its own custom targets.
+  export RUSTC_BOOTSTRAP=1
+  export RUSTFLAGS="${RUSTFLAGS} -Zunstable-options"
+
   cargo build \
     --target ${TARGET_NAME} \
     --no-default-features \

@@ -59,11 +59,17 @@ post_unpack() {
 }
 
 pre_configure_target() {
-  PKG_CMAKE_OPTS_TARGET+=" -DCMAKE_BUILD_TYPE=Release \
+  # The vendored mbedtls defaults MBEDTLS_FATAL_WARNINGS to ON, and that is
+  # the only thing adding -Werror anywhere in this tree. gcc 16 then stops
+  # on a dead local in its bignum.c. Warnings-as-errors is for mbedtls' own
+  # CI, not for a consumer building a pinned copy of it.
+  PKG_CMAKE_OPTS_TARGET+=" -DMBEDTLS_FATAL_WARNINGS=OFF \
+                           -DCMAKE_BUILD_TYPE=Release \
                            -DDISTRIBUTOR="ROCKNIX" \
                            -DENABLE_NOGUI=ON \
                            -DENABLE_EVDEV=ON \
                            -DENABLE_SDL=ON \
+                           -DSDL_PIPEWIRE=OFF \
                            -DUSE_DISCORD_PRESENCE=OFF \
                            -DBUILD_SHARED_LIBS=OFF \
                            -DLINUX_LOCAL_DEV=OFF \

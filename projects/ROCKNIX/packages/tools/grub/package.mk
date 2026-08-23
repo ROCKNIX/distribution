@@ -2,12 +2,18 @@
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="grub"
-PKG_VERSION="2.14-rc1"
+PKG_VERSION="2.14"
+PKG_SHA256="6dcd64c4c5163870dd4cd89d460d1aa8f59b150e721a1e2b493f88433bc79ca9"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://www.gnu.org/software/grub/index.html"
-PKG_URL="http://git.savannah.gnu.org/cgit/grub.git/snapshot/${PKG_NAME}-${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_HOST="toolchain:host"
-PKG_DEPENDS_TARGET="toolchain flex freetype:host gettext:host grub:host"
+# grub development moved off Savannah, whose cgit snapshots are gone. The
+# tag carries the project prefix, so the ref is grub-${PKG_VERSION}; the
+# archive's own top directory is stripped by scripts/extract.
+PKG_URL="https://gitlab.freedesktop.org/gnu-grub/grub/-/archive/${PKG_NAME}-${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tar.gz"
+# 2.14 configure.ac m4_fatal()s without AX_CHECK_LINK_FLAG, so ./bootstrap
+# needs autoconf-archive; 2.14-rc1 did not. Both phases bootstrap.
+PKG_DEPENDS_HOST="toolchain:host autoconf-archive:host"
+PKG_DEPENDS_TARGET="toolchain flex freetype:host gettext:host grub:host autoconf-archive:host"
 PKG_DEPENDS_UNPACK="gnulib"
 PKG_LONGDESC="GRUB is a Multiboot boot loader."
 PKG_TOOLCHAIN="configure"
@@ -21,6 +27,10 @@ pre_configure_host() {
   unset CXXFLAGS
   unset LDFLAGS
   unset CPP
+
+  # autoconf-archive installs its macros into the sysroot, which is not on
+  # aclocal's default search path, so bootstrap cannot see AX_CHECK_LINK_FLAG.
+  export ACLOCAL_PATH="${SYSROOT_PREFIX}/usr/share/aclocal"
 
   cd ${PKG_BUILD}
     # keep grub synced with gnulib
@@ -45,6 +55,10 @@ pre_configure_target() {
   unset LDFLAGS
   unset CPP
 
+  # autoconf-archive installs its macros into the sysroot, which is not on
+  # aclocal's default search path, so bootstrap cannot see AX_CHECK_LINK_FLAG.
+  export ACLOCAL_PATH="${SYSROOT_PREFIX}/usr/share/aclocal"
+
   cd ${PKG_BUILD}
     # keep grub synced with gnulib
     ./bootstrap --gnulib-srcdir=$(get_build_dir gnulib) --copy --no-git --no-bootstrap-sync --skip-po
@@ -61,10 +75,15 @@ pre_configure_target() {
 }
 
 make_target() {
+  # glibc 2.44 makes strchr and friends C23 const-generic, so given a
+  # "const char *" they now return "const char *". util/resolve.c assigns
+  # that to a plain "char *" and grub builds -Werror. The result is only
+  # tested for NULL there, so losing the qualifier changes nothing, and
+  # upstream still carries the same line.
   make CC=${CC} \
        AR=${AR} \
        RANLIB=${RANLIB} \
-       CFLAGS="-I${SYSROOT_PREFIX}/usr/include -fomit-frame-pointer -D_FILE_OFFSET_BITS=64" \
+       CFLAGS="-I${SYSROOT_PREFIX}/usr/include -fomit-frame-pointer -D_FILE_OFFSET_BITS=64 -Wno-error=discarded-qualifiers" \
        LDFLAGS="-L${SYSROOT_PREFIX}/usr/lib"
 }
 

@@ -1,0 +1,40 @@
+From: ROCKNIX <maintainers@rocknix.org>
+Subject: [PATCH] backend/libinput: ignore unhandled switch types
+
+libinput grew LIBINPUT_SWITCH_KEYPAD_SLIDE, which this wlroots is too
+old to know about, so -Werror=switch stops the build:
+
+  backend/libinput/switch.c:34:9: error: enumeration value
+  'LIBINPUT_SWITCH_KEYPAD_SLIDE' not handled in switch
+
+Silencing the warning would be wrong. wlr_event is zero initialised by
+its designated initialiser and WLR_SWITCH_TYPE_LID is 0, so an
+unhandled type currently falls out of the switch and gets emitted to
+the compositor as a lid event.
+
+Take the same route as wlroots 0.19/0.20, which return early with a
+debug log rather than guessing. Those versions do it by feature test in
+switch_type_from_libinput(); this branch has no such helper, so the
+default label goes on the switch itself and needs no libinput version
+check to compile against either libinput.
+
+--- a/backend/libinput/switch.c
++++ b/backend/libinput/switch.c
+@@ -1,6 +1,7 @@
+ #include <assert.h>
+ #include <libinput.h>
+ #include <wlr/interfaces/wlr_switch.h>
++#include <wlr/util/log.h>
+ #include "backend/libinput.h"
+ 
+ const struct wlr_switch_impl libinput_switch_impl = {
+@@ -38,6 +39,9 @@
+ 	case LIBINPUT_SWITCH_TABLET_MODE:
+ 		wlr_event.switch_type = WLR_SWITCH_TYPE_TABLET_MODE;
+ 		break;
++	default:
++		wlr_log(WLR_DEBUG, "Unhandled libinput switch type");
++		return;
+ 	}
+ 	switch (libinput_event_switch_get_switch_state(sevent)) {
+ 	case LIBINPUT_SWITCH_STATE_OFF:

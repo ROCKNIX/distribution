@@ -1,56 +1,81 @@
+From: ROCKNIX <maintainers@rocknix.org>
+Subject: [PATCH] ThunkLibs: keep foreign-arch sysroot out of interface parses
+
+thunkgen parses each interface twice: once for the host ABI and once
+for the guest (x86) ABI via --sysroot <x86 rootfs>. Include directories
+attached to the *-deps targets reach BOTH parses, and -isystem always
+outranks the sysroot's standard directories. On sysrooted cross builds
+pkg-config returns the sysroot-prefixed form of /usr/include, which the
+existing REMOVE_ITEM guard cannot catch, so the x86 guest parses read
+the host architecture's glibc. Two symptom classes on aarch64 hosts:
+bits/math-vector.h SVE typedefs are unparseable under an x86 target,
+and bits/wordsize.h hardcodes __WORDSIZE 64, which under -m32 collapses
+uint64_t to 32 bits and corrupts every generated guest layout that
+contains one (Vulkan non-dispatchable handles, VkDeviceSize, ...).
+
+Extend the guard in both helper copies (HostLibs and GuestLibs, keyed
+on CMAKE_SYSROOT and on pkg-config's own sysroot) and re-add only the
+arch-neutral API subdirectories (drm, wayland) on the host side. The
+standard library reaches the host parse via THUNKGEN_EXTRA_FLAGS
+"--sysroot ..." from the build recipe instead; the guest parse's later
+--sysroot overrides it, so each parse sees its own arch's headers.
+
 diff --git a/ThunkLibs/HostLibs/CMakeLists.txt b/ThunkLibs/HostLibs/CMakeLists.txt
-index a526c72ff..346eb71d4 100644
 --- a/ThunkLibs/HostLibs/CMakeLists.txt
 +++ b/ThunkLibs/HostLibs/CMakeLists.txt
-@@ -127,6 +127,7 @@ foreach(GUEST_BITNESS IN LISTS BITNESS_LIST)
- 
-   generate(libasound ${CMAKE_CURRENT_SOURCE_DIR}/../libasound/libasound_interface.cpp ${GUEST_BITNESS})
-   target_include_directories_from_pkgconfig(libasound-${GUEST_BITNESS}-deps alsa)
-+  target_include_directories(libasound-${GUEST_BITNESS}-deps INTERFACE ${CMAKE_SYSROOT}/usr/include)
-   add_host_lib(asound ${GUEST_BITNESS})
- 
-   # disabled for now, headers are platform specific
-@@ -137,6 +138,11 @@ foreach(GUEST_BITNESS IN LISTS BITNESS_LIST)
+@@ -13,6 +13,14 @@
+   pkg_check_modules(PKG QUIET ${pkg})
+   if (PKG_FOUND)
+     list(REMOVE_ITEM PKG_INCLUDE_DIRS /usr/include)
++    # Same rule for sysrooted cross builds: the guest parse must get the
++    # standard library from its own --sysroot, not the host architecture's
++    if (CMAKE_SYSROOT)
++      list(REMOVE_ITEM PKG_INCLUDE_DIRS ${CMAKE_SYSROOT}/usr/include)
++    endif()
++    if (DEFINED ENV{PKG_CONFIG_SYSROOT_DIR})
++      list(REMOVE_ITEM PKG_INCLUDE_DIRS "$ENV{PKG_CONFIG_SYSROOT_DIR}/usr/include")
++    endif()
+     target_include_directories(${target} INTERFACE ${PKG_INCLUDE_DIRS})
+   elseif (ARGN)
+     target_include_directories(${target} INTERFACE ${ARGN})
+@@ -137,6 +145,12 @@
  
    generate(libdrm ${CMAKE_CURRENT_SOURCE_DIR}/../libdrm/libdrm_interface.cpp ${GUEST_BITNESS})
    target_include_directories_from_pkgconfig(libdrm-${GUEST_BITNESS}-deps libdrm /usr/include/drm /usr/include/libdrm)
-+  target_include_directories(libdrm-${GUEST_BITNESS}-deps INTERFACE
-+    ${CMAKE_SYSROOT}/usr/include
-+    ${CMAKE_SYSROOT}/usr/include/drm
-+    ${CMAKE_SYSROOT}/usr/include/libdrm
-+  )
++  if (CMAKE_SYSROOT)
++    target_include_directories(libdrm-${GUEST_BITNESS}-deps INTERFACE
++      ${CMAKE_SYSROOT}/usr/include/drm
++      ${CMAKE_SYSROOT}/usr/include/libdrm
++    )
++  endif()
    add_host_lib(drm ${GUEST_BITNESS})
  endforeach()
  
-@@ -148,21 +154,30 @@ foreach(GUEST_BITNESS IN LISTS BITNESS_LIST)
-   endif()
- 
-   generate(libvulkan ${CMAKE_CURRENT_SOURCE_DIR}/../libvulkan/libvulkan_interface.cpp ${GUEST_BITNESS})
--  target_include_directories(libvulkan-${GUEST_BITNESS}-deps INTERFACE ${FEX_PROJECT_SOURCE_DIR}/External/Vulkan-Headers/include/)
-+  target_include_directories(libvulkan-${GUEST_BITNESS}-deps INTERFACE
-+    ${FEX_PROJECT_SOURCE_DIR}/External/Vulkan-Headers/include/
-+    ${CMAKE_SYSROOT}/usr/include
-+  )
-   target_include_directories_from_pkgconfig(libvulkan-${GUEST_BITNESS}-deps "xcb;x11;xrandr;xrender")
-   add_host_lib(vulkan ${GUEST_BITNESS})
- 
+@@ -155,6 +169,9 @@
    generate(libwayland-client ${CMAKE_CURRENT_SOURCE_DIR}/../libwayland-client/libwayland-client_interface.cpp ${GUEST_BITNESS})
    add_host_lib(wayland-client ${GUEST_BITNESS})
    target_include_directories_from_pkgconfig(libwayland-client-${GUEST_BITNESS}-deps wayland-client /usr/include/wayland)
-+  target_include_directories(libwayland-client-${GUEST_BITNESS}-deps INTERFACE
-+    ${CMAKE_SYSROOT}/usr/include
-+    ${CMAKE_SYSROOT}/usr/include/wayland
-+  )
++  if (CMAKE_SYSROOT)
++    target_include_directories(libwayland-client-${GUEST_BITNESS}-deps INTERFACE ${CMAKE_SYSROOT}/usr/include/wayland)
++  endif()
  
    generate(libEGL ${CMAKE_CURRENT_SOURCE_DIR}/../libEGL/libEGL_interface.cpp ${GUEST_BITNESS})
    target_include_directories_from_pkgconfig(libEGL-${GUEST_BITNESS}-deps egl)
-+  target_include_directories(libEGL-${GUEST_BITNESS}-deps INTERFACE ${CMAKE_SYSROOT}/usr/include)
-   add_host_lib(EGL ${GUEST_BITNESS})
- 
-   generate(libGL ${CMAKE_CURRENT_SOURCE_DIR}/../libGL/libGL_interface.cpp ${GUEST_BITNESS})
-   target_include_directories_from_pkgconfig(libGL-${GUEST_BITNESS}-deps gl)
-   target_include_directories_from_pkgconfig(libGL-${GUEST_BITNESS}-deps "xcb;x11;xrandr;xrender")
-+  target_include_directories(libGL-${GUEST_BITNESS}-deps INTERFACE ${CMAKE_SYSROOT}/usr/include)
-   add_host_lib(GL ${GUEST_BITNESS})
- 
-   find_package(OpenGL REQUIRED)
+diff --git a/ThunkLibs/GuestLibs/CMakeLists.txt b/ThunkLibs/GuestLibs/CMakeLists.txt
+--- a/ThunkLibs/GuestLibs/CMakeLists.txt
++++ b/ThunkLibs/GuestLibs/CMakeLists.txt
+@@ -12,6 +12,14 @@
+   pkg_check_modules(PKG QUIET ${pkg})
+   if (PKG_FOUND)
+     list(REMOVE_ITEM PKG_INCLUDE_DIRS /usr/include)
++    # Same rule for sysrooted cross builds: the guest parse must get the
++    # standard library from its own --sysroot, not the host architecture's
++    if (CMAKE_SYSROOT)
++      list(REMOVE_ITEM PKG_INCLUDE_DIRS ${CMAKE_SYSROOT}/usr/include)
++    endif()
++    if (DEFINED ENV{PKG_CONFIG_SYSROOT_DIR})
++      list(REMOVE_ITEM PKG_INCLUDE_DIRS "$ENV{PKG_CONFIG_SYSROOT_DIR}/usr/include")
++    endif()
+     target_include_directories(${target} INTERFACE ${PKG_INCLUDE_DIRS})
+   elseif (ARGN)
+     target_include_directories(${target} INTERFACE ${ARGN})

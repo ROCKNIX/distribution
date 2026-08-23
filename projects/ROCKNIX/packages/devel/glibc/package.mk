@@ -3,27 +3,25 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="glibc"
-PKG_VERSION="2.41"
-PKG_LICENSE="GPL"
+PKG_VERSION="2.44"
+PKG_SHA256="37f600f2bef3c5e8300147059568b2a2e40a7ad6ccc65ce942556d49429cc667"
+PKG_LICENSE="LGPL-2.1-or-later"
 PKG_SITE="https://www.gnu.org/software/libc/"
 PKG_URL="https://ftp.gnu.org/pub/gnu/glibc/${PKG_NAME}-${PKG_VERSION}.tar.xz"
+# ROCKNIX: pigz:host added
 PKG_DEPENDS_TARGET="ccache:host autotools:host linux:host gcc:bootstrap pigz:host Python3:host"
 PKG_DEPENDS_INIT="glibc"
 PKG_LONGDESC="The Glibc package contains the main C library."
+# ROCKNIX: force bfd, no gold
 PKG_BUILD_FLAGS="+bfd -gold"
 
+# ROCKNIX: lowest kernel across supported devices (RK3588 runs a 6.1 BSP)
 case "${DEVICE}" in
   RK3588)
     OPT_ENABLE_KERNEL=6.1.0
     ;;
   *)
     OPT_ENABLE_KERNEL=6.10.0
-    ;;
-esac
-
-case ${TARGET_ARCH} in
-  arm|aarch64)
-    PKG_PATCH_DIRS="widevine-arm"
     ;;
 esac
 
@@ -48,6 +46,9 @@ PKG_CONFIGURE_OPTS_TARGET="BASH_SHELL=/bin/sh \
                            --disable-nscd \
                            --disable-timezone-tools"
 
+# ROCKNIX: new-compiler warning churn must not break the build
+PKG_CONFIGURE_OPTS_TARGET+=" --disable-werror"
+
 if build_with_debug; then
   PKG_CONFIGURE_OPTS_TARGET+=" --enable-debug"
 else
@@ -59,7 +60,10 @@ post_unpack() {
 }
 
 pre_configure_target() {
-# Filter out some problematic *FLAGS
+  # Filter out some problematic *FLAGS
+  # ROCKNIX: build glibc at -O3
+  export CFLAGS=$(echo ${CFLAGS} | sed -e "s|-ffast-math||g")
+  export CFLAGS=$(echo ${CFLAGS} | sed -e "s|-Ofast|-O3|g")
   export CFLAGS=$(echo ${CFLAGS} | sed -e "s|-O.|-O3|g")
 
   export CFLAGS=$(echo ${CFLAGS} | sed -e "s|-Wunused-but-set-variable||g")
@@ -69,6 +73,8 @@ pre_configure_target() {
     export CFLAGS=$(echo ${CFLAGS} | sed -e "s|${PROJECT_CFLAGS}||g")
   fi
 
+  export LDFLAGS=$(echo ${LDFLAGS} | sed -e "s|-ffast-math||g")
+  export LDFLAGS=$(echo ${LDFLAGS} | sed -e "s|-Ofast|-O3|g")
   export LDFLAGS=$(echo ${LDFLAGS} | sed -e "s|-O.|-O3|g")
 
   export LDFLAGS=$(echo ${LDFLAGS} | sed -e "s|-Wl,--as-needed||")
@@ -107,12 +113,14 @@ post_makeinstall_target() {
     cp -a ${INSTALL}/usr/share/i18n/locales ${INSTALL}/.noinstall
     mv ${INSTALL}/usr/share/i18n/charmaps ${INSTALL}/.noinstall
 
+  # ROCKNIX: keep all glibc programs (no GLIBC_INCLUDE_BIN cleanup)
+
   safe_remove ${INSTALL}/usr/lib/audit
   safe_remove ${INSTALL}/usr/lib/glibc
   safe_remove ${INSTALL}/usr/lib/*.o
   safe_remove ${INSTALL}/var
 
-# add UTF-8 charmap
+  # add UTF-8 charmap
   mkdir -p ${INSTALL}/usr/share/i18n/charmaps
     cp -PR ${INSTALL}/.noinstall/charmaps/UTF-8.gz ${INSTALL}/usr/share/i18n/charmaps
 
@@ -123,11 +131,12 @@ post_makeinstall_target() {
       cp -PR ${PKG_BUILD}/localedata/locales/POSIX ${INSTALL}/usr/share/i18n/locales
   fi
 
-# create default configs
+  # create default configs
   mkdir -p ${INSTALL}/etc
     cp ${PKG_DIR}/config/nsswitch-target.conf ${INSTALL}/etc/nsswitch.conf
     cp ${PKG_DIR}/config/host.conf ${INSTALL}/etc
     cp ${PKG_DIR}/config/gai.conf ${INSTALL}/etc
+    # ROCKNIX: writable ld.so.cache location
     cp ${PKG_DIR}/config/ld.so.conf ${INSTALL}/etc
 
   ln -sf /storage/.cache/ld.so.cache ${INSTALL}/etc/ld.so.cache
@@ -173,7 +182,7 @@ makeinstall_init() {
 }
 
 post_makeinstall_init() {
-# create default configs
+  # create default configs
   mkdir -p ${INSTALL}/etc
     cp ${PKG_DIR}/config/nsswitch-init.conf ${INSTALL}/etc/nsswitch.conf
 }

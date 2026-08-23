@@ -4,9 +4,10 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="boost"
-PKG_VERSION="1.86.0"
-PKG_LICENSE="OSS"
-PKG_SITE="http://www.boost.org/"
+PKG_VERSION="1.91.0"
+PKG_SHA256="de5e6b0e4913395c6bdfa90537febd9028ea4c0735d2cdb0cd9b45d5f51264f5"
+PKG_LICENSE="BSL-1.0"
+PKG_SITE="https://www.boost.org/"
 PKG_URL="https://archives.boost.io/release/${PKG_VERSION}/source/${PKG_NAME}_${PKG_VERSION//./_}.tar.bz2"
 PKG_DEPENDS_HOST="toolchain:host"
 PKG_DEPENDS_TARGET="toolchain boost:host Python3 zlib bzip2"
@@ -60,7 +61,6 @@ makeinstall_target() {
                           --with-random \
                           --with-regex -sICU_PATH="${SYSROOT_PREFIX}/usr" \
                           --with-serialization \
-                          --with-system \
                           --with-thread \
                           --with-nowide \
 			  --with-context \

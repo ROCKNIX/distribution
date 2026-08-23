@@ -3,8 +3,9 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="syncthing"
-PKG_VERSION="2.0.13"
-PKG_LICENSE="MPLv2"
+PKG_VERSION="2.1.3"
+PKG_SHA256="f34bc1b3219e02ac1eca0b1446f582af8fe13f789da5f8c679ba9cac0396bf81"
+PKG_LICENSE="MPL-2.0"
 PKG_SITE="https://syncthing.net/"
 PKG_URL="https://github.com/syncthing/syncthing/releases/download/v${PKG_VERSION}/syncthing-source-v${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain go:host"

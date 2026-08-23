@@ -19,6 +19,12 @@ if [ -n "${UBOOT_FIRMWARE}" ]; then
 fi
 
 pre_make_target() {
+  # gcc 16 promotes -Wunused-but-set-variable and this vendor tree builds
+  # -Werror. The hits are dead locals in cmd/ (gpt.c, then nvedit.c), which
+  # are cosmetic, and each one costs a full build to find. Turn the class
+  # off rather than carry a patch per file for a tree we do not own.
+  export KCFLAGS="-Wno-error=unused-but-set-variable"
+
   PKG_UBOOT_CONFIG="orangepi_5_defconfig"
   PKG_RKBIN="$(get_build_dir rkbin)"
   PKG_MINILOADER="spl/u-boot-spl.bin"

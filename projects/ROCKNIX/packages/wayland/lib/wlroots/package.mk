@@ -4,7 +4,7 @@
 PKG_NAME="wlroots"
 PKG_LICENSE="MIT"
 PKG_SITE="https://gitlab.freedesktop.org/wlroots/wlroots/"
-PKG_DEPENDS_TARGET="toolchain libinput libxkbcommon pixman libdrm wayland wayland-protocols seatd xwayland hwdata:host libxcb xcb-util-wm"
+PKG_DEPENDS_TARGET="toolchain libinput libxkbcommon pixman libdrm wayland wayland-protocols seatd xwayland hwdata:host libxcb xcb-util-wm libdisplay-info"
 PKG_LONGDESC="A modular Wayland compositor library"
 PKG_TOOLCHAIN="meson"
 
@@ -22,8 +22,9 @@ case ${DEVICE} in
     PKG_URL="https://github.com/rocknix/rockchip-wlroots/archive/refs/tags/${PKG_VERSION}.tar.gz"
     ;;
   *)
-    PKG_VERSION="0.19.3"
-    PKG_SHA256="a6ff89b64ea15e424d1b0db4a22145fccf5ec2ff2e7b8af0fa35e2ac8975986f"
+    # stock upstream, matching the version LibreELEC core carries
+    PKG_VERSION="0.20.2"
+    PKG_SHA256="972c7ac44b17828f4702bfae7cd8347346a3fb5b2c1076cfa2c3fcedac5ec343"
     PKG_URL="${PKG_SITE}/-/archive/${PKG_VERSION}/wlroots-${PKG_VERSION}.tar.gz"
     ;;
 esac

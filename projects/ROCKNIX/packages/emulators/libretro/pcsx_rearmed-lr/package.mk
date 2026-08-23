@@ -29,7 +29,7 @@ makeinstall_target32() {
     aarch64)
       if [ "${ENABLE_32BIT}" == "true" ]
       then
-        cp -vP ${ROOT}/build.${DISTRO}-${DEVICE}.arm/install_pkg/${PKG_NAME}-*/usr/lib/libretro/${1}_libretro.so ${INSTALL}/usr/lib/libretro/${1}32_libretro.so
+        cp -vP ${BUILD_ROOT}/build.${DISTRO}-${DEVICE}.arm/install_pkg/${PKG_NAME}-*/usr/lib/libretro/${1}_libretro.so ${INSTALL}/usr/lib/libretro/${1}32_libretro.so
       fi
     ;;
   esac

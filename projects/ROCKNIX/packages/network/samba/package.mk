@@ -3,7 +3,8 @@
 # Copyright (C) 2017-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="samba"
-PKG_VERSION="4.21.0"
+PKG_VERSION="4.24.5"
+PKG_SHA256="6d5d7ee82f5ce9da4135086c9b184e47a58b4b023565f58abbb1f8c8a922306b"
 PKG_LICENSE="GPLv3+"
 PKG_SITE="https://www.samba.org"
 PKG_URL="https://download.samba.org/pub/samba/stable/${PKG_NAME}-${PKG_VERSION}.tar.gz"
@@ -86,8 +87,6 @@ pre_configure_target() {
   cd ${PKG_BUILD}
     rm -rf .${TARGET_NAME}
 
-# work around link issues
-  export LDFLAGS="${LDFLAGS} -lreadline -lncursesw"
 
 # support 64-bit offsets and seeks on 32-bit platforms
   if [ "${TARGET_ARCH}" = "arm" ]; then

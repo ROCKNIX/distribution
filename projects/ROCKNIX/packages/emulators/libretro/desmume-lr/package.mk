@@ -43,7 +43,7 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
   if [ "${ARCH}" = "aarch64" ]
   then
-    cp -vP ${ROOT}/build.${DISTRO}-${DEVICE}.arm/install_pkg/desmume-*/usr/lib/libretro/desmume_libretro.so ${INSTALL}/usr/lib/libretro/
+    cp -vP ${BUILD_ROOT}/build.${DISTRO}-${DEVICE}.arm/install_pkg/desmume-*/usr/lib/libretro/desmume_libretro.so ${INSTALL}/usr/lib/libretro/
   else
     cp desmume_libretro.so ${INSTALL}/usr/lib/libretro/
   fi
