@@ -7,9 +7,9 @@ PKG_VERSION="2.32.10"
 PKG_LICENSE="GPL"
 PKG_SITE="https://www.libsdl.org/"
 PKG_URL="https://www.libsdl.org/release/SDL2-${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain alsa-lib systemd dbus pulseaudio libdrm SDL2:host libX11:host"
-PKG_LONGDESC="Simple DirectMedia Layer is a cross-platform development library designed to provide low level access to audio, keyboard, mouse, joystick, and graphics hardware."
 PKG_DEPENDS_HOST="toolchain:host"
+PKG_DEPENDS_TARGET="toolchain alsa-lib systemd dbus pulseaudio libdrm"
+PKG_LONGDESC="Simple DirectMedia Layer is a cross-platform development library designed to provide low level access to audio, keyboard, mouse, joystick, and graphics hardware."
 
 if [ ! "${OPENGL_SUPPORT}" = "no" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL} glu"
@@ -43,9 +43,8 @@ else
                            -DVIDEO_VULKAN=OFF"
 fi
 
-if [ "${DISPLAYSERVER}" = "wl" ]
-then
-  PKG_DEPENDS_TARGET+=" wayland "
+if [ "${DISPLAYSERVER}" = "wl" ]; then
+  PKG_DEPENDS_TARGET+=" wayland"
   case ${ARCH} in
     arm)
       true
@@ -69,79 +68,52 @@ else
 fi
 
 case ${DEVICE} in
-  RK*)
-    PKG_DEPENDS_TARGET+=" librga"
-    PKG_PATCH_DIRS_TARGET+="${DEVICE}"
-  ;;
+  RK*) PKG_DEPENDS_TARGET+=" librga" ;;
 esac
 
 pre_configure_target(){
-
-  if [ -n "${PKG_PATCH_DIRS_TARGET}" ]
-  then
-    ###
-    ### Patching here is necessary to allow SDL2 to be built for
-    ### use by host builds without requiring additional unnecessary
-    ### packages to also be built (and break) during the build.
-    ###
-    ### It may be better served as a hook in scripts/build.
-    ###
-
-    if [ -d "${PKG_DIR}/patches/${PKG_PATCH_DIRS_TARGET}" ]
-    then
-      cd $(get_build_dir SDL2)
-      for PATCH in ${PKG_DIR}/patches/${PKG_PATCH_DIRS_TARGET}/*
-      do
-        patch -p1 <${PATCH}
-      done
-      cd -
-    fi
-
-    ### End
-  fi
-
   export LDFLAGS="${LDFLAGS} -ludev"
   PKG_CMAKE_OPTS_TARGET+="-DSDL_STATIC=OFF \
-                         -DLIBC=ON \
-                         -DGCC_ATOMICS=ON \
-                         -DALTIVEC=OFF \
-                         -DOSS=OFF \
-                         -DALSA=ON \
-                         -DALSA_SHARED=ON \
-                         -DJACK=OFF \
-                         -DJACK_SHARED=OFF \
-                         -DESD=OFF \
-                         -DESD_SHARED=OFF \
-                         -DARTS=OFF \
-                         -DARTS_SHARED=OFF \
-                         -DNAS=OFF \
-                         -DNAS_SHARED=OFF \
-                         -DLIBSAMPLERATE=OFF \
-                         -DLIBSAMPLERATE_SHARED=OFF \
-                         -DSNDIO=OFF \
-                         -DDISKAUDIO=OFF \
-                         -DDUMMYAUDIO=OFF \
-                         -DVIDEO_X11=OFF \
-                         -DVIDEO_MIR=OFF \
-                         -DMIR_SHARED=OFF \
-                         -DVIDEO_COCOA=OFF \
-                         -DVIDEO_DIRECTFB=OFF \
-                         -DVIDEO_VIVANTE=OFF \
-                         -DDIRECTFB_SHARED=OFF \
-                         -DFUSIONSOUND=OFF \
-                         -DFUSIONSOUND_SHARED=OFF \
-                         -DVIDEO_DUMMY=OFF \
-                         -DINPUT_TSLIB=ON \
-                         -DSDL_HIDAPI_JOYSTICK=ON \
-                         -DPTHREADS=ON \
-                         -DPTHREADS_SEM=ON \
-                         -DDIRECTX=OFF \
-                         -DSDL_DLOPEN=ON \
-                         -DCLOCK_GETTIME=OFF \
-                         -DSDL_RPATH=OFF \
-                         -DRENDER_D3D=OFF \
-                         -DPIPEWIRE=ON \
-                         -DPULSEAUDIO=ON"
+                          -DLIBC=ON \
+                          -DGCC_ATOMICS=ON \
+                          -DALTIVEC=OFF \
+                          -DOSS=OFF \
+                          -DALSA=ON \
+                          -DALSA_SHARED=ON \
+                          -DJACK=OFF \
+                          -DJACK_SHARED=OFF \
+                          -DESD=OFF \
+                          -DESD_SHARED=OFF \
+                          -DARTS=OFF \
+                          -DARTS_SHARED=OFF \
+                          -DNAS=OFF \
+                          -DNAS_SHARED=OFF \
+                          -DLIBSAMPLERATE=OFF \
+                          -DLIBSAMPLERATE_SHARED=OFF \
+                          -DSNDIO=OFF \
+                          -DDISKAUDIO=OFF \
+                          -DDUMMYAUDIO=OFF \
+                          -DVIDEO_X11=OFF \
+                          -DVIDEO_MIR=OFF \
+                          -DMIR_SHARED=OFF \
+                          -DVIDEO_COCOA=OFF \
+                          -DVIDEO_DIRECTFB=OFF \
+                          -DVIDEO_VIVANTE=OFF \
+                          -DDIRECTFB_SHARED=OFF \
+                          -DFUSIONSOUND=OFF \
+                          -DFUSIONSOUND_SHARED=OFF \
+                          -DVIDEO_DUMMY=OFF \
+                          -DINPUT_TSLIB=ON \
+                          -DSDL_HIDAPI_JOYSTICK=ON \
+                          -DPTHREADS=ON \
+                          -DPTHREADS_SEM=ON \
+                          -DDIRECTX=OFF \
+                          -DSDL_DLOPEN=ON \
+                          -DCLOCK_GETTIME=OFF \
+                          -DSDL_RPATH=OFF \
+                          -DRENDER_D3D=OFF \
+                          -DPIPEWIRE=ON \
+                          -DPULSEAUDIO=ON"
 }
 
 post_makeinstall_target() {
