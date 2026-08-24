@@ -93,6 +93,9 @@ monitor.bluez.rules = [
   }
 ]
 EOF
+
+# Platform-specific config files
+cp -f ${PKG_DIR}/config/${DEVICE}/*.conf ${INSTALL}/usr/share/wireplumber/wireplumber.conf.d/
 }
 
 post_install() {
