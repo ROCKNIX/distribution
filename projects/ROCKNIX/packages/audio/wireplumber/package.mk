@@ -95,7 +95,9 @@ monitor.bluez.rules = [
 EOF
 
 # Platform-specific config files
-cp -f ${PKG_DIR}/config/${DEVICE}/*.conf ${INSTALL}/usr/share/wireplumber/wireplumber.conf.d/
+if [ -d "${PKG_DIR}/config/${DEVICE}" ]; then 
+  cp -f ${PKG_DIR}/config/${DEVICE}/*.conf ${INSTALL}/usr/share/wireplumber/wireplumber.conf.d/
+fi
 }
 
 post_install() {
