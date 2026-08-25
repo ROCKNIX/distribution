@@ -39,7 +39,7 @@ then
   rm -f ${CONFIG_DIR}/keymapv2.json
 
   # Handle inputplumber platforms first
-  if [[ "${HW_DEVICE}" =~ RK3576|SM6115|SM8550|SM8650|SM8750|SM8250 ]]; then
+  if [ -d "/usr/share/inputplumber/" ]; then
     GAMEPAD="'Sony Interactive Entertainment DualSense Wireless Controller'"
   else
     # Check for js0, else fall back to joypad
