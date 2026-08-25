@@ -6,6 +6,7 @@ PKG_LICENSE="GPLv3"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_SITE="https://github.com/stenzek/duckstation"
 PKG_VERSION="0.1-10998"
+PKG_SHA256="f92319a0484e67bb62bfab7b0e56dac46165b50e45b51293038d9344a6288440"
 PKG_LONGDESC="Fast PlayStation 1 emulator for x86-64/AArch32/AArch64 "
 PKG_TOOLCHAIN="manual"
 

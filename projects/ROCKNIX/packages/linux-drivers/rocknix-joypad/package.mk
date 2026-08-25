@@ -3,6 +3,7 @@
 
 PKG_NAME="rocknix-joypad"
 PKG_VERSION="1dd1115c8d231ba934253efb91ffb0c6ad8e993d"
+PKG_SHA256="5ccecbbce8645401a609ece39268ee9cf41aade10bb6329247557ca8933e063f"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/ROCKNIX/rocknix-joypad"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

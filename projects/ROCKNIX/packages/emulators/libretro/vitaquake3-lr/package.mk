@@ -3,6 +3,7 @@
 
 PKG_NAME="vitaquake3-lr"
 PKG_VERSION="7a633867cf0a35c71701aef6fc9dd9dfab9c33a9"
+PKG_SHA256="8330d83fb1f33a751b2933cf174c1566a3858d95cec541689728adf3bb322c4c"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/vitaquake3"
 PKG_URL="https://github.com/libretro/vitaquake3/archive/${PKG_VERSION}.tar.gz"

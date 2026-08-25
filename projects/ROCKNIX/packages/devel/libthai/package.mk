@@ -3,6 +3,7 @@
 
 PKG_NAME="libthai"
 PKG_VERSION="0.1.29"
+PKG_SHA256="fc80cc7dcb50e11302b417cebd24f2d30a8b987292e77e003267b9100d0f4bcd"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/tlwg/libthai"
 PKG_URL="${PKG_SITE}/releases/download/v${PKG_VERSION}/libthai-${PKG_VERSION}.tar.xz"

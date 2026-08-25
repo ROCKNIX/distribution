@@ -3,6 +3,7 @@
 
 PKG_NAME="ap6256-firmware"
 PKG_VERSION="6b6f053f6089e08dd2a675cda1ec813de2e842e2"
+PKG_SHA256="4fb11cdcb75fef7900894802d95204f3abb0f34da3b17aa161e5895b5dcf451f"
 PKG_LICENSE="Apache"
 PKG_SITE="https://github.com/armbian/firmware"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

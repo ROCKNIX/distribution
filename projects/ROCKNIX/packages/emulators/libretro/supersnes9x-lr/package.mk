@@ -21,6 +21,7 @@
 
 PKG_NAME="supersnes9x-lr"
 PKG_VERSION="a5ca2bec6f97a85778abd6fb048567b01204753e"
+PKG_SHA256="e50e215fccad2e60d4719fb57e7d8c775640ec668e0c412ac174db6850881745"
 PKG_LICENSE="Non-commercial"
 PKG_SITE="https://github.com/shanytc/snes9x"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

@@ -3,6 +3,7 @@
 
 PKG_NAME="skyemu-lr"
 PKG_VERSION="46efbcbdb3b902373a09f4724e6d3b1a5acc4af3"
+PKG_SHA256="0ad7234fee100f7304f99ce1367ed1f29fefea4553ef2a242d9fcdc507196214"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/skylersaleh/SkyEmu"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

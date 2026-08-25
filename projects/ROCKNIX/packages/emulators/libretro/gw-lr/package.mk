@@ -21,6 +21,7 @@
 
 PKG_NAME="gw-lr"
 PKG_VERSION="435e5cfd4bf6aea03a84259e9b8dba3daf3ff5bd"
+PKG_SHA256="610f613aedb6182b00bd4231e53d4350977b97e28f6f551cec138ef810cbb761"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/libretro/gw-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

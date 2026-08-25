@@ -3,6 +3,7 @@
 
 PKG_NAME="renderdoc"
 PKG_VERSION="v1.44"
+PKG_SHA256="8a9d1d624f34a806a5623179ac61feb9266ada2b6aec6bf2a766dcc5c20e6e56"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/baldurk/renderdoc"
 PKG_URL="${PKG_SITE}/archive/refs/tags/${PKG_VERSION}.tar.gz"

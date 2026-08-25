@@ -5,6 +5,7 @@
 
 PKG_NAME="libdrm"
 PKG_VERSION="2.4.128"
+PKG_SHA256="3bb35db8700c2a0b569f2c6729a53f5495786856b310854c8de57782a22bddac"
 PKG_LICENSE="GPL"
 PKG_SITE="http://dri.freedesktop.org"
 PKG_URL="http://dri.freedesktop.org/libdrm/libdrm-${PKG_VERSION}.tar.xz"

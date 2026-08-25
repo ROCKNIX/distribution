@@ -3,6 +3,7 @@
 
 PKG_NAME="common-shaders"
 PKG_VERSION="86cfa146a8dfddf6377ddb5dbcff552feae2e5bf"
+PKG_SHA256="294318654059f7d7bbe99e73daf25eb702561ec8d366f0d8c4498456e11a5b9f"
 PKG_ARCH="aarch64"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/libretro/common-shaders"

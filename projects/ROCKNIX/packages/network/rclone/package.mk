@@ -5,6 +5,7 @@
 
 PKG_NAME="rclone"
 PKG_VERSION="1.71.0"
+PKG_SHA256="b710ac2ded37261d2cc6ab046dcd644828944524cf1ee7c2b17dd746f0fd8684"
 PKG_DEPENDS_TARGET="toolchain fuse rsync"
 PKG_LONGDESC="rsync for cloud storage"
 PKG_TOOLCHAIN="manual"

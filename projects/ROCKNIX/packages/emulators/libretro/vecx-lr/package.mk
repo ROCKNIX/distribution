@@ -20,6 +20,7 @@
 
 PKG_NAME="vecx-lr"
 PKG_VERSION="841229a6a81a0461d08af6488f252dcec5266c6a"
+PKG_SHA256="d564413e9611b16e49e076cadd719587b6712c3cb435eaf90597c2db157546f4"
 PKG_LICENSE="GPLv2|LGPLv2.1"
 PKG_SITE="https://github.com/libretro/libretro-vecx"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

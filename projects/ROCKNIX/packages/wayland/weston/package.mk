@@ -3,6 +3,7 @@
 
 PKG_NAME="weston"
 PKG_VERSION="14.0.2"
+PKG_SHA256="633f4e0f232ad150300c95ffcbc646fedf1349487bf389dbd2045fa69013d6e2"
 
 PKG_LICENSE="MIT"
 PKG_SITE="https://wayland.freedesktop.org/"

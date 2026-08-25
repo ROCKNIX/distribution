@@ -3,6 +3,7 @@
 
 PKG_NAME="libpng"
 PKG_VERSION="1.6.40"
+PKG_SHA256="535b479b2467ff231a3ec6d92a525906fb8ef27978be4f66dbe05d3f3a01b3a1"
 PKG_LICENSE="LibPNG2"
 PKG_SITE="http://www.libpng.org/"
 PKG_URL="${SOURCEFORGE_SRC}/libpng/${PKG_NAME}-${PKG_VERSION}.tar.xz"

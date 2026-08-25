@@ -5,6 +5,7 @@
 
 PKG_NAME="mupen64plus-sa-input-sdl"
 PKG_VERSION="3698a2b12b1dc536801649de2705b4a79ffb8a08"
+PKG_SHA256="9a2f2b2a0dbb7bdd32f26495d9614d19a0fc215ffaefeb11bef167d7e7b006c9"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/mupen64plus/mupen64plus-input-sdl"
 PKG_URL="https://github.com/mupen64plus/mupen64plus-input-sdl/archive/${PKG_VERSION}.tar.gz"

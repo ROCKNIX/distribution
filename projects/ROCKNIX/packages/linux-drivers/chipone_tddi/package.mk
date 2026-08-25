@@ -3,6 +3,7 @@
 
 PKG_NAME="chipone_tddi"
 PKG_VERSION="af27029fa2b27c4a77d16809298ed5d03c9da5a6"
+PKG_SHA256="7ff5290bfd9aed721e07345745c5fbea43468fec43f1338322152ef8567af0c2"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/ROCKNIX/chipone_tddi"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

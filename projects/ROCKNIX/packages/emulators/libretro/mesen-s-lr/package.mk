@@ -3,6 +3,7 @@
 
 PKG_NAME="mesen-s-lr"
 PKG_VERSION="d4fca31a6004041d99b02199688f84c009c55967"
+PKG_SHA256="f9a601bcb518bf750b5674bc3990675245fe3cfae6d824be8fb4bd61d13cecc4"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/libretro/Mesen-S"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

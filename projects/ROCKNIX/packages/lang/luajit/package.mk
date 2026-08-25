@@ -3,6 +3,7 @@
 
 PKG_NAME="luajit"
 PKG_VERSION="1edc3e52b67eaf6ce5f809be8e17d6862594b8bc"
+PKG_SHA256="85497ea149d136afbe2d7ef222e08849248e52cecc6dc8deefd8588e551e4e00"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/LuaJIT/LuaJIT"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

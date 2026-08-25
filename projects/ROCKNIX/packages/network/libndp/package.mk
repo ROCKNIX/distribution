@@ -3,6 +3,7 @@
 
 PKG_NAME="libndp"
 PKG_VERSION="1.9"
+PKG_SHA256="e564f5914a6b1b799c3afa64c258824a801c1b79a29e2fe6525b682249c65261"
 PKG_LICENSE="LGPL-2.1"
 PKG_SITE="https://github.com/jpirko/libndp"
 PKG_URL="${PKG_SITE}/archive/refs/tags/v${PKG_VERSION}.tar.gz"

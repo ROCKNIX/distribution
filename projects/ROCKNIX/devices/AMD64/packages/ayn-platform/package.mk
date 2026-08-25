@@ -3,6 +3,7 @@
 
 PKG_NAME="ayn-platform"
 PKG_VERSION="7ec810ed2aebe196b68b9cce580d3c9e520e6425"
+PKG_SHA256="10ebdf5c2611d957491cd46eea93d942292d5b92213a94dea1008a7eadac11a0"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/ShadowBlip/ayn-platform"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

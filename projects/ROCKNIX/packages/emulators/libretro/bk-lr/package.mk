@@ -3,6 +3,7 @@
 
 PKG_NAME="bk-lr"
 PKG_VERSION="f95d929c8eca6c85075cd5c56a08aac9c58f3802"
+PKG_SHA256="7ed9976abe5c235061a44884346426509231d1237c9b7ff23e8a7aa6894fcf5d"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/libretro/bk-emulator"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

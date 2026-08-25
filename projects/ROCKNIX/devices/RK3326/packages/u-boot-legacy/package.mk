@@ -3,6 +3,7 @@
 
 PKG_NAME="u-boot-legacy"
 PKG_VERSION="2492a3e467e332e2350d987234ce6123700b3392"
+PKG_SHA256="d8b358f20394ff1c901af989d0a5b7740f46708bd93ff714459d7bc3794a72f8"
 PKG_LICENSE="GPL"
 PKG_SITE="https://www.denx.de/wiki/U-Boot"
 PKG_URL="https://github.com/ROCKNIX/hardkernel-uboot/archive/${PKG_VERSION}.tar.gz"

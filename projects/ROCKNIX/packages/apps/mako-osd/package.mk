@@ -3,6 +3,7 @@
 
 PKG_NAME="mako-osd"
 PKG_VERSION="b131bc143f6b0f24d650f16bb88a11c7cb011c20"
+PKG_SHA256="f1d6f8d7fec785a49698543cf812589bc014caa410c82c21773595e8785ab842"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/emersion/mako"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

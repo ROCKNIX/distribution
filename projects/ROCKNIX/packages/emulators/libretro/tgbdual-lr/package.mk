@@ -21,6 +21,7 @@
 
 PKG_NAME="tgbdual-lr"
 PKG_VERSION="933707c0ba8f12360f6d79712f735a917713709a"
+PKG_SHA256="fb166e32c34f0f2b6e568e0136d38a60202f32c8e4f7f4defd421810ac7614e4"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/tgbdual-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

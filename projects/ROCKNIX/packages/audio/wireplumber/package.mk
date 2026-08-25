@@ -3,6 +3,7 @@
 
 PKG_NAME="wireplumber"
 PKG_VERSION="0.5.7"
+PKG_SHA256="8cd43a582f68368ee5a915e97bf9dadc44d2dfe8c7bb4f96bb7b40ea2ed7848f"
 PKG_LICENSE="MIT"
 PKG_SITE="https://gitlab.freedesktop.org/pipewire/wireplumber"
 PKG_URL="https://gitlab.freedesktop.org/pipewire/wireplumber/-/archive/${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tar.gz"

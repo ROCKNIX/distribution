@@ -3,6 +3,7 @@
 
 PKG_NAME="enet"
 PKG_VERSION="v1.3.18"
+PKG_SHA256="28603c895f9ed24a846478180ee72c7376b39b4bb1287b73877e5eae7d96b0dd"
 PKG_SITE="https://github.com/lsalzman/enet"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_LICENSE=""

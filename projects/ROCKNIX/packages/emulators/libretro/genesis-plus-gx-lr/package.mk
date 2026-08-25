@@ -22,6 +22,7 @@
 
 PKG_NAME="genesis-plus-gx-lr"
 PKG_VERSION="e48a37173350b5aec2a6431add7c1a625d1f28bf"
+PKG_SHA256="183f55d4784b6f38a0021cb13e8373318923bfc2e8109e0437f70b14a18372fa"
 PKG_LICENSE="Non-commercial"
 PKG_SITE="https://github.com/libretro/Genesis-Plus-GX"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

@@ -4,6 +4,7 @@
 
 PKG_NAME="gzdoom-sa"
 PKG_VERSION="g4.14.2"
+PKG_SHA256="2c4fbb0c5b06787c8a2ade9fbbbe2fa5eaa7c49cf7f62a73627c381f8f890156"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/ZDoom/gzdoom"
 PKG_URL="https://github.com/ZDoom/gzdoom/archive/refs/tags/${PKG_VERSION}.tar.gz"

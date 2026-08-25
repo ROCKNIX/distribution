@@ -4,6 +4,7 @@
 
 PKG_NAME="jstest-sdl"
 PKG_VERSION="f4fdf6daae687d19b303d8ba8809ff5a68bc33a4"
+PKG_SHA256="4eaef6eebb5f370b89fa320225ecdb2941cfe5604fe4dc59ef7e4335c68fa4be"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/ROCKNIX/jstest-sdl"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
