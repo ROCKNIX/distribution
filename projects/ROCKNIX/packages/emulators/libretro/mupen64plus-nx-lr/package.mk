@@ -1,15 +1,14 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="mupen64plus-nx-lr"
-PKG_VERSION="7c7f11061f29b2ccd5d0952e2373ae5b55cfea8f"
-PKG_SHA256="7f8e2b7bffad562de06eac26c1ccadb805155c5822ead7708d6075f863aae589"
-PKG_LICENSE="GPLv2"
+PKG_VERSION="f275caf4b2bfa1e6d1c51636746ea793f3d80320"
+PKG_SHA256="1810b7bbdc4abfdeee8a9f7f99c4a91dab601a228935802317c25a43d7cf9dbb"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/mupen64plus-libretro-nx"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain nasm:host"
 PKG_LONGDESC="mupen64plus NX"
-PKG_TOOLCHAIN="make"
 PKG_BUILD_FLAGS="-lto"
 
 if [ "${OPENGL_SUPPORT}" = "yes" ] && [ ! "${PREFER_GLES}" = "yes" ]; then
@@ -25,7 +24,13 @@ if [ "${VULKAN_SUPPORT}" = "yes" ]; then
   PKG_MAKE_OPTS_TARGET+=" HAVE_PARALLEL_RSP=1 HAVE_PARALLEL_RDP=1"
 fi
 
-echo PKG_DEPENDS_TARGET ${PKG_DEPENDS_TARGET}
+post_unpack() {
+  for SOURCE in ${PKG_BUILD}/mupen64plus-rsp-paraLLEl/rsp_disasm.cpp ${PKG_BUILD}/mupen64plus-rsp-paraLLEl/rsp_disasm.hpp; do
+    sed -i '/include <string>/a #include <cstdint>' ${SOURCE}
+  done
+  sed -e "s|^GIT_VERSION ?.*$|GIT_VERSION := \" ${PKG_VERSION:0:7}\"|" -i ${PKG_BUILD}/Makefile
+  sed -i 's/\-O[23]/-Ofast/' ${PKG_BUILD}/Makefile
+}
 
 pre_configure_target() {
   export CFLAGS="${CFLAGS} -DHAVE_UNISTD_H -Wno-error=incompatible-pointer-types"
@@ -34,21 +39,13 @@ pre_configure_target() {
     # as it prohibits the use of LSE-instructions, this is a package bug most likely
     export CXXFLAGS="${CXXFLAGS} -mno-outline-atomics"
   fi
-  for SOURCE in ${PKG_BUILD}/mupen64plus-rsp-paraLLEl/rsp_disasm.cpp ${PKG_BUILD}/mupen64plus-rsp-paraLLEl/rsp_disasm.hpp
-  do
-    sed -i '/include <string>/a #include <cstdint>' ${SOURCE}
-  done
-  sed -e "s|^GIT_VERSION ?.*$|GIT_VERSION := \" ${PKG_VERSION:0:7}\"|" -i Makefile
-  sed -i 's/\-O[23]/-Ofast/' ${PKG_BUILD}/Makefile
 
   case ${ARCH} in
-    aarch64)
-      PKG_MAKE_OPTS_TARGET+=" platform=${DEVICE}"
-	;;
+    aarch64) PKG_MAKE_OPTS_TARGET+=" platform=${DEVICE}" ;;
   esac
 }
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp mupen64plus_next_libretro.so ${INSTALL}/usr/lib/libretro/
+    cp -a mupen64plus_next_libretro.so ${INSTALL}/usr/lib/libretro
 }

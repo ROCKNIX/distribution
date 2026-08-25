@@ -1,47 +1,26 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2020 Trond Haugland (trondah@gmail.com)
-# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="pcsx_rearmed-lr"
-PKG_VERSION="228c14e10e9a8fae0ead8adf30daad2cdd8655b9"
-PKG_SHA256="0530dc5772466c31900a5bb8b412b67f82a01d8cbf771e07fe25d5799c161f0a"
-PKG_ARCH="arm aarch64"
-PKG_LICENSE="GPLv2"
+PKG_VERSION="da2cb8ecd17fd0932ab6d94774c0522beebce6e3"
+PKG_SHA256="ff191a349aa88b7156f2c40ae32b7144884eec921542f07508d88715105d175e"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/pcsx_rearmed"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="ARM optimized PCSX fork"
-PKG_TOOLCHAIN="manual"
+PKG_TOOLCHAIN="make"
 
-pre_configure_target() {
+PKG_MAKE_OPTS_TARGET="-f Makefile.libretro -C .. GIT_VERSION=${PKG_VERSION} platform=${DEVICE}"
+
+post_unpack() {
   sed -i 's/\-O[23]/-Ofast/' ${PKG_BUILD}/Makefile
-  export CFLAGS="${CFLAGS} -flto -fipa-pta"
-  export CXXFLAGS="${CXXFLAGS} -flto -fipa-pta"
-  export LDFLAGS="${LDFLAGS} -flto -fipa-pta"
-}
-
-make_target() {
-  cd ${PKG_BUILD}
-  make -f Makefile.libretro GIT_VERSION=${PKG_VERSION} platform=${DEVICE}
-}
-
-makeinstall_target32() {
-  case ${ARCH} in
-    aarch64)
-      if [ "${ENABLE_32BIT}" == "true" ]
-      then
-        cp -vP ${ROOT}/build.${DISTRO}-${DEVICE}.arm/install_pkg/${PKG_NAME}-*/usr/lib/libretro/${1}_libretro.so ${INSTALL}/usr/lib/libretro/${1}32_libretro.so
-      fi
-    ;;
-  esac
 }
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp pcsx_rearmed_libretro.so ${INSTALL}/usr/lib/libretro/
-  case ${TARGET_ARCH} in
-    aarch64)
-      makeinstall_target32 pcsx_rearmed
-    ;;
-  esac
+    case ${TARGET_ARCH} in
+      aarch64) cp -a ../pcsx_rearmed_libretro.so ${INSTALL}/usr/lib/libretro ;;
+      arm) cp -a ../pcsx_rearmed_libretro.so ${INSTALL}/usr/lib/libretro/pcsx_rearmed32_libretro.so ;;
+    esac
 }

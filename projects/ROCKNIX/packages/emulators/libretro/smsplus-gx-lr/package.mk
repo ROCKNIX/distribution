@@ -1,43 +1,18 @@
-################################################################################
-#      This file is part of OpenELEC - http://www.openelec.tv
-#      Copyright (C) 2009-2012 Stephan Raue (stephan@openelec.tv)
-#      Copyright (C) 2020      351ELEC team (https://github.com/fewtarius/351ELEC)
-#
-#  This Program is free software; you can redistribute it and/or modify
-#  it under the terms of the GNU General Public License as published by
-#  the Free Software Foundation; either version 2, or (at your option)
-#  any later version.
-#
-#  This Program is distributed in the hope that it will be useful,
-#  but WITHOUT ANY WARRANTY; without even the implied warranty of
-#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-#  GNU General Public License for more details.
-#
-#  You should have received a copy of the GNU General Public License
-#  along with OpenELEC.tv; see the file COPYING.  If not, write to
-#  the Free Software Foundation, 51 Franklin Street, Suite 500, Boston, MA 02110, USA.
-#  http://www.gnu.org/copyleft/gpl.html
-################################################################################
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="smsplus-gx-lr"
-PKG_VERSION="c642bbd0680b5959180a420036108893d0aec961"
-PKG_SHA256="53ec876e3a88f9d21c6d0ac083e62d724c34675552dbaed33cd56aec13eea27f"
-PKG_LICENSE="Non-commercial"
+PKG_VERSION="8a63f82d3c3bbf7215a31f86a4aaa13fb68a579f"
+PKG_SHA256="0d78af08f70f69af103502690e6908189c9a70a67993d3a9d4bd3114f8259e46"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/smsplus-gx"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="SMS Plus GX is an enhanced version"
 
-PKG_TOOLCHAIN="make"
-
-make_target() {
-  if [ "${ARCH}" == "arm" ]; then
-    CFLAGS="${CFLAGS} -DALIGN_LONG"
-  fi
-  make -f Makefile.libretro
-}
+PKG_MAKE_OPTS_TARGET="-f Makefile.libretro"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp smsplus_libretro.so ${INSTALL}/usr/lib/libretro/
+    cp -a smsplus_libretro.so ${INSTALL}/usr/lib/libretro
 }

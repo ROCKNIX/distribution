@@ -1,41 +1,20 @@
-################################################################################
-#      This file is part of OpenELEC - http://www.openelec.tv
-#      Copyright (C) 2009-2012 Stephan Raue (stephan@openelec.tv)
-#      Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
-#
-#  This Program is free software; you can redistribute it and/or modify
-#  it under the terms of the GNU General Public License as published by
-#  the Free Software Foundation; either version 2, or (at your option)
-#  any later version.
-#
-#  This Program is distributed in the hope that it will be useful,
-#  but WITHOUT ANY WARRANTY; without even the implied warranty of
-#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-#  GNU General Public License for more details.
-#
-#  You should have received a copy of the GNU General Public License
-#  along with OpenELEC.tv; see the file COPYING.  If not, write to
-#  the Free Software Foundation, 51 Franklin Street, Suite 500, Boston, MA 02110, USA.
-#  http://www.gnu.org/copyleft/gpl.html
-################################################################################
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="scummvm-lr"
-PKG_VERSION="9d31b31c179fd4a43f7cfc383a3435a9070c6aa8"
-PKG_LICENSE="GPLv2"
+PKG_VERSION="292e409938384ac0b3819a336c61fbb71dcbb9c3"
+PKG_SHA256="1027995a51a1eb429249c3afb6e6b438897652909a9384a82a539716b1d5182e"
+PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/libretro/scummvm"
-PKG_URL="${PKG_SITE}.git"
+PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="ScummVM with libretro backend."
-
 PKG_TOOLCHAIN="make"
 PKG_BUILD_FLAGS="-lto"
 
-pre_make_target() {
-  CXXFLAGS+=" -DHAVE_POSIX_MEMALIGN=1"
-  cd ${PKG_BUILD}/backends/platform/libretro
-}
+PKG_MAKE_OPTS_TARGET="-C ../backends/platform/libretro"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp scummvm_libretro.so ${INSTALL}/usr/lib/libretro/
+    cp -a ../backends/platform/libretro/scummvm_libretro.so ${INSTALL}/usr/lib/libretro
 }

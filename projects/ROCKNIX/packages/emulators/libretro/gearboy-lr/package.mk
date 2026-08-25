@@ -1,35 +1,19 @@
-################################################################################
-#
-#  Copyright (C) 2020      351ELEC team (https://github.com/fewtarius/351ELEC)
-#
-#  This Program is free software; you can redistribute it and/or modify
-#  it under the terms of the GNU General Public License as published by
-#  the Free Software Foundation; either version 2, or (at your option)
-#  any later version.
-#
-#  This Program is distributed in the hope that it will be useful,
-#  but WITHOUT ANY WARRANTY; without even the implied warranty of
-#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-#  GNU General Public License for more details.
-#
-################################################################################
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="gearboy-lr"
-PKG_VERSION="d2edb3469f367dabb40217f05caaf598a0177499"
-PKG_SHA256="b32b6ddddced462bcf52b557430c6704b63f9de6c8f549ad3394f13d9a1180e9"
-PKG_LICENSE="GPL"
+PKG_VERSION="542f60b7065612cf318986baf5c87ab64075f2aa"
+PKG_SHA256="c4cc7cad99bfa84b4dcf7860eeefc12ef181d4c21798445abbfa71060a01370f"
+PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/drhelius/Gearboy"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Game Boy / Gameboy Color emulator for iOS, Mac, Raspberry Pi, Windows and Linux"
-
 PKG_TOOLCHAIN="make"
 
-make_target() {
-  make -C platforms/libretro/
-}
+PKG_MAKE_OPTS_TARGET="-C platforms/libretro"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp platforms/libretro/gearboy_libretro.so ${INSTALL}/usr/lib/libretro/
+    cp -a platforms/libretro/gearboy_libretro.so ${INSTALL}/usr/lib/libretro
 }

@@ -1,39 +1,18 @@
-################################################################################
-#      This file is part of OpenELEC - http://www.openelec.tv
-#      Copyright (C) 2009-2012 Stephan Raue (stephan@openelec.tv)
-#
-#  This Program is free software; you can redistribute it and/or modify
-#  it under the terms of the GNU General Public License as published by
-#  the Free Software Foundation; either version 2, or (at your option)
-#  any later version.
-#
-#  This Program is distributed in the hope that it will be useful,
-#  but WITHOUT ANY WARRANTY; without even the implied warranty of
-#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-#  GNU General Public License for more details.
-#
-#  You should have received a copy of the GNU General Public License
-#  along with OpenELEC.tv; see the file COPYING.  If not, write to
-#  the Free Software Foundation, 51 Franklin Street, Suite 500, Boston, MA 02110, USA.
-#  http://www.gnu.org/copyleft/gpl.html
-################################################################################
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="snes9x2010-lr"
-PKG_VERSION="f9ae8fd28b13070a945a829ccf41cbf90a21d0f7"
-PKG_SHA256="730aa78b64c5c214454361c517b351ce7d225a89dd51705ebb94a8fedc3bd3e3"
-PKG_LICENSE="Non-commercial"
+PKG_VERSION="7db129b1ecdccb38cb4d7184bcbed39beed79656"
+PKG_SHA256="7443623d5c8a098fd20cf46dab29dbe8c7504f05d8a3aaa1a10f6d5d6a9d8d88"
+PKG_LICENSE=""
 PKG_SITE="https://github.com/libretro/snes9x2010"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Snes9x 2010."
 
-PKG_TOOLCHAIN="make"
-
-make_target() {
-  make -f Makefile.libretro
-}
+PKG_MAKE_OPTS_TARGET="-f Makefile.libretro"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp snes9x2010_libretro.so ${INSTALL}/usr/lib/libretro/
+    cp -a snes9x2010_libretro.so ${INSTALL}/usr/lib/libretro
 }

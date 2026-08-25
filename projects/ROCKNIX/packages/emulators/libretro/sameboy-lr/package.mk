@@ -1,40 +1,18 @@
-################################################################################
-#      This file is part of OpenELEC - http://www.openelec.tv
-#      Copyright (C) 2009-2012 Stephan Raue (stephan@openelec.tv)
-#      Copyright (C) 2020      351ELEC team (https://github.com/fewtarius/351ELEC)
-#
-#  This Program is free software; you can redistribute it and/or modify
-#  it under the terms of the GNU General Public License as published by
-#  the Free Software Foundation; either version 2, or (at your option)
-#  any later version.
-#
-#  This Program is distributed in the hope that it will be useful,
-#  but WITHOUT ANY WARRANTY; without even the implied warranty of
-#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-#  GNU General Public License for more details.
-#
-#  You should have received a copy of the GNU General Public License
-#  along with OpenELEC.tv; see the file COPYING.  If not, write to
-#  the Free Software Foundation, 51 Franklin Street, Suite 500, Boston, MA 02110, USA.
-#  http://www.gnu.org/copyleft/gpl.html
-################################################################################
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="sameboy-lr"
-PKG_VERSION="2d29ece3b8e7ec44347c9daad0fabb84912ed44f"
-PKG_SHA256="d9f1e2a89d112087d4753d0619b61a945ce0844ba9aca09c600c46fb44fb20fd"
+PKG_VERSION="aa158a889a48b538a0302873704a34577c8eb67d"
+PKG_SHA256="6d80783ac470c15b5be1060e619eda01079f00c1c42fdfbcc65527b7dcd8b5b7"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/libretro/SameBoy"
-PKG_URL="${PKG_SITE}/-/archive/${PKG_VERSION}/SameBoy-${PKG_VERSION}.tar.gz"
+PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain util-linux:host"
 PKG_LONGDESC="Gameboy and Gameboy Color emulator written in C"
 
-PKG_TOOLCHAIN="make"
-
-make_target() {
-  make -C libretro BOOTROMS_DIR=${PKG_BUILD}/BootROMs/prebuilt
-}
+PKG_MAKE_OPTS_TARGET="-C libretro BOOTROMS_DIR=${PKG_BUILD}/BootROMs/prebuilt"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp ${PKG_BUILD}/sameboy_libretro.so ${INSTALL}/usr/lib/libretro/
+    cp -a libretro/sameboy_libretro.so ${INSTALL}/usr/lib/libretro
 }

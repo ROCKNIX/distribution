@@ -1,35 +1,19 @@
-################################################################################
-#
-#  Copyright (C) 2021      351ELEC team (https://github.com/351ELEC/351ELEC)
-#
-#  This Program is free software; you can redistribute it and/or modify
-#  it under the terms of the GNU General Public License as published by
-#  the Free Software Foundation; either version 2, or (at your option)
-#  any later version.
-#
-#  This Program is distributed in the hope that it will be useful,
-#  but WITHOUT ANY WARRANTY; without even the implied warranty of
-#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-#  GNU General Public License for more details.
-#
-################################################################################
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="gearcoleco-lr"
-PKG_VERSION="f336da73f64917a2889b183e7e5025485bcd0e79"
-PKG_SHA256="6bac1c177a95cfa17cb0107c4b794032958c8a8b2ee3150320d22bab2ac02079"
-PKG_LICENSE="GPL"
+PKG_VERSION="fd6c7ccca76358b41aff646f85a9c0bbaa69b36a"
+PKG_SHA256="54be3e86d4466f3bba4c168d56faba467360c00c0a405702bd5580987868cb87"
+PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/drhelius/Gearcoleco"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Gearcoleco is a very accurate cross-platform ColecoVision emulator written in C++ that runs on Windows, macOS, Linux, BSD, Raspberry Pi and RetroArch."
-
 PKG_TOOLCHAIN="make"
 
-make_target() {
-  make -C platforms/libretro/
-}
+PKG_MAKE_OPTS_TARGET="-C platforms/libretro"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp platforms/libretro/gearcoleco_libretro.so ${INSTALL}/usr/lib/libretro/
+    cp -a platforms/libretro/gearcoleco_libretro.so ${INSTALL}/usr/lib/libretro
 }

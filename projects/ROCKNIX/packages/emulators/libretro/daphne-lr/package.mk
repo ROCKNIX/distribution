@@ -1,22 +1,18 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2019-present Shanti Gilbert (https://github.com/shantigilbert)
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="daphne-lr"
-PKG_VERSION="b5481bab34a51369b6749cd95f5f889e43aaa23f"
-PKG_SHA256="19d53def5db6921fa751fcb853840e3890bb8be0a36e29b711bcc30ba45df0d6"
-PKG_LICENSE="GPLv2+"
+PKG_VERSION="6f1695dd1f376060666eec0a416ff56bb6c9cccc"
+PKG_SHA256="04181eaa570acdb384920b2363eabf07b1d6d64701e806b852435aec0aa587ee"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/daphne"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="This is a Daphne core"
 PKG_TOOLCHAIN="make"
 
-pre_configure_target() {
-	export CFLAGS="${CFLAGS} -Wno-use-after-free -Wno-unused-function -Wno-maybe-uninitialized -Wno-unused-variable -Wno-implicit-function-declaration -Wno-builtin-declaration-mismatch -Wno-unknown-pragmas -Wno-pointer-to-int-cast -Wno-pedantic -Wno-error=incompatible-pointer-types"
-}
-
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp daphne_libretro.so ${INSTALL}/usr/lib/libretro/
+    cp -a daphne_libretro.so ${INSTALL}/usr/lib/libretro
 }
 

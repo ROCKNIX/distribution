@@ -1,36 +1,16 @@
-################################################################################
-#      This file is part of OpenELEC - http://www.openelec.tv
-#      Copyright (C) 2009-2012 Stephan Raue (stephan@openelec.tv)
-#      Copyright (C) 2020      351ELEC team (https://github.com/fewtarius/351ELEC)
-#
-#  This Program is free software; you can redistribute it and/or modify
-#  it under the terms of the GNU General Public License as published by
-#  the Free Software Foundation; either version 2, or (at your option)
-#  any later version.
-#
-#  This Program is distributed in the hope that it will be useful,
-#  but WITHOUT ANY WARRANTY; without even the implied warranty of
-#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-#  GNU General Public License for more details.
-#
-#  You should have received a copy of the GNU General Public License
-#  along with OpenELEC.tv; see the file COPYING.  If not, write to
-#  the Free Software Foundation, 51 Franklin Street, Suite 500, Boston, MA 02110, USA.
-#  http://www.gnu.org/copyleft/gpl.html
-################################################################################
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="crocods-lr"
-PKG_VERSION="a320f6e38af49af84a63f81329a1bdb9322022b4"
-PKG_SHA256="b2fb689f0a2d3d0496ee11330ed0d086d09dcd8cde1bce34f46f8a1db89aabbf"
+PKG_VERSION="a9c63b29443715ae2add392010fca4eae7f93e67"
+PKG_SHA256="e2d2ce649fa390e277ea7db15d376027b1f69b42c4767c5551e972015c6d2768"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/libretro/libretro-crocods"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Amstrad CPC emulator"
 
-PKG_TOOLCHAIN="make"
-
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp crocods_libretro.so ${INSTALL}/usr/lib/libretro/
+    cp -a crocods_libretro.so ${INSTALL}/usr/lib/libretro
 }

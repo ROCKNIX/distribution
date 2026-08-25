@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="tic80-lr"
 PKG_VERSION="7020500a6e88f6ee91301933bb77f082a10e10f5"
@@ -8,7 +8,6 @@ PKG_SITE="https://github.com/nesbox/TIC-80"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="TIC-80 is a fantasy computer for making, playing and sharing tiny games."
-
 
 PKG_CMAKE_OPTS_TARGET="-DBUILD_DEMO_CARTS=OFF \
                        -DBUILD_EDITORS=OFF \
@@ -33,10 +32,9 @@ PKG_CMAKE_OPTS_TARGET="-DBUILD_DEMO_CARTS=OFF \
                        -DBUILD_WITH_WASM=OFF \
                        -DBUILD_WITH_WREN=ON \
                        -DBUILD_WITH_ZLIB=ON \
-                       -DCMAKE_BUILD_TYPE=Release \
                        -DCMAKE_POLICY_VERSION_MINIMUM=3.5"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp ${PKG_BUILD}/.${TARGET_NAME}/bin/tic80_libretro.so ${INSTALL}/usr/lib/libretro/tic80_libretro.so
+    cp -a bin/tic80_libretro.so ${INSTALL}/usr/lib/libretro/tic80_libretro.so
 }
