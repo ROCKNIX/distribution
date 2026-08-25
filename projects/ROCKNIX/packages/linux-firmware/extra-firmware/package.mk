@@ -2,10 +2,13 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="extra-firmware"
-PKG_VERSION="2b7207cfcb80c53c09dc6e04165789ecaf2d3348"
+PKG_VERSION="5a628dba2ff27b692194237eee8ba3730fdbf98a"
 PKG_LICENSE="proprietary"
 PKG_SITE="https://github.com/ROCKNIX/extra-firmware"
-PKG_URL="https://github.com/ROCKNIX/extra-firmware/archive/${PKG_VERSION}.tar.gz"
+# XXX points at slaide/extra-firmware branch sm8750-konkr-dp-audio for the
+# KONKR topology with the DisplayPort graph. Repoint at ROCKNIX/extra-firmware
+# once https://github.com/ROCKNIX/extra-firmware PR is merged.
+PKG_URL="https://github.com/slaide/extra-firmware/archive/${PKG_VERSION}.tar.gz"
 PKG_LONGDESC="extra-firmware: Extra kernel firmware needed for ROCKNIX devices"
 PKG_TOOLCHAIN="manual"
 

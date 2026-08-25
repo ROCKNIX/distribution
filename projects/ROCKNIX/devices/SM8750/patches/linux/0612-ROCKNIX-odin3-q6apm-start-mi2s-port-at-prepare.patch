@@ -1,33 +1,53 @@
-Subject: [PATCH] ASoC: qdsp6: q6apm-lpass: start RX port at prepare
+Subject: [PATCH] ASoC: qdsp6: q6apm-lpass: start MI2S RX port at prepare
 
 Port start moved from .prepare to .trigger, so the MI2S bit-clock now
-starts after the codec DAPM widgets power up. The Odin3 aw88166 amps
-check their PLL against BCLK at DAPM PRE_PMU, before the trigger, and
-fail PLL lock with no clock, leaving the speakers silent.
+starts after the codec DAPM widgets power up. The Odin3 aw88166 and the
+KONKR aw88261 amps check their PLL against BCLK at DAPM PRE_PMU, before
+the trigger, and fail PLL lock with no clock, leaving the speakers silent.
 
 Start the playback port at prepare again so BCLK is up before PRE_PMU.
 The trigger's !is_port_started guard no-ops; capture is unchanged.
+
+MI2S ports only. Starting the DisplayPort endpoint this early makes the
+DSP reject APM_CMD_GRAPH_START: the DP controller only enables its audio
+path from the codec dai's prepare, which runs after this one.
 ---
 --- a/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c
 +++ b/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c
-@@ -224,6 +224,20 @@
+@@ -224,6 +224,36 @@
  		dev_err(dai->dev, "Failed to prepare Graph %d\n", rc);
  		goto err;
  	}
 +
 +	/*
-+	 * aw88166 checks its PLL against BCLK at DAPM PRE_PMU, before the
-+	 * PCM trigger; start the port here so BCLK is up in time. The
-+	 * trigger's !is_port_started guard then no-ops. Playback only.
++	 * aw88166/aw88261 check their PLL against BCLK at DAPM PRE_PMU, before
++	 * the PCM trigger, so the MI2S port has to be running by then. Start it
++	 * here and let the trigger's !is_port_started guard no-op.
++	 *
++	 * MI2S only. The DisplayPort endpoint must not start this early: the DP
++	 * controller's audio path is enabled from the codec dai's prepare, which
++	 * runs after this one, and the DSP rejects APM_CMD_GRAPH_START on a DP
++	 * port whose audio path is still off. Capture is unchanged.
 +	 */
-+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
-+		rc = q6apm_graph_start(dai_data->graph[dai->id]);
-+		if (rc < 0) {
-+			dev_err(dai->dev, "Failed to start APM port %d\n", dai->id);
-+			goto err;
++	switch (dai->id) {
++	case PRIMARY_MI2S_RX:
++	case SECONDARY_MI2S_RX:
++	case TERTIARY_MI2S_RX:
++	case QUATERNARY_MI2S_RX:
++	case QUINARY_MI2S_RX:
++		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
++			rc = q6apm_graph_start(dai_data->graph[dai->id]);
++			if (rc < 0) {
++				dev_err(dai->dev, "Failed to start APM port %d\n", dai->id);
++				goto err;
++			}
++			dai_data->is_port_started[dai->id] = true;
 +		}
-+		dai_data->is_port_started[dai->id] = true;
++		break;
++	default:
++		break;
 +	}
++
  	return 0;
  err:
  	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {

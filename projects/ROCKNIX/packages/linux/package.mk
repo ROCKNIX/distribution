@@ -265,10 +265,11 @@ pre_make_target() {
     mkdir -p ${PKG_BUILD}/external-firmware/qcom/sm8750/konkr/pfe
       cp -Lv $(get_build_dir extra-firmware)/SM8750/qcom/sm8750/konkr/pfe/aw88261_acf.bin ${PKG_BUILD}/external-firmware/qcom/sm8750/konkr/pfe
 
-    # KONKR Pocket FIT Elite: QUAT-MI2S audio topology (the AYN tplg with its
-    # MI2S backend retargeted SECONDARY->QUATERNARY — the konkr's speaker amps
-    # are on QUATERNARY MI2S). Built-in firmware is searched before the rootfs,
-    # so this also overrides any stale copy in the SYSTEM overlay.
+    # KONKR Pocket FIT Elite: AudioReach topology (SEC MI2S on SD1 for the amps,
+    # codec DMA for the headphones, DISPLAY_PORT_RX_0 for HDMI audio). The m4
+    # source and regen recipe live in devices/SM8750/audio-topology/. Built-in
+    # firmware is searched before the rootfs, so this also overrides any stale
+    # copy in the SYSTEM overlay.
       cp -Lv $(get_build_dir extra-firmware)/SM8750/qcom/sm8750/SM8750-KONKR-tplg.bin ${PKG_BUILD}/external-firmware/qcom/sm8750
 
     FW_LIST="$(find ${PKG_BUILD}/external-firmware -type f | sed 's|.*external-firmware/||' | sort | xargs)"

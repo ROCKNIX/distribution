@@ -1,0 +1,39 @@
+Subject: [PATCH] drm/msm/dp: don't fail audio prepare while the display is off
+
+msm_dp_audio_prepare() refuses with -EINVAL when the DP display is not
+powered on, to avoid unclocked access to the DP block. Skipping the setup
+is right, returning an error is not: userspace prepares the DisplayPort
+PCM to find out what it supports long before anything is plugged in
+(pipewire does it for every UCM device while it builds the card), and one
+failure there makes it discard the whole card profile, so the machine
+loses its speaker and headphone sinks too.
+
+Skip the programming as before and return success. Nothing is touched and
+no link is up, so the stream goes nowhere until the display is enabled.
+
+--- a/drivers/gpu/drm/msm/dp/dp_audio.c
++++ b/drivers/gpu/drm/msm/dp/dp_audio.c
+@@ -281,13 +281,18 @@
+ 	 * before OR even when DP is not connected . This can cause
+ 	 * unclocked access as the audio subsystem relies on the DP
+ 	 * driver to maintain the correct state of clocks. To protect
+-	 * such cases check for connection status and bail out if not
+-	 * connected.
++	 * such cases check for connection status and skip the setup if
++	 * not connected.
++	 *
++	 * Don't report an error for it. Userspace prepares this PCM to
++	 * find out what it can do long before anything is plugged in
++	 * (pipewire does it for every UCM device while it builds the
++	 * card), and failing that makes it drop the whole card profile,
++	 * taking the speakers down with it. Nothing is programmed here
++	 * and no link is up, so the stream simply goes nowhere.
+ 	 */
+-	if (!msm_dp_display->power_on) {
+-		rc = -EINVAL;
++	if (!msm_dp_display->power_on)
+ 		goto end;
+-	}
+ 
+ 	audio = msm_dp_audio_get_data(msm_dp_display);
+ 	if (IS_ERR(audio)) {
