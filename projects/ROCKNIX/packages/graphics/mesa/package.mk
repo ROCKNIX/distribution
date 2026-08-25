@@ -4,6 +4,7 @@
 
 PKG_NAME="mesa"
 PKG_VERSION="26.1.6"
+PKG_SHA256="2336a3a18ab24ffe1d906a51adde827e5ab565b06ff8446fe8ed44ae81bd0931"
 PKG_LICENSE="OSS"
 PKG_SITE="http://www.mesa3d.org/"
 PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"

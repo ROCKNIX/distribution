@@ -3,6 +3,7 @@
 
 PKG_NAME="oga_controls"
 PKG_VERSION="1604ee24150c1c5bb7c66bc4670919c2ad8f0064"
+PKG_SHA256="cdfa89581e3494220ef1d91246376179947bdd2ba1dd084249c224cc9ce0d8f4"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/christianhaitian/oga_controls"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

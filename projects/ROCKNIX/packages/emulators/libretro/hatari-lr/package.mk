@@ -21,6 +21,7 @@
 
 PKG_NAME="hatari-lr"
 PKG_VERSION="7008194d3f951a157997f67a820578f56f7feee0"
+PKG_SHA256="05f9da703fb5030aa5424e53a35d9b310d183b3b48aa777504e796c88fdd3da2"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/hatari"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

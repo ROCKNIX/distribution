@@ -4,6 +4,7 @@
 
 PKG_NAME="zmusic"
 PKG_VERSION="1.1.14"
+PKG_SHA256="f04410fe4ea08136f37703e7715c27df4c8532ace1e721cf40c6f303a93acc54"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/ZDoom/ZMusic"
 PKG_URL="https://github.com/ZDoom/ZMusic/archive/refs/tags/${PKG_VERSION}.tar.gz"

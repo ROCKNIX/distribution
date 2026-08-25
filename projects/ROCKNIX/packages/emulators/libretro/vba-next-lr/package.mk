@@ -21,6 +21,7 @@
 
 PKG_NAME="vba-next-lr"
 PKG_VERSION="d0ec7f3e209a91b903bb9d2c2397fef2bb3cca32"
+PKG_SHA256="380473c6c9d10f47dda27239ec0375f4e49b5b149e4466902a07380f57b8d77b"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/libretro/vba-next"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

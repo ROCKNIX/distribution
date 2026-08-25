@@ -4,6 +4,7 @@
 
 PKG_NAME="libvpx"
 PKG_VERSION="df655cf4fb6c2a23b964544acd015cc715752830" # 1.13.1
+PKG_SHA256="1d1094ad5a8058b3015ee40bfb1bfa8e0bd68d655f76ac852315b98e365218bd"
 PKG_LICENSE="BSD"
 PKG_SITE="https://github.com/webmproject/libvpx"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

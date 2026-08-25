@@ -3,6 +3,7 @@
 
 PKG_NAME="gamepadcalibration"
 PKG_VERSION="2077e7af7e9a8c1df54af6f1959cb92daea03207"
+PKG_SHA256="f14730170a41ec183a203bdad98e5acd089ab59cd580cd0235a5eda39759b677"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/cdeletre/GPcal"
 PKG_URL="https://github.com/cdeletre/GPcal/archive/${PKG_VERSION}.tar.gz"

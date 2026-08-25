@@ -3,6 +3,7 @@
 
 PKG_NAME="u-boot-Specific"
 PKG_VERSION="v2026.01"
+PKG_SHA256="03bb43c58d2343ee48dd191e0f181f0108425b179d84519add3a977071c3f654"
 PKG_LICENSE="GPL"
 PKG_SITE="https://www.denx.de/wiki/U-Boot"
 PKG_URL="https://github.com/u-boot/u-boot/archive/${PKG_VERSION}.tar.gz"

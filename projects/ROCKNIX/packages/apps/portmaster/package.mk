@@ -3,6 +3,7 @@
 
 PKG_NAME="portmaster"
 PKG_VERSION="2026.05.04-1202"
+PKG_SHA256="9d6f25d461afced95569923a57c6a9c42df225190c043d74fe2ec0edcf40a477"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/PortsMaster/PortMaster-GUI"
 PKG_URL="https://github.com/PortsMaster/PortMaster-GUI/releases/download/${PKG_VERSION}/PortMaster.zip"

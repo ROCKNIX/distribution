@@ -3,6 +3,7 @@
 
 PKG_NAME="alsa-ucm-conf"
 PKG_VERSION="1.2.13"
+PKG_SHA256="4483b6e3983cca08fd326a73fbae449b5036e444fb1a07c0dee74b504b7ab5af"
 PKG_LICENSE="BSD-3c"
 PKG_SITE="http://www.alsa-project.org/"
 PKG_URL="https://www.alsa-project.org/files/pub/lib/alsa-ucm-conf-${PKG_VERSION}.tar.bz2"

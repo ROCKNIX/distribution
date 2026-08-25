@@ -3,6 +3,7 @@
 
 PKG_NAME="libdecor"
 PKG_VERSION="0.2.5"
+PKG_SHA256="1d0e9b3d2711dfc4edc21db3c87752a76cd62079cfad447699acda5d49b23536"
 PKG_LICENSE="MIT"
 PKG_SITE="https://gitlab.freedesktop.org/libdecor/libdecor"
 PKG_URL="${PKG_SITE}/-/archive/${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tar.bz2"

@@ -3,6 +3,7 @@
 
 PKG_NAME="es-theme-art-book-next"
 PKG_VERSION="9a50ef366e750aabfab29e6915a2867607212971"
+PKG_SHA256="7ee1e93f2c4e4f7385b78680ecfa3828acf12bc616e2111d23cc66a524231125"
 PKG_LICENSE="CUSTOM"
 PKG_SITE="https://github.com/anthonycaccese/art-book-next-es"
 PKG_URL="https://github.com/anthonycaccese/art-book-next-es/archive/${PKG_VERSION}.tar.gz"

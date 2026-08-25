@@ -3,6 +3,7 @@
 
 PKG_NAME="lsfg-vk"
 PKG_VERSION="8b0da2661c6f3473a7fccc8ba643880050e71642"
+PKG_SHA256="2bfcc74919cb202669740a3c6ba348ebf702e2fef37310dce2ae095854fda1cb"
 PKG_LICENSE="GPL-3.0"
 PKG_SITE="https://github.com/PancakeTAS/lsfg-vk"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

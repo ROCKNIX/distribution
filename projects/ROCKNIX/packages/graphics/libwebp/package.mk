@@ -3,6 +3,7 @@
 
 PKG_NAME="libwebp"
 PKG_VERSION="1.6.0"
+PKG_SHA256="93a852c2b3efafee3723efd4636de855b46f9fe1efddd607e1f42f60fc8f2136"
 PKG_LICENSE="BSD"
 PKG_SITE="https://github.com/webmproject/libwebp"
 PKG_URL="${PKG_SITE}/archive/v${PKG_VERSION}.tar.gz"

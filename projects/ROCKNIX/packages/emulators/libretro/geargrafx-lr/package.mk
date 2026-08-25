@@ -16,6 +16,7 @@
 
 PKG_NAME="geargrafx-lr"
 PKG_VERSION="f960cf550404756f19221ac0a0978d31af77ca67"
+PKG_SHA256="e068b8b45054cddd3f94bf1b75a25e5078ddebbd4ef9eaae5ed6e0c84beb3644"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/drhelius/Geargrafx"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

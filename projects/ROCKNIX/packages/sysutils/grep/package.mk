@@ -4,6 +4,7 @@
 
 PKG_NAME="grep"
 PKG_VERSION="3.9"
+PKG_SHA256="abcd11409ee23d4caf35feb422e53bbac867014cfeed313bb5f488aca170b599"
 PKG_LICENSE="GPL"
 PKG_SITE="http://www.gnu.org/software/grep/"
 PKG_URL="http://ftp.gnu.org/gnu/grep/${PKG_NAME}-${PKG_VERSION}.tar.xz"

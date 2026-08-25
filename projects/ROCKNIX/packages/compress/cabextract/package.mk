@@ -3,6 +3,7 @@
 
 PKG_NAME="cabextract"
 PKG_VERSION="1.11"
+PKG_SHA256="6ba84be68f793ae47cf48f0962d3e0bc85c48463d2590af9dd692057cdbca52c"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://www.cabextract.org.uk"
 PKG_URL="https://github.com/ROCKNIX/packages/raw/main/cabextract.tar.xz"

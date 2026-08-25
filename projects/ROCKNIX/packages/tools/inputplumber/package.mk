@@ -3,6 +3,7 @@
 
 PKG_NAME="inputplumber"
 PKG_VERSION="v0.75.2"
+PKG_SHA256="8e8e84853138689081a60201d448f51cd6b46e160e4a0e02b95e52f2e30f27f0"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/ShadowBlip/InputPlumber"
 PKG_URL="https://github.com/ShadowBlip/InputPlumber/releases/download/${PKG_VERSION}/inputplumber-aarch64.tar.gz"

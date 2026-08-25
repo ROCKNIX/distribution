@@ -3,6 +3,7 @@
 
 PKG_NAME="gamepadtester"
 PKG_VERSION="6ac49e67aa98fe3dd5c27f73306d65d4b7a82daa"
+PKG_SHA256="dcba71ac2e673b7714a6cac12661d56e61a2eb861136bf7d74a42165d6a69be6"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/timre13/GamepadTester"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

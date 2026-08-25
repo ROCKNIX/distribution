@@ -22,6 +22,7 @@
 
 PKG_NAME="vice-lr"
 PKG_VERSION="91d0d4d884acd44b5240dfcdbd8bdc2f0f757dfd"
+PKG_SHA256="bb2d86206c7890fe036be79ecbf75cb83051e01ecf6b5b140f4950c0e6304356"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/vice-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

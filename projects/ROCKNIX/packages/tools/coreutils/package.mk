@@ -4,6 +4,7 @@
 
 PKG_NAME="coreutils"
 PKG_VERSION="9.4"
+PKG_SHA256="ea613a4cf44612326e917201bbbcdfbd301de21ffc3b59b6e5c07e040b275e52"
 PKG_LICENSE="GPLv2+"
 PKG_SITE="https://www.gnu.org/software/coreutils/"
 PKG_URL="https://ftp.gnu.org/gnu/coreutils/coreutils-${PKG_VERSION}.tar.xz"

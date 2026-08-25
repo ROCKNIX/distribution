@@ -3,6 +3,7 @@
 
 PKG_NAME="libiio"
 PKG_VERSION="v0.26"
+PKG_SHA256="fb445fb860ef1248759f45d4273a4eff360534480ec87af64c6b8db3b99be7e5"
 PKG_LICENSE="LGPL-2.1+"
 PKG_SITE="https://github.com/analogdevicesinc/libiio"
 PKG_URL="${PKG_SITE}/archive/refs/tags/${PKG_VERSION}.tar.gz"

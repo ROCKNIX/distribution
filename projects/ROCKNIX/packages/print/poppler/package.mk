@@ -5,6 +5,7 @@
 
 PKG_NAME="poppler"
 PKG_VERSION="23.05.0"
+PKG_SHA256="214a99df67b398c0cc141a0cfe16e45c1f708b7651f9fef28db298a0bfd513e9"
 PKG_LICENSE="GPL"
 PKG_SITE="https://gitlab.freedesktop.org/poppler/poppler"
 PKG_URL="${PKG_SITE}/-/archive/${PKG_NAME}-${PKG_VERSION}/${PKG_NAME}-${PKG_NAME}-${PKG_VERSION}.tar.bz2"

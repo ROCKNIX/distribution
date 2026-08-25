@@ -3,6 +3,7 @@
 
 PKG_NAME="emulationstation"
 PKG_VERSION="9d664e2ffa75d0fcfd129c6598318c61b57ff8f7"
+PKG_SHA256="e1639a1d6750c5987caa6b8a31bc560a6b9ed4692ae3f550a4db9e82dbb87daf"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/ROCKNIX/emulationstation-next"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
