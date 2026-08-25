@@ -2,7 +2,7 @@
 // Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
 
 #include <stdio.h>
-#include <SDL.h>
+#include <SDL2/SDL.h>
 #include <cstdlib>
 
 int main()

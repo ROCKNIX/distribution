@@ -1,3 +1,4 @@
+//# SPDX-License-Identifier: GPL-2.0
 //# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 #include <SDL2/SDL.h>
