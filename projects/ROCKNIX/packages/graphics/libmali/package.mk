@@ -45,6 +45,7 @@ esac
 case "${DEVICE}" in
   RK3326|RK3566|RK3576)
     PKG_SITE="https://github.com/JeffyCN/mirrors"
+    PKG_SHA256="54b8af924f582f7da7e120fbad4812a502cc7cc67f6d6ab061377cb403f3eb2d"
     PKG_VERSION="4233031d818e97a19e8a9cdbbd5c15795ededd93"
     # zip format makes extract very fast (<1s). tgz takes 20 seconds to scan the whole file
     PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.zip"
