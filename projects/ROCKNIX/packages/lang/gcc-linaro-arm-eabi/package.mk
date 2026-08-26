@@ -1,6 +1,6 @@
 PKG_NAME="gcc-linaro-arm-eabi"
 PKG_VERSION="4.9.4-2017.01"
-PKG_SHA256="40e71db1eeedc62d2542e28c76ea1c6b1f552fecdb425672f657c823f489b61e"
+PKG_SHA256="5fa170a74db172dca098c70ae58f4c08d2fca0232ce135530b2ef4996326b4bd"
 PKG_LICENSE="GPL"
 PKG_SITE=""
 PKG_URL="https://releases.linaro.org/components/toolchain/binaries/4.9-2017.01/arm-eabi/gcc-linaro-${PKG_VERSION}-x86_64_arm-eabi.tar.xz"
