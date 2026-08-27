@@ -1,0 +1,47 @@
+From: sunshineinabox <aqemail@gmail.com>
+Subject: [PATCH] clk: qcom: dispcc-sm4450: silence bootloader splash before RCG registration
+
+--- a/drivers/clk/qcom/dispcc-sm4450.c
++++ b/drivers/clk/qcom/dispcc-sm4450.c
+@@ -4,6 +4,8 @@
+  */
+ 
+ #include <linux/clk-provider.h>
++#include <linux/delay.h>
++#include <linux/io.h>
+ #include <linux/module.h>
+ #include <linux/platform_device.h>
+ #include <linux/regmap.h>
+@@ -735,10 +737,32 @@
+ };
+ MODULE_DEVICE_TABLE(of, disp_cc_sm4450_match_table);
+ 
++/*
++ * The bootloader hands over with the splash scanout still running. Stop the
++ * timing engine and let the frame drain before the RCGs register 
++ * so the display rests at full clock rates.
++ */
++static void disp_cc_sm4450_quiesce_splash(void)
++{
++	void __iomem *intf;
++
++	intf = ioremap(0xae36000, SZ_4);
++	if (!intf)
++		return;
++
++	if (readl(intf)) {
++		writel(0, intf);	/* INTF_TIMING_ENGINE_EN */
++		msleep(50);
++	}
++	iounmap(intf);
++}
++
+ static int disp_cc_sm4450_probe(struct platform_device *pdev)
+ {
+ 	struct regmap *regmap;
+ 
++	disp_cc_sm4450_quiesce_splash();
++
+ 	regmap = qcom_cc_map(pdev, &disp_cc_sm4450_desc);
+ 	if (IS_ERR(regmap))
+ 		return PTR_ERR(regmap);
