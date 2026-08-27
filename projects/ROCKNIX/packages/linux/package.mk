@@ -32,11 +32,11 @@ case ${DEVICE} in
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     PKG_PATCH_DIRS+=" 7.2.6"
     ;;
-  SM8550)
+  SM6115|SM8550)
     PKG_VERSION="7.3.5"
     PKG_SHA256="8f293f83d54f0b7b9be56863ebc5e4ea79d73e530b4ae55c572be97ef39f0990"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
-    PKG_PATCH_DIRS+=" 7.2.6"
+    PKG_PATCH_DIRS+=" 7.3"
     ;;
   S922X)
     PKG_VERSION="7.3.4"
@@ -44,7 +44,7 @@ case ${DEVICE} in
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     PKG_PATCH_DIRS+=" 7.2.6"
     ;;
-  AMD64|H700|SM4450|SM6115|SM8250|SM8650|SM8750)
+  AMD64|H700|SM4450|SM8250|SM8650|SM8750)
     PKG_VERSION="7.2"
     PKG_SHA256="f9fef3d14c0df53819026f4be74459835c2a0b0dcbf5b5bbd9ea19f0829402b3"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
