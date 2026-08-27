@@ -9,7 +9,7 @@ PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain libevdev SDL2 qt6 mesa libcom-err openssl zlib"
 PKG_LONGDESC="PS VITA Emulator"
 PKG_TOOLCHAIN="cmake"
-PKG_GIT_CLONE_BRANCH="master"
+PKG_GIT_CLONE_BRANCH="single"
 
 PKG_PATCH_DIRS+="${DEVICE}"
 
