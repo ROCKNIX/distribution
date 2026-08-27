@@ -10,40 +10,40 @@ Subsequent filesystem I/O repeatedly times out and a following suspend can
 block forever in the filesystem sync, after userspace has already blanked
 the display.
 
-Recover a failed clock-gating hibern8 enter inline, matching the recovery
-already used for clock-gating hibern8-exit failures by the SM8550 PM relink
-patch.  Keep clk_gating.is_suspended set around the UIC command and recovery
-so the generic UIC error path cannot race a second error-handler reset when
-the failure occurs outside system PM.  Arm the non-MCQ relink poller while the
-link is reset so completion does not depend on the threaded ONESHOT IRQ.
+Recover a failed clock-gating hibern8 enter inline.  Keep
+clk_gating.is_suspended set around the UIC command and recovery so the
+generic UIC error path cannot race a second error-handler reset when the
+failure occurs outside system PM.  On this kernel the UFS interrupt is
+serviced entirely in hardirq context, so link recovery completes through
+the normal handler and needs no out-of-band poller.
 
-After the first failure, pin runtime UFS clock gating off for the remainder of
-the boot.  This is the same active-request pin used by the clkgate_enable
+After the first failure, pin runtime UFS clock gating off for the remainder
+of the boot.  This is the same active-request pin used by the clkgate_enable
 sysfs control.  System PM remains enabled and can still transition the UFS
-device and link for suspend, while the failed idle Hibern8 path is not retried.
+device and link for suspend, while the failed idle Hibern8 path is not
+retried.
 
-Capture the clock-gating and PM state when the worker is admitted, immediately
-before DME_HIBER_ENTER, and after a failure.  Emit the snapshots only on the
-failure path.  This makes it possible to distinguish a controller failure
-from a race where system suspend requests clocks back on after the gate worker
-has passed its initial eligibility check.
+Capture the clock-gating and PM state when the worker is admitted,
+immediately before DME_HIBER_ENTER, and after a failure.  Emit the
+snapshots only on the failure path.  This makes it possible to distinguish
+a controller failure from a race where system suspend requests clocks back
+on after the gate worker has passed its initial eligibility check.
 
 Signed-off-by: gh123man <gh123man@users.noreply.github.com>
 ---
---- a/drivers/ufs/core/ufshcd.c
-+++ b/drivers/ufs/core/ufshcd.c
-@@ -2056,6 +2056,10 @@ static void ufshcd_gate_work(struct work_struct *work)
+--- a/drivers/ufs/core/ufshcd.c	2026-08-25 21:37:00.258096745 +0800
++++ b/drivers/ufs/core/ufshcd.c	2026-08-25 21:37:15.670766966 +0800
+@@ -2029,6 +2029,9 @@
  {
  	struct ufs_hba *hba = container_of(work, struct ufs_hba,
  			clk_gating.gate_work.work);
 +	enum clk_gating_state admitted_state;
 +	int admitted_active_reqs;
 +	bool admitted_pm;
-+	bool admitted_system_suspend;
  	int ret;
  
  	scoped_guard(spinlock_irqsave, &hba->clk_gating.lock) {
-@@ -2075,6 +2079,16 @@ static void ufshcd_gate_work(struct work_struct *work)
+@@ -2048,6 +2051,15 @@
  
  		if (hba->clk_gating.active_reqs)
  			return;
@@ -56,18 +56,16 @@ Signed-off-by: gh123man <gh123man@users.noreply.github.com>
 +		admitted_state = hba->clk_gating.state;
 +		admitted_active_reqs = hba->clk_gating.active_reqs;
 +		admitted_pm = READ_ONCE(hba->pm_op_in_progress);
-+		admitted_system_suspend = READ_ONCE(hba->system_suspending);
  	}
  
  	scoped_guard(spinlock_irqsave, hba->host->host_lock) {
-@@ -2085,16 +2099,99 @@ static void ufshcd_gate_work(struct work_struct *work)
+@@ -2058,16 +2070,82 @@
  
  	/* put the link into hibern8 mode before turning off clocks */
  	if (ufshcd_can_hibern8_during_gating(hba)) {
 +		enum clk_gating_state h8_start_state;
 +		int h8_start_active_reqs;
 +		bool h8_start_pm;
-+		bool h8_start_system_suspend;
 +
 +		/* Snapshot any state transition since the worker was admitted. */
 +		scoped_guard(spinlock_irqsave, &hba->clk_gating.lock) {
@@ -75,7 +73,6 @@ Signed-off-by: gh123man <gh123man@users.noreply.github.com>
 +			h8_start_active_reqs = hba->clk_gating.active_reqs;
 +		}
 +		h8_start_pm = READ_ONCE(hba->pm_op_in_progress);
-+		h8_start_system_suspend = READ_ONCE(hba->system_suspending);
 +
 +		/*
 +		 * Suppress the generic fatal UIC error path while this worker owns
@@ -103,36 +100,21 @@ Signed-off-by: gh123man <gh123man@users.noreply.github.com>
 +				"%s: hibern8 enter failed %d, recovering link\n",
  					__func__, ret);
 +			dev_err(hba->dev,
-+				"%s: gate race snapshot: admitted state=%d active=%d pm=%d system=%d; h8-start state=%d active=%d pm=%d system=%d; failed state=%d active=%d enabled=%d suspended=%d pm=%d system=%d outstanding=%#lx gate-work=%u ungate-work=%u\n",
++				"%s: gate race snapshot: admitted state=%d active=%d pm=%d; h8-start state=%d active=%d pm=%d; failed state=%d active=%d enabled=%d suspended=%d pm=%d outstanding=%#lx gate-work=%u ungate-work=%u\n",
 +				__func__, admitted_state, admitted_active_reqs,
-+				admitted_pm, admitted_system_suspend,
++				admitted_pm,
 +				h8_start_state, h8_start_active_reqs,
-+				h8_start_pm, h8_start_system_suspend,
++				h8_start_pm,
 +				failed_state, failed_active_reqs,
 +				failed_enabled, failed_suspended,
 +				READ_ONCE(hba->pm_op_in_progress),
-+				READ_ONCE(hba->system_suspending),
 +				READ_ONCE(hba->outstanding_reqs),
 +				work_busy(&hba->clk_gating.gate_work.work),
 +				work_busy(&hba->clk_gating.ungate_work));
  			trace_ufshcd_clk_gating(hba,
  						hba->clk_gating.state);
 +
-+			/*
-+			 * A non-MCQ relink cannot rely on this controller's threaded
-+			 * IRQ making forward progress across PM.  Use the out-of-band
-+			 * completion poller installed by the SM8550 relink patch.
-+			 */
-+			if (!hba->mcq_enabled) {
-+				WRITE_ONCE(hba->relink_poll_active, true);
-+				mod_timer(&hba->pm_poll_timer,
-+					  jiffies + msecs_to_jiffies(2));
-+			}
 +			ret = ufshcd_link_recovery(hba);
-+			if (!hba->mcq_enabled) {
-+				WRITE_ONCE(hba->relink_poll_active, false);
-+				timer_delete_sync(&hba->pm_poll_timer);
-+			}
 +
 +			/*
 +			 * Do not retry a destructive idle-Hibern8 transition this boot.
