@@ -1,0 +1,138 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026 ROCKNIX (https://github.com/ROCKNIX)
+
+# Power key policy for SM8550 devices that have real suspend.
+#
+# rocknix-fake-suspend exists for devices that cannot sleep: it owns a state
+# machine with timed shutdown, delay flags and lid handling, and it assumes
+# nothing else will suspend underneath it. Running a device that *can* sleep
+# through that machine leaves two owners of the display, and a real suspend
+# arriving while it holds the screen blanked resumes to a dead panel.
+#
+# So the key is taken here instead:
+#
+#   suspend not validated here -> hand straight back to fake suspend
+#   screen already blanked     -> unblank, whatever put it there
+#   external display attached  -> blank the internal panel, never suspend
+#   otherwise                  -> real suspend
+#
+# The "never suspend on an external display" rule is the one fake suspend
+# already applies; keeping it here is what stops a docked device powering
+# its TV output down mid-session. The blank state is ours and lives in one
+# flag, which sleep.d tears down before any real suspend so the two paths
+# can never overlap.
+
+. /etc/profile
+
+case $(get_setting system.loglevel) in
+verbose) DEBUG=true ;;
+*)       DEBUG=false ;;
+esac
+
+BLANK_FLAG="/run/power-blank-active.flag"
+
+# Devices where deep suspend is not validated keep the old behaviour exactly:
+# 030-suspend_mode leaves system.suspendmode off for them, and fake suspend is
+# still the right owner. Delegating rather than reimplementing keeps those
+# devices byte-identical to a tree without this handler.
+#
+# "release" is ours and fake suspend knows nothing about it, so it must never
+# be forwarded.
+if [ "$1" != "release" ] && [ "$(get_setting system.suspendmode)" = "off" ]; then
+  ${DEBUG} && log $0 "Suspend not enabled here, deferring to fake suspend."
+  exec /usr/bin/rocknix-fake-suspend "$@"
+fi
+
+# Blanking and the "is a display attached" question both come from
+# external-display. It blanks internal panels only: a DPMS off on an active DP output makes
+# msm_dp_display_disable() report the audio jack as unplugged, and the HPD
+# plug events that would undo it are discarded while the display is off, so
+# dock audio stays dead until a physical replug.
+EXTERNAL_DISPLAY="/usr/bin/external-display"
+
+# External display dependency. The helper itself is not part of this series,
+# and where it is missing every question below answers "not attached", so the
+# handler suspends exactly as it would on a device with no external output.
+# To drop external display handling altogether, remove this wrapper and the
+# two branches that call it: the blank instead of suspend in "power", and the
+# release in "release".
+external_display() {
+  [ -x "${EXTERNAL_DISPLAY}" ] || return 1
+  "${EXTERNAL_DISPLAY}" "$@"
+}
+
+# Deliberately no sink muting. wireplumber persists mute per route, so a sink
+# muted here that then disappears (external display audio across a dock change)
+# stays muted on disk forever, with nothing to unmute it. A docked device with
+# its screen off is still driving a TV, so its audio should keep playing.
+#
+# Deliberately no LED handling on the blank path. A dark power LED means
+# asleep on this platform, and a docked device with its screen off is awake
+# and charging. The suspend path below is the one exception: sleep.d does not
+# light the sleep indication until after the WiFi teardown, seconds after the
+# press, so the press looks dead and invites a second press that wakes the
+# device. Light it here, at press time; 000-led repeats the same writes later
+# and the post hooks restore as usual.
+POWER_LED="/sys/class/leds/power-led"
+
+case "$1" in
+  power)
+    # The blank is ours, so a press always ends it first. This also covers the
+    # display being blanked while docked and then undocked: without it the
+    # screen stays dark with nothing explaining why, and the next press would
+    # suspend a device the user thought was already asleep.
+    if [ -e "${BLANK_FLAG}" ]; then
+      ${DEBUG} && log $0 "Waking from blank."
+      rm -f "${BLANK_FLAG}"
+      external_display unblank
+      exit 0
+    fi
+
+    # Never suspend while an external display is attached: the output would go
+    # down with the SoC and the timed-shutdown path could power off a device
+    # that is driving a TV. The key becomes a screen toggle instead.
+    if external_display connected; then
+      ${DEBUG} && log $0 "External display attached, blanking instead of suspending."
+      touch "${BLANK_FLAG}"
+      external_display blank
+      exit 0
+    fi
+
+    ${DEBUG} && log $0 "Suspending."
+    if [ -d "${POWER_LED}" ]; then
+      echo none >"${POWER_LED}/trigger"
+      echo 0 0 255 >"${POWER_LED}/multi_intensity"
+      echo 255 >"${POWER_LED}/brightness"
+    fi
+    # Dark screen with the blue LED, at press time. Safe on an aborted
+    # suspend: resume re-powers the panel and the post hooks restore
+    # brightness, and the same restore runs on a failed sleep.
+    for BL in /sys/class/backlight/*/brightness; do
+      [ -f "${BL}" ] && echo 0 >"${BL}"
+    done
+    systemctl suspend
+    ;;
+
+  release)
+    # Called from sleep.d/pre. A real suspend must never begin while we hold
+    # the panel blanked: "output ... power off" is compositor state that
+    # survives suspend, so resume would restore brightness onto a panel still
+    # switched off and the device would look dead, recoverable only over ssh.
+    if [ -e "${BLANK_FLAG}" ]; then
+      ${DEBUG} && log $0 "Releasing blank before suspend."
+      rm -f "${BLANK_FLAG}"
+      external_display unblank
+    fi
+    ;;
+
+  lid)
+    # logind still owns the lid on this platform (HandleLidSwitch=suspend in
+    # 030-suspend_mode), so acting here as well would race its handler. Note
+    # that this means closing the lid on a docked device does suspend it,
+    # unlike the power key above.
+    ${DEBUG} && log $0 "Lid event left to logind: $2"
+    ;;
+esac
+
+exit 0
