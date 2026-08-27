@@ -1,6 +1,4 @@
-From 2b4adfaf66434bddbde753c3ae7229d8c73a0ea5 Mon Sep 17 00:00:00 2001
-From: jaewun <jaewun@users.noreply.github.com>
-Date: Mon, 11 May 2026 01:20:00 +1200
+From: Edouard Durand <edouard.durand@gmail.com>
 Subject: [PATCH] thermal: qcom: tsens: skip SM8550 uplow wake IRQs
 
 Native s2idle testing on SM8550 devices repeatedly resumes immediately with
@@ -9,49 +7,45 @@ The IRQ wake state exposed under /sys/kernel/irq is read-only on the live
 kernel, so runtime testing cannot disable this wake source.
 
 Keep normal TSENS interrupt handling active and keep critical TSENS wake
-enabled. Only skip enable_irq_wake() for the ordinary "uplow" TSENS IRQs on
+enabled. Only skip arming the ordinary "uplow" TSENS IRQ as a wake source on
 qcom,sm8550. Scoped to the SoC-level compatible (not a specific board) so it
 covers every SM8550 board, not just the one it was first observed on.
----
- drivers/thermal/qcom/tsens.c | 15 ++++++++++++++-
- 1 file changed, 14 insertions(+), 1 deletion(-)
 
-diff --git a/drivers/thermal/qcom/tsens.c b/drivers/thermal/qcom/tsens.c
-index fbdab9d00000..fbdab9d00001 100644
---- a/drivers/thermal/qcom/tsens.c
-+++ b/drivers/thermal/qcom/tsens.c
-@@ -1174,6 +1174,15 @@ static const struct thermal_zone_device_ops tsens_of_ops = {
- 	.set_trips = tsens_set_trips,
- };
+Guard the disable side to match so the wake refcount stays balanced and
+resume does not warn about an unbalanced disable_irq_wake().
+---
+--- a/drivers/thermal/qcom/tsens.c	2026-08-25 19:01:04.024339245 +0800
++++ b/drivers/thermal/qcom/tsens.c	2026-08-25 19:01:06.090453327 +0800
+@@ -1289,6 +1289,12 @@
+ 	return 0;
+ }
  
-+static bool tsens_irq_wake_enabled(const char *irqname)
++static bool tsens_uplow_wake_allowed(void)
 +{
-+	if (!of_machine_is_compatible("qcom,sm8550"))
-+		return true;
-+
-+	/* Keep critical thermal wake; only passive threshold-window IRQs are noisy. */
-+	return strcmp(irqname, "uplow") != 0;
++	/* SM8550 resumes immediately from s2idle on the uplow threshold IRQ. */
++	return !of_machine_is_compatible("qcom,sm8550");
 +}
 +
- static int tsens_register_irq(struct tsens_priv *priv, char *irqname,
- 			      irq_handler_t thread_fn)
+ int tsens_suspend_common(struct tsens_priv *priv)
  {
-@@ -1203,11 +1212,15 @@ static int tsens_register_irq(struct tsens_priv *priv, char *irqname,
- 
- 		if (ret)
- 			dev_err(&pdev->dev, "%s: failed to get irq\n",
- 				__func__);
--		else
-+		else if (tsens_irq_wake_enabled(irqname))
- 			enable_irq_wake(irq);
-+		else
-+			dev_info(&pdev->dev,
-+				 "leaving TSENS %s IRQ %d as non-wakeup on SM8550\n",
-+				 irqname, irq);
+ 	if (!device_may_wakeup(priv->dev))
+@@ -1297,7 +1303,8 @@
+ 	if (priv->feat->combo_int)
+ 		enable_irq_wake(priv->combined_irq);
+ 	else {
+-		enable_irq_wake(priv->uplow_irq);
++		if (tsens_uplow_wake_allowed())
++			enable_irq_wake(priv->uplow_irq);
+ 		if (priv->feat->crit_int)
+ 			enable_irq_wake(priv->crit_irq);
  	}
- 
- 	put_device(&pdev->dev);
- 	return ret;
- }
--- 
-2.50.0
+@@ -1316,7 +1323,8 @@
+ 	if (priv->feat->combo_int)
+ 		disable_irq_wake(priv->combined_irq);
+ 	else {
+-		disable_irq_wake(priv->uplow_irq);
++		if (tsens_uplow_wake_allowed())
++			disable_irq_wake(priv->uplow_irq);
+ 		if (priv->feat->crit_int)
+ 			disable_irq_wake(priv->crit_irq);
+ 	}
