@@ -4,6 +4,7 @@
 
 PKG_NAME="glibc"
 PKG_VERSION="2.41"
+PKG_SHA256="a5a26b22f545d6b7d7b3dd828e11e428f24f4fac43c934fb071b6a7d0828e901"
 PKG_LICENSE="GPL"
 PKG_SITE="https://www.gnu.org/software/libc/"
 PKG_URL="https://ftp.gnu.org/pub/gnu/glibc/${PKG_NAME}-${PKG_VERSION}.tar.xz"
@@ -129,6 +130,27 @@ post_makeinstall_target() {
     cp ${PKG_DIR}/config/host.conf ${INSTALL}/etc
     cp ${PKG_DIR}/config/gai.conf ${INSTALL}/etc
     cp ${PKG_DIR}/config/ld.so.conf ${INSTALL}/etc
+
+  ln -sf /storage/.cache/ld.so.cache ${INSTALL}/etc/ld.so.cache
+  if [ -f ${INSTALL}/usr/bin/ldconfig ]; then
+    mv ${INSTALL}/usr/bin/ldconfig ${INSTALL}/usr/bin/ldconfig.real
+    cat >${INSTALL}/usr/bin/ldconfig <<'EOF'
+#!/bin/sh
+me=$0
+case "$me" in
+  /*) ;;
+  *) me=$(pwd)/$me ;;
+esac
+me=$(readlink -f "$me" 2>/dev/null) || me=$0
+REAL=${me%/*}/ldconfig.real
+[ -x "$REAL" ] || REAL=/usr/bin/ldconfig.real
+case " $* " in
+  *" -C "*|*" -C"*) exec "$REAL" -X "$@" ;;
+esac
+exec "$REAL" -X -C /storage/.cache/ld.so.cache "$@"
+EOF
+    chmod 755 ${INSTALL}/usr/bin/ldconfig
+  fi
 }
 
 configure_init() {

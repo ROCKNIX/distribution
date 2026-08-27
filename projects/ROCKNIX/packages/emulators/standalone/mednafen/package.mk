@@ -3,6 +3,7 @@
 
 PKG_NAME="mednafen"
 PKG_VERSION="1.32.1"
+PKG_SHA256="00cdcf02e83072d1d0e861b61e86d1d12eac18accc03cfa161e84bd3744b0137"
 PKG_LICENSE="mixed"
 PKG_SITE="https://mednafen.github.io/"
 # Upstream pull url

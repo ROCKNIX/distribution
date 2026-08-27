@@ -5,6 +5,7 @@
 
 PKG_NAME="boost"
 PKG_VERSION="1.86.0"
+PKG_SHA256="1bed88e40401b2cb7a1f76d4bab499e352fa4d0c5f31c0dbae64e24d34d7513b"
 PKG_LICENSE="OSS"
 PKG_SITE="http://www.boost.org/"
 PKG_URL="https://archives.boost.io/release/${PKG_VERSION}/source/${PKG_NAME}_${PKG_VERSION//./_}.tar.bz2"

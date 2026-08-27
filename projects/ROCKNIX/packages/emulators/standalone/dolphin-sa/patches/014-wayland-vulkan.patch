@@ -1,0 +1,145 @@
+diff --git a/Source/Core/VideoBackends/Vulkan/VKGfx.cpp b/Source/Core/VideoBackends/Vulkan/VKGfx.cpp
+index c88e422c98..3b9480e9c2 100644
+--- a/Source/Core/VideoBackends/Vulkan/VKGfx.cpp
++++ b/Source/Core/VideoBackends/Vulkan/VKGfx.cpp
+@@ -368,6 +368,8 @@ void VKGfx::CheckForSurfaceChange()
+   g_command_buffer_mgr->CheckLastPresentFail();
+ 
+   // Recreate the surface. If this fails we're in trouble.
++  m_swap_chain->SetSurfaceDimensions(g_presenter->GetNewSurfaceWidth(),
++                                     g_presenter->GetNewSurfaceHeight());
+   if (!m_swap_chain->RecreateSurface(g_presenter->GetNewSurfaceHandle()))
+     PanicAlertFmt("Failed to recreate Vulkan surface. Cannot continue.");
+ 
+@@ -395,6 +397,8 @@ void VKGfx::CheckForSurfaceResize()
+   g_command_buffer_mgr->CheckLastPresentFail();
+ 
+   // Resize the swap chain.
++  m_swap_chain->SetSurfaceDimensions(g_presenter->GetNewSurfaceWidth(),
++                                     g_presenter->GetNewSurfaceHeight());
+   m_swap_chain->RecreateSwapChain();
+   OnSwapChainResized();
+ }
+diff --git a/Source/Core/VideoBackends/Vulkan/VKSwapChain.cpp b/Source/Core/VideoBackends/Vulkan/VKSwapChain.cpp
+index 370e22d15c..14a5d055ba 100644
+--- a/Source/Core/VideoBackends/Vulkan/VKSwapChain.cpp
++++ b/Source/Core/VideoBackends/Vulkan/VKSwapChain.cpp
+@@ -84,6 +84,29 @@ VkSurfaceKHR SwapChain::CreateVulkanSurface(VkInstance instance, const WindowSys
+   }
+ #endif
+ 
++#if defined(VK_USE_PLATFORM_WAYLAND_KHR)
++  if (wsi.type == WindowSystemType::Wayland)
++  {
++    VkWaylandSurfaceCreateInfoKHR surface_create_info = {
++        VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR,  // VkStructureType sType
++        nullptr,                                            // const void* pNext
++        0,                                                  // VkWaylandSurfaceCreateFlagsKHR flags
++        static_cast<wl_display*>(wsi.display_connection),   // struct wl_display* display
++        static_cast<wl_surface*>(wsi.render_surface)        // struct wl_surface* surface
++    };
++
++    VkSurfaceKHR surface;
++    VkResult res = vkCreateWaylandSurfaceKHR(instance, &surface_create_info, nullptr, &surface);
++    if (res != VK_SUCCESS)
++    {
++      LOG_VULKAN_ERROR(res, "vkCreateWaylandSurfaceKHR failed: ");
++      return VK_NULL_HANDLE;
++    }
++
++    return surface;
++  }
++#endif
++
+ #if defined(VK_USE_PLATFORM_ANDROID_KHR)
+   if (wsi.type == WindowSystemType::Android)
+   {
+@@ -299,8 +322,18 @@ bool SwapChain::CreateSwapChain()
+   VkExtent2D size = surface_capabilities.currentExtent;
+   if (size.width == UINT32_MAX)
+   {
+-    size.width = std::max(g_presenter->GetBackbufferWidth(), 1);
+-    size.height = std::max(g_presenter->GetBackbufferHeight(), 1);
++    // The surface leaves the extent up to us. On Wayland this is always the case and the
++    // presenter's backbuffer size is derived from this swap chain, so it cannot be used here.
++    if (m_wsi.render_surface_width > 0 && m_wsi.render_surface_height > 0)
++    {
++      size.width = static_cast<u32>(m_wsi.render_surface_width);
++      size.height = static_cast<u32>(m_wsi.render_surface_height);
++    }
++    else
++    {
++      size.width = std::max(g_presenter->GetBackbufferWidth(), 1);
++      size.height = std::max(g_presenter->GetBackbufferHeight(), 1);
++    }
+   }
+   size.width = std::clamp(size.width, surface_capabilities.minImageExtent.width,
+                           surface_capabilities.maxImageExtent.width);
+diff --git a/Source/Core/VideoBackends/Vulkan/VKSwapChain.h b/Source/Core/VideoBackends/Vulkan/VKSwapChain.h
+index 17334dbf97..4627b352ad 100644
+--- a/Source/Core/VideoBackends/Vulkan/VKSwapChain.h
++++ b/Source/Core/VideoBackends/Vulkan/VKSwapChain.h
+@@ -56,6 +56,14 @@ public:
+ 
+   bool RecreateSurface(void* native_handle);
+   bool ResizeSwapChain();
++
++  // Wayland cannot report its own surface size, so the frontend supplies it.
++  // Zero leaves the backend to determine the size as usual.
++  void SetSurfaceDimensions(int width, int height)
++  {
++    m_wsi.render_surface_width = width;
++    m_wsi.render_surface_height = height;
++  }
+   bool RecreateSwapChain();
+ 
+   // Change vsync enabled state. This may fail as it causes a swapchain recreation.
+diff --git a/Source/Core/VideoBackends/Vulkan/VulkanContext.cpp b/Source/Core/VideoBackends/Vulkan/VulkanContext.cpp
+index d388300b6e..641b54216c 100644
+--- a/Source/Core/VideoBackends/Vulkan/VulkanContext.cpp
++++ b/Source/Core/VideoBackends/Vulkan/VulkanContext.cpp
+@@ -362,6 +362,13 @@ bool VulkanContext::SelectInstanceExtensions(std::vector<const char*>* extension
+     return false;
+   }
+ #endif
++#if defined(VK_USE_PLATFORM_WAYLAND_KHR)
++  if (wstype == WindowSystemType::Wayland &&
++      !AddExtension(VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME, true))
++  {
++    return false;
++  }
++#endif
+ #if defined(VK_USE_PLATFORM_ANDROID_KHR)
+   if (wstype == WindowSystemType::Android &&
+       !AddExtension(VK_KHR_ANDROID_SURFACE_EXTENSION_NAME, true))
+diff --git a/Source/Core/VideoBackends/Vulkan/VulkanEntryPoints.inl b/Source/Core/VideoBackends/Vulkan/VulkanEntryPoints.inl
+index d716ce49d2..c262a345b1 100644
+--- a/Source/Core/VideoBackends/Vulkan/VulkanEntryPoints.inl
++++ b/Source/Core/VideoBackends/Vulkan/VulkanEntryPoints.inl
+@@ -49,6 +49,11 @@ VULKAN_INSTANCE_ENTRY_POINT(vkCreateXlibSurfaceKHR, false)
+ VULKAN_INSTANCE_ENTRY_POINT(vkGetPhysicalDeviceXlibPresentationSupportKHR, false)
+ #endif
+ 
++#if defined(VK_USE_PLATFORM_WAYLAND_KHR)
++VULKAN_INSTANCE_ENTRY_POINT(vkCreateWaylandSurfaceKHR, false)
++VULKAN_INSTANCE_ENTRY_POINT(vkGetPhysicalDeviceWaylandPresentationSupportKHR, false)
++#endif
++
+ #if defined(VK_USE_PLATFORM_ANDROID_KHR)
+ VULKAN_INSTANCE_ENTRY_POINT(vkCreateAndroidSurfaceKHR, false)
+ #endif
+diff --git a/Source/Core/VideoBackends/Vulkan/VulkanLoader.h b/Source/Core/VideoBackends/Vulkan/VulkanLoader.h
+index 33784d5d2e..af7427b9bd 100644
+--- a/Source/Core/VideoBackends/Vulkan/VulkanLoader.h
++++ b/Source/Core/VideoBackends/Vulkan/VulkanLoader.h
+@@ -13,6 +13,10 @@
+ #define VK_USE_PLATFORM_XLIB_KHR
+ #endif
+ 
++#if defined(HAVE_WAYLAND)
++#define VK_USE_PLATFORM_WAYLAND_KHR
++#endif
++
+ #if defined(ANDROID)
+ #define VK_USE_PLATFORM_ANDROID_KHR
+ #endif

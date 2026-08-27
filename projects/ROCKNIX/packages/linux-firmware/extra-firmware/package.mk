@@ -3,6 +3,7 @@
 
 PKG_NAME="extra-firmware"
 PKG_VERSION="2b7207cfcb80c53c09dc6e04165789ecaf2d3348"
+PKG_SHA256="1c1db6a797f23a3d179904941e4a869679a514c6f43687e20954c5d96cad4f49"
 PKG_LICENSE="proprietary"
 PKG_SITE="https://github.com/ROCKNIX/extra-firmware"
 PKG_URL="https://github.com/ROCKNIX/extra-firmware/archive/${PKG_VERSION}.tar.gz"

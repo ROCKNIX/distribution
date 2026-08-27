@@ -3,6 +3,7 @@
 
 PKG_NAME="xcb-util"
 PKG_VERSION="0.4.1"
+PKG_SHA256="5abe3bbbd8e54f0fa3ec945291b7e8fa8cfd3cccc43718f8758430f94126e512"
 PKG_LICENSE="GPL"
 PKG_SITE="https://xcb.freedesktop.org/XcbUtil/"
 PKG_URL="https://xcb.freedesktop.org/dist/xcb-util-${PKG_VERSION}.tar.xz"

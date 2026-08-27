@@ -20,6 +20,7 @@
 
 PKG_NAME="mgba-lr"
 PKG_VERSION="c758314a639aa0066e7b65a8341448181b73c804"
+PKG_SHA256="2cb97ada9b75d23ef4838fb2c1b52335bf0bba867f98d790d4ec2cf4d3b9e050"
 PKG_LICENSE="MPLv2.0"
 PKG_SITE="https://github.com/libretro/mgba"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

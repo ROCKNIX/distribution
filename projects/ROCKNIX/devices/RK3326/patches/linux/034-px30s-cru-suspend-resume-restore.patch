@@ -56,14 +56,28 @@ rockchip-pm-config, see 031-px30s-suspend-wakeup-config.patch) and
 there is no evidence either is needed on this SoC - only the
 save-before/restore-after half is applicable.
 
-NOT yet confirmed fixing the post-resume cpufreq-transition crash on
-real hardware.
+Confirmed fixing the post-resume cpufreq-transition crash on real
+hardware (kernel 6.12.79).
+
+Rebased for the kernel 6.12 -> 7.1.2 migration: upstream reworked the
+generic syscore_ops mechanism (drivers/base/syscore.c /
+include/linux/syscore_ops.h) - callbacks now take a `void *data`
+argument instead of `void`, registration no longer embeds a list_head
+directly in `struct syscore_ops` but instead wraps it in a separate
+`struct syscore { struct list_head node; const struct syscore_ops
+*ops; void *data; }`, and `register_syscore_ops()` was replaced by
+`register_syscore(struct syscore *)`. clk-rk3288.c in this same
+kernel tree was already updated upstream to the new API
+(rk3288_clk_suspend/rk3288_clk_resume taking `void *data`, a static
+`struct syscore rk3288_clk_syscore = { .ops = &rk3288_clk_syscore_ops
+}`, and `register_syscore(&rk3288_clk_syscore)`) - this rebase follows
+that exact pattern, no logic changes.
 
 ---
 --- a/drivers/clk/rockchip/clk-px30.c
 +++ b/drivers/clk/rockchip/clk-px30.c
-@@ -1019,6 +1019,51 @@
- 			PX30_CLKGATE_CON(12), 11, GFLAGS),
+@@ -999,6 +999,55 @@
+ 	"pclk_usb_grf",
  };
  
 +static void __iomem *px30_cru_base;
@@ -83,7 +97,7 @@ real hardware.
 +
 +static u32 px30_saved_cru_regs[ARRAY_SIZE(px30_saved_cru_reg_ids)];
 +
-+static int px30_clk_suspend(void)
++static int px30_clk_suspend(void *data)
 +{
 +	int i, reg_id;
 +
@@ -95,7 +109,7 @@ real hardware.
 +	return 0;
 +}
 +
-+static void px30_clk_resume(void)
++static void px30_clk_resume(void *data)
 +{
 +	int i, reg_id;
 +
@@ -106,15 +120,19 @@ real hardware.
 +	}
 +}
 +
-+static struct syscore_ops px30_clk_syscore_ops = {
++static const struct syscore_ops px30_clk_syscore_ops = {
 +	.suspend = px30_clk_suspend,
 +	.resume = px30_clk_resume,
++};
++
++static struct syscore px30_clk_syscore = {
++	.ops = &px30_clk_syscore_ops,
 +};
 +
  static void __init px30_clk_init(struct device_node *np)
  {
  	struct rockchip_clk_provider *ctx;
-@@ -1030,6 +1075,7 @@
+@@ -1010,6 +1059,7 @@
  		pr_err("%s: could not map cru region\n", __func__);
  		return;
  	}
@@ -122,11 +140,11 @@ real hardware.
  
  	clk_nr_clks = rockchip_clk_find_max_clk_id(px30_clk_branches,
  						   ARRAY_SIZE(px30_clk_branches)) + 1;
-@@ -1067,6 +1113,8 @@
+@@ -1039,6 +1089,8 @@
  
  	rockchip_register_restart_notifier(ctx, PX30_GLB_SRST_FST, NULL);
  
-+	register_syscore_ops(&px30_clk_syscore_ops);
++	register_syscore(&px30_clk_syscore);
 +
  	rockchip_clk_of_add_provider(np, ctx);
  }

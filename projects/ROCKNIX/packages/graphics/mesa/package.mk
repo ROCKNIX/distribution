@@ -3,57 +3,50 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="mesa"
+PKG_VERSION="26.1.6"
+PKG_SHA256="2336a3a18ab24ffe1d906a51adde827e5ab565b06ff8446fe8ed44ae81bd0931"
 PKG_LICENSE="OSS"
 PKG_SITE="http://www.mesa3d.org/"
-PKG_DEPENDS_HOST="toolchain:host llvm:host libclc:host spirv-tools:host libdrm:host \
-                  spirv-llvm-translator:host wayland-protocols:host libX11:host libXext:host \
-                  libXfixes:host libxshmfence:host libXxf86vm:host xrandr:host glslang:host"
+PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
+PKG_DEPENDS_HOST="toolchain:host expat:host libclc:host libdrm:host llvm:host Mako:host pyyaml:host spirv-tools:host"
 PKG_DEPENDS_TARGET="toolchain expat libdrm Mako:host pyyaml:host"
 PKG_LONGDESC="Mesa is a 3-D graphics library with an API."
-PKG_TOOLCHAIN="meson"
 PKG_PATCH_DIRS+=" ${DEVICE}"
-PKG_VERSION="26.1.6"
-PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
-
-if listcontains "${GRAPHIC_DRIVERS}" "panfrost" || \
-   listcontains "${GRAPHIC_DRIVERS}" "freedreno"; then
-  PKG_DEPENDS_TARGET+=" mesa:host"
-fi
 
 get_graphicdrivers
 
-pre_configure_host() {
-  PKG_MESON_OPTS_HOST+=" ${MESA_LIBS_PATH_OPTS} \
-                         -Dgallium-drivers=${GALLIUM_DRIVERS// /,} \
-                         -Dvulkan-drivers=${VULKAN_DRIVERS_MESA// /,}"
+if listcontains "${GRAPHIC_DRIVERS}" "panfrost"; then
+  PKG_DEPENDS_TARGET+=" mesa:host"
+fi
 
-  if listcontains "${GRAPHIC_DRIVERS}" "panfrost"; then
-    PKG_MESON_OPTS_HOST+=" -Dmesa-clc=enabled \
-                           -Dinstall-mesa-clc=true \
-                           -Dprecomp-compiler=enabled \
-                           -Dinstall-precomp-compiler=true"
-  fi
+PKG_MESON_OPTS_HOST="-Dglvnd=disabled \
+                     -Dgallium-drivers= \
+                     -Dplatforms= \
+                     -Dglx=disabled \
+                     -Dvulkan-drivers= \
+                     -Dshared-llvm=disabled \
+                     -Dtools=panfrost \
+                     -Dvideo-codecs= \
+                     -Dbuild-tests=false \
+                     -Denable-glcpp-tests=false \
+                     -Dmesa-clc=enabled \
+                     -Dinstall-mesa-clc=true \
+                     -Dprecomp-compiler=enabled \
+                     -Dinstall-precomp-compiler=true"
 
-  if listcontains "${GRAPHIC_DRIVERS}" "freedreno"; then
-    export HOST_CFLAGS="${HOST_CFLAGS} -fno-strict-aliasing"
-    export HOST_CXXFLAGS="${HOST_CXXFLAGS} -fno-strict-aliasing"
-    export CFLAGS="${HOST_CFLAGS}"
-    export CXXFLAGS="${HOST_CXXFLAGS}"
-
-  fi
-}
-
-PKG_MESON_OPTS_TARGET=" ${MESA_LIBS_PATH_OPTS} \
-                       -Dgallium-drivers=${GALLIUM_DRIVERS// /,} \
+PKG_MESON_OPTS_TARGET="-Dgallium-drivers=${GALLIUM_DRIVERS// /,} \
                        -Dgallium-extra-hud=false \
+                       -Dgallium-rusticl=false \
                        -Dshader-cache=enabled \
                        -Dshared-glapi=enabled \
                        -Dopengl=true \
                        -Dgbm=enabled \
                        -Degl=enabled \
+                       -Dvalgrind=disabled \
                        -Dlibunwind=disabled \
                        -Dlmsensors=disabled \
-                       -Dbuild-tests=false"
+                       -Dbuild-tests=false \
+                       -Dmicrosoft-clc=disabled"
 
 if listcontains "${GRAPHIC_DRIVERS}" "panfrost"; then
   # These options require that we have built mesa host as specified above

@@ -22,6 +22,7 @@
 
 PKG_NAME="dosbox-core-lr"
 PKG_VERSION="7bcf083e8309660e2c598d6f7d5982d3851f2178"
+PKG_SHA256="adf88f729b3240d9dc979cc41f0f111559663a86e5e3be200e8b0d36d166eb79"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/realnc/dosbox-core"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

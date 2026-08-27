@@ -21,6 +21,7 @@
 
 PKG_NAME="mame2010-lr"
 PKG_VERSION="c5b413b71e0a290c57fc351562cd47ba75bac105"
+PKG_SHA256="38270732ef2b503583e96a3c83cd5ba8d4ca6510d1f24f2b00bf6703eb74070d"
 PKG_LICENSE="MAME"
 PKG_SITE="https://github.com/libretro/mame2010-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

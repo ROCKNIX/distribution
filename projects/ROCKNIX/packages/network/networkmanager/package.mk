@@ -3,6 +3,7 @@
 
 PKG_NAME="networkmanager"
 PKG_VERSION="1.51.4"
+PKG_SHA256="865a7cc5686a51d7efe81d7dcb3c5246bfa3b996a58629135354972804ff4d3c"
 PKG_LICENSE="GPL"
 PKG_SITE="https://gitlab.freedesktop.org/NetworkManager/NetworkManager"
 PKG_URL="https://download.gnome.org/sources/NetworkManager/1.51/NetworkManager-${PKG_VERSION}.tar.xz"

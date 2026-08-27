@@ -4,12 +4,13 @@
 
 PKG_NAME="SDL3"
 PKG_VERSION="3.4.10"
+PKG_SHA256="12b34280415ec8418c864408b93d008a20a6530687ee613d60bfbd20411f2785"
 PKG_LICENSE="Zlib"
 PKG_SITE="https://www.libsdl.org/"
 PKG_URL="https://www.libsdl.org/release/SDL3-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain alsa-lib systemd dbus pulseaudio pipewire libdrm libusb"
 PKG_LONGDESC="Simple DirectMedia Layer is a cross-platform development library designed to provide low level access to audio, keyboard, mouse, joystick, and graphics hardware."
-PKG_DEPENDS_HOST="toolchain:host distutilscross:host"
+PKG_DEPENDS_HOST="toolchain:host"
 
 PKG_TOOLCHAIN="cmake"
 

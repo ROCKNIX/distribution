@@ -3,6 +3,7 @@
 
 PKG_NAME="melonds-ds-lr"
 PKG_VERSION="86986bfd82fb130d4d4739d93159acd986921808"
+PKG_SHA256="b97620ab2d116855c16bcb67199ac0476cc23f08571098710e1ee62ba36f6aac"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/JesseTG/melonds-ds"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

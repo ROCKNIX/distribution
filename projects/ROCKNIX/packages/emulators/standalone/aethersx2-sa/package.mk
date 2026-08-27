@@ -3,6 +3,7 @@
 
 PKG_NAME="aethersx2-sa"
 PKG_VERSION="1.5-3606"
+PKG_SHA256="b44fe609f2914627c2f9d9dba2513e8f6b72d5679e47b2dadabcd28aa05b8b43"
 PKG_ARCH="aarch64"
 PKG_LICENSE="LGPL"
 PKG_SITE="https://github.com/ROCKNIX/packages"

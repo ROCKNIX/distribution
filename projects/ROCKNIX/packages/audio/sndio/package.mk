@@ -3,6 +3,7 @@
 
 PKG_NAME="sndio"
 PKG_VERSION="1.10.0"
+PKG_SHA256="bebd3bfd01c50c9376cf3e7814b9379bed9e17d0393b5113b7eb7a3d0d038c54"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://sndio.org/"
 PKG_URL="${PKG_SITE}/${PKG_NAME}-${PKG_VERSION}.tar.gz"

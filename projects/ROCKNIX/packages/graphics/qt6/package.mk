@@ -1,26 +1,24 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="qt6"
+PKG_VERSION="6.10.3"
+PKG_SHA256="cbc81e726b0ff3c0cdb0219bf74545e91cec013c4a8503c20f93f83d73dff5d2"
 PKG_LICENSE="GPL"
 PKG_SITE="https://download.qt.io"
+PKG_URL="${PKG_SITE}/archive/qt/${PKG_VERSION%.*}/${PKG_VERSION}/single/qt-everywhere-src-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_TARGET="toolchain qt6:host openssl libjpeg-turbo libpng pcre2 sqlite zlib freetype SDL2 gstreamer gst-plugins-base gst-plugins-good gst-libav"
-PKG_DEPENDS_HOST="gcc:host llvm:host mesa:host"
+PKG_DEPENDS_HOST="toolchain:host"
 PKG_LONGDESC="A cross-platform application and UI framework"
-PKG_VERSION_MAJOR="6.10"
-PKG_VERSION="${PKG_VERSION_MAJOR}.3"
-PKG_URL="${PKG_SITE}/archive/qt/${PKG_VERSION_MAJOR}/${PKG_VERSION}/single/qt-everywhere-src-${PKG_VERSION}.tar.xz"
 
 # Apply project-specific patches
 PKG_PATCH_DIRS="${PROJECT}"
 
 # Set OpenGL or OpenGLES support for CMake
 if [ "${OPENGL_SUPPORT}" = "yes" ]; then
-  PKG_DEPENDS_HOST+=" ${OPENGL}"
   PKG_DEPENDS_TARGET+=" ${OPENGL}"
   PKG_CMAKE_OPTS_TARGET+=" -DQT_FEATURE_opengl=ON -DQT_FEATURE_opengles2=OFF"
 elif [ "${OPENGLES_SUPPORT}" = "yes" ]; then
-  PKG_DEPENDS_HOST+=" ${OPENGLES}"
   PKG_DEPENDS_TARGET+=" ${OPENGLES}"
   PKG_CMAKE_OPTS_TARGET+=" -DQT_FEATURE_opengles2=ON -DQT_FEATURE_opengl=OFF"
 else
@@ -50,16 +48,13 @@ fi
 
 
 pre_configure_host() {
-  export LDFLAGS="${LDFLAGS} -lgio-2.0 -lgobject-2.0 -lglib-2.0"
-  echo "LDFLAGS are $LDFLAGS"
-
   unset HOST_CMAKE_OPTS
   # Disable unneeded modules
   MODULES_TO_DISABLE=("qt3d" "qt5compat" "qtactiveqt" "qtcharts" "qtcoap" "qtconnectivity" "qtdatavis3d"
                       "qtdoc" "qtgraphs" "qtgrpc" "qthttpserver" "qtlocation" "qtlottie" "qtmqtt"
                       "qtmultimedia" "qtnetworkauth" "qtopcua" "qtpositioning" "qtquick3d" "qtquick3dphysics"
                       "qtquickeffectmaker" "qtquicktimeline" "qtremoteobjects" "qtscxml" "qtsensors" "qtserialbus"
-                      "qtserialport" "qtspeech" "qttranslations" "qtvirtualkeyboard" "qtwebchannel"
+                      "qtserialport" "qtspeech" "qttranslations" "qtvirtualkeyboard" "qtwayland" "qtwebchannel"
                       "qtwebengine" "qtwebsockets" "qtwebview")
   for module in "${MODULES_TO_DISABLE[@]}"; do
     PKG_CMAKE_OPTS_HOST+=" -DBUILD_${module}=OFF"
@@ -67,7 +62,7 @@ pre_configure_host() {
 
   # Enable required modules
   # > qtbase qtshadertools qtdeclarative qtsvg qtlanguageserver qttools qtwayland
-  MODULES_TO_ENABLE=("qtbase" "qtshadertools" "qtdeclarative" "qtsvg" "qtlanguageserver" "qtimageformats" "qttools" "qtwayland")
+  MODULES_TO_ENABLE=("qtbase" "qtshadertools" "qtdeclarative" "qtsvg" "qtlanguageserver" "qtimageformats" "qttools")
   for module in "${MODULES_TO_ENABLE[@]}"; do
     PKG_CMAKE_OPTS_HOST+=" -DBUILD_${module}=ON"
   done
@@ -80,7 +75,7 @@ pre_configure_host() {
                          -DQT_USE_CCACHE=ON \
                          -DQT_GENERATE_SBOM=OFF \
                          -DQT_FEATURE_icu=OFF \
-                         -DQT_FEATURE_wayland=ON \
+                         -DINPUT_opengl=no \
                          -DBUILD_WITH_PCH=OFF"
 }
 
@@ -125,10 +120,11 @@ post_makeinstall_target() {
   rm -rf ${INSTALL}/usr
 
   mkdir -p ${INSTALL}/usr/lib
-  mkdir -p ${INSTALL}/usr/plugins
-  mkdir -p ${INSTALL}/usr/qml
+    cp -a ${PKG_BUILD}/.${TARGET_NAME}/qtbase/lib/*.so* ${INSTALL}/usr/lib
 
-  cp -rf ${PKG_BUILD}/.${TARGET_NAME}/qtbase/lib/*.so* ${INSTALL}/usr/lib/
-  cp -rf ${PKG_BUILD}/.${TARGET_NAME}/qtbase/plugins/* ${INSTALL}/usr/plugins/
-  cp -rf ${PKG_BUILD}/.${TARGET_NAME}/qtbase/qml/* ${INSTALL}/usr/qml/
+  mkdir -p ${INSTALL}/usr/plugins
+    cp -a ${PKG_BUILD}/.${TARGET_NAME}/qtbase/plugins/* ${INSTALL}/usr/plugins
+
+  mkdir -p ${INSTALL}/usr/qml
+    cp -a ${PKG_BUILD}/.${TARGET_NAME}/qtbase/qml/* ${INSTALL}/usr/qml
 }

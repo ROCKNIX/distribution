@@ -211,10 +211,10 @@ EOF
 # Run rpcs3
 if [ "$SUI" = "true" ]; then
   export QT_QPA_PLATFORM=wayland
-  set_kill set "-9 rpcs3"
+  set_kill set "-9 rpcs3-sa"
   ${EMUPERF} /usr/bin/rpcs3-sa
 else
   export QT_QPA_PLATFORM=xcb
-  set_kill set "-9 rpcs3"
+  set_kill set "-9 rpcs3-sa"
   ${EMUPERF} /usr/bin/rpcs3-sa --no-gui "$GAME_PATH"
 fi

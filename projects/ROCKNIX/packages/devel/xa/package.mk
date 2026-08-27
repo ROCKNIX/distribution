@@ -3,6 +3,7 @@
 
 PKG_NAME="xa"
 PKG_VERSION="2.4.1"
+PKG_SHA256="63c12a6a32a8e364f34f049d8b2477f4656021418f08b8d6b462be0ed3be3ac3"
 PKG_LICENSE="GPL"
 PKG_SITE="http://tinycorelinux.net"
 PKG_URL="${PKG_SITE}/15.x/x86/tcz/src/xa/xa-${PKG_VERSION}.tar.gz"

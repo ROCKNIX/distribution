@@ -3,6 +3,7 @@
 
 PKG_NAME="libXmu"
 PKG_VERSION="1.3.1"
+PKG_SHA256="81a99e94c4501e81c427cbaa4a11748b584933e94b7a156830c3621256857bc4"
 PKG_LICENSE="OSS"
 PKG_SITE="http://www.X.org"
 PKG_URL="http://xorg.freedesktop.org/archive/individual/lib/${PKG_NAME}-${PKG_VERSION}.tar.xz"

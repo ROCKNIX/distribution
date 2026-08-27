@@ -2,14 +2,14 @@
 # Copyright (C) 2019 Trond Haugland (github.com/escalade)
 
 PKG_NAME="luajit"
-PKG_VERSION="29b0b282f59ac533313199f4f7be79490b7eee51"
+PKG_VERSION="1edc3e52b67eaf6ce5f809be8e17d6862594b8bc"
+PKG_SHA256="85497ea149d136afbe2d7ef222e08849248e52cecc6dc8deefd8588e551e4e00"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/LuaJIT/LuaJIT"
-PKG_URL="${PKG_SITE}.git"
+PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
+PKG_DEPENDS_HOST="toolchain:host"
 PKG_DEPENDS_TARGET="toolchain luajit:host"
 PKG_LONGDESC="LuaJIT is a Just-In-Time Compiler (JIT) for the Lua programming language. "
-
-PKG_GIT_CLONE_BRANCH="v2.1"
 PKG_TOOLCHAIN="manual"
 PKG_BUILD_FLAGS="+speed"
 

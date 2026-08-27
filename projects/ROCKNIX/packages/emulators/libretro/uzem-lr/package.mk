@@ -20,6 +20,7 @@
 
 PKG_NAME="uzem-lr"
 PKG_VERSION="cd6004ea143435cfdb6b12e7c6779dab499f7829"
+PKG_SHA256="338c6bff624e9c822f9d20f497e62080588b42cc3eb94c1bd52137b3e8cae977"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/libretro/libretro-uzem"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

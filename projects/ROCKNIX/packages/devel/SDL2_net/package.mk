@@ -4,6 +4,7 @@
 
 PKG_NAME="SDL2_net"
 PKG_VERSION="2.2.0"
+PKG_SHA256="4e4a891988316271974ff4e9585ed1ef729a123d22c08bd473129179dc857feb"
 PKG_LICENSE="GPL"
 PKG_SITE="https://www.libsdl.org/projects/SDL_net/"
 PKG_URL="https://github.com/libsdl-org/SDL_net/releases/download/release-${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tar.gz"

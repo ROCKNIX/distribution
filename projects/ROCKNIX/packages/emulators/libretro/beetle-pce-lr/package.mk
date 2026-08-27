@@ -21,6 +21,7 @@
 
 PKG_NAME="beetle-pce-lr"
 PKG_VERSION="9a301c0773c53702a882bbaa42ee9cbc6d523787"
+PKG_SHA256="65234b180d62968fcb214b1a014a69323011e3561a960f26f4ec453be162b613"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/beetle-pce-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

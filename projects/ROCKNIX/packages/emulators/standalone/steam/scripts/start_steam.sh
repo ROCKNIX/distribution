@@ -20,17 +20,6 @@ steam_prepare_storage_and_vdf() {
 steam_load_es_thunk_settings() {
   GAME=$(echo "${1}" | sed "s#^/.*/##")
   PLATFORM=$(echo "${2}" | sed "s#^/.*/##")
-  ASOUND_LIB=$(get_setting asound_host_library "${PLATFORM}" "${GAME}")
-  ASOUND_LIB=${ASOUND_LIB:-0}
-  DRM_LIB=$(get_setting drm_host_library "${PLATFORM}" "${GAME}")
-  DRM_LIB=${DRM_LIB:-0}
-  VULKAN_LIB=$(get_setting vulkan_host_library "${PLATFORM}" "${GAME}")
-  VULKAN_LIB=${VULKAN_LIB:-0}
-  WAYLAND_LIB=$(get_setting wayland_client_host_library "${PLATFORM}" "${GAME}")
-  WAYLAND_LIB=${WAYLAND_LIB:-0}
-  GL_LIB=$(get_setting gl_host_library "${PLATFORM}" "${GAME}")
-  GL_LIB=${GL_LIB:-0}
-  GAMESCOPE=$(get_setting gamescope "${PLATFORM}" "${GAME}")
   LSFG_ENABLE=$(get_setting lsfg_enable "${PLATFORM}" "${GAME}")
   LSFG_ENABLE=${LSFG_ENABLE:-0}
   LSFG_MULTIPLIER=$(get_setting lsfg_multiplier "${PLATFORM}" "${GAME}")
@@ -63,26 +52,6 @@ steam_apply_lsfg_settings() {
   fi
 }
 
-steam_write_fex_config_json() {
-  local tmp
-  tmp=$(mktemp)
-  jq \
-    --arg asound "$ASOUND_LIB" \
-    --arg drm "$DRM_LIB" \
-    --arg vulkan "$VULKAN_LIB" \
-    --arg wayland "$WAYLAND_LIB" \
-    --arg gl "$GL_LIB" \
-    '.ThunksDB |= {
-      asound: ($asound | tonumber),
-      drm: ($drm | tonumber),
-      Vulkan: ($vulkan | tonumber),
-      WaylandClient: ($wayland | tonumber),
-      GL: ($gl | tonumber)
-    }' \
-    /storage/.config/fex-emu/Config.json >"$tmp" &&
-    mv "$tmp" /storage/.config/fex-emu/Config.json
-}
-
 steam_set_cpu_affinity() {
   local cores
   cores=$(get_setting "cores" "${PLATFORM}" "${GAME}")
@@ -99,12 +68,6 @@ steam_debug_print() {
   echo "GAME set to: ${GAME}"
   echo "PLATFORM set to: ${PLATFORM}"
   echo "CPU CORES set to: ${EMUPERF}"
-  echo "ASOUND HOST LIB set to: ${ASOUND_LIB}"
-  echo "DRM HOST LIB set to: ${DRM_LIB}"
-  echo "VULKAN HOST LIB set to: ${VULKAN_LIB}"
-  echo "WAYLAND HOST LIB set to: ${WAYLAND_LIB}"
-  echo "GL HOST LIB set to: ${GL_LIB}"
-  echo "GAMESCOPE set to: ${GAMESCOPE}"
   echo "LSFG ENABLE set to: ${LSFG_ENABLE}"
   echo "LSFG MULTIPLIER set to: ${LSFG_MULTIPLIER}"
   echo "LSFG FLOW SCALE set to: ${LSFG_FLOW_SCALE}"
@@ -126,6 +89,51 @@ steam_read_sway_geometry() {
 steam_setup_environment() {
   TZ=$(timedatectl status | grep 'Time zone' | awk '{print $3}')
   [ -n "${TZ}" ] && export TZ
+}
+
+steam_touch_calibration_begin() {
+  local orientation="$1"
+  local model=""
+  local name_path
+
+  STEAM_TOUCH_EVENT=""
+  STEAM_TOUCH_RULE=""
+
+  [ "${orientation}" = "upsidedown" ] || return 0
+  if [ -r /proc/device-tree/model ]; then
+    model=$(tr -d '\000' </proc/device-tree/model)
+  fi
+  [ "${model}" = "AYANEO Pocket S Mini" ] || return 0
+
+  for name_path in /sys/class/input/event*/device/name; do
+    if [ "$(cat "${name_path}" 2>/dev/null)" = "Hynitron CST66xx Touchscreen" ]; then
+      STEAM_TOUCH_EVENT="${name_path%/device/name}"
+      break
+    fi
+  done
+  [ -n "${STEAM_TOUCH_EVENT}" ] || return 0
+
+  STEAM_TOUCH_RULE="/run/udev/rules.d/99-steam-touch-calibration.rules"
+  mkdir -p "${STEAM_TOUCH_RULE%/*}"
+  printf '%s\n' \
+    'ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Hynitron CST66xx Touchscreen", ENV{LIBINPUT_CALIBRATION_MATRIX}="-1 0 1 0 -1 1"' \
+    >"${STEAM_TOUCH_RULE}"
+  udevadm control --reload
+  udevadm trigger --action=change "${STEAM_TOUCH_EVENT}"
+  udevadm settle --timeout=3 >/dev/null 2>&1 || true
+}
+
+steam_touch_calibration_end() {
+  [ -n "${STEAM_TOUCH_RULE:-}" ] || return 0
+
+  rm -f "${STEAM_TOUCH_RULE}"
+  udevadm control --reload >/dev/null 2>&1 || true
+  if [ -n "${STEAM_TOUCH_EVENT:-}" ]; then
+    udevadm trigger --action=change "${STEAM_TOUCH_EVENT}" \
+      >/dev/null 2>&1 || true
+  fi
+  STEAM_TOUCH_RULE=""
+  STEAM_TOUCH_EVENT=""
 }
 
 steam_scope_reexec_if_needed() {
@@ -161,9 +169,7 @@ steam_arm64_binfmt_and_proton_prep() {
   echo 0 >/proc/sys/fs/binfmt_misc/x86
   echo 0 > /proc/sys/fs/binfmt_misc/box32
   echo 0 > /proc/sys/fs/binfmt_misc/box64
-
-  mkdir -p "/storage/.local/share/Steam/steamapps/common/Proton 11.0 (ARM64)/"
-  cp -f "/usr/share/steam/toolmanifest.vdf" "/storage/.local/share/Steam/steamapps/common/Proton 11.0 (ARM64)/"
+  rm "/storage/.local/share/Steam/compatibilitytools.d/compatibilitytool.vdf"
 }
 
 steam_launch_bigpicture() {
@@ -172,6 +178,8 @@ steam_launch_bigpicture() {
   local gamescope_mode_file="/storage/.config/gamescope/modes.cfg"
   if [ "${TRANSFORM}" = "90" ]; then
     force_orientation="right"
+  elif [ "${TRANSFORM}" = "180" ]; then
+    force_orientation="upsidedown"
   elif [ "${TRANSFORM}" = "270" ]; then
     force_orientation="left"
   fi
@@ -182,37 +190,35 @@ steam_launch_bigpicture() {
     game_uri="${exec_line#steam } -silent"
   fi
 
-  if [ "${GAMESCOPE}" != "0" ]; then
-    mkdir -p "$(dirname "$gamescope_mode_file")"
-    touch "$gamescope_mode_file"
-  fi
+  mkdir -p "$(dirname "$gamescope_mode_file")"
+  touch "$gamescope_mode_file"
   unset MESA_LOADER_DRIVER_OVERRIDE
   if [ "${STEAM_FLAVOR}" = "arm64" ]; then
-    SDL_VIDEODRIVER=x11 LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} /storage/.local/share/Steam/steamrtarm64/steam -steamdeck -exitsteam
-    if [ "${GAMESCOPE}" = "0" ]; then
-      SDL_VIDEODRIVER=x11 LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} /storage/.local/share/Steam/steamrtarm64/steam -nofriendsui -noverifyfiles -nobootstrapupdate -skipinitialbootstrap -norepairfiles -noshaders ${game_uri:+"$game_uri"}
-      exit 0
-    else
-      systemctl stop sway
-      GAMESCOPE_MODE_SAVE_FILE="${gamescope_mode_file}" GAMESCOPE_FAKE_OUTPUT_MM=508x286 env -u WAYLAND_DISPLAY LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} \
-        gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --mangoapp --backend drm --force-orientation "${force_orientation}" -e -- \
-        /storage/.local/share/Steam/steamrtarm64/steam -steamdeck -steamos3 -gamepadui -noverifyfiles -nobootstrapupdate -skipinitialbootstrap -norepairfiles -noshaders ${game_uri:+"$game_uri"}
-      systemctl start essway
-      exit 0
-    fi
+    export STEAM_COMPAT_GRAPHICS_PROVIDER=//storage/.local/share/fex-emu/RootFS/ArchLinux/graphics_provider.json
+    LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} gamescope -- /storage/.local/share/Steam/steamrtarm64/steam -deckard -steamos3 -exitsteam
+    systemctl stop sway
+    steam_touch_calibration_begin "${force_orientation}"
+    trap steam_touch_calibration_end EXIT
+    GAMESCOPE_MODE_SAVE_FILE="${gamescope_mode_file}" GAMESCOPE_FAKE_OUTPUT_MM=508x286 \
+    env -u WAYLAND_DISPLAY LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} \
+    gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --mangoapp --backend drm --force-orientation "${force_orientation}" -e -- \
+    /storage/.local/share/Steam/steamrtarm64/steam -deckard -steamos3 -gamepadui -noverifyfiles -nobootstrapupdate -skipinitialbootstrap -norepairfiles -noshaders ${game_uri:+"$game_uri"}
+    steam_touch_calibration_end
+    trap - EXIT
+    systemctl start essway
+    exit 0
   else
-    FEX /usr/bin/steam -steamdeck -exitsteam
-    if [ "${GAMESCOPE}" = "0" ]; then
-      ${EMUPERF} FEX /usr/bin/steam -nofriendsui -noverifyfiles -nobootstrapupdate -skipinitialbootstrap -norepairfiles -noshaders ${game_uri:+"$game_uri"}
-      exit 0
-    else
-      systemctl stop sway
-      GAMESCOPE_MODE_SAVE_FILE="${gamescope_mode_file}" GAMESCOPE_FAKE_OUTPUT_MM=508x286 env -u WAYLAND_DISPLAY ${EMUPERF} \
-        gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --mangoapp --backend drm --force-orientation "${force_orientation}" -e -- \
-        FEX /usr/bin/steam -steamdeck -steamos3 -gamepadui -noverifyfiles -nobootstrapupdate -skipinitialbootstrap -norepairfiles -noshaders ${game_uri:+"$game_uri"}
-      systemctl start essway
-      exit 0
-    fi
+    FEX /usr/bin/steam -exitsteam
+    systemctl stop sway
+    steam_touch_calibration_begin "${force_orientation}"
+    trap steam_touch_calibration_end EXIT
+    GAMESCOPE_MODE_SAVE_FILE="${gamescope_mode_file}" GAMESCOPE_FAKE_OUTPUT_MM=508x286 env -u WAYLAND_DISPLAY ${EMUPERF} \
+      gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --backend drm --force-orientation "${force_orientation}" -- \
+      FEX /usr/bin/steam -nobigpicture -noverifyfiles -nobootstrapupdate -skipinitialbootstrap -norepairfiles -noshaders ${game_uri:+"$game_uri"}
+    steam_touch_calibration_end
+    trap - EXIT
+    systemctl start essway
+    exit 0
   fi
 }
 

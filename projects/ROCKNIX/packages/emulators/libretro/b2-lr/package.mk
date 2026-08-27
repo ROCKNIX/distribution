@@ -20,6 +20,7 @@
 
 PKG_NAME="b2-lr"
 PKG_VERSION="ffcfcddc5ba05a97e04372672879bc25284ff653"
+PKG_SHA256="7b4bdbd29e74337c108557e9780d0da1ec44e0ec22b625239fb911cbbe6aa00e"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/zoltanvb/b2-libretro"
 PKG_URL="https://github.com/zoltanvb/b2-libretro/archive/${PKG_VERSION}.tar.gz"

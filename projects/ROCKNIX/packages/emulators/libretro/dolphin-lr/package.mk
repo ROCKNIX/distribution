@@ -3,6 +3,7 @@
 
 PKG_NAME="dolphin-lr"
 PKG_VERSION="89a4df725d4eb24537728f7d655cddb1add25c18"
+PKG_SHA256="67c3df4fd4f601e29b614fe47621bf8d1b0f1904121cdf3a989b53af348d3338"
 PKG_LICENSE="GPLv2"
 PKG_DEPENDS_TARGET="toolchain libevdev libdrm ffmpeg zlib libpng lzo libusb"
 PKG_SITE="https://github.com/libretro/dolphin"

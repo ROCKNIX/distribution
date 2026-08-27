@@ -3,6 +3,7 @@
 
 PKG_NAME="bdf2psf"
 PKG_VERSION="1.236"
+PKG_SHA256="6f8cc48290f1be5963ffd12e29d8133b3d57e9b07ee2793f5b559450c04253eb"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://packages.debian.org/unstable/${PKG_NAME}"
 PKG_URL="https://deb.debian.org/debian/pool/main/c/console-setup/${PKG_NAME}_${PKG_VERSION}_all.deb"
