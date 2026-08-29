@@ -20,8 +20,11 @@
 #include <dt-bindings/interconnect/qcom,sm4450-rpmh.h>
 #include <dt-bindings/interrupt-controller/arm-gic.h>
 #include <dt-bindings/mailbox/qcom-ipcc.h>
+#include <dt-bindings/phy/phy-qcom-qmp.h>
+#include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
 #include <dt-bindings/power/qcom,rpmhpd.h>
 #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+#include <dt-bindings/spmi/spmi.h>
 #include <dt-bindings/thermal/thermal.h>
 #include "sm4450.dtsi"
 / {
@@ -42,6 +45,37 @@
 		gpio = <&tlmm 2 GPIO_ACTIVE_HIGH>;
 		enable-active-high;
 		regulator-boot-on;
+	};
+
+	fan_pwr: regulator-fan-pwr {
+		compatible = "regulator-fixed";
+		regulator-name = "fan_pwr";
+		gpio = <&tlmm 8 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+	};
+
+	fan: pwm-fan {
+		compatible = "pwm-fan";
+		pwms = <&pm6450_pwm 0 50000>;
+		fan-supply = <&fan_pwr>;
+		interrupts-extended = <&tlmm 33 IRQ_TYPE_EDGE_FALLING>;
+		pulses-per-revolution = <2>;
+		#cooling-cells = <2>;
+		cooling-levels = <0 102>;
+	};
+
+	gpio_keys: gpio-keys {
+		compatible = "gpio-keys";
+		pinctrl-0 = <&vol_up_n>;
+		pinctrl-names = "default";
+
+		key-volume-up {
+			label = "volume_up";
+			linux,code = <KEY_VOLUMEUP>;
+			gpios = <&tlmm 53 GPIO_ACTIVE_LOW>;
+			debounce-interval = <15>;
+			wakeup-source;
+		};
 	};
 
 	pmic_glink: pmic-glink {
@@ -1534,6 +1568,12 @@
 		drive-strength = <2>;
 		bias-disable;
 	};
+
+	vol_up_n: vol-up-n-state {
+		pins = "gpio53";
+		function = "gpio";
+		bias-pull-up;
+	};
 };
 
 &qupv3_id_0 {
@@ -1641,6 +1681,22 @@
 		qcom,ratiometric;
 	};
 
+	channel@45 {
+		reg = <PMK8350_ADC7_AMUX_THM2_100K_PU>;
+		label = "pmk8350_wide_rfc_therm";
+		qcom,hw-settle-time = <200>;
+		qcom,pre-scaling = <1 1>;
+		qcom,ratiometric;
+	};
+
+	channel@46 {
+		reg = <PMK8350_ADC7_AMUX_THM3_100K_PU>;
+		label = "pmk8350_pa_therm1";
+		qcom,hw-settle-time = <200>;
+		qcom,pre-scaling = <1 1>;
+		qcom,ratiometric;
+	};
+
 	/* PM6450 channels are read through the PMK8350 ADC (SID-encoded) */
 	channel@103 {
 		reg = <(PM6450_SID << 8 | ADC7_DIE_TEMP)>;
@@ -1663,6 +1719,51 @@
 		qcom,pre-scaling = <1 1>;
 		qcom,ratiometric;
 	};
+};
+
+&pmk8350_rtc {
+	/* TODO: will need nvmem region */
+	qcom,no-alarm;
+	status = "okay";
+};
+
+&spmi_bus {
+	pm6450: pmic@1 {
+		compatible = "qcom,pm6450", "qcom,spmi-pmic";
+		reg = <0x1 SPMI_USID>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		pm6450_gpios: gpio@8800 {
+			compatible = "qcom,pm6450-gpio", "qcom,spmi-gpio";
+			reg = <0x8800>;
+			gpio-controller;
+			gpio-ranges = <&pm6450_gpios 0 0 9>;
+			#gpio-cells = <2>;
+			interrupt-controller;
+			#interrupt-cells = <2>;
+
+			fan_pwm_default: fan-pwm-state {
+				pins = "gpio7";
+				function = "func1";
+				power-source = <1>;
+				qcom,drive-strength = <PMIC_GPIO_STRENGTH_MED>;
+				bias-disable;
+			};
+		};
+
+		pm6450_pwm: pwm {
+			compatible = "qcom,pm6450-pwm";
+			#pwm-cells = <2>;
+			pinctrl-0 = <&fan_pwm_default>;
+			pinctrl-names = "default";
+		};
+	};
+};
+
+&pdc {
+	qcom,pdc-ranges = <0 480 94>, <94 609 31>, <125 63 1>,
+			  <126 716 12>;
 };
 
 &pon_pwrkey {
