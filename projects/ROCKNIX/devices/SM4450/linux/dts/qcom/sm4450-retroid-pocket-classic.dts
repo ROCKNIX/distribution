@@ -24,6 +24,8 @@
 #include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
 #include <dt-bindings/power/qcom,rpmhpd.h>
 #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+#include <dt-bindings/soc/qcom,gpr.h>
+#include <dt-bindings/sound/qcom,q6dsp-lpass-ports.h>
 #include <dt-bindings/spmi/spmi.h>
 #include <dt-bindings/thermal/thermal.h>
 #include "sm4450.dtsi"
@@ -609,10 +611,6 @@
 
 		firmware-name = "qcom/sm4450/adsp.mdt";
 
-		/*
-		 * TODO: audio (Topology also)
-		 * Speakers: 2x awinic aw883xx, blob aw883xx_acf.bin.
-		 */
 		glink-edge {
 			interrupts-extended = <&ipcc IPCC_CLIENT_LPASS
 						     IPCC_MPROC_SIGNAL_GLINK_QMP
@@ -621,6 +619,45 @@
 					IPCC_MPROC_SIGNAL_GLINK_QMP>;
 			label = "lpass";
 			qcom,remote-pid = <2>;
+
+			gpr {
+				compatible = "qcom,gpr";
+				qcom,glink-channels = "adsp_apps";
+				qcom,domain = <GPR_DOMAIN_ID_ADSP>;
+				qcom,intents = <512 20>;
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				q6apm: service@1 {
+					compatible = "qcom,q6apm";
+					reg = <GPR_APM_MODULE_IID>;
+					#sound-dai-cells = <0>;
+					qcom,protection-domain = "avs/audio",
+								 "msm/adsp/audio_pd";
+
+					q6apmdai: dais {
+						compatible = "qcom,q6apm-dais";
+						iommus = <&apps_smmu 0x1001 0x0>;
+					};
+
+					q6apmbedai: bedais {
+						compatible = "qcom,q6apm-lpass-dais";
+						#sound-dai-cells = <1>;
+					};
+				};
+
+				q6prm: service@2 {
+					compatible = "qcom,q6prm";
+					reg = <GPR_PRM_MODULE_IID>;
+					qcom,protection-domain = "avs/audio",
+								 "msm/adsp/audio_pd";
+
+					q6prmcc: clock-controller {
+						compatible = "qcom,q6prm-lpass-clocks";
+						#clock-cells = <2>;
+					};
+				};
+			};
 		};
 	};
 
@@ -651,10 +688,6 @@
 
 		firmware-name = "qcom/sm4450/wpss.mdt";
 
-	/*
-	 * TODO: wifi node - Adrastea firmware
-	 * BT is qcom,wcn3990
-	 */
 		glink-edge {
 			interrupts-extended = <&ipcc IPCC_CLIENT_WPSS
 						     IPCC_MPROC_SIGNAL_GLINK_QMP
@@ -1381,6 +1414,14 @@
 		bias-disable;
 	};
 
+	wcd_default: wcd-default-state {
+		pins = "gpio96";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-disable;
+		output-high;
+	};
+
 	panel_1p8_en_default: panel-1p8-en-default-state {
 		pins = "gpio30";
 		function = "gpio";
@@ -1594,25 +1635,25 @@
 		clock-frequency = <400000>;
 		#address-cells = <1>;
 		#size-cells = <0>;
-		status = "disabled";
+		status = "okay";
 
 		speaker_amp_l: audio-codec@34 {
-			compatible = "awinic,aw88395";
+			compatible = "awinic,aw88166";
 			reg = <0x34>;
 			#sound-dai-cells = <0>;
-			reset-gpios = <&tlmm 26 GPIO_ACTIVE_HIGH>;
+			reset-gpios = <&tlmm 26 GPIO_ACTIVE_LOW>;
 			sound-name-prefix = "Left";
 			awinic,audio-channel = <0>;
 			awinic,sync-flag;
 		};
 
 		speaker_amp_r: audio-codec@35 {
-			compatible = "awinic,aw88395";
+			compatible = "awinic,aw88166";
 			reg = <0x35>;
 			#sound-dai-cells = <0>;
-			reset-gpios = <&tlmm 28 GPIO_ACTIVE_HIGH>;
+			reset-gpios = <&tlmm 28 GPIO_ACTIVE_LOW>;
 			sound-name-prefix = "Right";
-			awinic,audio-channel = <1>;
+			awinic,audio-channel = <0>;
 			awinic,sync-flag;
 		};
 
@@ -1660,6 +1701,317 @@
 		interrupt-controller;
 		#interrupt-cells = <4>;
 		status = "okay";
+	};
+
+	lpass_tlmm: pinctrl@3440000 {
+		compatible = "qcom,sm8450-lpass-lpi-pinctrl";
+		reg = <0x0 0x03440000 0x0 0x20000>,
+		      <0x0 0x034d0000 0x0 0x10000>;
+
+		clocks = <&q6prmcc LPASS_HW_DCODEC_VOTE LPASS_CLK_ATTRIBUTE_COUPLE_NO>;
+		clock-names = "audio";
+		gpio-controller;
+		#gpio-cells = <2>;
+		gpio-ranges = <&lpass_tlmm 0 0 23>;
+	};
+
+	lpass_rxmacro: codec@3200000 {
+		compatible = "qcom,sc8280xp-lpass-rx-macro";
+		reg = <0x0 0x03200000 0x0 0x1000>;
+		clocks = <&q6prmcc LPASS_CLK_ID_RX_CORE_TX_MCLK LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
+			 <&q6prmcc LPASS_CLK_ID_RX_CORE_TX_2X_MCLK LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
+			 <&q6prmcc LPASS_HW_DCODEC_VOTE LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
+			 <&q6prmcc LPASS_HW_DCODEC_VOTE LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
+			 <&lpass_vamacro>;
+		clock-names = "mclk", "npl", "macro", "dcodec", "fsgen";
+		assigned-clocks = <&q6prmcc LPASS_CLK_ID_RX_CORE_TX_MCLK LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
+				  <&q6prmcc LPASS_CLK_ID_RX_CORE_TX_2X_MCLK LPASS_CLK_ATTRIBUTE_COUPLE_NO>;
+		assigned-clock-rates = <19200000>, <19200000>;
+
+		#clock-cells = <0>;
+		clock-output-names = "mclk";
+		#sound-dai-cells = <1>;
+	};
+
+	swr_rx: soundwire@3210000 {
+		compatible = "qcom,soundwire-v1.7.0";
+		reg = <0x0 0x03210000 0x0 0x2000>;
+		interrupts = <GIC_SPI 155 IRQ_TYPE_LEVEL_HIGH>;
+		clocks = <&lpass_rxmacro>;
+		clock-names = "iface";
+		label = "RX";
+
+		pinctrl-0 = <&rx_swr_active>;
+		pinctrl-names = "default";
+
+		qcom,din-ports = <0>;
+		qcom,dout-ports = <5>;
+
+		qcom,ports-word-length =	/bits/ 8 <0x01 0x07 0x04 0xff 0xff>;
+		qcom,ports-sinterval-low =	/bits/ 8 <0x03 0x3f 0x1f 0x03 0x03>;
+		qcom,ports-offset1 =		/bits/ 8 <0x00 0x00 0x0b 0x01 0x01>;
+		qcom,ports-offset2 =		/bits/ 8 <0x00 0x00 0x0b 0x00 0x00>;
+		qcom,ports-lane-control =	/bits/ 8 <0x01 0x00 0x00 0x00 0x00>;
+		qcom,ports-block-pack-mode =	/bits/ 8 <0xff 0x00 0x01 0xff 0xff>;
+		qcom,ports-hstart =		/bits/ 8 <0xff 0x03 0xff 0xff 0xff>;
+		qcom,ports-hstop =		/bits/ 8 <0xff 0x06 0xff 0xff 0xff>;
+		qcom,ports-block-group-count =	/bits/ 8 <0xff 0xff 0xff 0xff 0x00>;
+
+		#sound-dai-cells = <1>;
+		#address-cells = <2>;
+		#size-cells = <0>;
+
+		wcd937x_rx: codec@0,4 {
+			compatible = "sdw20217010a00";
+			reg = <0 4>;
+			qcom,rx-port-mapping = <1 2 3 4 5>;
+		};
+	};
+
+	lpass_txmacro: codec@3220000 {
+		compatible = "qcom,sc8280xp-lpass-tx-macro";
+		reg = <0x0 0x03220000 0x0 0x1000>;
+		clocks = <&q6prmcc LPASS_CLK_ID_TX_CORE_MCLK LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
+			 <&q6prmcc LPASS_CLK_ID_TX_CORE_NPL_MCLK LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
+			 <&q6prmcc LPASS_HW_DCODEC_VOTE LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
+			 <&q6prmcc LPASS_HW_DCODEC_VOTE LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
+			 <&lpass_vamacro>;
+		clock-names = "mclk", "npl", "macro", "dcodec", "fsgen";
+		assigned-clocks = <&q6prmcc LPASS_CLK_ID_TX_CORE_MCLK LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
+				  <&q6prmcc LPASS_CLK_ID_TX_CORE_NPL_MCLK LPASS_CLK_ATTRIBUTE_COUPLE_NO>;
+		assigned-clock-rates = <19200000>, <19200000>;
+
+		#clock-cells = <0>;
+		clock-output-names = "mclk";
+		#sound-dai-cells = <1>;
+	};
+
+	swr_tx: soundwire@33b0000 {
+		compatible = "qcom,soundwire-v1.7.0";
+		reg = <0x0 0x033b0000 0x0 0x2000>;
+		interrupts = <GIC_SPI 496 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 520 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "core", "wakeup";
+		clocks = <&lpass_txmacro>;
+		clock-names = "iface";
+		label = "TX";
+
+		pinctrl-0 = <&tx_swr_active>;
+		pinctrl-names = "default";
+
+		qcom,din-ports = <3>;
+		qcom,dout-ports = <0>;
+
+		qcom,ports-sinterval-low =	/bits/ 8 <0x01 0x03 0x03>;
+		qcom,ports-offset1 =		/bits/ 8 <0x01 0x00 0x02>;
+		qcom,ports-offset2 =		/bits/ 8 <0x00 0x00 0x00>;
+		qcom,ports-hstart =		/bits/ 8 <0xff 0xff 0xff>;
+		qcom,ports-hstop =		/bits/ 8 <0xff 0xff 0xff>;
+		qcom,ports-word-length =	/bits/ 8 <0xff 0x00 0xff>;
+		qcom,ports-block-pack-mode =	/bits/ 8 <0xff 0xff 0xff>;
+		qcom,ports-block-group-count =	/bits/ 8 <0xff 0xff 0xff>;
+		qcom,ports-lane-control =	/bits/ 8 <0x00 0x01 0x00>;
+
+		#sound-dai-cells = <1>;
+		#address-cells = <2>;
+		#size-cells = <0>;
+
+		wcd937x_tx: codec@0,3 {
+			compatible = "sdw20217010a00";
+			reg = <0 3>;
+			qcom,tx-port-mapping = <1 1 2 3>;
+		};
+	};
+
+	lpass_vamacro: codec@33f0000 {
+		compatible = "qcom,sc8280xp-lpass-va-macro";
+		reg = <0x0 0x033f0000 0x0 0x1000>;
+		clocks = <&q6prmcc LPASS_CLK_ID_TX_CORE_MCLK LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
+			 <&q6prmcc LPASS_HW_DCODEC_VOTE LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
+			 <&q6prmcc LPASS_HW_DCODEC_VOTE LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
+			 <&q6prmcc LPASS_CLK_ID_TX_CORE_NPL_MCLK LPASS_CLK_ATTRIBUTE_COUPLE_NO>;
+		clock-names = "mclk", "macro", "dcodec", "npl";
+		assigned-clocks = <&q6prmcc LPASS_CLK_ID_TX_CORE_MCLK LPASS_CLK_ATTRIBUTE_COUPLE_NO>;
+		assigned-clock-rates = <19200000>;
+		qcom,dmic-sample-rate = <600000>;
+
+		#clock-cells = <0>;
+		clock-output-names = "fsgen";
+		#sound-dai-cells = <1>;
+	};
+};
+
+&lpass_tlmm {
+	lpi_i2s2_default: lpi-i2s2-default-state {
+		sck-pins {
+			pins = "gpio10";
+			function = "i2s2_clk";
+			drive-strength = <8>;
+			bias-disable;
+		};
+
+		ws-pins {
+			pins = "gpio11";
+			function = "i2s2_ws";
+			drive-strength = <8>;
+			bias-disable;
+		};
+
+		data0-pins {
+			pins = "gpio12";
+			function = "i2s4_clk";
+			drive-strength = <8>;
+			bias-disable;
+		};
+
+		data1-pins {
+			pins = "gpio13";
+			function = "i2s4_ws";
+			drive-strength = <8>;
+			bias-disable;
+		};
+	};
+
+	rx_swr_active: rx-swr-active-state {
+		clk-pins {
+			pins = "gpio3";
+			function = "swr_rx_clk";
+			drive-strength = <2>;
+			slew-rate = <1>;
+			bias-disable;
+		};
+
+		data-pins {
+			pins = "gpio4", "gpio5";
+			function = "swr_rx_data";
+			drive-strength = <2>;
+			slew-rate = <1>;
+			bias-bus-hold;
+		};
+	};
+
+	tx_swr_active: tx-swr-active-state {
+		clk-pins {
+			pins = "gpio0";
+			function = "swr_tx_clk";
+			drive-strength = <2>;
+			slew-rate = <1>;
+			bias-disable;
+		};
+
+		data-pins {
+			pins = "gpio1", "gpio2", "gpio14";
+			function = "swr_tx_data";
+			drive-strength = <2>;
+			slew-rate = <1>;
+			bias-bus-hold;
+		};
+	};
+};
+
+/ {
+	vph_pwr: regulator-vph-pwr {
+		compatible = "regulator-fixed";
+		regulator-name = "vph_pwr";
+		regulator-min-microvolt = <3700000>;
+		regulator-max-microvolt = <3700000>;
+		regulator-always-on;
+		regulator-boot-on;
+	};
+
+	wcd937x: audio-codec {
+		compatible = "qcom,wcd9370-codec";
+
+		pinctrl-0 = <&wcd_default>;
+		pinctrl-names = "default";
+
+		reset-gpios = <&tlmm 96 GPIO_ACTIVE_LOW>;
+
+		vdd-buck-supply = <&vreg_l20b_1p7>;
+		vdd-rxtx-supply = <&vreg_l21b_1p8>;
+		vdd-px-supply = <&vreg_l21b_1p8>;
+		vdd-mic-bias-supply = <&vph_pwr>;
+
+		qcom,micbias1-microvolt = <1800000>;
+		qcom,micbias2-microvolt = <1800000>;
+		qcom,micbias3-microvolt = <1800000>;
+
+		qcom,rx-device = <&wcd937x_rx>;
+		qcom,tx-device = <&wcd937x_tx>;
+
+		qcom,mbhc-buttons-vthreshold-microvolt = <75000 150000 237000
+							  500000 500000 500000
+							  500000 500000>;
+		qcom,mbhc-headphone-vthreshold-microvolt = <50000>;
+		qcom,mbhc-headset-vthreshold-microvolt = <1700000>;
+
+		#sound-dai-cells = <1>;
+	};
+
+	sound {
+		compatible = "qcom,sm4450-sndcard", "qcom,sm8450-sndcard";
+		model = "RetroidPocketClassic";
+		pinctrl-0 = <&lpi_i2s2_default>;
+		pinctrl-names = "default";
+
+		audio-routing = "IN1_HPHL", "HPHL_OUT",
+				"IN2_HPHR", "HPHR_OUT",
+				"AMIC2", "MIC BIAS2",
+				"TX SWR_ADC1", "ADC2_OUTPUT";
+
+		clocks = <&q6prmcc LPASS_CLK_ID_QUI_MI2S_IBIT LPASS_CLK_ATTRIBUTE_COUPLE_NO>;
+		clock-names = "i2s_clk";
+
+		assigned-clocks = <&q6prmcc LPASS_CLK_ID_QUI_MI2S_IBIT LPASS_CLK_ATTRIBUTE_COUPLE_NO>;
+		assigned-clock-rates = <1536000>;
+
+		speaker-i2s-dai-link {
+			link-name = "Senary MI2S Playback";
+
+			cpu {
+				sound-dai = <&q6apmbedai SENARY_MI2S_RX>;
+			};
+
+			codec {
+				sound-dai = <&speaker_amp_l>, <&speaker_amp_r>;
+			};
+
+			platform {
+				sound-dai = <&q6apm>;
+			};
+		};
+
+		wcd-playback-dai-link {
+			link-name = "WCD Playback";
+
+			cpu {
+				sound-dai = <&q6apmbedai RX_CODEC_DMA_RX_0>;
+			};
+
+			codec {
+				sound-dai = <&wcd937x 0>, <&swr_rx 0>, <&lpass_rxmacro 0>;
+			};
+
+			platform {
+				sound-dai = <&q6apm>;
+			};
+		};
+
+		wcd-capture-dai-link {
+			link-name = "WCD Capture";
+
+			cpu {
+				sound-dai = <&q6apmbedai TX_CODEC_DMA_TX_3>;
+			};
+
+			codec {
+				sound-dai = <&wcd937x 1>, <&swr_tx 0>, <&lpass_txmacro 0>;
+			};
+
+			platform {
+				sound-dai = <&q6apm>;
+			};
+		};
 	};
 };
 
