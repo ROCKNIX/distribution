@@ -1,0 +1,44 @@
+rocknix-joypad: ratelimit the saradc read-failure message
+
+joypad_adc_check() runs from the input polling loop. When joypad_adc_read()
+fails it returns 0, and the driver logs at dev_err level with no ratelimiting -
+so a persistent ADC failure emits one line per poll, about 8 per second, for as
+long as the condition lasts.
+
+On a 1.5Mbaud serial console that is a permanent stream of identical lines. It
+drowns out whatever actually broke, and it adds console work to a machine that
+by that point is usually already in trouble. Observed on a Gusgu H7 whenever the
+SARADC stops answering: tens of thousands of identical messages, which actively
+hindered debugging an unrelated interrupt storm.
+
+Use dev_err_ratelimited() at all three call sites.
+
+--- a/rocknix-joypad.c	2026-08-27 19:05:34.283963099 -0400
++++ b/rocknix-joypad.c	2026-08-27 19:05:34.284933731 -0400
+@@ -143,7 +143,7 @@
+ 		/* Read first joystick axis */
+ 		adcx->value = joypad_adc_read(joypad, adcx);
+ 		if (!adcx->value) {
+-			dev_err(joypad->dev, "saradc channels[%d]!\n", nbtn);
++			dev_err_ratelimited(joypad->dev, "saradc channels[%d]!\n", nbtn);
+ 			continue;
+ 		}
+ 		adcx->value = adcx->value - adcx->cal;
+@@ -151,7 +151,7 @@
+ 		/* Read second joystick axis */
+ 		adcy->value = joypad_adc_read(joypad, adcy);
+ 		if (!adcy->value) {
+-			dev_err(joypad->dev, "saradc channels[%d]!\n", nbtn + 1);
++			dev_err_ratelimited(joypad->dev, "saradc channels[%d]!\n", nbtn + 1);
+ 			continue;
+ 		}
+ 		adcy->value = adcy->value - adcy->cal;
+@@ -229,7 +229,7 @@
+ 
+ 		adc->value = joypad_adc_read(joypad, adc);
+ 		if (!adc->value) {
+-			dev_err(joypad->dev, "saradc channels[%d]!\n", nbtn);
++			dev_err_ratelimited(joypad->dev, "saradc channels[%d]!\n", nbtn);
+ 			continue;
+ 		}
+ 		adc->cal = adc->value;
