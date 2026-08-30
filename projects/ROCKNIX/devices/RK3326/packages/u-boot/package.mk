@@ -54,6 +54,12 @@ make_target() {
   mv uboot.bin uboot.bin.uart5
 }
 
+# IMPORTANT!
+# For every device `<dev_name>` not in any image this function creates
+# an `extlinux.conf.<dev_name>` file passing a corresponding dtb directly
+# (effectively bypassing auto-detection by ADC value).
+# User needs to rename a single file (replacing the generic `extlinux.conf`)
+# to configure any (a/b) image for their device.
 generate_custom_extlinux_conf_files() {
   INI_FILES=""
   for SUBDEVICE in ${SUBDEVICES}; do
@@ -96,6 +102,8 @@ makeinstall_target() {
   sed -e "s/@EXTRA_CMDLINE@/${EXTRA_CMDLINE}/" \
     -i ${INSTALL}/usr/share/bootloader/extlinux/*
 
+  # Next call creates an `extlinux.conf.<dev_name>` files for every dts/dtb not in any image.
+  # User needs to rename a proper file to `extlinux.conf` (replacing it) as a preparation step.
   generate_custom_extlinux_conf_files
 
   find_dir_path config/stock && cp -av ${FOUND_PATH} "${INSTALL}/usr/share/bootloader/"
