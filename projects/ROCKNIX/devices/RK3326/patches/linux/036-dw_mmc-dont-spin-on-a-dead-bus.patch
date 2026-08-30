@@ -1,0 +1,127 @@
+mmc: dw_mmc: survive an SDIO card that stops responding
+
+Two independent problems, both hit on a Gusgu H7 (RK3326) when the RK915 SDIO
+wifi chip stops responding under load.
+
+1. TXDR/RXDR ask for the FIFO to be serviced by the CPU and are only meaningful
+   for PIO. dw_mci_submit_data_dma() masks them for the duration of a DMA
+   transfer, so DMA itself is covered - but nothing masks them once a transfer
+   is over. They are enabled by the INTMASK written in dw_mci_probe(), enabled
+   again by dw_mci_runtime_resume(), and re-enabled by every PIO transfer in
+   dw_mci_submit_data(); the only thing that ever clears them is the next DMA
+   transfer. An SDIO card driver that mixes CMD52 (PIO) with block transfers
+   therefore leaves them enabled for long stretches with host->sg == NULL, and
+   in that state the handler can only clear the latch.
+
+   Harmless while the FIFO condition is transient. Not harmless when the card
+   dies: the condition persists, clearing the latch achieves nothing, and the
+   level-triggered line is re-raised immediately.
+
+   Per-irq tracing on mmc@ff380000 caught the count advancing by ~697,000 between
+   two consecutive samples, with every other interrupt on that CPU frozen:
+
+       IRQTRACE 344 dwmci: 56:164736147  vop=11531 adc=24734 ser=418 gpio=10946
+       IRQTRACE 345 dwmci: 56:165433415  vop=11531 adc=24734 ser=418 gpio=10946
+
+   All device interrupts on this board are affine to CPU0, so the display stops
+   (drm vblank timeouts), the SARADC stops, the network dies, and the machine
+   needs a power cycle. Mask the bit when it fires with nothing to service;
+   dw_mci_submit_data() re-enables it for the next PIO transfer.
+
+2. dw_mci_set_drto() is armed only for reads, so a write to a card that has
+   stopped responding has no timeout at all - the hardware data timeout does not
+   cover the write data phase - and mmc_wait_for_req() waits forever:
+
+       task:rk915_tx  state:D
+         wait_for_completion / mmc_wait_for_req_done / mmc_io_rw_extended
+         / sdio_memcpy_toio / tx_thread [rk915]
+       task:rk915_rx  state:D
+         __mmc_claim_host / sdio_claim_host / rk915_serias_read [rk915]
+
+   The second thread is merely queued behind the first on the host lock. Nothing
+   errors, so the driver's own recovery never runs and the module cannot be
+   unloaded. Arm it for writes as well; the timeout comes from TMOUT, which
+   dw_mci_set_data_timeout() programs per request from data->timeout_ns.
+--- a/drivers/mmc/host/dw_mmc.c
++++ b/drivers/mmc/host/dw_mmc.c
+@@ -1554,6 +1554,29 @@
+ 	}
+ }
+ 
++/*
++ * TXDR/RXDR ask for the FIFO to be serviced by the CPU. If there is no transfer
++ * left to service - host->sg is NULL - the handler can only clear the latch, the
++ * underlying FIFO condition persists, and the level-triggered line is re-raised
++ * immediately. Mask the bit; dw_mci_submit_data() re-enables it for the next PIO
++ * transfer.
++ */
++static void dw_mci_mask_stuck_fifo_irq(struct dw_mci *host, u32 bit)
++{
++	unsigned long irqflags;
++	u32 int_mask;
++
++	spin_lock_irqsave(&host->irq_lock, irqflags);
++	int_mask = mci_readl(host, INTMASK);
++	if (int_mask & bit) {
++		mci_writel(host, INTMASK, int_mask & ~bit);
++		dev_err_ratelimited(host->dev,
++				    "FIFO irq %#x with no transfer to service; masking\n",
++				    bit);
++	}
++	spin_unlock_irqrestore(&host->irq_lock, irqflags);
++}
++
+ static void __dw_mci_enable_sdio_irq(struct dw_mci *host, int enb)
+ {
+ 	unsigned long irqflags;
+@@ -2025,10 +2048,13 @@
+ 						&host->pending_events)) {
+ 				/*
+ 				 * If all data-related interrupts don't come
+-				 * within the given time in reading data state.
++				 * within the given time. Armed for writes too:
++				 * the hardware data timeout does not cover the
++				 * write data phase, so a write to a card that
++				 * has stopped responding otherwise leaves
++				 * mmc_wait_for_req() waiting forever.
+ 				 */
+-				if (host->dir_status == MMC_DATA_READ)
+-					dw_mci_set_drto(host);
++				dw_mci_set_drto(host);
+ 				break;
+ 			}
+ 
+@@ -2063,12 +2089,11 @@
+ 		case STATE_DATA_BUSY:
+ 			if (!dw_mci_clear_pending_data_complete(host)) {
+ 				/*
+-				 * If data error interrupt comes but data over
+-				 * interrupt doesn't come within the given time.
+-				 * in reading data state.
++				 * If a data error interrupt comes but data over
++				 * does not follow within the given time. Armed
++				 * for writes as well, for the reason above.
+ 				 */
+-				if (host->dir_status == MMC_DATA_READ)
+-					dw_mci_set_drto(host);
++				dw_mci_set_drto(host);
+ 				break;
+ 			}
+ 
+@@ -2749,12 +2774,16 @@
+ 			mci_writel(host, RINTSTS, SDMMC_INT_RXDR);
+ 			if (host->dir_status == MMC_DATA_READ && host->sg)
+ 				dw_mci_read_data_pio(host, false);
++			else
++				dw_mci_mask_stuck_fifo_irq(host, SDMMC_INT_RXDR);
+ 		}
+ 
+ 		if (pending & SDMMC_INT_TXDR) {
+ 			mci_writel(host, RINTSTS, SDMMC_INT_TXDR);
+ 			if (host->dir_status == MMC_DATA_WRITE && host->sg)
+ 				dw_mci_write_data_pio(host);
++			else
++				dw_mci_mask_stuck_fifo_irq(host, SDMMC_INT_TXDR);
+ 		}
+ 
+ 		if (pending & SDMMC_INT_CMD_DONE) {
