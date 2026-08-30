@@ -1,0 +1,231 @@
+#!/usr/bin/env python3
+"""Gusgu H7 RGB ring: three WS2812s on /dev/spidev1.0, cycled by the RGB button.
+
+Wire format recovered from the stock firmware's own binary by capturing its
+ioctl(SPI_IOC_MESSAGE) buffers:
+
+    one SPI byte per WS2812 bit at the 8 MHz device default (125 ns/bit)
+        0xc0 = 11000000 -> 250 ns high -> a 0
+        0xfc = 11111100 -> 750 ns high -> a 1
+    three LEDs, three bytes each, wire order GRB
+    no latch bytes - the idle gap between frames is the reset
+
+The RGB button is BTN_MODE on the gamepad, the same physical button the stock
+firmware read as KEY_FN. The daemon reads it without EVIOCGRAB so the UI still
+sees it too.
+
+  h7-rgb <r> <g> <b>   all three to one colour
+  h7-rgb off
+  h7-rgb mode <name>   set a named mode (see MODES)
+  h7-rgb next          advance one mode
+  h7-rgb boot          re-apply the saved mode
+  h7-rgb daemon        render effects and follow the RGB button
+  h7-rgb list          list the modes
+"""
+import fcntl, math, os, select, struct, sys, time
+
+DEV   = "/dev/spidev1.0"
+NLED  = 3
+CONF  = "/storage/.config/h7-rgb.conf"
+ZERO, ONE = 0xC0, 0xFC
+SPEED = 8_000_000
+SPI_IOC_WR_MODE          = 0x40016B01
+SPI_IOC_WR_BITS_PER_WORD = 0x40016B03
+SPI_IOC_WR_MAX_SPEED_HZ  = 0x40046B04
+BTN_MODE = 316
+EV_KEY   = 0x01
+
+R, G, B = (255, 0, 0), (0, 255, 0), (0, 0, 255)
+
+# The stock firmware's list, in its order, so the button walks the same cycle.
+MODES = [
+    ("Red",                   "static",    [R]),
+    ("Red_Green",             "static",    [R, G]),
+    ("Green",                 "static",    [G]),
+    ("Green_Blue",            "static",    [G, B]),
+    ("Blue",                  "static",    [B]),
+    ("Blue_Red",              "static",    [B, R]),
+    ("Red_Green_Blue",        "static",    [R, G, B]),
+    ("Breathing_Red",         "breathing", [R]),
+    ("Breathing_Green",       "breathing", [G]),
+    ("Breathing_Blue",        "breathing", [B]),
+    ("Breathing_Blue_Red",    "breathing", [B, R]),
+    ("Breathing_Green_Blue",  "breathing", [G, B]),
+    ("Breathing_Red_Green",   "breathing", [R, G]),
+    ("Breathing_Red_Green_Blue", "breathing", [R, G, B]),
+    ("Breathing",             "breathing", [R, G, B]),
+    ("Scrolling",             "scrolling", [R, G, B]),
+    ("OFF",                   "static",    [(0, 0, 0)]),
+]
+NAMES = [m[0] for m in MODES]
+
+
+def encode(pixels):
+    out = bytearray()
+    for r, g, b in pixels:
+        for byte in (g, r, b):                       # GRB on the wire
+            for i in range(7, -1, -1):               # MSB first
+                out.append(ONE if (byte >> i) & 1 else ZERO)
+    return bytes(out)
+
+
+def open_spi():
+    fd = open(DEV, "wb", buffering=0)
+    fcntl.ioctl(fd, SPI_IOC_WR_MODE, struct.pack("B", 0))
+    fcntl.ioctl(fd, SPI_IOC_WR_BITS_PER_WORD, struct.pack("B", 8))
+    fcntl.ioctl(fd, SPI_IOC_WR_MAX_SPEED_HZ, struct.pack("I", SPEED))
+    return fd
+
+
+def show(fd, pixels):
+    fd.write(encode(pixels)); fd.flush()
+
+
+def render(kind, colours, phase):
+    """One frame. phase advances continuously; static modes ignore it."""
+    if kind == "static":
+        return [colours[i % len(colours)] for i in range(NLED)]
+    if kind == "breathing":
+        # sine on brightness, never fully dark so the ring stays visible
+        k = 0.15 + 0.85 * (0.5 - 0.5 * math.cos(phase * 2 * math.pi))
+        return [tuple(int(c * k) for c in colours[i % len(colours)])
+                for i in range(NLED)]
+    if kind == "scrolling":
+        off = int(phase * len(colours) * NLED) % len(colours)
+        return [colours[(i + off) % len(colours)] for i in range(NLED)]
+    return [(0, 0, 0)] * NLED
+
+
+def load_mode():
+    try:
+        with open(CONF) as f:
+            first = f.read().split("\n")[0].strip()
+    except OSError:
+        return "Scrolling"
+    if first in NAMES:
+        return first
+    parts = first.split()
+    if len(parts) >= 3:                              # legacy "R G B" file
+        return parts[:3]
+    return "Scrolling"
+
+
+def save_mode(name):
+    try:
+        os.makedirs(os.path.dirname(CONF), exist_ok=True)
+        with open(CONF, "w") as f:
+            f.write(name + "\n")
+    except OSError:
+        pass                                          # read-only /storage, fine
+
+
+def spec_for(mode):
+    if isinstance(mode, list):                        # legacy explicit colour
+        rgb = tuple(max(0, min(255, int(v))) for v in mode)
+        return "static", [rgb]
+    for name, kind, colours in MODES:
+        if name == mode:
+            return kind, colours
+    return "static", [(32, 32, 32)]
+
+
+def find_gamepad():
+    for n in range(0, 16):
+        path = f"/dev/input/event{n}"
+        try:
+            name = open(f"/sys/class/input/event{n}/device/name").read().strip()
+        except OSError:
+            continue
+        if "gamepad" in name.lower() or "joypad" in name.lower():
+            return path
+    return None
+
+
+def daemon(fd):
+    mode = load_mode()
+    kind, colours = spec_for(mode)
+    path = find_gamepad()
+    ev = None
+    if path:
+        try:
+            ev = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        except OSError:
+            ev = None
+    fmt, sz = "llHHi", struct.calcsize("llHHi")
+
+    phase, last = 0.0, time.time()
+    while True:
+        animated = kind in ("breathing", "scrolling")
+        timeout = 0.02 if animated else 0.25
+        if ev is not None:
+            r, _, _ = select.select([ev], [], [], timeout)
+            if r:
+                try:
+                    data = os.read(ev, sz * 64)
+                except OSError:
+                    data = b""
+                for i in range(0, len(data) - sz + 1, sz):
+                    _, _, typ, code, val = struct.unpack(fmt, data[i:i+sz])
+                    if typ == EV_KEY and code == BTN_MODE and val == 1:
+                        cur = mode if isinstance(mode, str) else "Scrolling"
+                        idx = (NAMES.index(cur) + 1) % len(NAMES) if cur in NAMES else 0
+                        mode = NAMES[idx]
+                        kind, colours = spec_for(mode)
+                        save_mode(mode)
+                        phase = 0.0
+        else:
+            time.sleep(timeout)
+
+        now = time.time()
+        if animated:
+            phase = (phase + (now - last) * 0.4) % 1.0
+        last = now
+        show(fd, render(kind, colours, phase))
+        if not animated:
+            # static: repaint slowly, enough to recover if something else wrote
+            time.sleep(0.25)
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__); return 1
+    cmd = sys.argv[1]
+
+    if cmd == "list":
+        for n in NAMES:
+            print(" ", n)
+        return 0
+
+    fd = open_spi()
+
+    if cmd == "daemon":
+        daemon(fd)
+    elif cmd == "boot":
+        kind, colours = spec_for(load_mode())
+        show(fd, render(kind, colours, 0.0))
+    elif cmd == "off":
+        save_mode("OFF")
+        show(fd, [(0, 0, 0)] * NLED)
+    elif cmd == "mode":
+        name = sys.argv[2]
+        if name not in NAMES:
+            print(f"unknown mode {name!r}; try: h7-rgb list"); return 1
+        save_mode(name)
+        kind, colours = spec_for(name)
+        show(fd, render(kind, colours, 0.0))
+    elif cmd == "next":
+        cur = load_mode()
+        cur = cur if isinstance(cur, str) and cur in NAMES else NAMES[0]
+        name = NAMES[(NAMES.index(cur) + 1) % len(NAMES)]
+        save_mode(name)
+        kind, colours = spec_for(name)
+        show(fd, render(kind, colours, 0.0))
+        print(" ", name)
+    else:
+        r, g, b = (int(x) for x in sys.argv[1:4])
+        save_mode(f"{r} {g} {b}")
+        show(fd, [(r, g, b)] * NLED)
+    return 0
+
+
+sys.exit(main())
