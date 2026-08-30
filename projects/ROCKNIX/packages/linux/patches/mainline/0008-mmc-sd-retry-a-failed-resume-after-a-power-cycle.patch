@@ -1,0 +1,73 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jacob Cook <jacobmcook1984@gmail.com>
+Subject: [PATCH] mmc: sd: retry a failed resume after a power cycle
+
+_mmc_sd_resume() re-initialises the card and hands the result back to
+mmc_sd_runtime_resume(), which logs it and returns 0. The PM core is
+therefore told the resume succeeded even when the card was never
+brought back, and every request already queued against it waits
+forever.
+
+That is not theoretical. Cycling suspend/resume quickly on a GKD
+Pixel2 (PX30S), the boot card is still busy when the host re-init
+starts:
+
+  dwmmc_rockchip ff370000.mmc: Busy; trying anyway
+  mmc_host mmc0: Timeout sending command (cmd 0x202000 arg 0x0 status 0x80202000)
+  mmc_host mmc0: Timeout sending command (cmd 0x202000 arg 0x0 status 0x80202000)
+  mmc0: error -95 doing runtime resume
+
+dw_mmc waits up to 500 ms for the card to release DAT0 and then issues
+the command regardless, so CMD0 times out and initialisation fails. A
+card is entitled to be busy for longer than that, so this can happen
+with any card - it just needs to be finishing internal work when the
+host comes back.
+
+Afterwards jbd2, the writeback worker and the block queue sit in
+uninterruptible sleep forever, and every process that touches the
+filesystem joins them. On a boot medium that takes the whole machine
+down: userspace stops responding while the kernel carries on happily
+answering pings, and even sshd cannot get far enough to print a
+banner.
+
+Give the card a second chance from a clean slate. The failing attempt
+has already spent several seconds in command timeouts, so by the time
+the retry runs the card has had ample time to become ready, and the
+power cycle resets the host controller state machine as well.
+
+Raising dw_mmc's busy timeout was considered instead and rejected: that
+poll is readl_poll_timeout_atomic() and dw_mci_start_command() runs
+under host->lock, so a longer wait means spinning longer in atomic
+context.
+
+--- a/drivers/mmc/core/sd.c
++++ b/drivers/mmc/core/sd.c
+@@ -1779,6 +1779,28 @@
+ 
+ 	mmc_power_up(host, host->card->ocr);
+ 	err = mmc_sd_init_card(host, host->card->ocr, host->card);
++	if (err) {
++		/*
++		 * The card may still be busy from before the suspend: a card
++		 * finishing internal housekeeping can hold DAT0 low for longer
++		 * than the host controller is prepared to wait, and the host
++		 * may then issue the initialisation command anyway and time
++		 * out. Give it one more attempt from a clean slate.
++		 *
++		 * Without this the card is left uninitialised while the PM
++		 * core is told the resume succeeded, so every request queued
++		 * against it hangs forever and takes down every task that
++		 * touches the filesystem - on a boot medium that wedges the
++		 * whole machine.
++		 */
++		pr_warn("%s: resume failed (%d), retrying after a power cycle\n",
++			mmc_hostname(host), err);
++		mmc_power_cycle(host, host->card->ocr);
++		err = mmc_sd_init_card(host, host->card->ocr, host->card);
++		if (err)
++			pr_err("%s: card could not be re-initialised on resume (%d)\n",
++			       mmc_hostname(host), err);
++	}
+ 	mmc_card_clr_suspended(host->card);
+ 
+ out:

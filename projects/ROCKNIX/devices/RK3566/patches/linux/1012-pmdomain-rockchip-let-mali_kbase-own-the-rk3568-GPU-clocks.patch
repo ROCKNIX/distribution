@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jacob Cook <jacobmcook1984@gmail.com>
+Subject: [PATCH] pmdomain: rockchip: let mali_kbase own the RK3568 GPU
+ clocks
+
+rockchip_pd_attach_dev() unconditionally walks the attaching device's
+own devicetree "clocks" property and hands each one to genpd's generic
+GENPD_FLAG_PM_CLK tracking via pm_clk_add_clk(). For the GPU node on
+RK3566/RK3568 those clocks are SCMI_CLK_GPU and CLK_GPU - the very
+clocks mali_kbase manages itself with clk_prepare_enable() and
+clk_disable_unprepare() in enable/disable_gpu_power_control().
+
+Two independent consumers tracking prepare/enable state for the same
+clk_core drift out of sync across suspend/resume, regardless of whether
+the domain's hardware power state ever toggles. That surfaces as
+"Enabling unprepared clk_gpu" and a -ESHUTDOWN out of pm_clk_resume()
+inside genpd_resume_noirq(), and can leave the domain unable to power
+back on, which the driver reports as:
+
+  rockchip-pm-domain fdd90000...: failed to set domain 'gpu' on, val=0
+
+This is the same defect already fixed for PX30S by
+024-px30s-gpu-power-domain-workaround.patch in the RK3326 device patch
+set; RK3566/RK3568 wire the GPU up the same way and need the same
+treatment. Only the GENPD_FLAG_PM_CLK half applies here: unlike PX30S,
+the power-domain node's own clocks (ACLK_GPU_PRE, PCLK_GPU_PRE) are
+distinct from the GPU device's, so rockchip_pd_power()'s clk_bulk pair
+does not touch what mali_kbase owns and is left alone.
+
+Keyed on the rk3568 power-controller compatible so no other Rockchip
+SoC's domains change behaviour.
+
+--- a/drivers/pmdomain/rockchip/pm-domains.c
++++ b/drivers/pmdomain/rockchip/pm-domains.c
+@@ -893,7 +893,21 @@
+ 	pd->genpd.power_on = rockchip_pd_power_on;
+ 	pd->genpd.attach_dev = rockchip_pd_attach_dev;
+ 	pd->genpd.detach_dev = rockchip_pd_detach_dev;
+-	pd->genpd.flags = GENPD_FLAG_PM_CLK | GENPD_FLAG_NO_STAY_ON;
++	/*
++	 * genpd's GENPD_FLAG_PM_CLK tracking (rockchip_pd_attach_dev() feeds
++	 * it the device's own DT clocks) would take SCMI_CLK_GPU and CLK_GPU,
++	 * which mali_kbase already prepares and enables itself. Two owners of
++	 * one clk_core drift apart across suspend/resume, so leave this domain
++	 * out and let mali_kbase own them, as PX30S already does in
++	 * 024-px30s-gpu-power-domain-workaround.patch. The domain's own clocks
++	 * are unaffected and still handled by rockchip_pd_power().
++	 */
++	if (id == RK3568_PD_GPU &&
++	    of_device_is_compatible(pmu->dev->of_node,
++				    "rockchip,rk3568-power-controller"))
++		pd->genpd.flags = GENPD_FLAG_NO_STAY_ON;
++	else
++		pd->genpd.flags = GENPD_FLAG_PM_CLK | GENPD_FLAG_NO_STAY_ON;
+ 	if (pd_info->active_wakeup)
+ 		pd->genpd.flags |= GENPD_FLAG_ACTIVE_WAKEUP;
+ 	pm_genpd_init(&pd->genpd, NULL,
