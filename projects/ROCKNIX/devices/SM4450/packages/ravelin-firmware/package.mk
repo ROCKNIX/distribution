@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2026 ROCKNIX (https://github.com/ROCKNIX)
 
-PKG_NAME="parrot-firmware"
+PKG_NAME="ravelin-firmware"
 PKG_VERSION="1.0"
 PKG_LICENSE="proprietary"
 PKG_SITE="https://rocknix.org"
