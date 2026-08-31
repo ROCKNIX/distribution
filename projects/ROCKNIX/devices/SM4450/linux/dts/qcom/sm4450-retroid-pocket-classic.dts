@@ -82,8 +82,37 @@
 
 	pmic_glink: pmic-glink {
 		compatible = "qcom,sm4450-pmic-glink", "qcom,pmic-glink";
-		/* TODO: Once ADSP up */
+		#address-cells = <1>;
+		#size-cells = <0>;
 		status = "okay";
+
+		connector@0 {
+			compatible = "usb-c-connector";
+			reg = <0>;
+			power-role = "dual";
+			data-role = "dual";
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				port@0 {
+					reg = <0>;
+
+					pmic_glink_hs_in: endpoint {
+						remote-endpoint = <&usb_1_dwc3_hs>;
+					};
+				};
+
+				port@1 {
+					reg = <1>;
+
+					pmic_glink_ss_in: endpoint {
+						remote-endpoint = <&usb_1_qmpphy_out>;
+					};
+				};
+			};
+		};
 	};
 
 	aliases {
@@ -749,6 +778,9 @@
 		vdda-pll-supply = <&vreg_l5b_0p88>;
 		vdda18-supply = <&vreg_l23b_1p8>;
 		vdda33-supply = <&vreg_l25b_3p072>;
+
+		qcom,hs-disconnect-bp = <1743>;
+		qcom,squelch-detector-bp = <(-530)>;
 	};
 
 	usb_1: usb@a6f8800 {
@@ -792,9 +824,6 @@
 
 		resets = <&gcc GCC_USB30_PRIM_BCR>;
 
-		/* HS-only (?) */
-		qcom,select-utmi-as-pipe-clk;
-
 		usb_1_dwc3: usb@a600000 {
 			compatible = "snps,dwc3";
 			reg = <0x0 0x0a600000 0x0 0xd800>;
@@ -802,16 +831,34 @@
 			iommus = <&apps_smmu 0x540 0x0>;
 			snps,dis_u2_susphy_quirk;
 			snps,dis_enblslpm_quirk;
-			phys = <&usb_1_hsphy>;
-			phy-names = "usb2-phy";
-			/*
-			 * HS only for now: QMP USB3+DP (requires mainlines support).
-			 */
-			maximum-speed = "high-speed";
-			/*
-			 * TODO: dr_mode otg + role switch via PM7250B.
-			 */
-			dr_mode = "peripheral";
+
+			phys = <&usb_1_hsphy>,
+			       <&usb_1_qmpphy QMP_USB43DP_USB3_PHY>;
+			phy-names = "usb2-phy", "usb3-phy";
+			dr_mode = "otg";
+			usb-role-switch;
+			role-switch-default-mode = "peripheral";
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				port@0 {
+					reg = <0>;
+
+					usb_1_dwc3_hs: endpoint {
+						remote-endpoint = <&pmic_glink_hs_in>;
+					};
+				};
+
+				port@1 {
+					reg = <1>;
+
+					usb_1_dwc3_ss: endpoint {
+						remote-endpoint = <&usb_1_qmpphy_usb_ss_in>;
+					};
+				};
+			};
 		};
 	};
 
@@ -2166,7 +2213,62 @@
 	};
 };
 
+&gcc {
+	clocks = <&rpmhcc RPMH_CXO_CLK>,
+		 <&sleep_clk>,
+		 <0>,
+		 <0>,
+		 <0>,
+		 <0>,
+		 <&usb_1_qmpphy QMP_USB43DP_USB3_PIPE_CLK>;
+};
+
 &soc {
+	usb_1_qmpphy: phy@88e8000 {
+		compatible = "qcom,sm4450-qmp-usb3-dp-phy",
+			     "qcom,sm8350-qmp-usb3-dp-phy";
+		reg = <0x0 0x088e8000 0x0 0x3000>;
+
+		clocks = <&gcc GCC_USB3_PRIM_PHY_AUX_CLK>,
+			 <&rpmhcc RPMH_CXO_CLK>,
+			 <&gcc GCC_USB3_PRIM_PHY_COM_AUX_CLK>,
+			 <&gcc GCC_USB3_PRIM_PHY_PIPE_CLK>;
+		clock-names = "aux", "ref", "com_aux", "usb3_pipe";
+
+		resets = <&gcc GCC_USB3_DP_PHY_PRIM_BCR>,
+			 <&gcc GCC_USB3_PHY_PRIM_BCR>;
+		reset-names = "phy", "common";
+
+		#clock-cells = <1>;
+		#phy-cells = <1>;
+
+		vdda-phy-supply = <&vreg_l7b_0p912>;
+		vdda-pll-supply = <&vreg_l16b_1p2>;
+
+		orientation-switch;
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+
+				usb_1_qmpphy_out: endpoint {
+					remote-endpoint = <&pmic_glink_ss_in>;
+				};
+			};
+
+			port@1 {
+				reg = <1>;
+
+				usb_1_qmpphy_usb_ss_in: endpoint {
+					remote-endpoint = <&usb_1_dwc3_ss>;
+				};
+			};
+		};
+	};
+
 	tsens0: thermal-sensor@c263000 {
 		compatible = "qcom,sm4450-tsens", "qcom,tsens-v2";
 		reg = <0x0 0x0c263000 0x0 0x1ff>,
