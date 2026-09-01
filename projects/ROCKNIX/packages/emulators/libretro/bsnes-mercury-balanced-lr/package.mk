@@ -2,29 +2,22 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="bsnes-mercury-balanced-lr"
-PKG_VERSION="0f35d044bf2f2b879018a0500e676447e93a1db1"
-PKG_SHA256="aba28b88898492239bbe752cc8fa5c62d89d5a9f6ddbafd4b4ae97b1d34c41ec"
-PKG_LICENSE="GPLv2"
+PKG_VERSION="ea22363fb0c1ebe92e7a70cdf55e9bb43f9207be"
+PKG_SHA256="5114fbfae7cc0e1c6479589ae43cd546acff9449cdd6849c7fab0b14c1c53214"
+PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/libretro/bsnes-mercury"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="BSNES Super Nintendo Libretro Core"
-PKG_TOOLCHAIN="make"
 
-pre_configure_target() {
+PKG_MAKE_OPTS_TARGET="platform=unix PROFILE=balanced"
+
+post_unpack() {
   sed -i 's/\-O[23]/-Ofast/' ${PKG_BUILD}/Makefile
-}
-
-pre_make_target() {
-    PKG_MAKE_OPTS_TARGET+=" platform=${DEVICE}"
-}
-
-make_target() {
-  make PROFILE=balanced
 }
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp bsnes_mercury_balanced_libretro.so ${INSTALL}/usr/lib/libretro/
+    cp -a bsnes_mercury_balanced_libretro.so ${INSTALL}/usr/lib/libretro
 }
 

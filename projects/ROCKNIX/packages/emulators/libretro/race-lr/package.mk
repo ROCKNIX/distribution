@@ -1,35 +1,16 @@
-################################################################################
-#      This file is part of OpenELEC - http://www.openelec.tv
-#      Copyright (C) 2009-2012 Stephan Raue (stephan@openelec.tv)
-#      Copyright (C) 2020      351ELEC team (https://github.com/fewtarius/351ELEC)
-#
-#  This Program is free software; you can redistribute it and/or modify
-#  it under the terms of the GNU General Public License as published by
-#  the Free Software Foundation; either version 2, or (at your option)
-#  any later version.
-#
-#  This Program is distributed in the hope that it will be useful,
-#  but WITHOUT ANY WARRANTY; without even the implied warranty of
-#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-#  GNU General Public License for more details.
-#
-#  You should have received a copy of the GNU General Public License
-#  along with OpenELEC.tv; see the file COPYING.  If not, write to
-#  the Free Software Foundation, 51 Franklin Street, Suite 500, Boston, MA 02110, USA.
-#  http://www.gnu.org/copyleft/gpl.html
-################################################################################
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="race-lr"
-PKG_VERSION="171950ea64c96ead503340ed60fa7ba18f56325c"
-PKG_SHA256="410d575dbe959f762dd64b82154638e3486ce0c9d18bc4176c556b3d1fef9304"
-PKG_LICENSE="GPLv2"
+PKG_VERSION="c7810dd7f172827bfa2004813bc000b13786636b"
+PKG_SHA256="9a7c2e4041753c8235f403bfa48f93b6049509f857d45e42e0657efffbebd898"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/RACE"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="This is the RACE NGPC emulator modified by theelf to run on the PSP."
-PKG_TOOLCHAIN="make"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp race_libretro.so ${INSTALL}/usr/lib/libretro/
+    cp -a race_libretro.so ${INSTALL}/usr/lib/libretro
 }

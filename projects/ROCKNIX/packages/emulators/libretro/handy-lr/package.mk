@@ -1,44 +1,22 @@
-################################################################################
-#      This file is part of OpenELEC - http://www.openelec.tv
-#      Copyright (C) 2009-2012 Stephan Raue (stephan@openelec.tv)
-#
-#  This Program is free software; you can redistribute it and/or modify
-#  it under the terms of the GNU General Public License as published by
-#  the Free Software Foundation; either version 2, or (at your option)
-#  any later version.
-#
-#  This Program is distributed in the hope that it will be useful,
-#  but WITHOUT ANY WARRANTY; without even the implied warranty of
-#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-#  GNU General Public License for more details.
-#
-#  You should have received a copy of the GNU General Public License
-#  along with OpenELEC.tv; see the file COPYING.  If not, write to
-#  the Free Software Foundation, 51 Franklin Street, Suite 500, Boston, MA 02110, USA.
-#  http://www.gnu.org/copyleft/gpl.html
-################################################################################
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="handy-lr"
-PKG_VERSION="fca239207e9c111da3e85d2faf0b1b9d7524e498"
-PKG_SHA256="0e73ed43f7a2768130e110ef6a84d7df8850976daa328405f5e89a2d6db4cb96"
-PKG_LICENSE="Zlib"
+PKG_VERSION="bc55d462f0b2d6b073ea93dc552ebd73cec60fd1"
+PKG_SHA256="65ad333df22aab7f3c8156c21ffd0b8da1ef09c7a7f1775df964b89986aa7324"
+PKG_LICENSE=""
 PKG_SITE="https://github.com/libretro/libretro-handy"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="K. Wilkins' Atari Lynx emulator Handy for libretro"
-PKG_TOOLCHAIN="make"
 
 case ${ARCH} in
-  aarch64)
-    PKG_MAKE_OPTS_TARGET=" platform=emuelec"
-  ;;
-  arm)
-    PKG_MAKE_OPTS_TARGET=" platform=classic_armv8_a35"
-  ;;
+  aarch64) PKG_MAKE_OPTS_TARGET="platform=emuelec" ;;
+  arm) PKG_MAKE_OPTS_TARGET="platform=classic_armv8_a35" ;;
 esac
 
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp handy_libretro.so ${INSTALL}/usr/lib/libretro/
+    cp -a handy_libretro.so ${INSTALL}/usr/lib/libretro/
 }

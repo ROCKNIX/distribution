@@ -1,43 +1,16 @@
-################################################################################
-#      This file is part of OpenELEC - http://www.openelec.tv
-#      Copyright (C) 2009-2012 Stephan Raue (stephan@openelec.tv)
-#
-#  This Program is free software; you can redistribute it and/or modify
-#  it under the terms of the GNU General Public License as published by
-#  the Free Software Foundation; either version 2, or (at your option)
-#  any later version.
-#
-#  This Program is distributed in the hope that it will be useful,
-#  but WITHOUT ANY WARRANTY; without even the implied warranty of
-#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-#  GNU General Public License for more details.
-#
-#  You should have received a copy of the GNU General Public License
-#  along with OpenELEC.tv; see the file COPYING.  If not, write to
-#  the Free Software Foundation, 51 Franklin Street, Suite 500, Boston, MA 02110, USA.
-#  http://www.gnu.org/copyleft/gpl.html
-################################################################################
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="tyrquake-lr"
-PKG_VERSION="77217664a09afe893a06be8e3e8f9611184636f8"
-PKG_SHA256="a86b131743a5a46dd7be0ecfdb42e2454df0bb7d629a2c6cd589cb0cbc9351b2"
-PKG_LICENSE="GPLv2"
+PKG_VERSION="e57bb11597e8a00380f30f2627d219da960cf69a"
+PKG_SHA256="6bedb86899ad6da030d15e11fa4a1a6b61db77a56d658d8de650f63afd1e166c"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/tyrquake"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Libretro port of Tyrquake (Quake 1 engine)"
-PKG_PATCH_DIRS+="${DEVICE}"
-
-PKG_TOOLCHAIN="make"
-
-pre_configure_target() {
-  if [ "${ARCH}" == "arm" ]; then
-    CFLAGS="${CFLAGS} -DARM -marm"
-  fi
-  CFLAGS="${CFLAGS} -std=gnu17"
-}
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp tyrquake_libretro.so ${INSTALL}/usr/lib/libretro/
+    cp -a tyrquake_libretro.so ${INSTALL}/usr/lib/libretro
 }

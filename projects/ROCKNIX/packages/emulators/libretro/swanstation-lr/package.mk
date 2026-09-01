@@ -1,11 +1,10 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2020-present Shanti Gilbert (https://github.com/shantigilbert)
-# Maintenance 2020 351ELEC team (https://github.com/fewtarius/351ELEC)
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="swanstation-lr"
-PKG_VERSION="4d309c05fd7bdc503d91d267bd542edb8d192b09"
-PKG_SHA256="bf41b6df7ab1eeaafc8548eb4732775153535b12d42de826e578b7f2492c6843"
-PKG_LICENSE="GPLv3"
+PKG_VERSION="7f69c199ed88d5723f71dd3a6e9c1b7a45b535a6"
+PKG_SHA256="d3a9e60a8b338f3edcfd8caeff54bbecc797668f0cda9e85f703255f69c5a821"
+PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/libretro/swanstation"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain nasm:host"
@@ -21,11 +20,9 @@ if [ "${OPENGLES_SUPPORT}" = yes ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGLES}"
 fi
 
-pre_configure_target() {
- PKG_CMAKE_OPTS_TARGET+=" -DCMAKE_BUILD_TYPE=Release -DBUILD_LIBRETRO_CORE=ON "
-}
+PKG_CMAKE_OPTS_TARGET="-DBUILD_LIBRETRO_CORE=ON"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp ${PKG_BUILD}/.${TARGET_NAME}/swanstation_libretro.so ${INSTALL}/usr/lib/libretro/
+    cp -a swanstation_libretro.so ${INSTALL}/usr/lib/libretro
 }

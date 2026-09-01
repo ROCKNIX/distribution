@@ -1,44 +1,19 @@
-################################################################################
-#      This file is part of OpenELEC - http://www.openelec.tv
-#      Copyright (C) 2009-2012 Stephan Raue (stephan@openelec.tv)
-#      Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
-#
-#  This Program is free software; you can redistribute it and/or modify
-#  it under the terms of the GNU General Public License as published by
-#  the Free Software Foundation; either version 2, or (at your option)
-#  any later version.
-#
-#  This Program is distributed in the hope that it will be useful,
-#  but WITHOUT ANY WARRANTY; without even the implied warranty of
-#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-#  GNU General Public License for more details.
-#
-#  You should have received a copy of the GNU General Public License
-#  along with OpenELEC.tv; see the file COPYING.  If not, write to
-#  the Free Software Foundation, 51 Franklin Street, Suite 500, Boston, MA 02110, USA.
-#  http://www.gnu.org/copyleft/gpl.html
-################################################################################
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="supersnes9x-lr"
-PKG_VERSION="a5ca2bec6f97a85778abd6fb048567b01204753e"
-PKG_SHA256="e50e215fccad2e60d4719fb57e7d8c775640ec668e0c412ac174db6850881745"
-PKG_LICENSE="Non-commercial"
+PKG_VERSION="691e47b40fb38fa522a5471462344a2f0206b7a8"
+PKG_SHA256="f8646c63337e8d0319afd86e0245b529db174dbec8b5aa7fd5a0e7773130fab5"
+PKG_LICENSE=""
 PKG_SITE="https://github.com/shanytc/snes9x"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="SuperSnes9x is a Snes9x-based core extended to also load and run Game Boy (.gb), Super Game Boy (.sgb), and Game Boy Color (.gbc) content via the bundled SGB subsystem, in addition to SNES/SFC, Satellaview and Sufami Turbo. Game Boy and Super Game Boy are fully supported (BIOS or BIOS-less); .gbc runs in monochrome DMG-compatibility mode. Place a real Super Game Boy BIOS (sgb.sfc / sgb2.sfc) in the system directory for authentic SGB sound and borders."
-
 PKG_TOOLCHAIN="make"
 
-make_target() {
-  if [ "${ARCH}" == "arm" ]; then
-    CXXFLAGS="${CXXFLAGS} -DARM"
-  fi
-
-  make -C libretro
-}
+PKG_MAKE_OPTS_TARGET="-C libretro"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp libretro/supersnes9x_libretro.so ${INSTALL}/usr/lib/libretro/
+    cp -a libretro/supersnes9x_libretro.so ${INSTALL}/usr/lib/libretro
 }

@@ -1,10 +1,10 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2019 Trond Haugland (trondah@gmail.com)
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="mame-lr"
-PKG_VERSION="a90e86e100f79533f257ac2b30ccefe26a76daad"
-PKG_SHA256="a077eda3aa575921a8c9103f0eb50cf38d04647437c258888e65c0599a5d5420"
-PKG_LICENSE="GPLv2"
+PKG_VERSION="24cffe763621b164fc10be2ae3660f140be25182"
+PKG_SHA256="4867bee5dbd4129e6eea095fe8f8e9725563998710cc9620190e90529ef8931b"
+PKG_LICENSE=""
 PKG_SITE="https://github.com/libretro/mame"
 PKG_URL="https://github.com/libretro/mame/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain zlib flac sqlite expat"
@@ -17,11 +17,11 @@ case ${TARGET_ARCH} in
     MAME_PLATFORM="PLATFORM=arm64"
     CROSS_BUILD="1"
     PTR64=0
-  ;;
+    ;;
   *)
     CROSS_BUILD="0"
     PTR64=1
-  ;;
+    ;;
 esac
 
 PKG_MAKE_OPTS_TARGET="REGENIE=1 \
@@ -47,16 +47,15 @@ PKG_MAKE_OPTS_TARGET="REGENIE=1 \
 		      USE_SYSTEM_LIB_FLAC=1 \
 		      USE_SYSTEM_LIB_SQLITE3=1"
 
-pre_configure_target() {
-  sed -i "s/-static-libstdc++//g" scripts/genie.lua
+post_unpack() {
+  sed -i "s/-static-libstdc++//g" ${PKG_BUILD}/scripts/genie.lua
 }
 
 make_target() {
   unset ARCH
   unset DISTRO
   unset PROJECT
-  if [ "${PLATFORM}" = "arm64" ]
-  then
+  if [ "${PLATFORM}" = "arm64" ]; then
     export ARCHOPTS="-D__aarch64__ -DASMJIT_BUILD_X86"
   fi
   make ${PKG_MAKE_OPTS_TARGET} OVERRIDE_CC=${CC} OVERRIDE_CXX=${CXX} OVERRIDE_LD=$LD AR=${AR} ${MAKEFLAGS}
@@ -64,7 +63,8 @@ make_target() {
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp *.so ${INSTALL}/usr/lib/libretro/mame_libretro.so
+    cp -a mame_libretro.so ${INSTALL}/usr/lib/libretro/mame_libretro.so
+
   mkdir -p ${INSTALL}/usr/config/retroarch/savefiles/mame/hi
-  cp plugins/hiscore/hiscore.dat ${INSTALL}/usr/config/retroarch/savefiles/mame/hi
+    cp -a plugins/hiscore/hiscore.dat ${INSTALL}/usr/config/retroarch/savefiles/mame/hi
 }

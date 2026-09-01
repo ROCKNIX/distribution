@@ -1,28 +1,10 @@
-################################################################################
-#      This file is part of OpenELEC - http://www.openelec.tv
-#      Copyright (C) 2009-2012 Stephan Raue (stephan@openelec.tv)
-#      Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
-#
-#  This Program is free software; you can redistribute it and/or modify
-#  it under the terms of the GNU General Public License as published by
-#  the Free Software Foundation; either version 2, or (at your option)
-#  any later version.
-#
-#  This Program is distributed in the hope that it will be useful,
-#  but WITHOUT ANY WARRANTY; without even the implied warranty of
-#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-#  GNU General Public License for more details.
-#
-#  You should have received a copy of the GNU General Public License
-#  along with OpenELEC.tv; see the file COPYING.  If not, write to
-#  the Free Software Foundation, 51 Franklin Street, Suite 500, Boston, MA 02110, USA.
-#  http://www.gnu.org/copyleft/gpl.html
-################################################################################
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="core-info"
-PKG_VERSION="20e7d555f911f5aa6712d5937f7b9b834015d88d"
-PKG_SHA256="9dad11db9f9e15ed8739a53c5490d091f015960fd5745d0d904d9aceacb80d47"
-PKG_LICENSE="GPL"
+PKG_VERSION="b03bfc451381e1a5eb92fda9e56a1e81bfeb92c9"
+PKG_SHA256="c6aa4a90b041a57037ec8ebf3caef304062523fbc2fd1e4733b7aa4668ed9a27"
+PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/libretro/libretro-core-info"
 PKG_URL="https://github.com/libretro/libretro-core-info/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
@@ -30,9 +12,10 @@ PKG_LONGDESC="Mirror of libretro's core info files"
 PKG_TOOLCHAIN="manual"
 
 makeinstall_target() {
+  ${TOOLCHAIN}/bin/rename mednafen beetle ${PKG_BUILD}/*.info
+
   mkdir -p ${INSTALL}/usr/lib/libretro
-  ${TOOLCHAIN}/bin/rename -v mednafen beetle ${PKG_BUILD}/*.info
-  cp ${PKG_BUILD}/*.info ${INSTALL}/usr/lib/libretro/
-  cp ${PKG_BUILD}/pcsx_rearmed_libretro.info ${INSTALL}/usr/lib/libretro/pcsx_rearmed32_libretro.info
-  cp ${PKG_BUILD}/flycast_libretro.info ${INSTALL}/usr/lib/libretro/flycast2021_libretro.info
+    cp -a ${PKG_BUILD}/*.info ${INSTALL}/usr/lib/libretro/
+    cp -a ${PKG_BUILD}/pcsx_rearmed_libretro.info ${INSTALL}/usr/lib/libretro/pcsx_rearmed32_libretro.info
+    cp -a ${PKG_BUILD}/flycast_libretro.info ${INSTALL}/usr/lib/libretro/flycast2021_libretro.info
 }

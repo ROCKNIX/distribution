@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="boom3-lr"
 PKG_VERSION="0bea79abf5ec8262dfe9af73cb8c54ea6e2aeb98"
 PKG_SHA256="613d655c7f05dd2fd90fc27721165efad2be6c30ed85d82a07d28d81e30324cc"
-PKG_LICENSE="GPLv3"
+PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/libretro/boom3"
 PKG_URL="https://github.com/libretro/boom3/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
@@ -24,6 +24,6 @@ make_target() {
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp -v ${PKG_BUILD}/neo/boom3_libretro.so ${INSTALL}/usr/lib/libretro/
-  cp -v ${PKG_BUILD}/neo/boom3_xp_libretro.so ${INSTALL}/usr/lib/libretro/
+    cp -a ${PKG_BUILD}/neo/boom3_libretro.so ${INSTALL}/usr/lib/libretro
+    cp -a ${PKG_BUILD}/neo/boom3_xp_libretro.so ${INSTALL}/usr/lib/libretro
 }

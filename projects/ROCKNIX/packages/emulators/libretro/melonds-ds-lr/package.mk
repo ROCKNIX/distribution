@@ -1,15 +1,14 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="melonds-ds-lr"
-PKG_VERSION="86986bfd82fb130d4d4739d93159acd986921808"
-PKG_SHA256="b97620ab2d116855c16bcb67199ac0476cc23f08571098710e1ee62ba36f6aac"
-PKG_LICENSE="GPLv3"
+PKG_VERSION="bc4e4b67d2d470d7c682810a1e892cafd6f9082b"
+PKG_SHA256="40faf8f205106a52e86fd37c15390d88bf92433329838766c7d87715098b15dc"
+PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/JesseTG/melonds-ds"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
-PKG_SHORTDESC="An enhanced remake of the melonDS core for libretro that prioritizes standalone parity, reliability, and usability."
-PKG_TOOLCHAIN="cmake-make"
+PKG_LONGDESC="An enhanced remake of the melonDS core for libretro that prioritizes standalone parity, reliability, and usability."
 PKG_BUILD_FLAGS="+lto-off"
 
 PKG_CMAKE_OPTS_TARGET=" -DENABLE_OPENGL=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5"
@@ -24,5 +23,5 @@ fi
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp ${PKG_BUILD}/.${TARGET_NAME}/src/libretro/melondsds_libretro.so ${INSTALL}/usr/lib/libretro/
+    cp -a ${PKG_BUILD}/.${TARGET_NAME}/src/libretro/melondsds_libretro.so ${INSTALL}/usr/lib/libretro
 }

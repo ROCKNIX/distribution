@@ -1,23 +1,19 @@
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2024 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="mu-lr"
-PKG_VERSION="865acf3a2889dfe02863bbfb9c5b3cfee8620c22"
-PKG_SHA256="e888f2a093443a7420d1337546e269e9c1a6f76fc380f60f6c4b2f65165a1d65"
-PKG_LICENSE="CC BY-NC 3.0 US"
+PKG_VERSION="f9d34a0006440aef8dca0db2a0d896438fcab2cb"
+PKG_SHA256="595b18df6da9b4dc3750d95e0597ad4952e70a79d748b5e1cf3865384ff1d17c"
+PKG_LICENSE=""
 PKG_SITE="https://github.com/libretro/Mu"
-PKG_URL="${PKG_SITE}/-/archive/${PKG_VERSION}/Mu-${PKG_VERSION}.tar.gz"
-PKG_GIT_CLONE_BRANCH="buildbot"
+PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="An emulator for the Palm m515 OS ported to libretro."
-
 PKG_TOOLCHAIN="make"
 
-make_target() {
-  make -C ${PKG_BUILD}/libretroBuildSystem/
-}
+PKG_MAKE_OPTS_TARGET="-C ../libretroBuildSystem"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp ${PKG_BUILD}/libretroBuildSystem/mu_libretro.so ${INSTALL}/usr/lib/libretro/
+    cp -a ../libretroBuildSystem/mu_libretro.so ${INSTALL}/usr/lib/libretro
 }

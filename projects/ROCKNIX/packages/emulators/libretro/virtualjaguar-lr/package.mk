@@ -1,35 +1,16 @@
-################################################################################
-#      This file is part of OpenELEC - http://www.openelec.tv
-#      Copyright (C) 2009-2012 Stephan Raue (stephan@openelec.tv)
-#
-#  This Program is free software; you can redistribute it and/or modify
-#  it under the terms of the GNU General Public License as published by
-#  the Free Software Foundation; either version 2, or (at your option)
-#  any later version.
-#
-#  This Program is distributed in the hope that it will be useful,
-#  but WITHOUT ANY WARRANTY; without even the implied warranty of
-#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-#  GNU General Public License for more details.
-#
-#  You should have received a copy of the GNU General Public License
-#  along with OpenELEC.tv; see the file COPYING.  If not, write to
-#  the Free Software Foundation, 51 Franklin Street, Suite 500, Boston, MA 02110, USA.
-#  http://www.gnu.org/copyleft/gpl.html
-################################################################################
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="virtualjaguar-lr"
-PKG_VERSION="48096c1f6f8b98cfff048a5cb4e6a86686631072"
-PKG_SHA256="2192ff7d093a76420b5dea2c694e7681ec6d388f7dd5b3df62ddec5a700afbe2"
-PKG_LICENSE="GPLv3"
+PKG_VERSION="e6709d27bd4561d10b5ca72d94522471a6fd10af"
+PKG_SHA256="1a10902e8b4c45e50d6df4d350fa58a2d6ed32cf86e9d78ba754f8636a67fe77"
+PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/libretro/virtualjaguar-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Port of Virtual Jaguar to Libretro"
 
-PKG_TOOLCHAIN="make"
-
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp virtualjaguar_libretro.so ${INSTALL}/usr/lib/libretro/
+    cp -a virtualjaguar_libretro.so ${INSTALL}/usr/lib/libretro
 }

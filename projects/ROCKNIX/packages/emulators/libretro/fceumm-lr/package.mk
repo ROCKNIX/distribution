@@ -1,40 +1,18 @@
-################################################################################
-#      This file is part of OpenELEC - http://www.openelec.tv
-#      Copyright (C) 2009-2012 Stephan Raue (stephan@openelec.tv)
-#      Copyright (C) 2020      351ELEC team (https://github.com/fewtarius/351ELEC)
-#
-#  This Program is free software; you can redistribute it and/or modify
-#  it under the terms of the GNU General Public License as published by
-#  the Free Software Foundation; either version 2, or (at your option)
-#  any later version.
-#
-#  This Program is distributed in the hope that it will be useful,
-#  but WITHOUT ANY WARRANTY; without even the implied warranty of
-#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-#  GNU General Public License for more details.
-#
-#  You should have received a copy of the GNU General Public License
-#  along with OpenELEC.tv; see the file COPYING.  If not, write to
-#  the Free Software Foundation, 51 Franklin Street, Suite 500, Boston, MA 02110, USA.
-#  http://www.gnu.org/copyleft/gpl.html
-################################################################################
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="fceumm-lr"
-PKG_VERSION="5cd4a43e16a7f3cd35628d481c347a0a98cfdfa2"
-PKG_SHA256="4e7b3c90f4823b58d37a670eea44f222f6da5a35b21e84a9c32033e73507ff37"
-PKG_LICENSE="GPLv2"
+PKG_VERSION="236ccdfc911e84c60fea6b9d0699c2d440a8de14"
+PKG_SHA256="dd002cde9b5271979e0394bb9e696bd37e149ced473ff1e3629cc7fed502381f"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/libretro-fceumm"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Port of FCEUmm / FCEUX to Libretro."
 
-PKG_TOOLCHAIN="make"
-
-make_target() {
-  make -f Makefile.libretro
-}
+PKG_MAKE_OPTS_TARGET="-f Makefile.libretro"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp fceumm_libretro.so ${INSTALL}/usr/lib/libretro/
+    cp -a fceumm_libretro.so ${INSTALL}/usr/lib/libretro
 }

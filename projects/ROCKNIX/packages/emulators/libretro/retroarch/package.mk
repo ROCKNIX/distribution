@@ -1,13 +1,12 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2021-present 351ELEC (https://github.com/351ELEC)
-# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="retroarch"
 PKG_VERSION="bdba046fa6766380bc2457532f38e589df769aaf" # v1.22.2 + fixes
 PKG_SHA256="ba14ddf6fd6712185334cce15d1fa7d36f3419195a34ae6fd6f1ade42095e94f"
 PKG_SITE="https://github.com/libretro/RetroArch"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_LICENSE="GPLv3"
+PKG_LICENSE="GPL-3.0-or-later"
 PKG_DEPENDS_TARGET="toolchain SDL2 alsa-lib libass openssl freetype zlib retroarch-assets core-info ffmpeg libass joyutils nss-mdns openal-soft libogg libvorbisidec libvorbis libvpx libpng libdrm pulseaudio miniupnpc flac xz"
 PKG_LONGDESC="Reference frontend for the libretro API."
 
@@ -24,35 +23,27 @@ case ${ARCH} in
     ;;
 esac
 
-PKG_PATCH_DIRS+=" ${DEVICE}"
-
-PKG_CONFIGURE_OPTS_TARGET="   --disable-qt \
-                              --enable-alsa \
-                              --enable-udev \
-                              --disable-opengl1 \
-                              --disable-x11 \
-                              --enable-zlib \
-                              --enable-freetype \
-                              --disable-discord \
-                              --disable-vg \
-                              --disable-sdl \
-                              --enable-sdl2 \
-                              --enable-kms \
-                              --enable-ffmpeg"
+PKG_CONFIGURE_OPTS_TARGET="--disable-qt \
+                           --enable-alsa \
+                           --enable-udev \
+                           --disable-opengl1 \
+                           --disable-x11 \
+                           --enable-zlib \
+                           --enable-freetype \
+                           --disable-discord \
+                           --disable-vg \
+                           --disable-sdl \
+                           --enable-sdl2 \
+                           --enable-kms \
+                           --enable-ffmpeg"
 
 case ${ARCH} in
-  arm)
-    PKG_CONFIGURE_OPTS_TARGET+=" --enable-neon"
-  ;;
-    aarch64)
-    PKG_CONFIGURE_OPTS_TARGET+=" --disable-neon"
-  ;;
+  arm) PKG_CONFIGURE_OPTS_TARGET+=" --enable-neon" ;;
+  aarch64) PKG_CONFIGURE_OPTS_TARGET+=" --disable-neon" ;;
 esac
 
 case ${DEVICE} in
-  RK*)
-    PKG_DEPENDS_TARGET+=" librga"
-  ;;
+  RK*) PKG_DEPENDS_TARGET+=" librga" ;;
 esac
 
 if [ "${DISPLAYSERVER}" = "wl" ]; then
@@ -70,23 +61,21 @@ else
   PKG_CONFIGURE_OPTS_TARGET+=" --disable-wayland"
 fi
 
-if [ "${OPENGLES_SUPPORT}" = "yes" ] && \
-	[ "${PREFER_GLES}" = "yes" ]; then
-    PKG_DEPENDS_TARGET+=" ${OPENGLES}"
-    # --enable-opengles3 required for glcore, --enable-opengles3_1 doesn't auto-select it
-    PKG_CONFIGURE_OPTS_TARGET+=" --enable-opengles --enable-opengles3 --enable-opengles3_1"
-    PKG_CONFIGURE_OPTS_TARGET+=" --disable-opengl"
+if [ "${OPENGLES_SUPPORT}" = "yes" ] && [ "${PREFER_GLES}" = "yes" ]; then
+  PKG_DEPENDS_TARGET+=" ${OPENGLES}"
+  # --enable-opengles3 required for glcore, --enable-opengles3_1 doesn't auto-select it
+  PKG_CONFIGURE_OPTS_TARGET+=" --enable-opengles --enable-opengles3 --enable-opengles3_1"
+  PKG_CONFIGURE_OPTS_TARGET+=" --disable-opengl"
 else
-	# Full OpenGL
-    PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
-    PKG_CONFIGURE_OPTS_TARGET+=" --enable-opengl"
-    PKG_CONFIGURE_OPTS_TARGET+=" --disable-opengles --disable-opengles3 --disable-opengles3_1 --disable-opengles3_2"
+  # Full OpenGL
+  PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
+  PKG_CONFIGURE_OPTS_TARGET+=" --enable-opengl"
+  PKG_CONFIGURE_OPTS_TARGET+=" --disable-opengles --disable-opengles3 --disable-opengles3_1 --disable-opengles3_2"
 fi
 
-if [ "${VULKAN_SUPPORT}" = "yes" ]
-then
-    PKG_DEPENDS_TARGET+=" ${VULKAN}"
-    PKG_CONFIGURE_OPTS_TARGET+=" --enable-vulkan --enable-vulkan_display"
+if [ "${VULKAN_SUPPORT}" = "yes" ]; then
+  PKG_DEPENDS_TARGET+=" ${VULKAN}"
+  PKG_CONFIGURE_OPTS_TARGET+=" --enable-vulkan --enable-vulkan_display"
 else
   PKG_CONFIGURE_OPTS_TARGET+=" --disable-vulkan"
 fi
@@ -95,7 +84,6 @@ pre_configure_target() {
   CFLAGS+=" -DUDEV_TOUCH_SUPPORT"
   CXXFLAGS+=" -DUDEV_TOUCH_SUPPORT"
   TARGET_CONFIGURE_OPTS=""
-
   cd ${PKG_BUILD}
 }
 
@@ -117,45 +105,41 @@ makeinstall_target() {
     aarch64)
       if [ -f ${ROOT}/build.${DISTRO}-${DEVICE}.arm/install_pkg/retroarch-*/usr/bin/retroarch ]; then
         cp -vP ${ROOT}/build.${DISTRO}-${DEVICE}.arm/install_pkg/retroarch-*/usr/bin/retroarch ${INSTALL}/usr/bin/retroarch32
-        mkdir -p ${INSTALL}/usr/share/retroarch/filters/32bit/
+        mkdir -p ${INSTALL}/usr/share/retroarch/filters/32bit
         cp -rvP ${ROOT}/build.${DISTRO}-${DEVICE}.arm/install_pkg/retroarch-*/usr/share/retroarch/filters/64bit/* ${INSTALL}/usr/share/retroarch/filters/32bit/
       fi
-    ;;
+      ;;
   esac
 
   mkdir -p ${INSTALL}/etc
-  cp ${PKG_BUILD}/retroarch.cfg ${INSTALL}/etc
+    cp -a ${PKG_BUILD}/retroarch.cfg ${INSTALL}/etc
 
   mkdir -p ${INSTALL}/usr/share/retroarch/filters/64bit/video
-  cp ${PKG_BUILD}/gfx/video_filters/*.so ${INSTALL}/usr/share/retroarch/filters/64bit/video
-  cp ${PKG_BUILD}/gfx/video_filters/*.filt ${INSTALL}/usr/share/retroarch/filters/64bit/video
+    cp -a ${PKG_BUILD}/gfx/video_filters/*.so ${INSTALL}/usr/share/retroarch/filters/64bit/video
+    cp -a ${PKG_BUILD}/gfx/video_filters/*.filt ${INSTALL}/usr/share/retroarch/filters/64bit/video
 
   mkdir -p ${INSTALL}/usr/share/retroarch/filters/64bit/audio
-  cp ${PKG_BUILD}/libretro-common/audio/dsp_filters/*.so ${INSTALL}/usr/share/retroarch/filters/64bit/audio
-  cp ${PKG_BUILD}/libretro-common/audio/dsp_filters/*.dsp ${INSTALL}/usr/share/retroarch/filters/64bit/audio
+    cp -a ${PKG_BUILD}/libretro-common/audio/dsp_filters/*.so ${INSTALL}/usr/share/retroarch/filters/64bit/audio
+    cp -a ${PKG_BUILD}/libretro-common/audio/dsp_filters/*.dsp ${INSTALL}/usr/share/retroarch/filters/64bit/audio
 
   # General configuration
-  mkdir -p ${INSTALL}/usr/config/retroarch/
-  if [ -d "${PKG_DIR}/sources/${DEVICE}" ]; then
-    cp -rf ${PKG_DIR}/sources/${DEVICE}/* ${INSTALL}/usr/config/retroarch/
-  else
-    echo "Configure retroarch for ${DEVICE}"
-    exit 1
-  fi
+  mkdir -p ${INSTALL}/usr/config/retroarch
+    if [ -d "${PKG_DIR}/sources/${DEVICE}" ]; then
+      cp -a ${PKG_DIR}/sources/${DEVICE}/* ${INSTALL}/usr/config/retroarch
+    else
+      echo "Configure retroarch for ${DEVICE}"
+      exit 1
+    fi
 
   # Make sure the shader directories exist for overlayfs.
-  for dir in common-shaders glsl-shaders slang-shaders
-  do
-    mkdir -p ${INSTALL}/usr/share/${dir}
-    touch ${INSTALL}/usr/share/${dir}/.overlay
-  done
+  mkdir -p ${INSTALL}/usr/share/{common,glsl,slang}-shaders
+    touch ${INSTALL}/usr/share/{common,glsl,slang}-shaders/.overlay
 
-  # Copy achievment sounds
   mkdir -p ${INSTALL}/usr/share/libretro
-    cp -R ${PKG_DIR}/sounds ${INSTALL}/usr/share/libretro
-
+    # Copy achievment sounds
+    cp -a ${PKG_DIR}/sounds ${INSTALL}/usr/share/libretro
     # Copy achievements hooks script
-    cp ${PKG_DIR}/scripts/call_achievements_hooks.sh ${INSTALL}/usr/share/libretro
+    cp -a ${PKG_DIR}/scripts/call_achievements_hooks.sh ${INSTALL}/usr/share/libretro
 }
 
 post_install() {
