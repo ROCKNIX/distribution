@@ -6,6 +6,7 @@
 
 DATE="${1}"
 LAST_TAG="${2}"
+CHANGELOG_MAX_COUNT="${CHANGELOG_MAX_COUNT:-200}"
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CONFIG_XML="${REPO_ROOT}/projects/ROCKNIX/config.xml"
 
@@ -267,7 +268,17 @@ FOOTER
 
 if [ -n "${LAST_TAG}" ]; then
   printf "\n## Changelog\n"
-  bash "$(dirname "$0")/generate-changelog.sh" "${LAST_TAG}..HEAD"
+  if [[ "${CHANGELOG_MAX_COUNT}" =~ ^[0-9]+$ ]] && [ "${CHANGELOG_MAX_COUNT}" -gt 0 ]; then
+    total_commits=$(git rev-list --count "${LAST_TAG}..HEAD" 2>/dev/null || echo 0)
+    bash "$(dirname "$0")/generate-changelog.sh" "${LAST_TAG}..HEAD" "${CHANGELOG_MAX_COUNT}"
+    if [ "${total_commits}" -gt "${CHANGELOG_MAX_COUNT}" ] 2>/dev/null; then
+      omitted_commits=$((total_commits - CHANGELOG_MAX_COUNT))
+      printf -- "\n- %s commits omitted\n" "${omitted_commits}"
+      printf -- "- Full changelog: https://github.com/ROCKNIX/distribution/compare/%s...%s\n" "${LAST_TAG}" "${DATE}"
+    fi
+  else
+    bash "$(dirname "$0")/generate-changelog.sh" "${LAST_TAG}..HEAD"
+  fi
 else
   printf "\n## Changelog\n\n- No previous tag found\n"
 fi
