@@ -1,0 +1,100 @@
+From 0000000000000000000000000000000000000005 Mon Sep 17 00:00:00 2001
+From: Philippe Simons <simons.philippe@gmail.com>
+Date: Thu, 6 Aug 2026 21:00:00 +0200
+Subject: [PATCH 5/5] fix: let a Steam window take global focus under SteamControlled
+
+A Steam client update paints nothing. The panel goes black the moment the
+bootstrapper decides an update is due and stays black until the install
+finishes — measured 13.5 minutes on HW, with zero atomic flips committed for the
+entire window. There is no progress bar, no logo, no backlight change; the
+device is indistinguishable from hung, and the natural user response is to hold
+power, which interrupts the update.
+
+The dialog is drawn. `xwininfo` shows it mapped, IsViewable, InputOutput,
+opaque, fullscreen, with a live commit queue. It is nonetheless never presented,
+because it never becomes the global focus window.
+
+`novadeck-session` passes `--steam`, which flips
+`cv_backend_virtual_connector_strategy` from `SingleApplication` to
+`SteamControlled` (`main.cpp`). That makes `controlledFocus` true for the whole
+session, and `pick_primary_focus_and_override()`'s
+
+    if ( !focus && ( !globalFocus || !controlledFocus ) )
+
+then withholds the generic `vecPossibleFocusWindows[ 0 ]` fallback from the
+global pass. That is intentional and worth keeping: it stops a game window from
+taking the screen away from whatever Steam has asked to be frontmost. But it
+leaves `focusControlWindow` and `ctxFocusControlAppIDs` as the only two routes
+to global focus, and Steam publishes both — so during a client update neither
+exists yet. Instrumented on the device, `focusControlWindow` measured `0x0` for
+the entire update and `ctxFocusControlAppIDs` measured empty (it only fills in
+with `[413091, 769]` once the client proper is up).
+
+The bootstrapper's dialog cannot match either. It carries `STEAM_BIGPICTURE=1`,
+so `isSteamLegacyBigPicture` and therefore `window_is_steam()` are true, but it
+has no `STEAM_GAME`, so its `appID` is 0 and no control appID can name it — the
+same override-redirect window upstream already special-cases elsewhere in
+steamcompmgr ("bootstrapper is override redirect :("). It passes every candidate
+filter, sorts into `vecPossibleFocusWindows`, and is then dropped for want of a
+route. `focus` stays NULL, so `out->focusWindow` is never assigned and nothing is
+composited at all.
+
+So add the missing route: when the global pass under `SteamControlled` would
+otherwise end with no focus, take the highest-priority candidate for which
+`window_is_steam()` holds.
+
+The guard is deliberately narrow. It runs only when `focus` is already NULL, so
+anything Steam actively asked for has matched first and a live client's choice
+can never be overridden. It is restricted to the global pass, so the local pass
+keeps reaching the generic fallback exactly as before. It is restricted to
+`SteamControlled`, so `SingleApplication`, `PerAppId` and `PerWindow` are
+untouched. And it will only ever select a Steam window — never a game — which
+preserves precisely the behaviour the withheld fallback exists to protect.
+
+`localGameFocused` is computed the same way the generic fallback computes it
+(`focus->appID != 0`), so the bootstrapper correctly does not register as a game
+being focused.
+
+Not sent upstream: on Valve's own hardware the bootstrapper reaches the panel
+because its update UI is presented before `--steam` is in play. This is worth
+carrying regardless of that, since the failure mode it removes is a device that
+looks bricked during a routine update.
+
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -3595,6 +3595,32 @@
+ 		}
+ 	}
+
++	// novadeck: last-resort global focus for Steam's own windows under SteamControlled.
++	//
++	// The fallback above is deliberately withheld from the global pass while focus is controlled, so
++	// that a game cannot take the screen from whatever Steam asked for. That leaves focusControlWindow
++	// and ctxFocusControlAppIDs as the only routes to global focus — and Steam publishes both, so
++	// neither exists yet while the bootstrapper is up. Its client-update dialog falls in that hole:
++	// STEAM_BIGPICTURE=1 but no STEAM_GAME, so window_is_steam() yet appID == 0, matching no control
++	// appID. It becomes a candidate and is then dropped, focus stays NULL, nothing is ever
++	// composited, and the panel is black for the whole download and install.
++	//
++	// Fall back to a Steam window, and only a Steam window: anything the client actively wants
++	// focused has already matched above, so this cannot override a live choice, and refusing to pick
++	// a game here preserves exactly the behaviour the withheld fallback protects.
++	if ( !focus && globalFocus && eStrategy == gamescope::VirtualConnectorStrategies::SteamControlled )
++	{
++		for ( steamcompmgr_win_t *candidate : vecPossibleFocusWindows )
++		{
++			if ( window_is_steam( candidate ) )
++			{
++				focus = candidate;
++				localGameFocused = focus->appID != 0;
++				break;
++			}
++		}
++	}
++
+ 	auto resolveTransientOverrides = [&](bool maybe)
+ 	{
+ 		if ( !focus || focus->type != steamcompmgr_win_type_t::XWAYLAND )
+--
+2.54.0
