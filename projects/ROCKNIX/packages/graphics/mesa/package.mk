@@ -19,6 +19,8 @@ if listcontains "${GRAPHIC_DRIVERS}" "panfrost"; then
   PKG_DEPENDS_TARGET+=" mesa:host"
 fi
 
+export LDFLAGS="${LDFLAGS} -lgcc"
+
 PKG_MESON_OPTS_HOST="-Dglvnd=disabled \
                      -Dgallium-drivers= \
                      -Dplatforms= \
@@ -34,7 +36,9 @@ PKG_MESON_OPTS_HOST="-Dglvnd=disabled \
                      -Dprecomp-compiler=enabled \
                      -Dinstall-precomp-compiler=true"
 
-PKG_MESON_OPTS_TARGET="-Dgallium-drivers=${GALLIUM_DRIVERS// /,} \
+PKG_MESON_OPTS_TARGET="-Dc_link_args=-lgcc \
+                       -Dcpp_link_args=-lgcc \
+                       -Dgallium-drivers=${GALLIUM_DRIVERS// /,} \
                        -Dgallium-extra-hud=false \
                        -Dgallium-rusticl=false \
                        -Dshader-cache=enabled \

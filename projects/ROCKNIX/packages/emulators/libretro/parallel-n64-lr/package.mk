@@ -39,6 +39,8 @@ pre_configure_target() {
     # as it prohibits the use of LSE-instructions, this is a package bug most likely
     export CFLAGS="${CFLAGS} -mno-outline-atomics -std=gnu17"
     export CXXFLAGS="${CXXFLAGS} -mno-outline-atomics"
+  elif [ "${ARCH}" = "x86_64" ]; then
+    export CFLAGS="${CFLAGS} -std=gnu17"
   fi
 }
 
