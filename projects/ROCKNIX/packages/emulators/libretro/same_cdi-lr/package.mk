@@ -4,7 +4,7 @@
 PKG_NAME="same_cdi-lr"
 PKG_VERSION="7ee1d8e9cb4307b7cd44ee1dd757e9b3f48f41d5"
 PKG_SHA256="3f3193561e6f58640ed6818b5c51fd7e3706083e9f211eb9f2282f12d189e5d4"
-PKG_LICENSE=""
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/same_cdi"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain expat zlib flac sqlite"

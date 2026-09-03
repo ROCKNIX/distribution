@@ -4,7 +4,7 @@
 PKG_NAME="fbalpha2012-lr"
 PKG_VERSION="0ce31536bef3162fe7e69ff5f555334ec4913cef"
 PKG_SHA256="6825b86c65887fc92ba02c07059d8225113bcca7764dab84ce21da18954c33af"
-PKG_LICENSE=""
+PKG_LICENSE="Non-commercial"
 PKG_SITE="https://github.com/libretro/fbalpha2012"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"

@@ -4,7 +4,7 @@
 PKG_NAME="idtech-lr"
 PKG_VERSION="1.0"
 PKG_SHA256=""
-PKG_LICENSE=""
+PKG_LICENSE="GPL-2.0-or-late"
 PKG_SITE="https://rocknix.org"
 PKG_URL=""
 PKG_LONGDESC="Package for all iD Software game engines."

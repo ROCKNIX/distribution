@@ -3,7 +3,7 @@
 
 PKG_NAME="play-lr"
 PKG_VERSION="04bde0df87ee7c0e2f0151b51bb2cc22c88541da"
-PKG_LICENSE=""
+PKG_LICENSE="BSD-2-Clause"
 PKG_SITE="https://github.com/jpd002/Play-"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain libevdev zstd"

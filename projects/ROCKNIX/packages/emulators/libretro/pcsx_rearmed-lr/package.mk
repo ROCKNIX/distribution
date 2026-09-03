@@ -20,8 +20,7 @@ post_unpack() {
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
     case ${TARGET_ARCH} in
-      aarch64) cp -a ../pcsx_rearmed_libretro.so ${INSTALL}/usr/lib/libretro ;;
+      aarch64|x86_64) cp -a ../pcsx_rearmed_libretro.so ${INSTALL}/usr/lib/libretro ;;
       arm) cp -a ../pcsx_rearmed_libretro.so ${INSTALL}/usr/lib/libretro/pcsx_rearmed32_libretro.so ;;
-      x86_64) cp -a ../pcsx_rearmed_libretro.so ${INSTALL}/usr/lib/libretro ;;
     esac
 }

@@ -4,7 +4,7 @@
 PKG_NAME="mame2015-lr"
 PKG_VERSION="283e04b03c121db9be12632d6bad2fc3e8707248"
 PKG_SHA256="8529bb074b1814c6577f928d852f4d443c4cdf1cd2a455c742f9ff2b339f8160"
-PKG_LICENSE=""
+PKG_LICENSE="MAME"
 PKG_SITE="https://github.com/libretro/mame2015-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"

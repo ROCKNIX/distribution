@@ -4,7 +4,7 @@
 PKG_NAME="mu-lr"
 PKG_VERSION="f9d34a0006440aef8dca0db2a0d896438fcab2cb"
 PKG_SHA256="595b18df6da9b4dc3750d95e0597ad4952e70a79d748b5e1cf3865384ff1d17c"
-PKG_LICENSE=""
+PKG_LICENSE="Non-commercial"
 PKG_SITE="https://github.com/libretro/Mu"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"

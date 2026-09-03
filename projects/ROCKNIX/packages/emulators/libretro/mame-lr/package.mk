@@ -4,7 +4,7 @@
 PKG_NAME="mame-lr"
 PKG_VERSION="24cffe763621b164fc10be2ae3660f140be25182"
 PKG_SHA256="4867bee5dbd4129e6eea095fe8f8e9725563998710cc9620190e90529ef8931b"
-PKG_LICENSE=""
+PKG_LICENSE="MAME"
 PKG_SITE="https://github.com/libretro/mame"
 PKG_URL="https://github.com/libretro/mame/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain zlib flac sqlite expat"
