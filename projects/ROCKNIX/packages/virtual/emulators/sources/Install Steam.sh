@@ -144,6 +144,12 @@ install_steam_runtime_arm64() {
 
   mkdir -p "${STEAM}/lib/aarch64-linux-gnu"
   ln -sf "${target}" "${STEAM}/lib/aarch64-linux-gnu/libibus-1.0.so.5" || die "Failed to symlink libibus."
+
+  target=$(echo "${STEAM}"/steam-runtime-steamrt-arm64/steamrt3c_platform_*/files/lib/aarch64-linux-gnu/libva.so.2.* | head -n 1)
+  if [ ! -f "$target" ]; then
+      die "Could not locate libva target inside runtime."
+    fi
+  ln -sf "${target}" "${STEAM}/lib/aarch64-linux-gnu/libva.so.2" || die "Failed to symlink libva."
 }
 
 install_steam_client_arm64() {
