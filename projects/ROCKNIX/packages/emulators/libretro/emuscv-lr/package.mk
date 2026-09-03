@@ -8,6 +8,7 @@ PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://gitlab.com/MaaaX-EmuSCV/libretro-emuscv"
 PKG_URL="${PKG_SITE}/-/archive/${PKG_VERSION}/libretro-emuscv-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain bin2c:host SDL2"
+PKG_DEPENDS_UNPACK="glibc"
 PKG_LONGDESC="An EPOCH/YENO Super Cassette Vision (1984) home video game emulator for Libretro"
 PKG_TOOLCHAIN="make"
 
