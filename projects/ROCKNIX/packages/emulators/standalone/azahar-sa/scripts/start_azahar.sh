@@ -67,6 +67,8 @@ CSHADERS=$(get_setting cache_shaders "${PLATFORM}" "${GAME}")
 HSHADERS=$(get_setting hardware_shaders "${PLATFORM}" "${GAME}")
 ACCURATE_HW_SHADERS=$(get_setting accurate_hardware_shaders "${PLATFORM}" "${GAME}")
 DISABLE_RIGHT_EYE_RENDER=$(get_setting disable_right_eye_render "${PLATFORM}" "${GAME}")
+SIMULATE_3DS_GPU_TIMINGS=$(get_setting simulate_3ds_gpu_timings "${PLATFORM}" "${GAME}")
+SIMULATE_HEADPHONES_PLUGGED=$(get_setting simulate_headphones_plugged "${PLATFORM}" "${GAME}")
 
 #Set the cores to use
 CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
@@ -196,6 +198,22 @@ sed -i '/^disable_right_eye_render\\default=/c\disable_right_eye_render\\default
 case "${DISABLE_RIGHT_EYE_RENDER}" in
   1) sed -i '/^disable_right_eye_render=/c\disable_right_eye_render=true' ${CONF_FILE};;
   *) sed -i '/^disable_right_eye_render=/c\disable_right_eye_render=false' ${CONF_FILE};;
+esac
+
+# Simulate 3DS GPU Timings - default to false
+sed -i '/^simulate_3ds_gpu_timings\\default=/c\simulate_3ds_gpu_timings\\default=false' ${CONF_FILE}
+
+case "${SIMULATE_3DS_GPU_TIMINGS}" in
+  1) sed -i '/^simulate_3ds_gpu_timings=/c\simulate_3ds_gpu_timings=true' ${CONF_FILE};;
+  *) sed -i '/^simulate_3ds_gpu_timings=/c\simulate_3ds_gpu_timings=false' ${CONF_FILE};;
+esac
+
+# Simulate Headphones Plugged - default to false
+sed -i '/^simulate_headphones_plugged\\default=/c\simulate_headphones_plugged\\default=false' ${CONF_FILE}
+
+case "${SIMULATE_HEADPHONES_PLUGGED}" in
+  1) sed -i '/^simulate_headphones_plugged=/c\simulate_headphones_plugged=true' ${CONF_FILE};;
+  *) sed -i '/^simulate_headphones_plugged=/c\simulate_headphones_plugged=false' ${CONF_FILE};;
 esac
 
 # QT platform - some device / screen combinations need xcb
