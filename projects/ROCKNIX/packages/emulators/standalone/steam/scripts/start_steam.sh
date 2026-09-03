@@ -47,6 +47,7 @@ steam_apply_lsfg_settings() {
     export LSFGVK_MULTIPLIER="${LSFG_MULTIPLIER}"
     export LSFGVK_FLOW_SCALE="${LSFG_FLOW_SCALE}"
     export LSFGVK_PERFORMANCE_MODE="${LSFG_PERFORMANCE_MODE}"
+    export ENABLE_GAMESCOPE_WSI=0
   else
     export DISABLE_LSFGVK=1
   fi
