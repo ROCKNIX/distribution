@@ -10,6 +10,7 @@ PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain nasm:host"
 PKG_LONGDESC="mupen64plus + RSP-HLE + GLideN64 + libretro"
 PKG_BUILD_FLAGS="-lto"
+PKG_PATCH_DIRS+=" ${DEVICE}"
 
 PKG_MAKE_OPTS_TARGET="OS_LINUX=1 platform=${DEVICE}"
 

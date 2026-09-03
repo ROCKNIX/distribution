@@ -3,7 +3,6 @@
 
 PKG_NAME="simple-http-server"
 PKG_VERSION="0.8.0"
-PKG_SHA256="88a523d339fa412575e497ee1741ffa4a7b6bdcfa23681a82eac7b8cd2bdf815"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/TheWaWaR/simple-http-server"
 PKG_DEPENDS_TARGET="toolchain"
@@ -19,6 +18,7 @@ case ${ARCH} in
     ;;
   aarch64)
     PKG_URL="${PKG_SITE}/releases/download/v${PKG_VERSION}/aarch64-unknown-linux-musl-simple-http-server"
+    PKG_SHA256="88a523d339fa412575e497ee1741ffa4a7b6bdcfa23681a82eac7b8cd2bdf815"
     ;;
 esac
 

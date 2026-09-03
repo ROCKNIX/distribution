@@ -11,7 +11,7 @@ PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="ARM optimized PCSX fork"
 PKG_TOOLCHAIN="make"
 
-PKG_MAKE_OPTS_TARGET="-f Makefile.libretro -C .. GIT_VERSION=${PKG_VERSION} platform=${DEVICE}"
+PKG_MAKE_OPTS_TARGET="-f Makefile.libretro -C .. GIT_VERSION=${PKG_VERSION} platform=$(if [ "${TARGET_ARCH}" = "x86_64" ]; then echo unix; else echo ${DEVICE}; fi)"
 
 post_unpack() {
   sed -i 's/\-O[23]/-Ofast/' ${PKG_BUILD}/Makefile
@@ -22,5 +22,6 @@ makeinstall_target() {
     case ${TARGET_ARCH} in
       aarch64) cp -a ../pcsx_rearmed_libretro.so ${INSTALL}/usr/lib/libretro ;;
       arm) cp -a ../pcsx_rearmed_libretro.so ${INSTALL}/usr/lib/libretro/pcsx_rearmed32_libretro.so ;;
+      x86_64) cp -a ../pcsx_rearmed_libretro.so ${INSTALL}/usr/lib/libretro ;;
     esac
 }
