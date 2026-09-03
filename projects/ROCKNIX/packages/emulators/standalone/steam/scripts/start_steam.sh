@@ -176,6 +176,9 @@ steam_launch_bigpicture() {
   local game_uri=""
   local force_orientation="normal"
   local gamescope_mode_file="/storage/.config/gamescope/modes.cfg"
+  local steam_exit_code=0
+  local gamescope_exit_code=0
+  local steam_exit_code_file=""
   if [ "${TRANSFORM}" = "90" ]; then
     force_orientation="right"
   elif [ "${TRANSFORM}" = "180" ]; then
@@ -195,13 +198,31 @@ steam_launch_bigpicture() {
   unset MESA_LOADER_DRIVER_OVERRIDE
   if [ "${STEAM_FLAVOR}" = "arm64" ]; then
     export STEAM_COMPAT_GRAPHICS_PROVIDER=//storage/.local/share/fex-emu/RootFS/ArchLinux/graphics_provider.json
+    steam_exit_code_file=$(mktemp /tmp/steam-exit-code.XXXXXX)
     systemctl stop sway
     steam_touch_calibration_begin "${force_orientation}"
     trap steam_touch_calibration_end EXIT
-    GAMESCOPE_MODE_SAVE_FILE="${gamescope_mode_file}" GAMESCOPE_FAKE_OUTPUT_MM=508x286 \
-    env -u WAYLAND_DISPLAY LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} \
-    gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --mangoapp --backend drm --force-orientation "${force_orientation}" -e -- \
-    /storage/.local/share/Steam/steamrtarm64/steam -deckard -steamos3 -gamepadui -noshaders ${game_uri:+"$game_uri"}
+    while true; do
+      rm -f "${steam_exit_code_file}"
+      GAMESCOPE_MODE_SAVE_FILE="${gamescope_mode_file}" GAMESCOPE_FAKE_OUTPUT_MM=508x286 \
+      env -u WAYLAND_DISPLAY LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} \
+      gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --mangoapp --backend drm --force-orientation "${force_orientation}" -e -- \
+      /bin/bash -c '
+        exit_file="$1"
+        shift
+        "$@"
+        printf "%s\n" "$?" >"${exit_file}"
+      ' _ "${steam_exit_code_file}" \
+      /storage/.local/share/Steam/steamrtarm64/steam -deckard -steamos3 -gamepadui -noshaders ${game_uri:+"$game_uri"}
+      gamescope_exit_code=$?
+      if [ -f "${steam_exit_code_file}" ]; then
+        steam_exit_code=$(cat "${steam_exit_code_file}")
+      else
+        steam_exit_code=${gamescope_exit_code}
+      fi
+      [ "${steam_exit_code}" = "42" ] || break
+    done
+    rm -f "${steam_exit_code_file}"
     steam_touch_calibration_end
     trap - EXIT
     systemctl start essway
