@@ -1,0 +1,270 @@
+diff -rupbN melonDS.orig/src/frontend/qt_sdl/Config.cpp melonDS/src/frontend/qt_sdl/Config.cpp
+--- melonDS.orig/src/frontend/qt_sdl/Config.cpp	2026-09-03 19:44:25.122471999 +0000
++++ melonDS/src/frontend/qt_sdl/Config.cpp	2026-09-04 16:07:57.369386597 +0000
+@@ -170,7 +170,7 @@ LegacyEntry LegacyFile[] =
+     {"HKKey_Pause",               0, "Keyboard.HK_Pause", true},
+     {"HKKey_Reset",               0, "Keyboard.HK_Reset", true},
+     {"HKKey_FastForward",         0, "Keyboard.HK_FastForward", true},
+-    {"HKKey_FastForwardToggle",   0, "Keyboard.HK_FrameLimitToggle", true},
++    {"HKKey_FastForwardToggle",   0, "Keyboard.HK_FastForwardToggle", true},
+     {"HKKey_FullscreenToggle",    0, "Keyboard.HK_FullscreenToggle", true},
+     #ifdef RETROACHIEVEMENTS_ENABLED
+     {"HKKey_RAOverlayToggle",     0, "Keyboard.HK_RAOverlayToggle", true},
+@@ -187,13 +187,16 @@ LegacyEntry LegacyFile[] =
+     {"HKKey_GuitarGripRed",       0, "Keyboard.HK_GuitarGripRed", true},
+     {"HKKey_GuitarGripYellow",    0, "Keyboard.HK_GuitarGripYellow", true},
+     {"HKKey_GuitarGripBlue",      0, "Keyboard.HK_GuitarGripBlue", true},
++    {"HKKey_SaveState",           0, "Keyboard.HK_SaveState", true},
++    {"HKKey_LoadState",           0, "Keyboard.HK_LoadState", true},
++    {"HKKey_HotkeyEnable",        0, "Keyboard.HK_HotkeyEnable", true},
+ 
+     {"HKJoy_Lid",                 0, "Joystick.HK_Lid", true},
+     {"HKJoy_Mic",                 0, "Joystick.HK_Mic", true},
+     {"HKJoy_Pause",               0, "Joystick.HK_Pause", true},
+     {"HKJoy_Reset",               0, "Joystick.HK_Reset", true},
+     {"HKJoy_FastForward",         0, "Joystick.HK_FastForward", true},
+-    {"HKJoy_FastForwardToggle",   0, "Joystick.HK_FrameLimitToggle", true},
++    {"HKJoy_FastForwardToggle",   0, "Joystick.HK_FastForwardToggle", true},
+     {"HKJoy_FullscreenToggle",    0, "Joystick.HK_FullscreenToggle", true},
+     #ifdef RETROACHIEVEMENTS_ENABLED
+     {"HKJoy_RAOverlayToggle",     0, "Joystick.HK_RAOverlayToggle", true},
+@@ -210,6 +213,9 @@ LegacyEntry LegacyFile[] =
+     {"HKJoy_GuitarGripRed",       0, "Joystick.HK_GuitarGripRed", true},
+     {"HKJoy_GuitarGripYellow",    0, "Joystick.HK_GuitarGripYellow", true},
+     {"HKJoy_GuitarGripBlue",      0, "Joystick.HK_GuitarGripBlue", true},
++    {"HKJoy_SaveState",           0, "Joystick.HK_SaveState", true},
++    {"HKJoy_LoadState",           0, "Joystick.HK_LoadState", true},
++    {"HKJoy_HotkeyEnable",        0, "Joystick.HK_HotkeyEnable", true},
+ 
+     {"JoystickID", 0, "JoystickID", true},
+ 
+@@ -708,25 +714,14 @@ template<typename T> T Table::FindDefaul
+ 
+ bool LoadLegacyFile(int inst)
+ {
+-    Platform::FileHandle* f;
+-    if (inst > 0)
+-    {
+-        char name[100] = {0};
+-        snprintf(name, 99, kLegacyUniqueConfigFile, inst+1);
+-        f = Platform::OpenLocalFile(name, Platform::FileMode::ReadText);
+-    }
+-    else
+-    {
+-        f = Platform::OpenLocalFile(kLegacyConfigFile, Platform::FileMode::ReadText);
+-    }
+-
++    Platform::FileHandle* f = Platform::OpenLocalFile(kLegacyConfigFile, Platform::FileMode::ReadText);
+     if (!f) return true;
+ 
+     toml::value* root;// = GetLocalTable(inst);
+     if (inst == -1)
+         root = &RootTable;
+     else
+-        root = &RootTable["Instance" + std::to_string(inst)];
++        root = &RootTable["Instance0"];
+ 
+     char linebuf[1024];
+     char entryname[32];
+@@ -803,8 +798,8 @@ bool LoadLegacyFile(int inst)
+ 
+ bool LoadLegacy()
+ {
+-    for (int i = -1; i < 16; i++)
+-        LoadLegacyFile(i);
++    LoadLegacyFile(-1); // root-level (non-instance-unique) entries
++    LoadLegacyFile(0);  // shared instance entries -> Instance0
+ 
+     return true;
+ }
+@@ -851,12 +846,10 @@ Table GetLocalTable(int instance)
+     if (instance == -1)
+         return Table(RootTable, "");
+ 
+-    std::string key = "Instance" + std::to_string(instance);
+-    toml::value& tbl = RootTable[key];
+-    if (tbl.is_empty())
+-        RootTable[key] = RootTable["Instance0"];
++    // No per-instance uniqueness: all instances share "Instance0"
++    toml::value& tbl = RootTable["Instance0"];
+ 
+-    return Table(tbl, key);
++    return Table(tbl, "Instance0");
+ }
+ 
+ #ifdef RETROACHIEVEMENTS_ENABLED
+diff -rupbN melonDS.orig/src/frontend/qt_sdl/EmuInstance.h melonDS/src/frontend/qt_sdl/EmuInstance.h
+--- melonDS.orig/src/frontend/qt_sdl/EmuInstance.h	2026-09-03 19:44:25.126472061 +0000
++++ melonDS/src/frontend/qt_sdl/EmuInstance.h	2026-09-03 19:50:51.248458999 +0000
+@@ -63,6 +63,9 @@ enum
+     //#ifdef RETROACHIEVEMENTS_ENABLED
+     //HK_RAOverlayToggle,
+     //#endif
++    HK_SaveState,
++    HK_LoadState,
++    HK_HotkeyEnable,
+     HK_MAX
+ };
+ 
+diff -rupbN melonDS.orig/src/frontend/qt_sdl/EmuInstanceInput.cpp melonDS/src/frontend/qt_sdl/EmuInstanceInput.cpp
+--- melonDS.orig/src/frontend/qt_sdl/EmuInstanceInput.cpp	2026-09-03 19:44:25.126472061 +0000
++++ melonDS/src/frontend/qt_sdl/EmuInstanceInput.cpp	2026-09-03 19:50:51.248458999 +0000
+@@ -70,7 +70,10 @@ const char* EmuInstance::hotkeyNames[HK_
+     "HK_GuitarGripGreen",
+     "HK_GuitarGripRed",
+     "HK_GuitarGripYellow",
+-    "HK_GuitarGripBlue"
++    "HK_GuitarGripBlue",
++    "HK_SaveState",
++    "HK_LoadState",
++    "HK_HotkeyEnable"
+ };
+ 
+ std::shared_ptr<SDL_mutex> EmuInstance::joyMutexGlobal = nullptr;
+diff -rupbN melonDS.orig/src/frontend/qt_sdl/EmuThread.cpp melonDS/src/frontend/qt_sdl/EmuThread.cpp
+--- melonDS.orig/src/frontend/qt_sdl/EmuThread.cpp	2026-09-03 19:44:25.126472061 +0000
++++ melonDS/src/frontend/qt_sdl/EmuThread.cpp	2026-09-04 15:13:58.007777551 +0000
+@@ -84,6 +84,8 @@ void EmuThread::attachWindow(MainWindow*
+     connect(this, SIGNAL(RAOverlayToggle()), window, SLOT(onRAOverlayToggled()));
+     #endif
+     connect(this, SIGNAL(screenEmphasisToggle()), window, SLOT(onScreenEmphasisToggled()));
++    connect(this, SIGNAL(SaveState()), window->actSaveState[1], SLOT(trigger()));
++    connect(this, SIGNAL(LoadState()), window->actLoadState[1], SLOT(trigger()));
+ 
+     if (window->winHasMenu())
+     {
+@@ -166,7 +168,8 @@ void EmuThread::run()
+             MPInterface::Get().Process();
+ 
+         emuInstance->inputProcess();
+-
++        if (emuInstance->hotkeyDown(HK_HotkeyEnable))
++        {
+         if (emuInstance->hotkeyPressed(HK_FrameLimitToggle)) emit windowLimitFPSChange();
+ 
+         if (emuInstance->hotkeyPressed(HK_Pause)) emuTogglePause();
+@@ -180,6 +183,9 @@ void EmuThread::run()
+         #endif
+         if (emuInstance->hotkeyPressed(HK_SwapScreens)) emit swapScreensToggle();
+         if (emuInstance->hotkeyPressed(HK_SwapScreenEmphasis)) emit screenEmphasisToggle();
++            if (emuInstance->hotkeyPressed(HK_SaveState)) emit SaveState();
++            if (emuInstance->hotkeyPressed(HK_LoadState)) emit LoadState();
++        }
+ 
+         if (emuStatus == emuStatus_Running || emuStatus == emuStatus_FrameStep)
+         {
+@@ -347,7 +353,7 @@ void EmuThread::run()
+             }
+             
+             #ifdef RETROACHIEVEMENTS_ENABLED
+-            if (Config::GetGlobalTable().GetBool("RetroAchievements.Enabled") && 
++            if (emuInstance->hotkeyDown(HK_HotkeyEnable) && Config::GetGlobalTable().GetBool("RetroAchievements.Enabled") &&
+             Config::GetGlobalTable().GetBool("RetroAchievements.HardcoreMode")) {
+                 if (emuInstance->hotkeyPressed(HK_FastForwardToggle) || emuInstance->hotkeyPressed(HK_FastForward)) {
+                     emuInstance->osdAddMessage(0xFFA0A0, "HARDCORE: Fast Forward is blocked!");
+@@ -358,13 +364,19 @@ void EmuThread::run()
+             }
+             #endif
+ 
+-            if (emuInstance->hotkeyPressed(HK_FastForwardToggle)) emuInstance->fastForwardToggled = !emuInstance->fastForwardToggled;
++            if (emuInstance->hotkeyDown(HK_HotkeyEnable))
++            {
++               if (emuInstance->hotkeyPressed(HK_FastForwardToggle))
++               {
++                  emuInstance->fastForwardToggled = !emuInstance->fastForwardToggled;
++                  emuInstance->osdAddMessage(0, emuInstance->fastForwardToggled ? "Fast forward on" : "Fast forward off");
++               }
+             if (emuInstance->hotkeyPressed(HK_SlowMoToggle)) emuInstance->slowmoToggled = !emuInstance->slowmoToggled;
+-
++            }
+             if (emuInstance->hotkeyPressed(HK_AudioMuteToggle)) emuInstance->toggleAudioMute();
+ 
+-            bool enablefastforward = emuInstance->hotkeyDown(HK_FastForward) | emuInstance->fastForwardToggled;
+-            bool enableslowmo = emuInstance->hotkeyDown(HK_SlowMo) | emuInstance->slowmoToggled;
++            bool enablefastforward = (emuInstance->hotkeyDown(HK_FastForward) && emuInstance->hotkeyDown(HK_HotkeyEnable)) | emuInstance->fastForwardToggled;
++            bool enableslowmo = (emuInstance->hotkeyDown(HK_SlowMo) && emuInstance->hotkeyDown(HK_HotkeyEnable)) | emuInstance->slowmoToggled;
+ 
+             #ifdef RETROACHIEVEMENTS_ENABLED
+             if (Config::GetGlobalTable().GetBool("RetroAchievements.Enabled") && 
+diff -rupbN melonDS.orig/src/frontend/qt_sdl/EmuThread.h melonDS/src/frontend/qt_sdl/EmuThread.h
+--- melonDS.orig/src/frontend/qt_sdl/EmuThread.h	2026-09-03 19:44:25.126472061 +0000
++++ melonDS/src/frontend/qt_sdl/EmuThread.h	2026-09-03 19:50:51.248458999 +0000
+@@ -161,6 +161,9 @@ signals:
+     void swapScreensToggle();
+     void screenEmphasisToggle();
+ 
++    void SaveState();
++    void LoadState();
++
+     void syncVolumeLevel();
+ 
+ private:
+diff -rupbN melonDS.orig/src/frontend/qt_sdl/InputConfig/InputConfigDialog.h melonDS/src/frontend/qt_sdl/InputConfig/InputConfigDialog.h
+--- melonDS.orig/src/frontend/qt_sdl/InputConfig/InputConfigDialog.h	2026-09-03 19:44:25.122471999 +0000
++++ melonDS/src/frontend/qt_sdl/InputConfig/InputConfigDialog.h	2026-09-03 19:50:51.248458999 +0000
+@@ -71,7 +71,10 @@ static constexpr std::initializer_list<i
+     HK_PowerButton,
+     HK_VolumeUp,
+     HK_VolumeDown,
+-    HK_AudioMuteToggle
++    HK_AudioMuteToggle,
++    HK_SaveState,
++    HK_LoadState,
++    HK_HotkeyEnable
+ };
+ 
+ static constexpr std::initializer_list<const char*> hk_general_labels =
+@@ -95,7 +98,10 @@ static constexpr std::initializer_list<c
+     "DSi Power button",
+     "DSi Volume up",
+     "DSi Volume down",
+-    "Toggle audio mute"
++    "Toggle audio mute",
++    "Save State",
++    "Load State",
++    "Enable Hotkey"
+ };
+ 
+ static_assert(hk_general.size() == hk_general_labels.size());
+diff -rupbN melonDS.orig/src/frontend/qt_sdl/Window.cpp melonDS/src/frontend/qt_sdl/Window.cpp
+--- melonDS.orig/src/frontend/qt_sdl/Window.cpp	2026-09-03 19:44:25.122471999 +0000
++++ melonDS/src/frontend/qt_sdl/Window.cpp	2026-09-03 22:07:11.058517889 +0000
+@@ -331,13 +331,13 @@ MainWindow::MainWindow(int id, EmuInstan
+                 for (int i = 1; i < 9; i++)
+                 {
+                     actSaveState[i] = submenu->addAction(QString("%1").arg(i));
+-                    actSaveState[i]->setShortcut(QKeySequence(Qt::ShiftModifier | (Qt::Key_F1 + i - 1)));
++                    //actSaveState[i]->setShortcut(QKeySequence(Qt::ShiftModifier | (Qt::Key_F1 + i - 1)));
+                     actSaveState[i]->setData(QVariant(i));
+                     connect(actSaveState[i], &QAction::triggered, this, &MainWindow::onSaveState);
+                 }
+ 
+                 actSaveState[0] = submenu->addAction("File...");
+-                actSaveState[0]->setShortcut(QKeySequence(Qt::ShiftModifier | Qt::Key_F9));
++                //actSaveState[0]->setShortcut(QKeySequence(Qt::ShiftModifier | Qt::Key_F9));
+                 actSaveState[0]->setData(QVariant(0));
+                 connect(actSaveState[0], &QAction::triggered, this, &MainWindow::onSaveState);
+             }
+@@ -347,19 +347,19 @@ MainWindow::MainWindow(int id, EmuInstan
+                 for (int i = 1; i < 9; i++)
+                 {
+                     actLoadState[i] = submenu->addAction(QString("%1").arg(i));
+-                    actLoadState[i]->setShortcut(QKeySequence(Qt::Key_F1 + i - 1));
++                    //actLoadState[i]->setShortcut(QKeySequence(Qt::Key_F1 + i - 1));
+                     actLoadState[i]->setData(QVariant(i));
+                     connect(actLoadState[i], &QAction::triggered, this, &MainWindow::onLoadState);
+                 }
+ 
+                 actLoadState[0] = submenu->addAction("File...");
+-                actLoadState[0]->setShortcut(QKeySequence(Qt::Key_F9));
++                //actLoadState[0]->setShortcut(QKeySequence(Qt::Key_F9));
+                 actLoadState[0]->setData(QVariant(0));
+                 connect(actLoadState[0], &QAction::triggered, this, &MainWindow::onLoadState);
+             }
+ 
+             actUndoStateLoad = menu->addAction("Undo state load");
+-            actUndoStateLoad->setShortcut(QKeySequence(Qt::Key_F12));
++            //actUndoStateLoad->setShortcut(QKeySequence(Qt::Key_F12));
+             connect(actUndoStateLoad, &QAction::triggered, this, &MainWindow::onUndoStateLoad);
+ 
+             menu->addSeparator();
