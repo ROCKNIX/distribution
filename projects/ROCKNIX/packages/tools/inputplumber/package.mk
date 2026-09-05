@@ -30,13 +30,15 @@ PKG_DROP_DEVICE_CONFIGS="
   50-retroid_pocket_nova.yaml
 "
 
+post_unpack() {
+  for config in ${PKG_DROP_DEVICE_CONFIGS}; do
+    rm -f ${PKG_BUILD}/usr/share/inputplumber/devices/${config}
+  done
+}
+
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr
   rsync -ar ${PKG_BUILD}/usr/ ${INSTALL}/usr/
-
-  for config in ${PKG_DROP_DEVICE_CONFIGS}; do
-    rm -f ${INSTALL}/usr/share/inputplumber/devices/${config}
-  done
 }
 
 post_install() {
