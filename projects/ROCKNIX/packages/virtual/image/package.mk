@@ -31,6 +31,9 @@ PKG_SYNC="synctools"
 
 PKG_TOOLS="patchelf i2c-tools evtest"
 
+# Batteryplus voltage-based battery percentage daemon
+[ "${BATTERYPLUS_SUPPORT}" = "yes" ] && PKG_TOOLS+=" batteryplus"
+
 PKG_DEBUG="debug"
 
 if [ "${BASE_ONLY}" = "true" ]

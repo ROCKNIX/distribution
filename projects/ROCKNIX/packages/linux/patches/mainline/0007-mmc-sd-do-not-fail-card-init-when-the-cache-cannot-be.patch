@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jacob Cook <jacobmcook1984@gmail.com>
+Subject: [PATCH] mmc: sd: do not fail card init when the cache cannot be
+ enabled
+
+Enabling the SD card's internal cache is treated as fatal to card
+initialisation. mmc_sd_init_card() is also the re-initialisation path
+taken from _mmc_sd_resume(), so a card that NAKs or times out the
+"Cache Enable" write on resume is removed from the bus:
+
+  mmc2: error -110 writing Cache Enable bit
+  mmc2: error -110 doing runtime resume
+  mmc2: card 5048 removed
+  Aborting journal on device mmcblk2p1-8.
+  EXT4-fs (mmcblk2p1): shut down requested (2)
+  mmc2: new UHS-I speed SDR104 SDXC card at address 5048
+
+The card is healthy and is re-detected immediately, but the block
+device has already disappeared underneath the mounted filesystem, which
+aborts. ext4 survives via journal replay; exFAT and FAT, which most
+removable cards use, are simply left corrupted.
+
+The cache is an optional performance feature and sd_enable_cache() has
+already cleared the enabled flag before returning an error, so nothing
+downstream assumes a cache that is not there - sd_flush_cache() checks
+the same flag. Warn and continue without it instead of destroying a
+mounted filesystem over an unavailable optimisation.
+
+Observed on an Anbernic RG353M (RK3566) with a Phison-made 512GB SDXC
+card (manfid 0x000027, oemid 0x5048, 03/2025) in the second slot: the
+games card would stop responding after a resume and stay unusable until
+reboot. Reproduced by cycling suspend/resume with I/O in flight.
+
+--- a/drivers/mmc/core/sd.c
++++ b/drivers/mmc/core/sd.c
+@@ -1574,11 +1574,23 @@
+ 			goto free_card;
+ 	}
+ 
+-	/* Enable internal SD cache if supported. */
++	/*
++	 * Enable the card's internal cache if it has one.  This is an optional
++	 * performance feature, so a failure here must not be fatal: this path
++	 * is also reached when re-initialising a card on resume, where tearing
++	 * the card down takes a mounted filesystem with it.  The block device
++	 * disappears underneath the filesystem, which aborts its journal - and
++	 * a filesystem without one (exFAT, FAT) is simply left corrupted.
++	 * sd_enable_cache() has already cleared the enabled flag, so carrying
++	 * on just means running without the cache.
++	 */
+ 	if (card->ext_perf.feature_support & SD_EXT_PERF_CACHE) {
+ 		err = sd_enable_cache(card);
+-		if (err)
+-			goto free_card;
++		if (err) {
++			pr_warn("%s: could not enable card cache (%d), continuing without it\n",
++				mmc_hostname(host), err);
++			err = 0;
++		}
+ 	}
+ 
+ 	if (!mmc_card_ult_capacity(card) && host->cqe_ops && !host->cqe_enabled) {

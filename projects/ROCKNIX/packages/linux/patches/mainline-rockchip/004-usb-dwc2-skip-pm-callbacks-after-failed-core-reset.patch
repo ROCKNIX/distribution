@@ -1,0 +1,120 @@
+From: Jacob Cook <jacobmcook1984@gmail.com>
+Date: Fri, 28 Aug 2026 17:10:00 -0400
+Subject: [PATCH] usb: dwc2: Skip PM register save/restore if the core reset
+ timed out
+
+If dwc2_core_reset() times out, the core never came out of soft reset -
+typically because the UTMI clock is stopped, e.g. on a peripheral that
+was activated while no cable was attached and whose PHY never started
+its clock output. dwc2_hsotg_core_init_disconnected() ignores the error
+and the controller is left in this dead state.
+
+The system suspend path then backs up the device registers
+unconditionally (dwc2_suspend() ->
+dwc2_gadget_backup_critical_registers()). With the UTMI clock domain
+dead, reading DCFG and the other device-mode CSRs does not fail - it
+stalls the AHB, wedging the CPU with interrupts off. The machine hangs
+hard with no oops; only a hardware watchdog can recover it.
+
+Observed on Rockchip PX30 (GKD Pixel 2) when booting on battery with
+no USB cable and entering system suspend, 100% reproducible:
+
+  dwc2 ff300000.usb: dwc2_core_reset: HANG! Soft Reset timeout GRSTCTL_CSFTRST
+  ...
+  PM: suspend entry (deep)
+  ...
+  dwc2 ff300000.usb: PM: calling dwc2_suspend @ 2730, parent: platform
+  <hard hang - captured via ramoops + hardware watchdog reset>
+
+Track the reset failure in the hsotg structure and make the system
+suspend/resume callbacks leave the controller alone while it is set. A
+later successful core reset (e.g. cable plug-in restarting the PHY and
+re-running dwc2_hsotg_core_init_disconnected()) clears the flag and
+re-enables normal PM handling.
+
+Cc: stable@vger.kernel.org
+Signed-off-by: Jacob Cook <jacobmcook1984@gmail.com>
+---
+--- a/drivers/usb/dwc2/core.c
++++ b/drivers/usb/dwc2/core.c
+@@ -434,6 +434,7 @@
+ 					      GRSTCTL_CSFTRST, 10000)) {
+ 			dev_warn(hsotg->dev, "%s: HANG! Soft Reset timeout GRSTCTL_CSFTRST\n",
+ 				 __func__);
++			hsotg->core_reset_failed = 1;
+ 			return -EBUSY;
+ 		}
+ 	} else {
+@@ -441,6 +442,7 @@
+ 					    GRSTCTL_CSFTRST_DONE, 10000)) {
+ 			dev_warn(hsotg->dev, "%s: HANG! Soft Reset timeout GRSTCTL_CSFTRST_DONE\n",
+ 				 __func__);
++			hsotg->core_reset_failed = 1;
+ 			return -EBUSY;
+ 		}
+ 		greset = dwc2_readl(hsotg, GRSTCTL);
+@@ -469,12 +471,15 @@
+ 	if (dwc2_hsotg_wait_bit_set(hsotg, GRSTCTL, GRSTCTL_AHBIDLE, 10000)) {
+ 		dev_warn(hsotg->dev, "%s: HANG! AHB Idle timeout GRSTCTL GRSTCTL_AHBIDLE\n",
+ 			 __func__);
++		hsotg->core_reset_failed = 1;
+ 		return -EBUSY;
+ 	}
+ 
+ 	if (wait_for_host_mode && !skip_wait)
+ 		dwc2_wait_for_mode(hsotg, true);
+ 
++	hsotg->core_reset_failed = 0;
++
+ 	return 0;
+ }
+ 
+--- a/drivers/usb/dwc2/core.h
++++ b/drivers/usb/dwc2/core.h
+@@ -875,6 +875,9 @@
+  * @reset_phy_on_wake:	Quirk saying that we should assert PHY reset on a
+  *			remote wakeup.
+  * @phy_off_for_suspend: Status of whether we turned the PHY off at suspend.
++ * @core_reset_failed:	Set when the last core soft reset timed out; the
++ *			core CSRs may be inaccessible until a further
++ *			successful reset.
+  * @need_phy_for_wake:	Quirk saying that we should keep the PHY on at
+  *			suspend if we need USB to wake us up.
+  * @frame_number:       Frame number read from the core. For both device
+@@ -1073,6 +1076,7 @@
+ 	unsigned int reset_phy_on_wake:1;
+ 	unsigned int need_phy_for_wake:1;
+ 	unsigned int phy_off_for_suspend:1;
++	unsigned int core_reset_failed:1;
+ 	u16 frame_number;
+ 
+ 	struct phy *phy;
+--- a/drivers/usb/dwc2/platform.c
++++ b/drivers/usb/dwc2/platform.c
+@@ -655,6 +655,15 @@
+ 	if (!dwc2->ll_hw_enabled)
+ 		return 0;
+ 
++	/*
++	 * If the last core soft reset timed out, the core never came out of
++	 * reset (e.g. no UTMI clock because the controller was activated
++	 * with no cable attached). Accessing most CSRs would stall the AHB
++	 * and hang the machine; leave the controller alone.
++	 */
++	if (dwc2->core_reset_failed)
++		return 0;
++
+ 	is_device_mode = dwc2_is_device_mode(dwc2);
+ 	if (is_device_mode)
+ 		dwc2_hsotg_suspend(dwc2);
+@@ -735,6 +744,10 @@
+ 	if (!dwc2->ll_hw_enabled)
+ 		return 0;
+ 
++	/* A core that failed its last soft reset cannot be safely touched. */
++	if (dwc2->core_reset_failed)
++		return 0;
++
+ 	if (dwc2->phy_off_for_suspend && dwc2->ll_hw_enabled) {
+ 		ret = __dwc2_lowlevel_hw_enable(dwc2);
+ 		if (ret)

@@ -6,6 +6,8 @@
 
 CONFIG_DIR="/storage/.config/batteryplus"
 CONFIG_FILE="${CONFIG_DIR}/batteryplus.conf"
+MAP_FILE="${CONFIG_DIR}/batteryplus-voltage.map"
+DT_BATTERY="/sys/firmware/devicetree/base/battery"
 SETTING_KEY="system.batteryplus.enabled"
 
 ### Enable logging
@@ -18,6 +20,51 @@ case $(get_setting system.loglevel) in
   ;;
 esac
 
+# Echo $1 limited to [$2,$3], or nothing if it is not a number.
+clamp() {
+  case $1 in
+    ''|*[!0-9]*) return ;;
+  esac
+  [ "$1" -lt "$2" ] && { echo "$2"; return; }
+  [ "$1" -gt "$3" ] && { echo "$3"; return; }
+  echo "$1"
+}
+
+# Millivolts for a POWER_SUPPLY_* key from the battery uevent.
+battery_mv() {
+  awk -F= -v k="POWER_SUPPLY_$1" \
+    '$1 == k && $2 ~ /^[0-9]+$/ { printf "%d", $2 / 1000; exit }' \
+    /sys/class/power_supply/[Bb][Aa][Tt]*/uevent 2>/dev/null
+}
+
+# Millivolts of the 100% entry of the device tree OCV table. That table is
+# the settled open circuit curve, so its first voltage is exactly the full
+# anchor batteryplus wants.
+ocv_full_mv() {
+  local hex
+  hex=$(od -An -N4 -tx1 "${DT_BATTERY}/ocv-capacity-table-0" 2>/dev/null | tr -d ' \n')
+  [ ${#hex} -eq 8 ] || return
+  echo $((16#${hex} / 1000))
+}
+
+# batteryplus maps voltage onto a percentage between anchors that otherwise
+# assume a 4.2V pack, so a cell with different chemistry - the 4.35V one in
+# the GKD Pixel2, for instance - reads 100% across the whole top of its
+# range. Derive the anchors from this battery instead. The limits mirror the
+# daemon's own validation, which silently discards values outside them.
+derive_anchors() {
+  V_EMPTY_DIS=$(clamp "$(battery_mv VOLTAGE_MIN_DESIGN)" 3000 3400)
+  [ -n "${V_EMPTY_DIS}" ] && V_EMPTY_CHG=$(clamp $((V_EMPTY_DIS + 100)) 3300 3600)
+
+  V_FULL_DIS=$(clamp "$(ocv_full_mv)" 3600 4600)
+  [ -z "${V_FULL_DIS}" ] && V_FULL_DIS=$(clamp "$(battery_mv VOLTAGE_MAX_DESIGN)" 3600 4600)
+  V_FULL_CHG=$(clamp "$(battery_mv CONSTANT_CHARGE_VOLTAGE_MAX)" 3600 4600)
+  [ -z "${V_FULL_CHG}" ] && V_FULL_CHG="${V_FULL_DIS}"
+  [ -n "${V_FULL_DIS}" ] && [ "${V_FULL_CHG}" -lt "${V_FULL_DIS}" ] && V_FULL_CHG="${V_FULL_DIS}"
+
+  ${DEBUG} && log $0 "batteryplus-mode: anchors ${V_EMPTY_DIS}/${V_EMPTY_CHG}/${V_FULL_DIS}/${V_FULL_CHG}"
+}
+
 write_config() {  
   ${DEBUG} && log $0 "batteryplus-mode: write_config, mode=$1"
 
@@ -25,9 +72,23 @@ write_config() {
   mkdir -p "${CONFIG_DIR}"
   
   # Write mode to batteryplus config override file
-  cat <<EOF >${CONFIG_FILE}
-mode=$1
-EOF
+  {
+    echo "mode=$1"
+    [ -n "${V_EMPTY_DIS}" ] && echo "V_EMPTY_DIS=${V_EMPTY_DIS}"
+    [ -n "${V_EMPTY_CHG}" ] && echo "V_EMPTY_CHG=${V_EMPTY_CHG}"
+  } >${CONFIG_FILE}
+}
+
+# Only ever seed the full anchors, never overwrite them - the daemon learns
+# and rewrites this file itself once it has seen a full charge.
+seed_map() {
+  [ -f "${MAP_FILE}" ] && return
+  [ -n "${V_FULL_CHG}" ] && [ -n "${V_FULL_DIS}" ] || return
+
+  ${DEBUG} && log $0 "batteryplus-mode: seed_map, ${V_FULL_CHG}/${V_FULL_DIS}"
+
+  mkdir -p "${CONFIG_DIR}"
+  printf 'V_FULL_CHG=%s\nV_FULL_DIS=%s\n' "${V_FULL_CHG}" "${V_FULL_DIS}" >${MAP_FILE}
 }
 
 init_config() {
@@ -44,7 +105,9 @@ init_config() {
   BATTERYPLUS_MODE="voltage"
   [[ "${BATTERYPLUS_ENABLED}" == "0" ]] && BATTERYPLUS_MODE="pmic"
 
+  derive_anchors
   write_config "${BATTERYPLUS_MODE}"
+  seed_map
 }
 
 # Main logic
