@@ -28,6 +28,19 @@ for FOLDER_LINK in "${FOLDER_LINKS[@]}"; do
   ln -sf "$TARGET_FOLDER" "$SOURCE_FOLDER"
 done
 
+# Refresh the wiki config database when online and older than a week; RPCS3
+# applies it per game at boot. The desktop GUI can force a refresh anytime.
+CONFIG_DB="/storage/.config/rpcs3/GuiConfigs/config_database.dat"
+if [ -z "$(find "${CONFIG_DB}" -mtime -7 2>/dev/null)" ]; then
+  mkdir -p "$(dirname "${CONFIG_DB}")"
+  if curl -sf --connect-timeout 3 --max-time 15 "https://api.rpcs3.net/config/?api=v1" -o "${CONFIG_DB}.tmp" \
+     && grep -q '"games"' "${CONFIG_DB}.tmp"; then
+    mv "${CONFIG_DB}.tmp" "${CONFIG_DB}"
+  else
+    rm -f "${CONFIG_DB}.tmp"
+  fi
+fi
+
 #Emulation Station Features
 GAME=$(echo "${1}"| sed "s#^/.*/##")
 PLATFORM=$(echo "${2}"| sed "s#^/.*/##")
