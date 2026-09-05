@@ -1,0 +1,41 @@
+rk915: keep the LMAC awake
+
+The BSP driver declared lpw_no_sleep as a module parameter defaulting to 0
+(sleep permitted), and paired that with trigger_wakeup(),
+check_and_wakeup_rpu_nonblocking() and get_rpu_sleep_status() in hal.c, which
+woke the chip before touching it over SDIO.
+
+The mainline port dropped that entire wake path - hal.c went from 1971 to 883
+lines - but kept the firmware being told it may sleep, and also dropped the
+module_param so there is no way to change it. Once traffic goes idle for a
+moment the chip sleeps, and the next CMD52 pair in rk915_read_data_len() reads
+back 0xF0/0xF0. The driver reports
+
+    rk915: rk915_serias_read: length(61680) too long error.
+
+then tries firmware recovery, which fails because SDIO is already incoherent
+("30550/48056 bytes differ, first at 0x0"), and mac80211 tears the device down.
+That matches the upstream "chip disconnects soon after association" defect:
+association itself succeeds because it keeps the chip busy.
+
+Default to keeping the LMAC awake and restore the parameter so it can be
+switched back once a wake path exists. Costs idle power; buys a stable link.
+
+--- a/src/procfs.c	2026-08-26 21:59:06.219423215 -0400
++++ b/src/procfs.c	2026-08-26 21:59:06.234497545 -0400
+@@ -12,7 +12,14 @@
+ #include "hal_io.h"
+ #include "if_io.h"
+ 
+-unsigned int lpw_no_sleep;
++/*
++ * Must stay 1 while the driver has no wake path: letting the LMAC sleep
++ * leaves CMD52 reads returning 0xF0F0 once the link goes idle.
++ */
++unsigned int lpw_no_sleep = 1;
++module_param(lpw_no_sleep, uint, 0444);
++MODULE_PARM_DESC(lpw_no_sleep,
++		 "keep the LMAC permanently awake (default 1; 0 needs a wake path)");
+ 
+ unsigned int default_phy_threshold = DAPT_DEFAULT_PHY_THRESH;
+ 
