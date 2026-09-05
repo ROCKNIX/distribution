@@ -1,14 +1,55 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2026 ROCKNIX (https://github.com/ROCKNIX)
 
-### Sleep is currently broken, so we'll disable it.
+. /etc/profile.d/001-functions
 
-/usr/bin/suspendmode off
+# Deep suspend is only enabled on devices where it has been validated.
+# Everything else keeps the previous behavior (suspend disabled) until
+# their remaining issues are resolved.
+case "${QUIRK_DEVICE}" in
+  "Retroid Pocket 6"*|"AYN Odin 2"*|"AYN-Odin2"|"AYN Thor"|"AYN-Thor")
+    # Default to mem suspend and keep systemd on that state.
+    mkdir -p /storage/.config/sleep.conf.d
+    cat <<EOF >/storage/.config/sleep.conf.d/zz-sm8550-deeponly.conf
+[Sleep]
+SuspendState=
+SuspendState=mem
+EOF
 
-### Ignore power button presses for now, until we can finish up fixing sleep.
-cat <<EOF >~/.config/logind.conf.d/login.conf
+    # bin/power-handler owns the power key here: it has to see the press
+    # before anything suspends, so that a device driving an external display
+    # blanks its own panel instead of taking the output down with the SoC.
+    # It calls systemctl suspend itself for every other case. The lid stays
+    # with logind.
+    cat <<EOF >~/.config/logind.conf.d/login.conf
+[Login]
+HandlePowerKey=ignore
+HandleSuspendKey=suspend
+HandleLidSwitch=suspend
+HandleLidSwitchExternalPower=suspend
+HandleLidSwitchDocked=ignore
+EOF
+
+    MYSLEEPMODE=$(get_setting system.suspendmode)
+    if [ -z "${MYSLEEPMODE}" ] || [ "${MYSLEEPMODE}" = "off" ]
+    then
+      /usr/bin/suspendmode mem
+    fi
+    ;;
+  *)
+    ### Suspend is not validated on this device yet, keep it disabled.
+    rm -f /storage/.config/sleep.conf.d/zz-sm8550-deeponly.conf
+
+    /usr/bin/suspendmode off
+
+    cat <<EOF >~/.config/logind.conf.d/login.conf
 [Login]
 HandlePowerKey=ignore
 HandleSuspendKey=ignore
 EOF
+    ;;
+esac
+
+systemctl try-restart systemd-logind.service 2>/dev/null || true
