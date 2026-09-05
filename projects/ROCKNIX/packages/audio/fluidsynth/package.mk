@@ -11,3 +11,7 @@ PKG_CMAKE_OPTS_TARGET="-DBUILD_SHARED_LIBS=1 \
                        -Denable-pulseaudio=1 \
                        -Denable-systemd=1 \
                        -Denable-readline=0"
+
+pre_configure_target() {
+  export LDFLAGS="${LDFLAGS} -Wl,-rpath-link,${TOOLCHAIN}/${TARGET_NAME}/lib"
+}
