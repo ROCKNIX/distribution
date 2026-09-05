@@ -40,7 +40,9 @@ else
 fi
 
 # store sdl_controllers in root directory so its shared across devices - will look to revisit this with controller refactor work
-cp -f /usr/config/SDL-GameControllerDB/gamecontrollerdb.txt ${GAME_DIR}/sdl_controllers.txt
+if [ ! -f "${GAME_DIR}/sdl_controllers.txt" ]; then
+  cp -f /usr/config/SDL-GameControllerDB/gamecontrollerdb.txt "${GAME_DIR}/sdl_controllers.txt"
+fi
 
 # mark the binary executable to cover cases where the user adding the binaries doesn't know or forgets.
 chmod 0755 ${LAUNCH_DIR}/${STATIC_BIN}
