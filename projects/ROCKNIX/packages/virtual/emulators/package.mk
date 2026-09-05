@@ -164,6 +164,9 @@ makeinstall_target() {
   add_emu_core 3do retroarch opera true
   add_es_system 3do
 
+  ### Noto CJK Fonts
+  install_script "Install Noto CJK Fonts.sh"
+
   ### Nintendo 3DS
   case ${DEVICE} in
     RK3576|RK3566|SM8250|SM8550|SM8650|SM8750|S922X|RK3588|SM6115|AMD64)
