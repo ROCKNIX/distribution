@@ -744,7 +744,7 @@ makeinstall_target() {
   ### Atari Jaguar
   add_emu_core atarijaguar retroarch virtualjaguar true
   case ${DEVICE} in
-    SM8250|SM8550|SM8650|SM8750)
+    S922X|SM8250|SM8550|SM8650|SM8750)
       add_emu_core atarijaguar bigpemu bigpemu-sa false
       install_script "Start BigPEmu.sh"
       ;;
