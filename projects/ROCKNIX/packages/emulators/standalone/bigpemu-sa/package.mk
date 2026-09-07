@@ -21,6 +21,12 @@ makeinstall_target() {
   cp -rf ${PKG_DIR}/scripts/* ${INSTALL}/usr/bin
   chmod 755 ${INSTALL}/usr/bin/*
 
+  # Base config
   mkdir -p ${INSTALL}/usr/config/bigpemu/userdata
-  cp -rf ${PKG_DIR}/config/BigPEmuConfig.bigpcfg ${INSTALL}/usr/config/bigpemu/userdata/
+  cp -f ${PKG_DIR}/config/BigPEmuConfig.bigpcfg ${INSTALL}/usr/config/bigpemu/userdata/
+
+  # Device-specific config
+  if [ -d "${PKG_DIR}/config/${DEVICE}" ]; then
+    cp -f ${PKG_DIR}/config/${DEVICE}/BigPEmuConfig.bigpcfg ${INSTALL}/usr/config/bigpemu/userdata/
+  fi
 }
