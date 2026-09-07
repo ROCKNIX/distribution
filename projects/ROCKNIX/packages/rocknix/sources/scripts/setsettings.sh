@@ -268,6 +268,22 @@ function game_setting() {
     fi
 }
 
+# Like add_setting, for a setting that has had two spellings: the one
+# EmulationStation writes today and an older one a hand-edited config may
+# still carry. The switches on the RetroAchievements page wrote
+# retroachievements.challenge_indicators, .encore and .unofficial while this
+# script read .challengeindicators, .active and .testunofficial, so those
+# three switches never reached RetroArch and it used its own defaults --
+# challenge indicators on whatever the switch said (2026-09-07).
+function add_setting_either() {
+    local OS_SETTING="$(game_setting ${1})"
+    if [ -z "${OS_SETTING}" ]
+    then
+        OS_SETTING="$(game_setting ${2})"
+    fi
+    add_setting "none" "${3}" "${OS_SETTING}"
+}
+
 function clear_setting() {
       log "Remove setting [${1}]"
       if [ ! -f "${TMP_CONFIG}.sed" ]
@@ -449,10 +465,13 @@ function set_cheevos() {
         add_setting "retroachievements.verbose" "cheevos_verbose_enable"
         add_setting "retroachievements.screenshot" "cheevos_auto_screenshot"
         add_setting "retroachievements.richpresence" "cheevos_richpresence_enable"
-        add_setting "retroachievements.challengeindicators" "cheevos_challenge_indicators"
-        add_setting "retroachievements.testunofficial" "cheevos_test_unofficial"
+        add_setting_either "retroachievements.challenge_indicators" "retroachievements.challengeindicators" "cheevos_challenge_indicators"
+        # The bottom-right count toward an achievement; EmulationStation's
+        # PROGRESS TRACKER switch. A different widget from the indicators.
+        add_setting "retroachievements.progress_tracker" "cheevos_visibility_progress_tracker"
+        add_setting_either "retroachievements.unofficial" "retroachievements.testunofficial" "cheevos_test_unofficial"
         add_setting "retroachievements.badges" "cheevos_badges_enable"
-        add_setting "retroachievements.active" "cheevos_start_active"
+        add_setting_either "retroachievements.encore" "retroachievements.active" "cheevos_start_active"
         local CHEEVOS_SOUND_ENABLE=$(game_setting "retroachievements.sound")
         if [ "${CHEEVOS_SOUND_ENABLE}" != "none" ]; then
             add_setting "none" "cheevos_unlock_sound_enable" "true"
