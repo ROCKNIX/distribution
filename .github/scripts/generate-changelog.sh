@@ -65,7 +65,7 @@ while IFS=$'\x1f' read -r subject author commit_hash; do
     connman|iwd|networkmanager|bluez|openssh|samba|nfs*|avahi|syncthing|rclone|tailscale|zerotier*|wireguard*|openvpn|sixaxis|iw|iptables|wsdd2|wireless-regdb|libpcap|enet|libndp|libnl|libtirpc|libssh|nss-mdns|ap6611s|simple-http-server|fping|speedtest-cli|curl|libslirp|wifi)
       category="🌐 Network" ;;
     # Device Support
-    h700*|rk3326*|rk3399*|rk3566*|rk3576*|rk3588*|s922x*|sm6115*|sm8250*|sm8550*|sm8650*|sm8750*|amd64*|quirks)
+    h700*|rk3326*|rk3399*|rk3566*|rk3576*|rk3588*|s922x*|sm6115*|sm4450*|sm8250*|sm8550*|sm8650*|sm8750*|amd64*|quirks)
       category="📱 Device Support" ;;
     # CI & Workflows
     ci|workflows|validate-commit)
