@@ -39,6 +39,9 @@ post_unpack() {
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr
   rsync -ar ${PKG_BUILD}/usr/ ${INSTALL}/usr/
+
+  # sources/ is overlaid with cp, so pin the mode udev needs to run the shim.
+  chmod 0755 ${INSTALL}/usr/lib/inputplumber/setfacl-shim/setfacl
 }
 
 post_install() {
