@@ -12,7 +12,9 @@ PKG_DEPENDS_TARGET="toolchain ncurses SDL2 cabextract libxss libXdmcp libXft gtk
 PKG_LONGDESC="Box64 lets you run x86_64 Linux programs (such as games) on non-x86_64 Linux systems, like ARM."
 PKG_TOOLCHAIN="cmake"
 
+# Enabled only by default for presets. 
 PKG_CMAKE_OPTS_TARGET="-DCMAKE_BUILD_TYPE=Release \
+                       -DARM_DYNAREC=On \
                        -DBOX32=On \
                        -DBOX32_BINFMT=On"
 
