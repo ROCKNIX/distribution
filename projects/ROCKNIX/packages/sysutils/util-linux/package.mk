@@ -97,6 +97,7 @@ post_makeinstall_target() {
             -e "s,@SWAP_PRIORITY@,${SWAP_PRIORITY:-auto},g" \
             -e "s,@KSM_ENABLE@,${KSM_ENABLE:-auto},g" \
             -e "s,@ZRAM_COMPRESSION_ALGO@,${ZRAM_COMPRESSION_ALGO},g" \
+            -e "s,@THP_MODE@,${THP_MODE:-madvise},g" \
             > ${INSTALL}/etc/swap.conf
   fi
 }

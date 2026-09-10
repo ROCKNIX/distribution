@@ -17,6 +17,7 @@ DEFAULT_VM_WATERMARK_FACTOR="auto"
 DEFAULT_VM_COMPACTION="auto"
 DEFAULT_VM_OVERCOMMIT="auto"
 DEFAULT_KSM_ENABLE="auto"
+DEFAULT_THP_MODE="madvise"
 
 # B. Load System Defaults (Distro Config)
 if [ -f /etc/swap.conf ]; then
@@ -37,6 +38,7 @@ VM_WATERMARK_FACTOR="${VM_WATERMARK_FACTOR:-$DEFAULT_VM_WATERMARK_FACTOR}"
 VM_COMPACTION="${VM_COMPACTION:-$DEFAULT_VM_COMPACTION}"
 VM_OVERCOMMIT="${VM_OVERCOMMIT:-$DEFAULT_VM_OVERCOMMIT}"
 KSM_ENABLE="${KSM_ENABLE:-$DEFAULT_KSM_ENABLE}"
+THP_MODE="${THP_MODE:-$DEFAULT_THP_MODE}"
 
 # --- 2. ENVIRONMENT & TIER DETECTION ---
 
@@ -328,8 +330,14 @@ apply_vm_tuning() {
     # 3. Transparent Huge Pages
     # Tiered THP Logic (FS MADVISE Synergy)
     if [ -f /sys/kernel/mm/transparent_hugepage/enabled ]; then
-        # Default to madvise for all to prevent bloat
-        echo madvise > /sys/kernel/mm/transparent_hugepage/enabled
+        # madvise by default to prevent bloat
+        local thp_mode="${THP_MODE,,}"
+        case "$thp_mode" in
+            always|madvise|never) ;;
+            *) logger -t memory-manager "THP: invalid THP_MODE '$THP_MODE', using madvise"; thp_mode="madvise" ;;
+        esac
+        echo "$thp_mode" > /sys/kernel/mm/transparent_hugepage/enabled
+        logger -t memory-manager "THP: enabled=$thp_mode"
         
         # Enable for Shared Memory (Crucial for Vulkan/Wayland textures)
         if [ -f /sys/kernel/mm/transparent_hugepage/shmem_enabled ]; then
@@ -383,9 +391,9 @@ apply_tuning() {
         sysctl -w vm.swappiness=100 >/dev/null
         sysctl -w vm.page-cluster=0 >/dev/null
         
-        if [ -n "$SECONDARY_ALGO" ] && [ -f /sys/block/zram0/recompress ]; then
-            if grep -q "$SECONDARY_ALGO" /sys/block/zram0/comp_algorithm; then
-                 echo "algo=$SECONDARY_ALGO priority=1" > /sys/block/zram0/recompress 2>/dev/null
+        if [ -n "$SECONDARY_ALGO" ] && [ -f /sys/block/zram0/recomp_algorithm ]; then
+            if ! grep -q "$SECONDARY_ALGO" /sys/block/zram0/recomp_algorithm; then
+                logger -t memory-manager "ZRAM secondary algorithm $SECONDARY_ALGO is not registered"
             fi
         fi
     elif [ "$SWAP_SIZE_VAL" -gt 0 ]; then
@@ -399,7 +407,7 @@ perform_optimization() {
     # 1. ZRAM Recompression (if Hybrid Tiering is active)
     if [ "$ZRAM_SIZE_VAL" -gt 0 ] && [ -n "$SECONDARY_ALGO" ] && [ -f /sys/block/zram0/recompress ]; then
         logger -t memory-manager "Optimizing: Triggering ZRAM recompression ($SECONDARY_ALGO)..."
-        if grep -q "$SECONDARY_ALGO" /sys/block/zram0/comp_algorithm; then
+        if grep -q "$SECONDARY_ALGO" /sys/block/zram0/recomp_algorithm 2>/dev/null; then
              # Recompress huge/idle pages to secondary algo
              echo "algo=$SECONDARY_ALGO type=huge_idle" > /sys/block/zram0/recompress 2>/dev/null
         fi
@@ -433,6 +441,12 @@ setup_zram() {
     
     local algo_path="/sys/block/zram0/comp_algorithm"
     [ -f "$algo_path" ] && echo "$PRIMARY_ALGO" > "$algo_path" 2>/dev/null
+
+    # The secondary algorithm must be registered before disksize initialises the device
+    if [ -n "$SECONDARY_ALGO" ] && [ -f /sys/block/zram0/recomp_algorithm ] && \
+       grep -q "$SECONDARY_ALGO" "$algo_path" 2>/dev/null; then
+        echo "algo=$SECONDARY_ALGO priority=1" > /sys/block/zram0/recomp_algorithm 2>/dev/null
+    fi
     
     echo $((ZRAM_SIZE_VAL * 1024 * 1024)) > /sys/block/zram0/disksize
     mkswap /dev/zram0 >/dev/null
@@ -491,6 +505,7 @@ while [[ $# -gt 0 ]]; do
         --vm-compaction) update_config "VM_COMPACTION" "$2"; shift 2 ;;
         --vm-overcommit) update_config "VM_OVERCOMMIT" "$2"; shift 2 ;;
         --ksm) update_config "KSM_ENABLE" "$2"; shift 2 ;;
+        --thp) update_config "THP_MODE" "$2"; shift 2 ;;
         --setup) ACTION="setup"; shift ;;
         --stop) ACTION="stop"; shift ;;
         --reload) ACTION="reload"; shift ;;
@@ -509,6 +524,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --vm-compaction [Auto|Val]   Set VM compaction proactiveness"
             echo "  --vm-overcommit [Auto|Val]   Set VM overcommit memory (0, 1, 2)"
             echo "  --ksm [Auto|Enable|Disable]  Set Kernel Samepage Merging"
+            echo "  --thp [madvise|always|never] Set Transparent Huge Pages mode"
             echo "Actions:"
             echo "  --setup        Initial setup"
             echo "  --reload       Safe reload (teardown -> setup)"
