@@ -4,6 +4,7 @@
 
 PKG_NAME="file"
 PKG_VERSION="c5eb6d6"
+PKG_SHA256="94df886d24a3ae1c550b436da395ba1d79ab32991bc8e1a3cdf14ce106b3d6ef"
 PKG_LICENSE="BSD"
 PKG_SITE="http://www.darwinsys.com/file/"
 PKG_URL="https://github.com/file/file/archive/${PKG_VERSION}.tar.gz"

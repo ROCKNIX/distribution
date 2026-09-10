@@ -1,39 +1,16 @@
-################################################################################
-#      This file is part of OpenELEC - http://www.openelec.tv
-#      Copyright (C) 2009-2012 Stephan Raue (stephan@openelec.tv)
-#      Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
-#
-#  This Program is free software; you can redistribute it and/or modify
-#  it under the terms of the GNU General Public License as published by
-#  the Free Software Foundation; either version 2, or (at your option)
-#  any later version.
-#
-#  This Program is distributed in the hope that it will be useful,
-#  but WITHOUT ANY WARRANTY; without even the implied warranty of
-#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-#  GNU General Public License for more details.
-#
-#  You should have received a copy of the GNU General Public License
-#  along with OpenELEC.tv; see the file COPYING.  If not, write to
-#  the Free Software Foundation, 51 Franklin Street, Suite 500, Boston, MA 02110, USA.
-#  http://www.gnu.org/copyleft/gpl.html
-################################################################################
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="slang-shaders"
-PKG_VERSION="a2ac00bcd5a44982ecaa6ba6e5b8cc9a9608b1d6"
-PKG_LICENSE="GPL"
+PKG_VERSION="4812a82f6c9a11cc8b5a7447040a98c9fc80c00e"
+PKG_SHA256="7b31fe9039477fff3e9395a7ac583d85f9b7b8b03bc54a15dd4beb40faa4e29e"
+PKG_LICENSE=""
 PKG_SITE="https://github.com/libretro/slang-shaders"
-PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
+PKG_DEPENDS_TARGET=""
 PKG_LONGDESC="Common SLANG shaders for RetroArch"
-
-PKG_TOOLCHAIN="make"
-
-configure_target() {
-  cd ${PKG_BUILD}
-}
+PKG_TOOLCHAIN="manual"
 
 makeinstall_target() {
-  mkdir -p ${INSTALL}/usr/share/slang-shaders
-  make install INSTALLDIR="${INSTALL}/usr/share/slang-shaders"
+  make install INSTALLDIR="${INSTALL}/usr/share/slang-shaders" -C "${PKG_BUILD}"
 }

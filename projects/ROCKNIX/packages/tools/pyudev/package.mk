@@ -5,6 +5,7 @@
 
 PKG_NAME="pyudev"
 PKG_VERSION="5e00141"
+PKG_SHA256="e6b41037ad342179cf6119c42f8291186ee2bae8fc8cb5daf0216abf3898bd85"
 PKG_LICENSE="OSS"
 PKG_SITE="https://github.com/pyudev/pyudev"
 PKG_URL="https://github.com/pyudev/pyudev/archive/${PKG_VERSION}.tar.gz"

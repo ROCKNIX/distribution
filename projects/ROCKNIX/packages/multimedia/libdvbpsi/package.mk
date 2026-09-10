@@ -3,6 +3,7 @@
 
 PKG_NAME="libdvbpsi"
 PKG_VERSION="1.3.3"
+PKG_SHA256="02b5998bcf289cdfbd8757bedd5987e681309b0a25b3ffe6cebae599f7a00112"
 PKG_LICENSE="GPL"
 PKG_SITE="http://www.videolan.org/developers/libdvbpsi.html"
 PKG_URL="http://download.videolan.org/pub/libdvbpsi/${PKG_VERSION}/libdvbpsi-${PKG_VERSION}.tar.bz2"

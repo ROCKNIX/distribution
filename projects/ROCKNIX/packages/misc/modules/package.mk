@@ -22,6 +22,13 @@ makeinstall_target() {
 }
 
 post_makeinstall_target() {
+  if [[ "${CODEX_SUPPORT}" != "yes" ]]; then
+    sed -i \
+      -e '/<path>\.\/Install Codex\.sh<\/path>/,/<\/game>/d' \
+      -e '/<path>\.\/Start Codex\.sh<\/path>/,/<\/game>/d' \
+      ${INSTALL}/usr/config/modules/gamelist.xml
+  fi
+
   case ${DEVICE} in
     SM8650|SM8750) rm -f ${INSTALL}/usr/config/modules/*32bit* ;;
   esac

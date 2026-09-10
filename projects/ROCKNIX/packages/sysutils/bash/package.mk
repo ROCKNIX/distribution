@@ -5,6 +5,7 @@
 
 PKG_NAME="bash"
 PKG_VERSION="5.3"
+PKG_SHA256="0d5cd86965f869a26cf64f4b71be7b96f90a3ba8b3d74e27e8e9d9d5550f31ba"
 PKG_LICENSE="GPL"
 PKG_SITE="http://www.gnu.org/software/bash/"
 PKG_URL="http://ftp.gnu.org/gnu/bash/${PKG_NAME}-${PKG_VERSION}.tar.gz"

@@ -3,6 +3,7 @@
 
 PKG_NAME="libserialport"
 PKG_VERSION="21b3dfe5f68c205be4086469335fd2fc2ce11ed2"
+PKG_SHA256="66c5eb23811b58938dc97168ec9acb0568dcebb02e3d97dcec30ae22a524eaf6"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/sigrokproject/libserialport"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

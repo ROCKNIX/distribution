@@ -3,6 +3,7 @@
 
 PKG_NAME="plutosvg"
 PKG_VERSION="0.0.7"
+PKG_SHA256="78561b571ac224030cdc450ca2986b4de915c2ba7616004a6d71a379bffd15f3"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/sammycage/plutosvg"
 PKG_URL="${PKG_SITE}/archive/refs/tags/v${PKG_VERSION}.tar.gz"

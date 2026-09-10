@@ -3,6 +3,7 @@
 
 PKG_NAME="lowerdeck"
 PKG_VERSION="ab735114ab318a84e4d28c9c5f1b154e450a579a"
+PKG_SHA256="2677d3ce675b9704487f9f09f82728b56009f9fa7c36403086e9c655af108f42"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/bulzipke/lowerdeck"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

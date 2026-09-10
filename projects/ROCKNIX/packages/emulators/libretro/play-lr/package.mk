@@ -1,14 +1,13 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="play-lr"
-PKG_VERSION="b3be9d4840ab947448aedf2228496510257726ac"
-PKG_LICENSE="BSDv2"
+PKG_VERSION="04bde0df87ee7c0e2f0151b51bb2cc22c88541da"
+PKG_LICENSE="BSD-2-Clause"
 PKG_SITE="https://github.com/jpd002/Play-"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain libevdev zstd"
 PKG_LONGDESC="Play! is an attempt to create a PlayStation 2 emulator for Windows, macOS, UNIX, Android & iOS platforms."
-PKG_TOOLCHAIN="cmake"
 
 if [ "${OPENGL_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL} glu"
@@ -23,7 +22,7 @@ case ${TARGET_ARCH} in
     PKG_CMAKE_OPTS_TARGET+=" -DUSE_GLEW=off \
                              -DUSE_GLES=on
                              -DTARGET_PLATFORM_UNIX_AARCH64=yes"
-  ;;
+    ;;
 esac
 
 PKG_CMAKE_OPTS_TARGET+=" -DBUILD_LIBRETRO_CORE=yes \
@@ -32,12 +31,12 @@ PKG_CMAKE_OPTS_TARGET+=" -DBUILD_LIBRETRO_CORE=yes \
                          -DENABLE_AMAZON_S3=no \
                          -DCMAKE_BUILD_TYPE=Release"
 
-pre_make_target() {
+post_unpack() {
   find ${PKG_BUILD} -name flags.make -exec sed -i "s:isystem :I:g" \{} \;
   find ${PKG_BUILD} -name build.ninja -exec sed -i "s:isystem :I:g" \{} \;
 }
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-     cp ${PKG_BUILD}/.${TARGET_NAME}/Source/ui_libretro/play_libretro.so ${INSTALL}/usr/lib/libretro/
+    cp -a Source/ui_libretro/play_libretro.so ${INSTALL}/usr/lib/libretro
 }

@@ -3,6 +3,7 @@
 
 PKG_NAME="pd-mapper"
 PKG_VERSION="1.1"
+PKG_SHA256="7654a7fb8b70b0c7670f98ad9313649abc48eabcef84dad086ed01408fd538a2"
 PKG_LICENSE="BSD-3-Clause"
 PKG_SITE="https://github.com/linux-msm/pd-mapper"
 PKG_URL="https://github.com/linux-msm/pd-mapper/archive/refs/tags/v${PKG_VERSION}.tar.gz"

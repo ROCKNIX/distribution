@@ -63,6 +63,14 @@ on:
         required: false
         default: false
         type: boolean
+      build_profile:
+        description: 'Build profile'
+        required: false
+        default: standard
+        type: choice
+        options:
+          - standard
+          - codex
   workflow_call:
   pull_request:
     types: [ assigned ]
@@ -76,6 +84,7 @@ jobs:
     outputs:
       NIGHTLY: ${{ steps.set-release-type.outputs.NIGHTLY }}
       OFFICIAL: ${{ steps.set-release-type.outputs.OFFICIAL }}
+      CODEX_SUPPORT: ${{ steps.set-codex-profile.outputs.CODEX_SUPPORT }}
       OWNER_LC: ${{ steps.set-envs.outputs.OWNER_OUTPUT }}
       matrix: ${{ steps.generate.outputs.matrix }}
     steps:
@@ -98,6 +107,14 @@ jobs:
           else
             echo "OFFICIAL=no" >> $GITHUB_OUTPUT
             echo "NIGHTLY=yes" >> $GITHUB_OUTPUT
+          fi
+      - name: Determine Codex profile
+        id: set-codex-profile
+        run: |
+          if [[ "${{ inputs.build_profile }}" == "codex" ]]; then
+            echo "CODEX_SUPPORT=yes" >> $GITHUB_OUTPUT
+          else
+            echo "CODEX_SUPPORT=no" >> $GITHUB_OUTPUT
           fi
       - id: generate
         shell: bash
@@ -177,6 +194,7 @@ jobs:
       OWNER_LC: ${{ needs.set-envs.outputs.OWNER_LC }}
       NIGHTLY: ${{ needs.set-envs.outputs.NIGHTLY }}
       OFFICIAL: ${{ needs.set-envs.outputs.OFFICIAL }}
+      CODEX_SUPPORT: ${{ needs.set-envs.outputs.CODEX_SUPPORT }}
 
   rerun-failed-jobs:
     if: always() && !cancelled() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && fromJSON(github.run_attempt) < 3 && github.ref_name == 'next' && (github.event_name != 'schedule' || github.repository == 'UzuCore/ROCKNIXK')
@@ -261,3 +279,56 @@ jobs:
         #body: "빌드완료"
         bodyFile: release_notes.md
         token: ${{ secrets.GH_PAT }}    # 토큰 사용
+
+  release-official:
+    if: ${{ always() && !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && github.repository_owner == 'ROCKNIX' && needs.set-envs.outputs.OFFICIAL == 'yes' }}
+    name: Release official
+    needs: build-devices
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Maximize build space
+        uses: justinthelaw/maximize-github-runner-space@v0.9.0
+        with:
+          skip-components: docker-engine,gh-cli
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: ROCKNIX-image*
+          merge-multiple: true
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: ROCKNIX-update*
+          merge-multiple: true
+      - name: get date
+        run: echo "DATE=$(date +'%Y%m%d')" >> $GITHUB_ENV
+      - name: get last tag
+        id: get-last-tag
+        run: |
+          echo "TAG=$(git tag --sort=-creatordate | head -n 1)" >> $GITHUB_OUTPUT
+      - name: Generate installation token for GitHub App
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.NIGHTLY_APP_ID }}
+          private-key: ${{ secrets.NIGHTLY_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+      - name: Install xmlstarlet
+        run: sudo apt-get install -y xmlstarlet
+      - name: Generate release body
+        env:
+          CHANGELOG_MAX_COUNT: 200
+        run: |
+          bash .github/scripts/generate-release-body.sh "${{ env.DATE }}" "${{ steps.get-last-tag.outputs.TAG }}" > release-body.md
+      - name: release official
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh release create "${{ env.DATE }}" ROCKNIX-* \
+            --target "${{ github.sha }}" \
+            --title "${{ env.DATE }}" \
+            --notes-file release-body.md \
+            --latest

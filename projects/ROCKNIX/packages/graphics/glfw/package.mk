@@ -3,6 +3,7 @@
 
 PKG_NAME="glfw"
 PKG_VERSION="e2c9264"
+PKG_SHA256="56d2700d72ac1e6bd093a46d2e95d0423dd6ba54e56b72c776dba5dcb40c39b7"
 PKG_LICENSE="zlib"
 PKG_DEPENDS_TARGET="toolchain expat libdrm libxkbcommon libXrandr libXinerama libXcursor libXi Mako:host "
 PKG_SITE="https://github.com/glfw/glfw"

@@ -12,6 +12,7 @@ PKG_TOOLCHAIN="manual"
 case ${ARCH} in
     aarch64)
       RCLONE_ARCH="arm64"
+      PKG_SHA256="b710ac2ded37261d2cc6ab046dcd644828944524cf1ee7c2b17dd746f0fd8684"
     ;;
     *)
       RCLONE_ARCH="amd64"

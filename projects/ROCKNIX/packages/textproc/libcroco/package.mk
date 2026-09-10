@@ -3,6 +3,7 @@
 
 PKG_NAME="libcroco"
 PKG_VERSION="0.6.13"
+PKG_SHA256="767ec234ae7aa684695b3a735548224888132e063f92db585759b422570621d4"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://www.freedesktop.org/wiki/Software/icon-theme/"
 PKG_URL="http://www.mirrorservice.org/sites/ftp.gnome.org//pub/GNOME/sources/${PKG_NAME}/${PKG_VERSION:0:3}/${PKG_NAME}-${PKG_VERSION}.tar.xz"

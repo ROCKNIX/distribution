@@ -369,10 +369,14 @@ SDL_DEVICE="${param_device}"
 MAPLINE=""
 if [ -n "${DEVICE}" ] && [ -f "${SDL_DB}" ]; then
   GUID_KEY="$(echo "${DEVICE}" | cut -c1-4)0000$(echo "${DEVICE}" | cut -c9-)"
-  MAPLINE="$(awk -F, -v k="${GUID_KEY}" '!/^#/ && NF>1 {
-      g = substr($1,1,4) "0000" substr($1,9)
-      if (g == k) { print; exit }
-    }' "${SDL_DB}")"
+  MAPLINE="$(awk -F, -v d="${DEVICE}" -v k="${GUID_KEY}" '!/^#/ && NF>1 {
+      if ($1 == d) { exact = $0; exit }
+      if (loose == "" && substr($1,5,4) == "0000") {
+        g = substr($1,1,4) "0000" substr($1,9)
+        if (g == k) { loose = $0 }
+      }
+    }
+    END { print (exact != "" ? exact : loose) }' "${SDL_DB}")"
   MAPPED="$(echo "${MAPLINE}" | cut -d, -f2)"
   [ -n "${MAPPED}" ] && SDL_DEVICE="${MAPPED}"
 fi

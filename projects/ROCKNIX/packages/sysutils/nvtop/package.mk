@@ -3,6 +3,7 @@
 
 PKG_NAME="nvtop"
 PKG_VERSION="76890233d759199f50ad3bdb57a0c0988e96fc44" #3.3.2
+PKG_SHA256="4391c5c9eecd09ed00a2c9f5fe6f36419acf52d0084d6e98213d36d657206a45"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/Syllo/nvtop"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

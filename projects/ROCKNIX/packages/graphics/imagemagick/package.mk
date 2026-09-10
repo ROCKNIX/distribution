@@ -4,6 +4,7 @@
 
 PKG_NAME="imagemagick"
 PKG_VERSION="7.1.2-29"
+PKG_SHA256="b05924ad73c6932ba62c9b32f338f0619b90b767162c8b767f3566556187a284"
 PKG_LICENSE="http://www.imagemagick.org/script/license.php"
 PKG_SITE="https://github.com/ImageMagick/ImageMagick"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

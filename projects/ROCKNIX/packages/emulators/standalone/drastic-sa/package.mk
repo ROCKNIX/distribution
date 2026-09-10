@@ -3,6 +3,7 @@
 
 PKG_NAME="drastic-sa"
 PKG_VERSION="1.0"
+PKG_SHA256="b7bbeb7493bcc355619880c0929cf2709e264f0785ab709a9c305e73b1199b30"
 PKG_LICENSE="Proprietary:DRASTIC.pdf"
 PKG_ARCH="aarch64"
 PKG_URL="https://github.com/ROCKNIX/packages/raw/main/drastic.tar.gz"

@@ -3,6 +3,7 @@
 
 PKG_NAME="dejavu"
 PKG_VERSION="2.37"
+PKG_SHA256="fa9ca4d13871dd122f61258a80d01751d603b4d3ee14095d65453b4e846e17d7"
 PKG_LICENSE="Bitstream"
 PKG_SITE="https://sourceforge.net/projects/dejavu/files/dejavu/${PKG_VERSION}"
 PKG_URL="${PKG_SITE}/${PKG_NAME}-fonts-ttf-${PKG_VERSION}.tar.bz2"

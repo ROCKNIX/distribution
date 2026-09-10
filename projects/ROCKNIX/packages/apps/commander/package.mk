@@ -3,6 +3,7 @@
 
 PKG_NAME="commander"
 PKG_VERSION="b3c008cac3bff9de54a3542cecc53cc271058744"
+PKG_SHA256="a760b9ece785cea937d7d927915a5f156599a32aef1225977b456e9562bcc8e0"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/ROCKNIX/commander"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

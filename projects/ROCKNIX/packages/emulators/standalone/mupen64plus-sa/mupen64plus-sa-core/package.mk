@@ -4,6 +4,7 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 PKG_NAME="mupen64plus-sa-core"
 PKG_VERSION="5340dafcc0f5e8284057ab931dd5c66222d3d49e"
+PKG_SHA256="04a3b14a82182b8f54f88b52585e27b91d37335f87393537332ce94c28037f6b"
 #PKG_VERSION="d4f3e12db0609158c7b4e0beef2bb950aad0ccb9"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/mupen64plus/mupen64plus-core"

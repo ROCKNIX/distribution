@@ -4,6 +4,7 @@
 PKG_NAME="xwayland"
 #PKG_VERSION="c5a47fda896aeefbf1d06a73e392a294344f9e1a" #24.1.13
 PKG_VERSION="24.1.13"
+PKG_SHA256="173aea3d6f79609164c04528e1c8e4c9b60fcd59391c3c9dad4667297d727fb6"
 PKG_LICENSE="OSS"
 PKG_SITE="https://gitlab.freedesktop.org/xorg/xserver"
 #PKG_URL="${PKG_SITE}.git"

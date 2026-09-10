@@ -3,6 +3,7 @@
 
 PKG_NAME="u-boot"
 PKG_VERSION="e99376f7dd01e310a0874459a1fe7535be431f43"
+PKG_SHA256="045519a0eb5471697e09dca903450298897ab9cc058cf371bacc03f334b3dd0e"
 PKG_LICENSE="GPL"
 PKG_SITE="https://www.denx.de/wiki/U-Boot"
 PKG_URL="https://github.com/ROCKNIX/rk3588-uboot/archive/${PKG_VERSION}.tar.gz"

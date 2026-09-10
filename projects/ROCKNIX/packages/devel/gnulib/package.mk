@@ -4,6 +4,7 @@
 PKG_NAME="gnulib"
 # Match version with GNULIB_REVISION in grub bootstrap.conf
 PKG_VERSION="9f48fb992a3d7e96610c4ce8be969cff2d61a01b"
+PKG_SHA256="5a030f3a2b723725faffa7d9ac408f92b4de5421db2668e14c8787e416746eff"
 PKG_LICENSE="GPL"
 PKG_SITE="https://savannah.gnu.org/git/?group=gnulib"
 PKG_URL="http://git.savannah.gnu.org/gitweb/?p=${PKG_NAME}.git;a=snapshot;h=${PKG_VERSION};sf=tgz"

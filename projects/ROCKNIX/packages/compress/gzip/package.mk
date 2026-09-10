@@ -3,6 +3,7 @@
 
 PKG_NAME="gzip"
 PKG_VERSION="1.13"
+PKG_SHA256="7454eb6935db17c6655576c2e1b0fabefd38b4d0936e0f87f48cd062ce91a057"
 PKG_LICENSE="GPL"
 PKG_SITE="https://ftp.gnu.org/gnu/gzip"
 PKG_URL="https://ftp.gnu.org/gnu/gzip/${PKG_NAME}-${PKG_VERSION}.tar.xz"

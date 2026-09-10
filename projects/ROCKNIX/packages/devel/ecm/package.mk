@@ -3,6 +3,7 @@
 
 PKG_NAME="ecm"
 PKG_VERSION="v6.16.0"
+PKG_SHA256="815638a4958e014f9efdaf6588fcf70efae456a23c2d991a457cf62e0ae25123"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/KDE/extra-cmake-modules"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

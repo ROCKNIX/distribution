@@ -4,42 +4,26 @@
 
 PKG_NAME="zmusic"
 PKG_VERSION="1.1.14"
+PKG_SHA256="f04410fe4ea08136f37703e7715c27df4c8532ace1e721cf40c6f303a93acc54"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/ZDoom/ZMusic"
 PKG_URL="https://github.com/ZDoom/ZMusic/archive/refs/tags/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_HOST="toolchain"
+PKG_DEPENDS_HOST="toolchain:host glib:host"
 PKG_DEPENDS_TARGET="toolchain zmusic:host glib"
 PKG_LONGDESC="GZDoom's music system as a standalone library"
 PKG_TOOLCHAIN="cmake-make"
 
-make_host() {
-  [ -d "${PKG_BUILD}/build" ] && rm -rf ${PKG_BUILD}/build
-  mkdir ${PKG_BUILD}/build
-  cd ${PKG_BUILD}/build
-  unset HOST_CMAKE_OPTS
-  cmake -DCMAKE_BUILD_TYPE=Release ..
-  cmake --build .
-}
-
-make_target() {
-  [ -d "${PKG_BUILD}/build" ] && rm -rf ${PKG_BUILD}/build
-  mkdir ${PKG_BUILD}/build
-  cd ${PKG_BUILD}/build
-  cmake -DCMAKE_BUILD_TYPE=Release ..
-  cmake --build .
-}
-
 makeinstall_host() {
   mkdir -p ${TOOLCHAIN}/usr/{lib,include}
-  cp -f ${PKG_BUILD}/build/source/libzmusic* ${TOOLCHAIN}/usr/lib/
-  cp -f ${PKG_BUILD}/include/zmusic.h ${TOOLCHAIN}/usr/include
+    cp -a ${PKG_BUILD}/.${HOST_NAME}/source/libzmusic* ${TOOLCHAIN}/usr/lib
+    cp -a ${PKG_BUILD}/include/zmusic.h ${TOOLCHAIN}/usr/include
 }
 
 makeinstall_target() {
   mkdir -p ${SYSROOT_PREFIX}/usr/{lib,include}
-  cp -f ${PKG_BUILD}/build/source/libzmusic* ${SYSROOT_PREFIX}/usr/lib/
-  cp -f ${PKG_BUILD}/include/zmusic.h ${SYSROOT_PREFIX}/usr/include
+    cp -a ${PKG_BUILD}/.${TARGET_NAME}/source/libzmusic* ${SYSROOT_PREFIX}/usr/lib
+    cp -a ${PKG_BUILD}/include/zmusic.h ${SYSROOT_PREFIX}/usr/include
 
   mkdir -p ${INSTALL}/usr/lib
-  cp -f ${PKG_BUILD}/build/source/libzmusic* ${INSTALL}/usr/lib
+    cp -a ${PKG_BUILD}/.${TARGET_NAME}/source/libzmusic* ${INSTALL}/usr/lib
 }

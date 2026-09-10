@@ -3,6 +3,7 @@
 
 PKG_NAME="batteryplus"
 PKG_VERSION="1c31e89ec1828d51710ad35a607bdfad7e18464e"
+PKG_SHA256="1619da9e945746ea589edb70efd1095b07d21207be3fa43a4c1598be5c2a2089"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/Mikhailzrick/knubat.components"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

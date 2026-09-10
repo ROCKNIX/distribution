@@ -18,20 +18,12 @@ FEX_ARCH_ROOT="${FEX_DATA}/RootFS/ArchLinux"
 FEX_ARCH_USR_LIB="${FEX_ARCH_ROOT}/usr/lib"
 RUNTIME_DIR="${STEAM}/steam-runtime-steamrt-arm64"
 CLIENT_DIR="${STEAM}/steamrtarm64"
-PROTON_NAME="Proton 11.0 (ARM64)"
-PROTON_DIR="${STEAM}/steamapps/common/${PROTON_NAME}"
 RUNTIME_TAR_BASE="https://repo.steampowered.com/steamrt3c/images"
 RUNTIME_TAR_VERSION_URL="${RUNTIME_TAR_BASE}/latest-public-stable.txt"
 STEAM_MANIFEST_URL="https://client-update.fastly.steamstatic.com/steam_client_publicbeta_linuxarm64"
 STEAM_CDN="https://client-update.steamstatic.com"
-PROTON_CACHYOS_VERSION_FULL="11.0-20260702-slr"
-PROTON_CACHYOS_TAR="proton-cachyos-${PROTON_CACHYOS_VERSION_FULL}-arm64.tar.xz"
-PROTON_CACHYOS_DIR="proton-cachyos-${PROTON_CACHYOS_VERSION_FULL}-arm64"
-PROTON_CACHYOS_URL="https://github.com/CachyOS/proton-cachyos/releases/download/cachyos-${PROTON_CACHYOS_VERSION_FULL}/${PROTON_CACHYOS_TAR}"
-PROTON_GE_VERSION_FULL="GE-Proton11-1"
-PROTON_GE_TAR="${PROTON_GE_VERSION_FULL}-aarch64.tar.gz"
-PROTON_GE_DIR="${PROTON_GE_VERSION_FULL}-aarch64"
-PROTON_GE_URL="https://github.com/GloriousEggroll/proton-ge-custom/releases/download/${PROTON_GE_VERSION_FULL}/${PROTON_GE_TAR}"
+PROTON_CACHYOS_RELEASE_API="https://api.github.com/repos/CachyOS/proton-cachyos/releases/latest"
+PROTON_GE_RELEASE_API="https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases/latest"
 unset MESA_LOADER_DRIVER_OVERRIDE
 
 # --- Logging & Error Handling Helpers ---
@@ -40,21 +32,66 @@ log_success() { echo -e "[\033[1;32mSUCCESS\033[0m] $1"; sleep 10; exit 0; }
 die() { echo -e "[\033[1;31mERROR\033[0m] $1" >&2; sleep 10; exit 1; }
 # ----------------------------------------
 
+fetch_proton_latest_release() {
+  local api_url="$1"
+  local asset_pattern="$2"
+  local tag_prefix_to_strip="$3"
+  local var_prefix="$4"
+  local display_name="$5"
+
+  log_info "Fetching latest ${display_name} release from GitHub..."
+
+  local release_json
+  release_json=$(curl -fsSL "${api_url}") || die "Failed to fetch ${display_name} latest release info."
+
+  # Extract tag name
+  local version_tag
+  version_tag=$(echo "${release_json}" | grep -oP '"tag_name":\s*"\K[^"]+' | head -n 1) || die "Failed to parse ${display_name} version tag."
+  [ -n "${version_tag}" ] || die "${display_name} version tag is empty."
+
+  # Extract download URL for specified asset pattern, excluding checksums
+  local download_url
+  download_url=$(echo "${release_json}" | grep -oP '"browser_download_url":\s*"\K[^"]*'"${asset_pattern}"'[^"]*' | grep -v '\.sha512sum' | head -n 1) || die "Failed to parse ${display_name} download URL."
+  [ -n "${download_url}" ] || die "Could not find ${asset_pattern} asset in ${display_name} release."
+
+  # Extract filename from URL
+  local tar_name
+  tar_name=$(basename "${download_url}") || die "Failed to extract ${display_name} filename."
+  [ -n "${tar_name}" ] || die "${display_name} filename is empty."
+
+  local version_clean="${version_tag}"
+  if [ -n "${tag_prefix_to_strip}" ]; then
+    version_clean="${version_tag#${tag_prefix_to_strip}}"
+  fi
+
+  # Infer directory name based on tar filename
+  local dir_name
+  dir_name=$(echo "${tar_name}" | sed 's/\.[^.]*$//' | sed 's/\.[^.]*$//')  # Remove .tar.xz or .tar.gz
+
+  # Set global variables dynamically
+  eval "${var_prefix}_VERSION_FULL='${version_clean}'"
+  eval "${var_prefix}_TAR='${tar_name}'"
+  eval "${var_prefix}_DIR='${dir_name}'"
+  eval "${var_prefix}_URL='${download_url}'"
+
+  log_info "${display_name} latest version: ${version_clean}"
+  log_info "${display_name} download URL: ${download_url}"
+}
+
 install_fex_config() {
   log_info "Installing FEX config..."
   cp -r "/usr/config/fex-emu" "/storage/.config/" || die "Failed to copy FEX config."
 }
 
 ensure_fex_rootfs() {
-  if [ ! -f "${FEX_DATA}/RootFS/ArchLinux/graphics_provider.json" ]; then
-    rm -rf ${FEX_DATA}/RootFS/ArchLinux* || die "Failed to remove existing FEX RootFS."
-  fi
+  rm -rf ${FEX_DATA}/RootFS/ArchLinux* || die "Failed to remove existing FEX RootFS."
 
-  if [ ! -f "${FEX_DATA}/RootFS/ArchLinux.sqsh" ]; then
+  if [ ! -d "${FEX_DATA}/RootFS/ArchLinux" ]; then
     log_info "FEX needs to download rootfs before starting Steam. This may take a while..."
     FEXRootFSFetcher --distro-name=arch --distro-version=rolling -y -x || die "Failed to fetch FEX RootFS."
+    rm -rf ${FEX_DATA}/RootFS/ArchLinux.sqsh || die "Failed to remove FEX RootFS sqsh."
   fi
-  cp -f "/usr/share/fex-emu/libvulkan_freedreno.so" "${FEX_ARCH_USR_LIB}" || die "Failed to copy libvulkan_freedreno.so."
+
   cp -f "/usr/lib/liblsfg-vk-layer.so" "${FEX_ARCH_USR_LIB}"  || die "Failed to copy liblsfg-vk-layer.so."
   cp -f "/usr/share/fex-emu/liblsfg-vk-layer-x86.so" "${FEX_ARCH_USR_LIB}"  || die "Failed to copy liblsfg-vk-layer-x86.so."
   cp -f "/usr/share/vulkan/implicit_layer.d/VkLayer_LSFGVK_frame_generation.json" \
@@ -107,6 +144,12 @@ install_steam_runtime_arm64() {
 
   mkdir -p "${STEAM}/lib/aarch64-linux-gnu"
   ln -sf "${target}" "${STEAM}/lib/aarch64-linux-gnu/libibus-1.0.so.5" || die "Failed to symlink libibus."
+
+  target=$(echo "${STEAM}"/steam-runtime-steamrt-arm64/steamrt3c_platform_*/files/lib/aarch64-linux-gnu/libva.so.2.* | head -n 1)
+  if [ ! -f "$target" ]; then
+      die "Could not locate libva target inside runtime."
+    fi
+  ln -sf "${target}" "${STEAM}/lib/aarch64-linux-gnu/libva.so.2" || die "Failed to symlink libva."
 }
 
 install_steam_client_arm64() {
@@ -137,7 +180,6 @@ install_steam_client_arm64() {
 
 install_bundled_proton_files() {
   log_info "Installing bundled Proton files..."
-  mkdir -p "${STEAM_DOT}" "${PROTON_DIR}/"
   cp -f "/usr/share/steam/registry.vdf" "${STEAM_DOT}" || die "Failed to copy registry.vdf."
 }
 
@@ -223,7 +265,9 @@ ensure_steam_desktop_stub
 install_steam_runtime_arm64
 install_steam_client_arm64
 install_bundled_proton_files
+fetch_proton_latest_release "${PROTON_CACHYOS_RELEASE_API}" "arm64" "cachyos-" "PROTON_CACHYOS" "Proton-CachyOS"
 install_proton_cachyos
+fetch_proton_latest_release "${PROTON_GE_RELEASE_API}" "aarch64" "" "PROTON_GE" "Proton-GE"
 install_proton_ge
 run_steam_first_launch
 

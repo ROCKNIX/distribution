@@ -1,5 +1,6 @@
 PKG_NAME="esp8089-firmware"
 PKG_VERSION="490722a"
+PKG_SHA256="48bfffecce1bdb9e48a01fa5e7af49e09e3b5f2986587d0a4334c5f56f7c483b"
 PKG_LICENSE="Apache"
 PKG_SITE="https://github.com/armbian/firmware"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

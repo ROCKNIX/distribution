@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2022-present AmberELEC (https://github.com/AmberELEC)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="same_cdi-lr"
 PKG_VERSION="7ee1d8e9cb4307b7cd44ee1dd757e9b3f48f41d5"
-PKG_LICENSE="GPL"
+PKG_SHA256="3f3193561e6f58640ed6818b5c51fd7e3706083e9f211eb9f2282f12d189e5d4"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/same_cdi"
-PKG_URL="${PKG_SITE}.git"
+PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain expat zlib flac sqlite"
 PKG_LONGDESC="SAME_CDI is a Single Arcade/Machine Emulator for libretro"
 PKG_TOOLCHAIN="make"
@@ -32,8 +33,8 @@ PKG_MAKE_OPTS_TARGET="REGENIE=1 \
                       USE_SYSTEM_LIB_FLAC=1 \
                       USE_SYSTEM_LIB_SQLITE3=1"
 
-pre_configure_target() {
-  sed -i "s/-static-libstdc++//g" scripts/genie.lua
+post_unpack() {
+  sed -i "s/-static-libstdc++//g" ${PKG_BUILD}/scripts/genie.lua
 }
 
 make_target() {
@@ -46,5 +47,5 @@ make_target() {
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp same_cdi_libretro.so ${INSTALL}/usr/lib/libretro/
+    cp -a same_cdi_libretro.so ${INSTALL}/usr/lib/libretro
 }

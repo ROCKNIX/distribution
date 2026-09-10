@@ -3,6 +3,7 @@
 
 PKG_NAME="libXres"
 PKG_VERSION="1.2.3"
+PKG_SHA256="d2de8f5401d6c86a8992791654547eb8def585dfdc0c08cc16e24ef6aeeb69dc"
 PKG_LICENSE="MIT"
 PKG_SITE="https://www.X.org"
 PKG_URL="https://xorg.freedesktop.org/archive/individual/lib/${PKG_NAME}-${PKG_VERSION}.tar.xz"

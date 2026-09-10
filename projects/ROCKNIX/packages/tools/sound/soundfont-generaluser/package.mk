@@ -3,6 +3,7 @@
 
 PKG_NAME="soundfont-generaluser"
 PKG_VERSION="8fe2798"
+PKG_SHA256="0229b2a75a717aa7337fd1802432e2cf36a5307e506fcb5d6ff7023192e037c4"
 PKG_LICENSE="OSS"
 PKG_SITE="http://www.schristiancollins.com/generaluser.php"
 PKG_URL="https://github.com/ROCKNIX/generaluser-gs/archive/${PKG_VERSION}.tar.gz"

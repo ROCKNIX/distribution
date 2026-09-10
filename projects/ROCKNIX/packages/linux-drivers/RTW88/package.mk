@@ -3,6 +3,7 @@
 
 PKG_NAME="RTW88"
 PKG_VERSION="74e7d03cec5b278a0475b30e80cb8af204ba2c2b"
+PKG_SHA256="35eaea3b593b59a4bcf20b9b7ee873aa5ae789a1a8dd3f99df0cb27851359381"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/lwfinger/rtw88"
 PKG_URL="https://github.com/lwfinger/rtw88/archive/${PKG_VERSION}.tar.gz"

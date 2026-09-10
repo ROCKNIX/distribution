@@ -3,10 +3,11 @@
 
 PKG_NAME="steam"
 PKG_VERSION="1.0.0.85"
+PKG_SHA256="b44634a6a604ca7c8b23809d0f2a921a0348bb2081c8cb8944116d0799872b70"
 PKG_LICENSE="proprietary"
 PKG_SITE="https://steampowered.com"
 PKG_URL="https://repo.steampowered.com/steam/archive/stable/steam-launcher_${PKG_VERSION}_amd64.deb"
-PKG_DEPENDS_TARGET="mesa:host fex-emu gamescope lsfg-vk nss networkmanager"
+PKG_DEPENDS_TARGET="fex-emu gamescope lsfg-vk nss networkmanager"
 PKG_LONGDESC="Steam is the ultimate destination for playing, discussing, and creating games"
 PKG_TOOLCHAIN="manual"
 

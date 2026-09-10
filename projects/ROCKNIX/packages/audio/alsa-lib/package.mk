@@ -4,6 +4,7 @@
 
 PKG_NAME="alsa-lib"
 PKG_VERSION="1.2.14"
+PKG_SHA256="be9c88a0b3604367dd74167a2b754a35e142f670292ae47a2fdef27a2ee97a32"
 PKG_LICENSE="GPL"
 PKG_SITE="http://www.alsa-project.org/"
 PKG_URL="https://www.alsa-project.org/files/pub/lib/alsa-lib-${PKG_VERSION}.tar.bz2"

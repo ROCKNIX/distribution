@@ -119,7 +119,7 @@ makeinstall_target() {
   cp -rf "${PKG_DIR}/config/gptk" "${INSTALL}/usr/config/fex-emu"
   mkdir -p "${INSTALL}/usr/config/modules"
   cp -rf "${PKG_DIR}/scripts/"* "${INSTALL}/usr/config/modules"
-  cp "${TOOLCHAIN}/lib/libvulkan_freedreno.so" "${INSTALL}/usr/share/fex-emu/"
+
 }
 
 makeinstall_host() {

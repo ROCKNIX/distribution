@@ -3,6 +3,7 @@
 
 PKG_NAME="plutovg"
 PKG_VERSION="1.3.2"
+PKG_SHA256="7bd4e79ce18b1d47517e7e91fbb7cf19d4f01942804a519bc7c0bf32b6325dd5"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/sammycage/plutovg"
 PKG_URL="${PKG_SITE}/archive/refs/tags/v${PKG_VERSION}.tar.gz"

@@ -3,6 +3,7 @@
 
 PKG_NAME="ryzenadj"
 PKG_VERSION="ea71739b4a3e1a0a624dfd1c9c268a31cb2a4182"
+PKG_SHA256="85e86ddec653b883fe93ce5772969cf4dc825489b32c41289d97dd08d385c41a"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/FlyGoat/RyzenAdj"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

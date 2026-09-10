@@ -951,7 +951,13 @@ do_autoreconf() {
     export AUTOPOINT=$TOOLCHAIN/bin/autopoint
   fi
 
-  if [ -e "$TOOLCHAIN/bin/libtoolize" ]; then
+  # Never reconfigure libtool with a previously installed libtoolize: it runs
+  # as 'libtoolize --copy --force' and overwrites the package's own m4 macros
+  # with the installed - older - ones. A clean build tree has no libtoolize
+  # here at all, so this only ever bites an incremental build across a libtool
+  # version bump, and it fails inside the new macros rather than pointing at
+  # the stale tool.
+  if [ -e "$TOOLCHAIN/bin/libtoolize" -a "$PKG_NAME" != "libtool" ]; then
     export LIBTOOLIZE=$TOOLCHAIN/bin/libtoolize
   fi
 
@@ -1088,12 +1094,34 @@ get_all_package_names() {
   sed -e 's#@?+?@##g; s#.*/##g' ${_CACHE_PACKAGE_GLOBAL} ${_CACHE_PACKAGE_LOCAL} | sort --ignore-case --unique
 }
 
+# Return the global package directory for a package, ignoring any project
+# package of the same name. Used by calculate_stamp; get_pkg_directory
+# deliberately prefers the project package and so cannot answer this.
+get_global_pkg_directory() {
+  local _PKG_ROOT_NAME=${1%:*} _ANCHOR="@?+?@" _DIR
+
+  for _DIR in $(grep -F "/${_PKG_ROOT_NAME}${_ANCHOR}" "${_CACHE_PACKAGE_GLOBAL}"); do
+    echo "${_DIR%${_ANCHOR}}"
+    return
+  done
+}
+
 calculate_stamp() {
-  local stamp data
+  local stamp data global_dir
 
   stamp="$PKG_DIR $PROJECT_DIR/$PROJECT/patches/$PKG_NAME $PROJECT_DIR/$PROJECT/packages/$PKG_NAME"
   [ -n "$DEVICE" ] && stamp+=" $PROJECT_DIR/$PROJECT/devices/$DEVICE/patches/$PKG_NAME"
   [ -n "$PKG_NEED_UNPACK" ] && stamp+=" $PKG_NEED_UNPACK"
+
+  # A project package.mk routinely sources the global one to inherit
+  # PKG_VERSION, PKG_URL and PKG_SHA256, adding only project-specific hooks.
+  # $PKG_DIR resolves to the project copy in that case, so without this the
+  # global recipe is never hashed and a version bump there does not invalidate
+  # the stamp - the previous version stays built and installed, silently. For
+  # a package with no project override this adds a path already in the list,
+  # which the sort -u below discards, so existing stamps do not change.
+  global_dir="$(get_global_pkg_directory "${PKG_NAME}")"
+  [ -n "${global_dir}" ] && stamp+=" ${global_dir}"
 
   data="$(find -L ${stamp} -type f -not -name '.*' -print0 2>/dev/null | sed -z "s|^${ROOT}/||" | LC_ALL=C sort -zu | xargs -0 sha256sum)"
   [ -n "${PKG_STAMP}" ] && data+=$'\n'"$(echo "${PKG_STAMP}" | sha256sum)"

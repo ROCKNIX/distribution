@@ -3,6 +3,7 @@
 
 PKG_NAME="layer-shell-qt"
 PKG_VERSION="v6.4.3"
+PKG_SHA256="eaf9c30a968f229d997fc76f196f3f0e21cd4cf3c14912697d99d40a8b8e3cf7"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/KDE/layer-shell-qt"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

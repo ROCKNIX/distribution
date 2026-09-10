@@ -3,6 +3,7 @@
 
 PKG_NAME="btop"
 PKG_VERSION="v1.4.0"
+PKG_SHA256="ac0d2371bf69d5136de7e9470c6fb286cbee2e16b4c7a6d2cd48a14796e86650"
 PKG_LICENSE="Apache-2.0"
 PKG_SITE="https://github.com/aristocratos/btop"
 PKG_URL="https://github.com/aristocratos/btop/archive/${PKG_VERSION}.tar.gz"

@@ -3,6 +3,7 @@
 
 PKG_NAME="sdltouchtest"
 PKG_VERSION="b62dae0d6233869a4c70a9472bc1e93dec391f94"
+PKG_SHA256="aac50a5a38f8be042ae9210a235e672c1fb9c90b7fc96af72b9554d3e94c2ef9"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/realchonk/sdl2-touch-test"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

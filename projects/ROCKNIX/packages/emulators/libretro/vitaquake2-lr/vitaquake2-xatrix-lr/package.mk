@@ -3,9 +3,10 @@
 
 PKG_NAME="vitaquake2-xatrix-lr"
 PKG_VERSION="$(get_pkg_version vitaquake2-lr)"
+PKG_SHA256="$(get_pkg_sha256 vitaquake2-lr)"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/libretro/vitaquake2"
-PKG_URL="$PKG_SITE/archive/$PKG_VERSION.tar.gz"
+PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Libretro port of VitaQuakeII (Quake 2 engine)"
 
@@ -23,11 +24,11 @@ pre_make_target() {
   case ${TARGET_ARCH} in
     aarch64)
       PKG_MAKE_OPTS_TARGET+=" platform=${DEVICE}_rocknix"
-    ;;
+      ;;
   esac
 }
 
 makeinstall_target() {
   mkdir -p $INSTALL/usr/lib/libretro
-  cp vitaquake2-xatrix_libretro.so $INSTALL/usr/lib/libretro/
+    cp -a vitaquake2-xatrix_libretro.so $INSTALL/usr/lib/libretro
 }

@@ -3,6 +3,7 @@
 
 PKG_NAME="libXaw"
 PKG_VERSION="1.0.16"
+PKG_SHA256="731d572b54c708f81e197a6afa8016918e2e06dfd3025e066ca642a5b8c39c8f"
 PKG_LICENSE="MIT"
 PKG_SITE="http://www.X.org"
 PKG_URL="http://xorg.freedesktop.org/archive/individual/lib/${PKG_NAME}-${PKG_VERSION}.tar.xz"

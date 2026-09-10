@@ -271,6 +271,8 @@ get_fdt_overlays() {
 }
 
 generate_grub_cfg_body() {
+  local MODEL_MATCH
+
   cat << EOF
 insmod part_gpt
 insmod part_msdos
@@ -284,26 +286,24 @@ else
 fi
 EOF
 
+  MODEL_MATCH=$(xmlstarlet sel -t -m "//rocknix/${DEVICE}/file[@full]" \
+    -v "concat(@full, '|', @short)" -n "${CONFIGXML}" 2>/dev/null | while IFS='|' read -r FULL SHORT; do
+    printf '  if [ "${abl_model}" = "%s" ]; then set abl_dev="%s"; fi\n' "${FULL}" "${SHORT}"
+  done)
+
   cat << EOF
 
-set abl_known=
-if fdtdump --prop model --set abl_model; then
+set abl_dev=
 EOF
 
-  xmlstarlet sel -t -m "//rocknix/${DEVICE}/file[@full]" \
-    -v "@full" -n "${CONFIGXML}" 2>/dev/null | while IFS= read -r FULL; do
-  cat << EOF
-  if [ "\${abl_model}" = "${FULL}" ]; then set abl_known=1; fi
-EOF
-  done
+  [ -n "${MODEL_MATCH}" ] && \
+    printf 'if fdtdump --prop model --set abl_model; then\n%s\nfi\n' "${MODEL_MATCH}"
 
   cat << EOF
-  if [ -n "\${abl_known}" ]; then
-    set default="abl"
-    set timeout=2
-  else
-    set abl_model=
-  fi
+
+if [ -n "\${abl_dev}" ]; then
+  set default="\${abl_dev}"
+  set timeout=2
 fi
 
 if [ x"\${feature_menuentry_id}" = xy ]; then
@@ -332,10 +332,10 @@ if [ "\${saved_entry}" = "${SHORT}" ]; then set rotation=$(((360 - ROT * 90) % 3
 EOF
   done
 
-  xmlstarlet sel -t -m "//rocknix/${DEVICE}/file[@rotation and @full]" \
-    -v "concat(@full, '|', @rotation)" -n "${CONFIGXML}" 2>/dev/null | while IFS='|' read -r FULL ROT; do
+  xmlstarlet sel -t -m "//rocknix/${DEVICE}/file[@rotation]" \
+    -v "concat(@short, '|', @rotation)" -n "${CONFIGXML}" 2>/dev/null | while IFS='|' read -r SHORT ROT; do
   cat << EOF
-if [ "\${abl_model}" = "${FULL}" ]; then set rotation=$(((360 - ROT * 90) % 360)); fi
+if [ "\${abl_dev}" = "${SHORT}" ]; then set rotation=$(((360 - ROT * 90) % 360)); fi
 EOF
   done
 
@@ -346,13 +346,6 @@ insmod gfxterm
 terminal_output gfxterm
 set menu_color_normal=cyan/blue
 set menu_color_highlight=white/blue
-
-if [ -n "\${abl_model}" ]; then
-menuentry "ROCKNIX (\${abl_model})" \$menuentry_id_option 'abl' {
-        search --set -f /KERNEL
-        linux /KERNEL boot=LABEL=${DISTRO_BOOTLABEL} disk=LABEL=${DISTRO_DISKLABEL} grub_portable ${EXTRA_CMDLINE}
-}
-fi
 
 EOF
 

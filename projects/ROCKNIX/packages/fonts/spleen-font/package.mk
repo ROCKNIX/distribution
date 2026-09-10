@@ -3,6 +3,7 @@
 
 PKG_NAME="spleen-font"
 PKG_VERSION="2.0.0"
+PKG_SHA256="778778b35dd48701b803db247a6ac8759154ce5fc3abd5cc0b6db98a44ba5a0c"
 PKG_LICENSE="BSD-2-Clause"
 PKG_SITE="https://github.com/fcambus/spleen"
 PKG_URL="${PKG_SITE}/releases/download/${PKG_VERSION}/spleen-${PKG_VERSION}.tar.gz"

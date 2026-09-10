@@ -3,6 +3,7 @@
 
 PKG_NAME="libXpm"
 PKG_VERSION="3.5.19"
+PKG_SHA256="ad3576d689221a39dc728f0e0dc02ca7bb6a0d724c9a77fd1bfa1e9af83be900"
 PKG_LICENSE="MIT"
 PKG_SITE="http://www.X.org"
 PKG_URL="http://xorg.freedesktop.org/archive/individual/lib/${PKG_NAME}-${PKG_VERSION}.tar.xz"

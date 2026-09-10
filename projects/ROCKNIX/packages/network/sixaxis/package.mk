@@ -4,6 +4,7 @@
 
 PKG_NAME="sixaxis"
 PKG_VERSION="f53b0ca28c35ebd71b54190f33eadcb8c3267186"
+PKG_SHA256="baf7fd22c86c5a32d5043a6bd8487928d2ae216759414632b1d3a998ba61d922"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/RetroPie/sixaxis"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

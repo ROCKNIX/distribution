@@ -3,6 +3,7 @@
 
 PKG_NAME="box64"
 PKG_VERSION="2f130fab1d6e1a4ee8a71dc60cfdfcc839ad192a" # v0.4.4
+PKG_SHA256="ce844041092de3f44316bd1c033a3cc10024e5f798c1a8e8a58f046c6d967981"
 PKG_ARCH="aarch64"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/ptitSeb/box64"

@@ -3,6 +3,7 @@
 PKG_NAME="waffle"
 PKG_LICENSE="BSD"
 PKG_VERSION="5f1f48287e806544d745e9a8f5aed47234c61292"
+PKG_SHA256="4a3584b56fc2bb98466eb64f2578a13b75d67328ae16c95b320fa55cbc6afe00"
 PKG_SITE="https://waffle.freedesktop.org/"
 PKG_URL="https://gitlab.freedesktop.org/mesa/waffle/-/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain wayland mesa Python3"

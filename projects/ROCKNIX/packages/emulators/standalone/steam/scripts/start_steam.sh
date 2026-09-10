@@ -47,6 +47,7 @@ steam_apply_lsfg_settings() {
     export LSFGVK_MULTIPLIER="${LSFG_MULTIPLIER}"
     export LSFGVK_FLOW_SCALE="${LSFG_FLOW_SCALE}"
     export LSFGVK_PERFORMANCE_MODE="${LSFG_PERFORMANCE_MODE}"
+    export ENABLE_GAMESCOPE_WSI=0
   else
     export DISABLE_LSFGVK=1
   fi
@@ -91,6 +92,51 @@ steam_setup_environment() {
   [ -n "${TZ}" ] && export TZ
 }
 
+steam_touch_calibration_begin() {
+  local orientation="$1"
+  local model=""
+  local name_path
+
+  STEAM_TOUCH_EVENT=""
+  STEAM_TOUCH_RULE=""
+
+  [ "${orientation}" = "upsidedown" ] || return 0
+  if [ -r /proc/device-tree/model ]; then
+    model=$(tr -d '\000' </proc/device-tree/model)
+  fi
+  [ "${model}" = "AYANEO Pocket S Mini" ] || return 0
+
+  for name_path in /sys/class/input/event*/device/name; do
+    if [ "$(cat "${name_path}" 2>/dev/null)" = "Hynitron CST66xx Touchscreen" ]; then
+      STEAM_TOUCH_EVENT="${name_path%/device/name}"
+      break
+    fi
+  done
+  [ -n "${STEAM_TOUCH_EVENT}" ] || return 0
+
+  STEAM_TOUCH_RULE="/run/udev/rules.d/99-steam-touch-calibration.rules"
+  mkdir -p "${STEAM_TOUCH_RULE%/*}"
+  printf '%s\n' \
+    'ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Hynitron CST66xx Touchscreen", ENV{LIBINPUT_CALIBRATION_MATRIX}="-1 0 1 0 -1 1"' \
+    >"${STEAM_TOUCH_RULE}"
+  udevadm control --reload
+  udevadm trigger --action=change "${STEAM_TOUCH_EVENT}"
+  udevadm settle --timeout=3 >/dev/null 2>&1 || true
+}
+
+steam_touch_calibration_end() {
+  [ -n "${STEAM_TOUCH_RULE:-}" ] || return 0
+
+  rm -f "${STEAM_TOUCH_RULE}"
+  udevadm control --reload >/dev/null 2>&1 || true
+  if [ -n "${STEAM_TOUCH_EVENT:-}" ]; then
+    udevadm trigger --action=change "${STEAM_TOUCH_EVENT}" \
+      >/dev/null 2>&1 || true
+  fi
+  STEAM_TOUCH_RULE=""
+  STEAM_TOUCH_EVENT=""
+}
+
 steam_scope_reexec_if_needed() {
   if [ -z "$_STEAM_SCOPE" ]; then
     systemctl stop steam-bigpicture.scope 2>/dev/null || true
@@ -131,8 +177,13 @@ steam_launch_bigpicture() {
   local game_uri=""
   local force_orientation="normal"
   local gamescope_mode_file="/storage/.config/gamescope/modes.cfg"
+  local steam_exit_code=0
+  local gamescope_exit_code=0
+  local steam_exit_code_file=""
   if [ "${TRANSFORM}" = "90" ]; then
     force_orientation="right"
+  elif [ "${TRANSFORM}" = "180" ]; then
+    force_orientation="upsidedown"
   elif [ "${TRANSFORM}" = "270" ]; then
     force_orientation="left"
   fi
@@ -148,20 +199,45 @@ steam_launch_bigpicture() {
   unset MESA_LOADER_DRIVER_OVERRIDE
   if [ "${STEAM_FLAVOR}" = "arm64" ]; then
     export STEAM_COMPAT_GRAPHICS_PROVIDER=//storage/.local/share/fex-emu/RootFS/ArchLinux/graphics_provider.json
-    LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} gamescope -- /storage/.local/share/Steam/steamrtarm64/steam -deckard -steamos3 -exitsteam
+    steam_exit_code_file=$(mktemp /tmp/steam-exit-code.XXXXXX)
     systemctl stop sway
-    GAMESCOPE_MODE_SAVE_FILE="${gamescope_mode_file}" GAMESCOPE_FAKE_OUTPUT_MM=508x286 \
-    env -u WAYLAND_DISPLAY LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} \
-    gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --mangoapp --backend drm --force-orientation "${force_orientation}" -e -- \
-    /storage/.local/share/Steam/steamrtarm64/steam -deckard -steamos3 -gamepadui -noverifyfiles -nobootstrapupdate -skipinitialbootstrap -norepairfiles -noshaders ${game_uri:+"$game_uri"}
+    steam_touch_calibration_begin "${force_orientation}"
+    trap steam_touch_calibration_end EXIT
+    while true; do
+      rm -f "${steam_exit_code_file}"
+      GAMESCOPE_MODE_SAVE_FILE="${gamescope_mode_file}" GAMESCOPE_FAKE_OUTPUT_MM=508x286 \
+      env -u WAYLAND_DISPLAY LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} \
+      gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --mangoapp --backend drm --force-orientation "${force_orientation}" -e -- \
+      /bin/bash -c '
+        exit_file="$1"
+        shift
+        "$@"
+        printf "%s\n" "$?" >"${exit_file}"
+      ' _ "${steam_exit_code_file}" \
+      /storage/.local/share/Steam/steamrtarm64/steam -deckard -steamos3 -gamepadui -noshaders ${game_uri:+"$game_uri"}
+      gamescope_exit_code=$?
+      if [ -f "${steam_exit_code_file}" ]; then
+        steam_exit_code=$(cat "${steam_exit_code_file}")
+      else
+        steam_exit_code=${gamescope_exit_code}
+      fi
+      [ "${steam_exit_code}" = "42" ] || break
+    done
+    rm -f "${steam_exit_code_file}"
+    steam_touch_calibration_end
+    trap - EXIT
     systemctl start essway
     exit 0
   else
     FEX /usr/bin/steam -exitsteam
     systemctl stop sway
+    steam_touch_calibration_begin "${force_orientation}"
+    trap steam_touch_calibration_end EXIT
     GAMESCOPE_MODE_SAVE_FILE="${gamescope_mode_file}" GAMESCOPE_FAKE_OUTPUT_MM=508x286 env -u WAYLAND_DISPLAY ${EMUPERF} \
       gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --backend drm --force-orientation "${force_orientation}" -- \
       FEX /usr/bin/steam -nobigpicture -noverifyfiles -nobootstrapupdate -skipinitialbootstrap -norepairfiles -noshaders ${game_uri:+"$game_uri"}
+    steam_touch_calibration_end
+    trap - EXIT
     systemctl start essway
     exit 0
   fi

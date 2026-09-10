@@ -3,6 +3,7 @@
 
 PKG_NAME="bigpemu-sa"
 PKG_VERSION="v119"
+PKG_SHA256="9128830fb1a10f6bae0ff40c780d2555a742803d63ce99ef78aef7fed3547d51"
 PKG_ARCH="aarch64"
 PKG_LICENSE="Proprietary"
 PKG_SITE="https://www.richwhitehouse.com/jaguar/"
@@ -20,6 +21,12 @@ makeinstall_target() {
   cp -rf ${PKG_DIR}/scripts/* ${INSTALL}/usr/bin
   chmod 755 ${INSTALL}/usr/bin/*
 
+  # Base config
   mkdir -p ${INSTALL}/usr/config/bigpemu/userdata
-  cp -rf ${PKG_DIR}/config/BigPEmuConfig.bigpcfg ${INSTALL}/usr/config/bigpemu/userdata/
+  cp -f ${PKG_DIR}/config/BigPEmuConfig.bigpcfg ${INSTALL}/usr/config/bigpemu/userdata/
+
+  # Device-specific config
+  if [ -d "${PKG_DIR}/config/${DEVICE}" ]; then
+    cp -f ${PKG_DIR}/config/${DEVICE}/BigPEmuConfig.bigpcfg ${INSTALL}/usr/config/bigpemu/userdata/
+  fi
 }
