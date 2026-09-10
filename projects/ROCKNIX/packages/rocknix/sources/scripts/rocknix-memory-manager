@@ -383,9 +383,9 @@ apply_tuning() {
         sysctl -w vm.swappiness=100 >/dev/null
         sysctl -w vm.page-cluster=0 >/dev/null
         
-        if [ -n "$SECONDARY_ALGO" ] && [ -f /sys/block/zram0/recompress ]; then
-            if grep -q "$SECONDARY_ALGO" /sys/block/zram0/comp_algorithm; then
-                 echo "algo=$SECONDARY_ALGO priority=1" > /sys/block/zram0/recompress 2>/dev/null
+        if [ -n "$SECONDARY_ALGO" ] && [ -f /sys/block/zram0/recomp_algorithm ]; then
+            if ! grep -q "$SECONDARY_ALGO" /sys/block/zram0/recomp_algorithm; then
+                logger -t memory-manager "ZRAM secondary algorithm $SECONDARY_ALGO is not registered"
             fi
         fi
     elif [ "$SWAP_SIZE_VAL" -gt 0 ]; then
@@ -399,7 +399,7 @@ perform_optimization() {
     # 1. ZRAM Recompression (if Hybrid Tiering is active)
     if [ "$ZRAM_SIZE_VAL" -gt 0 ] && [ -n "$SECONDARY_ALGO" ] && [ -f /sys/block/zram0/recompress ]; then
         logger -t memory-manager "Optimizing: Triggering ZRAM recompression ($SECONDARY_ALGO)..."
-        if grep -q "$SECONDARY_ALGO" /sys/block/zram0/comp_algorithm; then
+        if grep -q "$SECONDARY_ALGO" /sys/block/zram0/recomp_algorithm 2>/dev/null; then
              # Recompress huge/idle pages to secondary algo
              echo "algo=$SECONDARY_ALGO type=huge_idle" > /sys/block/zram0/recompress 2>/dev/null
         fi
@@ -433,6 +433,12 @@ setup_zram() {
     
     local algo_path="/sys/block/zram0/comp_algorithm"
     [ -f "$algo_path" ] && echo "$PRIMARY_ALGO" > "$algo_path" 2>/dev/null
+
+    # The secondary algorithm must be registered before disksize initialises the device
+    if [ -n "$SECONDARY_ALGO" ] && [ -f /sys/block/zram0/recomp_algorithm ] && \
+       grep -q "$SECONDARY_ALGO" "$algo_path" 2>/dev/null; then
+        echo "algo=$SECONDARY_ALGO priority=1" > /sys/block/zram0/recomp_algorithm 2>/dev/null
+    fi
     
     echo $((ZRAM_SIZE_VAL * 1024 * 1024)) > /sys/block/zram0/disksize
     mkswap /dev/zram0 >/dev/null
