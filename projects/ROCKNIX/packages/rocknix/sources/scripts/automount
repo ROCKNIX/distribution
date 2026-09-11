@@ -184,7 +184,16 @@ function mount_games() {
 function find_games() {
   if /usr/bin/busybox mountpoint -q /storage
   then
-    for DEV in $(for dev in mmcblk[0-9] sd[a-z] nvme[0-9]n[0-9]; do blkid | grep ${dev} | awk 'BEGIN {FS=":"}; /ext4/ || /btrfs/ || /fat/ || /ntfs/ {print $1}' | sort -r; done)
+    # Rank candidate partitions by size, largest first. UFS and eMMC devices can
+    # expose many partitions (boot, modem, userdata, ...), so device-name order
+    # is meaningless; only partitions of at least 8GiB are considered.
+    for DEV in $(for dev in mmcblk[0-9] sd[a-z] nvme[0-9]n[0-9]; do
+                   blkid | grep ${dev} | awk 'BEGIN {FS=":"}; /ext4/ || /btrfs/ || /fat/ || /ntfs/ {print $1}'
+                 done | while read -r CAND; do
+                   PART=$(basename "${CAND}")
+                   SECTORS=$(cat "/sys/class/block/${PART}/size" 2>/dev/null) || SECTORS=0
+                   (( SECTORS >= 16777216 )) && echo "${SECTORS} ${CAND}"
+                 done | sort -rn | awk '{print $2}')
     do
       ROOTDEV=$(echo ${DEV} | sed -e "s#^/.*/##g" -e "s#p[0-9].*\$##g")
       log $0 "Inspecting ${DEV}."
