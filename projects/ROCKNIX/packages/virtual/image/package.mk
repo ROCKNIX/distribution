@@ -102,6 +102,9 @@ fi
 # modules packages
 [ "${MODULES_PKG}" = "yes" ] && PKG_DEPENDS_TARGET+=" modules"
 
+# Batteryplus voltage-based battery percentage daemon
+[ "${BATTERYPLUS_SUPPORT}" = "yes" ] && PKG_DEPENDS_TARGET+=" batteryplus"
+
 # Entware support
 mkdir -p ${INSTALL}
 ln -sf /storage/.opt ${INSTALL}/opt
