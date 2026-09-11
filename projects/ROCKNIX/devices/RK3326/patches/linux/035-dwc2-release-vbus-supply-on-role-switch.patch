@@ -1,0 +1,102 @@
+usb: dwc2: release vbus-supply when a role switch leaves host mode
+
+Not from upstream (mainline drd.c still has no vbus handling on role
+changes as of this writing). Root-caused on the GKD Pixel2 with a
+sysfs trace of the role switch, the usb2phy's USB-HOST extcon cable
+and the RK817 otg_switch regulator:
+
+  12:53:45 role=host  (usbgadget: gadget disabled -> set_role host)
+  12:53:53 role=host USB-HOST=1 otg_switch=enabled   (OTG adapter in)
+  12:54:13 role=host USB-HOST=0 otg_switch=enabled   (adapter out)
+  12:55:18 role=device USB-HOST=0 otg_switch=enabled (set_role device)
+  ... otg_switch stayed enabled until reboot
+
+dwc2 enables vbus-supply from the hub port-power path once host mode
+starts and releases it only in _dwc2_hcd_stop()/_dwc2_hcd_suspend()
+or the Connector ID B-device path. A usb-role-switch driven change
+out of host mode takes neither: dwc2_drd_role_sw_set() forces device
+mode and returns, the HCD is never stopped, and the Connector ID
+status-change work does not run, so the regulator is leaked and the
+port keeps driving 5V out while in device mode. On a single-port
+board that also charges through that port this means the PMIC never
+sees an external supply, and with usbgadget switching the role back
+to device while a charger or PC is attached it briefly sources VBUS
+against the other end.
+
+Remember whether the core was in host mode when the role switch is
+requested and, after the mode has been forced, release vbus-supply
+when the new role is not host. Done outside the spinlock since
+regulator_disable() may sleep. The exit helper is reference counted
+by 010-dwc2-track-vbus-supply-state.patch, so this is a no-op when
+nothing is held, and the next host session re-enables it through the
+normal port-power path.
+
+---
+--- a/drivers/usb/dwc2/core.h
++++ b/drivers/usb/dwc2/core.h
+@@ -1504,6 +1504,7 @@
+ int dwc2_hcd_get_future_frame_number(struct dwc2_hsotg *hsotg, int us);
+ void dwc2_hcd_connect(struct dwc2_hsotg *hsotg);
+ void dwc2_hcd_disconnect(struct dwc2_hsotg *hsotg, bool force);
++void dwc2_hcd_vbus_supply_exit(struct dwc2_hsotg *hsotg);
+ void dwc2_hcd_start(struct dwc2_hsotg *hsotg);
+ int dwc2_core_init(struct dwc2_hsotg *hsotg, bool initial_setup);
+ int dwc2_port_suspend(struct dwc2_hsotg *hsotg, u16 windex);
+@@ -1531,6 +1532,7 @@
+ { return 0; }
+ static inline void dwc2_hcd_connect(struct dwc2_hsotg *hsotg) {}
+ static inline void dwc2_hcd_disconnect(struct dwc2_hsotg *hsotg, bool force) {}
++static inline void dwc2_hcd_vbus_supply_exit(struct dwc2_hsotg *hsotg) {}
+ static inline void dwc2_hcd_start(struct dwc2_hsotg *hsotg) {}
+ static inline void dwc2_hcd_remove(struct dwc2_hsotg *hsotg) {}
+ static inline int dwc2_core_init(struct dwc2_hsotg *hsotg, bool initial_setup)
+--- a/drivers/usb/dwc2/hcd.c
++++ b/drivers/usb/dwc2/hcd.c
+@@ -163,6 +163,12 @@
+ 	return ret;
+ }
+ 
++/* For role switch based mode changes, which bypass the host stop path. */
++void dwc2_hcd_vbus_supply_exit(struct dwc2_hsotg *hsotg)
++{
++	dwc2_vbus_supply_exit(hsotg);
++}
++
+ /**
+  * dwc2_enable_host_interrupts() - Enables the Host mode interrupts
+  *
+--- a/drivers/usb/dwc2/drd.c
++++ b/drivers/usb/dwc2/drd.c
+@@ -88,6 +88,7 @@
+ 	struct dwc2_hsotg *hsotg = usb_role_switch_get_drvdata(sw);
+ 	unsigned long flags;
+ 	int already = 0;
++	bool was_host;
+ 
+ 	/* Skip session not in line with dr_mode */
+ 	if ((role == USB_ROLE_DEVICE && hsotg->dr_mode == USB_DR_MODE_HOST) ||
+@@ -119,6 +120,8 @@
+ 
+ 	spin_lock_irqsave(&hsotg->lock, flags);
+ 
++	was_host = dwc2_is_host_mode(hsotg);
++
+ 	if (role == USB_ROLE_NONE) {
+ 		/* default operation mode when usb role is USB_ROLE_NONE */
+ 		if (hsotg->role_sw_default_mode == USB_DR_MODE_HOST)
+@@ -160,6 +163,15 @@
+ 		/* This will raise a Connector ID Status Change Interrupt */
+ 		dwc2_force_mode(hsotg, role == USB_ROLE_HOST);
+ 
++	/*
++	 * The host side enables vbus-supply when the root port is powered,
++	 * but a role switch away from host never stops the HCD, so nothing
++	 * releases it: the port keeps sourcing VBUS in device mode. Drop it
++	 * here, outside the lock (regulator_disable may sleep).
++	 */
++	if (was_host && role != USB_ROLE_HOST)
++		dwc2_hcd_vbus_supply_exit(hsotg);
++
+ 	if (!hsotg->ll_hw_enabled && hsotg->clk)
+ 		clk_disable_unprepare(hsotg->clk);
+ 
