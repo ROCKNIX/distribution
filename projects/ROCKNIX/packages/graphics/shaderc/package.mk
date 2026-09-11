@@ -8,7 +8,7 @@ PKG_LICENSE="Apache-2.0"
 PKG_SITE="https://github.com/google/shaderc"
 PKG_URL="${PKG_SITE}/archive/refs/tags/v${PKG_VERSION}.tar.gz"
 PKG_LONGDESC="A collection of tools, libraries, and tests for Vulkan shader compilation."
-PKG_DEPENDS_TARGET="toolchain glslang"
+PKG_DEPENDS_TARGET="toolchain glslang spirv-tools"
 PKG_DEPENDS_UNPACK="spirv-headers"
 PKG_TOOLCHAIN="cmake"
 
