@@ -35,6 +35,10 @@ if [ "${ZEROTIER_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET="${PKG_DEPENDS_TARGET} zerotier-one"
 fi
 
+if [ "${SINGBOX_SUPPORT}" = "yes" ]; then
+  PKG_DEPENDS_TARGET="${PKG_DEPENDS_TARGET} sing-box"
+fi
+
 # nss needed by inputstream.adaptive, chromium etc.
 if [ "${TARGET_ARCH}" = "x86_64" ] || [ "${TARGET_ARCH}" = "arm" ]; then
   PKG_DEPENDS_TARGET="${PKG_DEPENDS_TARGET} nss"
