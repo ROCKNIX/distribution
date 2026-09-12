@@ -6,61 +6,104 @@
 . /etc/profile.d/001-functions
 
 LED_PATH="/sys/class/leds"
+RGB_CONTROL=
+for RGB_CANDIDATE in /sys/bus/serial/drivers/ayaneo-serial-mcu/*/rgb; do
+  if [ -r "${RGB_CANDIDATE}/abi_version" ]; then
+    RGB_CONTROL=${RGB_CANDIDATE}
+    break
+  fi
+done
+RGB_GATE_LOCK="/run/ayaneo-pocket-evo-rgb-gate.lock"
+POWER_FAKE_SUSPEND_FLAG="/var/run/power-fake-suspend-active.flag"
+LID_CLOSED_FLAG="/var/run/lid-closed.flag"
 
-function led_brightness() {
+fake_suspend_active() {
+  [ -e "${POWER_FAKE_SUSPEND_FLAG}" ] || [ -e "${LID_CLOSED_FLAG}" ]
+}
+
+set_rgb_enabled() {
+  [ -n "${RGB_CONTROL}" ] && [ -w "${RGB_CONTROL}/enabled" ] || return 0
+  printf '%s\n' "${1}" >"${RGB_CONTROL}/enabled"
+}
+
+sync_rgb_enabled_to_fake_suspend_state() {
+  exec 8>"${RGB_GATE_LOCK}" || return 1
+  flock 8 || return 1
+
+  RGB_GATE_ATTEMPT=0
+  while [ "${RGB_GATE_ATTEMPT}" -lt 3 ]; do
+    if fake_suspend_active; then
+      RGB_ENABLED_DESIRED=0
+    else
+      RGB_ENABLED_DESIRED=1
+    fi
+
+    if set_rgb_enabled "${RGB_ENABLED_DESIRED}"; then
+      # The write can take long enough for another power event to change the
+      # marker. Only return after a stable before/after observation.
+      if fake_suspend_active; then
+        RGB_ENABLED_CURRENT=0
+      else
+        RGB_ENABLED_CURRENT=1
+      fi
+      if [ "${RGB_ENABLED_CURRENT}" = "${RGB_ENABLED_DESIRED}" ]; then
+        return 0
+      fi
+    fi
+
+    RGB_GATE_ATTEMPT=$((RGB_GATE_ATTEMPT + 1))
+  done
+
+  echo "Pocket EVO RGB: could not synchronize fake-suspend output gate" >&2
+  return 1
+}
+
+led_brightness() {
   echo ${2} >${LED_PATH}/${1}/brightness
 }
 
-function led_rgb() {
+led_rgb() {
   echo ${2} ${3} ${4} >${LED_PATH}/${1}/multi_intensity
 }
 
-function led_off() {
+led_off() {
   led_brightness power-led 0
   led_rgb power-led 0 0 0
-  /usr/bin/analog_sticks_ledcontrol 0 0 0 0
 }
 
-function led_red() {
+led_red() {
   led_brightness power-led 255
   led_rgb power-led 255 0 0
-  /usr/bin/analog_sticks_ledcontrol 255 255 0 0
 }
 
-function led_green() {
+led_green() {
   led_brightness power-led 255
   led_rgb power-led 0 255 0
-  /usr/bin/analog_sticks_ledcontrol 255 0 255 0
 }
 
-function led_blue() {
+led_blue() {
   led_brightness power-led 255
   led_rgb power-led 0 0 255
-  /usr/bin/analog_sticks_ledcontrol 255 0 0 255
 }
 
-function led_white() {
+led_white() {
   led_brightness power-led 255
   led_rgb power-led 255 255 255
-  /usr/bin/analog_sticks_ledcontrol 255 255 255 255
 }
 
-function led_orange() {
+led_orange() {
   led_brightness power-led 255
   led_rgb power-led 255 20 0
-  /usr/bin/analog_sticks_ledcontrol 255 255 20 0
 }
 
-function led_yellow() {
+led_yellow() {
   led_brightness power-led 255
   led_rgb power-led 255 125 0
-  /usr/bin/analog_sticks_ledcontrol 255 255 125 0
 }
 
-function led_purple() {
+led_purple() {
   led_brightness power-led 255
   led_rgb power-led 255 0 255
-  /usr/bin/analog_sticks_ledcontrol 255 255 0 255
 }
 
 case ${1} in
@@ -97,8 +140,10 @@ case ${1} in
     set_setting led.color ${1}
   ;;
   rgb)
-    LEDS_CONFIG=$(get_setting analogsticks.led)
-    /usr/bin/analog_sticks_ledcontrol ${LEDS_CONFIG}
+    if [ "${ROCKNIX_FAKE_SUSPEND_PHASE:-}" != "resume" ]; then
+      LEDS_CONFIG=$(get_setting analogsticks.led)
+      /usr/bin/analog_sticks_ledcontrol ${LEDS_CONFIG}
+    fi
     set_setting led.color ${1}
   ;;
   battery)
@@ -124,3 +169,11 @@ EOF
   ;;
 esac
 
+case "${ROCKNIX_FAKE_SUSPEND_PHASE:-}" in
+  suspend)
+    sync_rgb_enabled_to_fake_suspend_state
+  ;;
+  resume)
+    sync_rgb_enabled_to_fake_suspend_state
+  ;;
+esac
