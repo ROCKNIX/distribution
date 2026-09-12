@@ -1,0 +1,251 @@
+From: Luke Johnson <jaewun@me.com>
+Date: Thu, 2 Jul 2026 00:00:00 +1200
+Subject: [PATCH] regulator: qcom-rpmh: add suspend-state (SLEEP/WAKE TCS) support
+
+The mainline driver only ever votes in RPMH_ACTIVE_ONLY_STATE, so every
+rail that is enabled when the system suspends stays at full power through
+the platform sleep state.  Downstream (qcom,set=<3>) mirrors votes into
+the SLEEP set and additionally forces specific rails off in sleep.
+
+Implement regulator-state-mem support:
+
+ * set_suspend_enable/disable place an enable vote in the SLEEP set and
+   the current active-set contribution in the WAKE set, so the AOP wake
+   set replay restores exactly the pre-suspend state before the kernel
+   resumes.  rpmh's is_req_valid() prunes equal sleep/wake pairs, so a
+   rail with no APPS enable vote degenerates to a guaranteed no-op and
+   other DRVs' votes can never be overridden.
+
+ * set_suspend_mode does the same for the VRM mode register (LDO LPM in
+   suspend with HPM restored on wake).
+
+ * Every active-set request is now also mirrored into the SLEEP cache.
+   rpmh_flush() runs on runtime cluster idle too, not only at system
+   suspend; without the mirror, an enable that arrives after resume
+   would only update the wake side and leave a stale sleep=off vote that
+   cuts the rail on every runtime RSC deep-idle.  Equal pairs are pruned,
+   so the mirror is invisible in the TCSes until a suspend vote is armed.
+
+ * ops->resume re-aligns the SLEEP set with the active set so the
+   system-suspend configuration does not persist into post-resume
+   runtime idle (e.g. a codec rail left in LPM under WLAN load).
+
+Only regulators whose DT node carries regulator-state-mem with
+regulator-on/off-in-suspend are affected (the regulator core calls the
+suspend ops, and ops->resume, only for those).  The companion regulator
+core patch maps s2idle (PM_SUSPEND_TO_IDLE) to the same state-mem
+constraints, so the ops fire for both suspend modes on this platform.
+Active-set votes are never modified.
+---
+ drivers/regulator/qcom-rpmh-regulator.c | 165 +++++++++++++++++++++++-
+ 1 file changed, 163 insertions(+), 2 deletions(-)
+
+--- a/drivers/regulator/qcom-rpmh-regulator.c
++++ b/drivers/regulator/qcom-rpmh-regulator.c
+@@ -204,8 +204,21 @@
+ 	else
+ 		ret = rpmh_write_async(vreg->dev, RPMH_ACTIVE_ONLY_STATE, cmd,
+ 					1);
++	if (ret < 0)
++		return ret;
+ 
+-	return ret;
++	/*
++	 * Mirror every active-set request into the SLEEP set cache.  rpmh
++	 * prunes cache entries whose sleep and wake values are equal (an
++	 * ACTIVE_ONLY write also updates the cached wake value), so this
++	 * changes nothing in the sleep/wake TCSes by itself.  It matters
++	 * once a suspend-state vote (set_suspend_*) has been placed for a
++	 * register: any later active-set change then re-aligns the sleep
++	 * vote instead of leaving a stale suspend value that rpmh_flush()
++	 * would re-apply on every runtime RSC deep-idle entry.  This is
++	 * cache-only; no request is sent to the hardware here.
++	 */
++	return rpmh_write(vreg->dev, RPMH_SLEEP_STATE, cmd, 1);
+ }
+ 
+ static int _rpmh_regulator_vrm_set_voltage_sel(struct regulator_dev *rdev,
+@@ -342,6 +355,141 @@
+ }
+ 
+ /**
++ * rpmh_regulator_send_sleep_wake_request() - cache a SLEEP set vote together
++ *		with the matching WAKE set restore value for one register of
++ *		an RPMh regulator resource
++ * @vreg:	Pointer to the RPMh regulator
++ * @reg_offset:	VRM/XOB register offset within the RPMh resource
++ * @sleep_val:	Value to apply while the RSC is in its sleep state
++ * @wake_val:	Value the wake set replay restores before the CPUs resume
++ *
++ * Both votes are only cached here; rpmh_flush() writes them to the sleep
++ * and wake TCSes when the last CPU powers down.  rpmh's is_req_valid()
++ * prunes cache entries whose sleep and wake values are equal, so sending
++ * an identical pair is a guaranteed no-op for this resource.  The active
++ * set is never modified by this function.
++ *
++ * Return: 0 on success, or a negative error number on failure
++ */
++static int rpmh_regulator_send_sleep_wake_request(struct rpmh_vreg *vreg,
++				u32 reg_offset, u32 sleep_val, u32 wake_val)
++{
++	struct tcs_cmd cmd = {
++		.addr = vreg->addr + reg_offset,
++		.data = sleep_val,
++	};
++	int ret;
++
++	ret = rpmh_write(vreg->dev, RPMH_SLEEP_STATE, &cmd, 1);
++	if (ret < 0)
++		return ret;
++
++	cmd.data = wake_val;
++
++	return rpmh_write(vreg->dev, RPMH_WAKE_ONLY_STATE, &cmd, 1);
++}
++
++static int rpmh_regulator_set_suspend_enable(struct regulator_dev *rdev)
++{
++	struct rpmh_vreg *vreg = rdev_get_drvdata(rdev);
++
++	return rpmh_regulator_send_sleep_wake_request(vreg,
++			RPMH_REGULATOR_REG_ENABLE, 1, vreg->enabled == 1);
++}
++
++static int rpmh_regulator_set_suspend_disable(struct regulator_dev *rdev)
++{
++	struct rpmh_vreg *vreg = rdev_get_drvdata(rdev);
++
++	/*
++	 * WAKE restores the current active-set contribution: 1 only if an
++	 * APPS enable vote is in place right now.  If no enable request has
++	 * ever been sent (enabled == -EINVAL) the pair is 0/0, which rpmh
++	 * prunes - the vote of another DRV (AOP, TZ, ...) keeping such a
++	 * rail on can never be overridden from here.
++	 */
++	return rpmh_regulator_send_sleep_wake_request(vreg,
++			RPMH_REGULATOR_REG_ENABLE, 0, vreg->enabled == 1);
++}
++
++/*
++ * Return the PMIC mode value currently requested in the active set, or a
++ * negative error number if no mode request has been sent.
++ */
++static int rpmh_regulator_vrm_active_pmic_mode(struct rpmh_vreg *vreg)
++{
++	if (vreg->bypassed)
++		return PMIC4_BOB_MODE_PASS;
++
++	if (vreg->mode == REGULATOR_MODE_INVALID)
++		return -EINVAL;
++
++	return vreg->hw_data->pmic_mode_map[vreg->mode];
++}
++
++static int rpmh_regulator_vrm_set_suspend_mode(struct regulator_dev *rdev,
++					unsigned int mode)
++{
++	struct rpmh_vreg *vreg = rdev_get_drvdata(rdev);
++	int sleep_mode, wake_mode;
++
++	if (mode > REGULATOR_MODE_STANDBY)
++		return -EINVAL;
++
++	sleep_mode = vreg->hw_data->pmic_mode_map[mode];
++	if (sleep_mode < 0)
++		return sleep_mode;
++
++	/*
++	 * WAKE must restore the pre-suspend active-set mode.  If no mode
++	 * request has ever been sent, reuse sleep_mode so that the equal
++	 * pair is pruned instead of inventing a wake vote that was not
++	 * present before suspend.
++	 */
++	wake_mode = rpmh_regulator_vrm_active_pmic_mode(vreg);
++	if (wake_mode < 0)
++		wake_mode = sleep_mode;
++
++	/* Never override bypass (pass-through) mode in the sleep set. */
++	if (vreg->bypassed)
++		sleep_mode = wake_mode;
++
++	return rpmh_regulator_send_sleep_wake_request(vreg,
++			RPMH_REGULATOR_REG_VRM_MODE, sleep_mode, wake_mode);
++}
++
++static int rpmh_regulator_resume(struct regulator_dev *rdev)
++{
++	struct rpmh_vreg *vreg = rdev_get_drvdata(rdev);
++	int mode;
++	int ret;
++
++	/*
++	 * Re-align the SLEEP set with the active set.  The rpmh sleep/wake
++	 * cache persists after resume, and rpmh_flush() also runs when the
++	 * last CPU powers down for runtime cpuidle - without this undo the
++	 * system-suspend configuration would be re-applied on every runtime
++	 * RSC sleep.  Writing SLEEP equal to the current active value makes
++	 * is_req_valid() prune the entry at the next flush.
++	 */
++	ret = rpmh_regulator_send_sleep_wake_request(vreg,
++			RPMH_REGULATOR_REG_ENABLE,
++			vreg->enabled == 1, vreg->enabled == 1);
++	if (ret < 0)
++		return ret;
++
++	if (vreg->hw_data->regulator_type != VRM)
++		return 0;
++
++	mode = rpmh_regulator_vrm_active_pmic_mode(vreg);
++	if (mode < 0)
++		return 0;
++
++	return rpmh_regulator_send_sleep_wake_request(vreg,
++			RPMH_REGULATOR_REG_VRM_MODE, mode, mode);
++}
++
++/**
+  * rpmh_regulator_vrm_get_optimum_mode() - get the mode based on the  load
+  * @rdev:		Regulator device pointer for the rpmh-regulator
+  * @input_uV:		Input voltage
+@@ -399,6 +547,10 @@
+ 	.list_voltage		= regulator_list_voltage_linear_range,
+ 	.set_mode		= rpmh_regulator_vrm_set_mode,
+ 	.get_mode		= rpmh_regulator_vrm_get_mode,
++	.set_suspend_enable	= rpmh_regulator_set_suspend_enable,
++	.set_suspend_disable	= rpmh_regulator_set_suspend_disable,
++	.set_suspend_mode	= rpmh_regulator_vrm_set_suspend_mode,
++	.resume			= rpmh_regulator_resume,
+ };
+ 
+ static const struct regulator_ops rpmh_regulator_vrm_drms_ops = {
+@@ -411,6 +563,10 @@
+ 	.set_mode		= rpmh_regulator_vrm_set_mode,
+ 	.get_mode		= rpmh_regulator_vrm_get_mode,
+ 	.get_optimum_mode	= rpmh_regulator_vrm_get_optimum_mode,
++	.set_suspend_enable	= rpmh_regulator_set_suspend_enable,
++	.set_suspend_disable	= rpmh_regulator_set_suspend_disable,
++	.set_suspend_mode	= rpmh_regulator_vrm_set_suspend_mode,
++	.resume			= rpmh_regulator_resume,
+ };
+ 
+ static const struct regulator_ops rpmh_regulator_vrm_bypass_ops = {
+@@ -424,12 +580,19 @@
+ 	.get_mode		= rpmh_regulator_vrm_get_mode,
+ 	.set_bypass		= rpmh_regulator_vrm_set_bypass,
+ 	.get_bypass		= rpmh_regulator_vrm_get_bypass,
++	.set_suspend_enable	= rpmh_regulator_set_suspend_enable,
++	.set_suspend_disable	= rpmh_regulator_set_suspend_disable,
++	.set_suspend_mode	= rpmh_regulator_vrm_set_suspend_mode,
++	.resume			= rpmh_regulator_resume,
+ };
+ 
+ static const struct regulator_ops rpmh_regulator_xob_ops = {
+ 	.enable			= rpmh_regulator_enable,
+ 	.disable		= rpmh_regulator_disable,
+ 	.is_enabled		= rpmh_regulator_is_enabled,
++	.set_suspend_enable	= rpmh_regulator_set_suspend_enable,
++	.set_suspend_disable	= rpmh_regulator_set_suspend_disable,
++	.resume			= rpmh_regulator_resume,
+ };
+ 
+ /**

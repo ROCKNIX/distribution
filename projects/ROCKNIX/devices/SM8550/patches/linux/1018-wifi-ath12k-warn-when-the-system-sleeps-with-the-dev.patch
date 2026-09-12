@@ -1,0 +1,56 @@
+From f510e6ea4c3dda504cbdcda9bf5828a6b5088ca5 Mon Sep 17 00:00:00 2001
+From: Edouard Durand <edouard.durand@gmail.com>
+Date: Thu, 13 Aug 2026 10:10:47 +0800
+Subject: [PATCH] wifi: ath12k: warn when the system sleeps with the device
+ still up
+
+The suspend callbacks do their work only when the hardware has reached
+ATH12K_HW_STATE_OFF. Any other state is taken to mean wowlan armed the firmware
+and the device must stay powered, so the callbacks return success and skip
+everything.
+
+That assumption is unchecked. If the radio is brought up again while the system
+is on its way down, or a recovery is still in flight, the state is not OFF and
+no wowlan is armed either: the SoC then sleeps with a powered, un-suspended
+chip, and on resume the driver skips the power up and carries on against a
+device that has meanwhile been through a PCIe link down. The symptoms surface
+much later and look nothing like a suspend bug.
+
+Log it, with the state that was caught, since ON, RESTARTING and WEDGED each
+mean something different. This changes no behaviour.
+
+Signed-off-by: Edouard Durand <edouard.durand@gmail.com>
+---
+ drivers/net/wireless/ath/ath12k/core.c | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/core.c b/drivers/net/wireless/ath/ath12k/core.c
+index 34d0a9e..fa62f63 100644
+--- a/drivers/net/wireless/ath/ath12k/core.c
++++ b/drivers/net/wireless/ath/ath12k/core.c
+@@ -167,11 +167,21 @@ EXPORT_SYMBOL(ath12k_core_suspend);
+ 
+ int ath12k_core_suspend_late(struct ath12k_base *ab)
+ {
++	struct ath12k *ar = ab->pdevs[0].ar;
+ 	int ret;
+ 
+ 	ret = ath12k_core_continue_suspend_resume(ab);
+-	if (ret <= 0)
++	if (ret <= 0) {
++		/* Skipping the power down is only correct when wowlan is keeping
++		 * the firmware alive; otherwise the SoC sleeps with a running
++		 * chip that nothing will resynchronise on resume.
++		 */
++		if (!ret && !device_may_wakeup(ab->dev))
++			ath12k_warn(ab, "suspending with the device still up, hw state %d, no wowlan armed\n",
++				    (ar && ar->ah) ? ar->ah->state : -1);
++
+ 		return ret;
++	}
+ 
+ 	ath12k_acpi_stop(ab);
+ 
+-- 
+2.49.0.windows.1
+
