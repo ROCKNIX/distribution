@@ -59,12 +59,19 @@ case "${DEVICE}" in
     PKG_EMUS+=" aethersx2-sa azahar-sa dolphin-sa drastic-sa mednafen melonds-sa supermodel-sa vita3k-sa"
     LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr uae4arm-lr"
     ;;
-  SM4450|SM6115)
+  SM6115)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 desmume-lr gpsp-lr pcsx_rearmed-lr"
     PKG_EMUS+=" aethersx2-sa azahar-sa dolphin-sa drastic-sa mednafen melonds-sa supermodel-sa vita3k-sa armsx2-sa"
     LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr uae4arm-lr"
     ;;
-  SM4450|SM8250)
+  # TODO: cemu and xemu testing, drop if unplayable
+  SM4450)
+    [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 daedalusx64-sa desmume-lr gpsp-lr pcsx_rearmed-lr"
+    PKG_EMUS+=" aethersx2-sa azahar-sa bigpemu-sa cemu-sa dolphin-sa heroic mednafen melonds-sa nanoboyadvance-sa supermodel-sa xemu-sa \
+                skyemu-sa steam vita3k-sa armsx2-sa"
+    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr kronos-lr uae4arm-lr"
+    ;;
+  SM8250)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 daedalusx64-sa desmume-lr gpsp-lr pcsx_rearmed-lr"
     PKG_EMUS+=" aethersx2-sa azahar-sa bigpemu-sa cemu-sa dolphin-sa heroic mednafen melonds-sa nanoboyadvance-sa rpcs3-sa supermodel-sa \
                 xemu-sa skyemu-sa steam vita3k-sa armsx2-sa"
@@ -251,12 +258,12 @@ makeinstall_target() {
 
   ## Sammy Atomiswave
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3576|RK3566|RK3588|SM4450|SM6115)
+    H700|RK3326|RK3399|RK3576|RK3566|RK3588|SM6115)
       add_emu_core atomiswave retroarch flycast2021 true
       add_emu_core atomiswave retroarch flycast false
       add_emu_core atomiswave flycast flycast-sa false
       ;;
-    SM8250|SM8550|SM8650|SM8750|S922X)
+    SM4450|SM8250|SM8550|SM8650|SM8750|S922X)
       add_emu_core atomiswave flycast flycast-sa true
       add_emu_core atomiswave retroarch flycast false
       add_emu_core atomiswave retroarch flycast2021 false
@@ -342,12 +349,12 @@ makeinstall_target() {
 
   ### Sega Dreamcast
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3576|RK3566|RK3588|SM4450|SM6115)
+    H700|RK3326|RK3399|RK3576|RK3566|RK3588|SM6115)
       add_emu_core dreamcast retroarch flycast2021 true
       add_emu_core dreamcast retroarch flycast false
       add_emu_core dreamcast flycast flycast-sa false
       ;;
-    SM8250|SM8550|SM8650|SM8750|S922X)
+    SM4450|SM8250|SM8550|SM8650|SM8750|S922X)
       add_emu_core dreamcast flycast flycast-sa true
       add_emu_core dreamcast retroarch flycast false
       add_emu_core dreamcast retroarch flycast2021 false
@@ -452,7 +459,7 @@ makeinstall_target() {
       ;;
   esac
   case ${DEVICE} in
-    SM8250|SM8550|SM8650|SM8750|AMD64)
+    SM4450|SM8250|SM8550|SM8650|SM8750|AMD64)
       add_emu_core gb skyemu skyemu-sa false
       install_script "Start SkyEmu.sh"
       ;;
@@ -486,7 +493,7 @@ makeinstall_target() {
       ;;
   esac
   case ${DEVICE} in
-    SM8250|SM8550|SM8650|SM8750|AMD64)
+    SM4450|SM8250|SM8550|SM8650|SM8750|AMD64)
       add_emu_core gbh skyemu skyemu-sa false
       ;;
   esac
@@ -521,7 +528,7 @@ makeinstall_target() {
       ;;
   esac
   case ${DEVICE} in
-    SM8250|SM8550|SM8650|SM8750|AMD64)
+    SM4450|SM8250|SM8550|SM8650|SM8750|AMD64)
       add_emu_core gba skyemu skyemu-sa false
       ;;
   esac
@@ -548,7 +555,7 @@ makeinstall_target() {
       ;;
   esac
   case ${DEVICE} in
-    SM8250|SM8550|SM8650|SM8750|AMD64)
+    SM4450|SM8250|SM8550|SM8650|SM8750|AMD64)
       add_emu_core gbah skyemu skyemu-sa false
       ;;
   esac
@@ -575,7 +582,7 @@ makeinstall_target() {
       ;;
   esac
   case ${DEVICE} in
-    SM8250|SM8550|SM8650|SM8750|AMD64)
+    SM4450|SM8250|SM8550|SM8650|SM8750|AMD64)
       add_emu_core gbav skyemu skyemu-sa false
       ;;
   esac
@@ -597,7 +604,7 @@ makeinstall_target() {
       ;;
   esac
   case ${DEVICE} in
-    SM8250|SM8550|SM8650|SM8750|AMD64)
+    SM4450|SM8250|SM8550|SM8650|SM8750|AMD64)
       add_emu_core gbc skyemu skyemu-sa false
       ;;
   esac
@@ -624,7 +631,7 @@ makeinstall_target() {
       ;;
   esac
   case ${DEVICE} in
-    SM8250|SM8550|SM8650|SM8750|AMD64)
+    SM4450|SM8250|SM8550|SM8650|SM8750|AMD64)
       add_emu_core gbch skyemu skyemu-sa false
       ;;
   esac
@@ -672,7 +679,7 @@ makeinstall_target() {
 
   ### Nintendo Wii U
   case ${DEVICE} in
-    SM8250|SM8550|SM8650|SM8750|AMD64)
+    SM4450|SM8250|SM8550|SM8650|SM8750|AMD64)
       add_emu_core wiiu cemu cemu-sa true
       add_es_system wiiu
       install_script "Start CEMU.sh"
@@ -720,7 +727,7 @@ makeinstall_target() {
 
   ## Steam & Heroic Games Launcher
   case ${DEVICE} in
-    SM8250|SM8550|SM8650|SM8750)
+    SM4450|SM8250|SM8550|SM8650|SM8750)
       add_emu_core steam steam steam true
       install_script "Install Steam.sh"
       install_script "Uninstall Steam.sh"
@@ -744,7 +751,7 @@ makeinstall_target() {
   ### Atari Jaguar
   add_emu_core atarijaguar retroarch virtualjaguar true
   case ${DEVICE} in
-    S922X|SM8250|SM8550|SM8650|SM8750)
+    S922X|SM4450|SM8250|SM8550|SM8650|SM8750)
       add_emu_core atarijaguar bigpemu bigpemu-sa false
       install_script "Start BigPEmu.sh"
       ;;
@@ -789,7 +796,7 @@ makeinstall_target() {
 
   ### Sega Model 3
   case ${DEVICE} in
-    RK3588|SM8250|SM8550|SM8650|SM8750)
+    RK3588|SM4450|SM8250|SM8550|SM8650|SM8750)
       add_emu_core segamodel3 supermodel supermodel-sa true
       add_es_system segamodel3
       ;;
@@ -833,12 +840,12 @@ makeinstall_target() {
 
   ### Sega Naomi
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3576|RK3566|RK3588|SM4450|SM6115)
+    H700|RK3326|RK3399|RK3576|RK3566|RK3588|SM6115)
       add_emu_core naomi retroarch flycast2021 true
       add_emu_core naomi retroarch flycast false
       add_emu_core naomi flycast flycast-sa false
       ;;
-    SM8250|SM8550|SM8650|SM8750|S922X)
+    SM4450|SM8250|SM8550|SM8650|SM8750|S922X)
       add_emu_core naomi flycast flycast-sa true
       add_emu_core naomi retroarch flycast false
       add_emu_core naomi retroarch flycast2021 false
@@ -896,7 +903,7 @@ makeinstall_target() {
   add_emu_core ngpc retroarch beetle_ngp true
   add_emu_core ngpc retroarch race false
   case ${DEVICE} in
-    H700|RK3326|RK3399|RK3576|RK3566|RK3588|SM8250|SM8550|SM8650|SM8750|AMD64)
+    H700|RK3326|RK3399|RK3576|RK3566|RK3588|SM4450|SM8250|SM8550|SM8650|SM8750|AMD64)
       add_emu_core ngpc mednafen ngp false
       ;;
   esac
@@ -916,7 +923,7 @@ makeinstall_target() {
   add_emu_core n64 retroarch parallel_n64 false
   add_emu_core n64 mupen64plus mupen64plus-sa false
   case ${DEVICE} in
-    SM8250)
+    SM4450|SM8250)
       add_emu_core n64 daedalusx64 daedalusx64-sa false
       install_script "Start DaedalusX64.sh"
       ;;
@@ -953,7 +960,7 @@ makeinstall_target() {
       add_emu_core nds retroarch desmume false
       add_emu_core nds retroarch skyemu false
       ;;
-    RK3399|RK3576|RK3566|RK3588|SM4450|SM6115)
+    RK3399|RK3576|RK3566|RK3588|SM6115)
       add_emu_core nds drastic drastic-sa true
       add_emu_core nds retroarch melonds false
       add_emu_core nds retroarch melondsds false
@@ -962,7 +969,7 @@ makeinstall_target() {
       add_emu_core nds retroarch skyemu false
       install_script "Start MelonDS.sh"
       ;;
-    SM8250|SM8550)
+    SM4450|SM8250|SM8550)
       add_emu_core nds melonds melonds-sa true
       add_emu_core nds drastic drastic-sa false
       add_emu_core nds skyemu skyemu-sa false
@@ -1116,7 +1123,7 @@ makeinstall_target() {
       add_emu_core psx retroarch pcsx_rearmed false
       add_emu_core psx retroarch duckstation false
       ;;
-    RK3399|RK3588|SM4450|SM6115)
+    RK3399|RK3588|SM6115)
       add_emu_core psx retroarch pcsx_rearmed true
       add_emu_core psx retroarch pcsx_rearmed32 false
       add_emu_core psx retroarch beetle_psx false
@@ -1128,7 +1135,7 @@ makeinstall_target() {
       add_emu_core psx retroarch pcsx_rearmed false
       add_emu_core psx retroarch duckstation false
       ;;
-    SM8250|SM8550)
+    SM4450|SM8250|SM8550)
       add_emu_core psx retroarch pcsx_rearmed32 true
       add_emu_core psx retroarch pcsx_rearmed false
       add_emu_core psx retroarch beetle_psx false
@@ -1328,11 +1335,11 @@ makeinstall_target() {
   add_emu_core saturn yabasanshiro yabasanshiro-sa true
   add_emu_core saturn retroarch yabasanshiro false
   case ${DEVICE} in
-    RK3588|SM4450|SM6115)
+    RK3588|SM6115)
       add_emu_core saturn retroarch beetle_saturn false
       add_emu_core saturn mednafen ss false
       ;;
-    SM8250|SM8550|SM8650|SM8750)
+    SM4450|SM8250|SM8550|SM8650|SM8750)
       add_emu_core saturn retroarch beetle_saturn false
       add_emu_core saturn retroarch kronos false
       add_emu_core saturn mednafen ss false
@@ -1368,7 +1375,7 @@ makeinstall_target() {
 
   ### Microsoft XBox
   case ${DEVICE} in
-    SM8250|SM8550|SM8650|SM8750|AMD64)
+    SM4450|SM8250|SM8550|SM8650|SM8750|AMD64)
       add_emu_core xbox xemu xemu-sa true
       add_es_system xbox
       install_script "Start Xemu.sh"

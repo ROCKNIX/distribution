@@ -16,14 +16,14 @@ PKG_LONGDESC="Mupen64Plus Standalone Glide64 Video Driver"
 PKG_TOOLCHAIN="manual"
 
 case ${DEVICE} in
-  RK3588|S922X|RK3399|RK3566*|SM8250|SM8550|SM8650|SM8750|AMD64)
+  RK3588|S922X|RK3399|RK3566*|SM4450|SM8250|SM8550|SM8650|SM8750|AMD64)
     PKG_DEPENDS_TARGET+=" mupen64plus-sa-simplecore"
     PKG_DEPENDS_UNPACK+=" mupen64plus-sa-simplecore"
   ;;
 esac
 
 case ${DEVICE} in
-  SM8250|SM8550|SM8650|SM8750|AMD64)
+  SM4450|SM8250|SM8550|SM8650|SM8750|AMD64)
     PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
     export USE_GLES=0
   ;;
@@ -55,7 +55,7 @@ make_target() {
   cp ${PKG_BUILD}/projects/unix/mupen64plus-video-glide64mk2.so ${PKG_BUILD}/projects/unix/mupen64plus-video-glide64mk2-base.so
 
   case ${DEVICE} in
-    RK3588|S922X|RK3399|RK3566*|SM8250|SM8550|SM8650|SM8750)
+    RK3588|S922X|RK3399|RK3566*|SM4450|SM8250|SM8550|SM8650|SM8750)
       export APIDIR=$(get_build_dir mupen64plus-sa-simplecore)/src/api
       make -C projects/unix all ${PKG_MAKE_OPTS_TARGET}
       cp ${PKG_BUILD}/projects/unix/mupen64plus-video-glide64mk2.so ${PKG_BUILD}/projects/unix/mupen64plus-video-glide64mk2-simple.so
