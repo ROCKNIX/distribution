@@ -497,10 +497,23 @@ then
 fi
 
 ${VERBOSE} && log $0 "Checking errors: ${ret_error} "
-if [ "${ret_error}" == "0" ]
-then
+### Report how the launch ended. EmulationStation records play count, play time
+### and last-played only on 0 (FileData::launchGame) and passes the same code to
+### whatever runs after the game. The global exit hotkey (input_sense, execute_kill) ends
+### a standalone emulator with killall -9 and RetroArch with SIGTERM, so 137 and
+### 143 are the player leaving, not a failed launch: a clean exit. Every other
+### non-zero status still collapses to 1 -- ES keeps 200-300 for messages it can
+### name, and an emulator's own codes would land in that range.
+case "${ret_error}" in
+  0)
         quit 0
-else
+  ;;
+  137|143)
+        log $0 "emulator ended by signal (${ret_error}, the exit hotkey); a clean exit"
+        quit 0
+  ;;
+  *)
         log $0 "exiting with ${ret_error}"
         quit 1
-fi
+  ;;
+esac
