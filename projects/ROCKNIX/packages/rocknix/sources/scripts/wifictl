@@ -15,12 +15,12 @@ NMCLI="$(command -v nmcli 2>/dev/null)"
 ###     wifictl command [ssid] [psk]
 ###
 
-IWD_AP_CFG_DIR="/storage/.cache/iwd/ap"
 WIFI_TYPE=$(get_setting wifi.adhoc.enabled)
 NETWORK_ADDRESS="192.168.80"
 ADHOC_CLIENT_ID=$(get_setting wifi.adhoc.id)
+[ -z "${ADHOC_CLIENT_ID}" ] && ADHOC_CLIENT_ID="1"
+NETPLAY_SSID="NETPLAY_AP"
 WIFI_DEV="$(ls /sys/class/net | grep -m1 ^wlan)"
-DEFAULT_CHAN="6"
 
 # Exit the script if the WiFi device isn't available
 [ -z "${WIFI_DEV}" ] && exit 0
@@ -32,14 +32,8 @@ PSK="${3:-$(get_setting wifi.key 2>/dev/null)}"
 COUNTRY="${4:-$(get_setting wifi.country | tr -d '[:space:]' 2>/dev/null)}"
 
 if [ "${WIFI_TYPE}" = "1" ]; then
-  SSID="NETPLAY_AP"
+  SSID="${NETPLAY_SSID}"
   PSK="deadbeef"
-fi
-
-ADHOC_CHAN=$(get_setting wifi.adhoc.channel)
-if [ -z "${ADHOC_CHAN}" ]; then
-  ADHOC_CHAN="${DEFAULT_CHAN}"
-  set_setting wifi.adhoc.channel ${DEFAULT_CHAN}
 fi
 
 ###
@@ -86,33 +80,52 @@ connect_wifi() {
 
 create_adhoc() {
   wait_for_wifi
-  "${NMCLI}" device set "${WIFI_DEV}" managed no >/dev/null 2>&1
+  # NetworkManager drives iwd into AP mode itself (Device.Mode + AP.Start).
+  # Switching the mode behind its back only makes NM force the device back to
+  # station mode, so the netplay AP has to be a NetworkManager connection.
+  # No DHCP: the clients derive their address from the local play ID.
+  "${NMCLI}" connection delete id "${SSID}" >/dev/null 2>&1
+  "${NMCLI}" connection add type wifi ifname "${WIFI_DEV}" con-name "${SSID}" ssid "${SSID}" \
+    802-11-wireless.mode ap \
+    802-11-wireless.band bg \
+    802-11-wireless-security.key-mgmt wpa-psk \
+    802-11-wireless-security.psk "${PSK}" \
+    ipv4.method manual ipv4.addresses "${NETWORK_ADDRESS}.${ADHOC_CLIENT_ID}/24" \
+    ipv6.method disabled || return 1
+  "${NMCLI}" -w 30 connection up id "${SSID}" || return 1
+}
 
-  # Create an iwd AP profile file
-  mkdir -p "${IWD_AP_CFG_DIR}"
-  cat <<EOF >"${IWD_AP_CFG_DIR}/${SSID}.ap"
-[General]
-Channel=${ADHOC_CHAN}
-DisableHT=true
-
-[Security]
-Passphrase=${PSK}
-
-[IPv4]
-Address=${NETWORK_ADDRESS}.${ADHOC_CLIENT_ID}
-Netmask=255.255.255.0
-Gateway=${NETWORK_ADDRESS}.${ADHOC_CLIENT_ID}
-EOF
-
-  iwctl device ${WIFI_DEV} set-property Mode ap
-  # Start the AP profile
-  iwctl ap ${WIFI_DEV} start-profile "${SSID}" 2>/dev/null
+connect_adhoc_client() {
+  destroy_adhoc
+  # Static lease: the netplay host runs no DHCP server, so the client
+  # address is derived from the local play ID. Autoconnect stays off so a
+  # vanished host doesn't keep the device from returning to ordinary
+  # networks; rejoining is an explicit wifictl connect (ES toggle).
+  "${NMCLI}" connection add type wifi ifname "${WIFI_DEV}" con-name "${SSID}" ssid "${SSID}" \
+    802-11-wireless-security.key-mgmt wpa-psk \
+    802-11-wireless-security.psk "${PSK}" \
+    ipv4.method manual ipv4.addresses "${NETWORK_ADDRESS}.${ADHOC_CLIENT_ID}/24" \
+    ipv6.method disabled connection.autoconnect no || return 1
+  # The iwd backend fails "connection up" instantly when the SSID is not in
+  # the scan cache yet, so make sure the host AP shows up first
+  for i in $(seq 1 15); do
+    "${NMCLI}" device wifi rescan ifname "${WIFI_DEV}" >/dev/null 2>&1
+    sleep 2
+    "${NMCLI}" -t -f SSID device wifi list ifname "${WIFI_DEV}" 2>/dev/null | grep -q "^${SSID}$" && break
+  done
+  "${NMCLI}" -t -f SSID device wifi list ifname "${WIFI_DEV}" 2>/dev/null | grep -q "^${SSID}$" || return 1
+  # The host may still be coming up
+  for i in $(seq 1 3); do
+    "${NMCLI}" -w 20 connection up id "${SSID}" && return 0
+    sleep 3
+  done
+  return 1
 }
 
 destroy_adhoc() {
-  iwctl ap ${WIFI_DEV} stop 2>/dev/null
-  rm -f "${IWD_AP_CFG_DIR}/${SSID}.ap" 2>/dev/null
-  "${NMCLI}" device set "${WIFI_DEV}" managed yes >/dev/null 2>&1
+  # Remove the netplay connection (host or client) so NM autoconnect
+  # can't resurrect it and the device returns to the ordinary networks
+  "${NMCLI}" connection delete id "${NETPLAY_SSID}" >/dev/null 2>&1
 }
 
 # Prefer the network currently in use for the next automatic connection. On
@@ -168,18 +181,17 @@ case "${1}" in
   connect)
     if [ "${WIFI_TYPE}" = "1" ] && \
        [ "${ADHOC_CLIENT_ID}" = "1" ]; then
-      create_adhoc >/dev/null 2>&1
+      create_adhoc
+    elif [ "${WIFI_TYPE}" = "1" ]; then
+      connect_adhoc_client
     else
-      destroy_adhoc >/dev/null 2>&1
-      # Allow NetworkManager time to re-initialize the device after setting managed=yes
-      sleep 3
-      connect_wifi >/dev/null 2>&1
+      destroy_adhoc
+      connect_wifi
     fi
   ;;
   disconnect)
     if [ "${WIFI_TYPE}" = "1" ]; then
-      destroy_adhoc >/dev/null 2>&1
-      iwctl ap ${WIFI_DEV} stop 2>/dev/null
+      destroy_adhoc
     else
       "${NMCLI}" device disconnect "${WIFI_DEV}" >/dev/null 2>&1
     fi
