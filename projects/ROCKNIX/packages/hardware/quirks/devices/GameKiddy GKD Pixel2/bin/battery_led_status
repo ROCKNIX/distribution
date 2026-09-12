@@ -14,8 +14,8 @@
 #   1 = OFF
 #
 # On battery, not charging, VBUS not present:
-#     0%   : shut the device down
-#   1-10%  : one solid red
+#   (voltage at/below cutoff for 3s: shut the device down)
+#   0-10%  : one solid red
 #  11-25%  : one solid green
 #  26-50%  : two solid green
 #  51-75%  : three solid green
@@ -120,6 +120,28 @@ is_vbus_present()
     [ -n "$VOLTAGE" ] && [ "$VOLTAGE" -ge 1000 ]
 }
 
+# Power off on measured battery voltage, not the fuel gauge - the
+# gauge can read false-0% (recoverable via 'factoryreset
+# rk817-fuelgauge') or stick high while genuinely empty, and the
+# driver never clamps it against real voltage. Compares voltage_avg
+# against the dts cutoff (voltage-min-design, 3.4V), both read at
+# runtime. Unreadable voltage counts as empty so a sysfs failure
+# can't disable over-discharge protection.
+is_battery_empty()
+{
+    VNOW=$(cat /sys/class/power_supply/battery/voltage_avg 2>/dev/null)
+    VMIN=$(cat /sys/class/power_supply/battery/voltage_min_design 2>/dev/null)
+    [ -n "$VNOW" ] || return 0
+    [ -n "$VMIN" ] || VMIN=3400000
+    [ "$VNOW" -le "$VMIN" ]
+}
+
+# Consecutive samples at/below cutoff before powering off: 3 seconds
+# at the 0.5s loop cadence, so momentary load sag at moderate charge
+# doesn't false-trigger.
+EMPTY_COUNT=0
+EMPTY_LIMIT=6
+
 # $1 = battery percent, $2 = blink phase ("1" or "0"), alternates every call
 show_level()
 {
@@ -142,7 +164,7 @@ show_level()
         set_leds "$BLINK" "$BLINK" "$BLINK" "$BLINK" "$BLINK"
 
     else
-        if   [ "$PCT" -le 0 ]; then
+        if   [ "$EMPTY_COUNT" -ge "$EMPTY_LIMIT" ]; then
             all_off
             systemctl poweroff
             # Avoid re-triggering in a tight loop while poweroff completes.
@@ -177,6 +199,12 @@ while :; do
             continue
             ;;
     esac
+
+    if is_battery_empty; then
+        EMPTY_COUNT=$(( EMPTY_COUNT + 1 ))
+    else
+        EMPTY_COUNT=0
+    fi
 
     show_level "$PCT" "$BLINK"
 
