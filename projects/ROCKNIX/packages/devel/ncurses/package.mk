@@ -63,12 +63,19 @@ PKG_CONFIGURE_OPTS_TARGET="--without-ada \
                            --enable-sigwinch \
                            --cache-file=config.cache"
 
-PKG_CONFIGURE_OPTS_HOST="--enable-termcap \
+PKG_CONFIGURE_OPTS_HOST="--without-cxx-binding \
+                         --enable-termcap \
                          --with-termlib \
                          --with-shared \
                          --enable-pc-files \
                          --without-tests \
                          --without-manpages"
+
+pre_configure_host() {
+  unset TERMINFO
+  unset TERMINFO_DIR
+}
+
 
 pre_configure_target() {
   cat >config.cache <<EOF
@@ -78,6 +85,7 @@ EOF
 
   CFLAGS="${CFLAGS} -std=gnu17"
 }
+
 
 post_makeinstall_target() {
   local f
