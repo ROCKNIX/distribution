@@ -7,6 +7,7 @@ PKG_SHA256="7ee1e93f2c4e4f7385b78680ecfa3828acf12bc616e2111d23cc66a524231125"
 PKG_LICENSE="CUSTOM"
 PKG_SITE="https://github.com/anthonycaccese/art-book-next-es"
 PKG_URL="https://github.com/anthonycaccese/art-book-next-es/archive/${PKG_VERSION}.tar.gz"
+PKG_DEPENDS_TARGET="toolchain noto-sans-cjk"
 PKG_LONGDESC="Art Book Next"
 PKG_TOOLCHAIN="manual"
 
@@ -15,4 +16,11 @@ makeinstall_target() {
     cp -rf * ${INSTALL}/usr/share/themes/${PKG_NAME}
     rm -rf ${INSTALL}/usr/share/themes/${PKG_NAME}/_inc/systems/{artwork-circuit,artwork-classic,artwork-nintendont,artwork-noir,artwork-outline}
     sed -i '/<include name="\(noir\|nintendont\|circuit\|outline\)"/d' ${INSTALL}/usr/share/themes/${PKG_NAME}/theme.xml
+    sed -i '/<\/theme>/i\
+   <variables lang="zh" ifSubset="fonts:default|custom">\
+      <fontBold>/usr/share/fonts/truetype/noto-cjk/NotoSansCJKsc-Regular.otf</fontBold>\
+      <fontRegular>/usr/share/fonts/truetype/noto-cjk/NotoSansCJKsc-Regular.otf</fontRegular>\
+      <fontLight>/usr/share/fonts/truetype/noto-cjk/NotoSansCJKsc-Regular.otf</fontLight>\
+      <fontLogo>/usr/share/fonts/truetype/noto-cjk/NotoSansCJKsc-Regular.otf</fontLogo>\
+   </variables>' ${INSTALL}/usr/share/themes/${PKG_NAME}/fonts.xml
 }
