@@ -1,0 +1,96 @@
+Subject: [PATCH] wifi: ath12k: skip the passive flag on multi-band
+ wcn7860 scans
+
+A fully passive scan whose channel list spans 2.4 GHz and 5/6 GHz kills the
+wcn7860 firmware. The chip is put in DBS mode, so a multi-band scan has the
+firmware drive both MACs, and doing that passively makes it assert a few
+hundred ms in:
+
+  firmware crashed: MHI_CB_EE_RDDM
+  cmnos_assert_patched.c:604:0x8
+  Asserted in:0x1270bac:0x1811678, line#1671
+
+Every WMI command then returns -108 and MHI reloads the image, which takes
+about a second and drops the connection. The assert address is identical
+across crash dumps, so it is one firmware code path.
+
+iwd's periodic scan sends no SSIDs, which is what ath12k turns into
+WMI_SCAN_FLAG_PASSIVE, so on the KONKR Pocket FIT Elite this fires every
+30 seconds and Wi-Fi never settles. Counting "firmware crashed" per
+iw dev wlan0 scan:
+
+  passive, 2.4 + 5 + 6 GHz      2 2 2
+  passive, 2.4 + 5 GHz          2 2
+  passive, 2.4 GHz only         0 0
+  passive, 5 GHz only           0 0
+  passive, 6 GHz only           0 0
+  active,  2.4 + 5 + 6 GHz      0 0
+  active,  6 GHz only           0 0
+
+One band passively is fine and every band actively is fine; only the
+combination is fatal. Leave WMI_SCAN_FLAG_PASSIVE off for that case. The
+per-channel passive and DFS flags from WMI_SCAN_CHAN_LIST still apply, so
+channels that may not be probed still are not probed.
+
+It does not depend on the regulatory table: with the phy left at country 00
+it still crashes three times in the first 40 seconds of iwd running. The
+narrow reproducer above, which lists only 2.4 and 5 GHz, happens to survive
+at country 00; iwd's own scan, which lists every supported channel, does not.
+
+wcn7850 shares the single-pdev DBS design and may well have the same
+firmware bug, but it is untested here, so keep this keyed to wcn7860.
+---
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -5604,6 +5604,32 @@
+ 	return ATH12K_FIRST_SCAN_LINK;
+ }
+ 
++/* The wcn7860 firmware dies on a fully passive scan whose channel list spans
++ * 2.4 GHz and 5/6 GHz, so tell the caller to leave WMI_SCAN_FLAG_PASSIVE off
++ * for that one case.
++ */
++static bool ath12k_mac_skip_passive_scan_flag(struct ath12k *ar, int n_channels,
++					      struct ieee80211_channel **chan_list)
++{
++	bool has_2ghz = false, has_other = false;
++	int i;
++
++	if (ar->ab->hw_rev != ATH12K_HW_WCN7860_HW20)
++		return false;
++
++	for (i = 0; i < n_channels; i++) {
++		if (chan_list[i]->band == NL80211_BAND_2GHZ)
++			has_2ghz = true;
++		else
++			has_other = true;
++
++		if (has_2ghz && has_other)
++			return true;
++	}
++
++	return false;
++}
++
+ static int ath12k_mac_initiate_hw_scan(struct ieee80211_hw *hw,
+ 				       struct ieee80211_vif *vif,
+ 				       struct ieee80211_scan_request *hw_req,
+@@ -5724,6 +5750,18 @@
+ 		arg->num_ssids = req->n_ssids;
+ 		for (i = 0; i < arg->num_ssids; i++)
+ 			arg->ssid[i] = req->ssids[i];
++	} else if (ath12k_mac_skip_passive_scan_flag(ar, n_channels, chan_list)) {
++		/* The firmware puts both MACs to work on a multi-band scan and
++		 * asserts a few hundred ms into a passive one, after which
++		 * every WMI command returns -108 and MHI has to reload the
++		 * image. Leave the flag off and let the firmware use the
++		 * per-channel passive and DFS flags it already has from
++		 * WMI_SCAN_CHAN_LIST, so channels that may not be probed
++		 * still are not probed.
++		 */
++		ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
++			   "mac skipping passive flag for %d-channel multi-band scan\n",
++			   n_channels);
+ 	} else {
+ 		arg->scan_f_passive = 1;
+ 	}
