@@ -29,7 +29,7 @@ DEFAULT_CHAN="6"
 
 SSID="${2:-$(get_setting wifi.ssid 2>/dev/null)}"
 PSK="${3:-$(get_setting wifi.key 2>/dev/null)}"
-COUNTRY="${4:-$(get_setting wifi.country | tr -d '[:space:]' 2>/dev/null)}"
+COUNTRY="${4:-$(get_setting wifi.country 2>/dev/null | tr -d '[:space:]')}"
 
 if [ "${WIFI_TYPE}" = "1" ]; then
   SSID="NETPLAY_AP"
@@ -52,7 +52,56 @@ wait_for_wifi() {
     iwctl device list | grep -q "${WIFI_DEV}" && break
     sleep 1
   done
-  [ -n "${COUNTRY}" ] && iw reg set "${COUNTRY}"
+
+  return 0
+}
+
+# Put the radio on the configured country, and record it where iw's udev hook
+# (60-iw-regdomain.rules -> /usr/lib/iw/setregdomain) will find it on the next
+# boot. That hook runs on ieee80211 "add", which is the only correct moment:
+# the phy exists, nothing is associated yet, and it costs nothing on devices
+# with no Wi-Fi at all. Applying the domain later rebuilds the channel list and
+# drops any active link, so this is a no-op unless the country really changed.
+#
+# Not called from the scan or connect path either: emptying the scan cache
+# immediately before "device wifi connect" makes the connect fail with the SSID
+# not found -- it breaks the connection it is meant to enable.
+apply_regdomain() {
+  local current target
+
+  # ES stores "N/A" as an empty string. Ask for the world domain then, instead
+  # of leaving the radio on whatever the firmware picked for itself: wcn7860
+  # comes up as country US, which allows 30 dBm on 2.4 GHz and on 5735-5855
+  # where ETSI allows 20 and 14, so it is the wrong table to sit on in Europe.
+  if [ -z "${COUNTRY}" ]; then
+    target="00"
+  else
+    # iw only takes ISO 3166-1 alpha-2 codes, and setregdomain sources the
+    # file below as root, so refuse anything that is not exactly two letters
+    # instead of writing it out.
+    case "${COUNTRY}" in
+      [A-Za-z][A-Za-z]) target="$(echo "${COUNTRY}" | tr '[:lower:]' '[:upper:]')" ;;
+      *) return 0 ;;
+    esac
+  fi
+
+  # The udev hook reads this back at the next boot, world domain included.
+  mkdir -p /storage/.cache
+  echo "REGDOMAIN=${target}" >/storage/.cache/regdomain.conf
+
+  # Already there: don't touch the radio, re-applying would drop the link.
+  # Self-managed drivers (ath12k) report their country in a phy# section;
+  # everything else only has the global domain.
+  current="$(iw reg get 2>/dev/null | sed -n '/^phy#/,$p' |
+             awk '/^country/ { print substr($2, 1, 2); exit }')"
+  [ -z "${current}" ] &&
+    current="$(iw reg get 2>/dev/null |
+               awk '/^country/ { print substr($2, 1, 2); exit }')"
+  [ "${current}" = "${target}" ] && return 0
+
+  iw reg set "${target}"
+
+  return 0
 }
 
 # lists all wifi networks
@@ -71,8 +120,15 @@ connect_wifi() {
     "${NMCLI}" -t -f DEVICE,STATE dev status 2>/dev/null | grep -q "^${WIFI_DEV}:connected" && return 0
     sleep 1
   done
-  "${NMCLI}" dev wifi rescan ifname "${WIFI_DEV}" 2>/dev/null
-  sleep 2
+  # "device wifi connect" fails outright when the SSID isn't in the scan cache,
+  # which is normal for a radio that has only just come up. Rescan until it
+  # appears rather than assuming one pass is enough.
+  for i in $(seq 1 5); do
+    "${NMCLI}" dev wifi rescan ifname "${WIFI_DEV}" 2>/dev/null
+    sleep 2
+    "${NMCLI}" -t -f SSID dev wifi list ifname "${WIFI_DEV}" 2>/dev/null |
+      grep -qxF "${SSID}" && break
+  done
   # If a keyfile profile for this SSID already exists but is incomplete (e.g. missing
   # 802-11-wireless-security.key-mgmt), NM fails connection-update with "key-mgmt: property is missing".
   # Drop the stale profile so "device wifi connect" creates a clean one.
@@ -158,6 +214,7 @@ has_ap_mode() {
 case "${1}" in
   enable)
     rfkill unblock wifi
+    apply_regdomain
     ;;
   disable)
     rfkill block wifi
@@ -166,6 +223,12 @@ case "${1}" in
     pin_wifi
     ;;
   connect)
+    # ES passes the country on this call and not on "enable", so apply it here
+    # too. It has to run before connect_wifi: changing the domain rebuilds the
+    # channel list and empties the scan cache, which is what connect_wifi's
+    # rescan loop then refills. apply_regdomain returns without touching the
+    # radio when the country has not changed, so the usual path is a no-op.
+    apply_regdomain
     if [ "${WIFI_TYPE}" = "1" ] && \
        [ "${ADHOC_CLIENT_ID}" = "1" ]; then
       create_adhoc >/dev/null 2>&1
