@@ -25,16 +25,7 @@ check_hardware_suspend_enabled() {
 }
 
 check_hdmi_connected() {
-  for status_file in /sys/class/drm/card*-HDMI-A-[0-9]/status; do
-    if [[ -f "$status_file" ]]; then
-      local HDMI_STATUS=$(cat "$status_file")
-      if [[ "${HDMI_STATUS}" = "connected" ]]; then
-        return 0
-      fi
-    fi
-  done
-
-  return 1
+  /usr/bin/external-display connected
 }
 
 check_charging() {
@@ -65,69 +56,34 @@ check_es_running_game() {
   fi
 }
 
-backlight_off() {
-  ${DEBUG} && log $0 "Backlight off"
-
-  for BL_POWER_DEVICE in "${BL_POWER_DEVICES[@]}"; do
-    echo 4 > "${BL_POWER_DEVICE}"
-  done
-}
-
-backlight_on() {
-  ${DEBUG} && log $0 "Backlight on"
-
-  for BL_POWER_DEVICE in "${BL_POWER_DEVICES[@]}"; do
-    echo 0 > "${BL_POWER_DEVICE}"
-  done
-}
-
 display_off() {
+  # external-display blanks internal panels only. A DPMS off on an
+  # active DP output kills the alt mode audio jack until a physical
+  # replug (verified on AYN Odin 2 with the official dock).
   if [[ "${ENABLE_DPMS}" == "1" ]]; then
-    # DPMS enabled, use it to turn off the display
     ${DEBUG} && log $0 "DPMS - display off"
-
-    if [[ -n $(echo "${UI_SERVICE}" | grep "sway") && -n $(pgrep "sway") ]]; then
-      ${DEBUG} && log $0 "Display power off"
-      swaymsg "output * power off"
-    elif [[ -n $(echo "${UI_SERVICE}" | grep "weston") && -n $(pgrep "weston") ]]; then
-      weston-dpms -m off
-    else
-      # Fallback - just turn off the backlight
-      backlight_off
-    fi
+    /usr/bin/external-display blank
   else
-    # DPMS disabled, just turn off the backlight
-    backlight_off
+    ${DEBUG} && log $0 "Backlight off"
+    /usr/bin/external-display blank backlight
   fi
 }
 
 display_on() {
-  if [[ "${ENABLE_DPMS}" == "1" ]]; then
-    # DPMS enabled, use it to turn on the display
-    ${DEBUG} && log $0 "DPMS - display on"
-
-    if [[  -n $(echo "${UI_SERVICE}" | grep "sway") && -n $(pgrep "sway") ]]; then
-      ${DEBUG} && log $0 "Display power on"
-      swaymsg "output * power on"
-    elif [[ -n $(echo "${UI_SERVICE}" | grep "weston") && -n $(pgrep "weston") ]]; then
-      weston-dpms -m on
-    else
-      backlight_on
-    fi
-  else
-    # Fallback - just turn on the backlight
-    backlight_on
-  fi
+  ${DEBUG} && log $0 "Display on"
+  /usr/bin/external-display unblank
 }
 
 mute_audio() {
-  ${DEBUG} && log $0 "Mute audio"
-  pactl set-sink-mute @DEFAULT_SINK@ true
+  # Deliberately no sink muting: wireplumber persists sink mute per
+  # route, and a sink that disappears while muted (external display
+  # audio during a sleep cycle) stays muted on disk forever. The
+  # frozen processes stop producing audio anyway.
+  ${DEBUG} && log $0 "Mute audio: skipped (freeze silences the apps)"
 }
 
 unmute_audio() {
-  ${DEBUG} && log $0 "Unmute audio"
-  pactl set-sink-mute @DEFAULT_SINK@ false
+  ${DEBUG} && log $0 "Unmute audio: nothing to undo"
 }
 
 disable_leds() {
@@ -422,12 +378,6 @@ INPUT_WHITELIST=(
 
 # Ayn Thor gpio-keys contains lid events
 [[ "${QUIRK_DEVICE}" == "AYN Thor" ]] && INPUT_WHITELIST+=("gpio-keys")
-
-# Backlight power devices
-declare -a BL_POWER_DEVICES=()
-while IFS= read -r line; do
-  BL_POWER_DEVICES+=("$line")
-done < <(find /sys/class/backlight/*/ -name bl_power 2>/dev/null)
 
 # Source = power / lid
 SOURCE=$1
