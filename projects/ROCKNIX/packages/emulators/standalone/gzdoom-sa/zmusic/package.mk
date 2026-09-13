@@ -1,13 +1,12 @@
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2021-present 351ELEC (https://github.com/351ELEC)
-# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="zmusic"
 PKG_VERSION="1.1.14"
 PKG_SHA256="f04410fe4ea08136f37703e7715c27df4c8532ace1e721cf40c6f303a93acc54"
-PKG_LICENSE="GPL"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/ZDoom/ZMusic"
-PKG_URL="https://github.com/ZDoom/ZMusic/archive/refs/tags/${PKG_VERSION}.tar.gz"
+PKG_URL="${PKG_SITE}/archive/refs/tags/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_HOST="toolchain:host glib:host"
 PKG_DEPENDS_TARGET="toolchain zmusic:host glib"
 PKG_LONGDESC="GZDoom's music system as a standalone library"

@@ -1,13 +1,12 @@
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2021-present 351ELEC (https://github.com/351ELEC)
-# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="gzdoom-sa"
 PKG_VERSION="g4.14.2"
 PKG_SHA256="2c4fbb0c5b06787c8a2ade9fbbbe2fa5eaa7c49cf7f62a73627c381f8f890156"
-PKG_LICENSE="GPLv3"
+PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/ZDoom/gzdoom"
-PKG_URL="https://github.com/ZDoom/gzdoom/archive/refs/tags/${PKG_VERSION}.tar.gz"
+PKG_URL="${PKG_SITE}/archive/refs/tags/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_HOST="toolchain:host SDL2:host zmusic:host libvpx:host libwebp:host"
 PKG_DEPENDS_TARGET="toolchain gzdoom-sa:host SDL2 zmusic libvpx libwebp"
 PKG_LONGDESC="GZDoom is a modder-friendly OpenGL and Vulkan source port based on the DOOM engine"

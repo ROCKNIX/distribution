@@ -1,27 +1,16 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
+# SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="dolphin-sa"
-PKG_LICENSE="GPLv2"
-PKG_DEPENDS_TARGET="toolchain libevdev libdrm ffmpeg zlib libpng lzo libusb zstd ecm openal-soft pulseaudio alsa-lib libfmt hidapi curl SDL3"
-PKG_LONGDESC="Dolphin is a GameCube / Wii / Triforce emulator, allowing you to play games for these two platforms on PC with improvements. "
-PKG_TOOLCHAIN="cmake"
-
 PKG_VERSION="6094cfcf7b8fba733b3116fdf3414d51c1c0e4a4" #2606
-PKG_DOLPHIN_VERSION_MAJOR="2606"
-PKG_DOLPHIN_VERSION_MINOR="1"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/dolphin-emu/dolphin"
 PKG_URL="${PKG_SITE}.git"
+PKG_DEPENDS_TARGET="toolchain libevdev libdrm ffmpeg zlib libpng lzo libusb zstd ecm openal-soft pulseaudio alsa-lib libfmt hidapi curl SDL3 qt6"
+PKG_LONGDESC="Dolphin is a GameCube / Wii / Triforce emulator, allowing you to play games for these two platforms on PC with improvements. "
 
-# Every device builds both frontends: nogui plays games, Qt provides the settings
-# UI from the Tools menu. RetroAchievements lives in Core (AchievementManager) and
-# is driven entirely by RetroAchievements.ini, so it is not tied to either one.
-PKG_DEPENDS_TARGET+=" qt6"
-PKG_CMAKE_OPTS_TARGET+=" -DENABLE_QT=ON \
-                         -DUSE_RETRO_ACHIEVEMENTS=ON \
-                         -DENABLE_HEADLESS=OFF \
-                         -DCMAKE_EXE_LINKER_FLAGS=-flto=$(nproc)"
+PKG_DOLPHIN_VERSION_MAJOR="2606"
+PKG_DOLPHIN_VERSION_MINOR="1"
 
 if [ "${OPENGL_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
@@ -36,15 +25,14 @@ fi
 # type, so building both only widens what a given image can do.
 if [ "${DISPLAYSERVER}" = "wl" ]; then
   PKG_DEPENDS_TARGET+=" wayland wayland-protocols ${WINDOWMANAGER} xwayland xrandr libXi"
-  PKG_CMAKE_OPTS_TARGET+="       -DENABLE_X11=ON \
-                                 -DENABLE_WAYLAND=ON"
+  PKG_CMAKE_OPTS_TARGET+=" -DENABLE_X11=ON \
+                           -DENABLE_WAYLAND=ON"
 else
-    PKG_CMAKE_OPTS_TARGET+="     -DENABLE_X11=OFF \
-                                 -DENABLE_WAYLAND=OFF"
+  PKG_CMAKE_OPTS_TARGET+=" -DENABLE_X11=OFF \
+                           -DENABLE_WAYLAND=OFF"
 fi
 
-if [ "${VULKAN_SUPPORT}" = "yes" ]
-then
+if [ "${VULKAN_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${VULKAN}"
   PKG_CMAKE_OPTS_TARGET+=" -DENABLE_VULKAN=ON"
   GRENDERER="Vulkan"
@@ -53,71 +41,69 @@ else
   GRENDERER="OGL"
 fi
 
+# Every device builds both frontends: nogui plays games, Qt provides the settings
+# UI from the Tools menu. RetroAchievements lives in Core (AchievementManager) and
+# is driven entirely by RetroAchievements.ini, so it is not tied to either one.
+PKG_CMAKE_OPTS_TARGET+=" -DENABLE_QT=ON \
+                         -DUSE_RETRO_ACHIEVEMENTS=ON \
+                         -DENABLE_HEADLESS=OFF \
+                         -DCMAKE_EXE_LINKER_FLAGS=-flto=$(nproc) \
+                         -DCMAKE_BUILD_TYPE=Release \
+                         -DDISTRIBUTOR="ROCKNIX" \
+                         -DENABLE_NOGUI=ON \
+                         -DENABLE_EVDEV=ON \
+                         -DENABLE_SDL=ON \
+                         -DUSE_DISCORD_PRESENCE=OFF \
+                         -DBUILD_SHARED_LIBS=OFF \
+                         -DLINUX_LOCAL_DEV=OFF \
+                         -DENABLE_PULSEAUDIO=ON \
+                         -DENABLE_ALSA=ON \
+                         -DENABLE_TESTS=OFF \
+                         -DENABLE_LLVM=OFF \
+                         -DENABLE_ANALYTICS=OFF \
+                         -DENABLE_LTO=ON \
+                         -DENCODE_FRAMEDUMPS=OFF \
+                         -DENABLE_AUTOUPDATE=OFF \
+                         -DUSE_MGBA=OFF \
+                         -DENABLE_CLI_TOOL=OFF \
+                         -DCMAKE_POLICY_VERSION_MINIMUM=3.5"
+
+
 post_unpack() {
   sed -i "s|gcc-ar|${TARGET_PREFIX}ar|g" "${PKG_BUILD}/CMakeLists.txt"
   sed -i "s|gcc-ranlib|${TARGET_PREFIX}ranlib|g" "${PKG_BUILD}/CMakeLists.txt"
-}
-
-pre_configure_target() {
-  PKG_CMAKE_OPTS_TARGET+=" -DCMAKE_BUILD_TYPE=Release \
-                           -DDISTRIBUTOR="ROCKNIX" \
-                           -DENABLE_NOGUI=ON \
-                           -DENABLE_EVDEV=ON \
-                           -DENABLE_SDL=ON \
-                           -DUSE_DISCORD_PRESENCE=OFF \
-                           -DBUILD_SHARED_LIBS=OFF \
-                           -DLINUX_LOCAL_DEV=OFF \
-                           -DENABLE_PULSEAUDIO=ON \
-                           -DENABLE_ALSA=ON \
-                           -DENABLE_TESTS=OFF \
-                           -DENABLE_LLVM=OFF \
-                           -DENABLE_ANALYTICS=OFF \
-                           -DENABLE_LTO=ON \
-                           -DENCODE_FRAMEDUMPS=OFF \
-                           -DENABLE_AUTOUPDATE=OFF \
-                           -DUSE_MGBA=OFF \
-                           -DENABLE_CLI_TOOL=OFF \
-                           -DCMAKE_POLICY_VERSION_MINIMUM=3.5"
-
   sed -i 's~#include <cstdlib>~#include <cstdlib>\n#include <cstdint>~g' ${PKG_BUILD}/Externals/VulkanMemoryAllocator/include/vk_mem_alloc.h
   sed -i 's~#include <cstdint>~#include <cstdint>\n#include <string>~g' ${PKG_BUILD}/Externals/VulkanMemoryAllocator/include/vk_mem_alloc.h
-
   if [ -n "${PKG_DOLPHIN_VERSION_MAJOR=}" ]; then
     sed -e "s/@PKG_DOLPHIN_VERSION_MAJOR@/${PKG_DOLPHIN_VERSION_MAJOR}/g" -i ${PKG_BUILD}/CMake/ScmRevGen.cmake
     sed -e "s/@PKG_DOLPHIN_VERSION_MINOR@/${PKG_DOLPHIN_VERSION_MINOR}/g" -i ${PKG_BUILD}/CMake/ScmRevGen.cmake
   fi
-
 }
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin
-  cp -rf ${PKG_BUILD}/.${TARGET_NAME}/Binaries/dolphin* ${INSTALL}/usr/bin
-  cp -rf ${PKG_DIR}/scripts/* ${INSTALL}/usr/bin
-
-  chmod +x ${INSTALL}/usr/bin/*
+    cp -a ${PKG_BUILD}/.${TARGET_NAME}/Binaries/dolphin* ${INSTALL}/usr/bin
+    cp -a ${PKG_DIR}/scripts/* ${INSTALL}/usr/bin
 
   mkdir -p ${INSTALL}/usr/config/dolphin-emu
-  cp -rf ${PKG_BUILD}/Data/Sys/* ${INSTALL}/usr/config/dolphin-emu
-  cp -rfH ${PKG_DIR}/config/${DEVICE}/* ${INSTALL}/usr/config/dolphin-emu
-  cp -rf ${PKG_DIR}/triforce ${INSTALL}/usr/config/dolphin-emu/triforce_gecko_codes
+    cp -a ${PKG_BUILD}/Data/Sys/* ${INSTALL}/usr/config/dolphin-emu
+    cp -aL ${PKG_DIR}/config/${DEVICE}/* ${INSTALL}/usr/config/dolphin-emu
+    cp -a ${PKG_DIR}/triforce ${INSTALL}/usr/config/dolphin-emu/triforce_gecko_codes
 }
 
 post_install() {
-    # The Qt frontend renders straight to the compositor on every device. Patch 016 is
-    # what makes this take effect; upstream otherwise rewrites the value back to xcb.
-    EXPORTS="export QT_QPA_PLATFORM=wayland"
+  # The Qt frontend renders straight to the compositor on every device. Patch 016 is
+  # what makes this take effect; upstream otherwise rewrites the value back to xcb.
+  EXPORTS="export QT_QPA_PLATFORM=wayland"
 
-    # nogui is the default player, so its -p platform is Wayland everywhere.
-    DOLPHIN_BACKEND="wayland"
+  # nogui is the default player, so its -p platform is Wayland everywhere.
+  DOLPHIN_BACKEND="wayland"
 
-    sed -e "s/@DOLPHIN_BACKEND@/${DOLPHIN_BACKEND}/g" -i ${INSTALL}/usr/bin/start_dolphin_gc.sh
-    sed -e "s/@DOLPHIN_BACKEND@/${DOLPHIN_BACKEND}/g" -i  ${INSTALL}/usr/bin/start_dolphin_wii.sh
-
-    sed -e "s/@GRENDERER@/${GRENDERER}/g" -i ${INSTALL}/usr/bin/start_dolphin_gc.sh
-    sed -e "s/@GRENDERER@/${GRENDERER}/g" -i ${INSTALL}/usr/bin/start_dolphin_wii.sh
-
-    sed -e "s/@EXPORTS@/${EXPORTS}/g" \
-        -i  ${INSTALL}/usr/bin/start_dolphin_gc.sh
-    sed -e "s/@EXPORTS@/${EXPORTS}/g" \
-        -i  ${INSTALL}/usr/bin/start_dolphin_wii.sh
+  for script in start_dolphin_{gc,wii}.sh; do
+    sed -i \
+        -e "s/@DOLPHIN_BACKEND@/${DOLPHIN_BACKEND}/g" \
+        -e "s/@GRENDERER@/${GRENDERER}/g" \
+        -e "s/@EXPORTS@/${EXPORTS}/g" \
+        "${INSTALL}/usr/bin/$script"
+  done
 }
