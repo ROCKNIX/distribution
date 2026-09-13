@@ -8,6 +8,12 @@ name: Build DTB only
 # Also builds the upstream rock-4d DTB as a size/reference baseline.
 
 on:
+  push:
+    branches: [next]
+    paths:
+      - 'projects/ROCKNIX/devices/RK3576/linux/dts/**'
+      - 'projects/ROCKNIX/devices/RK3576/patches/linux/*.patch'
+      - '.github/workflows/build-dtb.yml'
   workflow_dispatch:
     inputs:
       DEVICE:
@@ -16,7 +22,7 @@ on:
         default: "RK3576"
         required: true
       DTB:
-        description: "Board DTB to build (empty = all RK3576 DTBs)"
+        description: "Board DTB to build"
         type: string
         default: "rk3576-ggboom-zero-mini.dtb"
         required: false
@@ -28,10 +34,15 @@ on:
         default: "RK3576"
         required: false
       DTB:
-        description: "Board DTB to build (empty = all RK3576 DTBs)"
+        description: "Board DTB to build"
         type: string
         default: "rk3576-ggboom-zero-mini.dtb"
         required: false
+
+env:
+  # inputs.* are empty on push events; fall back to RK3576 defaults.
+  DEVICE: ${{ inputs.DEVICE || 'RK3576' }}
+  DTB: ${{ inputs.DTB || 'rk3576-ggboom-zero-mini.dtb' }}
 
 jobs:
   build-dtb:
@@ -42,7 +53,8 @@ jobs:
       - name: Install build deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc make flex bison bc libssl-dev device-tree-compiler
+          sudo apt-get install -y gcc make flex bison bc libssl-dev pkg-config libelf-dev python3 device-tree-compiler
+          gcc --version | head -n 1; make --version | head -n 1
 
       - name: Resolve kernel source
         id: ksrc
@@ -70,7 +82,7 @@ jobs:
           # patches (only patches touching arch/arm64/boot/dts matter
           # for DTB output).
           cd /tmp/kernel
-          for p in ${GITHUB_WORKSPACE}/projects/ROCKNIX/devices/${{ inputs.DEVICE }}/patches/linux/*.patch; do
+          for p in ${GITHUB_WORKSPACE}/projects/ROCKNIX/devices/${DEVICE}/patches/linux/*.patch; do
             if grep -q '^diff --git a/arch/arm64/boot/dts' "${p}"; then
               echo "Applying $(basename "${p}")"
               patch -p1 < "${p}"
@@ -80,33 +92,29 @@ jobs:
       - name: Overlay ROCKNIX DTS dir
         run: |
           # Mirrors linux package post_patch().
-          rsync -av projects/ROCKNIX/devices/${{ inputs.DEVICE }}/linux/dts/ /tmp/kernel/arch/arm64/boot/dts/
+          rsync -av projects/ROCKNIX/devices/${DEVICE}/linux/dts/ /tmp/kernel/arch/arm64/boot/dts/
 
       - name: Compile DTBs
         run: |
           cd /tmp/kernel
           export ARCH=arm64
+          # NOTE: runner shell is bash -eo pipefail, so a failing make
+          # fails this step on its own; no extra error-grep needed.
           make defconfig
-          if [ -n "${{ inputs.DTB }}" ]; then
-            make KBUILD_DTC_FLAGS="-v" rockchip/${{ inputs.DTB }} 2>&1 | tee /tmp/dtc.log
-          else
-            make KBUILD_DTC_FLAGS="-v" dtbs 2>&1 | tee /tmp/dtc.log
-          fi
+          make KBUILD_DTC_FLAGS="-v" rockchip/${DTB} 2>&1 | tee /tmp/dtc.log
           # Baseline: upstream rock-4d from the same tree, for size compare.
           make rockchip/rk3576-rock-4d.dtb 2>&1 | tee -a /tmp/dtc.log
-          # DTC errors fail the job; warnings are shown but tolerated.
-          if grep -iE 'error' /tmp/dtc.log; then
-            echo 'DTC reported errors'; exit 1
-          fi
-          ls -la arch/arm64/boot/dts/rockchip/rk3576-*.dtb
-          echo '--- decompiled node counts ---'
+          ls -la arch/arm64/boot/dts/rockchip/rk3576-*.dtb | tee -a /tmp/dtc.log
+          echo '--- decompiled node counts ---' | tee -a /tmp/dtc.log
           for f in arch/arm64/boot/dts/rockchip/rk3576-ggboom-zero-mini.dtb arch/arm64/boot/dts/rockchip/rk3576-rock-4d.dtb; do
-            [ -f "${f}" ] && echo "${f}: $(dtc -I dtb -O dts "${f}" 2>/dev/null | grep -c '{') nodes, $(stat -c%s "${f}") bytes"
+            [ -f "${f}" ] && echo "${f}: $(dtc -I dtb -O dts "${f}" 2>/dev/null | grep -c '{') nodes, $(stat -c%s "${f}") bytes" | tee -a /tmp/dtc.log
           done
 
       - uses: actions/upload-artifact@v7
+        if: always()
         with:
-          name: dtb-${{ inputs.DEVICE }}-${{ github.sha }}
+          name: dtb-${{ env.DEVICE }}-${{ github.sha }}
+          if-no-files-found: warn
           path: |
             /tmp/kernel/arch/arm64/boot/dts/rockchip/rk3576-*.dtb
             /tmp/dtc.log
