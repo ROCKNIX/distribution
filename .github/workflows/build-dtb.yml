@@ -1,0 +1,112 @@
+name: Build DTB only
+
+# Fast device-tree iteration: unpacks the same kernel tarball the image
+# build uses, applies the DTS-relevant patches, overlays the ROCKNIX
+# out-of-tree DTS dir (same as linux package post_patch), and compiles
+# only the DTBs. No toolchain, no kernel/modules, no image.
+#
+# Also builds the upstream rock-4d DTB as a size/reference baseline.
+
+on:
+  workflow_dispatch:
+    inputs:
+      DEVICE:
+        description: "The device name"
+        type: string
+        default: "RK3576"
+        required: true
+      DTB:
+        description: "Board DTB to build (empty = all RK3576 DTBs)"
+        type: string
+        default: "rk3576-ggboom-zero-mini.dtb"
+        required: false
+  workflow_call:
+    inputs:
+      DEVICE:
+        description: "The device name"
+        type: string
+        default: "RK3576"
+        required: false
+      DTB:
+        description: "Board DTB to build (empty = all RK3576 DTBs)"
+        type: string
+        default: "rk3576-ggboom-zero-mini.dtb"
+        required: false
+
+jobs:
+  build-dtb:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc make flex bison bc libssl-dev device-tree-compiler
+
+      - name: Resolve kernel source
+        id: ksrc
+        run: |
+          # Parse the same package.mk the image build uses so the
+          # tarball can never drift from the official kernel.
+          # NOTE: PKG_NAME must be exported first: PKG_URL contains
+          # bash expansions that are evaluated eagerly by eval below.
+          export PKG_NAME=linux
+          eval "$(awk '/RK3576\|RK3566\)/{f=1} f&&/PKG_VERSION=/{print; c++} f&&/PKG_SHA256=/{print} f&&/PKG_URL=/{print} c==1&&/;;/{exit}' projects/ROCKNIX/packages/linux/package.mk | sed 's/^ *//')"
+          echo "version=${PKG_VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "sha256=${PKG_SHA256}" >> "${GITHUB_OUTPUT}"
+          echo "url=${PKG_URL}" >> "${GITHUB_OUTPUT}"
+          echo "Resolved: ${PKG_URL} ${PKG_SHA256}"
+
+      - name: Download and verify kernel
+        run: |
+          curl -sL --retry 3 -o /tmp/linux.tar.xz '${{ steps.ksrc.outputs.url }}'
+          echo '${{ steps.ksrc.outputs.sha256 }}  /tmp/linux.tar.xz' | sha256sum -c -
+          mkdir -p /tmp/kernel && tar -xf /tmp/linux.tar.xz -C /tmp/kernel --strip-components=1
+
+      - name: Apply DTS patches
+        run: |
+          # Same patch set the image build applies, minus driver-only
+          # patches (only patches touching arch/arm64/boot/dts matter
+          # for DTB output).
+          cd /tmp/kernel
+          for p in ${GITHUB_WORKSPACE}/projects/ROCKNIX/devices/${{ inputs.DEVICE }}/patches/linux/*.patch; do
+            if grep -q '^diff --git a/arch/arm64/boot/dts' "${p}"; then
+              echo "Applying $(basename "${p}")"
+              patch -p1 < "${p}"
+            fi
+          done
+
+      - name: Overlay ROCKNIX DTS dir
+        run: |
+          # Mirrors linux package post_patch().
+          rsync -av projects/ROCKNIX/devices/${{ inputs.DEVICE }}/linux/dts/ /tmp/kernel/arch/arm64/boot/dts/
+
+      - name: Compile DTBs
+        run: |
+          cd /tmp/kernel
+          export ARCH=arm64
+          make defconfig
+          if [ -n "${{ inputs.DTB }}" ]; then
+            make KBUILD_DTC_FLAGS="-v" rockchip/${{ inputs.DTB }} 2>&1 | tee /tmp/dtc.log
+          else
+            make KBUILD_DTC_FLAGS="-v" dtbs 2>&1 | tee /tmp/dtc.log
+          fi
+          # Baseline: upstream rock-4d from the same tree, for size compare.
+          make rockchip/rk3576-rock-4d.dtb 2>&1 | tee -a /tmp/dtc.log
+          # DTC errors fail the job; warnings are shown but tolerated.
+          if grep -iE 'error' /tmp/dtc.log; then
+            echo 'DTC reported errors'; exit 1
+          fi
+          ls -la arch/arm64/boot/dts/rockchip/rk3576-*.dtb
+          echo '--- decompiled node counts ---'
+          for f in arch/arm64/boot/dts/rockchip/rk3576-ggboom-zero-mini.dtb arch/arm64/boot/dts/rockchip/rk3576-rock-4d.dtb; do
+            [ -f "${f}" ] && echo "${f}: $(dtc -I dtb -O dts "${f}" 2>/dev/null | grep -c '{') nodes, $(stat -c%s "${f}") bytes"
+          done
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dtb-${{ inputs.DEVICE }}-${{ github.sha }}
+          path: |
+            /tmp/kernel/arch/arm64/boot/dts/rockchip/rk3576-*.dtb
+            /tmp/dtc.log
