@@ -2,7 +2,7 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="libmali-vulkan"
-PKG_LICENSE="mali_driver"
+PKG_LICENSE="LES-PRE-20769"
 PKG_ARCH="arm aarch64"
 PKG_DEPENDS_TARGET="toolchain mesa vulkan-tools vulkan-headers libmali vulkan-wsi-layer"
 PKG_TOOLCHAIN="manual"
@@ -39,6 +39,10 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/share/vulkan/icd.d
 
   cp ${PKG_BUILD}/${FILENAME} ${INSTALL}/usr/lib/
+
+  mkdir -p ${INSTALL}/usr/share/licenses/libmali-vulkan
+  cp ${ROOT}/licenses/LicenseRef-ARM-Mali-EULA.txt \
+     ${INSTALL}/usr/share/licenses/libmali-vulkan/END_USER_LICENCE_AGREEMENT.txt
   cp -r ${PKG_BUILD}/mali.json ${INSTALL}/usr/share/vulkan/icd.d
 
   ln -sfv /usr/lib/${FILENAME} ${INSTALL}/usr/lib/libMaliVulkan.so.1

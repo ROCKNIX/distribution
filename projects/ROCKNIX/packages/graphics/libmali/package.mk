@@ -4,7 +4,7 @@
 # Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="libmali"
-PKG_LICENSE="nonfree"
+PKG_LICENSE="LES-PRE-20769"
 PKG_SITE="https://github.com/ROCKNIX/libmali"
 PKG_VERSION="0fe30426b822699f0a660268a6040fdafce229d1"
 PKG_SHA256="b2d0b4904577aa1cf737f1402052a6651f84fcbc94aca0601b782ff63cc9167b"
@@ -55,7 +55,6 @@ case "${DEVICE}" in
     ZIPDIRNAME="mirrors"
     PKG_PATCH_DIRS+=" next"
     OPTS=" -Dwrappers=true "
-    MALI_G29="yes"
   ;;
   *)
     OPTS=" -Dwrappers=enabled "
@@ -74,7 +73,8 @@ unpack() {
   pwd
   # Extract only what is needed
   LIBNAME="libmali-${MALI_FAMILY}-${DRIVER_VERSION}${PLATFORM}.so"
-  unzip -q "${SOURCES}/${PKG_NAME}/${PKG_SOURCE_NAME}" "*/hook/*" "*/include/*" "*/scripts/*" "*/meson*" "*/data/*" "*/${LIBNAME}"
+  unzip -q "${SOURCES}/${PKG_NAME}/${PKG_SOURCE_NAME}" "*/hook/*" "*/include/*" "*/scripts/*" "*/meson*" "*/data/*" "*/${LIBNAME}" \
+        "*/END_USER_LICENCE_AGREEMENT.txt"
   mv ${ZIPDIRNAME}*/* .
   rmdir ${ZIPDIRNAME}-*
   if [ "${MALI_FAMILY}" = "meson" ]; then
@@ -86,6 +86,9 @@ unpack() {
 post_makeinstall_target() {
   rm -rf "${SYSROOT_PREFIX}/usr/include"   # all needed headers are installed by glvnd, mesa and wayland
   rm -rf "${INSTALL}/etc/ld.so.conf.d" "${SYSROOT_PREFIX}/etc/ld.so.conf.d"  # upstream installs ld.so config and we don't need it
+
+  mkdir -p "${INSTALL}/usr/share/licenses/libmali"
+  cp "${PKG_BUILD}/END_USER_LICENCE_AGREEMENT.txt" "${INSTALL}/usr/share/licenses/libmali/"
 
   # IDK how libs in ubuntu package get these dependencies. Need to specify them manually here.
   for lib in "${INSTALL}"/usr/lib*/mali/lib*.so.*; do
@@ -105,20 +108,4 @@ post_makeinstall_target() {
     mv "${INSTALL}"/usr/lib32/mali/libMaliVulkan.* "${INSTALL}"/usr/lib32/
   fi
 
-  # Provide RUNPATH for 32bit mali blobs 
-  if [ "${ARCH}" = "arm" ]; then
-    for lib in "${INSTALL}"/usr/lib32/lib*.so.* \
-               "${INSTALL}"/usr/lib32/mali/lib*.so.*; do
-      [ -f "${lib}" ] && [ ! -L "${lib}" ] || continue
-      patchelf --set-rpath '/usr/lib32' "${lib}"
-    done
-  fi
-
-  # Patch libmali to enable 32bit Vulkan
-  if [ -n "${MALI_G29}" ] && [ "${ARCH}" = "arm" ]; then
-    for so in "${INSTALL}"/usr/lib32/libmali.so.*.*; do
-      [ -f "${so}" ] && [ ! -L "${so}" ] || continue
-      python3 "${PKG_DIR}/scripts/note_fullgap.py" "${so}"
-    done
-  fi
 }
