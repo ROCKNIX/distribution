@@ -1,0 +1,32 @@
+batteryplus: snap the visible percent on resume in PMIC mode
+
+The long-gap snap only exists in voltage mode. In PMIC mode a resume
+goes through the ordinary step limiter, which moves one point at a time
+and never counts down while charging, so a kernel gauge that corrected
+itself across a sleep is hidden from the UI: after a 10 h suspend on an
+RG353M the kernel read 63 % while /tmp/battery.percent, and with it ES,
+stayed at 87 % because the device woke on the charger.
+
+In PMIC mode the kernel value is the authority and has already done its
+own reconciliation; smoothing is there for jitter, not for corrections.
+Snap to it whenever a resume is detected.
+
+Candidate for upstream (Mikhailzrick/knubat.components).
+
+---
+--- a/BatteryPlus/batteryplus.cpp
++++ b/BatteryPlus/batteryplus.cpp
+@@ -1654,7 +1654,12 @@
+         }
+
+         bool snap_now = false;
+-        if (long_resume_gap && g_cfg.mode == BatteryMode::Voltage) {
++        if (resume_detected && g_cfg.mode == BatteryMode::Pmic) {
++            // The kernel gauge has already reconciled itself across the
++            // sleep; a step-limited, direction-locked visible value would
++            // hide that for a long time.
++            snap_now = true;
++        } else if (long_resume_gap && g_cfg.mode == BatteryMode::Voltage) {
+             // Long resume gaps may reflect real battery movement while asleep, but voltage can
+             // also rebound after suspend/load removal. Always burst-sample and reseed EMA so
+             // internal calculations restart from a current voltage, but only snap the visible
