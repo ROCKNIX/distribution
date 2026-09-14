@@ -23,5 +23,5 @@ makeinstall_target() {
     cp -a ${PKG_DIR}/scripts/start_pico8.sh ${INSTALL}/usr/bin
 
   mkdir -p ${INSTALL}/usr/lib/autostart/common
-    cp -a ${PKG_DIR}/autostart/common/* ${INSTALL}/usr/lib/autostart/common
+    cp -a ${PKG_BUILD}/autostart/common/* ${INSTALL}/usr/lib/autostart/common
 }
