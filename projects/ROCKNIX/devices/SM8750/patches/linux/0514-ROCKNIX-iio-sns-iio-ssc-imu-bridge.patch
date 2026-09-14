@@ -1,0 +1,210 @@
+From: Anze <aanzdev@gmail.com>
+Date: Wed, 9 Jul 2026 20:45:00 +0200
+Subject: [PATCH] ROCKNIX: iio: add sns_iio SSC accel+gyro bridge (userspace-fed)
+
+Exposes the Snapdragon Sensor Core accel+gyro as a standard IIO device on the
+AYN Odin 3 (SM8750). The QST QMI8658 lives on the ADSP-owned SSC island bus,
+unreachable from the AP directly; a userspace daemon reads it over QRTR
+(sns_client) and feeds the latest 6-axis sample via /dev/sns_iio_feed. A kfifo
+buffer is attached only so a /dev/iio:deviceN node exists (InputPlumber's udev
+discovery requires a devnode); consumers read the sysfs *_raw channels. Named
+bmi323-imu so InputPlumber's iio_imu driver binds via its bmi*-imu glob.
+---
+diff --git a/drivers/iio/imu/sns_iio.c b/drivers/iio/imu/sns_iio.c
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/drivers/iio/imu/sns_iio.c
+@@ -0,0 +1,163 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * sns_iio - expose Snapdragon Sensor Core accel+gyro as an IIO device on
++ * ROCKNIX, fed by a userspace QRTR reader through /dev/sns_iio_feed.
++ *
++ * The heavy lifting (QMI-over-QRTR sns_client discovery + streaming) stays in
++ * a tested userspace daemon; this module just holds the latest 6-axis sample
++ * and presents it as a standard IIO device that InputPlumber can consume.
++ *
++ * A kfifo buffer is attached only so the IIO core creates the /dev/iio:deviceN
++ * node (InputPlumber's udev discovery requires a devnode); readers use the
++ * sysfs *_raw channels, not the buffer.
++ *
++ * Feed protocol: write 6 little-endian s32 to /dev/sns_iio_feed:
++ *   [accel_x, accel_y, accel_z, anglvel_x, anglvel_y, anglvel_z]
++ * in fixed-point micro-units (value * 1e6). Scales below convert back.
++ */
++#include <linux/module.h>
++#include <linux/miscdevice.h>
++#include <linux/fs.h>
++#include <linux/uaccess.h>
++#include <linux/iio/iio.h>
++#include <linux/iio/buffer.h>
++#include <linux/iio/kfifo_buf.h>
++#include <linux/mutex.h>
++
++static s32 sns_vals[6];		/* ax ay az gx gy gz, micro-units */
++static DEFINE_MUTEX(sns_lock);
++static struct iio_dev *sns_indio;
++
++enum { AX, AY, AZ, GX, GY, GZ };
++
++#define SNS_CH(_type, axis, idx) {				\
++	.type = _type,						\
++	.modified = 1,						\
++	.channel2 = IIO_MOD_##axis,				\
++	.info_mask_separate = BIT(IIO_CHAN_INFO_RAW),		\
++	.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_SCALE) |	\
++				    BIT(IIO_CHAN_INFO_SAMP_FREQ),	\
++	.scan_index = idx,					\
++	.scan_type = {						\
++		.sign = 's',					\
++		.realbits = 32,					\
++		.storagebits = 32,				\
++		.endianness = IIO_LE,				\
++	},							\
++}
++
++static const struct iio_chan_spec sns_channels[] = {
++	SNS_CH(IIO_ACCEL, X, AX), SNS_CH(IIO_ACCEL, Y, AY), SNS_CH(IIO_ACCEL, Z, AZ),
++	SNS_CH(IIO_ANGL_VEL, X, GX), SNS_CH(IIO_ANGL_VEL, Y, GY), SNS_CH(IIO_ANGL_VEL, Z, GZ),
++};
++
++static int sns_read_raw(struct iio_dev *indio, struct iio_chan_spec const *chan,
++			int *val, int *val2, long mask)
++{
++	switch (mask) {
++	case IIO_CHAN_INFO_RAW:
++		mutex_lock(&sns_lock);
++		*val = sns_vals[chan->scan_index];
++		mutex_unlock(&sns_lock);
++		return IIO_VAL_INT;
++	case IIO_CHAN_INFO_SCALE:
++		/* fed value is value*1e6, so scale = 1e-6 to recover units
++		 * (accel m/s^2, gyro rad/s) */
++		*val = 0;
++		*val2 = 1;		/* 0.000001 */
++		return IIO_VAL_INT_PLUS_MICRO;
++	case IIO_CHAN_INFO_SAMP_FREQ:
++		*val = 100;
++		return IIO_VAL_INT;
++	}
++	return -EINVAL;
++}
++
++static const struct iio_info sns_iio_info = {
++	.read_raw = sns_read_raw,
++};
++
++/* ---- feed chardev ---- */
++static ssize_t sns_feed_write(struct file *f, const char __user *buf,
++			      size_t len, loff_t *off)
++{
++	s32 tmp[6];
++
++	if (len < sizeof(tmp))
++		return -EINVAL;
++	if (copy_from_user(tmp, buf, sizeof(tmp)))
++		return -EFAULT;
++	mutex_lock(&sns_lock);
++	memcpy(sns_vals, tmp, sizeof(tmp));
++	mutex_unlock(&sns_lock);
++	return sizeof(tmp);
++}
++
++static const struct file_operations sns_feed_fops = {
++	.owner = THIS_MODULE,
++	.write = sns_feed_write,
++	.llseek = noop_llseek,
++};
++
++static struct miscdevice sns_feed_dev = {
++	.minor = MISC_DYNAMIC_MINOR,
++	.name = "sns_iio_feed",
++	.fops = &sns_feed_fops,
++};
++
++static int __init sns_iio_init(void)
++{
++	struct iio_buffer *buffer;
++	int ret;
++
++	sns_indio = iio_device_alloc(NULL, 0);
++	if (!sns_indio)
++		return -ENOMEM;
++
++	sns_indio->name = "bmi323-imu";
++	sns_indio->modes = INDIO_DIRECT_MODE | INDIO_BUFFER_SOFTWARE;
++	sns_indio->info = &sns_iio_info;
++	sns_indio->channels = sns_channels;
++	sns_indio->num_channels = ARRAY_SIZE(sns_channels);
++
++	/* attach a kfifo buffer purely so a /dev/iio:deviceN node is created */
++	buffer = iio_kfifo_allocate();
++	if (!buffer) {
++		ret = -ENOMEM;
++		goto err_free;
++	}
++	ret = iio_device_attach_buffer(sns_indio, buffer);
++	if (ret)
++		goto err_free;
++
++	ret = iio_device_register(sns_indio);
++	if (ret)
++		goto err_free;
++
++	ret = misc_register(&sns_feed_dev);
++	if (ret)
++		goto err_unreg;
++
++	pr_info("sns_iio: registered IIO '%s' + /dev/sns_iio_feed\n",
++		sns_indio->name);
++	return 0;
++
++err_unreg:
++	iio_device_unregister(sns_indio);
++err_free:
++	iio_device_free(sns_indio);
++	return ret;
++}
++
++static void __exit sns_iio_exit(void)
++{
++	misc_deregister(&sns_feed_dev);
++	iio_device_unregister(sns_indio);
++	iio_device_free(sns_indio);
++}
++
++module_init(sns_iio_init);
++module_exit(sns_iio_exit);
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("SSC accel+gyro IIO bridge (userspace-fed)");
++MODULE_AUTHOR("ROCKNIX/Anze");
+diff --git a/drivers/iio/imu/Kconfig b/drivers/iio/imu/Kconfig
+--- a/drivers/iio/imu/Kconfig
++++ b/drivers/iio/imu/Kconfig
+@@ -128,4 +128,14 @@ source "drivers/iio/imu/smi330/Kconfig"
+ source "drivers/iio/imu/st_lsm6dsx/Kconfig"
+ source "drivers/iio/imu/st_lsm9ds0/Kconfig"
+ 
++config SNS_IIO
++	tristate "Snapdragon Sensor Core accel+gyro IIO bridge (userspace-fed)"
++	depends on IIO
++	select IIO_BUFFER
++	select IIO_KFIFO_BUF
++	help
++	  Exposes SSC accel/gyro (fed from userspace via /dev/sns_iio_feed) as a
++	  standard IIO device. Used on the AYN Odin 3 (SM8750) where the IMU sits
++	  behind the ADSP sensor core and is read over QRTR by a userspace daemon.
++
+ endmenu
+diff --git a/drivers/iio/imu/Makefile b/drivers/iio/imu/Makefile
+--- a/drivers/iio/imu/Makefile
++++ b/drivers/iio/imu/Makefile
+@@ -34,4 +34,5 @@ obj-$(CONFIG_SMI240) += smi240.o
+ 
+ obj-y += smi330/
++obj-$(CONFIG_SNS_IIO) += sns_iio.o
+ obj-y += st_lsm6dsx/
+ obj-y += st_lsm9ds0/
+-- 
+2.43.0
