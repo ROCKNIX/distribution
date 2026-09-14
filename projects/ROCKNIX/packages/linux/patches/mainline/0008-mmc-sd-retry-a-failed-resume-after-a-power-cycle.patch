@@ -1,0 +1,83 @@
+From dccc95fa0ff484ae206d81ddb7703af8701a68ed Mon Sep 17 00:00:00 2001
+From: Jacob Cook <jacobmcook1984@gmail.com>
+Date: Fri, 11 Sep 2026 19:01:02 -0400
+Subject: [PATCH] mmc: core: Retry a failed SD card resume after a power cycle
+
+_mmc_sd_resume() re-initialises the card and hands the result back to
+mmc_sd_runtime_resume(), which logs it and returns 0. The PM core is
+therefore told the resume succeeded even when the card was never
+brought back, and every request already queued against it waits
+forever. jbd2, the writeback worker and the block queue end up in
+uninterruptible sleep, and so does every task that touches the
+filesystem. On a boot medium that takes the whole machine down:
+userspace stops responding while the kernel still answers pings.
+
+Two unrelated failures reach this path on Rockchip handhelds.
+
+A card that is still busy when the host re-initialises it. dw_mmc
+waits up to 500 ms for the card to release DAT0, then issues the
+command anyway, so CMD0 times out:
+
+  dwmmc_rockchip ff370000.mmc: Busy; trying anyway
+  mmc_host mmc0: Timeout sending command (cmd 0x202000 arg 0x0 status 0x80202000)
+  mmc0: error -95 doing runtime resume
+
+And a card that times out the optional SD "Cache Enable" write during
+that same re-initialisation:
+
+  mmc2: error -110 writing Cache Enable bit
+  mmc2: card 5048 removed
+  Aborting journal on device mmcblk2p1-8.
+  EXT4-fs (mmcblk2p1): shut down requested (2)
+
+Both cards are healthy: each is re-detected seconds later and works.
+What they have in common is that the card's state is unusable at the
+moment the resume runs, and no amount of carrying on repairs it. A
+card is entitled to be busy for longer than the host waits, and an
+optional feature is entitled to fail, so neither is a card defect.
+
+Give the card a second chance from a clean slate. The failed attempt
+has already spent several seconds in command timeouts, so the card
+has had time to become ready, and the power cycle also resets the
+host controller state.
+
+Raising dw_mmc's busy timeout was considered instead and rejected:
+that poll is readl_poll_timeout_atomic(), so a longer wait means
+spinning longer in atomic context, and it would only help one host
+driver.
+
+Cc: stable@vger.kernel.org
+Assisted-by: Claude:claude-fable-5-1
+---
+ drivers/mmc/core/sd.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/drivers/mmc/core/sd.c b/drivers/mmc/core/sd.c
+index c763efb..fb738e4 100644
+--- a/drivers/mmc/core/sd.c
++++ b/drivers/mmc/core/sd.c
+@@ -1772,6 +1772,21 @@ static int _mmc_sd_resume(struct mmc_host *host)
+ 
+ 	mmc_power_up(host, host->card->ocr);
+ 	err = mmc_sd_init_card(host, host->card->ocr, host->card);
++	if (err) {
++		/*
++		 * A card still busy from before the suspend can make the
++		 * first command time out. Retry once after a power cycle:
++		 * a failed resume is reported as success, leaving queued
++		 * requests to hang forever.
++		 */
++		pr_warn("%s: resume failed (%d), retrying after a power cycle\n",
++			mmc_hostname(host), err);
++		mmc_power_cycle(host, host->card->ocr);
++		err = mmc_sd_init_card(host, host->card->ocr, host->card);
++		if (err)
++			pr_err("%s: card could not be re-initialised on resume (%d)\n",
++			       mmc_hostname(host), err);
++	}
+ 	mmc_card_clr_suspended(host->card);
+ 
+ out:
+-- 
+2.47.3
+
