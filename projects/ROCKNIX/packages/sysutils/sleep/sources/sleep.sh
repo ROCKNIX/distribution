@@ -40,8 +40,14 @@ modules() {
   log $0 "Modules: ${1}"
   case ${1} in
     stop)
+      KEEP=""
+      for LIST in /usr/lib/autostart/quirks/platforms/"${HW_DEVICE}"/modules.keep \
+                  /usr/lib/autostart/quirks/devices/"${QUIRK_DEVICE}"/modules.keep; do
+        [ -e "${LIST}" ] && KEEP="${KEEP} $(cat "${LIST}")"
+      done
       if [ -e "/usr/config/modules.bad" ]; then
         for module in $(cat /usr/config/modules.bad); do
+          case " ${KEEP} " in *" ${module} "*) continue ;; esac
           EXISTS=$(lsmod | grep ${module})
           if [ $? = 0 ]; then
             echo ${module} >>/tmp/modules.load
