@@ -2,58 +2,47 @@
 # Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="rpcs3-sa"
+PKG_VERSION="cd814f8263bf6bfcb60322c3461aa74dd8e34f66"
+PKG_REV="1"
+PKG_ARCH="any"
 PKG_LICENSE="GPLv2"
-PKG_LONGDESC="PS3 Emulator"
-PKG_VERSION="2f4034590f261cc2aafbc10139744c68a146b5a4"
 PKG_SITE="https://github.com/RPCS3/rpcs3"
-PKG_URL="${PKG_SITE}.git"
-PKG_TOOLCHAIN="cmake"
-PKG_DEPENDS_TARGET="toolchain llvm qt6 SDL3 ffmpeg curl zlib zstd libpng pugixml \
-                    libusb libevdev alsa-lib pulseaudio openal-soft miniupnpc"
+PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
+PKG_SOURCE="rpcs3-${PKG_VERSION}.tar.gz"
+PKG_DEPENDS_TARGET="toolchain mesa libglvnd ffmpeg libpng libjpeg-turbo zlib curl vulkan-loader vulkan-headers qt6-base qt6-declarative qt6-svg libX11 libXext libX11-xcb libxcb xcb-util xcb-util-keysyms xcb-util-wm xcb-util-cursor libXrender libXrandr libXi libxkbcommon ALSA pipewire openal-soft cubeb sdl2 rtmidi systemd hidapi Glew pugixml flatbuffers yaml-cpp xxhash ffmpeg"
+PKG_PRIORITY="optional"
+PKG_SECTION="emulators"
+PKG_SHORTDESC="PlayStation 3 emulator"
+PKG_LONGDESC="RPCS3 is an open-source PlayStation 3 emulator and debugger written in C++."
 
-if [ "${OPENGL_SUPPORT}" = "yes" ]; then
-  PKG_DEPENDS_TARGET+=" ${OPENGL} glew"
-fi
-if [ "${VULKAN_SUPPORT}" = "yes" ]; then
-  PKG_DEPENDS_TARGET+=" ${VULKAN} vulkan-headers"
-fi
+PKG_CMAKE_OPTS_TARGET="
+  -DCMAKE_BUILD_TYPE=Release
+  -DUSE_SYSTEM_LIBFFMPEG=ON
+  -DUSE_SYSTEM_ZLIB=ON
+  -DUSE_SYSTEM_LIBPNG=ON
+  -DUSE_SYSTEM_CURL=ON
+  -DUSE_SYSTEM_PUGIXML=ON
+  -DUSE_SYSTEM_FLATBUFFERS=ON
+  -DUSE_SYSTEM_YAMLCPP=ON
+  -DUSE_SYSTEM_XXHASH=ON
+  -DUSE_NATIVE_INSTRUCTIONS=OFF
+  -DUSE_SYSTEM_FAUDIO=OFF
+  -DUSE_VULKAN=ON
+  -DUSE_AUDIO=ON
+  -DUSE_ALSA=ON
+  -DUSE_PULSE=OFF
+  -DUSE_JACK=OFF
+  -DUSE_SNDIO=OFF
+  -DUSE_GUI=ON
+  -DUSE_DISCORD_RPC=OFF
+  -DBUILD_LLVM_FASTMATH=OFF
+"
 
-pre_configure_target() {
-  # llvm is linked from the sysroot, drop its build tree to free disk for rpcs3
-  rm -rf "$(get_build_dir llvm)"
-
-  export CFLAGS="${CFLAGS} -DGLEW_EGL"
-  export CXXFLAGS="${CXXFLAGS} -DGLEW_EGL"
-
-  PKG_CMAKE_OPTS_TARGET+=" -DWITH_LLVM=ON \
-                           -DBUILD_LLVM=OFF \
-                           -DSTATIC_LINK_LLVM=OFF \
-                           -DLLVM_DIR=${SYSROOT_PREFIX}/usr/lib/cmake/llvm \
-                           -DUSE_NATIVE_INSTRUCTIONS=OFF \
-                           -DUSE_PRECOMPILED_HEADERS=OFF \
-                           -DUSE_LTO=ON \
-                           -DUSE_DISCORD_RPC=OFF \
-                           -DUSE_SYSTEM_FFMPEG=ON \
-                           -DUSE_SYSTEM_CURL=ON \
-                           -DUSE_SYSTEM_SDL=ON \
-                           -DUSE_SYSTEM_ZLIB=ON \
-                           -DUSE_SYSTEM_ZSTD=ON \
-                           -DUSE_SYSTEM_LIBPNG=ON \
-                           -DUSE_SYSTEM_PUGIXML=ON \
-                           -DUSE_SYSTEM_LIBUSB=ON \
-                           -DUSE_SYSTEM_OPENAL=ON \
-                           -DUSE_SYSTEM_MINIUPNPC=ON \
-                           -DUSE_SYSTEM_OPENCV=OFF"
+make_target() {
+  cmake --build ${PKG_BUILD} --parallel ${TOOLCHAIN_NUM_JOBS}
 }
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin
-  DESTDIR=${INSTALL} cmake --install ${PKG_BUILD}/.${TARGET_NAME}
-  mv ${INSTALL}/usr/bin/rpcs3 ${INSTALL}/usr/bin/${PKG_NAME}
-  cp -rf ${PKG_DIR}/scripts/start_rpcs3.sh ${INSTALL}/usr/bin
-  chmod 755 ${INSTALL}/usr/bin/*
-  mkdir -p ${INSTALL}/usr/config/rpcs3
-  if [ -d "${PKG_DIR}/config/${DEVICE}" ]; then
-    cp -rfH ${PKG_DIR}/config/${DEVICE}/* ${INSTALL}/usr/config/rpcs3/
-  fi
+  cp ${PKG_BUILD}/bin/rpcs3 ${INSTALL}/usr/bin/rpcs3-sa
 }
