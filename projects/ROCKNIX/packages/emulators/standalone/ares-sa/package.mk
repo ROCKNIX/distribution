@@ -1,36 +1,31 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="ares-sa"
 PKG_VERSION="0aafd85789215e84e1e43415c07d4c88461b7899" #v148
 PKG_SHA256="34df540c29913755f6ad522451a0a84174142b3b2240f72508f63d6bcc103129"
-PKG_LICENSE="GPLv3"
+PKG_LICENSE="ISC"
 PKG_SITE="https://github.com/ares-emulator/ares"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_LONGDESC="Ares is a multi-system emulator. It is a descendant of higan and bsnes, and focuses on accuracy and preservation."
 PKG_DEPENDS_HOST="toolchain"
 PKG_DEPENDS_TARGET="toolchain librashader ares-sa:host SDL3 libao gtk3 openal-soft"
-PKG_TOOLCHAIN="cmake"
 
-pre_configure_host() {
-  PKG_CMAKE_OPTS_HOST+=" -DCMAKE_BUILD_TYPE=Release \
+PKG_CMAKE_OPTS_HOST+=" -DCMAKE_BUILD_TYPE=Release \
+                       -DBUILD_SHARED_LIBS=FALSE \
+                       -DWITH_SYSTEM_ZLIB=ON \
+                       -DARES_BUILD_LOCAL=OFF \
+                       -DARES_ENABLE_MINIMUM_CPU=OFF \
+                       -DARES_BUILD_SOURCERY_ONLY=ON \
+                       -DCMAKE_CROSSCOMPILING=OFF \
+                       -DARES_CROSSCOMPILING=OFF"
+
+PKG_CMAKE_OPTS_TARGET+=" -DCMAKE_BUILD_TYPE=Release \
                          -DBUILD_SHARED_LIBS=FALSE \
                          -DWITH_SYSTEM_ZLIB=ON \
                          -DARES_BUILD_LOCAL=OFF \
                          -DARES_ENABLE_MINIMUM_CPU=OFF \
-                         -DARES_BUILD_SOURCERY_ONLY=ON \
-                         -DCMAKE_CROSSCOMPILING=OFF \
-                         -DARES_CROSSCOMPILING=OFF"
-}
-
-pre_configure_target() {
-  PKG_CMAKE_OPTS_TARGET+=" -DCMAKE_BUILD_TYPE=Release \
-                           -DBUILD_SHARED_LIBS=FALSE \
-                           -DWITH_SYSTEM_ZLIB=ON \
-                           -DARES_BUILD_LOCAL=OFF \
-                           -DARES_ENABLE_MINIMUM_CPU=OFF \
-                           -Dsourcery_DIR=${TOOLCHAIN}/lib/cmake/sourcery"
-}
+                         -Dsourcery_DIR=${TOOLCHAIN}/lib/cmake/sourcery"
 
 makeinstall_host() {
   mkdir -p ${TOOLCHAIN}/bin

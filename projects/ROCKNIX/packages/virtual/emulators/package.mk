@@ -9,7 +9,7 @@ PKG_LONGDESC="Emulation metapackage."
 PKG_TOOLCHAIN="manual"
 
 PKG_EMUS="amiberry duckstation-sa flycast-sa gzdoom-sa hatarisa hypseus-singe moonlight mupen64plus-sa openbor pico-8   \
-          ppsspp-sa scummvmsa touchhle-sa vice-sa wine yabasanshiro-sa"
+          ppsspp-sa scummvm-sa touchhle-sa vice-sa wine yabasanshiro-sa"
 
 EMUS_32BIT=""
 
@@ -1216,7 +1216,7 @@ makeinstall_target() {
   add_es_system pokemini
 
   ### ScummVM
-  add_emu_core scummvm scummvmsa scummvm true
+  add_emu_core scummvm scummvm-sa scummvm true
   add_emu_core scummvm retroarch scummvm false
   add_es_system scummvm
   add_system_dir /storage/roms/scummvm

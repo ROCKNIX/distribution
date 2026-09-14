@@ -1,8 +1,8 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="gopher64-sa"
-PKG_LICENSE="GPLv3"
+PKG_LICENSE="GPL-3.0-or-later"
 PKG_VERSION="ca4a20f52403bb14f819db53f1cb161d41894666"
 PKG_SITE="https://github.com/gopher64/gopher64"
 PKG_URL="${PKG_SITE}.git"
@@ -14,7 +14,7 @@ pre_make_target() {
   sed -i 's/"build-from-source-static"/"use-pkg-config"/g' ${PKG_BUILD}/Cargo.toml
 }
 
-make_target() {
+configure_target() {
   unset CMAKE
   export RUSTFLAGS="-A unpredictable_function_pointer_comparisons -C link-arg=-ldrm -C link-arg=-lgbm -C link-arg=-lasound -C link-arg=-lvulkan -C link-arg=-lvolk -C link-arg=-lfreetype"
   export PKG_CONFIG_ALLOW_CROSS=1
@@ -39,7 +39,9 @@ make_target() {
   extra_asmflags=[]
   "
   export SKIA_BINARIES_URL="https://github.com/rust-skia/skia-binaries/releases/download/0.90.0/skia-binaries-da4579b39b75fa2187c5-aarch64-unknown-linux-gnu-gl-pdf-textlayout-vulkan.tar.gz"
+}
 
+make_target() {
   cargo build \
     --target ${TARGET_NAME} \
     --no-default-features \
@@ -49,9 +51,9 @@ make_target() {
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin
-  cp -rf ${PKG_BUILD}/.${TARGET_NAME}/target/${TARGET_NAME}/release/gopher64 ${INSTALL}/usr/bin
-  cp -rf ${PKG_DIR}/scripts/* ${INSTALL}/usr/bin
+    cp -a ${PKG_BUILD}/.${TARGET_NAME}/target/${TARGET_NAME}/release/gopher64 ${INSTALL}/usr/bin
+    cp -a ${PKG_DIR}/scripts/start_gopher64.sh ${INSTALL}/usr/bin
+
   mkdir -p ${INSTALL}/usr/config/gopher64
-  cp ${PKG_DIR}/config/* ${INSTALL}/usr/config/gopher64
-  chmod +x ${INSTALL}/usr/bin/*
+    cp -a ${PKG_DIR}/config/* ${INSTALL}/usr/config/gopher64
 }
