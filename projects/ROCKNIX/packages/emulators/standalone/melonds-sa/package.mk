@@ -80,5 +80,5 @@ post_install() {
   sed -e "s|@PANFROST@|${PANFROST}|g" \
       -e "s|@HOTKEY@|${HOTKEY}|g" \
       -e "s|@LIBMALI@|${LIBMALI}|g" \
-      -i ${INSTALL}/usr/bin/start_melonds.s
+      -i ${INSTALL}/usr/bin/start_melonds.sh
 }
