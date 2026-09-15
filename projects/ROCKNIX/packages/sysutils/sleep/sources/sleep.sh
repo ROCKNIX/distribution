@@ -83,6 +83,7 @@ modules() {
 quirks() {
   for QUIRK in /usr/lib/autostart/quirks/platforms/"${HW_DEVICE}"/sleep.d/${1}/* \
                /usr/lib/autostart/quirks/devices/"${QUIRK_DEVICE}"/sleep.d/${1}/*; do
+    [ -x "${QUIRK}" ] || continue
     "${QUIRK}" >${EVENTLOG} 2>&1
   done
 }
