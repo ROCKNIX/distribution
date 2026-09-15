@@ -1,0 +1,51 @@
+From: Edouard Durand <edouard.durand@gmail.com>
+Subject: [PATCH] thermal: qcom: tsens: skip SM8550 uplow wake IRQs
+
+Native s2idle testing on SM8550 devices repeatedly resumes immediately with
+pm_wakeup_irq pointing at the SM8550 TSENS uplow/passive threshold IRQ.
+The IRQ wake state exposed under /sys/kernel/irq is read-only on the live
+kernel, so runtime testing cannot disable this wake source.
+
+Keep normal TSENS interrupt handling active and keep critical TSENS wake
+enabled. Only skip arming the ordinary "uplow" TSENS IRQ as a wake source on
+qcom,sm8550. Scoped to the SoC-level compatible (not a specific board) so it
+covers every SM8550 board, not just the one it was first observed on.
+
+Guard the disable side to match so the wake refcount stays balanced and
+resume does not warn about an unbalanced disable_irq_wake().
+---
+--- a/drivers/thermal/qcom/tsens.c	2026-08-25 19:01:04.024339245 +0800
++++ b/drivers/thermal/qcom/tsens.c	2026-08-25 19:01:06.090453327 +0800
+@@ -1289,6 +1289,12 @@
+ 	return 0;
+ }
+ 
++static bool tsens_uplow_wake_allowed(void)
++{
++	/* SM8550 resumes immediately from s2idle on the uplow threshold IRQ. */
++	return !of_machine_is_compatible("qcom,sm8550");
++}
++
+ int tsens_suspend_common(struct tsens_priv *priv)
+ {
+ 	if (!device_may_wakeup(priv->dev))
+@@ -1297,7 +1303,8 @@
+ 	if (priv->feat->combo_int)
+ 		enable_irq_wake(priv->combined_irq);
+ 	else {
+-		enable_irq_wake(priv->uplow_irq);
++		if (tsens_uplow_wake_allowed())
++			enable_irq_wake(priv->uplow_irq);
+ 		if (priv->feat->crit_int)
+ 			enable_irq_wake(priv->crit_irq);
+ 	}
+@@ -1316,7 +1323,8 @@
+ 	if (priv->feat->combo_int)
+ 		disable_irq_wake(priv->combined_irq);
+ 	else {
+-		disable_irq_wake(priv->uplow_irq);
++		if (tsens_uplow_wake_allowed())
++			disable_irq_wake(priv->uplow_irq);
+ 		if (priv->feat->crit_int)
+ 			disable_irq_wake(priv->crit_irq);
+ 	}
