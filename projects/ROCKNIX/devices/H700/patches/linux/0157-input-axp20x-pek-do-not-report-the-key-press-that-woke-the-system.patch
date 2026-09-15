@@ -1,0 +1,52 @@
+From: Jacob Cook <jacobmcook1984@gmail.com>
+Subject: [PATCH] Input: axp20x-pek - do not report the key press that woke the system
+
+When the power key is the wakeup source, the press is delivered to
+userspace after resume and systemd-logind suspends the system straight
+back to sleep.
+
+The AXP288 handles this by clearing the pending PEK bits from the noirq
+resume callback, but that only works for a real suspend-to-RAM where the
+IRQ thread cannot run until the devices are back. Under s2idle the nested
+regmap-irq thread runs as soon as the PMIC interrupt fires, consumes the
+status bits and calls this handler while the system is still officially
+suspended, so anything done at resume time is too late.
+
+Drop key events while pm_suspend_in_progress() says a system suspend is in
+progress. The interrupt has already done its job as a wakeup source; the
+matching release, if it lands after resume, is a lone key-up that nobody
+acts on.
+
+Seen on the Anbernic RG35XX H (H700 + AXP717): every power-key wake from
+s2idle was followed by "Power key pressed short" / "Suspending..." from
+systemd-logind in the same second.
+
+---
+--- a/drivers/input/misc/axp20x-pek.c
++++ b/drivers/input/misc/axp20x-pek.c
+@@ -26,6 +26,7 @@
+ #include <linux/platform_device.h>
+ #include <linux/regmap.h>
+ #include <linux/slab.h>
++#include <linux/suspend.h>
+ 
+ #define AXP20X_PEK_STARTUP_MASK		(0xc0)
+ #define AXP20X_PEK_SHUTDOWN_MASK	(0x03)
+@@ -201,6 +202,17 @@
+ 	struct axp20x_pek *axp20x_pek = input_get_drvdata(idev);
+ 
+ 	/*
++	 * A press that wakes the system from sleep has done its job as a
++	 * wakeup source. Under s2idle the nested IRQ thread runs as soon as
++	 * the PMIC interrupt fires, long before the devices resume, so the
++	 * pending bits cannot be cleared from a resume callback the way the
++	 * AXP288 does it. Drop the event instead of reporting it to
++	 * userspace, which would otherwise suspend the system right away.
++	 */
++	if (pm_suspend_in_progress())
++		return IRQ_HANDLED;
++
++	/*
+ 	 * The power-button is connected to ground so a falling edge (dbf)
+ 	 * means it is pressed.
+ 	 */
