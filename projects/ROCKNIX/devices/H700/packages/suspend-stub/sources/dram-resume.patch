@@ -1,0 +1,143 @@
+From: Kailash R S <kailashrs@users.noreply.github.com>
+Subject: [PATCH] sunxi: dram: H616 resume path for the SRAM suspend stub
+
+Adapted from U-Boot's arch/arm/mach-sunxi/dram_sun50i_h616.c (v2026.01),
+originally by Jernej Skrabec and Andre Przywara; resume hooks by kailashrs
+in H700_rocknix_enhancement. Applied only to the copy compiled into the
+suspend stub, never to the bootloader's own driver.
+
+Skips cold SDRAM initialisation on resume, clears bit 0 of RTC + 0x1f4
+before leaving self-refresh, bounds two PHY calibration polls with a
+deadline, and records progress markers in the RTC for post-mortem.
+
+Two register uses here are not grounded in any source we hold: RTC +
+0x1f4 bit 0, which the author uses to hold and release the DRAM pads,
+and the progress markers at RTC + 0x10c onwards. The marker window
+0x100-0x11f is the general-purpose area Linux's rtc-sun6i exposes as
+nvmem, and 0x120 upwards is undocumented to us. Both need a datasheet
+section or BSP reference from the author before this ships.
+
+---
+--- a/dram_sun50i_h616.c
++++ b/dram_sun50i_h616.c
+@@ -392,7 +392,7 @@
+ 	else
+ 		val = 3;
+ 
+-	while ((readl(SUNXI_DRAM_PHY0_BASE + 0x184) & val) != val) {
++	for (u64 _dl = stub_deadline(1000000); (readl(SUNXI_DRAM_PHY0_BASE + 0x184) & val) != val && !stub_expired(_dl, SUNXI_DRAM_PHY0_BASE + 0x184); ) {
+ 		if (readl(SUNXI_DRAM_PHY0_BASE + 0x184) & 0x20) {
+ 			result = false;
+ 			break;
+@@ -408,7 +408,7 @@
+ 
+ 		setbits_le32(SUNXI_DRAM_PHY0_BASE + 8, 1);
+ 
+-		while ((readl(SUNXI_DRAM_PHY0_BASE + 0x184) & val) != val) {
++		for (u64 _dl = stub_deadline(1000000); (readl(SUNXI_DRAM_PHY0_BASE + 0x184) & val) != val && !stub_expired(_dl, SUNXI_DRAM_PHY0_BASE + 0x184); ) {
+ 			if (readl(SUNXI_DRAM_PHY0_BASE + 0x184) & 0x20) {
+ 				result = false;
+ 				break;
+@@ -1039,10 +1039,15 @@
+ 	writel(0, &mctl_ctl->swctl);
+ 	clrbits_le32(&mctl_ctl->dfimisc, 0x20);
+ 
++	/* Resume: release DRAM pad retention before leaving self-refresh */
++	if (sunxi_dram_resume)
++		setbits_le32(SUNXI_RTC_BASE + 0x1f4, BIT(0));
++
+ 	clrbits_le32(&mctl_ctl->pwrctl, 0x20);
+ 	writel(1, &mctl_ctl->swctl);
+ 	mctl_await_completion(&mctl_ctl->swstat, 1, 1);
+ 	mctl_await_completion(&mctl_ctl->statr, 3, 1);
++	stage(0x63);
+ 
+ 	udelay(200);
+ 
+@@ -1144,6 +1149,7 @@
+ 		panic("This DRAM setup is currently not supported.\n");
+ 	};
+ 
++	stage(0x64);
+ 	writel(0, SUNXI_DRAM_PHY0_BASE + 0x54);
+ 
+ 	writel(0, &mctl_ctl->swctl);
+@@ -1160,6 +1166,7 @@
+ 		}
+ 	}
+ 
++	stage(0x65);
+ 	if (para->tpr10 & TPR10_READ_CALIBRATION) {
+ 		for (i = 0; i < 5; i++)
+ 			if (mctl_phy_read_calibration(config))
+@@ -1170,6 +1177,7 @@
+ 		}
+ 	}
+ 
++	stage(0x66);
+ 	if (para->tpr10 & TPR10_READ_TRAINING) {
+ 		for (i = 0; i < 5; i++)
+ 			if (mctl_phy_read_training(para, config))
+@@ -1190,6 +1198,7 @@
+ 		}
+ 	}
+ 
++	stage(0x67);
+ 	mctl_phy_bit_delay_compensation(para);
+ 
+ 	clrbits_le32(SUNXI_DRAM_PHY0_BASE + 0x60, 4);
+@@ -1270,6 +1279,10 @@
+ 
+ 	mctl_set_timing_params(para);
+ 
++	/* Resume: SDRAM is in self-refresh, skip its initialisation */
++	if (sunxi_dram_resume)
++		clrsetbits_le32(&mctl_ctl->init[0], BIT(31) | BIT(30), BIT(30));
++
+ 	writel(0, &mctl_ctl->pwrctl);
+ 
+ 	setbits_le32(&mctl_ctl->dfiupd[0], BIT(31) | BIT(30));
+@@ -1294,6 +1307,7 @@
+ 	setbits_le32(&mctl_com->unk_0x500, BIT(24));
+ 	udelay(1);
+ 
++	stage(0x62);
+ 	if (!mctl_phy_init(para, config))
+ 		return false;
+ 
+@@ -1308,6 +1322,7 @@
+ 	writel(1, &mctl_ctl->swctl);
+ 	mctl_await_completion(&mctl_ctl->swstat, 1, 1);
+ 
++	stage(0x68);
+ 	return true;
+ }
+ 
+@@ -1315,6 +1330,7 @@
+ 		    const struct dram_config *config)
+ {
+ 	mctl_sys_init(para->clk);
++	stage(0x61);
+ 
+ 	return mctl_ctrl_init(para, config);
+ }
+@@ -1360,3 +1376,19 @@
+ 
+ 	return size;
+ };
++
++
++bool sunxi_dram_resume_init(const struct dram_config *config)
++{
++	void *const prcm = (void *)SUNXI_PRCM_BASE;
++
++	setbits_le32(prcm + CCU_PRCM_RES_CAL_CTRL, BIT(8));
++	clrbits_le32(prcm + CCU_PRCM_OHMS240, 0x3f);
++
++	if (!mctl_core_init(&para, config))
++		return false;
++
++	mctl_set_master_priority();
++
++	return true;
++}
