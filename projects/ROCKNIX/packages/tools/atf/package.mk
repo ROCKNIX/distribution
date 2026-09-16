@@ -15,6 +15,7 @@ PKG_PATCH_DIRS+="${DEVICE}"
 case ${DEVICE} in
   H700)
     PKG_VERSION="2.12.0"
+    PKG_DEPENDS_TARGET+=" suspend-stub"
   ;;
   *)
     PKG_VERSION="2.10.0"
@@ -33,7 +34,12 @@ if [ "${ATF_PLATFORM}" = "rk3399" ]; then
 fi
 
 make_target() {
-  CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" CFLAGS="" make PLAT=${ATF_PLATFORM} bl31
+  # H700: build BL31 with PSCI SYSTEM_SUSPEND, embedding the SRAM resume stub.
+  if [ "${DEVICE}" = "H700" ]; then
+    ATF_SUSPEND="SUNXI_SYSTEM_SUSPEND=1 SUNXI_SUSPEND_STUB=$(get_build_dir suspend-stub)/suspend_stub.bin"
+  fi
+
+  CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" CFLAGS="" make PLAT=${ATF_PLATFORM} ${ATF_SUSPEND} bl31
 }
 
 makeinstall_target() {
