@@ -21,7 +21,7 @@ PKG_UI_TOOLS="fbgrab grim"
 
 PKG_GRAPHICS="imagemagick"
 
-PKG_FONTS="corefonts"
+PKG_FONTS="corefonts noto-sans-cjk"
 
 PKG_MULTIMEDIA="ffmpeg vlc mpv gmu m8c"
 
