@@ -30,6 +30,8 @@ steam_load_es_thunk_settings() {
   LSFG_PERFORMANCE_MODE=${LSFG_PERFORMANCE_MODE:-1}
   FPS_LIMIT=$(get_setting fps_limit "${PLATFORM}" "${GAME}")
   FPS_LIMIT=${FPS_LIMIT:-0}
+  GAMESCOPE_BACKEND=$(get_setting gamescope_backend "${PLATFORM}" "${GAME}")
+  GAMESCOPE_BACKEND=${GAMESCOPE_BACKEND:-drm}
 }
 
 steam_apply_fps_limit() {
@@ -75,6 +77,7 @@ steam_debug_print() {
   echo "LSFG PERFORMANCE MODE set to: ${LSFG_PERFORMANCE_MODE}"
   echo "LSFG FPS LIMIT set to: ${FPS_LIMIT}"
   echo "VSYNC set to: ${VSYNC}"
+  echo "GAMESCOPE_BACKEND set to: ${GAMESCOPE_BACKEND}"
 }
 
 steam_read_sway_geometry() {
@@ -208,17 +211,28 @@ steam_launch_bigpicture() {
   mkdir -p "$(dirname "$gamescope_mode_file")"
   touch "$gamescope_mode_file"
   unset MESA_LOADER_DRIVER_OVERRIDE
+
+  # drm gamescope backend needs wayland socket unset
+  if [ "${GAMESCOPE_BACKEND}" = "drm" ]; then
+    unset WAYLAND_DISPLAY
+  fi
+
   if [ "${STEAM_FLAVOR}" = "arm64" ]; then
     export STEAM_COMPAT_GRAPHICS_PROVIDER=//storage/.local/share/fex-emu/RootFS/ArchLinux/graphics_provider.json
     steam_exit_code_file=$(mktemp /tmp/steam-exit-code.XXXXXX)
-    systemctl stop sway
+
+    # drm gamescope backend cannot co-exist with a wayland compositer
+    if [ "${GAMESCOPE_BACKEND}" = "drm" ]; then
+      systemctl stop sway
+    fi
+
     steam_touch_calibration_begin "${force_orientation}"
     trap steam_touch_calibration_end EXIT
     while true; do
       rm -f "${steam_exit_code_file}"
       GAMESCOPE_MODE_SAVE_FILE="${gamescope_mode_file}" GAMESCOPE_FAKE_OUTPUT_MM=508x286 \
-      env -u WAYLAND_DISPLAY LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} \
-      gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --mangoapp --backend drm --force-orientation "${force_orientation}" ${rotate_clamp} -e -- \
+      LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} \
+      gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --mangoapp --backend "${GAMESCOPE_BACKEND}" --force-orientation "${force_orientation}" ${rotate_clamp} -e -- \
       /bin/bash -c '
         exit_file="$1"
         shift
@@ -245,7 +259,7 @@ steam_launch_bigpicture() {
     steam_touch_calibration_begin "${force_orientation}"
     trap steam_touch_calibration_end EXIT
     GAMESCOPE_MODE_SAVE_FILE="${gamescope_mode_file}" GAMESCOPE_FAKE_OUTPUT_MM=508x286 env -u WAYLAND_DISPLAY ${EMUPERF} \
-      gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --backend drm --force-orientation "${force_orientation}" ${rotate_clamp} -- \
+      gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --backend "${GAMESCOPE_BACKEND}" --force-orientation "${force_orientation}" ${rotate_clamp} -- \
       FEX /usr/bin/steam -nobigpicture -noverifyfiles -nobootstrapupdate -skipinitialbootstrap -norepairfiles -noshaders ${game_uri:+"$game_uri"}
     steam_touch_calibration_end
     trap - EXIT
