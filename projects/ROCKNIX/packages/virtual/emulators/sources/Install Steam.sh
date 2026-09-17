@@ -119,10 +119,6 @@ ensure_steam_desktop_stub() {
 }
 
 install_steam_runtime_arm64() {
-  if [ -d "${RUNTIME_DIR}" ]; then
-    log_info "Steam runtime already exists. Skipping."
-    return 0
-  fi
   log_info "Downloading and installing Steam runtime (ARM64)..."
   local tar_path="${STEAM}/steam-runtime-steamrt-arm64.tar.xz"
 
