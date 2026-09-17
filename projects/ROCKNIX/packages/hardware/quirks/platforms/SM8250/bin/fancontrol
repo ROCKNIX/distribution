@@ -1,31 +1,96 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2026 ROCKNIX (https://github.com/ROCKNIX)
 
 . /etc/profile
 
 DEBUG=false
 sleep 1 && COOLING_PROFILE=$(get_setting "cooling.profile")
 FAN_PWM="${DEVICE_PWM_FAN}"
+FAN_ENABLE="${DEVICE_PWM_FAN}_enable"
 
-# Enable fan if it's turned off
-if [ -f "${DEVICE_PWM_FAN}_enable" ] && [ "$(cat "${DEVICE_PWM_FAN}_enable")" != "1" ]; then
-  echo 1 > "${DEVICE_PWM_FAN}_enable"
-  echo "Enabling fan pwm"
-fi
+# Profile = trip temps
+TRIPS_AGGRESSIVE="40000 48000 55000 61000 66000 71000"
+TRIPS_MODERATE="45000 55000 62000 68000 73000 78000"
+TRIPS_QUIET="52000 62000 69000 75000 80000 85000"
 
+# Fallback PWM curve
+FB_SPEEDS=(255 204 179 153 128 102 77 51 0)
+FB_AGGRESSIVE=(72000 68000 64000 60000 56000 52000 46000 40000 0)
+FB_MODERATE=(78000 74000 70000 66000 62000 57000 50000 43000 0)
+FB_QUIET=(84000 80000 76000 72000 67000 62000 55000 47000 0)
 
-log $0 "Setting profile to ${COOLING_PROFILE}"
+HYSTERESIS=5000
 
 function set_control() {
   log $0 "Set fan control to ${1}"
-  if [ -e "${DEVICE_PWM_FAN}_enable" ]
+  if [ -e "${FAN_ENABLE}" ]
   then
-    echo ${1} >${DEVICE_PWM_FAN}_enable
+    echo ${1} >"${FAN_ENABLE}"
   fi
 }
 
-trap "set_control 0 && exit 0" SIGHUP SIGINT SIGQUIT SIGABRT
+# Thermal zone the device tree binds the fan to
+function fan_zone() {
+  local zone cdev
+  for zone in /sys/class/thermal/thermal_zone*
+  do
+    for cdev in "${zone}"/cdev*
+    do
+      [ -e "${cdev}/type" ] || continue
+      if [ "$(cat "${cdev}/type" 2>/dev/null)" = "pwm-fan" ]
+      then
+        echo "${zone}"
+        return 0
+      fi
+    done
+  done
+  return 1
+}
+
+function active_trips() {
+  local zone="${1}" f idx
+  for f in "${zone}"/trip_point_*_type
+  do
+    [ -e "${f}" ] || continue
+    [ "$(cat "${f}" 2>/dev/null)" = "active" ] || continue
+    idx="${f##*/trip_point_}"
+    echo "${idx%_type}"
+  done | sort -n
+}
+
+function set_trips() {
+  local zone="${1}" temps="${2}" idx
+  set -- ${temps}
+  for idx in $(active_trips "${zone}")
+  do
+    [ -n "${1}" ] || break
+    $DEBUG && log $0 "trip_point_${idx}_temp = ${1}"
+    echo "${1}" >"${zone}/trip_point_${idx}_temp" 2>/dev/null
+    shift
+  done
+}
+
+function zone_mode() {
+  [ -n "${FAN_ZONE}" ] && [ -e "${FAN_ZONE}/mode" ] || return 0
+  echo "${1}" >"${FAN_ZONE}/mode" 2>/dev/null
+}
+
+# Hand the fan back to the kernel rather than switching it off
+function cleanup() {
+  set_control 2 >/dev/null 2>&1
+  zone_mode enabled
+  exit 0
+}
+
+trap cleanup SIGHUP SIGINT SIGQUIT SIGABRT SIGTERM
+
+FAN_ZONE="$(fan_zone)"
+
+# The fan is hard disabled at enable=0 and ignores every pwm1 write
+set_control 2 >/dev/null 2>&1
+
+log $0 "Setting profile to ${COOLING_PROFILE}"
 
 if [ "${COOLING_PROFILE}" = "custom" ]
 then
@@ -35,42 +100,60 @@ then
     source /storage/.config/fancontrol.conf
     if [ ! $? = 0 ]
     then
-      WARN="Custom fan profile could not be loaded, defaulting to auto."
+      WARN="Custom fan profile could not be loaded, defaulting to moderate."
       log $0 "${WARN}"
-      COOLING_PROFILE="auto"
-      set_setting cooling.profile auto
+      COOLING_PROFILE="moderate"
+      set_setting cooling.profile moderate
     fi
   else
-    WARN="Custom fan profile selected but fancontrol.conf not found, defaulting to auto."
+    WARN="Custom fan profile selected but fancontrol.conf not found, defaulting to moderate."
     log $0 "${WARN}"
-    COOLING_PROFILE="auto"
-    set_setting cooling.profile auto
+    COOLING_PROFILE="moderate"
+    set_setting cooling.profile moderate
   fi
 fi
 
-
-if [ ! "${COOLING_PROFILE}" = "custom" ]
+# A custom profile brings its own speeds/temps
+if [ "${COOLING_PROFILE}" = "custom" ]
 then
-  if [ "${COOLING_PROFILE}" = "aggressive" ]; then
-    SPEEDS=(255 196 128 96 64 32)
-    TEMPS=(75000 65000 55000 45000 35000 0)
-  elif [ "${COOLING_PROFILE}" = "moderate" ]; then
-    SPEEDS=(255 196 128 96 64 32)
-    TEMPS=(80000 70000 60000 50000 40000 0)
-  elif [ "${COOLING_PROFILE}" = "quiet" ]; then
-    # Quiet.
-    SPEEDS=(255 196 128 96 64 32)
-    TEMPS=(85000 75000 65000 55000 45000 0)
-  else
-    # auto
-    set_control 0 >/dev/null 2>&1
+  if [ -n "${FAN_ZONE}" ]
+  then
+    log $0 "Custom profile, taking the fan from $(cat ${FAN_ZONE}/type)"
+    zone_mode disabled
+  fi
+else
+  case "${COOLING_PROFILE}" in
+    aggressive)
+      TRIPS="${TRIPS_AGGRESSIVE}"
+      SPEEDS=("${FB_SPEEDS[@]}")
+      TEMPS=("${FB_AGGRESSIVE[@]}")
+      ;;
+    quiet)
+      TRIPS="${TRIPS_QUIET}"
+      SPEEDS=("${FB_SPEEDS[@]}")
+      TEMPS=("${FB_QUIET[@]}")
+      ;;
+    *)
+      TRIPS="${TRIPS_MODERATE}"
+      SPEEDS=("${FB_SPEEDS[@]}")
+      TEMPS=("${FB_MODERATE[@]}")
+      ;;
+  esac
+
+  if [ -n "${FAN_ZONE}" ]
+  then
+    log $0 "Fan driven by $(cat ${FAN_ZONE}/type), setting trips to ${TRIPS}"
+    set_trips "${FAN_ZONE}" "${TRIPS}"
+    zone_mode enabled
     exit 0
   fi
+
+  log $0 "No thermal zone drives the fan, falling back to pwm control."
 fi
 
 log $0 "Enabling fan control."
-set_control 1 >/dev/null 2>&1
 
+LASTINDEX=""
 while true
 do
   CPU_TEMP=$(awk '{total += $1; count++} END {printf "%d", total/count}' ${DEVICE_TEMP_SENSOR})
@@ -84,15 +167,30 @@ do
     fi
     INDEX=$(( $INDEX + 1 ))
   done
+
+  if [ -n "${LASTINDEX}" ]
+  then
+    if (( ${INDEX} > ${LASTINDEX} ))
+    then
+      if (( "${CPU_TEMP}" > ${TEMPS[${LASTINDEX}]} - ${HYSTERESIS} ))
+      then
+        INDEX=${LASTINDEX}
+      else
+        INDEX=$(( ${LASTINDEX} + 1 ))
+      fi
+    elif (( ${INDEX} < ${LASTINDEX} - 2 ))
+    then
+      INDEX=$(( ${LASTINDEX} - 2 ))
+    fi
+  fi
+
   FSPEED=${SPEEDS[${INDEX}]}
   if [ ! "${LASTSPEED}" = "${FSPEED}" ]
   then
-    $DEBUG && log $0 "Setting PWM FAN to ${FSPEED} (${TEMP})" 2>/dev/null
+    $DEBUG && log $0 "Setting PWM FAN to ${FSPEED} (${TEMPS[${INDEX}]})" 2>/dev/null
     echo ${FSPEED} >${FAN_PWM}
     LASTSPEED=${FSPEED}
   fi
+  LASTINDEX=${INDEX}
   sleep 3
 done
-
-log $0 "Disabling fan control."
-set_control 0 >/dev/null 2>&1
