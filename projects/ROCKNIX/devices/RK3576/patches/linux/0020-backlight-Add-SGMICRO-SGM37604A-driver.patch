@@ -1,0 +1,257 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ROCKNIX <noreply@rocknix.org>
+Date: Mon, 01 Jan 2024 00:00:00 +0000
+Subject: [PATCH] backlight: Add SGMICRO SGM37604A driver
+
+Ported from Radxa ROCK 4D linux-rockchip 6.1 BSP for the
+1080x2160 MIPI panel (rk3576-rock-4d-panel.dtsi). System
+brightness 0-255 maps to 0-70% of the 12-bit hardware range
+as panel overdrive protection. Return values of all regmap
+writes are checked and the enable GPIO error path is handled.
+
+Signed-off-by: ROCKNIX <noreply@rocknix.org>
+---
+diff --git a/drivers/video/backlight/Kconfig b/drivers/video/backlight/Kconfig
+index a7a3fba..1d9823a 100644
+--- a/drivers/video/backlight/Kconfig
++++ b/drivers/video/backlight/Kconfig
+@@ -258,6 +258,18 @@ config BACKLIGHT_PWM
+ 	  If you have a LCD backlight adjustable by PWM, say Y to enable
+ 	  this driver.
+ 
++config BACKLIGHT_SGM37604A
++	tristate "SGMICRO SGM37604A backlight driver"
++	depends on I2C
++	depends on BACKLIGHT_CLASS_DEVICE
++	select REGMAP_I2C
++	help
++	  Say Y to enable support for the SGMICRO SGM37604A I2C
++	  backlight controller used by the Radxa ROCK 4D MIPI panel.
++
++	  To compile this driver as a module, choose M here: the
++	  module will be called sgm37604a.
++
+ config BACKLIGHT_CGBC
+ 	tristate "Congatec Board Controller (CGBC) backlight support"
+ 	depends on MFD_CGBC && X86
+diff --git a/drivers/video/backlight/Makefile b/drivers/video/backlight/Makefile
+index 794820a..20054b0 100644
+--- a/drivers/video/backlight/Makefile
++++ b/drivers/video/backlight/Makefile
+@@ -57,6 +57,7 @@ obj-$(CONFIG_BACKLIGHT_QCOM_WLED)	+= qcom-wled.o
+ obj-$(CONFIG_BACKLIGHT_RT4831)		+= rt4831-backlight.o
+ obj-$(CONFIG_BACKLIGHT_SAHARA)		+= kb3886_bl.o
+ obj-$(CONFIG_BACKLIGHT_SKY81452)	+= sky81452-backlight.o
++obj-$(CONFIG_BACKLIGHT_SGM37604A)	+= sgm37604a.o
+ obj-$(CONFIG_BACKLIGHT_TPS65217)	+= tps65217_bl.o
+ obj-$(CONFIG_BACKLIGHT_WM831X)		+= wm831x_bl.o
+ obj-$(CONFIG_BACKLIGHT_ARCXCNN) 	+= arcxcnn_bl.o
+diff --git a/drivers/video/backlight/sgm37604a.c b/drivers/video/backlight/sgm37604a.c
+new file mode 100644
+index 0000000..f2af0ef
+--- /dev/null
++++ b/drivers/video/backlight/sgm37604a.c
+@@ -0,0 +1,203 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * SGM37604A I2C backlight driver.
++ *
++ * Ported from Radxa ROCK 4D linux-rockchip 6.1 BSP.
++ * System brightness 0-255 maps to 0-70% of the 12-bit hardware
++ * range as panel overdrive protection.
++ */
++
++#include <linux/backlight.h>
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/i2c.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/regmap.h>
++
++#define SGM37604A_MAX_HW_VAL	4095
++#define SGM37604A_MAX_USER_VAL	255
++#define SGM37604A_LIMIT_PERCENT	70
++#define SGM37604A_MIN_HW_VAL	16
++
++#define SGM37604A_REG_LED_CTRL		0x10
++#define SGM37604A_REG_MODE_CTRL		0x11
++#define SGM37604A_REG_BRIGHTNESS_MSB	0x19
++#define SGM37604A_REG_BRIGHTNESS_LSB	0x1a
++#define SGM37604A_REG_CURRENT_CTRL	0x1b
++
++struct sgm37604a_data {
++	struct device *dev;
++	struct regmap *regmap;
++	struct backlight_device *bl;
++	struct gpio_desc *en_gpio;
++	u8 led_channels;
++	u8 max_current;
++	bool powered_on;
++};
++
++static const struct regmap_config sgm37604a_regmap_config = {
++	.reg_bits = 8,
++	.val_bits = 8,
++	.max_register = 0x1f,
++	.cache_type = REGCACHE_RBTREE,
++};
++
++static int sgm37604a_hw_init(struct sgm37604a_data *chip)
++{
++	int ret;
++
++	if (chip->en_gpio) {
++		gpiod_set_value_cansleep(chip->en_gpio, 1);
++		msleep(50);
++	}
++
++	ret = regmap_write(chip->regmap, SGM37604A_REG_MODE_CTRL, 0x00);
++	if (ret)
++		goto err;
++	ret = regmap_write(chip->regmap, SGM37604A_REG_LED_CTRL,
++			   chip->led_channels);
++	if (ret)
++		goto err;
++	ret = regmap_write(chip->regmap, SGM37604A_REG_CURRENT_CTRL,
++			   chip->max_current);
++	if (ret)
++		goto err;
++
++	chip->powered_on = true;
++	return 0;
++
++err:
++	dev_err(chip->dev, "failed to init hardware registers: %d\n", ret);
++	return ret;
++}
++
++static int sgm37604a_update_status(struct backlight_device *bl)
++{
++	struct sgm37604a_data *chip = bl_get_data(bl);
++	int brightness = bl->props.brightness;
++	u32 hw_limit, hw_val;
++	u8 lsb, msb;
++	int ret;
++
++	if (backlight_is_blank(bl))
++		brightness = 0;
++
++	if (!brightness) {
++		ret = regmap_write(chip->regmap,
++				   SGM37604A_REG_BRIGHTNESS_LSB, 0x00);
++		ret |= regmap_write(chip->regmap,
++				    SGM37604A_REG_BRIGHTNESS_MSB, 0x00);
++		if (ret)
++			dev_err(chip->dev, "failed to clear brightness\n");
++		if (chip->en_gpio)
++			gpiod_set_value_cansleep(chip->en_gpio, 0);
++		chip->powered_on = false;
++		return ret;
++	}
++
++	if (!chip->powered_on) {
++		ret = sgm37604a_hw_init(chip);
++		if (ret)
++			return ret;
++	}
++
++	hw_limit = SGM37604A_MAX_HW_VAL * SGM37604A_LIMIT_PERCENT / 100;
++	hw_val = (u32)brightness * hw_limit / SGM37604A_MAX_USER_VAL;
++	if (hw_val > hw_limit)
++		hw_val = hw_limit;
++	if (hw_val < SGM37604A_MIN_HW_VAL)
++		hw_val = SGM37604A_MIN_HW_VAL;
++
++	lsb = (0xf << 4) | (hw_val & 0x0f);
++	msb = (hw_val >> 4) & 0xff;
++
++	ret = regmap_write(chip->regmap, SGM37604A_REG_BRIGHTNESS_LSB, lsb);
++	if (ret)
++		return ret;
++
++	return regmap_write(chip->regmap, SGM37604A_REG_BRIGHTNESS_MSB, msb);
++}
++
++static const struct backlight_ops sgm37604a_bl_ops = {
++	.options = BL_CORE_SUSPENDRESUME,
++	.update_status = sgm37604a_update_status,
++};
++
++static int sgm37604a_probe(struct i2c_client *client)
++{
++	struct device *dev = &client->dev;
++	struct sgm37604a_data *chip;
++	struct backlight_properties props;
++	u32 val;
++	int ret;
++
++	chip = devm_kzalloc(dev, sizeof(*chip), GFP_KERNEL);
++	if (!chip)
++		return -ENOMEM;
++	chip->dev = dev;
++
++	chip->regmap = devm_regmap_init_i2c(client,
++					    &sgm37604a_regmap_config);
++	if (IS_ERR(chip->regmap))
++		return dev_err_probe(dev, PTR_ERR(chip->regmap),
++				     "failed to init regmap\n");
++
++	if (!device_property_read_u32(dev, "sgmicro,led-channels", &val))
++		chip->led_channels = (u8)val;
++	else
++		chip->led_channels = 0x07;
++
++	if (!device_property_read_u32(dev, "sgmicro,max-current", &val))
++		chip->max_current = (u8)val;
++	else
++		chip->max_current = 0x1f;
++
++	chip->en_gpio = devm_gpiod_get_optional(dev, "enable", GPIOD_OUT_LOW);
++	if (IS_ERR(chip->en_gpio))
++		return dev_err_probe(dev, PTR_ERR(chip->en_gpio),
++				     "failed to get enable gpio\n");
++
++	memset(&props, 0, sizeof(props));
++	props.type = BACKLIGHT_RAW;
++	props.max_brightness = SGM37604A_MAX_USER_VAL;
++	if (!device_property_read_u32(dev, "default-brightness", &val))
++		props.brightness = val;
++	else
++		props.brightness = 128;
++
++	chip->bl = devm_backlight_device_register(dev, "sgm37604a", dev,
++						  chip, &sgm37604a_bl_ops,
++						  &props);
++	if (IS_ERR(chip->bl))
++		return dev_err_probe(dev, PTR_ERR(chip->bl),
++				     "failed to register backlight\n");
++
++	ret = sgm37604a_hw_init(chip);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to init hardware\n");
++
++	backlight_update_status(chip->bl);
++	i2c_set_clientdata(client, chip);
++
++	return 0;
++}
++
++static const struct of_device_id sgm37604a_of_match[] = {
++	{ .compatible = "sgmicro,sgm37604a" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, sgm37604a_of_match);
++
++static struct i2c_driver sgm37604a_i2c_driver = {
++	.driver = {
++		.name = "sgm37604a",
++		.of_match_table = sgm37604a_of_match,
++	},
++	.probe = sgm37604a_probe,
++};
++module_i2c_driver(sgm37604a_i2c_driver);
++
++MODULE_AUTHOR("ROCKNIX");
++MODULE_DESCRIPTION("SGM37604A I2C backlight driver");
++MODULE_LICENSE("GPL");
