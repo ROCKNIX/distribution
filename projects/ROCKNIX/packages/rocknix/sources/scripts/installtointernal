@@ -60,26 +60,10 @@ get_storage_size_kb() {
   echo "$total_kb"
 }
 
-# 1) Check for existing ROCKNIX or STORAGE partitions
-mapfile -t part_names < <(parted -m -s "$DEVICE" print | tail -n +2 | cut -d: -f6)
-for name in "${part_names[@]}"; do
-  if [[ "$name" == "ROCKNIX" || "$name" == "STORAGE" ]]; then
-    echo "An installation already exists (found partition named '$name'). Exiting."
-    exit 0
-  fi
-done
-
-# 2) Warn user
-read -rp "WARNING: This will wipe Android userdata on ${DEVICE}. Proceed? [y/N]: " confirm
-if [[ ! $confirm =~ ^[Yy]$ ]]; then
-  echo "Aborted by user."
-  exit 0
-fi
-
-# 3) Find current Android userdata partition
+# 1) Find current Android userdata partition
 mapfile -t ud_line < <(parted -m -s "$DEVICE" unit B print | grep ':userdata:')
 if [[ ${#ud_line[@]} -ne 1 ]]; then
-  echo "ERROR: Could not uniquely find a Android userdata partition labeled 'userdata'."
+  echo "ERROR: Could not find an Android userdata partition."
   exit 1
 fi
 IFS=':' read -r UD_NUM UD_STARTB UD_ENDB _ <<< "${ud_line[0]}"
@@ -102,47 +86,84 @@ if [[ "$HW_DEVICE" == "SM6115" ]]; then
   ST_PART_DEV="${DEVICE}p${ST_NUM}"
 fi
 
+# 2) Check for partitions after userdata and prompt user
+MAX_PART_NUM=$(parted -m -s "$DEVICE" print | awk -F: '/^[0-9]+:/ {print $1}' | sort -n | tail -1)
+PRESERVE_USERDATA=0
+
+if (( MAX_PART_NUM > UD_NUM )); then
+  echo "Linux has been detected on internal storage already."
+  read -rp "Do you wish to wipe these partitions? [y/N]: " wipe_linux
+  if [[ ! $wipe_linux =~ ^[Yy]$ ]]; then
+    echo "Aborted by user."
+    exit 0
+  fi
+
+  read -rp "Do you want to preserve the existing Android userdata partition? (Answering 'N' will erase/resize it) [Y/n]: " pres_ud
+  if [[ ! $pres_ud =~ ^[Nn]$ ]]; then
+    PRESERVE_USERDATA=1
+  fi
+
+  echo "Removing partitions..."
+  # Delete backwards to preserve partition numbering integrity during removal
+  for (( p=MAX_PART_NUM; p>UD_NUM; p-- )); do
+    parted -s "$DEVICE" rm "$p" >/dev/null 2>&1 || true
+  done
+else
+  # 3) Standard warning for clean Android installations
+  read -rp "WARNING: This will wipe Android userdata on ${DEVICE}. Proceed? [y/N]: " confirm
+  if [[ ! $confirm =~ ^[Yy]$ ]]; then
+    echo "Aborted by user."
+    exit 0
+  fi
+fi
+
 # Compute MiB-aligned boundaries for Android userdata
 UD_START_MB=$(( (UD_START + 1048575) / 1048576 ))     # round up to MiB
 UD_END_MB=$(( UD_END / 1048576 ))                     # round down to MiB
 ORIG_SIZE=$(( (UD_END_MB - UD_START_MB) * 1024**2 ))  # bytes
-MIN_SIZE=$((1 * 1024**3))
-RESERVE=$((8 * 1024**3))
-MAX_SIZE=$(( ORIG_SIZE - RESERVE ))
-if (( MAX_SIZE < MIN_SIZE )); then
-  echo "ERROR: Not enough space to shrink by 8GB. Aborting."
-  exit 1
+
+if (( PRESERVE_USERDATA == 1 )); then
+  echo "Preserving existing Android userdata partition..."
+  NEW_UD_END_MB=$UD_END_MB
+else
+  # 4) Ask desired Android userdata size in GB
+  MIN_SIZE=$((1 * 1024**3))
+  RESERVE=$((8 * 1024**3))
+  MAX_SIZE=$(( ORIG_SIZE - RESERVE ))
+  if (( MAX_SIZE < MIN_SIZE )); then
+    echo "ERROR: Not enough space to shrink by 8GB. Aborting."
+    exit 1
+  fi
+
+  echo "Current Android userdata size: $((ORIG_SIZE / 1024**3)) GB"
+  echo "You may choose between 1 GB and $((MAX_SIZE / 1024**3)) GB"
+  while :; do
+    read -rp "Enter new Android userdata size in GB: " ud_gb
+    if ! [[ $ud_gb =~ ^[0-9]+$ ]]; then
+      echo "Please enter an integer."
+      continue
+    fi
+    ud_bytes=$(( ud_gb * 1024**3 ))
+    if (( ud_bytes < MIN_SIZE || ud_bytes > MAX_SIZE )); then
+      echo "Value out of range. Must be between 1 and $((MAX_SIZE / 1024**3)) GB."
+      continue
+    fi
+    break
+  done
+  NEW_UD_END_MB=$(( UD_START_MB + (ud_bytes / 1024**2) ))
+
+  # 5) Delete and recreate Android userdata partition
+  echo "Deleting Android userdata partition #$UD_NUM..."
+  parted -s "$DEVICE" rm "$UD_NUM"
+  echo "Creating Android userdata partition #$UD_NUM (${UD_START_MB}MiB–${NEW_UD_END_MB}MiB)..."
+  parted -a optimal -s "$DEVICE" \
+    mkpart primary ext4 "${UD_START_MB}MiB" "${NEW_UD_END_MB}MiB"
+  parted -s "$DEVICE" name "$UD_NUM" userdata
+
+  # 5b) Wipe first 8 MiB of the new Android userdata partition
+  echo "Zeroing first 8 MiB of ${UD_PART_DEV}..."
+  dd if=/dev/zero of="${UD_PART_DEV}" bs=1M count=8 &>/dev/null
 fi
-
-# 4) Ask desired Android userdata size in GB
-echo "Current Android userdata size: $((ORIG_SIZE / 1024**3)) GB"
-echo "You may choose between 1 GB and $((MAX_SIZE / 1024**3)) GB"
-while :; do
-  read -rp "Enter new Android userdata size in GB: " ud_gb
-  if ! [[ $ud_gb =~ ^[0-9]+$ ]]; then
-    echo "Please enter an integer."
-    continue
-  fi
-  ud_bytes=$(( ud_gb * 1024**3 ))
-  if (( ud_bytes < MIN_SIZE || ud_bytes > MAX_SIZE )); then
-    echo "Value out of range. Must be between 1 and $((MAX_SIZE / 1024**3)) GB."
-    continue
-  fi
-  break
-done
-NEW_UD_END_MB=$(( UD_START_MB + (ud_bytes / 1024**2) ))
-
-# 5) Delete and recreate Android userdata partition
-echo "Deleting Android userdata partition #$UD_NUM..."
-parted -s "$DEVICE" rm "$UD_NUM"
-echo "Creating Android userdata partition #$UD_NUM (${UD_START_MB}MiB–${NEW_UD_END_MB}MiB)..."
-parted -a optimal -s "$DEVICE" \
-  mkpart primary ext4 "${UD_START_MB}MiB" "${NEW_UD_END_MB}MiB"
-parted -s "$DEVICE" name "$UD_NUM" userdata
-
-# 5b) Wipe first 8 MiB of the new Android userdata partition
-echo "Zeroing first 8 MiB of ${UD_PART_DEV}..."
-dd if=/dev/zero of="${UD_PART_DEV}" bs=1M count=8 &>/dev/null
 
 # 6) Create ROCKNIX partition
 RK_START_MB=$NEW_UD_END_MB
