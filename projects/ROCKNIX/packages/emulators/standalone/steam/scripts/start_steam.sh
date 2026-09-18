@@ -199,6 +199,12 @@ steam_launch_bigpicture() {
     rotate_clamp="--rotated-output-max-height 1080"
   fi
 
+  # SM4450 arm64 Steam UI requires --force-composition-rotation to work with gamescope drm backend
+  local force_composition_rotation=""
+  if [[ "${HW_DEVICE}" == "SM4450" ]]; then
+    force_composition_rotation="--force-composition-rotation"
+  fi
+
   if [[ "$1" == *.desktop && -f "$1" && "$(basename "$1")" != "Steam.desktop" ]]; then
     local exec_line
     exec_line=$(grep -m1 '^Exec=' "$1" | cut -d'=' -f2-)
@@ -218,7 +224,7 @@ steam_launch_bigpicture() {
       rm -f "${steam_exit_code_file}"
       GAMESCOPE_MODE_SAVE_FILE="${gamescope_mode_file}" GAMESCOPE_FAKE_OUTPUT_MM=508x286 \
       env -u WAYLAND_DISPLAY LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} \
-      gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --mangoapp --backend drm --force-orientation "${force_orientation}" ${rotate_clamp} -e -- \
+      gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --mangoapp --backend drm ${force_composition_rotation} --force-orientation "${force_orientation}" ${rotate_clamp} -e -- \
       /bin/bash -c '
         exit_file="$1"
         shift
