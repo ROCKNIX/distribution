@@ -9,6 +9,7 @@ PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain llvm qt6 SDL3 ffmpeg curl zlib zstd libpng pugixml \
                     libusb libevdev alsa-lib pulseaudio openal-soft miniupnpc"
 PKG_LONGDESC="PS3 Emulator"
+PKG_WIKI_CONFIG_DB="https://api.rpcs3.net/config/?api=v1"
 
 if [ "${OPENGL_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL} glew"
@@ -54,4 +55,12 @@ makeinstall_target() {
 
   mkdir -p ${INSTALL}/usr/config/rpcs3
     cp -aL ${PKG_DIR}/config/${DEVICE}/* ${INSTALL}/usr/config/rpcs3
+
+  mkdir -p ${INSTALL}/usr/config/rpcs3/GuiConfigs
+    CONFIG_DB="${PKG_BUILD}/config_database.dat"
+    if curl -fLo "${CONFIG_DB}" "${PKG_WIKI_CONFIG_DB}" && grep -q '"games"' "${CONFIG_DB}"; then
+      cp "${CONFIG_DB}" ${INSTALL}/usr/config/rpcs3/GuiConfigs
+    else
+      log_qa_check "config_database" "could not fetch a valid config database from ${PKG_WIKI_CONFIG_DB}"
+    fi
 }
