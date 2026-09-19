@@ -1,0 +1,30 @@
+#!/bin/sh
+# AYN Odin 3 SSC accel+gyro bring-up orchestration.
+#  1. stage the Hexagon sensor registry to a writable tmpfs path
+#  2. load the sns_iio IIO bridge module
+#  3. spawn the ADSP "sensorspd" static PD + reverse-RPC listener (adsprpcd)
+#  4. stream accel+gyro from QRTR into the bridge (snsfeed, foreground)
+HEXFS=/tmp/qcom-hexagon-fs
+
+# (1) stage registry: base + AYN Odin 3 overlay were merged at build time
+rm -rf "${HEXFS}"
+mkdir -p "${HEXFS}"
+cp -a /usr/share/qcom-hexagon-fs/. "${HEXFS}/"
+# the DSP searches configs under a domain-qualified <path>/adsp/vendor/... prefix
+ln -sf . "${HEXFS}/adsp"
+# and requests both /vendor/... and /mnt/vendor/... paths
+mkdir -p "${HEXFS}/mnt/vendor"
+mountpoint -q "${HEXFS}/mnt/vendor" || mount --bind "${HEXFS}/vendor" "${HEXFS}/mnt/vendor"
+
+# (2) IIO bridge (creates /dev/iio:deviceN + /dev/sns_iio_feed; pulls kfifo_buf)
+modprobe sns_iio 2>/dev/null
+
+# (3) spawn the sensor PD + listener (backgrounded; serves the DSP's file reads
+#     of the staged registry via apps_std over ADSP_LIBRARY_PATH)
+ADSP_LIBRARY_PATH="${HEXFS}" /usr/bin/adsprpcd sensorspd adsp &
+ADSPRPCD_PID=$!
+trap "kill ${ADSPRPCD_PID} 2>/dev/null" EXIT
+
+# (4) give the sensor drivers time to register on the SSC, then stream
+sleep 10
+exec /usr/bin/snsfeed 100
