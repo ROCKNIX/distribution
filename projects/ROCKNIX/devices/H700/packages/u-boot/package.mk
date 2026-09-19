@@ -17,6 +17,7 @@ for PKG_SUBDEVICE in ${SUBDEVICES}; do
   PKG_DEPENDS_TARGET+=" u-boot-${PKG_SUBDEVICE}"
   PKG_DEPENDS_UNPACK+=" u-boot-${PKG_SUBDEVICE}"
   PKG_NEED_UNPACK+=" $(get_pkg_directory u-boot-${PKG_SUBDEVICE})"
+  PKG_NEED_UNPACK+=" $(get_build_dir u-boot-${PKG_SUBDEVICE})/u-boot-sunxi-with-spl.bin"
 done
 
 make_target() {
