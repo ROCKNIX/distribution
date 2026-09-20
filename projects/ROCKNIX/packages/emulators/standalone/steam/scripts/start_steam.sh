@@ -205,20 +205,32 @@ steam_launch_bigpicture() {
     game_uri="${exec_line#steam } -silent"
   fi
 
+  # SM4450 Steam UI requires wayland gamescope backend
+  local gamescope_backend="drm"
+  if [[ "${HW_DEVICE}" == "SM4450" ]]; then
+    gamescope_backend="wayland"
+  fi
+
   mkdir -p "$(dirname "$gamescope_mode_file")"
   touch "$gamescope_mode_file"
   unset MESA_LOADER_DRIVER_OVERRIDE
+
+  # drm gamescope backend needs wayland socket unset and compositer stopped
+  if [ "${gamescope_backend}" = "drm" ]; then
+    unset WAYLAND_DISPLAY
+    systemctl stop sway
+  fi
+
   if [ "${STEAM_FLAVOR}" = "arm64" ]; then
     export STEAM_COMPAT_GRAPHICS_PROVIDER=//storage/.local/share/fex-emu/RootFS/ArchLinux/graphics_provider.json
     steam_exit_code_file=$(mktemp /tmp/steam-exit-code.XXXXXX)
-    systemctl stop sway
     steam_touch_calibration_begin "${force_orientation}"
     trap steam_touch_calibration_end EXIT
     while true; do
       rm -f "${steam_exit_code_file}"
       GAMESCOPE_MODE_SAVE_FILE="${gamescope_mode_file}" GAMESCOPE_FAKE_OUTPUT_MM=508x286 \
-      env -u WAYLAND_DISPLAY LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} \
-      gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --mangoapp --backend drm --force-orientation "${force_orientation}" ${rotate_clamp} -e -- \
+      LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} \
+      gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --mangoapp --backend "${gamescope_backend}" --force-orientation "${force_orientation}" ${rotate_clamp} -e -- \
       /bin/bash -c '
         exit_file="$1"
         shift
@@ -241,11 +253,10 @@ steam_launch_bigpicture() {
     exit 0
   else
     FEX /usr/bin/steam -exitsteam
-    systemctl stop sway
     steam_touch_calibration_begin "${force_orientation}"
     trap steam_touch_calibration_end EXIT
-    GAMESCOPE_MODE_SAVE_FILE="${gamescope_mode_file}" GAMESCOPE_FAKE_OUTPUT_MM=508x286 env -u WAYLAND_DISPLAY ${EMUPERF} \
-      gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --backend drm --force-orientation "${force_orientation}" ${rotate_clamp} -- \
+    GAMESCOPE_MODE_SAVE_FILE="${gamescope_mode_file}" GAMESCOPE_FAKE_OUTPUT_MM=508x286 ${EMUPERF} \
+      gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --backend "${gamescope_backend}" --force-orientation "${force_orientation}" ${rotate_clamp} -- \
       FEX /usr/bin/steam -nobigpicture -noverifyfiles -nobootstrapupdate -skipinitialbootstrap -norepairfiles -noshaders ${game_uri:+"$game_uri"}
     steam_touch_calibration_end
     trap - EXIT
