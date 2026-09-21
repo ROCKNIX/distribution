@@ -17,12 +17,6 @@ PKG_TOOLCHAIN="manual"
 PKG_DEPENDS_UNPACK="u-boot-DDR4 u-boot-DDR3 atf"
 PKG_NEED_UNPACK="$(get_pkg_directory u-boot-DDR4) $(get_pkg_directory u-boot-DDR3) $(get_pkg_directory atf)"
 
-# The stubs are read out of this build directory by atf, but nothing declares an
-# unpack dependency on it (that would close the loop above), so the refcount drops
-# to zero the moment this package is installed and AUTOREMOVE=yes deletes the
-# directory before atf runs. Keep it until the build ends.
-AUTOREMOVE_BLOCK+=" ${PKG_NAME}"
-
 # One stub per memory type; BL31 picks the match at boot. <bootloader package>:<output>
 PKG_STUB_VARIANTS="u-boot-DDR4:suspend_stub_lpddr4.bin \
                    u-boot-DDR3:suspend_stub_lpddr3.bin"
@@ -54,5 +48,8 @@ make_target() {
 }
 
 makeinstall_target() {
-  : # atf embeds the stubs in bl31; nothing from this package is installed
+  # atf reads the stubs from the sysroot rather than from this build directory,
+  # which neither survives AUTOREMOVE nor crosses a CI job boundary.
+  mkdir -p ${SYSROOT_PREFIX}/usr/share/${PKG_NAME}
+  cp -a *.bin ${SYSROOT_PREFIX}/usr/share/${PKG_NAME}
 }

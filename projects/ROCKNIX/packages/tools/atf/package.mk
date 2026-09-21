@@ -16,8 +16,8 @@ case ${DEVICE} in
   H700)
     PKG_VERSION="2.12.0"
     PKG_DEPENDS_TARGET+=" h700-suspend-stub"
-    # BL31 embeds the stubs
-    PKG_NEED_UNPACK+=" $(get_build_dir h700-suspend-stub)"
+    # BL31 embeds the stubs; rebuild when they change
+    PKG_NEED_UNPACK+=" ${SYSROOT_PREFIX}/usr/share/h700-suspend-stub"
   ;;
   *)
     PKG_VERSION="2.10.0"
@@ -37,7 +37,7 @@ fi
 
 make_target() {
   if [ "${DEVICE}" = "H700" ]; then
-    STUB_DIR="$(get_build_dir h700-suspend-stub)"
+    STUB_DIR="${SYSROOT_PREFIX}/usr/share/h700-suspend-stub"
     ATF_SUSPEND="SUNXI_SYSTEM_SUSPEND=1 SUNXI_SUSPEND_STUB=${STUB_DIR}/suspend_stub_lpddr4.bin"
     ATF_SUSPEND+=" SUNXI_SUSPEND_STUB2=${STUB_DIR}/suspend_stub_lpddr3.bin"
   fi
