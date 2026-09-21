@@ -17,7 +17,7 @@ case ${DEVICE} in
     PKG_VERSION="2.12.0"
     PKG_DEPENDS_TARGET+=" h700-suspend-stub"
     # BL31 embeds the stubs; rebuild when they change
-    PKG_NEED_UNPACK+=" ${SYSROOT_PREFIX}/usr/share/h700-suspend-stub"
+    PKG_NEED_UNPACK+=" $(get_pkg_directory h700-suspend-stub) ${SYSROOT_PREFIX}/usr/share/h700-suspend-stub"
   ;;
   *)
     PKG_VERSION="2.10.0"
