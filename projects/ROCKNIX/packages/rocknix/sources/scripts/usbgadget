@@ -461,6 +461,32 @@ usb_stop() {
 	) >/dev/null 2>&1
 }
 
+# Role implied by the OTG ID pin, read from the usb2 phy's extcon: host while
+# an OTG cable grounds ID (USB-HOST cable on), device otherwise. Fails when
+# the kernel exposes no such cable.
+id_role() {
+	for cable in /sys/class/extcon/*/cable.*; do
+		[ "$(cat ${cable}/name 2>/dev/null)" = "USB-HOST" ] || continue
+		[ "$(cat ${cable}/state 2>/dev/null)" = "1" ] && echo host || echo device
+		return 0
+	done
+	return 1
+}
+
+# Devices whose single OTG port both charges and self-sources VBUS in host
+# mode (DEVICE_USB_ROLE_FOLLOW_ID) track the ID pin instead of parking in
+# host: dwc2 keeps driving 5V out until the role changes, so a fixed host
+# role can never accept a charger again. Also runs from udev on extcon
+# changes, where the login environment is absent, so read the quirk config
+# directly.
+follow_id_role() {
+	[ -r /storage/.config/profile.d/001-device_config ] && . /storage/.config/profile.d/001-device_config
+	[ "${DEVICE_USB_ROLE_FOLLOW_ID}" = "true" ] || return 1
+	[ "${CURRENT_MODE}" = "disabled" ] || return 1
+	ROLE=$(id_role) || return 1
+	set_role "${ROLE}"
+}
+
 set_usb_mode() {
 	case "${1}" in
 		cdc|mtp)
@@ -468,7 +494,7 @@ set_usb_mode() {
 			;;
 		*)
 			usb_stop
-			set_role host
+			follow_id_role || set_role host
 			;;
 	esac
 }
@@ -523,6 +549,7 @@ case "$1" in
 		usb_stop
 		;;
 	trigger)
+		follow_id_role || :
 		usb_trigger
 		;;
 	restart)
