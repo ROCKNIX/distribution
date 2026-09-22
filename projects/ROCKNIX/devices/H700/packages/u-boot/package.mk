@@ -17,7 +17,7 @@ for PKG_SUBDEVICE in ${SUBDEVICES}; do
   PKG_DEPENDS_TARGET+=" u-boot-${PKG_SUBDEVICE}"
   PKG_DEPENDS_UNPACK+=" u-boot-${PKG_SUBDEVICE}"
   PKG_NEED_UNPACK+=" $(get_pkg_directory u-boot-${PKG_SUBDEVICE})"
-  PKG_NEED_UNPACK+=" $(get_build_dir u-boot-${PKG_SUBDEVICE})/u-boot-sunxi-with-spl.bin"
+  PKG_NEED_UNPACK+=" ${SYSROOT_PREFIX}/usr/share/u-boot-${PKG_SUBDEVICE}/u-boot-sunxi-with-spl.bin"
 done
 
 make_target() {
@@ -28,7 +28,9 @@ makeinstall_target() {
   mkdir -p $INSTALL/usr/share/bootloader
 
   for PKG_SUBDEVICE in ${SUBDEVICES}; do
-    PKG_UBOOTBIN=$(get_build_dir u-boot-${PKG_SUBDEVICE})/u-boot-sunxi-with-spl.bin
+    # scripts/build redirects SYSROOT_PREFIX to a per-package staging dir for
+    # the duration of makeinstall; PKG_ORIG_SYSROOT_PREFIX is the shared one.
+    PKG_UBOOTBIN=${PKG_ORIG_SYSROOT_PREFIX}/usr/share/u-boot-${PKG_SUBDEVICE}/u-boot-sunxi-with-spl.bin
     cp -av ${PKG_UBOOTBIN} $INSTALL/usr/share/bootloader/H700_${PKG_SUBDEVICE}_u-boot-sunxi-with-spl.bin
   done
 }

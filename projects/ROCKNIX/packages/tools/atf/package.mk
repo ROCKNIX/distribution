@@ -48,4 +48,12 @@ make_target() {
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/share/bootloader
   cp -a build/${ATF_PLATFORM}/release/${ATF_BL31_BINARY} ${INSTALL}/usr/share/bootloader
+
+  # u-boot embeds BL31 at build time. It read it straight out of this package's
+  # build directory, which neither survives AUTOREMOVE nor crosses a CI job
+  # boundary. Stage it in the sysroot, which is carried between jobs.
+  if [ -n "${ATF_BL31_BINARY}" ]; then
+    mkdir -p ${SYSROOT_PREFIX}/usr/share/${PKG_NAME}
+    cp -a build/${ATF_PLATFORM}/release/${ATF_BL31_BINARY} ${SYSROOT_PREFIX}/usr/share/${PKG_NAME}
+  fi
 }
