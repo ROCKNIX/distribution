@@ -222,7 +222,7 @@ steam_launch_bigpicture() {
   fi
 
   if [ "${STEAM_FLAVOR}" = "arm64" ]; then
-    export STEAM_COMPAT_GRAPHICS_PROVIDER=//storage/.local/share/fex-emu/RootFS/ArchLinux/graphics_provider.json
+    export STEAM_COMPAT_GRAPHICS_PROVIDER=/storage/.local/share/fex-emu/RootFS/ArchLinux/graphics_provider.json
     steam_exit_code_file=$(mktemp /tmp/steam-exit-code.XXXXXX)
     steam_touch_calibration_begin "${force_orientation}"
     trap steam_touch_calibration_end EXIT
