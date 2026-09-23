@@ -16,6 +16,13 @@ PKG_CMAKE_OPTS_TARGET+=" -DBUILD_SDL_FRONTEND=OFF \
                          -DENABLE_DISCORD_PRESENCE=OFF \
                          -DUSE_X11=OFF"
 
+pre_configure_target() {
+  # xxhash's x86 dispatcher refuses AVX builds; AVX is already the x86_64 baseline.
+  if [ "${TARGET_ARCH}" = "x86_64" ]; then
+    export CFLAGS="${CFLAGS} -DXXH_X86DISPATCH_ALLOW_AVX"
+  fi
+}
+
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
     cp -a ${PKG_BUILD}/.${TARGET_NAME}/duckstation_libretro.so ${INSTALL}/usr/lib/libretro
