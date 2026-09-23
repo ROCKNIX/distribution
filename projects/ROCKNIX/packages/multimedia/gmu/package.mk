@@ -24,7 +24,8 @@ configure_target() {
 }
 
 make_target() {
-  make
+  # libmodplug is static and built with -ffast-math, so on x86_64 it calls libmvec
+  make DEC_modplug_LIBS="-lmodplug -lm"
 }
 
 post_makeinstall_target() {
