@@ -1,0 +1,104 @@
+batteryplus: seed the voltage anchors from the battery driver
+
+The defaults describe a 4.2 V cell (3250/3400 mV empty, 4000/4050 mV
+full), so a 4.35 V pack such as the GKD Pixel2's reads 100% from 4.33 V
+down to 3.98 V until the first full charge teaches the map otherwise,
+and the empty anchors are off for most RK817 packs. The driver already
+reports the pack's limits: take voltage_min_design for the empty
+anchors, voltage_max_design and constant_charge_voltage_max for the
+full ones (voltage_min and voltage_max on axp20x). Empties apply unless
+the configuration sets them; full anchors are seeded only while the map
+still holds the defaults, so a learned map is never touched.
+
+A charge ceiling learned below the seeded discharge anchor now pulls
+that anchor down with it, as the discharge learner already keeps itself
+below the ceiling; load_map would otherwise reject the pair.
+
+Candidate for upstream (Mikhailzrick/knubat.components).
+
+---
+--- a/BatteryPlus/batteryplus.cpp
++++ b/BatteryPlus/batteryplus.cpp
+@@ -198,6 +198,7 @@
+     fs::path data_dir;
+     int V_EMPTY_DIS = DEFAULT_V_EMPTY_DIS;
+     int V_EMPTY_CHG = DEFAULT_V_EMPTY_CHG;
++    bool v_empty_set = false;
+ };
+ 
+ // Tracks whether both full anchors were learned during this session.
+@@ -539,6 +540,7 @@
+ 
+             if (end != val && *end == '\0') {
+                 cfg.V_EMPTY_DIS = static_cast<int>(v);
++                cfg.v_empty_set = true;
+             }
+ 
+         } else if (std::strcmp(key, "V_EMPTY_CHG") == 0) {
+@@ -547,6 +549,7 @@
+ 
+             if (end != val && *end == '\0') {
+                 cfg.V_EMPTY_CHG = static_cast<int>(v);
++                cfg.v_empty_set = true;
+             }
+         }
+     }
+@@ -945,6 +948,8 @@
+     // Only save if meaningfully changed
+     if (std::abs(quantized_mv - old_vfull_mv) >= 5) {
+         map.V_FULL_CHG = quantized_mv;
++        // Discharge-side full should remain below charge-side full.
++        map.V_FULL_DIS = std::min(map.V_FULL_DIS, quantized_mv - 10);
+         save_map_atomic(g_paths.map_file, map);
+     }
+ 
+@@ -1035,6 +1040,40 @@
+     return raw; // mV
+ }
+ 
++// ========================= Anchor seeding =========================
++// The defaults describe a 4.2 V cell, so a 4.35 V pack reads 100% across the
++// top of its range until the first full charge teaches the map otherwise.
++// Start from the limits the battery driver reports instead: rk817 names them
++// *_design and constant_charge_voltage_max, axp20x voltage_max and voltage_min.
++static int read_limit_mv(const fs::path& dir, const char* a, const char* b) {
++    int mv = read_voltage_mv(dir / a);
++    return mv > 0 ? mv : read_voltage_mv(dir / b);
++}
++
++// Returns true when the map was seeded and needs saving.
++static bool seed_anchors(const BatteryPaths& bp, MapVals& map) {
++    if (!g_cfg.v_empty_set) {
++        int empty = read_limit_mv(bp.base_dir, "voltage_min_design", "voltage_min");
++        if (empty >= 3000 && empty <= 3400) {
++            g_cfg.V_EMPTY_DIS = empty;
++            g_cfg.V_EMPTY_CHG = std::max(empty + 100, 3300);
++        }
++    }
++
++    // Only an unlearned map; learning owns it from the first full charge on.
++    if (map.V_FULL_CHG != DEFAULT_V_FULL_CHG || map.V_FULL_DIS != DEFAULT_V_FULL_DIS)
++        return false;
++
++    int dis = read_limit_mv(bp.base_dir, "voltage_max_design", "voltage_max");
++    int chg = read_limit_mv(bp.base_dir, "constant_charge_voltage_max", "voltage_max");
++    if (dis < 3600 || dis > 4600)
++        return false;
++
++    map.V_FULL_DIS = dis;
++    map.V_FULL_CHG = std::clamp(chg, dis, 4600);
++    return true;
++}
++
+ static int update_smoothed_voltage(int voltage_raw_mv, const MapVals& map, SmoothedV& sv) {
+     if (sv.prev1 < 0)
+         sv.prev1 = (voltage_raw_mv > 0 ? voltage_raw_mv : map.V_FULL_DIS);
+@@ -1574,7 +1613,7 @@
+     // Voltage map
+     MapVals map = load_map(g_paths.map_file);
+ 
+-    if (!fs::exists(g_paths.map_file)) {
++    if (seed_anchors(bp, map) || !fs::exists(g_paths.map_file)) {
+         save_map_atomic(g_paths.map_file, map);
+     }
+ 

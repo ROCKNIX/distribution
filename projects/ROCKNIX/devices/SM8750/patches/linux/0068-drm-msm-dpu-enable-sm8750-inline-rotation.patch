@@ -10,19 +10,14 @@ height 1088), same family as Kalama. Expose 90/270 on VIG pipes
 Require UBWC for inline rotation of both RGB and YUV. Include
 XRGB2101010 which gamescope prefers for scanout.
 
-Keep QSEED enabled for 1:1 RGB when rotating; the rotator output
-feeds the scaler (SDE does the same). DRM rotation is CCW, DPU
-inline rotator is CW: XOR REFLECT_X|Y on rot90. Check pre-rotated
-source height, not width. Reserve rot90 pipes with test_bit.
+The generic dpu_plane/dpu_rm fixes this depends on live in the
+common patch 0013-drm-msm-dpu-fix-inline-rotation.
 
 Signed-off-by: tiopex <tiopxyz@gmail.com>
 ---
  drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_12_0_sm8750.h | 16 ++++++++--------
- drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c | 30 ++++++++++++++++++++++++++++++
- drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c | 9 ++++++---
- drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c | 2 +-
- 4 files changed, 45 insertions(+), 12 deletions(-)
-
+ drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c          | 30 ++++++++++++++++++++++++++++++
+ 2 files changed, 38 insertions(+), 8 deletions(-)
 diff --git a/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_12_0_sm8750.h b/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_12_0_sm8750.h
 --- a/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_12_0_sm8750.h
 +++ b/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_12_0_sm8750.h
@@ -125,58 +120,3 @@ diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c b/drivers/gpu/drm/ms
  static const struct dpu_sspp_sub_blks dpu_vig_sblk_qseed3_3_5 =
  				_VIG_SBLK_REC0_REC1(SSPP_SCALER_VER(3, 5));
  
-diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
---- a/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
-+++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
-@@ -476,7 +476,7 @@
- 		}
- 	}
- 	if (!(MSM_FORMAT_IS_YUV(fmt)) && (src_h == dst_h)
--		&& (src_w == dst_w))
-+		&& (src_w == dst_w) && !inline_rotation)
- 		return;
- 
- 	scale_cfg->dst_width = dst_w;
-@@ -704,17 +704,17 @@
- 		return -EINVAL;
- 	}
- 
--	if (drm_rect_width(&src) > sblk->rotation_cfg->rot_maxheight) {
-+	if (drm_rect_height(&src) > sblk->rotation_cfg->rot_maxheight) {
- 		DPU_DEBUG_PLANE(pdpu, "invalid height for inline rot:%d max:%d\n",
--				src.y2, sblk->rotation_cfg->rot_maxheight);
-+				drm_rect_height(&src), sblk->rotation_cfg->rot_maxheight);
- 		return -EINVAL;
- 	}
- 
- 	supported_formats = sblk->rotation_cfg->rot_format_list;
- 	num_formats = sblk->rotation_cfg->rot_num_formats;
- 
- 	if (!MSM_FORMAT_IS_UBWC(fmt) ||
- 		!dpu_find_format(fmt->pixel_format, supported_formats, num_formats))
- 		return -EINVAL;
- 
- 	return 0;
-@@ -758,6 +758,9 @@
- 	pipe_cfg->rotation = drm_rotation_simplify(new_plane_state->rotation,
- 						   supported_rotations);
- 
-+	if (pipe_cfg->rotation & DRM_MODE_ROTATE_90)
-+		pipe_cfg->rotation ^= DRM_MODE_REFLECT_X | DRM_MODE_REFLECT_Y;
-+
- 	min_src_size = MSM_FORMAT_IS_YUV(fmt) ? 2 : 1;
- 
- 	if (MSM_FORMAT_IS_YUV(fmt) &&
-diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c
---- a/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c
-+++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c
-@@ -817,7 +817,7 @@
- 		if (reqs->yuv && !hw_sspp->cap->sblk->csc_blk.len)
- 			continue;
- 
--		if (reqs->rot90 && !(hw_sspp->cap->features & DPU_SSPP_INLINE_ROTATION))
-+		if (reqs->rot90 && !test_bit(DPU_SSPP_INLINE_ROTATION, &hw_sspp->cap->features))
- 			continue;
- 
- 		global_state->sspp_to_crtc_id[i] = crtc_id;
-
