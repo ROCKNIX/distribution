@@ -14,7 +14,14 @@ if [ ! "${OPENGL}" = "no" ]; then
   PKG_PATCH_DIRS+=" opengl"
 fi
 
-PKG_MAKE_OPTS_TARGET+=" PLATFORM=${DEVICE} all SDL_CONFIG=${SYSROOT_PREFIX}/usr/bin/sdl2-config"
+# 01-platform.patch turns PLATFORM=${DEVICE} into an aarch64/NEON target;
+# upstream's own x86-64 target is the right one there.
+if [ "${ARCH}" = "x86_64" ]; then
+  PKG_MAKE_OPTS_TARGET+=" PLATFORM=x86-64"
+else
+  PKG_MAKE_OPTS_TARGET+=" PLATFORM=${DEVICE}"
+fi
+PKG_MAKE_OPTS_TARGET+=" all SDL_CONFIG=${SYSROOT_PREFIX}/usr/bin/sdl2-config"
 
 post_unpack() {
   sed -i "s|AS     = as|AS     \?= as|" ${PKG_BUILD}/Makefile

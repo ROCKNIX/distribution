@@ -3,10 +3,18 @@
 
 PKG_NAME="bigpemu-sa"
 PKG_VERSION="v119"
-PKG_SHA256="9128830fb1a10f6bae0ff40c780d2555a742803d63ce99ef78aef7fed3547d51"
 PKG_LICENSE="proprietary"
 PKG_SITE="https://www.richwhitehouse.com/jaguar"
-PKG_URL="${PKG_SITE}/builds/BigPEmu_LinuxARM64_${PKG_VERSION}.tar.gz"
+case ${TARGET_ARCH} in
+  x86_64)
+    PKG_SHA256="92267dcb30d19032f377912d8c89f7d932f6ed8d861bccac1b4cd3335251c935"
+    PKG_URL="${PKG_SITE}/builds/BigPEmu_Linux64_${PKG_VERSION}.tar.gz"
+    ;;
+  *)
+    PKG_SHA256="9128830fb1a10f6bae0ff40c780d2555a742803d63ce99ef78aef7fed3547d51"
+    PKG_URL="${PKG_SITE}/builds/BigPEmu_LinuxARM64_${PKG_VERSION}.tar.gz"
+    ;;
+esac
 PKG_DEPENDS_TARGET="toolchain SDL2"
 PKG_LONGDESC="BigPEmu - The World's Prefurred Large Pussycat Emulator."
 PKG_TOOLCHAIN="manual"

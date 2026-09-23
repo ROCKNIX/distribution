@@ -15,7 +15,8 @@ if [ ! "${OPENGL}" = "no" ]; then
                            -DUSING_GLES2=OFF"
 fi
 
-if [ "${OPENGLES_SUPPORT}" = yes ]; then
+# x86_64 has desktop GL; keep the GLES/fbdev build to the ARM devices.
+if [ "${OPENGLES_SUPPORT}" = yes ] && [ ! "${TARGET_ARCH}" = "x86_64" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGLES}"
   PKG_CMAKE_OPTS_TARGET+=" -DUSING_FBDEV=ON \
                            -DUSING_EGL=OFF \

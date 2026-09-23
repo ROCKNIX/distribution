@@ -15,7 +15,9 @@ PKG_PATCH_DIRS+=" ${DEVICE}"
 
 get_graphicdrivers
 
-if listcontains "${GRAPHIC_DRIVERS}" "panfrost"; then
+# Drivers with OpenCL-C internal shaders need mesa_clc and vtn_bindgen2 from
+# the host build; they cannot be run from the target build.
+if listcontains "${GRAPHIC_DRIVERS}" "(panfrost|iris)"; then
   PKG_DEPENDS_TARGET+=" mesa:host"
 fi
 
@@ -53,6 +55,8 @@ if listcontains "${GRAPHIC_DRIVERS}" "panfrost"; then
   # These options require that we have built mesa host as specified above
   PKG_MESON_OPTS_TARGET+=" -Dmesa-clc=system \
                            -Dprecomp-compiler=system"
+elif listcontains "${GRAPHIC_DRIVERS}" "iris"; then
+  PKG_MESON_OPTS_TARGET+=" -Dmesa-clc=system"
 fi
 
 if [ "${DISPLAYSERVER}" = "x11" ]; then

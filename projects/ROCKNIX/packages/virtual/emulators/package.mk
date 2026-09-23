@@ -94,9 +94,10 @@ case "${DEVICE}" in
     LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr uae4arm-lr"
     ;;
   AMD64)
-    PKG_EMUS+=" ares-sa azahar-sa cemu-sa dolphin-sa gopher64-sa mednafen melonds-sa nanoboyadvance-sa \
-                xemu-sa skyemu-sa vita3k-sa armsx2-sa"
-    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr"
+    PKG_EMUS+=" ares-sa azahar-sa bigpemu-sa cemu-sa dolphin-sa gopher64-sa mednafen melonds-sa nanoboyadvance-sa rpcs3-sa \
+                supermodel-sa xemu-sa skyemu-sa vita3k-sa armsx2-sa"
+    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr desmume-lr dolphin-lr duckstation-lr kronos-lr ppsspp-lr"
+    ;;
 esac
 
 # Split building emulators into 2 stages, needed to fit the jobs into the 6 hour GH runner time limit.
@@ -206,7 +207,9 @@ makeinstall_target() {
       add_emu_core amigacd32 retroarch puae2021 false
       ;;
   esac
-  add_emu_core amigacd32 retroarch uae4arm false
+  if [ ! "${ARCH}" = "x86_64" ]; then
+    add_emu_core amigacd32 retroarch uae4arm false
+  fi
   add_es_system amigacd32
 
   ### Amstrad CPC
@@ -751,7 +754,7 @@ makeinstall_target() {
   ### Atari Jaguar
   add_emu_core atarijaguar retroarch virtualjaguar true
   case ${DEVICE} in
-    S922X|SM4450|SM8250|SM8550|SM8650|SM8750)
+    S922X|SM4450|SM8250|SM8550|SM8650|SM8750|AMD64)
       add_emu_core atarijaguar bigpemu bigpemu-sa false
       install_script "Start BigPEmu.sh"
       ;;
@@ -796,7 +799,7 @@ makeinstall_target() {
 
   ### Sega Model 3
   case ${DEVICE} in
-    RK3588|SM4450|SM8250|SM8550|SM8650|SM8750)
+    RK3588|SM4450|SM8250|SM8550|SM8650|SM8750|AMD64)
       add_emu_core segamodel3 supermodel supermodel-sa true
       add_es_system segamodel3
       ;;
@@ -996,6 +999,7 @@ makeinstall_target() {
       add_emu_core nds skyemu skyemu-sa false
       add_emu_core nds retroarch melonds false
       add_emu_core nds retroarch melondsds false
+      add_emu_core nds retroarch desmume false
       add_emu_core nds retroarch skyemu false
       install_script "Start MelonDS.sh"
       ;;
@@ -1176,7 +1180,9 @@ makeinstall_target() {
     AMD64)
       add_emu_core psx retroarch pcsx_rearmed true
       add_emu_core psx retroarch beetle_psx false
+      add_emu_core psx retroarch duckstation false
       add_emu_core psx mednafen psx false
+      ;;
   esac
   add_emu_core psx duckstation duckstation-sa false
   add_emu_core psx retroarch swanstation false
@@ -1204,7 +1210,7 @@ makeinstall_target() {
 
   ### Sony Playstation 3
   case ${DEVICE} in
-    SM8250|SM8550|SM8650|SM8750)
+    SM8250|SM8550|SM8650|SM8750|AMD64)
       add_emu_core ps3 rpcs3 rpcs3-sa true
       add_es_system ps3
       install_script "Start RPCS3.sh"
@@ -1359,12 +1365,12 @@ makeinstall_target() {
       add_emu_core saturn retroarch beetle_saturn false
       add_emu_core saturn mednafen ss false
       ;;
-    SM4450|SM8250|SM8550|SM8650|SM8750)
+    SM4450|SM8250|SM8550|SM8650|SM8750|AMD64)
       add_emu_core saturn retroarch beetle_saturn false
       add_emu_core saturn retroarch kronos false
       add_emu_core saturn mednafen ss false
       ;;
-    S922X|AMD64)
+    S922X)
       add_emu_core saturn retroarch beetle_saturn false
       ;;
   esac

@@ -13,7 +13,10 @@ PKG_TOOLCHAIN="make"
 
 case ${ARCH} in
   aarch64) platform="platform=arm64" ;;
-  x86_64) platform="" ;;
+  x86_64)
+    platform=""
+    PKG_DEPENDS_TARGET+=" ${OPENGL}"
+    ;;
 esac
 
 make_target() {

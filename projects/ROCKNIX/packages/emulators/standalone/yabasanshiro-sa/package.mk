@@ -53,6 +53,10 @@ pre_configure_target() {
                                -DYAB_PORTS=retro_arena \
                                -DCMAKE_PROJECT_INCLUDE=${PKG_BUILD}/yabause/src/retro_arena/n2.cmake"
       ;;
+    x86_64)
+      PKG_CMAKE_OPTS_TARGET+=" -DYAB_PORTS=retro_arena \
+                               -DCMAKE_PROJECT_INCLUDE=${PKG_BUILD}/yabause/src/retro_arena/pc.cmake"
+      ;;
   esac
 }
 

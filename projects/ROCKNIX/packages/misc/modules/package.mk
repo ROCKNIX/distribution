@@ -23,7 +23,7 @@ makeinstall_target() {
 
 post_makeinstall_target() {
   case ${DEVICE} in
-    SM8650|SM8750) rm -f ${INSTALL}/usr/config/modules/*32bit* ;;
+    AMD64|SM8650|SM8750) rm -f ${INSTALL}/usr/config/modules/*32bit* ;;
   esac
 
   if [[ "${INSTALLER_SUPPORT}" != "yes" || "${DISPLAYSERVER}" != "wl" ]]; then

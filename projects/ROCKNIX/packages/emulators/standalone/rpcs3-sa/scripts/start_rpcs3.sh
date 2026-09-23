@@ -61,7 +61,10 @@ else
   sed -i "s#Asynchronous Texture Streaming 2:.*\$#Asynchronous Texture Streaming 2: false#g" "${CONFIG_YML}"
 fi
 
-#Graphics Backend
+#Graphics Backend (unset: Vulkan on x86_64, OpenGL elsewhere)
+if [ -z "$GRENDERER" ] && [ "$(uname -m)" = "x86_64" ]; then
+  GRENDERER="vulkan"
+fi
 if [ "$GRENDERER" = "vulkan" ]; then
   sed -i '/Video:/ {n; s/Renderer: .*/Renderer: Vulkan/}' "${CONFIG_YML}"
 else

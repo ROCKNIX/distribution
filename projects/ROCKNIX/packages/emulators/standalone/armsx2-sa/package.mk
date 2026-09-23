@@ -42,6 +42,12 @@ pre_configure_target() {
     -DCMAKE_LINKER_TYPE=LLD
   )
 
+  # Upstream builds x86 with -march=native, tuning the binary to the build
+  # machine. Multi-ISA dispatches SSE4/AVX2 at runtime instead.
+  if [ "${TARGET_ARCH}" = "x86_64" ]; then
+    PCSX2_CMAKE_BASE+=(-DDISABLE_ADVANCE_SIMD=ON)
+  fi
+
   for _v in CFLAGS CXXFLAGS LDFLAGS; do
     export ${_v}="$(echo ${!_v} | sed 's/-mabi=lp64//g; s/-mtune=[^ ]*//g')"
   done

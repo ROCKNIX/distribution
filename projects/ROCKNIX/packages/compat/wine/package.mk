@@ -3,10 +3,20 @@
 
 PKG_NAME="wine"
 PKG_VERSION="11.0"
-PKG_SHA256="632f2c8e9150841c26d277000e76b82c425cd4564bfb050780705b9d37b2567f"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/Kron4ek/Wine-Builds"
-PKG_URL="${PKG_SITE}/releases/download/${PKG_VERSION}/wine-${PKG_VERSION}-amd64.tar.xz"
+case ${TARGET_ARCH} in
+  x86_64)
+    # WoW64 runs 32-bit Windows programs without 32-bit host libraries,
+    # which x86_64 devices do not ship.
+    PKG_SHA256="39574efa1132c3ca0d5c77dd2eddbe4a49cca0d6cc2c290ff4924493a1c40314"
+    PKG_URL="${PKG_SITE}/releases/download/${PKG_VERSION}/wine-${PKG_VERSION}-amd64-wow64.tar.xz"
+    ;;
+  *)
+    PKG_SHA256="632f2c8e9150841c26d277000e76b82c425cd4564bfb050780705b9d37b2567f"
+    PKG_URL="${PKG_SITE}/releases/download/${PKG_VERSION}/wine-${PKG_VERSION}-amd64.tar.xz"
+    ;;
+esac
 
 PKG_DEPENDS_TARGET="toolchain libXcomposite libXdmcp cups"
 PKG_LONGDESC="Wine is a compatibility layer capable of running Windows applications"
