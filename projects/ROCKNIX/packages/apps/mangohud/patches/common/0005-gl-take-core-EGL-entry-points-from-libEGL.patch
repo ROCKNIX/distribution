@@ -1,0 +1,40 @@
+From caae9a3e2bf306c223e0e820d40143bb2f46c506 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Wed, 23 Sep 2026 13:31:11 -0700
+Subject: [PATCH] gl: take core EGL entry points from libEGL
+
+glvnd's eglGetProcAddress returns NULL for core entry points such as
+eglGetDisplay and eglGetPlatformDisplayEXT, and the RTLD_NEXT fallback finds
+nothing because the overlay is loaded RTLD_LOCAL. The hooks then call a NULL
+pointer: every program that calls eglGetDisplay directly instead of through
+SDL (glmark2, dolphin-emu-nogui with OpenGL) crashes at startup.
+
+Fall back to looking the name up in libEGL.so.1.
+---
+ src/gl/inject_egl.cpp | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/src/gl/inject_egl.cpp b/src/gl/inject_egl.cpp
+index 619b5fd..7297d8b 100644
+--- a/src/gl/inject_egl.cpp
++++ b/src/gl/inject_egl.cpp
+@@ -80,6 +80,16 @@ static void* get_egl_proc_address(const char* name) {
+     if (!func)
+         func = get_proc_address( name );
+ 
++    /* glvnd's eglGetProcAddress does not hand out core entry points such as
++     * eglGetDisplay, and RTLD_NEXT finds nothing from a library loaded
++     * RTLD_LOCAL: take them from libEGL itself. */
++    if (!func) {
++        static void *libegl = real_dlopen("libEGL.so.1", RTLD_LAZY);
++
++        if (libegl)
++            func = real_dlsym(libegl, name);
++    }
++
+     if (!func) {
+         SPDLOG_ERROR("Failed to get function '{}'", name);
+     }
+-- 
+2.55.0
+
