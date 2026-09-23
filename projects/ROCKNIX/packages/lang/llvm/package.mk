@@ -13,10 +13,6 @@ PKG_DEPENDS_TARGET="toolchain llvm:host zlib"
 PKG_LONGDESC="Low-Level Virtual Machine (LLVM) is a compiler infrastructure."
 PKG_TOOLCHAIN="cmake"
 
-if listcontains "${GRAPHIC_DRIVERS}" "iris"; then
-  PKG_DEPENDS_UNPACK="spirv-headers spirv-llvm-translator"
-fi
-
 PKG_CMAKE_OPTS_COMMON="-DLLVM_INCLUDE_TOOLS=ON \
                        -DLLVM_BUILD_TOOLS=ON \
                        -DLLVM_BUILD_UTILS=OFF \
@@ -46,18 +42,6 @@ PKG_CMAKE_OPTS_COMMON="-DLLVM_INCLUDE_TOOLS=ON \
                        -DLLVM_ENABLE_Z3_SOLVER=OFF \
                        -DLLVM_SPIRV_INCLUDE_TESTS=OFF \
                        -DCMAKE_SKIP_RPATH=ON"
-
-post_unpack() {
-  if listcontains "${GRAPHIC_DRIVERS}" "iris"; then
-    mkdir -p "${PKG_BUILD}"/llvm/projects/{SPIRV-Headers,SPIRV-LLVM-Translator}
-      tar --strip-components=1 \
-        -xf "${SOURCES}/spirv-headers/spirv-headers-$(get_pkg_version spirv-headers).tar.gz" \
-        -C "${PKG_BUILD}/llvm/projects/SPIRV-Headers"
-      tar --strip-components=1 \
-        -xf "${SOURCES}/spirv-llvm-translator/spirv-llvm-translator-$(get_pkg_version spirv-llvm-translator).tar.gz" \
-        -C "${PKG_BUILD}/llvm/projects/SPIRV-LLVM-Translator"
-  fi
-}
 
 pre_configure() {
   PKG_CMAKE_SCRIPT=${PKG_BUILD}/llvm/CMakeLists.txt
@@ -100,10 +84,6 @@ pre_configure_host() {
 
 post_make_host() {
   ninja ${NINJA_OPTS} llvm-config llvm-objcopy llvm-tblgen llvm-min-tblgen
-
-  if listcontains "${GRAPHIC_DRIVERS}" "iris"; then
-    ninja ${NINJA_OPTS} llvm-as llvm-link llvm-spirv opt
-  fi
 }
 
 post_makeinstall_host() {
@@ -114,10 +94,6 @@ post_makeinstall_host() {
     cp -a bin/llvm-min-tblgen ${TOOLCHAIN}/bin
     cp -a bin/lld ${TOOLCHAIN}/bin
     cp -a bin/ld.lld ${TOOLCHAIN}/bin
-
-  if listcontains "${GRAPHIC_DRIVERS}" "iris"; then
-    cp -a bin/{llvm-as,llvm-link,llvm-spirv,opt} "${TOOLCHAIN}/bin"
-  fi
 }
 
 pre_configure_target() {
