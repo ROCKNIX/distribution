@@ -19,6 +19,13 @@ case ${ARCH} in
     ;;
 esac
 
+post_unpack() {
+  # The x86_64 toolchain has no libatomic; its atomics are inlined.
+  if [ "${ARCH}" = "x86_64" ]; then
+    sed -i 's/ -latomic$//' ${PKG_BUILD}/yabause/src/libretro/Makefile
+  fi
+}
+
 make_target() {
   make -C ${PKG_BUILD}/yabause/src/libretro/ generate-files CC="${HOSTCC}"
   make -C ${PKG_BUILD}/yabause/src/libretro/ ${platform} HAVE_CDROM=1 FORCE_GLES=0
