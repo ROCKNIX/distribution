@@ -79,10 +79,10 @@ fi
                 sed -i "/fit =/c\fit = 'center'" "${CONF_DIR}/${XEMU_INI}"
         elif [ "$FIT" = "stretch" ]; then
                 sed -i "/fit =/c\fit = 'stretch'" "${CONF_DIR}/${XEMU_INI}"
-        elif [ "$FIT" = "scale" ]; then
-                sed -i "/fit =/c\fit = 'scale'" "${CONF_DIR}/${XEMU_INI}"
-        else
+        elif [ "$FIT" = "integer" ]; then
                 sed -i "/fit =/c\fit = 'integer'" "${CONF_DIR}/${XEMU_INI}"
+        else
+                sed -i "/fit =/c\fit = 'scale'" "${CONF_DIR}/${XEMU_INI}"
         fi
 
   #Cache shaders to disk
