@@ -25,7 +25,7 @@ fi
 if [ "${DISPLAYSERVER}" = "wl" ]; then
   PKG_DEPENDS_TARGET+=" wayland libXtst libXfixes libXi gdk-pixbuf"
   case ${ARCH} in
-    arm)
+    arm|i686)
       true
       ;;
     *)
@@ -40,7 +40,7 @@ if [ "${PIPEWIRE_SUPPORT}" = "yes" ]; then
 fi
 
 ### Emulators and Cores
-if [ "${EMULATION_DEVICE}" = "yes" ]; then
+if [ "${EMULATION_DEVICE}" = "yes" ] && [ "${ARCH}" != "i686" ]; then
   EMUS_32BIT=$(ENABLE_32BIT=true bash -c ". ${ROOT}/projects/ROCKNIX/packages/virtual/emulators/package.mk; echo \$EMUS_32BIT")
   PKG_DEPENDS_TARGET+=" retroarch ${EMUS_32BIT}"
 fi
