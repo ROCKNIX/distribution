@@ -10,7 +10,7 @@ PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="${OPENGL} ${OPENGLES} glu toolchain SDL2 SDL2_net zlib"
 PKG_LONGDESC="Supermodel is a Sega Model 3 arcade emulator"
 
-PKG_MAKE_OPTS="NET_BOARD=1"
+PKG_MAKE_OPTS_TARGET="NET_BOARD=1"
 
 post_unpack() {
   cp ${PKG_BUILD}/Makefiles/Makefile.UNIX ${PKG_BUILD}/Makefile
