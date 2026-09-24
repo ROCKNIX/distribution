@@ -83,6 +83,10 @@ then
   OPTIONS+=" -res=$(swaymsg -t get_outputs | jq -r '.[] | select(.focused) | "\(.rect.width),\(.rect.height)"')"
 fi
 
+# Preset NVRAM (single cabinet etc.); never overwrite existing ones
+mkdir -p /storage/.config/supermodel/NVRAM
+cp -n /usr/config/supermodel/NVRAM/*.nv /storage/.config/supermodel/NVRAM/ 2>/dev/null
+
 sway_fullscreen supermodel &
 
 cd ${CONFIG_DIR}
