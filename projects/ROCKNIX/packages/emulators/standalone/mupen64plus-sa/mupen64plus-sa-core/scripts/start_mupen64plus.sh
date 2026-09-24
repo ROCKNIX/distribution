@@ -6,7 +6,7 @@
 
 . /etc/profile
 
-set_kill set "-9 mupen64plus"
+set_kill set "-9 mupen64plus mupen64plus-sim"
 
 # Emulation Station features
 GAME=$(echo "${1}"| sed "s#^/.*/##")
@@ -52,6 +52,57 @@ elif [ "${CON}" = "standard" ]; then
     cp ${SHARE}/default.ini ${TMP}/InputAutoCfg.ini
 else
     cp ${SHARE}/default.ini ${TMP}/InputAutoCfg.ini
+fi
+
+# AMD64: player 1's layout and Select + button hotkeys from its ES mapping
+if [ "${HW_DEVICE}" = "AMD64" ] && [ "${CON}" != "custom" ] && mkcontroller; then
+    . /storage/.config/profile.d/098-controller
+    control-gen_init.sh
+    source /storage/.config/gptokeyb/control.ini
+    get_controls
+    m64() {
+        case "$1" in
+            "") ;;
+            h*) local d="${1:2}"; echo "hat(${1:1:1} ${d^})" ;;
+            *[+-]) echo "axis(${1}${2:+,$2})" ;;
+            *) echo "button($1)" ;;
+        esac
+    }
+    cat <<EOF >>${TMP}/InputAutoCfg.ini
+
+[${param_device}]
+plugged = True
+mouse = False
+AnalogDeadzone = 4096,4096
+AnalogPeak = 32768,32768
+DPad R = $(m64 ${DEVICE_BTN_DPAD_RIGHT})
+DPad L = $(m64 ${DEVICE_BTN_DPAD_LEFT})
+DPad D = $(m64 ${DEVICE_BTN_DPAD_DOWN})
+DPad U = $(m64 ${DEVICE_BTN_DPAD_UP})
+Start = $(m64 ${DEVICE_BTN_START})
+Z Trig = $(m64 ${DEVICE_BTN_TL2})
+B Button = $(m64 ${DEVICE_BTN_WEST})
+A Button = $(m64 ${DEVICE_BTN_SOUTH})
+C Button R = $(m64 ${DEVICE_BTN_AR_RIGHT} 24000)
+C Button L = $(m64 ${DEVICE_BTN_AR_LEFT} 24000) $(m64 ${DEVICE_BTN_NORTH})
+C Button D = $(m64 ${DEVICE_BTN_AR_DOWN} 24000) $(m64 ${DEVICE_BTN_EAST})
+C Button U = $(m64 ${DEVICE_BTN_AR_UP} 24000)
+R Trig = $(m64 ${DEVICE_BTN_TR2}) $(m64 ${DEVICE_BTN_TR})
+L Trig = $(m64 ${DEVICE_BTN_TL})
+X Axis = axis(${DEVICE_BTN_AL_LEFT%?}-,${DEVICE_BTN_AL_RIGHT%?}+)
+Y Axis = axis(${DEVICE_BTN_AL_UP%?}-,${DEVICE_BTN_AL_DOWN%?}+)
+EOF
+    j() { case "$1" in *[+-]) echo "A$1" ;; *) echo "B$1" ;; esac; }
+    HK="J0B${DEVICE_BTN_SELECT}"
+    SLOT=""
+    [[ "${DEVICE_BTN_DPAD_UP}" =~ ^[0-9]+$ ]] && SLOT="${HK}/B${DEVICE_BTN_DPAD_UP}"
+    sed -i -e "s|^Joy Mapping Stop = .*|Joy Mapping Stop = \"${HK}/$(j ${DEVICE_BTN_START})\"|" \
+           -e "s|^Joy Mapping Save State = .*|Joy Mapping Save State = \"${HK}/$(j ${DEVICE_BTN_TR})\"|" \
+           -e "s|^Joy Mapping Load State = .*|Joy Mapping Load State = \"${HK}/$(j ${DEVICE_BTN_TL})\"|" \
+           -e "s|^Joy Mapping Fast Forward = .*|Joy Mapping Fast Forward = \"${HK}/$(j ${DEVICE_BTN_TR2})\"|" \
+           -e "s|^Joy Mapping Pause = .*|Joy Mapping Pause = \"${HK}/$(j ${DEVICE_BTN_NORTH})\"|" \
+           -e "s|^Joy Mapping Increment Slot = .*|Joy Mapping Increment Slot = \"${SLOT}\"|" \
+           -e "s#^Joy Mapping \(Reset\|Screenshot\|Gameshark\) = .*#Joy Mapping \1 = \"\"#" ${TMP}/mupen64plus.cfg
 fi
 if [ $(echo $1 | grep -i .zip | wc -l) -eq 1 ]; then
     # Unzip the game ROM if needed
