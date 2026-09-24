@@ -43,8 +43,17 @@ OUTPUT_LOG="${LOG_DIRECTORY}/${LOG_FILE}"
 SCRIPT_NAME=$(basename "$0")
 
 ### Export Game Guide Path
-GAME_GUIDE_PATH_CHECK="${1%.*}.txt"
-if [ ! -f "${GAME_GUIDE_PATH_CHECK}" ]; then
+GAME_GUIDE_PATH_CHECK=""
+
+GAME_GUIDE_TXT_CHECK="${1%.*}.txt"
+if [ -f "${GAME_GUIDE_TXT_CHECK}" ]; then
+  GAME_GUIDE_PATH_CHECK="${1%.*}.txt"
+fi
+GAME_GUIDE_PDF_CHECK="${1%.*}.pdf"
+if [ -f "${GAME_GUIDE_PDF_CHECK}" ]; then
+  GAME_GUIDE_PATH_CHECK="${1%.*}.pdf"
+fi
+if [ -z "${GAME_GUIDE_PATH_CHECK}" ]; then
   GAME_GUIDE_PATH_CHECK="No Game Guide Found"
 fi
   /usr/bin/game-guides-tool "${1}"

@@ -7,7 +7,7 @@ PKG_SITE="https://rocknix.org"
 PKG_SECTION="virtual"
 PKG_LONGDESC="Game support software metapackage."
 
-PKG_GAMESUPPORT="sixaxis rocknix-hotkey jstest-sdl gamecontrollerdb sdljoytest sdltouchtest control-gen sdl2text"
+PKG_GAMESUPPORT="sixaxis rocknix-hotkey jstest-sdl gamecontrollerdb sdljoytest sdltouchtest control-gen sdl2text sdl2pdf"
 
 case ${DEVICE} in
   RK3326|S922X|SM4450|SM6115|SM8250|SM8550|SM8650|SM8750)
