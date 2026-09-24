@@ -44,6 +44,7 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/config/flycast
     cp -aL ${PKG_DIR}/config/${DEVICE}/* ${INSTALL}/usr/config/flycast
     cp -a ${PKG_DIR}/config/flycast.gptk ${INSTALL}/usr/config/flycast
+  mkdir -p ${INSTALL}/usr/config/flycast/mappings
     cp -a ${PKG_DIR}/config/SDL_Keyboard.cfg ${INSTALL}/usr/config/flycast/mappings
 }
 
