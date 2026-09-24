@@ -19,7 +19,13 @@ JOYNAME=$(echo "${GAMEPADINFO}" | grep "Joystick 0 name " | sed "s|Joystick 0 na
 
 GPFILE="/usr/share/libretro/autoconfig/${JOYNAME}.cfg"
 
-if [[ -f "${GPFILE}" ]]; then
+# AMD64 has no fixed pad: take player 1's buttons from its ES mapping
+if [ "${HW_DEVICE}" = "AMD64" ] && mkcontroller; then
+    . /storage/.config/profile.d/098-controller
+    ES_MAP=1
+fi
+
+if [[ -f "${GPFILE}" ]] || [ -n "${ES_MAP}" ]; then
         # Other keys to consider KEY_SCREENSHOT KEY_QUIT KEY_PAUSE
         for key in KEY_UP KEY_DOWN KEY_LEFT KEY_RIGHT KEY_BUTTON1 KEY_BUTTON2 KEY_BUTTON3 KEY_START1 KEY_COIN1; do
             case ${key} in
@@ -60,6 +66,20 @@ if [[ -f "${GPFILE}" ]]; then
                 keyboard="53 54"
                 ;;
             esac
+
+            if [ -n "${ES_MAP}" ]; then
+                case ${key} in
+                "KEY_UP") button="${DEVICE_BTN_DPAD_UP}" ;;
+                "KEY_DOWN") button="${DEVICE_BTN_DPAD_DOWN}" ;;
+                "KEY_LEFT") button="${DEVICE_BTN_DPAD_LEFT}" ;;
+                "KEY_RIGHT") button="${DEVICE_BTN_DPAD_RIGHT}" ;;
+                "KEY_BUTTON1") button="${DEVICE_BTN_SOUTH}" ;;
+                "KEY_BUTTON2") button="${DEVICE_BTN_EAST}" ;;
+                "KEY_BUTTON3") button="${DEVICE_BTN_WEST}" ;;
+                "KEY_START1") button="${DEVICE_BTN_START}" ;;
+                "KEY_COIN1") button="${DEVICE_BTN_SELECT}" ;;
+                esac
+            fi
 
             # if the button is in fact a hat extract the number, else use the button number+1
             if [[ "${button}" == "h"* ]]; then
