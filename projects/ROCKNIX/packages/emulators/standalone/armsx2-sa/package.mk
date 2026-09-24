@@ -22,6 +22,14 @@ elif listcontains "${GRAPHIC_DRIVERS}" "(freedreno)"; then
   GRAPHICS_DRIVER="freedreno"
 fi
 
+# Ship ARMSX2's own Turnip build on the Adreno 6xx/7xx families. SM8750
+# (Adreno 8xx) keeps the system driver.
+case ${DEVICE} in
+  SM4450|SM6115|SM8250|SM8550|SM8650)
+    PKG_DEPENDS_TARGET+=" armsx2-turnip"
+    ;;
+esac
+
 pre_configure_target() {
   PCSX2_CMAKE_BASE=(
     # Reported version
