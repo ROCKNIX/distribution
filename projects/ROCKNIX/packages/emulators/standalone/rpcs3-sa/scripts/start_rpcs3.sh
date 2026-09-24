@@ -10,6 +10,15 @@ if [ ! -d "/storage/.config/rpcs3" ]; then
   cp -r "/usr/config/rpcs3" "/storage/.config/"
 fi
 
+# Player 1 is the first controller; RPCS3 names SDL pads "<name> <n>"
+if [ "${HW_DEVICE}" = "AMD64" ]; then
+  control-gen_init.sh
+  source /storage/.config/gptokeyb/control.ini
+  get_controls
+  [ -n "${param_device}" ] && sed -i "/^Player 1 Input:/,/^Player 2 Input:/ s|^  Device: .*|  Device: ${param_device} 1|" \
+    /storage/.config/rpcs3/input_configs/global/Default.yml
+fi
+
 # Link certain RPCS3 folders to a location in /storage/roms/bios
 FOLDER_LINKS=("dev_flash" "dev_hdd0" "dev_hdd1" "custom_configs")
 for FOLDER_LINK in "${FOLDER_LINKS[@]}"; do
