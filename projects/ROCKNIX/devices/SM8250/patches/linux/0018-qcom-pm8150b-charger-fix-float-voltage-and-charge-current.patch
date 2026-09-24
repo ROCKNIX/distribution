@@ -1,0 +1,135 @@
+From: xenocideend <xenocideend@gmail.com>
+Subject: [PATCH] power: supply: qcom_pm8150b_charger: fix float voltage scale
+ and set charge current
+
+The driver was ported from pmi8998 and programs FLOAT_VOLTAGE_CFG with the
+pmi8998 scale (3.4875 V + 7.5 mV/LSB). pm8150b is 3.6 V + 10 mV/LSB
+(Qualcomm downstream smb5_pm8150b_params), so the value written for a 4.40 V
+battery, 122, is 4.82 V - above the cell rating and above the register's own
+4.79 V maximum. FAST_CHARGE_CURRENT_CFG is never written, leaving the
+hardware default of 107 = 5.35 A.
+
+Use the pm8150b scale, round down, fall back to 4.20 V if the battery's
+maximum is missing or above 4.45 V, program the charge current (DT
+constant-charge-current-max, else 0.5C of the design capacity, capped at
+3 A), and keep charging disabled until both are written.
+
+Measured on a Retroid Pocket 5: FLOAT_VOLTAGE_CFG = 80 held the cell at
+4.40 V in constant-voltage and FAST_CHARGE_CURRENT_CFG = 40 charged at
+1.98 A; with this patch the driver logs "float voltage 4400000 uV, charge
+current 1900000 uA".
+
+This change was written by an AI assistant (Anthropic's Claude).
+---
+--- a/drivers/power/supply/qcom_pm8150b_charger.c
++++ b/drivers/power/supply/qcom_pm8150b_charger.c
+@@ -739,10 +739,14 @@
+ 	{ .addr = CHARGE_RCHG_SOC_THRESHOLD_CFG_REG,
+ 	  .mask = CHARGE_RCHG_SOC_THRESHOLD_CFG_MASK,
+ 	  .val = 98 },
+-	/* Enable charging */
++	/*
++	 * Hold charging off until smb5_init_charge_params() has programmed
++	 * the float voltage and charge current; whatever the bootloader left
++	 * in those registers is not trusted.
++	 */
+ 	{ .addr = CHARGING_ENABLE_CMD,
+ 	  .mask = CHARGING_ENABLE_CMD_BIT,
+-	  .val = CHARGING_ENABLE_CMD_BIT },
++	  .val = 0 },
+ 	/* Enable BC1P2 Src detect */
+ 	{ .addr = USBIN_OPTIONS_1_CFG,
+ 	  .mask = BC1P2_SRC_DETECT_BIT,
+@@ -793,6 +797,78 @@
+ 	return 0;
+ }
+ 
++/*
++ * pm8150b charge parameters, from Qualcomm's downstream smb5_pm8150b_params:
++ *   FLOAT_VOLTAGE_CFG        3.6 V + 10 mV/LSB (max 4.79 V)
++ *   FAST_CHARGE_CURRENT_CFG  50 mA/LSB
++ *
++ * This driver was ported from pmi8998, whose float voltage register is
++ * 3.4875 V + 7.5 mV/LSB. Using that formula wrote 122 for a 4.4 V battery,
++ * which on pm8150b is 4.82 V. The charge current was never written, leaving
++ * the hardware default of 107 (5.35 A). Measured on a Retroid Pocket 5:
++ * FLOAT_VOLTAGE_CFG = 80 held the cell at 4.40 V in constant-voltage, and
++ * FAST_CHARGE_CURRENT_CFG = 40 charged at 1.98 A.
++ */
++#define FV_MIN_UV		3600000
++#define FV_STEP_UV		10000
++#define FV_CEILING_UV		4450000	/* reject anything above LiHV 4.45 V */
++#define FV_FALLBACK_UV		4200000
++#define FCC_STEP_UA		50000
++#define FCC_CEILING_UA		3000000
++#define FCC_FALLBACK_UA		1500000
++
++static int smb5_init_charge_params(struct smb5_chip *chip)
++{
++	struct power_supply_battery_info *info = chip->batt_info;
++	int fv_uv = info->voltage_max_design_uv;
++	int fcc_ua = info->constant_charge_current_max_ua;
++	unsigned int fv_raw, fcc_raw;
++	int rc;
++
++	/* prefer an explicit charge voltage if it is the lower of the two */
++	if (info->constant_charge_voltage_max_uv > 0 &&
++	    (fv_uv <= 0 || info->constant_charge_voltage_max_uv < fv_uv))
++		fv_uv = info->constant_charge_voltage_max_uv;
++
++	if (fv_uv < FV_MIN_UV + FV_STEP_UV || fv_uv > FV_CEILING_UV) {
++		dev_warn(chip->dev,
++			 "battery max voltage %d uV missing or out of range, using %d uV\n",
++			 fv_uv, FV_FALLBACK_UV);
++		fv_uv = FV_FALLBACK_UV;
++	}
++
++	/* no charge current in DT: 0.5C of the design capacity */
++	if (fcc_ua <= 0)
++		fcc_ua = info->charge_full_design_uah > 0 ?
++			 info->charge_full_design_uah / 2 : FCC_FALLBACK_UA;
++	fcc_ua = min(fcc_ua, FCC_CEILING_UA);
++
++	/* integer division rounds down: never above the requested value */
++	fv_raw = (fv_uv - FV_MIN_UV) / FV_STEP_UV;
++	fcc_raw = fcc_ua / FCC_STEP_UA;
++
++	rc = regmap_update_bits(chip->regmap, chip->base + FLOAT_VOLTAGE_CFG,
++				FLOAT_VOLTAGE_SETTING_MASK, fv_raw);
++	if (rc < 0)
++		return dev_err_probe(chip->dev, rc, "Couldn't set float voltage\n");
++
++	rc = regmap_update_bits(chip->regmap,
++				chip->base + FAST_CHARGE_CURRENT_CFG,
++				FAST_CHARGE_CURRENT_SETTING_MASK, fcc_raw);
++	if (rc < 0)
++		return dev_err_probe(chip->dev, rc, "Couldn't set charge current\n");
++
++	dev_info(chip->dev, "float voltage %u uV, charge current %u uA\n",
++		 FV_MIN_UV + fv_raw * FV_STEP_UV, fcc_raw * FCC_STEP_UA);
++
++	rc = regmap_update_bits(chip->regmap, chip->base + CHARGING_ENABLE_CMD,
++				CHARGING_ENABLE_CMD_BIT, CHARGING_ENABLE_CMD_BIT);
++	if (rc < 0)
++		return dev_err_probe(chip->dev, rc, "Couldn't enable charging\n");
++
++	return 0;
++}
++
+ static int smb5_init_irq(struct smb5_chip *chip, int *irq, const char *name,
+ 			 irqreturn_t (*handler)(int irq, void *data))
+ {
+@@ -884,11 +960,9 @@
+ 		return dev_err_probe(chip->dev, rc,
+ 				     "Failed to init status change work\n");
+ 
+-	rc = (chip->batt_info->voltage_max_design_uv - 3487500) / 7500 + 1;
+-	rc = regmap_update_bits(chip->regmap, chip->base + FLOAT_VOLTAGE_CFG,
+-				FLOAT_VOLTAGE_SETTING_MASK, rc);
++	rc = smb5_init_charge_params(chip);
+ 	if (rc < 0)
+-		return dev_err_probe(chip->dev, rc, "Couldn't set vbat max\n");
++		return rc;
+ 
+ 	rc = smb5_init_irq(chip, &irq, "bat-ov", smb5_handle_batt_overvoltage);
+ 	if (rc < 0)
