@@ -92,6 +92,8 @@ if [ "${LLVM_SUPPORT}" = "yes" ]; then
   PKG_MESON_OPTS_TARGET+=" -Dllvm=enabled"
 else
   PKG_MESON_OPTS_TARGET+=" -Dllvm=disabled"
+  # radeonsi needs libelf even when ACO does all the compiling
+  listcontains "${GRAPHIC_DRIVERS}" "radeonsi" && PKG_DEPENDS_TARGET+=" elfutils"
 fi
 
 if [ "${VAAPI_SUPPORT}" = "yes" ] && listcontains "${GRAPHIC_DRIVERS}" "(r600|radeonsi)"; then
