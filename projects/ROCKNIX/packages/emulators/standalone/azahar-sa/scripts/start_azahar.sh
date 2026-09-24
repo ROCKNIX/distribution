@@ -51,6 +51,24 @@ fi
 
 # Make sure gptokeyb mapping files exist
 [ ! -f "${CONF_DIR}/azahar.gptk" ] && cp ${IMMUTABLE_CONF_DIR}/azahar.gptk ${CONF_DIR}
+grep -q "add_ctrl" "${CONF_DIR}/azahar.gptk" || cp -f ${IMMUTABLE_CONF_DIR}/azahar.gptk ${CONF_DIR}
+
+# Select + R2 toggles turbo through gptokeyb
+sed -i -e 's|^\(Shortcuts\\Main%20Window\\Toggle%20Turbo%20Mode\\KeySeq\)=.*|\1=Ctrl+T|' \
+       -e 's|^\(Shortcuts\\Main%20Window\\Toggle%20Turbo%20Mode\\KeySeq\\default\)=.*|\1=false|' "${CONF_FILE}"
+
+# Bind by gamepad position on any controller, Nintendo layout (A east, B south)
+if [ "${HW_DEVICE}" = "AMD64" ]; then
+  bind() {
+    sed -i "s|^\(profiles\\\\1\\\\$1\)=.*|\1=\"$2,api:controller,engine:sdl,maptype:all,port:0\"|" "${CONF_FILE}"
+  }
+  bind button_a button:1; bind button_b button:0; bind button_x button:3; bind button_y button:2
+  bind button_select button:4; bind button_home button:5; bind button_start button:6
+  bind button_l button:9; bind button_r button:10
+  bind button_up button:11; bind button_down button:12; bind button_left button:13; bind button_right button:14
+  bind button_zl axis:4,direction:+,threshold:0.5; bind button_zr axis:5,direction:+,threshold:0.5
+  bind circle_pad axis_x:0,axis_y:1,deadzone:0.100000; bind c_stick axis_x:2,axis_y:3,deadzone:0.100000
+fi
 [ ! -f "${CONF_DIR}/azahar_mouse_addon.gptk" ] && cp ${IMMUTABLE_CONF_DIR}/azahar_mouse_addon.gptk ${CONF_DIR}
 
 # Emulation Station Features
