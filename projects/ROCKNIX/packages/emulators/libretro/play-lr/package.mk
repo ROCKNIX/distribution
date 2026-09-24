@@ -2,7 +2,7 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="play-lr"
-PKG_VERSION="04bde0df87ee7c0e2f0151b51bb2cc22c88541da"
+PKG_VERSION="fa75cea31a33f5ab7a2008ed0d90dc74353e9cef" # tag 0.77
 PKG_LICENSE="BSD-2-Clause"
 PKG_SITE="https://github.com/jpd002/Play-"
 PKG_URL="${PKG_SITE}.git"
@@ -10,7 +10,7 @@ PKG_DEPENDS_TARGET="toolchain libevdev zstd"
 PKG_LONGDESC="Play! is an attempt to create a PlayStation 2 emulator for Windows, macOS, UNIX, Android & iOS platforms."
 
 if [ "${OPENGL_SUPPORT}" = "yes" ]; then
-  PKG_DEPENDS_TARGET+=" ${OPENGL} glu"
+  PKG_DEPENDS_TARGET+=" ${OPENGL} glu glew"
 fi
 
 if [ "${OPENGLES_SUPPORT}" = "yes" ]; then
