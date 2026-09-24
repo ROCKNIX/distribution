@@ -6,6 +6,9 @@
 
 # OpenBOR only works with Pak files, if you have an extracted game you will need to create a pak first.
 
+. /etc/profile
+set_kill set "-9 OpenBOR"
+
 pakname=$(basename "$1")
 pakname="${pakname%.*}"
 
