@@ -36,6 +36,7 @@ kconfig-menuconfig-%:
 
 AMD64:
 	unset DEVICE_ROOT
+	PROJECT=ROCKNIX DEVICE=AMD64 ARCH=i686 ./scripts/build_distro
 	PROJECT=ROCKNIX DEVICE=AMD64 ARCH=x86_64 ./scripts/build_distro
 
 RK3588:
