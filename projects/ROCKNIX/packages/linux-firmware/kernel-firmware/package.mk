@@ -5,8 +5,8 @@ PKG_NAME="kernel-firmware"
 case ${DEVICE} in
   AMD64)
     # Current amdgpu, i915 and xe firmware for newer handheld APUs.
-    PKG_VERSION="20260622"
-    PKG_SHA256="2b9d8a358e76eb766588609135e53fa548b902c551daae33ee32f26f25e60dbb"
+    PKG_VERSION="20260916"
+    PKG_SHA256="f80dcb757a623deda62200c08e0e1a88c76fb6b54964f31b35fa74da1c90ccc5"
     PKG_URL="https://cdn.kernel.org/pub/linux/kernel/firmware/linux-firmware-${PKG_VERSION}.tar.xz"
     ;;
   *)
