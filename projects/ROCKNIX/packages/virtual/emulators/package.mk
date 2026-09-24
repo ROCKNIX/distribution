@@ -94,9 +94,9 @@ case "${DEVICE}" in
     LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr uae4arm-lr"
     ;;
   AMD64)
-    PKG_EMUS+=" ares-sa azahar-sa bigpemu-sa cemu-sa dolphin-sa gopher64-sa mednafen melonds-sa nanoboyadvance-sa rpcs3-sa \
+    PKG_EMUS+=" ares-sa azahar-sa bigpemu-sa cemu-sa dolphin-sa gopher64-sa mednafen melonds-sa nanoboyadvance-sa pcsx2-sa rpcs3-sa \
                 supermodel-sa xemu-sa skyemu-sa vita3k-sa armsx2-sa"
-    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr desmume-lr dolphin-lr duckstation-lr kronos-lr ppsspp-lr"
+    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr desmume-lr dolphin-lr duckstation-lr kronos-lr lrps2-lr play-lr ppsspp-lr"
     ;;
 esac
 
@@ -1191,7 +1191,11 @@ makeinstall_target() {
   ### Sony Playstation 2
   case ${DEVICE} in
   AMD64)
-    add_emu_core ps2 armsx2 armsx2-sa true
+    add_emu_core ps2 pcsx2 pcsx2-sa true
+    add_emu_core ps2 armsx2 armsx2-sa false
+    add_emu_core ps2 retroarch pcsx2 false
+    add_emu_core ps2 retroarch play false
+    install_script "Start PCSX2.sh"
     install_script "Start ARMSX2.sh"
     add_es_system ps2
     ;;
