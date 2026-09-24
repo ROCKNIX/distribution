@@ -41,6 +41,12 @@ then
 EOF
 fi
 
+# AMD64 has no fixed pad: map player 1 by position from its ES mapping on every launch
+if [ "${HW_DEVICE}" = "AMD64" ] && mkcontroller; then
+  . /storage/.config/profile.d/098-controller
+  rm -f "${CONFIG_PATH}/sdl-joymap-${EMU}.vjm"
+fi
+
 if [ ! -e "${CONFIG_PATH}/sdl-joymap-${EMU}.vjm" ]
 then
   cat <<EOF >${CONFIG_PATH}/sdl-joymap-${EMU}.vjm
@@ -55,11 +61,9 @@ then
 0 0 6 0
 0 0 7 0
 
-0 1 0 1 0 16
-0 1 1 1 0 32
-0 1 2 1 0 64
-0 1 3 0
-0 1 4 0
+0 1 ${DEVICE_BTN_SOUTH:-0} 1 0 16
+0 1 ${DEVICE_BTN_EAST:-1} 1 0 32
+0 1 ${DEVICE_BTN_WEST:-2} 1 0 64
 0 1 ${DEVICE_BTN_SELECT} 5 Virtual keyboard
 0 1 ${DEVICE_BTN_START} 4
 EOF
