@@ -15,6 +15,18 @@ then
   cp -rf ${SOURCE_DIR} ${CONF_DIR}
 fi
 
+# Older AMD64 builds shipped a controls.ini without mappings
+if ! grep -q "^\[ControlMapping\]" "${CONF_DIR}/PSP/SYSTEM/controls.ini" 2>/dev/null; then
+  cp -f ${SOURCE_DIR}/PSP/SYSTEM/controls.ini ${CONF_DIR}/PSP/SYSTEM/controls.ini
+fi
+
+# Hotkeys are Select + button combos
+if grep -q "^AllowMappingCombos =" "${CONF_DIR}/${PPSSPP_INI}"; then
+  sed -i '/^AllowMappingCombos =/c\AllowMappingCombos = True' "${CONF_DIR}/${PPSSPP_INI}"
+else
+  sed -i '/^\[Control\]/a AllowMappingCombos = True' "${CONF_DIR}/${PPSSPP_INI}"
+fi
+
 # Check if savestate dir exists
 if [ ! -d "/storage/roms/savestates/psp/ppsspp-sa" ]; then
   mkdir -p "/storage/roms/savestates/psp/ppsspp-sa"
