@@ -26,5 +26,7 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/config/supermodel/Config
     cp -a ${PKG_BUILD}/Config/Games.xml ${INSTALL}/usr/config/supermodel/Config
     cp -a ${PKG_DIR}/config/${DEVICE}/* ${INSTALL}/usr/config/supermodel/Config
+    # Single-cabinet NVRAM presets from Batocera, used with permission
+    # (batocera.linux: package/batocera/emulators/supermodel/NVRAM)
     cp -a ${PKG_DIR}/config/NVRAM ${INSTALL}/usr/config/supermodel
 }
