@@ -34,6 +34,35 @@ if [ ! -f "${CONF_DIR}/${MELONDS_INI}" ]; then
 	cp -r "/usr/config/melonDS/melonDS.ini" "${CONF_DIR}/${MELONDS_INI}"
 fi
 
+# Bind player 1 by position from its ES mapping (AMD64 has no fixed pad)
+if [ "${HW_DEVICE}" = "AMD64" ] && mkcontroller; then
+  . /storage/.config/profile.d/098-controller
+  # melonDS: button, or 0x100|hat<<4|dir, in the low 16 bits; 0x10000|axis<<24|dir<<20 above
+  mds() {
+    case "$1" in
+      "") echo -1 ;;
+      h*) local d; case "${1:2}" in up) d=1 ;; right) d=2 ;; down) d=4 ;; *) d=8 ;; esac
+          echo $(( 0x100 | ${1:1:1} << 4 | d )) ;;
+      *-) echo $(( 0xFFFF | 0x10000 | ${1%?} << 24 | 1 << 20 )) ;;
+      *+) echo $(( 0xFFFF | 0x10000 | ${1%?} << 24 )) ;;
+      *) echo "$1" ;;
+    esac
+  }
+  # D-pad direction plus the matching left stick direction
+  mds_dir() { local b=$(mds "$1") a=0; [ -n "$2" ] && a=$(( $(mds "$2") & ~0xFFFF )); echo $(( (b & 0xFFFF) | a )); }
+  INI="${CONF_DIR}/${MELONDS_INI}"
+  for kv in "Joy_A=$(mds ${DEVICE_BTN_EAST})" "Joy_B=$(mds ${DEVICE_BTN_SOUTH})" "Joy_X=$(mds ${DEVICE_BTN_NORTH})" \
+            "Joy_Y=$(mds ${DEVICE_BTN_WEST})" "Joy_L=$(mds ${DEVICE_BTN_TL})" "Joy_R=$(mds ${DEVICE_BTN_TR})" \
+            "Joy_Select=$(mds ${DEVICE_BTN_SELECT})" "Joy_Start=$(mds ${DEVICE_BTN_START})" \
+            "Joy_Up=$(mds_dir "${DEVICE_BTN_DPAD_UP}" "${DEVICE_BTN_AL_UP}")" "Joy_Down=$(mds_dir "${DEVICE_BTN_DPAD_DOWN}" "${DEVICE_BTN_AL_DOWN}")" \
+            "Joy_Left=$(mds_dir "${DEVICE_BTN_DPAD_LEFT}" "${DEVICE_BTN_AL_LEFT}")" "Joy_Right=$(mds_dir "${DEVICE_BTN_DPAD_RIGHT}" "${DEVICE_BTN_AL_RIGHT}")" \
+            "HKJoy_HotkeyEnable=$(mds ${DEVICE_BTN_MODE:-${DEVICE_BTN_SELECT}})" "HKJoy_SaveState=$(mds ${DEVICE_BTN_TR})" \
+            "HKJoy_LoadState=$(mds ${DEVICE_BTN_TL})" "HKJoy_FastForwardToggle=$(mds ${DEVICE_BTN_TR2})" \
+            "HKJoy_SwapScreenEmphasis=$(mds ${DEVICE_BTN_TL2})"; do
+    sed -i "s/^${kv%%=*}=.*/${kv}/" "${INI}"
+  done
+fi
+
 #Emulation Station Features
 GAME=$(echo "${1}" | sed "s#^/.*/##")
 PLATFORM=$(echo "${2}"| sed "s#^/.*/##")
