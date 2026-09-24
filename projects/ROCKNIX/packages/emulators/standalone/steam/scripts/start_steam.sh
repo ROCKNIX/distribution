@@ -221,15 +221,22 @@ steam_launch_bigpicture() {
     systemctl stop sway
   fi
 
-  if [ "${STEAM_FLAVOR}" = "arm64" ]; then
-    export STEAM_COMPAT_GRAPHICS_PROVIDER=/storage/.local/share/fex-emu/RootFS/ArchLinux/graphics_provider.json
+  if [ "${STEAM_FLAVOR}" = "arm64" ] || [ "${STEAM_FLAVOR}" = "native" ]; then
+    local steam_env=(GAMESCOPE_MODE_SAVE_FILE="${gamescope_mode_file}" GAMESCOPE_FAKE_OUTPUT_MM=508x286)
+    local steam_cmd=(/usr/bin/steam -steamos3 -gamepadui)
+    if [ "${STEAM_FLAVOR}" = "arm64" ]; then
+      export STEAM_COMPAT_GRAPHICS_PROVIDER=/storage/.local/share/fex-emu/RootFS/ArchLinux/graphics_provider.json
+      steam_env+=(LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/)
+      steam_cmd=(/storage/.local/share/Steam/steamrtarm64/steam -deckard -steamos3 -gamepadui -noshaders)
+    elif [[ "${QUIRK_DEVICE}" == Valve* ]]; then
+      steam_cmd+=(-steamdeck)
+    fi
     steam_exit_code_file=$(mktemp /tmp/steam-exit-code.XXXXXX)
     steam_touch_calibration_begin "${force_orientation}"
     trap steam_touch_calibration_end EXIT
     while true; do
       rm -f "${steam_exit_code_file}"
-      GAMESCOPE_MODE_SAVE_FILE="${gamescope_mode_file}" GAMESCOPE_FAKE_OUTPUT_MM=508x286 \
-      LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} \
+      env "${steam_env[@]}" ${EMUPERF} \
       gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --mangoapp --backend "${gamescope_backend}" --force-orientation "${force_orientation}" ${rotate_clamp} -e -- \
       /bin/bash -c '
         exit_file="$1"
@@ -237,7 +244,7 @@ steam_launch_bigpicture() {
         "$@"
         printf "%s\n" "$?" >"${exit_file}"
       ' _ "${steam_exit_code_file}" \
-      /storage/.local/share/Steam/steamrtarm64/steam -deckard -steamos3 -gamepadui -noshaders ${game_uri:+"$game_uri"}
+      "${steam_cmd[@]}" ${game_uri:+"$game_uri"}
       gamescope_exit_code=$?
       if [ -f "${steam_exit_code_file}" ]; then
         steam_exit_code=$(cat "${steam_exit_code_file}")
@@ -273,7 +280,9 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   STEAM_VERSION=$(get_setting steam_version "${PLATFORM}" "${GAME}")
   STEAM_VERSION=${STEAM_VERSION:-"arm64"}
   echo "STEAM_VERSION set to: ${STEAM_VERSION}"
-  if [ "${STEAM_VERSION}" = "arm64" ]; then
+  if [ "$(uname -m)" = "x86_64" ]; then
+    exec /usr/bin/start_steam_native.sh "$@"
+  elif [ "${STEAM_VERSION}" = "arm64" ]; then
     exec /usr/bin/start_steam_arm64.sh "$@"
   else
     exec /usr/bin/start_steam_x86.sh "$@"

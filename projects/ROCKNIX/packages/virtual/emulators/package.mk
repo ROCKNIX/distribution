@@ -95,7 +95,7 @@ case "${DEVICE}" in
     ;;
   AMD64)
     PKG_EMUS+=" ares-sa azahar-sa bigpemu-sa cemu-sa dolphin-sa gopher64-sa mednafen melonds-sa nanoboyadvance-sa pcsx2-sa rpcs3-sa \
-                supermodel-sa xemu-sa skyemu-sa vita3k-sa armsx2-sa"
+                supermodel-sa xemu-sa skyemu-sa steam vita3k-sa armsx2-sa"
     LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr desmume-lr dolphin-lr duckstation-lr kronos-lr lrps2-lr play-lr ppsspp-lr"
     ;;
 esac
@@ -730,6 +730,12 @@ makeinstall_target() {
 
   ## Steam & Heroic Games Launcher
   case ${DEVICE} in
+    AMD64)
+      add_emu_core steam steam steam true
+      install_script "Install Steam.sh"
+      install_script "Uninstall Steam.sh"
+      add_es_system steam
+      ;;
     SM4450|SM8250|SM8550|SM8650|SM8750)
       add_emu_core steam steam steam true
       install_script "Install Steam.sh"

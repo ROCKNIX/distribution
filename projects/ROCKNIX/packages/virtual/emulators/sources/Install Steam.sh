@@ -254,6 +254,15 @@ run_steam_first_launch() {
 # --- Execution ---
 log_info "Starting Steam Installation Process..."
 
+# x86_64 runs Valve's own client natively; it downloads its runtime and Proton itself
+if [ "$(uname -m)" = "x86_64" ]; then
+  link_steam_library
+  ensure_steam_desktop_stub
+  log_info "Downloading and updating the Steam client..."
+  /usr/bin/steam -exitsteam || log_info "Steam exited with an error."
+  log_success "Steam installed successfully. You can now start it from EmulationStation from the Steam section."
+fi
+
 install_fex_config
 ensure_fex_rootfs
 link_steam_library
