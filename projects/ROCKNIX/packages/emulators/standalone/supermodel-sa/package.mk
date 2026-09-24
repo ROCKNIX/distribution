@@ -7,7 +7,7 @@ PKG_SHA256="ff4a925fdf739da08b4e8dd19e09d0a81dda0801fe2d276acf7905073bfa8b96"
 PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/DirtBagXon/model3emu-code-sinden"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="${OPENGL} ${OPENGLES} glu toolchain SDL2 SDL2_net zlib"
+PKG_DEPENDS_TARGET="${OPENGL} ${OPENGLES} glu toolchain SDL2 SDL2_net zlib supermodel-nvram"
 PKG_LONGDESC="Supermodel is a Sega Model 3 arcade emulator"
 
 PKG_MAKE_OPTS_TARGET="NET_BOARD=1"
@@ -26,7 +26,4 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/config/supermodel/Config
     cp -a ${PKG_BUILD}/Config/Games.xml ${INSTALL}/usr/config/supermodel/Config
     cp -a ${PKG_DIR}/config/${DEVICE}/* ${INSTALL}/usr/config/supermodel/Config
-    # Single-cabinet NVRAM presets from Batocera, used with permission
-    # (batocera.linux: package/batocera/emulators/supermodel/NVRAM)
-    cp -a ${PKG_DIR}/config/NVRAM ${INSTALL}/usr/config/supermodel
 }
