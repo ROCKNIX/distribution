@@ -369,6 +369,8 @@ fi
   else
     SHOULDERS="stacked"
   fi
+  # nogui hotkeys: Select + Z (R1) saves and Select + R (R2) fast-forwards when stacked
+  [ "${SHOULDERS}" = "stacked" ] && export DOLPHIN_GC_STACKED=1
 
   if [ "$CON" = "east" ]; then
     cp -r ${CONF_DIR}/GamecubeControllerProfiles/GCPadNew.ini.east.${SHOULDERS} ${CONF_DIR}/${CONTROLLER_INI}
