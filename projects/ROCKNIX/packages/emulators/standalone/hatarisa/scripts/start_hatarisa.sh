@@ -3,6 +3,7 @@
 # Copyright (C) 2018-present 5schatten (https://github.com/5schatten)
 
 . /etc/profile
+set_kill set "-9 hatarisa"
 
 # Set some common variables
 HATARI_DIR_HOME=/storage/.hatari
@@ -32,6 +33,12 @@ mkdir -p "$HATARI_TMP_DIR"
 
 # copy default config file to tmp
 cp $HATARI_CONFIG_DIR/Atari-ST-default.cfg "$HATARI_TMP_CONFIG"
+
+# Fire buttons by position; Hatari's defaults are raw buttons 0-2
+if [ "${HW_DEVICE}" = "AMD64" ] && mkcontroller; then
+  . /storage/.config/profile.d/098-controller
+  sed -i "/^\[Joystick1\]/a nJoyBut1Index = ${DEVICE_BTN_SOUTH}\nnJoyBut2Index = ${DEVICE_BTN_EAST}\nnJoyBut3Index = ${DEVICE_BTN_WEST}" "$HATARI_TMP_CONFIG"
+fi
 
 # Check if we are loading a .zip file
 if [ `echo $1 | grep -i .zip | wc -l` -eq 1 ]; then
