@@ -95,8 +95,9 @@ case "${DEVICE}" in
     ;;
   AMD64)
     PKG_EMUS+=" ares-sa azahar-sa bigpemu-sa cemu-sa dolphin-sa gopher64-sa mednafen melonds-sa nanoboyadvance-sa pcsx2-sa rpcs3-sa \
-                supermodel-sa xemu-sa skyemu-sa steam vita3k-sa armsx2-sa"
-    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr desmume-lr dolphin-lr duckstation-lr kronos-lr lrps2-lr play-lr ppsspp-lr"
+                shadps4-sa supermodel-sa xemu-sa skyemu-sa steam vita3k-sa armsx2-sa ymir-sa"
+    LIBRETRO_CORES+=" azahar-lr beetle-psx-lr beetle-saturn-lr blastem-lr bsnes-lr bsnes-hd-lr desmume-lr dice-lr dolphin-lr duckstation-lr \
+                    ep128emu-core-lr gp32emu-lr kronos-lr lrps2-lr nxengine-lr play-lr ppsspp-lr"
     ;;
 esac
 
@@ -176,6 +177,11 @@ makeinstall_target() {
   case ${DEVICE} in
     RK3576|RK3566|SM8250|SM8550|SM8650|SM8750|S922X|RK3588|SM4450|SM6115|AMD64)
       add_emu_core 3ds azahar azahar-sa true
+      case ${DEVICE} in
+        AMD64)
+          add_emu_core 3ds retroarch azahar false
+          ;;
+      esac
       add_es_system 3ds
       install_script "Start Azahar.sh"
     ;;
@@ -215,6 +221,11 @@ makeinstall_target() {
   ### Amstrad CPC
   add_emu_core amstradcpc retroarch crocods true
   add_emu_core amstradcpc retroarch cap32 false
+  case ${DEVICE} in
+    AMD64)
+      add_emu_core amstradcpc retroarch ep128emu_core false
+      ;;
+  esac
   add_es_system amstradcpc
 
   ### Arcade
@@ -801,6 +812,11 @@ makeinstall_target() {
       add_emu_core megadrive-japan mednafen md false
       ;;
   esac
+  case ${DEVICE} in
+    AMD64)
+      add_emu_core megadrive-japan retroarch blastem false
+      ;;
+  esac
   add_es_system megadrive-japan
 
   ### Sega Model 3
@@ -1227,6 +1243,14 @@ makeinstall_target() {
       ;;
   esac
 
+  ### Sony Playstation 4
+  case ${DEVICE} in
+    AMD64)
+      add_emu_core ps4 shadps4 shadps4-sa true
+      add_es_system ps4
+      ;;
+  esac
+
   ### Sony Playstation Portable
   add_emu_core psp ppsspp ppsspp-sa true
   add_emu_core psp retroarch ppsspp false
@@ -1306,6 +1330,11 @@ makeinstall_target() {
       add_emu_core genesis ares ares-sa false
       ;;
   esac
+  case ${DEVICE} in
+    AMD64)
+      add_emu_core genesis retroarch blastem false
+      ;;
+  esac
   add_es_system genesis
 
   ### Sega Genesis Hacks
@@ -1320,6 +1349,11 @@ makeinstall_target() {
   case ${DEVICE} in
     SM8550|SM8650|SM8750|AMD64)
       add_emu_core genh ares ares-sa false
+      ;;
+  esac
+  case ${DEVICE} in
+    AMD64)
+      add_emu_core genh retroarch blastem false
       ;;
   esac
   add_es_system genh
@@ -1350,6 +1384,11 @@ makeinstall_target() {
       add_emu_core megadrive mednafen md false
       ;;
   esac
+  case ${DEVICE} in
+    AMD64)
+      add_emu_core megadrive retroarch blastem false
+      ;;
+  esac
   add_es_system megadrive
 
   ### Sega MegaDrive Hacks
@@ -1359,6 +1398,11 @@ makeinstall_target() {
   case ${DEVICE} in
     H700|RK3326|RK3399|RK3576|RK3566|RK3588|SM4450|SM6115|SM8250|SM8550|SM8650|SM8750|AMD64)
       add_emu_core megadriveh mednafen md false
+      ;;
+  esac
+  case ${DEVICE} in
+    AMD64)
+      add_emu_core megadriveh retroarch blastem false
       ;;
   esac
   add_es_system megadriveh
@@ -1382,6 +1426,11 @@ makeinstall_target() {
       ;;
     S922X)
       add_emu_core saturn retroarch beetle_saturn false
+      ;;
+  esac
+  case ${DEVICE} in
+    AMD64)
+      add_emu_core saturn ymir ymir-sa false
       ;;
   esac
   add_es_system saturn
@@ -1423,6 +1472,11 @@ makeinstall_target() {
   case ${DEVICE} in
     SM8550|SM8650|SM8750|AMD64)
       add_emu_core zxspectrum ares ares-sa false
+      ;;
+  esac
+  case ${DEVICE} in
+    AMD64)
+      add_emu_core zxspectrum retroarch ep128emu_core false
       ;;
   esac
   add_es_system zxspectrum
@@ -1681,6 +1735,11 @@ makeinstall_target() {
 
   ### GamePark GP32
   add_emu_core gp32 retroarch mame true
+  case ${DEVICE} in
+    AMD64)
+      add_emu_core gp32 retroarch gp32emu false
+      ;;
+  esac
   add_es_system gp32
 
   ### PC Ports
@@ -1705,6 +1764,38 @@ makeinstall_target() {
   ### Music Player
   add_emu_core music gmu gmu true
   add_es_system music
+
+  ### Discrete Integrated Circuit Emulator
+  case ${DEVICE} in
+    AMD64)
+      add_emu_core dice retroarch dice true
+      add_es_system dice
+      ;;
+  esac
+
+  ### Enterprise 64/128
+  case ${DEVICE} in
+    AMD64)
+      add_emu_core enterprise retroarch ep128emu_core true
+      add_es_system enterprise
+      ;;
+  esac
+
+  ### Videoton TVC
+  case ${DEVICE} in
+    AMD64)
+      add_emu_core tvc retroarch ep128emu_core true
+      add_es_system tvc
+      ;;
+  esac
+
+  ### Cave Story
+  case ${DEVICE} in
+    AMD64)
+      add_emu_core cavestory retroarch nxengine true
+      add_es_system cavestory
+      ;;
+  esac
 
   ### Moonlight
   add_emu_core moonlight moonlight moonlight true
