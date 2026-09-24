@@ -86,9 +86,8 @@ else
   unset EMUPERF
 fi
 
-#Set correct input device
-GAMEPAD="/dev/hidraw0"
-sed -Ei "/\"controller_assignment\": \[/ { n; s#\"[^\"]*\"#\"$GAMEPAD\"#; }" "${CONF_DIR}/${GOPHER64_JSON}"
+# Give port 1 the first controller SDL lists; gopher64 skips this flag when a game is passed
+/usr/bin/gopher64 --assign-controller 0 --port 1 >/dev/null 2>&1
 
 # Cheevos
 CHEEVOS_LOG_FILE="/var/log/cheevos.log"
@@ -122,4 +121,4 @@ fi
   echo "Launching /usr/bin/gopher64 ${1}"
 
 # Start Gopher64
-${EMUPERF} /usr/bin/gopher64 --fullscreen --assign-controller 0 --port 1 ${CHEEVOS} "${1}"
+${EMUPERF} /usr/bin/gopher64 --fullscreen ${CHEEVOS} "${1}"
