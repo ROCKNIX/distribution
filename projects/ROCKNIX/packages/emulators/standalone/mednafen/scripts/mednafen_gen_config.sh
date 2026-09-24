@@ -36,6 +36,12 @@ DEVICE_BTN_DPAD_LEFT="5-"
 DEVICE_BTN_DPAD_RIGHT="5+"
 fi
 
+# AMD64: Select is the hotkey, as in RetroArch and the other emulators
+if [ "${HW_DEVICE}" = "AMD64" ]; then
+export DEVICE_FUNC_KEYA_MODIFIER="BTN_SELECT"
+export DEVICE_FUNC_KEYB_MODIFIER="BTN_SELECT"
+fi
+
 # Replace modifiers with actual buttons
 for MOD in DEVICE_FUNC_KEYA_MODIFIER DEVICE_FUNC_KEYB_MODIFIER
 do

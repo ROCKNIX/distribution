@@ -16,9 +16,12 @@ then
   mkdir /storage/.config/mednafen
 fi
 
-if [ ! -f "$MEDNAFEN_HOME/mednafen.cfg" ]
+# Regenerate when missing, or on AMD64 when player 1 is a different pad
+PAD=""
+[ "${HW_DEVICE}" = "AMD64" ] && PAD="$(control-gen | awk 'BEGIN {FS="\""} /^DEVICE/ {print $2; exit}')"
+if [ ! -f "$MEDNAFEN_HOME/mednafen.cfg" ] || [ "${PAD}" != "$(cat "$MEDNAFEN_HOME/.pad" 2>/dev/null)" ]
 then
-    /usr/bin/bash /usr/bin/mednafen_gen_config.sh
+    /usr/bin/bash /usr/bin/mednafen_gen_config.sh && echo "${PAD}" >"$MEDNAFEN_HOME/.pad"
 fi
 
 #Emulation Station Features
