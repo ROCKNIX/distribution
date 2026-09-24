@@ -335,6 +335,18 @@ ${VERBOSE} && log $0 "script to execute: ${RUNTHIS}"
 
 ### Set the cores to use
 CORES=$(get_setting "cores" "${PLATFORM}" "${ROMNAME##*/}")
+# AMD64: give SDL a mapping, built from ES, for connected pads SDL does not know
+if [ "${HW_DEVICE}" = "AMD64" ]; then
+  UNMAPPED="$(control-gen --unmapped)"
+  if [ -n "${UNMAPPED}" ]; then
+    ABUT="b" BBUT="a" XBUT="y" YBUT="x"
+    rm -f /tmp/es_gamecontrollerdb.txt
+    create_controller_db xbox /tmp/es_input.cfg /tmp/es_gamecontrollerdb.txt >/dev/null 2>&1
+    export SDL_GAMECONTROLLERCONFIG="$(grep -iF "${UNMAPPED}" /tmp/es_gamecontrollerdb.txt)"
+    ${VERBOSE} && log $0 "SDL mappings from ES for: ${UNMAPPED}"
+  fi
+fi
+
 ${VERBOSE} && log $0 "Configure big.little (${CORES})"
 case ${CORES} in
   little)
