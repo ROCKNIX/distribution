@@ -48,5 +48,8 @@ make_target() {
 }
 
 makeinstall_target() {
-  : # atf embeds the stubs in bl31; nothing from this package is installed
+  # atf reads the stubs from the sysroot rather than from this build directory,
+  # which neither survives AUTOREMOVE nor crosses a CI job boundary.
+  mkdir -p ${SYSROOT_PREFIX}/usr/share/${PKG_NAME}
+  cp -a *.bin ${SYSROOT_PREFIX}/usr/share/${PKG_NAME}
 }

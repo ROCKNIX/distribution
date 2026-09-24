@@ -13,7 +13,7 @@ PKG_TOOLCHAIN="manual"
 
 PKG_NEED_UNPACK="${PROJECT_DIR}/${PROJECT}/bootloader ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/bootloader"
 # the SPL embeds atf's BL31; rebuild when it changes
-PKG_NEED_UNPACK+=" $(get_build_dir atf)/build/sun50i_h616/release/bl31.bin"
+PKG_NEED_UNPACK+=" ${SYSROOT_PREFIX}/usr/share/atf/bl31.bin"
 
 if [ -n "${UBOOT_FIRMWARE}" ]; then
   PKG_DEPENDS_TARGET+=" ${UBOOT_FIRMWARE}"
@@ -22,7 +22,7 @@ fi
 
 pre_make_target() {
   PKG_UBOOT_CONFIG="anbernic_rg35xx_h700_lpddr3_defconfig"
-  PKG_BL31="$(get_build_dir atf)/build/sun50i_h616/release/bl31.bin"
+  PKG_BL31="${SYSROOT_PREFIX}/usr/share/atf/bl31.bin"
 }
 
 make_target() {
@@ -35,5 +35,9 @@ make_target() {
 }
 
 makeinstall_target() {
-  : # nothing
+  # The u-boot wrapper package picks these up. It read them from this build
+  # directory, which neither survives AUTOREMOVE nor crosses a CI job boundary;
+  # the sysroot lives inside toolchain and is carried between jobs.
+  mkdir -p ${SYSROOT_PREFIX}/usr/share/${PKG_NAME}
+  cp -a u-boot-sunxi-with-spl.bin ${SYSROOT_PREFIX}/usr/share/${PKG_NAME}
 }
