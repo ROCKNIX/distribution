@@ -203,6 +203,14 @@ fi
                 sed -i '/^EnableWideScreenPatches =/c\EnableWideScreenPatches = false' /storage/.config/ARMSX2/inis/PCSX2.ini
         fi
 
+#Hotkeys: Select + button on AMD64, like PCSX2 and RetroArch
+if [ "${HW_DEVICE}" = "AMD64" ]; then
+  INI=/storage/.config/ARMSX2/inis/PCSX2.ini
+  sed -i -e '/^\[Hotkeys\]/,/^\[/ { /^[A-Za-z]* = SDL-0\/Guide/d; /^\(ShutdownVM\|OpenPauseMenu\|SaveStateToSlot\|LoadStateFromSlot\|ToggleTurbo\|NextSaveStateSlot\|PreviousSaveStateSlot\) = /d }' -e '/^Analog = SDL-0\/Guide$/d' "${INI}"
+  sed -i '/^\[Hotkeys\]/a ShutdownVM = SDL-0/Back \& SDL-0/Start\nOpenPauseMenu = SDL-0/Back \& SDL-0/FaceNorth\nSaveStateToSlot = SDL-0/Back \& SDL-0/RightShoulder\nLoadStateFromSlot = SDL-0/Back \& SDL-0/LeftShoulder\nToggleTurbo = SDL-0/Back \& SDL-0/+RightTrigger\nNextSaveStateSlot = SDL-0/Back \& SDL-0/DPadUp\nPreviousSaveStateSlot = SDL-0/Back \& SDL-0/DPadDown' "${INI}"
+  sed -i '/^ConfirmShutdown = /c\ConfirmShutdown = false' "${INI}"
+fi
+
 #Retroachievements
   /usr/bin/cheevos_armsx2.sh
 
