@@ -36,6 +36,20 @@ fi
 sed -i '/vid_defheight=/c\vid_defheight='$(fbheight) /storage/.config/gzdoom/gzdoom.ini
 sed -i '/vid_defwidth=/c\vid_defwidth='$(fbwidth) /storage/.config/gzdoom/gzdoom.ini
 
+# AMD64: bind player 1's buttons by position from its ES mapping
+if [ "${HW_DEVICE}" = "AMD64" ] && mkcontroller; then
+  . /storage/.config/profile.d/098-controller
+  # GZDoom names joystick button n "Joy<n+1>"
+  BINDS=""
+  bind() { [[ "$1" =~ ^[0-9]+$ ]] && BINDS+="Joy$(( $1 + 1 ))=$2\\n"; }
+  bind "${DEVICE_BTN_SOUTH}" +use; bind "${DEVICE_BTN_EAST}" +jump; bind "${DEVICE_BTN_WEST}" +reload
+  bind "${DEVICE_BTN_NORTH}" turn180; bind "${DEVICE_BTN_TR}" +attack; bind "${DEVICE_BTN_TL}" +speed
+  bind "${DEVICE_BTN_SELECT}" togglemap; bind "${DEVICE_BTN_START}" menu_main
+  bind "${DEVICE_BTN_DPAD_LEFT}" weapprev; bind "${DEVICE_BTN_DPAD_RIGHT}" weapnext
+  bind "${DEVICE_BTN_DPAD_DOWN}" +crouch; bind "${DEVICE_BTN_DPAD_UP}" centerview
+  sed -i -e '/^\[Doom.Bindings\]/,/^\[/ { /^Joy[0-9]*=/d }' -e "/^\[Doom.Bindings\]/a ${BINDS%\\n}" "${CONFIG}"
+fi
+
 if [ ! -d "/storage/roms/doom/iwads" ]; then
   mkdir /storage/roms/doom/iwads
 fi
