@@ -15,7 +15,17 @@ function map_input_control {
     "b")                TR_NAME="${BBUT:-b}";;
     "x")                TR_NAME="${XBUT:-x}";;
     "y")                TR_NAME="${YBUT:-y}";;
-    "hotkeyenable")     TR_NAME="guide";;
+    "hotkeyenable"|"hotkey") TR_NAME="guide";;
+    "pageup")           TR_NAME="${LEFTSHOULDER:-leftshoulder}";;
+    "pagedown")         TR_NAME="${RIGHTSHOULDER:-rightshoulder}";;
+    "l2")               TR_NAME="${LEFTTRIGGER:-lefttrigger}";;
+    "r2")               TR_NAME="${RIGHTTRIGGER:-righttrigger}";;
+    "l3")               TR_NAME="leftstick";;
+    "r3")               TR_NAME="rightstick";;
+    "joystick1up")      map_x_result="lefty:a${ID},"; return;;
+    "joystick1left")    map_x_result="leftx:a${ID},"; return;;
+    "joystick2up")      map_x_result="righty:a${ID},"; return;;
+    "joystick2left")    map_x_result="rightx:a${ID},"; return;;
     "up")               TR_NAME="dpup";;
     "down")             TR_NAME="dpdown";;
     "left")             TR_NAME="dpleft";;
@@ -87,10 +97,15 @@ function build_connected_devices_es_input {
   # Loop through connected device and extract ES xml mapping
   mkdir /tmp/es_input
   while read DGUID; do
-    if [ ! -z "$(cat /storage/.config/emulationstation/es_input.cfg | grep ${DGUID})" ]; then
-      cp -r /storage/.config/emulationstation/es_input.cfg /tmp/es_input/${DGUID}.xml
-      xmlstarlet ed --inplace -d  "inputList/inputConfig[@deviceGUID!='${DGUID}']" /tmp/es_input/${DGUID}.xml
-    fi
+    # ES may store the GUID with or without SDL's name CRC (bytes 2-3)
+    for EGUID in "${DGUID}" "${DGUID:0:4}0000${DGUID:8}"; do
+      if grep -q "deviceGUID=\"${EGUID}\"" /storage/.config/emulationstation/es_input.cfg; then
+        cp -r /storage/.config/emulationstation/es_input.cfg /tmp/es_input/${DGUID}.xml
+        xmlstarlet ed --inplace -d "inputList/inputConfig[@deviceGUID!='${EGUID}']" \
+          -u "inputList/inputConfig/@deviceGUID" -v "${DGUID}" /tmp/es_input/${DGUID}.xml
+        break
+      fi
+    done
   done </tmp/list-guid
 
   # Combine mappings for each device
@@ -129,14 +144,14 @@ function create_controller_db {
       unset SELECT_BUTTON
 
       while IFS=";" read -r -e INPUT_NAME TYPE ID VALUE; do
-        [ ${INPUT_NAME} == "hotkeyenable" ] && HOTKEYENABLE_BUTTON="${ID}"
+        [ ${INPUT_NAME} == "hotkeyenable" -o ${INPUT_NAME} == "hotkey" ] && HOTKEYENABLE_BUTTON="${ID}"
         [ ${INPUT_NAME} == "select" ] && SELECT_BUTTON="${ID}"
       done <<< ${MAPPING_CFG:1}
 
       local MAPPING=""
       while IFS=";" read -r -e INPUT_NAME TYPE ID VALUE; do
         # Map the controller - skip 'hotkeyenable' if it is the same as 'select'
-        if [ ${INPUT_NAME} == "hotkeyenable" -a ${HOTKEYENABLE_BUTTON} == ${SELECT_BUTTON} ]; then
+        if [ ${INPUT_NAME} == "hotkeyenable" -o ${INPUT_NAME} == "hotkey" ] && [ ${HOTKEYENABLE_BUTTON} == ${SELECT_BUTTON} ]; then
           echo "Skipping 'hotkeyenable', same mapping as 'select'"
         else
           map_input_control "${INPUT_NAME}" "${TYPE}" "${ID}" "${VALUE}"
