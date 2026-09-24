@@ -114,6 +114,10 @@ pre_configure_target(){
                            -DQT_FEATURE_xcb=ON \
                            -DQT_GENERATE_SBOM=OFF \
                            -DBUILD_WITH_PCH=OFF"
+
+  # Qt turns this on for x86 only. It binds QCoreApplication::self inside QtCore,
+  # so non-PIC apps (azahar, dolphin-emu) read a null qApp and crash at startup.
+  PKG_CMAKE_OPTS_TARGET+=" -DFEATURE_reduce_relocations=OFF"
 }
 
 post_makeinstall_target() {
