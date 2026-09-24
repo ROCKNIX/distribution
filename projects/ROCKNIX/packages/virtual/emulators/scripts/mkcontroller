@@ -6,10 +6,14 @@ TMPFILE=$(uuidgen)
 OUTFILE=$(uuidgen)
 
 CONTROLLER=$(control-gen | awk 'BEGIN {FS="\""} /^DEVICE/ {print $2;exit}')
-xmlstarlet sel -t \
-               -m "/inputList/inputConfig[@deviceGUID='${CONTROLLER}']/input" \
-               -v "concat(@name,'|',@type,'|',@id,'|',@value)" \
-               -n /storage/.config/emulationstation/es_input.cfg >/tmp/${TMPFILE}
+# ES may store the GUID with or without SDL's name CRC (bytes 2-3)
+for GUID in "${CONTROLLER}" "${CONTROLLER:0:4}0000${CONTROLLER:8}"; do
+  xmlstarlet sel -t \
+                 -m "/inputList/inputConfig[@deviceGUID='${GUID}']/input" \
+                 -v "concat(@name,'|',@type,'|',@id,'|',@value)" \
+                 -n /storage/.config/emulationstation/es_input.cfg >/tmp/${TMPFILE}
+  [ -s /tmp/${TMPFILE} ] && break
+done
 
 while read -r line
 do
@@ -29,12 +33,28 @@ do
   then
     ID="h${ID}${BTN}"
   fi
-  if [[ ${BTN} == "pagedown" ]]
+  if [[ ${BTN} == "pageup" ]]
   then
     BTN="leftshoulder"
-  elif [[ ${BTN} == "pageup" ]]
+  elif [[ ${BTN} == "pagedown" ]]
   then
     BTN="rightshoulder"
+  elif [[ ${BTN} == "hotkey" ]]
+  then
+    BTN="hotkeyenable"
+  elif [[ ${BTN} =~ ^joystick[12](up|left)$ ]]
+  then
+    # ES stores each stick axis once; split it into both directions
+    SIDE=$([ "${BTN:8:1}" = "1" ] && echo left || echo right)
+    OPPOSITE=$([ "${ID: -1}" = "-" ] && echo "${ID:: -1}+" || echo "${ID:: -1}-")
+    if [[ ${BTN} == *up ]]; then
+      echo "${SIDE}analogup=${ID}" >>/tmp/${OUTFILE}
+      BTN="${SIDE}analogdown"
+    else
+      echo "${SIDE}analogleft=${ID}" >>/tmp/${OUTFILE}
+      BTN="${SIDE}analogright"
+    fi
+    ID="${OPPOSITE}"
   elif [[ ${BTN} == "l2" ]]
   then
     BTN="lefttrigger"
