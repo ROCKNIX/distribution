@@ -78,6 +78,9 @@ then
 elif [ "$RESOLUTION" = "2" ]
 then
   OPTIONS+=" -res=992,768"
+elif [ "${HW_DEVICE}" = "AMD64" ]
+then
+  OPTIONS+=" -res=$(swaymsg -t get_outputs | jq -r '.[] | select(.focused) | "\(.rect.width),\(.rect.height)"')"
 fi
 
 sway_fullscreen supermodel &
