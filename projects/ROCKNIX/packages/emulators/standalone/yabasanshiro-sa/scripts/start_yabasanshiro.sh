@@ -52,6 +52,15 @@ then
 
   GAMEPADCONFIG=$(xmlstarlet sel -t -c "//inputList/inputConfig[@deviceName=${GAMEPAD}]" -n /storage/.emulationstation/es_input.cfg)
 
+  # AMD64: find player 1 by GUID (with or without SDL's name CRC); kernel and SDL names differ
+  if [ "${HW_DEVICE}" = "AMD64" ]; then
+    GUID="$(control-gen | awk 'BEGIN {FS="\""} /^DEVICE/ {print $2; exit}')"
+    for G in "${GUID}" "${GUID:0:4}0000${GUID:8}"; do
+      CFG=$(xmlstarlet sel -t -c "//inputList/inputConfig[@deviceGUID='${G}']" -n /storage/.emulationstation/es_input.cfg)
+      [ -n "${CFG}" ] && GAMEPADCONFIG="${CFG}" && break
+    done
+  fi
+
   MAPPING_FILE="/usr/config/yabasanshiro/devices/keymapv2_$(eval echo $GAMEPAD).json"
   if [ -e "${MAPPING_FILE}" ]; then
     cp ${MAPPING_FILE} ${CONFIG_DIR}/keymapv2.json
@@ -59,6 +68,10 @@ then
 
   if [ ! -z "${GAMEPADCONFIG}" ]
   then
+    # ES auto-config names -> the names YabaSanshiro reads
+    GAMEPADCONFIG=$(echo "${GAMEPADCONFIG}" | sed -e 's/name="pageup"/name="leftshoulder"/' -e 's/name="pagedown"/name="rightshoulder"/' \
+      -e 's/name="l2"/name="lefttrigger"/' -e 's/name="r2"/name="righttrigger"/' -e 's/name="l3"/name="leftthumb"/' \
+      -e 's/name="r3"/name="rightthumb"/' -e 's/name="hotkey"/name="hotkeyenable"/')
     cat <<EOF >${CONFIG_DIR}/input.cfg
 <?xml version="1.0"?>
 <inputList>
