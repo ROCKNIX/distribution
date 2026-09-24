@@ -6,6 +6,12 @@
 unset PKG_DEPENDS_HOST
 PKG_BUILD_FLAGS="+local-cc"
 
+configure_target() {
+  [ "${TARGET_ARCH}" = "i686" ] && OPENSSL_TARGET=linux-elf
+  cd ${PKG_BUILD}/.${TARGET_NAME}
+  ./Configure ${PKG_CONFIGURE_OPTS_TARGET} ${PKG_CONFIGURE_OPTS_SHARED} ${PLATFORM_FLAGS} ${OPENSSL_TARGET} ${CFLAGS} ${LDFLAGS}
+}
+
 post_makeinstall_target() {
   rm -rf ${INSTALL}/etc/ssl/misc
   rm -rf ${INSTALL}/usr/bin/c_rehash
