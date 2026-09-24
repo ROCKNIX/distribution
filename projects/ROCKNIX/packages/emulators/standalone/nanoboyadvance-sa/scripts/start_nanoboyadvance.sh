@@ -12,15 +12,10 @@ if [ ! -d "/storage/.config/nanoboyadvance" ]; then
         cp -r "/usr/config/nanoboyadvance" "/storage/.config/"
 fi
 
-#Make nanoboyadvance bios folder
-if [ ! -d "/storage/roms/bios/gba" ]; then
-    mkdir -p "/storage/roms/bios/gba"
-fi
-
-#Copy open source bios if no other bios exists
-if [ ! -f "/storage/roms/bios/gba/gba_bios.bin" ]; then
-  cp -r "/usr/config/nanoboyadvance" "/storage/roms/bios/gba/gba_bios.bin"
-fi
+#Use the user's GBA BIOS, or the bundled open-source one
+BIOS="/storage/roms/bios/gba_bios.bin"
+[ -f "${BIOS}" ] || BIOS="/usr/config/nanoboyadvance/bios/gba_bios.bin"
+sed -i "s|^bios_path = .*|bios_path = \"${BIOS}\"|" /storage/.config/nanoboyadvance/config.toml
 
 #Set the cores to use
 GAME=$(echo "${1}"| sed "s#^/.*/##")
