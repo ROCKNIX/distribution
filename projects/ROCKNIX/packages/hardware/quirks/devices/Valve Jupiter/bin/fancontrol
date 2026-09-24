@@ -1,0 +1,76 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+# Steam Deck fan control through Valve's steamdeck-hwmon. Left to itself the EC never
+# stops the fan, so follow the curve SteamOS uses instead: off while cool, a ramp above
+# the threshold, a minimum on-time, and a floor while charging. Exit hands it back.
+
+. /etc/profile
+
+if [ ! "${DEVICE_HAS_FAN}" = "true" ] || [ ! -e "${DEVICE_FAN_TARGET}" ]
+then
+  exit 0
+fi
+
+case "${QUIRK_DEVICE}" in
+  "Valve Galileo")
+    ON_TEMP=45; MIN_RPM=2000; CURVE="60:2400 80:4000 95:5600"
+  ;;
+  *)
+    ON_TEMP=55; MIN_RPM=1500; CURVE="55:2000 80:5000 90:7000"
+  ;;
+esac
+MAX_RPM=7300
+OFF_RPM=10
+MIN_ON_TIME=120
+
+COOLING_PROFILE=$(get_setting "cooling.profile")
+case "${COOLING_PROFILE}" in
+  quiet)      SHIFT=5 ;;
+  aggressive) SHIFT=-10 ;;
+  *)          SHIFT=0 ;;
+esac
+log "$0" "Steam Deck fan control, profile ${COOLING_PROFILE:-auto}"
+
+GPU_TEMP=""
+for h in /sys/class/hwmon/hwmon*
+do
+  [ "$(cat ${h}/name)" = "amdgpu" ] && GPU_TEMP="${h}/temp1_input"
+done
+
+trap "echo 0 >${DEVICE_FAN_TARGET}; exit 0" SIGHUP SIGINT SIGQUIT SIGABRT SIGTERM
+
+LAST_HOT=0
+CURRENT=""
+while true
+do
+  TEMP=$(cat ${DEVICE_TEMP_SENSOR} ${GPU_TEMP} 2>/dev/null | sort -n | tail -1)
+  TEMP=$(( ${TEMP:-0} / 1000 - SHIFT ))
+  NOW=$(date +%s)
+  if (( TEMP >= ON_TEMP ))
+  then
+    LAST_HOT=${NOW}
+    RPM=$(echo "${CURVE}" | awk -v t=${TEMP} '{
+      n = split($0, p, " ")
+      for (i = 1; i <= n; i++) { split(p[i], q, ":"); T[i] = q[1]; R[i] = q[2] }
+      if (t <= T[1]) { print R[1]; exit }
+      for (i = 2; i <= n; i++)
+        if (t <= T[i]) { printf "%d\n", R[i-1] + (R[i] - R[i-1]) * (t - T[i-1]) / (T[i] - T[i-1]); exit }
+      printf "%d\n", R[n] + (R[n] - R[n-1]) * (t - T[n]) / (T[n] - T[n-1])
+    }')
+    (( RPM < MIN_RPM )) && RPM=${MIN_RPM}
+  elif (( NOW - LAST_HOT < MIN_ON_TIME )) || [ "$(cat /sys/class/power_supply/BAT1/status 2>/dev/null)" = "Charging" ]
+  then
+    RPM=${MIN_RPM}
+  else
+    RPM=${OFF_RPM}
+  fi
+  (( RPM > MAX_RPM )) && RPM=${MAX_RPM}
+  if [ ! "${RPM}" = "${CURRENT}" ]
+  then
+    echo ${RPM} >${DEVICE_FAN_TARGET}
+    CURRENT=${RPM}
+  fi
+  sleep 2
+done
