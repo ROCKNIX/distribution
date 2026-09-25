@@ -1,0 +1,35 @@
+From: xenocideend (with Claude Opus 5.5) <xenocideend@gmail.com>
+Subject: [PATCH] power: supply: qcom_pm8150b_charger: fix wakeirq leak on
+ remove
+
+The driver has no .remove callback, so the dev_pm_set_wake_irq() call in
+probe() is never paired with dev_pm_clear_wake_irq(), and a later
+unbind/bind of the driver fails probe() with -EEXIST ("Couldn't set wake
+irq"). Use the devm-managed devm_device_init_wakeup() and
+devm_pm_set_wake_irq(), as upstream did for the pmi8998 charger.
+---
+--- a/drivers/power/supply/qcom_pm8150b_charger.c
++++ b/drivers/power/supply/qcom_pm8150b_charger.c
+@@ -18,6 +18,7 @@
+ #include <linux/module.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm_wakeirq.h>
++#include <linux/pm_wakeup.h>
+ #include <linux/of.h>
+ #include <linux/power_supply.h>
+ #include <linux/regmap.h>
+@@ -946,7 +947,13 @@
+ 	if (rc < 0)
+ 		return rc;
+ 
+-	rc = dev_pm_set_wake_irq(chip->dev, chip->cable_irq);
++	/* devm: there is no .remove() to clear the wake irq on unbind */
++	rc = devm_device_init_wakeup(chip->dev);
++	if (rc < 0)
++		return dev_err_probe(chip->dev, rc,
++				     "Couldn't init wakeup source\n");
++
++	rc = devm_pm_set_wake_irq(chip->dev, chip->cable_irq);
+ 	if (rc < 0)
+ 		return dev_err_probe(chip->dev, rc, "Couldn't set wake irq\n");
+ 

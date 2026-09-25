@@ -1,0 +1,40 @@
+From: xenocideend (with Claude Opus 5.5) <xenocideend@gmail.com>
+Subject: [PATCH] power: supply: qcom_pm8150b_charger: fix inhibit status
+ check
+
+smb5_get_prop_status() reports NOT_CHARGING whenever VBATT_GTET_INHIBIT
+is set in BATTERY_CHARGER_STATUS_2, but that bit only says VBAT is above
+the recharge-inhibit threshold; it stops charging only when the inhibit
+feature is enabled with CHARGER_INHIBIT_BIT in CHGR_CFG2. Check that bit
+first. A real inhibit is still reported through INHIBIT_CHARGE in the
+charger state below.
+---
+--- a/drivers/power/supply/qcom_pm8150b_charger.c
++++ b/drivers/power/supply/qcom_pm8150b_charger.c
+@@ -411,9 +411,24 @@
+ 		return rc;
+ 	}
+ 
++	/*
++	 * VBATT_GTET_INHIBIT only means VBAT is above the inhibit threshold.
++	 * It stops charging only when the inhibit feature is enabled in
++	 * CHGR_CFG2; with it disabled the charger keeps going, and this check
++	 * reported "Not charging" during FULLON at 4.25A on a Retroid Pocket 5.
++	 * The state machine below already reports a real inhibit as
++	 * INHIBIT_CHARGE.
++	 */
+ 	if (stat[1] & VBATT_GTET_INHIBIT_BIT) {
+-		*val = POWER_SUPPLY_STATUS_NOT_CHARGING;
+-		return 0;
++		unsigned int cfg2;
++
++		rc = regmap_read(chip->regmap, chip->base + CHGR_CFG2, &cfg2);
++		if (rc < 0)
++			return rc;
++		if (cfg2 & CHARGER_INHIBIT_BIT) {
++			*val = POWER_SUPPLY_STATUS_NOT_CHARGING;
++			return 0;
++		}
+ 	}
+ 
+ 	stat[0] = stat[0] & BATTERY_CHARGER_STATUS_MASK;
