@@ -48,40 +48,40 @@ else
   unset EMUPERF
 fi
 
-OPTIONS=" -fullscreen"
+OPTIONS=(-fullscreen)
 
 #VSYNC
 if [ "$VSYNC" = "true" ]
 then
-  OPTIONS+=" -vsync"
+  OPTIONS+=(-vsync)
 elif [ "$VSYNC" = "false" ]
 then
-  OPTIONS+=" -no-vsync"
+  OPTIONS+=(-no-vsync)
 fi
 
 #ENGINE
 if [ "$ENGINE" = "1" ]
 then
-  OPTIONS+=" -new3d"
+  OPTIONS+=(-new3d)
 elif [ "$ENGINE" = "0" ]
 then
-  OPTIONS+=" -legacy3d"
+  OPTIONS+=(-legacy3d)
 fi
 
 #RESOLUTION
 if [ "$RESOLUTION" = "0" ]
 then
-  OPTIONS+=" -res=1920,1080"
+  OPTIONS+=(-res=1920,1080)
 elif [ "$RESOLUTION" = "1" ]
 then
-  OPTIONS+=" -res=496,384"
+  OPTIONS+=(-res=496,384)
 elif [ "$RESOLUTION" = "2" ]
 then
-  OPTIONS+=" -res=992,768"
+  OPTIONS+=(-res=992,768)
 fi
 
 sway_fullscreen supermodel &
 
 cd ${CONFIG_DIR}
-echo "Command: supermodel ${1} ${OPTIONS}" >/var/log/exec.log 2>&1
-${EMUPERF} supermodel "${1}" "${OPTIONS}" >>/var/log/exec.log 2>&1 ||:
+echo "Command: supermodel ${1} ${OPTIONS[*]}" >/var/log/exec.log 2>&1
+${EMUPERF} supermodel "${1}" "${OPTIONS[@]}" >>/var/log/exec.log 2>&1 ||:

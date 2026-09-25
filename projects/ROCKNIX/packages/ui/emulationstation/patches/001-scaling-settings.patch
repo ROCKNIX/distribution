@@ -1,0 +1,87 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Sat, 19 Sep 2026 18:41:55 -0700
+Subject: [PATCH] GuiMenu: add scaling and sharpening settings
+
+--- a/es-app/src/guis/GuiMenu.cpp
++++ b/es-app/src/guis/GuiMenu.cpp
+@@ -1488,7 +1488,61 @@
+ 	return results;
+ }
+ #endif
++
++static void openResolutionScalingSettings(Window* window, const std::string& configName)
++{
++	// per system or game when configName is set, DEFAULT inherits the global value
++	const bool global = configName.empty();
++	const std::string key = (global ? "" : configName + ".") + "rocknix.scaling.";
++	auto s = new GuiSettings(window, _("SCALING AND SHARPENING").c_str());
++
++	int maxRender = atoi(Utils::Platform::GetEnv("DEVICE_SCANOUT_MAX_RENDER").c_str());
++	if (maxRender <= 0)
++		maxRender = 400;
++
++	auto render = std::make_shared<OptionListComponent<std::string>>(window, _("RENDER RESOLUTION"));
++	std::string selected = SystemConf::getInstance()->get(key + "render");
++	if (global && selected.empty())
++		selected = "off";
++	if (!global)
++		render->add(_("DEFAULT"), "", selected.empty());
++	render->add(_("OFF"), "off", selected == "off");
++	render->add(_("MATCH EMULATOR"), "internal", selected == "internal");
++	render->addGroup(_("EMULATOR + DISPLAY"));
++	for (const auto& e : std::vector<std::pair<std::string, std::string>>{ { _("0.25X ORIGINAL"), "0.25x" }, { _("0.5X ORIGINAL"), "0.5x" }, { _("0.75X ORIGINAL"), "0.75x" }, { _("1X ORIGINAL"), "1x" }, { _("2X ORIGINAL"), "2x" }, { _("3X ORIGINAL"), "3x" }, { _("4X ORIGINAL"), "4x" }, { _("5X ORIGINAL"), "5x" }, { _("6X ORIGINAL"), "6x" }, { _("8X ORIGINAL"), "8x" } })
++		render->add(e.first, e.second, e.second == selected);
++	render->addGroup(_("DISPLAY ONLY"));
++	for (const auto& e : std::vector<std::pair<std::string, std::string>>{ { _("25% OF SCREEN"), "25" }, { _("33% OF SCREEN"), "33" }, { _("40% OF SCREEN"), "40" }, { _("50% OF SCREEN"), "50" }, { _("59% OF SCREEN"), "59" }, { _("67% OF SCREEN"), "67" }, { _("77% OF SCREEN"), "77" }, { _("100% OF SCREEN"), "100" }, { _("140% OF SCREEN"), "140" }, { _("200% OF SCREEN"), "200" }, { _("300% OF SCREEN"), "300" }, { _("400% OF SCREEN"), "400" } })
++		if (atoi(e.second.c_str()) <= maxRender)
++			render->add(e.first, e.second, e.second == selected);
++	if (!render->hasSelection())
++		render->add(selected, selected, true);
++	s->addWithDescription(_("RENDER RESOLUTION"), _("Multiples set the emulator's resolution and the display scales it to the screen; percentages only size the window."), render);
++	s->addSaveFunc([render, key] { if (render->changed()) SystemConf::getInstance()->set(key + "render", render->getSelected()); });
++
++	auto addList = [&](const std::string& label, const std::string& description, const std::string& setting, const std::string& fallback, std::vector<std::pair<std::string, std::string>> values)
++	{
++		auto list = std::make_shared<OptionListComponent<std::string>>(window, label);
++		std::string value = SystemConf::getInstance()->get(key + setting);
++		if (global && value.empty())
++			value = fallback;
++		if (!global)
++			values.insert(values.begin(), { _("DEFAULT"), "" });
++		list->addRange(values, value);
++		s->addWithDescription(label, description, list);
++		s->addSaveFunc([list, key, setting] { if (list->changed()) SystemConf::getInstance()->set(key + setting, list->getSelected()); });
++	};
++	// the display controller's filter and sharpening knobs, where the kernel exposes them
++	if (!Utils::Platform::GetEnv("DEVICE_SCANOUT_SHARPNESS").empty())
++	{
++		addList(_("SCALING FILTER"), _("Used when the render resolution differs from the screen."), "filter", "hardware", { { _("SMOOTH"), "hardware" }, { _("EDGE-AWARE"), "hardware_edge" }, { _("NEAREST"), "hardware_nearest" } });
++		addList(_("EDGE STRENGTH"), _("How strongly the edge-aware filter follows edges."), "edge", "32", { { _("LOW"), "16" }, { _("MEDIUM"), "32" }, { _("HIGH"), "96" }, { _("MAXIMUM"), "255" } });
++		addList(_("SHARPENING"), _("Sharpens the image on the display, scaled or not."), "sharpness", "0", { { _("OFF"), "0" }, { _("LOW"), "2" }, { _("MEDIUM"), "5" }, { _("HIGH"), "8" }, { _("MAXIMUM"), "10" } });
++	}
+ 
++	window->pushGui(s);
++}
++
+ void GuiMenu::openSystemSettings() 
+ {
+ 	Window *window = mWindow;
+@@ -1765,6 +1819,9 @@
+                 SystemConf::getInstance()->set("rocknix.mangohud.enabled", mangohud_state ? "1" : "0");
+         });
+       }
++
++      if (Utils::Platform::GetEnv("DEVICE_SCANOUT_SCALING") == "true")
++        s->addEntry(_("SCALING AND SHARPENING"), true, [this] { openResolutionScalingSettings(mWindow, ""); });
+ 
+       // Add option to toggle touchscreen keyboard
+       if (Utils::Platform::GetEnv("DEVICE_HAS_TOUCHSCREEN") == "true"){
+@@ -6182,6 +6239,8 @@
+ 
+ 	// System settings
+ 	systemConfiguration->addEntry(_("SYSTEM OPTIONS"), true, [mWindow, configName] { openSystemOptionsConfiguration(mWindow, configName); });
++	if (Utils::Platform::GetEnv("DEVICE_SCANOUT_SCALING") == "true")
++		systemConfiguration->addEntry(_("SCALING AND SHARPENING"), true, [mWindow, configName] { openResolutionScalingSettings(mWindow, configName); });
+ 
+ 	auto customFeatures = systemData->getCustomFeatures(currentEmulator, currentCore);
+ 

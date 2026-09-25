@@ -243,3 +243,127 @@ function sway_fullscreen {
     echo "sway is not running, exiting"
   fi
 }
+
+function prerotate_env() {
+  unset vk_wsi_wayland_prerotate egl_wayland_prerotate
+  [ "${DEVICE_SCANOUT_SCALING}" = "true" ] || return 0
+  if [ "${2}" != "always" ]; then
+    [ "${DEVICE_PLANE_ROTATION}" = "true" ] && [ ! -e /storage/.config/rotator.disabled ] && return 0
+  fi
+  case "${1}" in
+    90)  export vk_wsi_wayland_prerotate=270 egl_wayland_prerotate=270 ;;
+    270) export vk_wsi_wayland_prerotate=90  egl_wayland_prerotate=90 ;;
+    180) export vk_wsi_wayland_prerotate=180 egl_wayland_prerotate=180 ;;
+  esac
+  return 0
+}
+
+SCANOUT_HINT_FILE=/run/rocknix/fullscreen-scale-hint
+SCANOUT_SCALED_FILE=/run/rocknix/scanout-scaled-outputs
+SCANOUT_OWNER_FILE=/run/rocknix/scanout-owner
+
+function scanout_output_size() {
+  swaymsg -t get_outputs | jq -r --arg o "$1" --arg l "$2" '
+    .[] | select(.name == $o and .current_mode != null) |
+    (if (.transform | test("90|270")) then [.current_mode.height, .current_mode.width]
+     else [.current_mode.width, .current_mode.height] end) |
+    if $l == "landscape" and .[1] > .[0] then "\(.[1]) \(.[0])" else "\(.[0]) \(.[1])" end'
+}
+
+function scanout_set_render() {
+  local out=$1 screen_h=$2 render_h=$3 scale=1 hint
+  mkdir -p "${SCANOUT_HINT_FILE%/*}"
+  [ -f "${SCANOUT_HINT_FILE}" ] && sed -i "/ ${out}\$/d" "${SCANOUT_HINT_FILE}"
+  hint=$(awk "BEGIN { printf \"%.6f\", ${render_h} / ${screen_h} }")
+  if [ "${render_h}" -lt "${screen_h}" ]; then
+    scale=$(awk "BEGIN { printf \"%.6f\", int(${screen_h} * 120 / ${render_h}) / 120 }")
+    hint=$(awk "BEGIN { printf \"%.6f\", 1 / ${scale} }")
+  fi
+  [ "${render_h}" -ne "${screen_h}" ] && echo "${hint} ${SCANOUT_OWNER:-$$} ${out}" >> "${SCANOUT_HINT_FILE}"
+  if [ "${scale}" != 1 ] || grep -qx "${out}" "${SCANOUT_SCALED_FILE}" 2>/dev/null; then
+    swaymsg output "${out}" scale "${scale}" >/dev/null 2>&1
+    grep -qx "${out}" "${SCANOUT_SCALED_FILE}" 2>/dev/null || echo "${out}" >> "${SCANOUT_SCALED_FILE}"
+  fi
+}
+
+function scanout_claim() {
+  mkdir -p "${SCANOUT_OWNER_FILE%/*}"
+  echo "${SCANOUT_OWNER:-$$}" > "${SCANOUT_OWNER_FILE}"
+}
+
+# The dpu values are the driver defaults
+function scanout_reset() {
+  local out P=${DEVICE_SCANOUT_SHARPNESS}
+  if [ -f "${SCANOUT_SCALED_FILE}" ]; then
+    while read -r out; do
+      swaymsg output "${out}" scale 1 >/dev/null 2>&1
+    done < "${SCANOUT_SCALED_FILE}"
+  fi
+  if [ -d "${P}" ]; then
+    echo Y  > "${P}/dpu_de" 2>/dev/null
+    echo 12 > "${P}/dpu_de_sharpen1" 2>/dev/null
+    echo 12 > "${P}/dpu_de_sharpen2" 2>/dev/null
+    echo N  > "${P}/dpu_de_unscaled" 2>/dev/null
+    echo N  > "${P}/dpu_nearest" 2>/dev/null
+    echo N  > "${P}/dpu_de_dir" 2>/dev/null
+    echo 32 > "${P}/dpu_de_dir_weight" 2>/dev/null
+  fi
+  rm -f "${SCANOUT_HINT_FILE}" "${SCANOUT_SCALED_FILE}" "${SCANOUT_OWNER_FILE}"
+}
+
+function scanout_reset_stale() {
+  local pid
+  read -r pid 2>/dev/null < "${SCANOUT_OWNER_FILE}" || return 0
+  grep -qa runemu "/proc/${pid}/cmdline" 2>/dev/null || scanout_reset
+}
+
+function scanout_internal_scale() {
+  local cur=$1 lines=$2 min=$3 max=$4 step=${5:-1} screen_w screen_h
+  case ${SCANOUT_RENDER} in
+    [0-9]*x) ;;
+    *) echo "${cur}"; return 0 ;;
+  esac
+  read -r screen_w screen_h <<< "$(scanout_output_size "${SCANOUT_OUTPUT}")"
+  awk -v n="${SCANOUT_RENDER%x}" -v lo="${min}" -v hi="${max}" -v st="${step}" -v l="${lines}" \
+      -v cap="$(( ${screen_h:-0} * ${SCANOUT_MAX_RENDER:-400} / 100 ))" -v cur="${cur}" '
+    BEGIN { if (n + 0 <= 0) { print cur; exit }
+            s = int(n / st + 1e-6) * st; if (s < lo) s = lo; if (s > hi) s = hi
+            while (cap > 0 && s - st >= lo && s * l > cap) s -= st
+            printf "%g\n", s }'
+}
+
+function scanout_render_size() {
+  local lines=$1 scale=${2:-1} aspect=${3:-4:3} out=${SCANOUT_OUTPUT} orient=""
+  local screen_w screen_h render_h max_h k=1
+  [ -n "${SCANOUT_OWNER}" ] || return 0
+  if [ "$4" = "second" ]; then
+    out=${SCANOUT_OUTPUT2}
+    orient=landscape
+  fi
+  [ -n "${out}" ] || return 0
+  read -r screen_w screen_h <<< "$(scanout_output_size "${out}" ${orient})"
+  [ -n "${screen_h}" ] || return 0
+  max_h=$(( screen_h * ${SCANOUT_MAX_RENDER:-400} / 100 ))
+  case ${SCANOUT_RENDER} in
+    internal|[0-9]*x)
+      render_h=$(awk -v l="${lines}" -v s="${scale}" -v a="${aspect}" -v sw="${screen_w}" -v sh="${screen_h}" '
+        BEGIN { split(a, r, ":"); h = l * s; w = (r[2] > 0) ? h * r[1] / r[2] : 0
+                if (w * sh / sw > h) h = w * sh / sw; printf "%d", int(h) + (h > int(h)) }')
+      [ "${render_h}" -gt 0 ] || return 0
+      render_h=$(( (render_h + 1) / 2 * 2 ))   # round up so the window holds the image
+      # over the device ceiling, use the largest whole fraction that fits
+      while [ $(( render_h / k )) -gt "${max_h}" ]; do k=$(( k + 1 )); done
+      [ "${k}" -gt 1 ] && render_h=$(( render_h / k / 2 * 2 ))
+      ;;
+    [0-9]|[0-9][0-9]|[0-9][0-9][0-9])
+      # percent of screen, only for the second screen since runemu sizes the main one
+      [ "$4" = "second" ] || return 0
+      render_h=$(( screen_h * SCANOUT_RENDER / 100 / 2 * 2 ))
+      [ "${render_h}" -lt $(( screen_h / 4 )) ] && render_h=$(( screen_h / 4 / 2 * 2 ))
+      [ "${render_h}" -gt "${max_h}" ] && render_h=$(( max_h / 2 * 2 ))
+      ;;
+    *) return 0 ;;
+  esac
+  scanout_set_render "${out}" "${screen_h}" "${render_h}"
+  echo "Scan-out: ${lines} lines x${scale} ${aspect} on ${out}: ${render_h} of ${screen_h} lines"
+}

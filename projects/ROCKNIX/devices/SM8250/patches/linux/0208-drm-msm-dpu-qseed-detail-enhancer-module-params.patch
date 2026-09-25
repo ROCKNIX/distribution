@@ -1,0 +1,186 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Tue, 22 Sep 2026 09:27:40 -0700
+Subject: [PATCH] drm/msm/dpu: make the detail enhancer and directional filter tunable
+
+Expose the QSEED detail enhancer and directional filter settings as msm
+module parameters so they can be tuned live instead of
+recompiling. Values are clamped to their register fields.
+
+Add vendor defaults.
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
+@@ -433,15 +433,53 @@ static void _dpu_plane_set_qos_remap(struct drm_plane *plane,
+ 					       false, &forced_on);
+ }
+ 
++static bool dpu_de = true;
++module_param(dpu_de, bool, 0644);
++static bool dpu_de_unscaled;
++module_param(dpu_de_unscaled, bool, 0644);
++static bool dpu_de_dir;
++module_param(dpu_de_dir, bool, 0644);
++static int dpu_de_dir_weight = 32;
++module_param(dpu_de_dir_weight, int, 0644);
++static int dpu_de_sharpen1 = 12;
++module_param(dpu_de_sharpen1, int, 0644);
++static int dpu_de_sharpen2 = 12;
++module_param(dpu_de_sharpen2, int, 0644);
++static int dpu_de_clip = 4;
++module_param(dpu_de_clip, int, 0644);
++static int dpu_de_limit = 3;
++module_param(dpu_de_limit, int, 0644);
++static int dpu_de_thr_quiet;
++module_param(dpu_de_thr_quiet, int, 0644);
++static int dpu_de_thr_dieout = 1023;
++module_param(dpu_de_thr_dieout, int, 0644);
++static int dpu_de_thr_low = 40;
++module_param(dpu_de_thr_low, int, 0644);
++static int dpu_de_thr_high = 512;
++module_param(dpu_de_thr_high, int, 0644);
++static int dpu_de_prec_shift = 4;
++module_param(dpu_de_prec_shift, int, 0644);
++static int dpu_de_blend = 15;
++module_param(dpu_de_blend, int, 0644);
++static int dpu_de_adjust_a[DPU_MAX_DE_CURVES] = { 102, 0, -8 };
++module_param_array(dpu_de_adjust_a, int, NULL, 0644);
++static int dpu_de_adjust_b[DPU_MAX_DE_CURVES] = { 0, 16, 32 };
++module_param_array(dpu_de_adjust_b, int, NULL, 0644);
++static int dpu_de_adjust_c[DPU_MAX_DE_CURVES] = { 0, 0, -2 };
++module_param_array(dpu_de_adjust_c, int, NULL, 0644);
++
+ static void _dpu_plane_setup_scaler3(struct dpu_hw_sspp *pipe_hw,
+ 		uint32_t src_w, uint32_t src_h, uint32_t dst_w, uint32_t dst_h,
+ 		struct dpu_hw_scaler3_cfg *scale_cfg,
+ 		const struct msm_format *fmt,
+ 		uint32_t chroma_subsmpl_h, uint32_t chroma_subsmpl_v,
+-		unsigned int rotation)
++		unsigned int rotation, bool multirect)
+ {
+ 	uint32_t i;
+ 	bool inline_rotation = rotation & DRM_MODE_ROTATE_90;
++
++	bool unscaled_de = dpu_de_unscaled && !multirect;
++	bool scaled;
+ 
+ 	/*
+ 	 * For inline rotation cases, scaler config is post-rotation,
+@@ -488,8 +526,10 @@ static void _dpu_plane_setup_scaler3(struct dpu_hw_sspp *pipe_hw,
+ 			scale_cfg->preload_y[i] = DPU_QSEED3_DEFAULT_PRELOAD_V;
+ 		}
+ 	}
+-	if (!(MSM_FORMAT_IS_YUV(fmt)) && (src_h == dst_h)
+-		&& (src_w == dst_w) && !inline_rotation)
++	scaled = src_w != dst_w || src_h != dst_h;
++
++	if (!(MSM_FORMAT_IS_YUV(fmt)) && !scaled && !inline_rotation &&
++	    !(dpu_de && unscaled_de))
+ 		return;
+ 
+ 	scale_cfg->dst_width = dst_w;
+@@ -500,25 +540,26 @@ static void _dpu_plane_setup_scaler3(struct dpu_hw_sspp *pipe_hw,
+ 	scale_cfg->lut_flag = 0;
+ 	scale_cfg->blend_cfg = 1;
+ 	scale_cfg->enable = 1;
+-	if (src_w != dst_w || src_h != dst_h) {
+-		scale_cfg->dir_en = 1;
+-		scale_cfg->dir_weight = 32;
+-
++	if (scaled) {
++		scale_cfg->dir_en = dpu_de_dir;
++		scale_cfg->dir_weight = clamp(dpu_de_dir_weight, 0, 255);
++	}
++	if (dpu_de && (scaled || unscaled_de)) {
+ 		scale_cfg->de.enable = 1;
+-		scale_cfg->de.sharpen_level1 = 8;
+-		scale_cfg->de.sharpen_level2 = 8;
+-		scale_cfg->de.clip = 0;
+-		scale_cfg->de.limit = 4;
+-		scale_cfg->de.thr_quiet = 8;
+-		scale_cfg->de.thr_dieout = 256;
+-		scale_cfg->de.thr_low = 8;
+-		scale_cfg->de.thr_high = 64;
+-		scale_cfg->de.prec_shift = 2;
+-		scale_cfg->de.blend = 0;
++		scale_cfg->de.sharpen_level1 = clamp(dpu_de_sharpen1, -256, 255);
++		scale_cfg->de.sharpen_level2 = clamp(dpu_de_sharpen2, -256, 255);
++		scale_cfg->de.clip = clamp(dpu_de_clip, 0, 7);
++		scale_cfg->de.limit = clamp(dpu_de_limit, 0, 15);
++		scale_cfg->de.thr_quiet = clamp(dpu_de_thr_quiet, 0, 255);
++		scale_cfg->de.thr_dieout = clamp(dpu_de_thr_dieout, 0, 1023);
++		scale_cfg->de.thr_low = clamp(dpu_de_thr_low, 0, 1023);
++		scale_cfg->de.thr_high = clamp(dpu_de_thr_high, 0, 1023);
++		scale_cfg->de.prec_shift = clamp(dpu_de_prec_shift, 0, 7);
++		scale_cfg->de.blend = clamp(dpu_de_blend, 0, 15);
+ 		for (i = 0; i < DPU_MAX_DE_CURVES; i++) {
+-			scale_cfg->de.adjust_a[i] = 112;
+-			scale_cfg->de.adjust_b[i] = 0;
+-			scale_cfg->de.adjust_c[i] = 0;
++			scale_cfg->de.adjust_a[i] = clamp(dpu_de_adjust_a[i], -512, 511);
++			scale_cfg->de.adjust_b[i] = clamp(dpu_de_adjust_b[i], -512, 511);
++			scale_cfg->de.adjust_c[i] = clamp(dpu_de_adjust_c[i], -512, 511);
+ 		}
+ 	}
+ }
+@@ -584,7 +625,8 @@ static void _dpu_plane_setup_scaler(struct dpu_sw_pipe *pipe,
+ 			dst_height,
+ 			&scaler3_cfg, fmt,
+ 			info->hsub, info->vsub,
+-			pipe_cfg->rotation);
++			pipe_cfg->rotation,
++			pipe->multirect_mode != DPU_SSPP_MULTIRECT_NONE);
+ 
+ 	/* configure pixel extension based on scalar config */
+ 	_dpu_plane_setup_pixel_ext(&scaler3_cfg, &pixel_ext,
+@@ -1322,6 +1364,7 @@ static int dpu_plane_virtual_assign_resources(struct drm_crtc *crtc,
+ 	struct dpu_sw_pipe *pipe;
+ 	struct dpu_sw_pipe_cfg *pipe_cfg;
+ 	const struct msm_format *fmt;
++	bool unscaled_de;
+ 	int i, ret;
+ 
+ 	pstate = to_dpu_plane_state(plane_state);
+@@ -1352,22 +1395,39 @@ static int dpu_plane_virtual_assign_resources(struct drm_crtc *crtc,
+ 
+ 	reqs.rot90 = drm_rotation_90_or_270(plane_state->rotation);
+ 
++
++	unscaled_de = dpu_de && dpu_de_unscaled && !reqs.scale && !reqs.yuv &&
++		plane->type == DRM_PLANE_TYPE_PRIMARY;
++
+ 	for (i = 0; i < STAGES_PER_PLANE; i++) {
+-		if (prev_adjacent_pstate[i] &&
++		struct dpu_rm_sspp_requirements de_reqs = reqs;
++
++		bool want_scaler = unscaled_de &&
++			!drm_rect_width(&pstate->pipe_cfg[i * PIPES_PER_STAGE + 1].src_rect);
++
++		if (prev_adjacent_pstate[i] && !want_scaler &&
+ 		    dpu_plane_try_multirect_shared(pstate, prev_adjacent_pstate[i], fmt,
+ 						   dpu_kms->catalog->caps->max_linewidth,
+ 						   i))
+ 			continue;
+ 
+-		if (dpu_plane_get_single_pipe_in_stage(pstate, &pipe, &pipe_cfg, i))
++		if (!want_scaler &&
++		    dpu_plane_get_single_pipe_in_stage(pstate, &pipe, &pipe_cfg, i))
+ 			prev_adjacent_plane_state[i] = plane_state;
+ 
+ 		pipe = &pstate->pipe[i * PIPES_PER_STAGE];
+ 		pipe_cfg = &pstate->pipe_cfg[i * PIPES_PER_STAGE];
++		de_reqs.scale = want_scaler;
+ 		ret = dpu_plane_assign_resource_in_stage(pipe, pipe_cfg,
+ 							 plane_state,
+ 							 global_state,
+-							 crtc, &reqs);
++							 crtc, want_scaler ? &de_reqs : &reqs);
++
++		if (ret && want_scaler)
++			ret = dpu_plane_assign_resource_in_stage(pipe, pipe_cfg,
++								 plane_state,
++								 global_state,
++								 crtc, &reqs);
+ 		if (ret)
+ 			return ret;
+ 	}
