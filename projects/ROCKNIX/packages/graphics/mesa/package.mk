@@ -3,8 +3,8 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="mesa"
-PKG_VERSION="dbe2e161456cb90b8d421707fbe7d9c5d897974c" # 26.2.3 + Rocknix_rotation
-PKG_SHA256="13d8620731760a1920c768efea179270cdcbc19571bb193ff3d4865ae48b5747"
+PKG_VERSION="ff7ac753c5aead9e88680260016ddff4307c2b58"
+PKG_SHA256="c1488c626040015199e3676250656214aa672ceea8c3599b75aa3be95789dab2"
 PKG_LICENSE="OSS"
 PKG_SITE="http://www.mesa3d.org/"
 PKG_URL="https://gitlab.freedesktop.org/sunshineinabox/mesa/-/archive/${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tar.gz"
