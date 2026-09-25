@@ -1,0 +1,56 @@
+From: xenocideend (with Claude Opus 5.5) <xenocideend@gmail.com>
+Subject: [PATCH] power: supply: qcom_pm8150b_charger: range-check battery
+ info
+
+0018 writes the float voltage and charge current straight from the battery
+info. A missing or out-of-range voltage_max_design_uv then programs a
+garbage float voltage, and with no constant_charge_current_max_ua and no
+charge_full_design_uah the charge current becomes 0. Use the lower of the
+design and constant-charge voltages, fall back to 4.2 V outside 3.61-4.45 V,
+fall back to 1.5 A when no current can be derived, and keep the 3 A cap.
+Every SM8250 board with this charger today has complete battery info, so
+their register values do not change.
+
+---
+--- a/drivers/power/supply/qcom_pm8150b_charger.c
++++ b/drivers/power/supply/qcom_pm8150b_charger.c
+@@ -841,5 +841,5 @@
+ 	struct regulator *vbus;
+ 	struct smb5_chip *chip;
+-	int rc, irq;
++	int rc, irq, fv_uv, fcc_ua;
+ 
+ 	chip = devm_kzalloc(&pdev->dev, sizeof(*chip), GFP_KERNEL);
+@@ -915,16 +915,26 @@
+ 	}
+ 
+-	rc = (chip->batt_info->voltage_max_design_uv - 3600000) / 10000;
++	fv_uv = chip->batt_info->voltage_max_design_uv;
++	if (chip->batt_info->constant_charge_voltage_max_uv > 0 &&
++	    (fv_uv <= 0 || chip->batt_info->constant_charge_voltage_max_uv < fv_uv))
++		fv_uv = chip->batt_info->constant_charge_voltage_max_uv;
++	if (fv_uv < 3610000 || fv_uv > 4450000) {
++		dev_warn(chip->dev, "battery max voltage %d uV missing or out of range, using 4200000 uV\n",
++			 fv_uv);
++		fv_uv = 4200000;
++	}
+ 	rc = regmap_update_bits(chip->regmap, chip->base + FLOAT_VOLTAGE_CFG,
+-				FLOAT_VOLTAGE_SETTING_MASK, rc);
++				FLOAT_VOLTAGE_SETTING_MASK, (fv_uv - 3600000) / 10000);
+ 	if (rc < 0)
+ 		return dev_err_probe(chip->dev, rc, "Couldn't set vbat max\n");
+ 
+-	rc = chip->batt_info->constant_charge_current_max_ua;
+-	if (rc <= 0)
+-		rc = min(chip->batt_info->charge_full_design_uah / 2, 3000000);
++	fcc_ua = chip->batt_info->constant_charge_current_max_ua;
++	if (fcc_ua <= 0)
++		fcc_ua = chip->batt_info->charge_full_design_uah > 0 ?
++			 chip->batt_info->charge_full_design_uah / 2 : 1500000;
++	fcc_ua = min(fcc_ua, 3000000);
+ 	rc = regmap_update_bits(chip->regmap,
+ 				chip->base + FAST_CHARGE_CURRENT_CFG,
+-				FAST_CHARGE_CURRENT_SETTING_MASK, rc / 50000);
++				FAST_CHARGE_CURRENT_SETTING_MASK, fcc_ua / 50000);
+ 	if (rc < 0)
+ 		return dev_err_probe(chip->dev, rc, "Couldn't set charge current\n");
