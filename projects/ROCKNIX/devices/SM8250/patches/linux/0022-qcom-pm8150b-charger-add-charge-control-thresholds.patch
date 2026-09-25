@@ -1,0 +1,350 @@
+From: xenocideend (with Claude Opus 5.5) <xenocideend@gmail.com>
+Subject: [PATCH] power: supply: qcom_pm8150b_charger: add charge control
+ thresholds
+
+Add CHARGE_CONTROL_START_THRESHOLD and CHARGE_CONTROL_END_THRESHOLD so
+userspace can hold the battery at a chosen percentage and resume charging
+below a lower one. With no capacity interrupt, a delayed work item polls
+the battery supply every 30 s while a limit is set and gates
+CHARGING_ENABLE_CMD, leaving USBIN on so the device keeps running from
+external power. The worker waits until probe has programmed the float
+voltage and charge current, and a devm action releases a held battery on
+unbind. The default end threshold is 100, so nothing changes unless
+userspace sets a limit.
+---
+--- a/drivers/power/supply/qcom_pm8150b_charger.c
++++ b/drivers/power/supply/qcom_pm8150b_charger.c
+@@ -260,6 +260,18 @@
+ 
+ /* pmi8150b registers represent current in increments of 1/40th of an amp */
+ #define CURRENT_SCALE_FACTOR		50000
++
++/*
++ * Charge limit. The thresholds are battery percentages from the fuel gauge
++ * ("battery" psy, qcom_fg). There is no capacity interrupt we can rely on
++ * here, so a limit that is set is re-checked on a timer.
++ */
++#define CHARGE_LIMIT_POLL_MS		30000
++#define CHARGE_LIMIT_SETTLE_MS		2000	/* re-notify after a pause/resume */
++#define CHARGE_LIMIT_END_MIN		50
++#define CHARGE_LIMIT_HYSTERESIS		5	/* minimum end - start gap */
++#define CHARGE_LIMIT_START_MIN		20
++#define CHARGE_LIMIT_BATT_PSY		"battery"
+ /* clang-format on */
+ 
+ enum charger_status {
+@@ -292,6 +304,11 @@
+  * @usb_in_i_chan:	USB_IN current measurement channel
+  * @usb_in_v_chan:	USB_IN voltage measurement channel
+  * @chg_psy:		Charger power supply instance
++ * @limit_work:		Worker that enforces the charge thresholds
++ * @limit_lock:		Protects the threshold fields below
++ * @end_threshold:	Stop charging at this percentage; 100 = no limit
++ * @start_threshold:	Resume charging at or below this percentage
++ * @limit_paused:	True while we hold CHARGING_ENABLE_CMD off
+  */
+ struct smb5_chip {
+ 	struct device *dev;
+@@ -309,6 +326,15 @@
+ 
+ 	struct power_supply *chg_psy;
+ 	struct notifier_block vbus_nb;
++
++	struct delayed_work limit_work;
++	struct mutex limit_lock;
++	int end_threshold;
++	int start_threshold;
++	bool limit_paused;
++	bool limit_dead;
++	bool params_ready;	/* FV/FCC programmed; worker may touch 0x42 */
++	bool limit_notify_again; /* re-notify once the state has settled */
+ };
+ 
+ static enum power_supply_property smb5_properties[] = {
+@@ -321,6 +347,8 @@
+ 	POWER_SUPPLY_PROP_HEALTH,
+ 	POWER_SUPPLY_PROP_ONLINE,
+ 	POWER_SUPPLY_PROP_USB_TYPE,
++	POWER_SUPPLY_PROP_CHARGE_CONTROL_START_THRESHOLD,
++	POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD,
+ };
+ 
+ static int smb5_get_prop_usb_online(struct smb5_chip *chip, int *val)
+@@ -589,6 +617,185 @@
+ 	return 0;
+ }
+ 
++/*
++ * Caller holds limit_lock. Writes the bit unconditionally - the worker calls
++ * this on every poll so the hardware is re-asserted to the desired state even
++ * if something changed it behind the cached flag - but only logs and notifies
++ * on a real transition.
++ */
++static int smb5_limit_set_paused(struct smb5_chip *chip, bool pause)
++{
++	int rc;
++
++	rc = regmap_update_bits(chip->regmap, chip->base + CHARGING_ENABLE_CMD,
++				CHARGING_ENABLE_CMD_BIT,
++				pause ? 0 : CHARGING_ENABLE_CMD_BIT);
++	if (rc < 0) {
++		dev_err(chip->dev, "Couldn't %s charging for limit: %d\n",
++			pause ? "pause" : "resume", rc);
++		return rc;
++	}
++
++	if (chip->limit_paused != pause) {
++		chip->limit_paused = pause;
++		dev_info(chip->dev, "charge limit: charging %s\n",
++			 pause ? "paused" : "resumed");
++		power_supply_changed(chip->chg_psy);
++		/*
++		 * The charger state machine takes a moment to reach DISABLE (or
++		 * leave it). A listener that reads STATUS in response to the
++		 * notification above can see the old state - the fuel gauge
++		 * cached "Charging" while paused. Notify again once settled.
++		 */
++		chip->limit_notify_again = true;
++		mod_delayed_work(system_wq, &chip->limit_work,
++				 msecs_to_jiffies(CHARGE_LIMIT_SETTLE_MS));
++	}
++	return 0;
++}
++
++/*
++ * Enforce the charge thresholds by gating CHARGING_ENABLE_CMD, the same bit
++ * smb5_init_seq sets at probe. Only the battery path is gated: USBIN stays up,
++ * so the system keeps running from external power while the battery holds.
++ *
++ * Fails safe: if capacity cannot be read, the current state is kept and the
++ * check retried. Charging is never re-enabled unless we paused it ourselves.
++ *
++ * Limitation: the timer does not run while the system is suspended, so a
++ * threshold crossed during suspend is acted on at the next resume.
++ */
++static void smb5_limit_work(struct work_struct *work)
++{
++	struct smb5_chip *chip = container_of(work, struct smb5_chip,
++					      limit_work.work);
++	union power_supply_propval cap;
++	struct power_supply *batt;
++	bool want;
++	int rc;
++
++	mutex_lock(&chip->limit_lock);
++
++	if (chip->limit_dead)
++		goto out;	/* driver going away: do not requeue */
++
++	/*
++	 * Never touch CHARGING_ENABLE_CMD before smb5_init_charge_params has
++	 * programmed the float voltage and current: re-asserting "enabled"
++	 * then would charge on untrusted bootloader values. It kicks this
++	 * worker once it is done.
++	 */
++	if (!chip->params_ready)
++		goto out;
++
++	if (chip->limit_notify_again) {
++		chip->limit_notify_again = false;
++		power_supply_changed(chip->chg_psy);
++	}
++
++	if (chip->end_threshold >= 100) {
++		/* never stop polling while charging is still held off */
++		if (chip->limit_paused && smb5_limit_set_paused(chip, false) < 0)
++			goto resched;
++		goto out;	/* no limit: stop polling */
++	}
++
++	batt = power_supply_get_by_name(CHARGE_LIMIT_BATT_PSY);
++	if (!batt) {
++		dev_dbg(chip->dev, "charge limit: battery psy not found yet\n");
++		goto resched;
++	}
++	rc = power_supply_get_property(batt, POWER_SUPPLY_PROP_CAPACITY, &cap);
++	power_supply_put(batt);
++	if (rc < 0) {
++		dev_dbg(chip->dev, "charge limit: capacity read failed: %d\n", rc);
++		goto resched;
++	}
++
++	/* hysteresis on the cached decision, then re-assert it every poll */
++	want = chip->limit_paused;
++	if (!want && cap.intval >= chip->end_threshold)
++		want = true;
++	else if (want && cap.intval <= chip->start_threshold)
++		want = false;
++	smb5_limit_set_paused(chip, want);
++
++resched:
++	schedule_delayed_work(&chip->limit_work,
++			      msecs_to_jiffies(CHARGE_LIMIT_POLL_MS));
++out:
++	mutex_unlock(&chip->limit_lock);
++}
++
++static int smb5_set_threshold(struct smb5_chip *chip,
++			      enum power_supply_property psp, int val)
++{
++	int rc = 0;
++
++	mutex_lock(&chip->limit_lock);
++
++	if (chip->limit_dead) {
++		rc = -ENODEV;
++		goto out;
++	}
++
++	if (psp == POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD) {
++		if (val < CHARGE_LIMIT_END_MIN || val > 100) {
++			rc = -EINVAL;
++			goto out;
++		}
++		/* WRITE_ONCE pairs with the lockless READ_ONCE in get_property */
++		WRITE_ONCE(chip->end_threshold, val);
++		/* keep the resume point at least HYSTERESIS below the limit */
++		if (chip->start_threshold > val - CHARGE_LIMIT_HYSTERESIS)
++			WRITE_ONCE(chip->start_threshold,
++				   val - CHARGE_LIMIT_HYSTERESIS);
++	} else {
++		/*
++		 * The fuel gauge never reports below 1%, so a very low resume
++		 * point could hold charging off indefinitely; and a gap under
++		 * HYSTERESIS makes charging flap at the limit.
++		 */
++		if (val < CHARGE_LIMIT_START_MIN ||
++		    val > chip->end_threshold - CHARGE_LIMIT_HYSTERESIS) {
++			rc = -EINVAL;
++			goto out;
++		}
++		WRITE_ONCE(chip->start_threshold, val);
++	}
++
++out:
++	mutex_unlock(&chip->limit_lock);
++	if (!rc)
++		mod_delayed_work(system_wq, &chip->limit_work, 0);
++	return rc;
++}
++
++/*
++ * devm action, registered right after the psy so it runs BEFORE the psy is
++ * unregistered: stop new threshold writes from queueing the worker, then
++ * cancel it, so it can never call power_supply_changed() on a freed psy.
++ */
++static void smb5_limit_teardown(void *data)
++{
++	struct smb5_chip *chip = data;
++
++	mutex_lock(&chip->limit_lock);
++	chip->limit_dead = true;
++	mutex_unlock(&chip->limit_lock);
++	cancel_delayed_work_sync(&chip->limit_work);
++
++	/*
++	 * Do not leave the battery held off with no driver left to release
++	 * it. The float voltage and current programmed at probe stay in the
++	 * hardware, so re-enabling here is safe.
++	 */
++	if (chip->limit_paused)
++		regmap_update_bits(chip->regmap, chip->base + CHARGING_ENABLE_CMD,
++				   CHARGING_ENABLE_CMD_BIT,
++				   CHARGING_ENABLE_CMD_BIT);
++}
++
+ static int smb5_get_property(struct power_supply *psy,
+ 			     enum power_supply_property psp,
+ 			     union power_supply_propval *val)
+@@ -618,6 +825,12 @@
+ 		return smb5_get_prop_health(chip, &val->intval);
+ 	case POWER_SUPPLY_PROP_USB_TYPE:
+ 		return smb5_apsd_get_charger_type(chip, &val->intval);
++	case POWER_SUPPLY_PROP_CHARGE_CONTROL_START_THRESHOLD:
++		val->intval = READ_ONCE(chip->start_threshold);
++		return 0;
++	case POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD:
++		val->intval = READ_ONCE(chip->end_threshold);
++		return 0;
+ 	default:
+ 		dev_err(chip->dev, "invalid property: %d\n", psp);
+ 		return -EINVAL;
+@@ -633,6 +846,9 @@
+ 	switch (psp) {
+ 	case POWER_SUPPLY_PROP_CURRENT_MAX:
+ 		return smb5_set_current_limit(chip, val->intval);
++	case POWER_SUPPLY_PROP_CHARGE_CONTROL_START_THRESHOLD:
++	case POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD:
++		return smb5_set_threshold(chip, psp, val->intval);
+ 	default:
+ 		dev_err(chip->dev, "No setter for property: %d\n", psp);
+ 		return -EINVAL;
+@@ -644,6 +860,8 @@
+ {
+ 	switch (psp) {
+ 	case POWER_SUPPLY_PROP_CURRENT_MAX:
++	case POWER_SUPPLY_PROP_CHARGE_CONTROL_START_THRESHOLD:
++	case POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD:
+ 		return 1;
+ 	default:
+ 		return 0;
+@@ -676,6 +894,10 @@
+ 	schedule_delayed_work(&chip->status_change_work,
+ 			      msecs_to_jiffies(1500));
+ 
++	/* re-check the charge limit now, not up to a poll interval later */
++	if (READ_ONCE(chip->end_threshold) < 100)
++		mod_delayed_work(system_wq, &chip->limit_work, 0);
++
+ 	return IRQ_HANDLED;
+ }
+ 
+@@ -903,12 +1125,30 @@
+ 	if (!desc->name)
+ 		return -ENOMEM;
+ 
++	/*
++	 * The threshold properties become writable the moment the psy is
++	 * registered, so their lock and worker must exist before that.
++	 * Default is no limit; userspace opts in.
++	 */
++	chip->end_threshold = 100;
++	chip->start_threshold = 100 - CHARGE_LIMIT_HYSTERESIS;
++	rc = devm_mutex_init(chip->dev, &chip->limit_lock);
++	if (rc)
++		return dev_err_probe(chip->dev, rc, "Failed to init limit lock\n");
++	/* cancelled by smb5_limit_teardown, registered after the psy below */
++	INIT_DELAYED_WORK(&chip->limit_work, smb5_limit_work);
++
+ 	chip->chg_psy =
+ 		devm_power_supply_register(chip->dev, desc, &supply_config);
+ 	if (IS_ERR(chip->chg_psy))
+ 		return dev_err_probe(chip->dev, PTR_ERR(chip->chg_psy),
+ 				     "failed to register power supply\n");
+ 
++	rc = devm_add_action_or_reset(chip->dev, smb5_limit_teardown, chip);
++	if (rc)
++		return dev_err_probe(chip->dev, rc,
++				     "Failed to register charge limit teardown\n");
++
+ 	rc = power_supply_get_battery_info(chip->chg_psy, &chip->batt_info);
+ 	if (rc)
+ 		return dev_err_probe(chip->dev, rc,
+@@ -945,6 +1185,17 @@
+ 	if (rc < 0)
+ 		return dev_err_probe(chip->dev, rc, "Couldn't set charge current\n");
+ 
++	/*
++	 * The threshold sysfs is live from psy registration; the worker holds
++	 * off until params_ready. Once FV/FCC are programmed, kick it so a
++	 * limit written early is enforced straight away.
++	 */
++	mutex_lock(&chip->limit_lock);
++	chip->params_ready = true;
++	mutex_unlock(&chip->limit_lock);
++	if (READ_ONCE(chip->end_threshold) < 100)
++		mod_delayed_work(system_wq, &chip->limit_work, 0);
++
+ 	rc = smb5_init_irq(chip, &irq, "bat-ov", smb5_handle_batt_overvoltage);
+ 	if (rc < 0)
+ 		return rc;
