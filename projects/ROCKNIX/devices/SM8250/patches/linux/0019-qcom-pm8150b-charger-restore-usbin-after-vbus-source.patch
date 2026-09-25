@@ -1,0 +1,150 @@
+From: xenocideend <xenocideend@gmail.com>
+Subject: [PATCH] power: supply: qcom_pm8150b_charger: restore USBIN after
+ VBUS sourcing ends
+
+Downstream Qualcomm's smb5-lib.c has OTG/VBUS-boost control and
+APSD/USBIN input handling in one driver, and its OTG-disable path
+reruns APSD and un-suspends USBIN afterwards. Mainline split this
+into two drivers that never talk to each other: the pm8150b boost
+regulator (qcom_usb_vbus-regulator.c) and this charger driver
+(APSD/USBIN). Once the port has sourced VBUS to a downstream device
+(a dock or an accessory it powers) and stopped again, USBIN stays
+wedged for the rest of the boot: voltage_now reads 0V even with a
+powered charger attached, and only a reboot recovers it.
+
+Adds an optional handle to the vbus boost regulator
+(devm_regulator_get_optional(), so probe still succeeds on charger
+nodes without the DT link) and a notifier on
+REGULATOR_EVENT_DISABLE that clears USBIN_SUSPEND_BIT, reruns APSD,
+and reschedules status_change_work so charger-type detection and
+the current limit re-run against whatever is attached.
+
+Requires the companion devicetree change adding vbus-supply to the
+&pm8150b_charger node (see the accompanying dtsi diff); without it
+devm_regulator_get_optional() returns -ENODEV and this patch is
+inert. Depends on #3368 (vdd-vbus-supply on &pm8150b_typec), since
+that is what gets the vbus regulator enabled/disabled in the first
+place.
+
+Tested on a Retroid Pocket 5 with the USB-C Dual Screen add-on: the
+RP5 sources VBUS to the unpowered add-on, then a charger is plugged
+into the add-on. Before this patch (plus the dtsi change), USBIN
+stays wedged (APSD FLOAT, ICL_STATUS/AICL_STATUS 0,
+POWER_PATH INPUT_SS_DONE 0) for the rest of the boot. With both
+applied, the port sinks at 9V, POWER_PATH reaches 0x95, ICL climbs
+to 550-650mA with APSD none, and once the 85% charge limit is
+lifted the battery reaches FULLON at -1.87A.
+
+This change was written by an AI assistant (Anthropic's Claude).
+
+--- a/drivers/power/supply/qcom_pm8150b_charger.c
++++ b/drivers/power/supply/qcom_pm8150b_charger.c
+@@ -21,6 +21,7 @@
+ #include <linux/of.h>
+ #include <linux/power_supply.h>
+ #include <linux/regmap.h>
++#include <linux/regulator/consumer.h>
+ #include <linux/types.h>
+ #include <linux/workqueue.h>
+
+@@ -306,6 +307,16 @@ struct smb5_chip {
+ 	struct iio_channel *usb_in_v_chan;
+
+ 	struct power_supply *chg_psy;
++
++	/*
++	 * Optional handle to the pm8150b boost regulator (pm8150b_vbus)
++	 * plus the notifier block used to catch REGULATOR_EVENT_DISABLE
++	 * on it, so USBIN can be restored once VBUS sourcing ends (see
++	 * the comment above smb5_vbus_notifier()). Both stay NULL/unused
++	 * on charger nodes without a "vbus-supply" property.
++	 */
++	struct regulator *vbus_reg;
++	struct notifier_block vbus_nb;
+ };
+
+ static enum power_supply_property smb5_properties[] = {
+@@ -815,6 +826,51 @@ static int smb5_init_irq(struct smb5_chi
+ 	return 0;
+ }
+
++/*
++ * Restore USBIN after VBUS sourcing ends.
++ *
++ * Downstream Qualcomm's smb5-lib.c has OTG boost control and APSD/USBIN
++ * in ONE driver and chains "OTG exit -> restore USBIN". Upstream split
++ * these into qcom_usb_vbus-regulator.c (drives the pm8150b boost
++ * regulator that sources VBUS for a downstream/dock device) and this
++ * driver (owns APSD/USBIN), and nothing bridges them: once the boost
++ * regulator has been enabled and then disabled again, USBIN_SUSPEND
++ * stays set and voltage_now reads 0V even with a powered dock attached,
++ * until reboot. Confirmed on a Retroid Pocket 5 + USB-C dock/add-on.
++ *
++ * This notifier fires on REGULATOR_EVENT_DISABLE for the vbus boost
++ * regulator (sourcing has just ended): clear USBIN_SUSPEND_BIT in
++ * USBIN_CMD_IL so the input path is no longer suspended, set
++ * APSD_RERUN_BIT in CMD_APSD to force a fresh charger-type detection,
++ * then reschedule the same status_change_work the plugin IRQ handler
++ * already uses to pick up the result.
++ */
++static int smb5_vbus_notifier(struct notifier_block *nb, unsigned long event,
++			      void *data)
++{
++	struct smb5_chip *chip = container_of(nb, struct smb5_chip, vbus_nb);
++	int rc;
++
++	if (!(event & REGULATOR_EVENT_DISABLE))
++		return NOTIFY_OK;
++
++	dev_dbg(chip->dev, "vbus source disabled, restoring USBIN\n");
++
++	rc = regmap_update_bits(chip->regmap, chip->base + USBIN_CMD_IL,
++				USBIN_SUSPEND_BIT, 0);
++	if (rc < 0)
++		dev_err(chip->dev, "Couldn't clear USBIN_SUSPEND_BIT: %d\n", rc);
++
++	rc = regmap_update_bits(chip->regmap, chip->base + CMD_APSD,
++				APSD_RERUN_BIT, APSD_RERUN_BIT);
++	if (rc < 0)
++		dev_err(chip->dev, "Couldn't rerun APSD: %d\n", rc);
++
++	schedule_delayed_work(&chip->status_change_work, msecs_to_jiffies(1000));
++
++	return NOTIFY_OK;
++}
++
+ static int smb5_probe(struct platform_device *pdev)
+ {
+ 	struct power_supply_config supply_config = {};
+@@ -850,6 +906,31 @@ static int smb5_probe(struct platform_de
+ 				     "Couldn't get usb_in_i_uv IIO channel\n");
+ 	}
+
++	/*
++	 * Optional: if the charger node has a "vbus-supply" phandle to the
++	 * pm8150b boost regulator, watch for it being disabled so USBIN can
++	 * be un-wedged afterwards (see smb5_vbus_notifier() above).
++	 * devm_regulator_get_optional() returns -ENODEV when the DT link is
++	 * absent, treated as "feature not available" rather than a probe
++	 * failure, so this is safe on chargers whose DT hasn't been
++	 * updated yet.
++	 */
++	chip->vbus_reg = devm_regulator_get_optional(chip->dev, "vbus");
++	if (IS_ERR(chip->vbus_reg)) {
++		rc = PTR_ERR(chip->vbus_reg);
++		if (rc != -ENODEV)
++			return dev_err_probe(chip->dev, rc,
++					     "Couldn't get vbus regulator\n");
++		chip->vbus_reg = NULL;
++	} else {
++		chip->vbus_nb.notifier_call = smb5_vbus_notifier;
++		rc = devm_regulator_register_notifier(chip->vbus_reg,
++						      &chip->vbus_nb);
++		if (rc < 0)
++			return dev_err_probe(chip->dev, rc,
++					     "Couldn't register vbus notifier\n");
++	}
++
+ 	rc = smb5_init_hw(chip);
+ 	if (rc < 0)
+ 		return rc;
