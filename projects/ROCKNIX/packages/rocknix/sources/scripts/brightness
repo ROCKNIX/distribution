@@ -35,10 +35,22 @@ CURRENT_MAX=0
 CURRENT_SETTING_KEY=""
 SCREEN_INPUT=1
 
+# Backlight drivers are typically good at providing a max / ceiling value,
+# but occasionally not so good at providing a min / floor value (values below
+# which have no effect). Add HARDWARE_FLOOR into the calc to cater for this.
+HARDWARE_FLOOR=0
+[[ "${QUIRK_DEVICE}" == "Anbernic RG 55G1" ]] && HARDWARE_FLOOR=650
+
 _compute_raw() {
   local percent="${1}"
   local max_val="${2}"
-  echo "(${percent} / 100 * ${max_val})" | bc -l | cut -f1 -d.
+  echo "(((${percent} / 100 * (${max_val} - ${HARDWARE_FLOOR}))) + ${HARDWARE_FLOOR})" | bc -l | cut -f1 -d.
+}
+
+_compute_percent_from_raw() {
+  local raw="${1}"
+  local max_val="${2}"
+  echo "((((${raw} - ${HARDWARE_FLOOR}) / (${max_val} - ${HARDWARE_FLOOR})) * 100) + 1)" | bc -l | cut -f1 -d.
 }
 
 _resolve_config() {
@@ -136,7 +148,14 @@ setBrightnessValue() {
 }
 
 getBrightnessValue() {
-  cat "${CURRENT_DEV_PATH}"
+  local raw_value=$(cat "${CURRENT_DEV_PATH}")
+  echo "(${raw_value} - ${HARDWARE_FLOOR})" | bc -l | cut -f1 -d.
+}
+
+getBrightnessPercent() {
+  local brightness=$(cat "${CURRENT_DEV_PATH}")
+  local percent="$(_compute_percent_from_raw "${brightness}" "${CURRENT_MAX}")"
+  echo "${percent}"
 }
 
 # Helper: apply an action to all detected screens
@@ -197,6 +216,18 @@ case "${ACTION}" in
       setBrightnessValue "${percentage_val}"
     fi
     getBrightnessValue
+    ;;
+
+  "getPercent") 
+    if [ -n "${1}" ] && [[ "${1}" =~ ^[0-9]+$ ]]; then
+        screen_to_get="${1}"
+    else
+        screen_to_get="1"
+    fi
+
+    if ! _resolve_config "${screen_to_get}"; then exit 1; fi
+    getBrightnessPercent
+    exit 0
     ;;
 
   "")
