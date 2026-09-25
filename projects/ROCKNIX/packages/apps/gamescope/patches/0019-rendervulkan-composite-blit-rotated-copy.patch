@@ -1,0 +1,306 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Fri, 18 Sep 2026 14:52:13 -0700
+Subject: [PATCH] rendervulkan: composite a single layer with a rotated blit
+
+With --composite-blit or GAMESCOPE_COMPOSITE_BLIT=1, a frame with exactly one
+unscaled sRGB layer is copied to the output with a transfer blit, rotated
+with VK_QCOM_rotated_copy_commands when the output is rotated. It skips
+colour management, like direct scanout of that layer. Anything else takes
+the normal composite path.
+---
+diff --git a/src/main.cpp b/src/main.cpp
+index 9202e8d..87e0edc 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -138,6 +138,7 @@ const struct option *gamescope_options = (struct option[]){
+ 	{ "disable-xres", no_argument, nullptr, 'x' },
+ 	{ "fade-out-duration", required_argument, nullptr, 0 },
+ 	{ "composite-graphics", no_argument, nullptr, 0 },
++	{ "composite-blit", no_argument, nullptr, 0 },
+ 	{ "force-composition-rotation", no_argument, nullptr, 0 },
+ 	{ "force-orientation", required_argument, nullptr, 0 },
+ 	{ "rotated-output-max-height", required_argument, nullptr, 0 },
+@@ -207,6 +208,7 @@ const char usage[] =
+ 	"  --xwayland-count               create N xwayland servers\n"
+ 	"  --prefer-vk-device             prefer Vulkan device for compositing (ex: 1002:7300)\n"
+ 	"  --composite-graphics           composite with a fragment pass instead of compute (better on tiling GPUs)\n"
++	"  --composite-blit               copy a single unscaled layer to the output with a (rotated) transfer blit, no colour management\n"
+ 	"  --force-composition-rotation   always rotate the output in the compositor instead of at scanout (autodetected otherwise)\n"
+ 	"  --force-orientation            rotate the internal display (left, right, normal, upsidedown)\n"
+ 	"  --rotated-output-max-height    when scanning out a rotated panel, clamp the logical output to N lines\n"
+@@ -380,6 +382,7 @@ bool g_bForceCompositionRotation = false;
+ uint32_t g_uOutputRotation = 0;
+ uint32_t g_nRotatedOutputMaxHeight = 0;
+ bool g_bCompositeGraphics = false;
++bool g_bCompositeBlit = false;
+ 
+ GamescopePanelOrientation g_DesiredInternalOrientation = GAMESCOPE_PANEL_ORIENTATION_AUTO;
+ static GamescopePanelOrientation force_orientation(const char *str)
+@@ -832,6 +835,8 @@ int main(int argc, char **argv)
+ 					g_bForceCompositionRotation = true;
+ 				} else if (strcmp(opt_name, "composite-graphics") == 0) {
+ 					g_bCompositeGraphics = true;
++				} else if (strcmp(opt_name, "composite-blit") == 0) {
++					g_bCompositeBlit = true;
+ 				} else if (strcmp(opt_name, "force-orientation") == 0) {
+ 					g_DesiredInternalOrientation = force_orientation( optarg );
+ 				} else if (strcmp(opt_name, "rotated-output-max-height") == 0) {
+@@ -899,6 +904,8 @@ int main(int argc, char **argv)
+ 
+ 	if ( const char *pszCompositeGraphics = getenv( "GAMESCOPE_COMPOSITE_GRAPHICS" ) )
+ 		g_bCompositeGraphics = atoi( pszCompositeGraphics ) != 0;
++	if ( const char *pszCompositeBlit = getenv( "GAMESCOPE_COMPOSITE_BLIT" ) )
++		g_bCompositeBlit = atoi( pszCompositeBlit ) != 0;
+ 
+ 	if ( gamescope::Process::HasCapSysNice() )
+ 	{
+diff --git a/src/main.hpp b/src/main.hpp
+index f049f22..febe90c 100644
+--- a/src/main.hpp
++++ b/src/main.hpp
+@@ -26,6 +26,7 @@ extern bool g_bForceCompositionRotation;
+ extern uint32_t g_uOutputRotation;
+ extern uint32_t g_nRotatedOutputMaxHeight;
+ extern bool g_bCompositeGraphics;
++extern bool g_bCompositeBlit;
+ 
+ extern bool g_bFullscreen;
+ 
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+index c539dee..cfad74b 100644
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -460,6 +460,9 @@ bool CVulkanDevice::createDevice()
+ 
+ 		if ( strcmp(ext.extensionName, VK_EXT_HDR_METADATA_EXTENSION_NAME) == 0 )
+ 			supportsHDRMetadata = true;
++
++		if ( strcmp(ext.extensionName, VK_QCOM_ROTATED_COPY_COMMANDS_EXTENSION_NAME) == 0 )
++			m_bSupportsRotatedCopy = true;
+ 	}
+ 
+ 	vk_log.infof( "physical device %s DRM format modifiers", m_bSupportsModifiers ? "supports" : "does not support" );
+@@ -584,6 +587,9 @@ bool CVulkanDevice::createDevice()
+ 	enabledExtensions.push_back( VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME );
+ 
+ 	enabledExtensions.push_back( VK_EXT_ROBUSTNESS_2_EXTENSION_NAME );
++
++	if ( m_bSupportsRotatedCopy )
++		enabledExtensions.push_back( VK_QCOM_ROTATED_COPY_COMMANDS_EXTENSION_NAME );
+ #if 0
+ 	enabledExtensions.push_back( VK_KHR_MAINTENANCE_5_EXTENSION_NAME );
+ #endif
+@@ -2118,6 +2124,56 @@ void CVulkanCmdBuffer::copyImage(gamescope::Rc<CVulkanTexture> src, gamescope::R
+ 	m_textureRefs.emplace_back(std::move(dst));
+ }
+ 
++// rotation is g_uOutputRotation, 1 is ROTATE_270 and 3 is ROTATE_90 to match unrotateOutputCoord
++void CVulkanCmdBuffer::blitImageRotated(gamescope::Rc<CVulkanTexture> src, gamescope::Rc<CVulkanTexture> dst, uint32_t rotation)
++{
++	prepareSrcImage(src.get());
++	prepareDestImage(dst.get());
++	insertBarrier();
++
++	VkSurfaceTransformFlagBitsKHR transform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
++	switch (rotation)
++	{
++		case 1u: transform = VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR; break;
++		case 2u: transform = VK_SURFACE_TRANSFORM_ROTATE_180_BIT_KHR; break;
++		case 3u: transform = VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR; break;
++		default: break;
++	}
++	const VkCopyCommandTransformInfoQCOM transformInfo = {
++		.sType = VK_STRUCTURE_TYPE_COPY_COMMAND_TRANSFORM_INFO_QCOM,
++		.transform = transform,
++	};
++	const VkImageBlit2 region = {
++		.sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2,
++		.pNext = transform != VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR ? &transformInfo : nullptr,
++		.srcSubresource = {
++			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
++			.layerCount = 1,
++		},
++		.srcOffsets = { { 0, 0, 0 }, { (int32_t)src->width(), (int32_t)src->height(), 1 } },
++		.dstSubresource = {
++			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
++			.layerCount = 1,
++		},
++		.dstOffsets = { { 0, 0, 0 }, { (int32_t)dst->width(), (int32_t)dst->height(), 1 } },
++	};
++	const VkBlitImageInfo2 blitInfo = {
++		.sType = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2,
++		.srcImage = src->vkImage(),
++		.srcImageLayout = VK_IMAGE_LAYOUT_GENERAL,
++		.dstImage = dst->vkImage(),
++		.dstImageLayout = VK_IMAGE_LAYOUT_GENERAL,
++		.regionCount = 1,
++		.pRegions = &region,
++		.filter = VK_FILTER_NEAREST,
++	};
++	m_device->vk.CmdBlitImage2(m_cmdBuffer, &blitInfo);
++
++	markDirty(dst.get());
++	m_textureRefs.emplace_back(std::move(src));
++	m_textureRefs.emplace_back(std::move(dst));
++}
++
+ void CVulkanCmdBuffer::copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, uint32_t stride, gamescope::Rc<CVulkanTexture> dst)
+ {
+ 	prepareDestImage(dst.get());
+@@ -3600,6 +3656,7 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
+ 	outputImageflags.bStorage = !g_bCompositeGraphics; // storage forces linear, attachment-only can take UBWC
+ 	outputImageflags.bColorAttachment = g_bCompositeGraphics;
+ 	outputImageflags.bTransferSrc = true; // for screenshots
++	outputImageflags.bTransferDst = g_bCompositeBlit; // for composite-blit
+ 	outputImageflags.bSampled = true; // for pipewire blits
+ 	outputImageflags.bOutputImage = true;
+ 
+@@ -3897,6 +3954,7 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_dmabuf( struct wl
+ 
+ 	CVulkanTexture::createFlags texCreateFlags;
+ 	texCreateFlags.bSampled = true;
++	texCreateFlags.bTransferSrc = g_bCompositeBlit; // for composite-blit
+ 
+ 	//fprintf(stderr, "pDMA->width: %d pDMA->height: %d pDMA->format: 0x%x pDMA->modifier: 0x%lx pDMA->n_planes: %d\n",
+ 	//	pDMA->width, pDMA->height, pDMA->format, pDMA->modifier, pDMA->n_planes);
+@@ -4360,6 +4418,71 @@ extern uint32_t g_reshade_technique_idx;
+ 
+ ReshadeEffectPipeline *g_pLastReshadeEffect = nullptr;
+ 
++// one opaque, unscaled SDR layer that covers the output is a plain copy on the
++// transfer engine, much cheaper than the composite shader with its per-pixel
++// colour-management LUTs. Skipping colour management matches what direct
++// scanout of that layer does.
++static bool vulkan_composite_blit( CVulkanCmdBuffer *cmdBuffer, const struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> compositeImage, uint32_t uOutputRotation, bool bOverride )
++{
++	if ( !g_bCompositeBlit )
++		return false;
++
++	// log each reason once
++	static uint32_t s_uLoggedReasons = 0;
++	auto decline = [&]( uint32_t uBit, const char *pszReason, auto... args ) -> bool
++	{
++		if ( !( s_uLoggedReasons & ( 1u << uBit ) ) )
++		{
++			s_uLoggedReasons |= 1u << uBit;
++			vk_log.infof( pszReason, args... );
++		}
++		return false;
++	};
++
++	if ( bOverride )
++		return decline( 0, "composite-blit: not for output overrides (screenshots, upscale cache)" );
++	if ( !g_device.supportsRotatedCopy() )
++		return decline( 1, "composite-blit: driver lacks VK_QCOM_rotated_copy_commands" );
++	if ( frameInfo->layers.count() != 1 )
++		return decline( 2, "composite-blit: %d layers, need exactly 1", frameInfo->layers.count() );
++	if ( frameInfo->useFSRLayer0 || frameInfo->useNISLayer0 || frameInfo->useGSRLayer0 || frameInfo->blurLayer0 || !g_reshade_effect.empty() )
++		return decline( 3, "composite-blit: layer 0 uses a scaler, blur or reshade" );
++
++	const FrameInfo_t::Layer_t *layer = &frameInfo->layers.get( 0 );
++	if ( !layer->tex )
++		return decline( 4, "composite-blit: layer 0 has no texture" );
++	if ( layer->isYcbcr() )
++		return decline( 5, "composite-blit: layer 0 is YCbCr" );
++	if ( layer->ctm != nullptr )
++		return decline( 6, "composite-blit: layer 0 has a CTM" );
++	if ( layer->opacity != 1.0f )
++		return decline( 7, "composite-blit: layer 0 opacity %f", layer->opacity );
++	// LINEAR is a raw view of sRGB-encoded content (colorimetry.h), direct scanout copies it raw too
++	if ( layer->colorspace != GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB && layer->colorspace != GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR &&
++	     layer->colorspace != GAMESCOPE_APP_TEXTURE_COLORSPACE_PASSTHRU )
++		return decline( 8, "composite-blit: layer 0 colorspace %u is not sRGB/linear-view/passthrough", (uint32_t)layer->colorspace );
++	if ( !close_enough( layer->scale.x, 1.0f ) || !close_enough( layer->scale.y, 1.0f ) )
++		return decline( 9, "composite-blit: layer 0 scale %f x %f", layer->scale.x, layer->scale.y );
++	if ( layer->offset.x != 0.0f || layer->offset.y != 0.0f )
++		return decline( 10, "composite-blit: layer 0 offset %f, %f", layer->offset.x, layer->offset.y );
++
++	const bool bTransposed = ( uOutputRotation & 1u ) != 0;
++	const uint32_t uSrcWidth = layer->tex->width();
++	const uint32_t uSrcHeight = layer->tex->height();
++	if ( ( bTransposed ? uSrcHeight : uSrcWidth ) != compositeImage->width() || ( bTransposed ? uSrcWidth : uSrcHeight ) != compositeImage->height() )
++		return decline( 11, "composite-blit: layer 0 is %ux%u, output %ux%u, rotation %u", uSrcWidth, uSrcHeight, compositeImage->width(), compositeImage->height(), uOutputRotation );
++
++	static bool s_bLogged = false;
++	if ( !s_bLogged )
++	{
++		vk_log.infof( "composite-blit: %ux%u -> %ux%u, rotation %u, transfer blit instead of the composite shader", uSrcWidth, uSrcHeight, compositeImage->width(), compositeImage->height(), uOutputRotation );
++		s_bLogged = true;
++	}
++
++	cmdBuffer->blitImageRotated( layer->tex, compositeImage, uOutputRotation );
++	return true;
++}
++
+ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pPipewireTexture, bool partial, gamescope::Rc<CVulkanTexture> pOutputOverride, bool increment, std::unique_ptr<CVulkanCmdBuffer> pInCommandBuffer, bool bAllowGfxBlit )
+ {
+ 	EOTF outputTF = frameInfo->outputEncodingEOTF;
+@@ -4416,7 +4539,11 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
+ 	for (uint32_t i = 0; i < EOTF_Count; i++)
+ 		cmdBuffer->bindColorMgmtLuts(i, frameInfo->shaperLut[i], frameInfo->lut3D[i]);
+ 
+-	if ( frameInfo->useFSRLayer0 )
++	if ( vulkan_composite_blit( cmdBuffer.get(), frameInfo, compositeImage, uOutputRotation, pOutputOverride != nullptr ) )
++	{
++		// copied by the transfer engine
++	}
++	else if ( frameInfo->useFSRLayer0 )
+ 	{
+ 		uint32_t inputX = frameInfo->layers.get( 0 ).tex->width();
+ 		uint32_t inputY = frameInfo->layers.get( 0 ).tex->height();
+@@ -4944,6 +5071,7 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struc
+ 	CVulkanTexture::createFlags texCreateFlags;
+ 	texCreateFlags.bSampled = true;
+ 	texCreateFlags.bTransferDst = true;
++	texCreateFlags.bTransferSrc = g_bCompositeBlit; // for composite-blit
+ 	texCreateFlags.bFlippable = true;
+ 	if ( pTex->BInit( width, height, 1u, drmFormat, texCreateFlags, nullptr, 0, 0, nullptr, pBackendFb ) == false )
+ 		return nullptr;
+diff --git a/src/rendervulkan.hpp b/src/rendervulkan.hpp
+index 3d423b7..a7f2796 100644
+--- a/src/rendervulkan.hpp
++++ b/src/rendervulkan.hpp
+@@ -791,6 +791,7 @@ static inline uint32_t div_roundup(uint32_t x, uint32_t y)
+ 	VK_FUNC(CmdClearColorImage) \
+ 	VK_FUNC(CmdCopyBufferToImage) \
+ 	VK_FUNC(CmdCopyImage) \
++	VK_FUNC(CmdBlitImage2) \
+ 	VK_FUNC(CmdDispatch) \
+ 	VK_FUNC(CmdDraw) \
+ 	VK_FUNC(CmdEndRendering) \
+@@ -913,6 +914,7 @@ public:
+ 	inline VkPipelineLayout pipelineLayout() {return m_pipelineLayout;}
+ 	inline int drmRenderFd() {return m_drmRendererFd;}
+ 	inline bool supportsModifiers() {return m_bSupportsModifiers;}
++	inline bool supportsRotatedCopy() {return m_bSupportsRotatedCopy;}
+ 	inline bool hasDrmPrimaryDevId() {return m_bHasDrmPrimaryDevId;}
+ 	inline dev_t primaryDevId() {return m_drmPrimaryDevId;}
+ 	inline bool supportsFp16() {return m_bSupportsFp16;}
+@@ -981,6 +983,7 @@ protected:
+ 	bool m_bSupportsFp16 = false;
+ 	bool m_bHasDrmPrimaryDevId = false;
+ 	bool m_bSupportsModifiers = false;
++	bool m_bSupportsRotatedCopy = false; // VK_QCOM_rotated_copy_commands
+ 	bool m_bInitialized = false;
+ 
+ 
+@@ -1064,6 +1067,7 @@ public:
+ 	void dispatch(uint32_t x, uint32_t y = 1, uint32_t z = 1);
+ 	void draw();
+ 	void copyImage(gamescope::Rc<CVulkanTexture> src, gamescope::Rc<CVulkanTexture> dst);
++	void blitImageRotated(gamescope::Rc<CVulkanTexture> src, gamescope::Rc<CVulkanTexture> dst, uint32_t rotation);
+ 	void copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, uint32_t stride, gamescope::Rc<CVulkanTexture> dst);
+ 
+ 
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+index 4f5a623..cc3b6ef 100644
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -7542,6 +7542,7 @@ static TempUpscaleImage_t *GetTempUpscaleImage( uint32_t uWidth, uint32_t uHeigh
+ 	// storage forces linear, an attachment can stay compressed
+ 	imageFlags.bStorage = !g_bCompositeGraphics;
+ 	imageFlags.bColorAttachment = g_bCompositeGraphics;
++	imageFlags.bTransferSrc = g_bCompositeBlit; // for composite-blit
+ 	imageFlags.bFlippable = true;
+ 	pTexture->BInit( g_nOutputWidth, g_nOutputHeight, 1, uDrmFormat, imageFlags );
+ 	TempUpscaleImage_t &image = g_pUpscaleImages.emplace_back( std::move( pTexture ), std::move( pTimeline ) );

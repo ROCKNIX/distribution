@@ -147,6 +147,12 @@ fi
                 sed -i "/surface_scale =/c\surface_scale = 1" "${CONF_DIR}/${XEMU_INI}"
         fi
 
+  #Scan out render size
+        SCANOUT_SCALE=$(scanout_internal_scale "$(awk '/^surface_scale = / {print $3; exit}' "${CONF_DIR}/${XEMU_INI}")" 480 1 10)
+        sed -i "/surface_scale =/c\surface_scale = ${SCANOUT_SCALE}" "${CONF_DIR}/${XEMU_INI}"
+        [ "$ASPECT" = "1" ] && SCANOUT_ASPECT=16:9 || SCANOUT_ASPECT=4:3
+        scanout_render_size 480 "${SCANOUT_SCALE}" "${SCANOUT_ASPECT}"
+
   #Show FPS
 	if [ "$SHOWFPS" = "1" ]
 	then

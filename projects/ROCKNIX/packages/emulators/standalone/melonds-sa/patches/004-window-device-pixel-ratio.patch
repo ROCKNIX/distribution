@@ -1,0 +1,42 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Sun, 20 Sep 2026 16:33:47 -0700
+Subject: [PATCH] melonDS: size the GL surface with the window's device pixel ratio
+
+On Wayland the screen's device pixel ratio is the output scale rounded
+up. When the compositor shrinks the output and hints this surface a
+fractional scale of 1, the surface came out twice the window size or
+more. The window's ratio follows the fractional scale, so use that.
+
+Also redo the layout when the ratio changes without a resize, which
+happens when the compositor settles the scale after the window goes
+fullscreen.
+
+--- a/src/frontend/qt_sdl/Screen.cpp
++++ b/src/frontend/qt_sdl/Screen.cpp
+@@ -393,6 +393,11 @@ bool ScreenPanel::event(QEvent* event)
+         mainWindow->onFocusIn();
+     else if (event->type() == QEvent::FocusOut)
+         mainWindow->onFocusOut();
++#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
++    // a new scale without a resize (e.g. the compositor settling it after fullscreen)
++    else if (event->type() == QEvent::DevicePixelRatioChange)
++        setupScreenLayout();
++#endif
+ 
+     return QWidget::event(event);
+ }
+@@ -1265,11 +1270,9 @@ void ScreenPanelGL::drawScreen()
+ 
+ qreal ScreenPanelGL::devicePixelRatioFromScreen() const
+ {
+-    const QScreen* screen_for_ratio = window()->windowHandle()->screen();
+-    if (!screen_for_ratio)
+-        screen_for_ratio = QGuiApplication::primaryScreen();
+-
+-    return screen_for_ratio ? screen_for_ratio->devicePixelRatio() : static_cast<qreal>(1);
++    // on Wayland the window's ratio follows the fractional scale, the screen's is rounded up
++    const QWindow* handle = window()->windowHandle();
++    return handle ? handle->devicePixelRatio() : static_cast<qreal>(1);
+ }
+ 
+ int ScreenPanelGL::scaledWindowWidth() const

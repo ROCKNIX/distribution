@@ -15,6 +15,7 @@ SCREENWIDTH=$(fbwidth)
 SCREENHEIGHT=$(fbheight)
 ASPECT=$(get_setting game_aspect_ratio "${PLATFORM}" "${GAME}")
 IRES=$(get_setting internal_resolution "${PLATFORM}" "${GAME}")
+IRES=$(scanout_internal_scale "${IRES}" 240 1 8)
 RSP=$(get_setting rsp_plugin "${PLATFORM}" "${GAME}")
 SIMPLECORE=$(get_setting core_plugin "${PLATFORM}" "${GAME}")
 FPS=$(get_setting show_fps "${PLATFORM}" "${GAME}")
@@ -165,6 +166,9 @@ case ${VPLUGIN} in
         SET_PARAMS+=" --gfx mupen64plus-video-rice${SIMPLESUFFIX}.so"
     ;;
 esac
+
+# Only GLideN64 has an internal resolution. The other plugins draw at window size.
+[ "${VPLUGIN}" = "gliden64" ] && [ -n "${IRES}" ] && scanout_render_size 240 "${IRES}"
 
 # Set the RSP plugin
 case "${RSP}" in

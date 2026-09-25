@@ -411,10 +411,163 @@ if [ "${DEVICE_MANGOHUD_SUPPORT}" == "true" ]; then
   fi
 fi
 
+scaling_setting() {
+  get_setting "rocknix.scaling.$1" "${PLATFORM}" "${ROMNAME##*/}"
+}
+scaling_dpu_knobs() {
+  # dpu_de_unscaled keeps the scaler on at 1:1 so an unscaled plane is sharpened too.
+  local P=${DEVICE_SCANOUT_SHARPNESS}
+  [ -d "${P}" ] || return
+  [ "${SCALING_FILTER}" = "hardware_nearest" ] && echo Y > "${P}/dpu_nearest" 2>/dev/null \
+                                              || echo N > "${P}/dpu_nearest" 2>/dev/null
+  if [ "${SCALING_FILTER}" = "hardware_edge" ]; then
+    echo Y > "${P}/dpu_de_dir" 2>/dev/null
+    echo "${SCALING_EDGE}" > "${P}/dpu_de_dir_weight" 2>/dev/null
+  else
+    echo N > "${P}/dpu_de_dir" 2>/dev/null
+  fi
+  if [ "${SCALING_SHARPNESS}" -gt 0 ]; then
+    echo Y > "${P}/dpu_de" 2>/dev/null
+    echo $(( SCALING_SHARPNESS * 12 / 5 )) > "${P}/dpu_de_sharpen1" 2>/dev/null
+    echo $(( SCALING_SHARPNESS * 12 / 5 )) > "${P}/dpu_de_sharpen2" 2>/dev/null
+    echo Y > "${P}/dpu_de_unscaled" 2>/dev/null
+  else
+    echo N > "${P}/dpu_de" 2>/dev/null
+  fi
+  ${VERBOSE} && log $0 "Display filter ${SCALING_FILTER} (edge ${SCALING_EDGE}), sharpening level ${SCALING_SHARPNESS}"
+}
+scanout_reset_stale
+if [ "${DEVICE_SCANOUT_SCALING}" = "true" ] && [ "${PLATFORM}" != "steam" ] && [ "${PLATFORM}" != "heroic" ]; then
+  # Reset after the game, or by the trap on an early exit
+  scanout_claim
+  trap scanout_reset EXIT
+
+  eval "$(swaymsg -t get_outputs | jq -r '
+    (.[] | select(.focused == true) |
+    "OUTPUT_W=\(.current_mode.width) OUTPUT_H=\(.current_mode.height) OUTPUT_TRANSFORM=\(.transform) OUTPUT_NAME=\(.name)"),
+    (first(.[] | select(.focused != true and .active == true)) | "OUTPUT2_NAME=\(.name)")
+  ')"
+
+  prerotate_env "${OUTPUT_TRANSFORM}"
+  ${VERBOSE} && log $0 "Pre-rotation ${vk_wsi_wayland_prerotate:-none} (output ${OUTPUT_TRANSFORM})"
+
+  SCALING_SHARPNESS=$(scaling_setting sharpness)
+  case ${SCALING_SHARPNESS} in
+    [0-9]|10) ;;
+    *) SCALING_SHARPNESS=0 ;;
+  esac
+  SCALING_FILTER=$(scaling_setting filter)
+  case ${SCALING_FILTER} in
+    hardware_nearest|hardware_edge) ;;
+    *) SCALING_FILTER=hardware ;;
+  esac
+  SCALING_EDGE=$(scaling_setting edge)
+  case ${SCALING_EDGE} in
+    [0-9]|[0-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5]) ;;
+    *) SCALING_EDGE=32 ;;
+  esac
+  scaling_dpu_knobs
+
+  SCALING_RENDER=$(scaling_setting render)
+  if [ -n "${SCALING_RENDER}" ] && [ "${SCALING_RENDER}" != "off" ] && [ -n "${OUTPUT_W}" ] && [ -n "${OUTPUT_H}" ]; then
+    SCALING_W=${OUTPUT_W}
+    SCALING_H=${OUTPUT_H}
+    case ${OUTPUT_TRANSFORM} in
+      90|270|flipped-90|flipped-270)
+        SCALING_W=${OUTPUT_H}; SCALING_H=${OUTPUT_W}
+      ;;
+    esac
+    # Native heights for launchers that don't report their image
+    case ${PLATFORM} in
+      dreamcast|naomi|atomiswave|xbox) NATIVE_H=480 ;;
+      n64|saturn|psx)                  NATIVE_H=240 ;;
+      ps2)                             NATIVE_H=448 ;;
+      gamecube|wii)                    NATIVE_H=480 ;;
+      psp)                             NATIVE_H=272 ;;
+      nds)                             NATIVE_H=384 ;;
+      3ds)                             NATIVE_H=480 ;;
+      psvita)                          NATIVE_H=544 ;;
+      *)                               NATIVE_H="" ;;
+    esac
+    SCALING_MAX=${DEVICE_SCANOUT_MAX_RENDER:-400}
+    # The pipe fetches lines in panel orientation, so on a rotated output a line is the frame height
+    if [ -n "${DEVICE_SCANOUT_MAX_FETCH}" ]; then
+      case ${OUTPUT_TRANSFORM} in
+        90|270|flipped-90|flipped-270) SCALING_FETCH=${SCALING_H} ;;
+        *)                             SCALING_FETCH=${SCALING_W} ;;
+      esac
+      SCALING_FETCH=$(( DEVICE_SCANOUT_MAX_FETCH * 100 / SCALING_FETCH ))
+      [ "${SCALING_FETCH}" -lt "${SCALING_MAX}" ] && SCALING_MAX=${SCALING_FETCH}
+    fi
+    SCALING_MAX_H=$(( SCALING_H * SCALING_MAX / 100 ))
+    export SCANOUT_RENDER=${SCALING_RENDER} SCANOUT_OWNER=$$ SCANOUT_MAX_RENDER=${SCALING_MAX} \
+           SCANOUT_OUTPUT=${OUTPUT_NAME}
+    [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ] && export SCANOUT_OUTPUT2=${OUTPUT2_NAME}
+    SCALING_MULT=""
+    case ${SCALING_RENDER} in
+      internal) SCALING_MULT=100; [ -z "${NATIVE_H}" ] && SCALING_RENDER=100 ;;
+      [0-9]*x)
+        SCALING_MULT=$(awk -v n="${SCALING_RENDER%x}" 'BEGIN { if (n + 0 > 0) printf "%d", n * 100 }')
+        if [ -z "${SCALING_MULT}" ] || [ -z "${NATIVE_H}" ]; then SCALING_MULT=""; SCALING_RENDER=100; fi ;;
+      *[!0-9]*) SCALING_RENDER=59 ;;
+    esac
+    if [ -n "${SCALING_MULT}" ] && [ -n "${NATIVE_H}" ]; then
+
+      SCALING_RENDER_H=$(( (NATIVE_H * SCALING_MULT / 100) / 2 * 2 ))
+      if [ "${SCALING_RENDER_H}" -gt "${SCALING_MAX_H}" ]; then
+        SCALING_MULT=$(( SCALING_MAX_H * 100 / NATIVE_H / 100 * 100 ))
+        [ "${SCALING_MULT}" -lt 100 ] && SCALING_MULT=100
+        SCALING_RENDER_H=$(( (NATIVE_H * SCALING_MULT / 100) / 2 * 2 ))
+      fi
+      SCALING_RENDER_W=$(( (SCALING_RENDER_H * SCALING_W / SCALING_H) / 2 * 2 ))
+      SCALING_RENDER="native ${SCALING_MULT}%"
+    else
+      [ "${SCALING_RENDER}" -lt 25 ] && SCALING_RENDER=25
+      [ "${SCALING_RENDER}" -gt "${SCALING_MAX}" ] && SCALING_RENDER=${SCALING_MAX}
+      SCALING_RENDER_W=$(( (SCALING_W * SCALING_RENDER / 100) / 2 * 2 ))
+      SCALING_RENDER_H=$(( (SCALING_H * SCALING_RENDER / 100) / 2 * 2 ))
+      # Nearest only looks right at a whole factor, so snap to the closest one
+      if [ "${SCALING_FILTER}" = "hardware_nearest" ]; then
+        if [ "${SCALING_RENDER}" -lt 100 ]; then
+          SCALING_INT=$(( (100 + SCALING_RENDER / 2) / SCALING_RENDER ))
+          [ "${SCALING_INT}" -lt 2 ] && SCALING_INT=2
+          SCALING_RENDER_W=$(( (SCALING_W / SCALING_INT) / 2 * 2 ))
+          SCALING_RENDER_H=$(( (SCALING_H / SCALING_INT) / 2 * 2 ))
+        elif [ "${SCALING_RENDER}" -gt 100 ]; then
+          SCALING_INT=$(( (SCALING_RENDER + 50) / 100 ))
+          [ "${SCALING_INT}" -lt 2 ] && SCALING_INT=2
+          [ "${SCALING_INT}" -gt 4 ] && SCALING_INT=4
+          [ "${SCALING_INT}" -gt $(( SCALING_MAX / 100 )) ] && SCALING_INT=$(( SCALING_MAX / 100 ))
+          SCALING_RENDER_W=$(( SCALING_W * SCALING_INT ))
+          SCALING_RENDER_H=$(( SCALING_H * SCALING_INT ))
+        fi
+      fi
+      SCALING_RENDER="${SCALING_RENDER}% of screen"
+    fi
+
+    # Frames taller than the plane can rotate are pre-rotated, so the plane only scales them
+    if [ -n "${DEVICE_PLANE_ROTATION_MAX_HEIGHT}" ] && [ "${SCALING_RENDER_H}" -gt "${DEVICE_PLANE_ROTATION_MAX_HEIGHT}" ]; then
+      case ${OUTPUT_TRANSFORM} in
+        90|270)
+          prerotate_env "${OUTPUT_TRANSFORM}" always
+          ${VERBOSE} && log $0 "Pre-rotation ${vk_wsi_wayland_prerotate} (${SCALING_RENDER_H} lines is over the plane's ${DEVICE_PLANE_ROTATION_MAX_HEIGHT})"
+        ;;
+      esac
+    fi
+
+    # SDL sizes HiDPI windows from the fractional scale.
+    export GDK_SCALE=1.0001
+    [ -n "${OUTPUT_NAME}" ] && scanout_set_render "${OUTPUT_NAME}" "${SCALING_H}" "${SCALING_RENDER_H}"
+    ${VERBOSE} && log $0 "Scaling ${SCALING_RENDER} (${SCALING_RENDER_W}x${SCALING_RENDER_H} -> ${SCALING_W}x${SCALING_H}, filter ${SCALING_FILTER})"
+  fi
+else
+  prerotate_env
+fi
+
 # If the rom is a shell script just execute it, useful for DOSBOX and ScummVM scan scripts
 if [[ "${ROMNAME}" == *".sh" ]] && [ ! "${PLATFORM}" = "ports" ] && [ ! "${PLATFORM}" = "windows" ]; then
         ${VERBOSE} && log $0 "Executing shell script ${ROMNAME}"
-        "${ROMNAME}" &>>${OUTPUT_LOG}
+        ${GAMESCOPE_CMD} "${ROMNAME}" &>>${OUTPUT_LOG}
         ret_error=$?
 else
         ${VERBOSE} && log $0 "Executing $(eval echo ${RUNTHIS})"
@@ -426,6 +579,12 @@ fi
 performance
 
 clear_screen
+
+### Reset this game's scan out scaling and sharpening
+if [ -f "${SCANOUT_OWNER_FILE}" ]; then
+  scanout_reset
+  trap - EXIT
+fi
 
 ### Disable touch on the secondary screen for dual screen devices
 if [[ "${DEVICE_HAS_DUAL_SCREEN}" == "true" ]]; then

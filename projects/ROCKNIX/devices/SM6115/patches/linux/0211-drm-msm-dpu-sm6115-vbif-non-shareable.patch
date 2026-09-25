@@ -1,0 +1,110 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Mon, 14 Sep 2026 15:16:22 -0700
+Subject: [PATCH] drm/msm/dpu: sm6115: mark the VBIF's AXI traffic non-shareable
+
+The downstream SDE driver clears both the outer and inner shareable
+bits on bengal whenever it programs the memory types. Do the same.
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_6_3_sm6115.h b/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_6_3_sm6115.h
+--- a/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_6_3_sm6115.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_6_3_sm6115.h
+@@ -147,7 +147,7 @@ const struct dpu_mdss_cfg dpu_sm6115_cfg = {
+ 	.pingpong = sm6115_pp,
+ 	.intf_count = ARRAY_SIZE(sm6115_intf),
+ 	.intf = sm6115_intf,
+-	.vbif = &sdm845_vbif,
++	.vbif = &sm6115_vbif,
+ 	.perf = &sm6115_perf_data,
+ };
+ 
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
+@@ -609,6 +609,23 @@ static const struct dpu_vbif_cfg sdm845_vbif = {
+ 	.memtype = {3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3},
+ };
+ 
++static const struct dpu_vbif_cfg sm6115_vbif = {
++	.len = 0x1040,
++	.features = BIT(DPU_VBIF_QOS_REMAP) | BIT(DPU_VBIF_NON_SHAREABLE),
++	.xin_halt_timeout = 0x4000,
++	.qos_rp_remap_size = 0x40,
++	.qos_rt_tbl = {
++		.npriority_lvl = ARRAY_SIZE(sdm845_rt_pri_lvl),
++		.priority_lvl = sdm845_rt_pri_lvl,
++		},
++	.qos_nrt_tbl = {
++		.npriority_lvl = ARRAY_SIZE(sdm845_nrt_pri_lvl),
++		.priority_lvl = sdm845_nrt_pri_lvl,
++		},
++	.memtype_count = 14,
++	.memtype = {3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3},
++};
++
+ static const struct dpu_vbif_cfg sm8550_vbif = {
+ 	.len = 0x1040,
+ 	.features = BIT(DPU_VBIF_QOS_REMAP),
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h
+@@ -132,11 +132,13 @@ enum {
+  * VBIF sub-blocks and features
+  * @DPU_VBIF_QOS_OTLIM        VBIF supports OT Limit
+  * @DPU_VBIF_QOS_REMAP        VBIF supports QoS priority remap
++ * @DPU_VBIF_NON_SHAREABLE    VBIF must mark its AXI traffic non-shareable
+  * @DPU_VBIF_MAX              maximum value
+  */
+ enum {
+ 	DPU_VBIF_QOS_OTLIM = 0x1,
+ 	DPU_VBIF_QOS_REMAP,
++	DPU_VBIF_NON_SHAREABLE,
+ 	DPU_VBIF_MAX
+ };
+ 
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_vbif.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_vbif.c
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_vbif.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_vbif.c
+@@ -26,6 +26,8 @@
+ #define VBIF_OUT_WR_LIM_CONF0		0x00D4
+ #define VBIF_OUT_AXI_AMEMTYPE_CONF0	0x0160
+ #define VBIF_OUT_AXI_AMEMTYPE_CONF1	0x0164
++#define VBIF_OUT_AXI_ASHARED		0x0170
++#define VBIF_OUT_AXI_AINNERSHARED	0x0174
+ #define VBIF_XIN_PND_ERR		0x0190
+ #define VBIF_XIN_SRC_ERR		0x0194
+ #define VBIF_XIN_CLR_ERR		0x019C
+@@ -84,6 +86,22 @@ static void dpu_hw_set_mem_type(struct dpu_hw_vbif *vbif,
+ 	DPU_REG_WRITE(c, reg_off, reg_val);
+ }
+ 
++static void dpu_hw_set_mem_type_non_shareable(struct dpu_hw_vbif *vbif,
++		u32 xin_id, u32 value)
++{
++	struct dpu_hw_blk_reg_map *c = &vbif->hw;
++
++	dpu_hw_set_mem_type(vbif, xin_id, value);
++	if (xin_id >= 32)
++		return;
++
++
++	DPU_REG_WRITE(c, VBIF_OUT_AXI_ASHARED,
++		      DPU_REG_READ(c, VBIF_OUT_AXI_ASHARED) & ~BIT(xin_id));
++	DPU_REG_WRITE(c, VBIF_OUT_AXI_AINNERSHARED,
++		      DPU_REG_READ(c, VBIF_OUT_AXI_AINNERSHARED) & ~BIT(xin_id));
++}
++
+ static void dpu_hw_set_limit_conf(struct dpu_hw_vbif *vbif,
+ 		u32 xin_id, bool rd, u32 limit)
+ {
+@@ -208,7 +226,10 @@ static void _setup_vbif_ops(struct dpu_hw_vbif_ops *ops,
+ 	ops->get_halt_ctrl = dpu_hw_get_halt_ctrl;
+ 	if (test_bit(DPU_VBIF_QOS_REMAP, &cap))
+ 		ops->set_qos_remap = dpu_hw_set_qos_remap;
+-	ops->set_mem_type = dpu_hw_set_mem_type;
++	if (test_bit(DPU_VBIF_NON_SHAREABLE, &cap))
++		ops->set_mem_type = dpu_hw_set_mem_type_non_shareable;
++	else
++		ops->set_mem_type = dpu_hw_set_mem_type;
+ 	ops->clear_errors = dpu_hw_clear_errors;
+ 	ops->set_write_gather_en = dpu_hw_set_write_gather_en;
+ }

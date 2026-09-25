@@ -180,6 +180,27 @@ case "${SLAYOUT}" in
     ;;
 esac
 
+# With separate windows the bottom screen goes on the second screen.
+SCANOUT_LAYOUT=$(awk -F= '/^layout_option=/ {print $2; exit}' ${CONF_FILE})
+case "${SCANOUT_LAYOUT}" in
+  0) SCANOUT_W=400; SCANOUT_H=480 ;;  # top / bottom
+  1) SCANOUT_W=400; SCANOUT_H=240; [ "${SLAYOUT}" = "1b" ] && SCANOUT_W=320 ;;
+  2) SCANOUT_W=480; SCANOUT_H=240 ;;  # large screen beside a quarter-size one
+  3) SCANOUT_W=720; SCANOUT_H=240 ;;  # side by side
+  *) SCANOUT_W=400; SCANOUT_H=240 ;;  # separate windows: the top screen
+esac
+SCANOUT_W2=320; SCANOUT_H2=240
+if [ "${ROTATE}" = "1" ]; then
+  SCANOUT_T=${SCANOUT_W}; SCANOUT_W=${SCANOUT_H}; SCANOUT_H=${SCANOUT_T}
+  SCANOUT_W2=240; SCANOUT_H2=320
+fi
+SCANOUT_SCALE=$(scanout_internal_scale "$(awk -F= '/^resolution_factor=/ {print $2; exit}' ${CONF_FILE})" "${SCANOUT_H}" 1 10)
+sed -i "/^resolution_factor=/c\resolution_factor=${SCANOUT_SCALE}" ${CONF_FILE}
+scanout_render_size "${SCANOUT_H}" "${SCANOUT_SCALE}" "${SCANOUT_W}:${SCANOUT_H}"
+if [ "${SCANOUT_LAYOUT}" = "4" ] && [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
+  scanout_render_size "${SCANOUT_H2}" "${SCANOUT_SCALE}" "${SCANOUT_W2}:${SCANOUT_H2}" second
+fi
+
 # Force Disable Shader JIT
 sed -i '/^use_shader_jit=/c\use_shader_jit=false' ${CONF_FILE}
 sed -i '/^use_shader_jit\\default=/c\use_shader_jit\\default=false' ${CONF_FILE}

@@ -5,4 +5,9 @@
 ### setup is the same
 . $(dirname $0)/es_settings
 
+### Pre-rotate the frontend and the games it starts
+prerotate_env "${WLR_CON_TRANSFORM}"
+
+scanout_reset_stale
+
 emulationstation --log-path /var/log --no-splash

@@ -1,0 +1,1176 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Mon, 21 Sep 2026 09:14:02 -0700
+Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
+
+--- a/drivers/gpu/drm/msm/Makefile
++++ b/drivers/gpu/drm/msm/Makefile
+@@ -86,6 +86,7 @@ msm-display-$(CONFIG_DRM_MSM_DPU) += \
+ 	disp/dpu1/dpu_hw_intf.o \
+ 	disp/dpu1/dpu_hw_lm.o \
+ 	disp/dpu1/dpu_hw_pingpong.o \
++	disp/dpu1/dpu_hw_rotator.o \
+ 	disp/dpu1/dpu_hw_sspp.o \
+ 	disp/dpu1/dpu_hw_sspp_v13.o \
+ 	disp/dpu1/dpu_hw_dspp.o \
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_formats.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_formats.c
+@@ -55,7 +55,7 @@ static void _dpu_get_v_h_subsample_rate(
+ 
+ static int _dpu_format_populate_plane_sizes_ubwc(
+ 		const struct msm_format *fmt,
+-		struct drm_framebuffer *fb,
++		u32 width, u32 height,
+ 		struct dpu_hw_fmt_layout *layout)
+ {
+ 	bool meta = MSM_FORMAT_IS_UBWC(fmt);
+@@ -69,23 +69,23 @@ static int _dpu_format_populate_plane_sizes_ubwc(
+ 		if (MSM_FORMAT_IS_DX(fmt)) {
+ 			if (fmt->flags & MSM_FORMAT_FLAG_UNPACK_TIGHT) {
+ 				/* can't use round_up() here because 192 is NPoT */
+-				stride = roundup(fb->width, 192);
++				stride = roundup(width, 192);
+ 				stride = round_up(stride * 4 / 3, 256);
+ 				y_tile_width = 48;
+ 			} else {
+-				stride = round_up(fb->width * 2, 256);
++				stride = round_up(width * 2, 256);
+ 				y_tile_width = 32;
+ 			}
+ 
+-			y_sclines = round_up(fb->height, 16);
+-			uv_sclines = round_up((fb->height+1)>>1, 16);
++			y_sclines = round_up(height, 16);
++			uv_sclines = round_up((height+1)>>1, 16);
+ 			y_tile_height = 4;
+ 		} else {
+-			stride = round_up(fb->width, 128);
++			stride = round_up(width, 128);
+ 			y_tile_width = 32;
+ 
+-			y_sclines = round_up(fb->height, 32);
+-			uv_sclines = round_up((fb->height+1)>>1, 32);
++			y_sclines = round_up(height, 32);
++			uv_sclines = round_up((height+1)>>1, 32);
+ 			y_tile_height = 8;
+ 		}
+ 
+@@ -100,26 +100,26 @@ static int _dpu_format_populate_plane_sizes_ubwc(
+ 		if (!meta)
+ 			return 0;
+ 
+-		y_meta_stride = DIV_ROUND_UP(fb->width, y_tile_width);
++		y_meta_stride = DIV_ROUND_UP(width, y_tile_width);
+ 		layout->plane_pitch[2] = round_up(y_meta_stride, 64);
+ 
+-		y_meta_scanlines = DIV_ROUND_UP(fb->height, y_tile_height);
++		y_meta_scanlines = DIV_ROUND_UP(height, y_tile_height);
+ 		y_meta_scanlines = round_up(y_meta_scanlines, 16);
+ 		layout->plane_size[2] = round_up(layout->plane_pitch[2] *
+ 			y_meta_scanlines, DPU_UBWC_PLANE_SIZE_ALIGNMENT);
+ 
+-		uv_meta_stride = DIV_ROUND_UP((fb->width+1)>>1, y_tile_width / 2);
++		uv_meta_stride = DIV_ROUND_UP((width+1)>>1, y_tile_width / 2);
+ 		layout->plane_pitch[3] = round_up(uv_meta_stride, 64);
+ 
+-		uv_meta_scanlines = DIV_ROUND_UP((fb->height+1)>>1, y_tile_height);
++		uv_meta_scanlines = DIV_ROUND_UP((height+1)>>1, y_tile_height);
+ 		uv_meta_scanlines = round_up(uv_meta_scanlines, 16);
+ 		layout->plane_size[3] = round_up(layout->plane_pitch[3] *
+ 			uv_meta_scanlines, DPU_UBWC_PLANE_SIZE_ALIGNMENT);
+ 	} else {
+ 		unsigned int rgb_scanlines, rgb_meta_scanlines, rgb_meta_stride;
+ 
+-		layout->plane_pitch[0] = round_up(fb->width * fmt->bpp, 256);
+-		rgb_scanlines = round_up(fb->height, 16);
++		layout->plane_pitch[0] = round_up(width * fmt->bpp, 256);
++		rgb_scanlines = round_up(height, 16);
+ 		layout->plane_size[0] = round_up(layout->plane_pitch[0] *
+ 			rgb_scanlines, DPU_UBWC_PLANE_SIZE_ALIGNMENT);
+ 
+@@ -129,10 +129,10 @@ static int _dpu_format_populate_plane_sizes_ubwc(
+ 		/* uAPI leaves plane[1] empty and plane[2] as meta */
+ 		layout->num_planes += 1;
+ 
+-		rgb_meta_stride = DIV_ROUND_UP(fb->width, 16);
++		rgb_meta_stride = DIV_ROUND_UP(width, 16);
+ 		layout->plane_pitch[2] = round_up(rgb_meta_stride, 64);
+ 
+-		rgb_meta_scanlines = DIV_ROUND_UP(fb->height, 4);
++		rgb_meta_scanlines = DIV_ROUND_UP(height, 4);
+ 		rgb_meta_scanlines = round_up(rgb_meta_scanlines, 16);
+ 
+ 		layout->plane_size[2] = round_up(layout->plane_pitch[2] *
+@@ -239,7 +239,8 @@ int dpu_format_populate_plane_sizes(
+ 	layout->num_planes = fmt->num_planes;
+ 
+ 	if (MSM_FORMAT_IS_UBWC(fmt) || MSM_FORMAT_IS_TILE(fmt))
+-		ret = _dpu_format_populate_plane_sizes_ubwc(fmt, fb, layout);
++		ret = _dpu_format_populate_plane_sizes_ubwc(fmt, fb->width,
++							    fb->height, layout);
+ 	else
+ 		ret = _dpu_format_populate_plane_sizes_linear(fmt, fb, layout);
+ 
+@@ -252,6 +253,27 @@ int dpu_format_populate_plane_sizes(
+ 	return 0;
+ }
+ 
++int dpu_format_get_plane_sizes_ubwc(const struct msm_format *fmt,
++				    u32 width, u32 height,
++				    struct dpu_hw_fmt_layout *layout)
++{
++	int ret, i;
++
++	memset(layout, 0, sizeof(struct dpu_hw_fmt_layout));
++	layout->width = width;
++	layout->height = height;
++	layout->num_planes = fmt->num_planes;
++
++	ret = _dpu_format_populate_plane_sizes_ubwc(fmt, width, height, layout);
++	if (ret)
++		return ret;
++
++	for (i = 0; i < DPU_MAX_PLANES; i++)
++		layout->total_size += layout->plane_size[i];
++
++	return 0;
++}
++
+ static void _dpu_format_populate_addrs_ubwc(struct drm_framebuffer *fb,
+ 					    struct dpu_hw_fmt_layout *layout)
+ {
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_formats.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_formats.h
+@@ -38,4 +38,8 @@ int dpu_format_populate_plane_sizes(
+ 		struct drm_framebuffer *fb,
+ 		struct dpu_hw_fmt_layout *layout);
+ 
++int dpu_format_get_plane_sizes_ubwc(const struct msm_format *fmt,
++				    u32 width, u32 height,
++				    struct dpu_hw_fmt_layout *layout);
++
+ #endif /*_DPU_FORMATS_H */
+--- /dev/null
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_rotator.c
+@@ -0,0 +1,867 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#include <linux/clk.h>
++#include <linux/completion.h>
++#include <linux/delay.h>
++#include <linux/debugfs.h>
++#include <linux/dma-fence.h>
++#include <linux/interconnect.h>
++#include <linux/interrupt.h>
++#include <linux/iopoll.h>
++#include <linux/io.h>
++#include <linux/ktime.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/of_address.h>
++#include <linux/of_irq.h>
++#include <linux/of_platform.h>
++#include <linux/pm_qos.h>
++#include <linux/pm_runtime.h>
++#include <linux/seq_file.h>
++#include <linux/workqueue.h>
++#include <linux/soc/qcom/ubwc.h>
++
++#include <drm/drm_mode.h>
++#include <drm/drm_gem.h>
++#include <drm/drm_fourcc.h>
++#include <drm/drm_framebuffer.h>
++
++#include "msm_gem.h"
++#include "dpu_kms.h"
++#include "dpu_formats.h"
++#include "dpu_hw_rotator.h"
++
++#define ROTTOP_OFF		0x800
++#define ROTTOP_HW_VERSION	(ROTTOP_OFF + 0x00)
++#define ROTTOP_SW_RESET_OVERRIDE (ROTTOP_OFF + 0x28)
++#define ROTTOP_INTR_EN		(ROTTOP_OFF + 0x30)
++#define ROTTOP_INTR_STATUS	(ROTTOP_OFF + 0x34)
++#define ROTTOP_INTR_CLEAR	(ROTTOP_OFF + 0x38)
++#define ROTTOP_START_CTRL	(ROTTOP_OFF + 0x40)
++#define ROTTOP_STATUS		(ROTTOP_OFF + 0x44)
++#define ROTTOP_OP_MODE		(ROTTOP_OFF + 0x48)
++#define ROTTOP_OP_MODE_START	BIT(0)
++#define ROTTOP_OP_MODE_ROT90	BIT(1)
++#define ROTTOP_DNSC		(ROTTOP_OFF + 0x4C)
++#define ROTTOP_UBWC_DEC_VERSION	(ROTTOP_OFF + 0x58)
++#define ROTTOP_OP_MODE_SBUF_MASK (BIT(5) | BIT(4) | BIT(1) | BIT(0))
++#define ROT_DONE_MASK		0x1
++#define ROT_BUSY_BIT		BIT(0)
++#define ROT_ERROR_BIT		BIT(8)
++#define ROT_HW_VERSION_1_0	0x10000000
++
++#define SSPP_OFF		0x900
++#define ROT_SSPP_SRC_SIZE	(SSPP_OFF + 0x00)
++#define ROT_SSPP_SRC_IMG_SIZE	(SSPP_OFF + 0x04)
++#define ROT_SSPP_SRC_XY		(SSPP_OFF + 0x08)
++#define ROT_SSPP_OUT_SIZE	(SSPP_OFF + 0x0C)
++#define ROT_SSPP_OUT_XY		(SSPP_OFF + 0x10)
++#define ROT_SSPP_SRC0_ADDR	(SSPP_OFF + 0x14)
++#define ROT_SSPP_SRC1_ADDR	(SSPP_OFF + 0x18)
++#define ROT_SSPP_SRC2_ADDR	(SSPP_OFF + 0x1C)
++#define ROT_SSPP_SRC3_ADDR	(SSPP_OFF + 0x20)
++#define ROT_SSPP_SRC_YSTRIDE0	(SSPP_OFF + 0x24)
++#define ROT_SSPP_SRC_YSTRIDE1	(SSPP_OFF + 0x28)
++#define ROT_SSPP_SRC_FORMAT	(SSPP_OFF + 0x30)
++#define ROT_SSPP_SRC_UNPACK_PATTERN (SSPP_OFF + 0x34)
++#define ROT_SSPP_SRC_OP_MODE	(SSPP_OFF + 0x38)
++#define ROT_SSPP_UBWC_STATIC_CTRL (SSPP_OFF + 0x44)
++#define ROT_SSPP_FETCH_CONFIG	(SSPP_OFF + 0x48)
++#define ROT_SSPP_DANGER_LUT	(SSPP_OFF + 0x60)
++#define ROT_SSPP_SAFE_LUT	(SSPP_OFF + 0x64)
++#define ROT_SSPP_SRC_ADDR_SW_STATUS (SSPP_OFF + 0x70)
++#define ROT_SSPP_CREQ_LUT_0	(SSPP_OFF + 0x74)
++#define ROT_SSPP_CREQ_LUT_1	(SSPP_OFF + 0x78)
++#define ROT_SSPP_UBWC_ERROR_STATUS (SSPP_OFF + 0x138)
++#define ROT_SSPP_CDP_CNTL	(SSPP_OFF + 0x134)
++
++#define WB_OFF			0xB00
++#define ROT_WB_DST_FORMAT	(WB_OFF + 0x000)
++#define ROT_WB_DST_OP_MODE	(WB_OFF + 0x004)
++#define ROT_WB_DST_PACK_PATTERN	(WB_OFF + 0x008)
++#define ROT_WB_DST0_ADDR	(WB_OFF + 0x00C)
++#define ROT_WB_DST1_ADDR	(WB_OFF + 0x010)
++#define ROT_WB_DST2_ADDR	(WB_OFF + 0x014)
++#define ROT_WB_DST3_ADDR	(WB_OFF + 0x018)
++#define ROT_WB_DST_YSTRIDE0	(WB_OFF + 0x01C)
++#define ROT_WB_DST_YSTRIDE1	(WB_OFF + 0x020)
++#define ROT_WB_DST_WRITE_CONFIG	(WB_OFF + 0x048)
++#define ROT_WB_OUT_SIZE		(WB_OFF + 0x074)
++#define ROT_WB_DANGER_LUT	(WB_OFF + 0x084)
++#define ROT_WB_SAFE_LUT		(WB_OFF + 0x088)
++#define ROT_WB_CREQ_LUT_0	(WB_OFF + 0x098)
++#define ROT_WB_CREQ_LUT_1	(WB_OFF + 0x09C)
++#define ROT_WB_DST_ADDR_SW_STATUS (WB_OFF + 0x2B0)
++#define ROT_WB_CDP_CNTL		(WB_OFF + 0x2B4)
++#define ROT_WB_UBWC_ERROR_STATUS (WB_OFF + 0x2BC)
++#define ROT_WB_OUT_IMG_SIZE	(WB_OFF + 0x2C0)
++#define ROT_WB_OUT_XY		(WB_OFF + 0x2C4)
++
++#define SRC_FORMAT_ALPHA_EN	BIT(8)
++#define SRC_FORMAT_ROT90	BIT(11)
++#define SRC_FORMAT_DX		BIT(14)
++#define SRC_FORMAT_UNPACK_TIGHT	BIT(17)
++#define SRC_FORMAT_UNPACK_MSB	BIT(18)
++#define DST_FORMAT_PACK_DX	BIT(21)
++#define SRC_OP_BWC_DEC_EN	BIT(0)
++#define SRC_OP_FLIP_LR		BIT(13)
++#define SRC_OP_FLIP_UD		BIT(14)
++#define SRC_OP_PE_OVERRIDE	BIT(31)
++#define WB_OP_BWC_ENC_EN	BIT(0)
++
++#define WB_NO_PARTIAL_WRITES	BIT(10)
++#define PARTIAL_WRITE_ALIGN	0x1f
++
++#define CDP_CNTL_ENABLE		BIT(0)
++#define CDP_CNTL_UBWC_META	BIT(1)
++#define CDP_CNTL_TILE_AMORTIZE	BIT(2)
++#define CDP_CNTL_PRELOAD_64	BIT(3)
++
++#define FETCH_CFG		0x00087
++#define UBWC_CTRL_V3_PLUS	BIT(30)
++
++
++#define SID_ROT_RD		0x20
++#define SID_ROT_WR		0x24
++#define ROT_SID_ID		0x1c
++
++#define VBIF_XIN_SSPP		0
++#define VBIF_XIN_WB		1
++#define VBIF_WRITE_GATHER_EN	0x0AC
++#define VBIF_OUT_AXI_AMEMTYPE_CONF0 0x160
++#define VBIF_XIN_HALT_CTRL0	0x200
++#define VBIF_XIN_HALT_CTRL1	0x204
++#define VBIF_QOS_RP_REMAP_000	0x550
++#define VBIF_QOS_LVL_REMAP_000	0x590
++#define VBIF_QOS_LEVELS		8
++#define VBIF_QOS_PRIORITY	3
++#define VBIF_MEMTYPE		3
++
++#define SENTINEL		0xABABABAB
++
++#define ROT_ICC_IDLE_MS		100
++
++#define ROT_QOS_LATENCY_US	100
++
++#define ROT_ICC_PEAK_BW		MBps_to_icc(6400)
++
++static const struct of_device_id dpu_hw_rotator_of_match[] = {
++	{ .compatible = "qcom,sm6115-sde-rotator" },
++	{ .compatible = "qcom,sm8250-sde-rotator" },
++	{ }
++};
++
++static inline void rwr(struct dpu_hw_rotator *r, u32 off, u32 v)
++{
++	writel_relaxed(v, r->base + off);
++}
++
++static inline u32 rrd(struct dpu_hw_rotator *r, u32 off)
++{
++	return readl_relaxed(r->base + off);
++}
++
++static void rot_sid_setup(struct dpu_hw_rotator *rot)
++{
++	if (!rot->sid)
++		return;
++	writel_relaxed(ROT_SID_ID, rot->sid + SID_ROT_RD);
++	writel_relaxed(ROT_SID_ID, rot->sid + SID_ROT_WR);
++}
++
++
++static void rot_vbif_setup(struct dpu_hw_rotator *rot)
++{
++	u32 qos = (VBIF_QOS_PRIORITY << (VBIF_XIN_SSPP * 4)) |
++		  (VBIF_QOS_PRIORITY << (VBIF_XIN_WB * 4));
++	u32 i;
++
++	if (!rot->vbif)
++		return;
++
++	for (i = 0; i < VBIF_QOS_LEVELS; i++) {
++		writel_relaxed(qos, rot->vbif + VBIF_QOS_RP_REMAP_000 + i * 8);
++		writel_relaxed(qos, rot->vbif + VBIF_QOS_LVL_REMAP_000 + i * 8);
++	}
++	writel_relaxed((VBIF_MEMTYPE << (VBIF_XIN_SSPP * 4)) |
++		       (VBIF_MEMTYPE << (VBIF_XIN_WB * 4)),
++		       rot->vbif + VBIF_OUT_AXI_AMEMTYPE_CONF0);
++
++	writel_relaxed(BIT(VBIF_XIN_WB), rot->vbif + VBIF_WRITE_GATHER_EN);
++}
++
++static void rot_vbif_halt_xin(struct dpu_hw_rotator *rot, u32 xin)
++{
++	u32 v;
++
++	if (!rot->vbif)
++		return;
++
++	v = readl_relaxed(rot->vbif + VBIF_XIN_HALT_CTRL0);
++	writel_relaxed(v | BIT(xin), rot->vbif + VBIF_XIN_HALT_CTRL0);
++	readl_relaxed_poll_timeout(rot->vbif + VBIF_XIN_HALT_CTRL1, v,
++				   v & BIT(xin), 100, 5000);
++	v = readl_relaxed(rot->vbif + VBIF_XIN_HALT_CTRL0);
++	writel_relaxed(v & ~BIT(xin), rot->vbif + VBIF_XIN_HALT_CTRL0);
++}
++
++static bool rot_irq_ok(struct dpu_hw_rotator *rot)
++{
++	return rot->irq > 0 && !rot->irq_dead;
++}
++
++static irqreturn_t rot_isr(int irq, void *data)
++{
++	struct dpu_hw_rotator *rot = data;
++
++	if (!rot->job_pending)
++		return IRQ_NONE;
++	if (!(rrd(rot, ROTTOP_INTR_STATUS) & ROT_DONE_MASK))
++		return IRQ_NONE;
++
++	rwr(rot, ROTTOP_INTR_EN, 0);
++	rwr(rot, ROTTOP_INTR_CLEAR, ROT_DONE_MASK);
++	rot->job_pending = false;
++	complete(&rot->job_done);
++	return IRQ_HANDLED;
++}
++
++
++static void rot_reset(struct dpu_hw_rotator *rot)
++{
++	u32 op_mode;
++
++	rwr(rot, ROTTOP_SW_RESET_OVERRIDE, 1);
++	wmb();
++	usleep_range(10000, 20000);
++	op_mode = rrd(rot, ROTTOP_OP_MODE);
++	rwr(rot, ROTTOP_OP_MODE, op_mode & ~ROTTOP_OP_MODE_SBUF_MASK);
++	rwr(rot, ROTTOP_SW_RESET_OVERRIDE, 0);
++	rot_vbif_halt_xin(rot, VBIF_XIN_SSPP);
++	rot_vbif_halt_xin(rot, VBIF_XIN_WB);
++	rwr(rot, ROTTOP_INTR_EN, 0);
++	rwr(rot, ROTTOP_INTR_CLEAR, ROT_DONE_MASK);
++}
++
++bool dpu_hw_rotator_accepts(struct dpu_hw_rotator *rot,
++			    const struct msm_format *fmt)
++{
++	if (IS_ERR_OR_NULL(rot) || fmt->bpp != 4 || MSM_FORMAT_IS_YUV(fmt))
++		return false;
++	if (MSM_FORMAT_IS_LINEAR(fmt))
++		return true;
++	return MSM_FORMAT_IS_UBWC(fmt) && rot->has_ubwc;
++}
++
++int dpu_hw_rotator_dst_layout(const struct msm_format *fmt, u32 width,
++			      u32 height, u32 iova,
++			      struct dpu_hw_fmt_layout *layout)
++{
++	int ret;
++
++	if (MSM_FORMAT_IS_UBWC(fmt)) {
++		ret = dpu_format_get_plane_sizes_ubwc(fmt, width, height,
++						      layout);
++		if (ret)
++			return ret;
++		layout->plane_addr[0] = iova + layout->plane_size[2];
++		layout->plane_addr[2] = iova;
++		return 0;
++	}
++
++	memset(layout, 0, sizeof(*layout));
++	layout->num_planes = 1;
++	layout->width = width;
++	layout->height = height;
++	layout->plane_pitch[0] = width * fmt->bpp;
++	layout->plane_size[0] = layout->plane_pitch[0] * height;
++	layout->plane_addr[0] = iova;
++	layout->total_size = layout->plane_size[0];
++	return 0;
++}
++
++static u32 rot_ubwc_static_ctrl(const struct qcom_ubwc_cfg_data *cfg, u32 hbb)
++{
++	if (cfg->ubwc_enc_version >= UBWC_4_0)
++		return UBWC_CTRL_V3_PLUS;
++	if (cfg->ubwc_enc_version >= UBWC_3_0)
++		return UBWC_CTRL_V3_PLUS | qcom_ubwc_swizzle(cfg) | (hbb << 4);
++	return (qcom_ubwc_swizzle(cfg) & 1) | (hbb << 4);
++}
++
++
++static unsigned int dpu_rot_clk_mhz;
++module_param(dpu_rot_clk_mhz, uint, 0644);
++MODULE_PARM_DESC(dpu_rot_clk_mhz,
++		 "rotator clock in MHz (0: follow the DPU core clock)");
++
++static void rot_clk_set_rate(struct dpu_hw_rotator *rot)
++{
++	unsigned long rate;
++
++	if (dpu_rot_clk_mhz)
++		rate = dpu_rot_clk_mhz * 1000000UL;
++	else if (rot->core_clk)
++		rate = clk_get_rate(rot->core_clk);
++	else
++		return;
++
++	clk_set_rate(rot->rot_clk, clk_round_rate(rot->rot_clk, rate));
++}
++
++static void rot_bw_idle(struct work_struct *work)
++{
++	struct dpu_hw_rotator *rot = container_of(to_delayed_work(work),
++						  struct dpu_hw_rotator, bw_idle);
++
++	mutex_lock(&rot->bw_lock);
++	if (rot->bw_on) {
++		icc_set_bw(rot->mem_path, 0, 0);
++		rot->bw_on = false;
++	}
++	mutex_unlock(&rot->bw_lock);
++}
++
++static void rot_bw_kick(struct dpu_hw_rotator *rot)
++{
++	if (!rot->mem_path)
++		return;
++
++	mutex_lock(&rot->bw_lock);
++	if (!rot->bw_on) {
++		icc_set_bw(rot->mem_path, 0, ROT_ICC_PEAK_BW);
++		rot->bw_on = true;
++	}
++	mutex_unlock(&rot->bw_lock);
++	mod_delayed_work(system_wq, &rot->bw_idle,
++			 msecs_to_jiffies(ROT_ICC_IDLE_MS));
++}
++
++
++void dpu_hw_rotator_resume(struct dpu_hw_rotator *rot)
++{
++	if (IS_ERR_OR_NULL(rot))
++		return;
++	rot_clk_set_rate(rot);
++	if (clk_prepare_enable(rot->rot_clk))
++		return;
++	rot_sid_setup(rot);
++	rot_vbif_setup(rot);
++}
++
++void dpu_hw_rotator_suspend(struct dpu_hw_rotator *rot)
++{
++	if (IS_ERR_OR_NULL(rot))
++		return;
++	cancel_delayed_work_sync(&rot->bw_idle);
++	rot_bw_idle(&rot->bw_idle.work);
++	clk_disable_unprepare(rot->rot_clk);
++}
++
++int dpu_hw_rotator_rotate(struct dpu_hw_rotator *rot,
++			  const struct msm_format *fmt,
++			  const struct dpu_hw_fmt_layout *src,
++			  const struct dpu_hw_fmt_layout *dst,
++			  u32 rotation)
++{
++	bool rot90 = rotation & (DRM_MODE_ROTATE_90 | DRM_MODE_ROTATE_270);
++	bool ubwc = MSM_FORMAT_IS_UBWC(fmt);
++	u32 w = src->width, h = src->height;
++	u32 dw = dst->width, dh = dst->height;
++	u32 op_mode = SRC_OP_PE_OVERRIDE;
++	u32 fetch_cfg = FETCH_CFG;
++	u32 src_format, dst_format, unpack, ubwc_ctrl = 0, write_cfg = 0;
++	u32 cdp = CDP_CNTL_ENABLE | CDP_CNTL_PRELOAD_64;
++	u32 status, intr;
++	ktime_t t0;
++	int ret;
++
++	if (rot->has_ubwc) {
++		fetch_cfg |= rot->hbb << 18;
++		ubwc_ctrl = rot_ubwc_static_ctrl(rot->dpu_kms->mdss, rot->hbb);
++		write_cfg = rot->hbb << 8;
++	}
++	if (ubwc) {
++		op_mode |= SRC_OP_BWC_DEC_EN;
++		cdp |= CDP_CNTL_UBWC_META | CDP_CNTL_TILE_AMORTIZE;
++	} else {
++		unsigned int i;
++
++
++		write_cfg |= WB_NO_PARTIAL_WRITES;
++		for (i = 0; i < ARRAY_SIZE(dst->plane_pitch); i++)
++			if (dst->plane_pitch[i] & PARTIAL_WRITE_ALIGN)
++				write_cfg &= ~WB_NO_PARTIAL_WRITES;
++	}
++
++	src_format = (fmt->chroma_sample << 23) | (fmt->fetch_type << 19) |
++		     (fmt->bpc_a << 6) | (fmt->bpc_r_cr << 4) |
++		     (fmt->bpc_b_cb << 2) | (fmt->bpc_g_y << 0);
++	if (rot90)
++		src_format |= SRC_FORMAT_ROT90;
++	if (fmt->alpha_enable && fmt->fetch_type == MDP_PLANE_INTERLEAVED)
++		src_format |= SRC_FORMAT_ALPHA_EN;
++	if (MSM_FORMAT_IS_DX(fmt))
++		src_format |= SRC_FORMAT_DX;
++	src_format |= ((fmt->unpack_count - 1) << 12) |
++		      ((fmt->flags & MSM_FORMAT_FLAG_UNPACK_TIGHT ? 1 : 0) << 17) |
++		      ((fmt->flags & MSM_FORMAT_FLAG_UNPACK_ALIGN_MSB ? 1 : 0) << 18) |
++		      ((fmt->bpp - 1) << 9) |
++		      ((fmt->fetch_mode & 3) << 30);
++	unpack = (fmt->element[3] << 24) | (fmt->element[2] << 16) |
++		 (fmt->element[1] << 8) | (fmt->element[0] << 0);
++
++	dst_format = src_format & ~(SRC_FORMAT_ROT90 | SRC_FORMAT_DX |
++				    SRC_FORMAT_UNPACK_TIGHT | SRC_FORMAT_UNPACK_MSB);
++	dst_format |= SRC_FORMAT_ALPHA_EN;
++	if (MSM_FORMAT_IS_DX(fmt))
++		dst_format |= DST_FORMAT_PACK_DX;
++
++
++	if (rotation & (DRM_MODE_ROTATE_90 | DRM_MODE_ROTATE_180))
++		op_mode ^= (SRC_OP_FLIP_LR | SRC_OP_FLIP_UD);
++
++	rot_bw_kick(rot);
++	rot_clk_set_rate(rot);
++	rot_sid_setup(rot);
++	rot_vbif_setup(rot);
++
++
++	rwr(rot, ROTTOP_START_CTRL, 0);
++
++	rwr(rot, ROT_SSPP_SRC_SIZE, (h << 16) | w);
++	rwr(rot, ROT_SSPP_SRC_IMG_SIZE, (h << 16) | w);
++	rwr(rot, ROT_SSPP_SRC_XY, 0);
++	rwr(rot, ROT_SSPP_OUT_SIZE, (h << 16) | w);
++	rwr(rot, ROT_SSPP_OUT_XY, 0);
++	rwr(rot, ROT_SSPP_SRC0_ADDR, src->plane_addr[0]);
++	rwr(rot, ROT_SSPP_SRC1_ADDR, src->plane_addr[1]);
++	rwr(rot, ROT_SSPP_SRC2_ADDR, src->plane_addr[2]);
++	rwr(rot, ROT_SSPP_SRC3_ADDR, src->plane_addr[3]);
++	rwr(rot, ROT_SSPP_SRC_YSTRIDE0,
++	    src->plane_pitch[0] | (src->plane_pitch[1] << 16));
++	rwr(rot, ROT_SSPP_SRC_YSTRIDE1,
++	    src->plane_pitch[2] | (src->plane_pitch[3] << 16));
++	rwr(rot, ROT_SSPP_SRC_FORMAT, src_format);
++	rwr(rot, ROT_SSPP_SRC_UNPACK_PATTERN, unpack);
++	rwr(rot, ROT_SSPP_SRC_OP_MODE, op_mode);
++	rwr(rot, ROT_SSPP_FETCH_CONFIG, fetch_cfg);
++	rwr(rot, ROT_SSPP_UBWC_STATIC_CTRL, ubwc_ctrl);
++	rwr(rot, ROT_SSPP_SRC_ADDR_SW_STATUS, 0);
++	rwr(rot, ROT_SSPP_CREQ_LUT_0, 0);
++	rwr(rot, ROT_SSPP_CREQ_LUT_1, 0);
++	rwr(rot, ROT_SSPP_DANGER_LUT, 0);
++	rwr(rot, ROT_SSPP_SAFE_LUT, 0xffff);
++	rwr(rot, ROT_SSPP_CDP_CNTL, cdp);
++
++	rwr(rot, ROT_WB_DST_FORMAT, dst_format);
++	rwr(rot, ROT_WB_DST_OP_MODE, ubwc ? WB_OP_BWC_ENC_EN : 0);
++	rwr(rot, ROT_WB_DST_PACK_PATTERN, unpack);
++	rwr(rot, ROT_WB_DST0_ADDR, dst->plane_addr[0]);
++	rwr(rot, ROT_WB_DST1_ADDR, dst->plane_addr[1]);
++	rwr(rot, ROT_WB_DST2_ADDR, dst->plane_addr[2]);
++	rwr(rot, ROT_WB_DST3_ADDR, dst->plane_addr[3]);
++	rwr(rot, ROT_WB_DST_YSTRIDE0,
++	    dst->plane_pitch[0] | (dst->plane_pitch[1] << 16));
++	rwr(rot, ROT_WB_DST_YSTRIDE1,
++	    dst->plane_pitch[2] | (dst->plane_pitch[3] << 16));
++	rwr(rot, ROT_WB_OUT_SIZE, (dh << 16) | dw);
++	rwr(rot, ROT_WB_OUT_IMG_SIZE, (dh << 16) | dw);
++	rwr(rot, ROT_WB_OUT_XY, 0);
++	rwr(rot, ROT_WB_DST_WRITE_CONFIG, write_cfg);
++	rwr(rot, ROT_WB_DST_ADDR_SW_STATUS, 0);
++	rwr(rot, ROT_WB_CREQ_LUT_0, 0);
++	rwr(rot, ROT_WB_CREQ_LUT_1, 0);
++	rwr(rot, ROT_WB_DANGER_LUT, 0);
++	rwr(rot, ROT_WB_SAFE_LUT, 0xffff);
++	rwr(rot, ROT_WB_CDP_CNTL, cdp);
++
++	rwr(rot, ROTTOP_DNSC, 0);
++	rwr(rot, ROTTOP_OP_MODE,
++	    ROTTOP_OP_MODE_START | (rot90 ? ROTTOP_OP_MODE_ROT90 : 0));
++	rwr(rot, ROTTOP_INTR_CLEAR, ROT_DONE_MASK);
++	if (rot_irq_ok(rot)) {
++		reinit_completion(&rot->job_done);
++		rot->job_pending = true;
++		cpu_latency_qos_add_request(&rot->qos, ROT_QOS_LATENCY_US);
++		rwr(rot, ROTTOP_INTR_EN, ROT_DONE_MASK);
++	} else {
++		rwr(rot, ROTTOP_INTR_EN, 0);
++	}
++	wmb();
++	t0 = ktime_get();
++	rwr(rot, ROTTOP_START_CTRL, 1);
++
++
++	if (rot_irq_ok(rot)) {
++		ret = wait_for_completion_timeout(&rot->job_done,
++						  msecs_to_jiffies(300))
++		      ? 0 : -ETIMEDOUT;
++		cpu_latency_qos_remove_request(&rot->qos);
++		intr = ret ? rrd(rot, ROTTOP_INTR_STATUS) : ROT_DONE_MASK;
++		if (ret) {
++
++			rwr(rot, ROTTOP_INTR_EN, 0);
++			rot->job_pending = false;
++
++			if (intr & ROT_DONE_MASK) {
++				rot->irq_dead = true;
++				DRM_WARN("dpu rotator: irq never fired, polling instead\n");
++				ret = 0;
++			}
++		}
++	} else {
++		ret = readl_relaxed_poll_timeout(rot->base + ROTTOP_INTR_STATUS,
++						 intr, intr & ROT_DONE_MASK,
++						 100, 300000);
++	}
++	status = rrd(rot, ROTTOP_STATUS);
++	rot->last_us = ktime_us_delta(ktime_get(), t0);
++	rot->last_status = status;
++	rot->last_intr = intr;
++	pr_debug("dpu_hw_rotator: %ux%u->%ux%u%s rotate %u us status %#x\n",
++		 w, h, dw, dh, ubwc ? " ubwc" : "", rot->last_us, status);
++	if (ret || (status & (ROT_ERROR_BIT | ROT_BUSY_BIT))) {
++		pr_err("dpu_hw_rotator: %s (status %#x intr %#x)\n",
++		       ret ? "timeout" : "error", status, intr);
++		rot_reset(rot);
++		ret = ret ? ret : -EIO;
++	}
++	rwr(rot, ROTTOP_INTR_CLEAR, ROT_DONE_MASK);
++	return ret;
++}
++
++struct dpu_rot_job {
++	struct work_struct work;
++	struct dpu_hw_rotator *rot;
++	struct drm_framebuffer *fb;
++	const struct msm_format *fmt;
++	struct dpu_hw_fmt_layout src;
++	struct dpu_hw_fmt_layout dst;
++	u32 rotation;
++	struct dma_fence *in_fence;
++	struct dma_fence_cb cb;
++	struct dma_fence fence;
++	spinlock_t lock;
++	struct rcu_head rcu;
++};
++
++static const char *rot_fence_get_driver_name(struct dma_fence *f)
++{
++	return "dpu_rotator";
++}
++
++static const char *rot_fence_get_timeline_name(struct dma_fence *f)
++{
++	return "rot";
++}
++
++static void rot_fence_release(struct dma_fence *f)
++{
++	struct dpu_rot_job *job = container_of(f, struct dpu_rot_job, fence);
++
++	kfree_rcu(job, rcu);
++}
++
++static const struct dma_fence_ops rot_fence_ops = {
++	.get_driver_name = rot_fence_get_driver_name,
++	.get_timeline_name = rot_fence_get_timeline_name,
++	.release = rot_fence_release,
++};
++
++static void rot_job_work(struct work_struct *work)
++{
++	struct dpu_rot_job *job = container_of(work, struct dpu_rot_job, work);
++	struct device *dev = &job->rot->dpu_kms->pdev->dev;
++
++	pm_runtime_get_sync(dev);
++	dpu_hw_rotator_rotate(job->rot, job->fmt, &job->src, &job->dst,
++			      job->rotation);
++	pm_runtime_put_sync(dev);
++	dma_fence_signal(&job->fence);
++	dma_fence_put(job->in_fence);
++	msm_framebuffer_cleanup(job->fb, false);
++	drm_framebuffer_put(job->fb);
++	dma_fence_put(&job->fence);
++}
++
++static void rot_job_in_fence_cb(struct dma_fence *f, struct dma_fence_cb *cb)
++{
++	struct dpu_rot_job *job = container_of(cb, struct dpu_rot_job, cb);
++
++	queue_work(job->rot->wq, &job->work);
++}
++
++struct dma_fence *dpu_hw_rotator_queue(struct dpu_hw_rotator *rot,
++				       struct drm_framebuffer *fb,
++				       struct dma_fence *in_fence,
++				       const struct dpu_hw_fmt_layout *dst,
++				       u32 rotation)
++{
++	struct dpu_rot_job *job;
++
++	if (!rot->wq)
++		return NULL;
++
++	job = kzalloc(sizeof(*job), GFP_KERNEL);
++	if (!job)
++		return NULL;
++
++	if (msm_framebuffer_prepare(fb, false)) {
++		kfree(job);
++		return NULL;
++	}
++	if (dpu_format_populate_plane_sizes(fb, &job->src)) {
++		msm_framebuffer_cleanup(fb, false);
++		kfree(job);
++		return NULL;
++	}
++	dpu_format_populate_addrs(fb, &job->src);
++	drm_framebuffer_get(fb);
++
++	job->rot = rot;
++	job->fb = fb;
++	job->fmt = msm_framebuffer_format(fb);
++	job->dst = *dst;
++	job->rotation = rotation;
++	job->in_fence = in_fence;
++	spin_lock_init(&job->lock);
++	INIT_WORK(&job->work, rot_job_work);
++	dma_fence_init(&job->fence, &rot_fence_ops, &job->lock,
++		       rot->fence_context,
++		       atomic64_inc_return(&rot->fence_seqno));
++	dma_fence_get(&job->fence);
++
++	if (!in_fence || dma_fence_add_callback(in_fence, &job->cb,
++						rot_job_in_fence_cb))
++		queue_work(rot->wq, &job->work);
++
++	return &job->fence;
++}
++
++static const u32 QA = 0xFFFF0000, QB = 0xFF00FF00, QC = 0xFF0000FF, QD = 0xFFFFFFFF;
++
++static const char *qname(u32 v)
++{
++	return v == QA ? "R" : v == QB ? "G" : v == QC ? "B" : v == QD ? "W" : "?";
++}
++
++static int rot_one_test(struct seq_file *s, struct dpu_hw_rotator *rot,
++			u32 w, u32 h, u32 rotation)
++{
++	struct dpu_kms *dpu_kms = rot->dpu_kms;
++	struct drm_device *dev = dpu_kms->dev;
++	struct drm_gem_object *src_bo, *dst_bo;
++	u64 src_iova, dst_iova;
++	u32 *src, *dst;
++	u32 x, y, nz = 0;
++	int ret = -ENOMEM;
++	bool rot90 = rotation & (DRM_MODE_ROTATE_90 | DRM_MODE_ROTATE_270);
++	u32 dw = rot90 ? h : w, dh = rot90 ? w : h;
++	char line[256];
++	struct msm_drm_private *priv = dev->dev_private;
++	const struct msm_format *fmt = mdp_get_format(priv->kms,
++				DRM_FORMAT_ARGB8888, DRM_FORMAT_MOD_LINEAR);
++	struct dpu_hw_fmt_layout src_layout, dst_layout;
++
++	if (!fmt)
++		return -EINVAL;
++
++	src_bo = msm_gem_new(dev, w * h * 4, MSM_BO_WC);
++	if (IS_ERR(src_bo))
++		return PTR_ERR(src_bo);
++	dst_bo = msm_gem_new(dev, dw * dh * 4, MSM_BO_WC);
++	if (IS_ERR(dst_bo))
++		goto put_src;
++	if (msm_gem_get_and_pin_iova(src_bo, dpu_kms->base.vm, &src_iova))
++		goto put_dst;
++	if (msm_gem_get_and_pin_iova(dst_bo, dpu_kms->base.vm, &dst_iova))
++		goto unpin_src;
++
++	src = msm_gem_get_vaddr(src_bo);
++	dst = msm_gem_get_vaddr(dst_bo);
++	if (IS_ERR(src) || IS_ERR(dst))
++		goto unpin_dst;
++
++	for (y = 0; y < h; y++)
++		for (x = 0; x < w; x++)
++			src[y * w + x] = (x < w / 2) ?
++				(y < h / 2 ? QA : QC) : (y < h / 2 ? QB : QD);
++	for (x = 0; x < dw * dh; x++)
++		dst[x] = SENTINEL;
++	wmb();
++
++	dpu_hw_rotator_dst_layout(fmt, w, h, (u32)src_iova, &src_layout);
++	dpu_hw_rotator_dst_layout(fmt, dw, dh, (u32)dst_iova, &dst_layout);
++	ret = dpu_hw_rotator_rotate(rot, fmt, &src_layout, &dst_layout,
++				    rotation);
++	for (x = 0; x < dw * dh; x++)
++		nz += dst[x] != SENTINEL;
++
++	scnprintf(line, sizeof(line),
++		  "rot %#x %ux%u->%ux%u src %#x dst %#x: ret=%d %u us status %#x intr %#x changed %u/%u [%#x %#x %#x %#x] TL=%s TR=%s BL=%s BR=%s",
++		  rotation, w, h, dw, dh, (u32)src_iova, (u32)dst_iova, ret,
++		  rot->last_us, rot->last_status, rot->last_intr, nz, dw * dh,
++		  dst[0], dst[1], dst[dw], dst[dw + 1],
++		  qname(dst[(dh / 4) * dw + dw / 4]),
++		  qname(dst[(dh / 4) * dw + 3 * dw / 4]),
++		  qname(dst[(3 * dh / 4) * dw + dw / 4]),
++		  qname(dst[(3 * dh / 4) * dw + 3 * dw / 4]));
++	seq_printf(s, "%s\n", line);
++	if (!ret && !nz)
++		ret = -ENODATA;
++
++	msm_gem_put_vaddr(dst_bo);
++	msm_gem_put_vaddr(src_bo);
++unpin_dst:
++	msm_gem_unpin_iova(dst_bo, dpu_kms->base.vm);
++unpin_src:
++	msm_gem_unpin_iova(src_bo, dpu_kms->base.vm);
++put_dst:
++	drm_gem_object_put(dst_bo);
++put_src:
++	drm_gem_object_put(src_bo);
++	return ret;
++}
++
++static int rot_test_show(struct seq_file *s, void *unused)
++{
++	struct dpu_hw_rotator *rot = s->private;
++	struct device *dev = &rot->dpu_kms->pdev->dev;
++	int ret;
++
++	seq_printf(s, "hw %#x ubwc %d hbb %u vbif %d sid %d\n", rot->hw_version,
++		   rot->has_ubwc, rot->hbb, !!rot->vbif, !!rot->sid);
++	seq_puts(s, "src TL=R TR=G BL=B BR=W; on-panel-correct 90 -> TL=G TR=W BL=R BR=B\n");
++	pm_runtime_get_sync(dev);
++	ret = rot_one_test(s, rot, 128, 64, DRM_MODE_ROTATE_270);
++	if (!ret) {
++		rot_one_test(s, rot, 1920, 1080, DRM_MODE_ROTATE_270);
++		rot_one_test(s, rot, 1920, 1080, DRM_MODE_ROTATE_90);
++	}
++	pm_runtime_put_sync(dev);
++	return 0;
++}
++DEFINE_SHOW_ATTRIBUTE(rot_test);
++
++
++struct dpu_hw_rotator *dpu_hw_rotator_init(struct drm_device *dev,
++					   struct dpu_kms *dpu_kms)
++{
++	struct dpu_hw_rotator *rot;
++	struct device_node *np;
++	struct platform_device *pdev;
++	struct resource res;
++	int ret;
++
++	np = of_find_matching_node(NULL, dpu_hw_rotator_of_match);
++	if (!np)
++		return NULL;
++	if (!of_device_is_available(np)) {
++		of_node_put(np);
++		return NULL;
++	}
++
++	rot = devm_kzalloc(dev->dev, sizeof(*rot), GFP_KERNEL);
++	if (!rot) {
++		ret = -ENOMEM;
++		goto put_node;
++	}
++	rot->dpu_kms = dpu_kms;
++
++	ret = of_address_to_resource(np, 0, &res);
++	if (ret)
++		goto put_node;
++	rot->base = devm_ioremap(dev->dev, res.start, resource_size(&res));
++	if (!rot->base) {
++		ret = -ENOMEM;
++		goto put_node;
++	}
++	if (!of_address_to_resource(np, 1, &res))
++		rot->vbif = devm_ioremap(dev->dev, res.start,
++					 resource_size(&res));
++	if (!of_address_to_resource(np, 2, &res))
++		rot->sid = devm_ioremap(dev->dev, res.start,
++					resource_size(&res));
++
++	rot->rot_clk = of_clk_get_by_name(np, "rot");
++	if (IS_ERR(rot->rot_clk)) {
++		ret = PTR_ERR(rot->rot_clk);
++		goto put_node;
++	}
++	rot->core_clk = msm_clk_bulk_get_clock(dpu_kms->clocks,
++					       dpu_kms->num_clocks, "core");
++
++	pdev = of_find_device_by_node(np);
++	if (pdev) {
++		rot->mem_path = of_icc_get(&pdev->dev, "mem");
++		put_device(&pdev->dev);
++		if (IS_ERR(rot->mem_path)) {
++			DRM_DEV_INFO(dev->dev, "dpu rotator: no bandwidth path (%ld)\n",
++				     PTR_ERR(rot->mem_path));
++			rot->mem_path = NULL;
++		}
++	}
++	mutex_init(&rot->bw_lock);
++	INIT_DELAYED_WORK(&rot->bw_idle, rot_bw_idle);
++
++
++	rot_clk_set_rate(rot);
++	ret = clk_prepare_enable(rot->rot_clk);
++	if (ret)
++		goto put_node;
++	rot->hw_version = rrd(rot, ROTTOP_HW_VERSION);
++	rot->has_ubwc = rrd(rot, ROTTOP_UBWC_DEC_VERSION) != 0;
++	rot->hbb = dpu_kms->mdss->highest_bank_bit - 13;
++	rot_reset(rot);
++	rot_sid_setup(rot);
++	rot_vbif_setup(rot);
++
++	init_completion(&rot->job_done);
++	rot->irq = of_irq_get(np, 0);
++	if (rot->irq > 0 &&
++	    devm_request_irq(dev->dev, rot->irq, rot_isr, IRQF_SHARED,
++			     "dpu-rotator", rot))
++		rot->irq = 0;
++
++	rot->wq = alloc_ordered_workqueue("dpu_rotator", WQ_HIGHPRI);
++	rot->fence_context = dma_fence_context_alloc(1);
++
++	DRM_DEV_INFO(dev->dev, "dpu rotator %#x ubwc %d vbif %d sid %d\n",
++		     rot->hw_version, rot->has_ubwc, !!rot->vbif, !!rot->sid);
++	of_node_put(np);
++	return rot;
++
++put_node:
++	of_node_put(np);
++	return ERR_PTR(ret);
++}
++
++void dpu_hw_rotator_debugfs_init(struct dpu_hw_rotator *rot,
++				 struct dentry *parent)
++{
++	if (!IS_ERR_OR_NULL(rot)) {
++		debugfs_create_file("rotator_test", 0400, parent, rot,
++				    &rot_test_fops);
++	}
++}
++
++static int dpu_hw_rotator_probe(struct platform_device *pdev)
++{
++
++	return devm_pm_runtime_enable(&pdev->dev);
++}
++
++static const struct of_device_id dpu_hw_rotator_stub_match[] = {
++	{ .compatible = "qcom,sm8250-sde-rotator" },
++	{ }
++};
++
++struct platform_driver dpu_hw_rotator_driver = {
++	.probe = dpu_hw_rotator_probe,
++	.driver = {
++		.name = "dpu_sde_rotator",
++		.of_match_table = dpu_hw_rotator_stub_match,
++		.suppress_bind_attrs = true,
++	},
++};
+--- /dev/null
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_rotator.h
+@@ -0,0 +1,81 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef _DPU_HW_ROTATOR_H
++#define _DPU_HW_ROTATOR_H
++
++#include <linux/atomic.h>
++#include <linux/completion.h>
++#include <linux/mutex.h>
++#include <linux/workqueue.h>
++#include <linux/io.h>
++
++struct clk;
++struct dentry;
++struct dpu_hw_fmt_layout;
++struct dpu_kms;
++struct drm_device;
++struct drm_framebuffer;
++struct dma_fence;
++struct icc_path;
++struct msm_format;
++struct platform_driver;
++struct workqueue_struct;
++
++struct dpu_hw_rotator {
++	void __iomem *base;
++	void __iomem *vbif;
++	void __iomem *sid;
++	struct dpu_kms *dpu_kms;
++	struct clk *rot_clk;
++	struct clk *core_clk;
++	struct icc_path *mem_path;
++
++	struct mutex bw_lock;
++	struct delayed_work bw_idle;
++	bool bw_on;
++	struct workqueue_struct *wq;
++	u64 fence_context;
++	atomic64_t fence_seqno;
++	u32 hw_version;
++	u32 hbb;
++	bool has_ubwc;
++	u32 last_us, last_status, last_intr;
++
++
++	int irq;
++	bool irq_dead;
++	bool job_pending;
++	struct completion job_done;
++	struct pm_qos_request qos;
++};
++
++bool dpu_hw_rotator_accepts(struct dpu_hw_rotator *rot,
++			    const struct msm_format *fmt);
++
++int dpu_hw_rotator_dst_layout(const struct msm_format *fmt, u32 width,
++			      u32 height, u32 iova,
++			      struct dpu_hw_fmt_layout *layout);
++
++int dpu_hw_rotator_rotate(struct dpu_hw_rotator *rot,
++			  const struct msm_format *fmt,
++			  const struct dpu_hw_fmt_layout *src,
++			  const struct dpu_hw_fmt_layout *dst,
++			  u32 rotation);
++
++struct dma_fence *dpu_hw_rotator_queue(struct dpu_hw_rotator *rot,
++				       struct drm_framebuffer *fb,
++				       struct dma_fence *in_fence,
++				       const struct dpu_hw_fmt_layout *dst,
++				       u32 rotation);
++
++struct dpu_hw_rotator *dpu_hw_rotator_init(struct drm_device *dev,
++					   struct dpu_kms *dpu_kms);
++
++void dpu_hw_rotator_resume(struct dpu_hw_rotator *rot);
++void dpu_hw_rotator_suspend(struct dpu_hw_rotator *rot);
++
++void dpu_hw_rotator_debugfs_init(struct dpu_hw_rotator *rot,
++				 struct dentry *parent);
++
++extern struct platform_driver dpu_hw_rotator_driver;
++
++#endif
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
+@@ -32,6 +32,7 @@
+ #include "dpu_encoder.h"
+ #include "dpu_formats.h"
+ #include "dpu_hw_vbif.h"
++#include "dpu_hw_rotator.h"
+ #include "dpu_kms.h"
+ #include "dpu_plane.h"
+ #include "dpu_vbif.h"
+@@ -309,6 +310,7 @@ static int dpu_kms_debugfs_init(struct msm_kms *kms, struct drm_minor *minor)
+ 	dpu_debugfs_vbif_init(dpu_kms, entry);
+ 	dpu_debugfs_core_irq_init(dpu_kms, entry);
+ 	dpu_debugfs_sspp_init(dpu_kms, entry);
++	dpu_hw_rotator_debugfs_init(dpu_kms->rotator, entry);
+ 
+ 	return dpu_core_perf_debugfs_init(dpu_kms, entry);
+ }
+@@ -1226,6 +1228,12 @@ static int dpu_kms_hw_init(struct msm_kms *kms)
+ 
+ 	dpu_kms->hw_vbif = hw;
+ 
++	dpu_kms->rotator = dpu_hw_rotator_init(dev, dpu_kms);
++	if (IS_ERR(dpu_kms->rotator)) {
++		DPU_ERROR("rotator init failed %ld\n", PTR_ERR(dpu_kms->rotator));
++		dpu_kms->rotator = NULL;
++	}
++
+ 	/* TODO: use the same max_freq as in dpu_kms_hw_init */
+ 	max_core_clk_rate = dpu_kms_get_clk_rate(dpu_kms, "core");
+ 	if (!max_core_clk_rate) {
+@@ -1438,6 +1446,7 @@ static int __maybe_unused dpu_runtime_suspend(struct device *dev)
+ 	struct msm_drm_private *priv = platform_get_drvdata(pdev);
+ 	struct dpu_kms *dpu_kms = to_dpu_kms(priv->kms);
+ 
++	dpu_hw_rotator_suspend(dpu_kms->rotator);
+ 	clk_bulk_disable_unprepare(dpu_kms->num_clocks, dpu_kms->clocks);
+ 
+ 	for (i = 0; i < dpu_kms->num_paths; i++)
+@@ -1462,6 +1471,7 @@ static int __maybe_unused dpu_runtime_resume(struct device *dev)
+ 		DPU_ERROR("clock enable failed rc:%d\n", rc);
+ 		return rc;
+ 	}
++	dpu_hw_rotator_resume(dpu_kms->rotator);
+ 
+ 	dpu_vbif_init_memtypes(dpu_kms);
+ 
+@@ -1531,10 +1541,12 @@ static struct platform_driver dpu_driver = {
+ 
+ void __init msm_dpu_register(void)
+ {
++	platform_driver_register(&dpu_hw_rotator_driver);
+ 	platform_driver_register(&dpu_driver);
+ }
+ 
+ void __exit msm_dpu_unregister(void)
+ {
+ 	platform_driver_unregister(&dpu_driver);
++	platform_driver_unregister(&dpu_hw_rotator_driver);
+ }
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.h
+@@ -62,6 +62,8 @@ struct dpu_kms {
+ 	const struct dpu_mdss_cfg *catalog;
+ 	const struct qcom_ubwc_cfg_data *mdss;
+ 
++	struct dpu_hw_rotator *rotator;
++
+ 	/* io/register spaces: */
+ 	void __iomem *mmio, *vbif;
+ 

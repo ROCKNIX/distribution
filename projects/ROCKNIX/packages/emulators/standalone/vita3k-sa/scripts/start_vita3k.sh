@@ -73,6 +73,11 @@ else
   sed -i "/^resolution-multiplier:/c\resolution-multiplier: 1" /storage/.config/Vita3K/config.yml
 fi
 
+# Scan out render size
+SCANOUT_SCALE=$(scanout_internal_scale "$(awk '/^resolution-multiplier: / {print $2; exit}' /storage/.config/Vita3K/config.yml)" 544 0.5 8 0.25)
+sed -i "/^resolution-multiplier:/c\resolution-multiplier: ${SCANOUT_SCALE}" /storage/.config/Vita3K/config.yml
+scanout_render_size 544 "${SCANOUT_SCALE}" 960:544
+
 # PSTV Mode
 if [ "${PSTVMODE}" = "true" ]; then
   sed -i "/^pstv-mode:/c\pstv-mode: true" /storage/.config/Vita3K/config.yml
