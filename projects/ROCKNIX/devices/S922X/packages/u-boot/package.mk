@@ -3,11 +3,11 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="u-boot"
-PKG_VERSION="b91540f886e8655a1547532eb0077e83a7b431d7"
-PKG_SHA256="5cecb72e239217d2e523b5378f8d6d209851027e89eaf7b9e5e93ec09a8bbfa9"
+PKG_VERSION="c5e1c3944f908c71777d2fe69ff4ae3ac29c2d26"
+# PKG_SHA256="5cecb72e239217d2e523b5378f8d6d209851027e89eaf7b9e5e93ec09a8bbfa9"
 PKG_LICENSE="GPL"
 PKG_SITE="https://www.denx.de/wiki/U-Boot"
-PKG_URL="https://github.com/ROCKNIX/u-boot/archive/${PKG_VERSION}.tar.gz"
+PKG_URL="https://github.com/porschemad911/rocknix-u-boot/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain openssl:host pkg-config:host Python3:host swig:host pyelftools:host gcc-linaro-aarch64-elf:host gcc-linaro-arm-eabi:host"
 PKG_LONGDESC="Das U-Boot is a cross-platform bootloader for embedded systems."
 PKG_TOOLCHAIN="manual"
