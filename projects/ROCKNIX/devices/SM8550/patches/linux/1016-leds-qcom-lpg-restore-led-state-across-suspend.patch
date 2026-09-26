@@ -1,0 +1,101 @@
+From: Edouard Durand <edouard.durand@gmail.com>
+Subject: [PATCH] leds: qcom-lpg: keep LED state across suspend, off in noirq
+
+The LPG lives on the PMIC, so a lit LED stays lit for the whole sleep
+once the SoC is down. Turn every LED off in the suspend noirq phase,
+the last step before the platform enters sleep, and restore the
+programmed state in resume noirq, before any other device resumes. A
+sleep indication armed by userspace then survives the whole suspend
+entry, the LED is dark while sleeping, and the same indication is the
+first sign of life on wake, well before userspace thaws.
+
+The noirq phase is deliberate: the LED class helper suspends LEDs in
+the normal device phase, where the slower devices suspending after it
+would leave the LED dark seconds before the system actually sleeps.
+
+Signed-off-by: Edouard Durand <edouard.durand@gmail.com>
+---
+--- a/drivers/leds/rgb/leds-qcom-lpg.c	2026-08-25 21:19:43.621064255 +0800
++++ b/drivers/leds/rgb/leds-qcom-lpg.c	2026-08-25 21:19:47.434754677 +0800
+@@ -162,6 +162,8 @@
+ 	struct led_classdev cdev;
+ 	struct led_classdev_mc mcdev;
+ 
++	struct list_head node;
++
+ 	unsigned int num_channels;
+ 	struct lpg_channel *channels[] __counted_by(num_channels);
+ };
+@@ -193,6 +195,8 @@
+ 
+ 	struct mutex lock;
+ 
++	struct list_head leds;
++
+ 	struct pwm_chip *pwm;
+ 
+ 	const struct lpg_data *data;
+@@ -1464,6 +1468,8 @@
+ 		ret = devm_led_classdev_register_ext(lpg->dev, &led->cdev, &init_data);
+ 	if (ret)
+ 		dev_err_probe(lpg->dev, ret, "unable to register %s\n", cdev->name);
++	else
++		list_add(&led->node, &lpg->leds);
+ 
+ 	return ret;
+ }
+@@ -1594,6 +1600,37 @@
+ 	return 0;
+ }
+ 
++static struct led_classdev *lpg_led_cdev(struct lpg_led *led)
++{
++	return led->num_channels > 1 ? &led->mcdev.led_cdev : &led->cdev;
++}
++
++static int lpg_suspend_noirq(struct device *dev)
++{
++	struct lpg *lpg = dev_get_drvdata(dev);
++	struct lpg_led *led;
++
++	list_for_each_entry(led, &lpg->leds, node)
++		led_classdev_suspend(lpg_led_cdev(led));
++
++	return 0;
++}
++
++static int lpg_resume_noirq(struct device *dev)
++{
++	struct lpg *lpg = dev_get_drvdata(dev);
++	struct lpg_led *led;
++
++	list_for_each_entry(led, &lpg->leds, node)
++		led_classdev_resume(lpg_led_cdev(led));
++
++	return 0;
++}
++
++static const struct dev_pm_ops lpg_pm_ops = {
++	NOIRQ_SYSTEM_SLEEP_PM_OPS(lpg_suspend_noirq, lpg_resume_noirq)
++};
++
+ static int lpg_probe(struct platform_device *pdev)
+ {
+ 	const struct lpg_data *data;
+@@ -1613,6 +1650,8 @@
+ 	lpg->data = data;
+ 	lpg->dev = &pdev->dev;
+ 	mutex_init(&lpg->lock);
++	INIT_LIST_HEAD(&lpg->leds);
++	platform_set_drvdata(pdev, lpg);
+ 
+ 	lpg->map = dev_get_regmap(pdev->dev.parent, NULL);
+ 	if (!lpg->map)
+@@ -1841,6 +1880,7 @@
+ 	.probe = lpg_probe,
+ 	.driver = {
+ 		.name = "qcom-spmi-lpg",
++		.pm = pm_sleep_ptr(&lpg_pm_ops),
+ 		.of_match_table = lpg_of_table,
+ 	},
+ };

@@ -1,0 +1,59 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026 ROCKNIX (https://github.com/ROCKNIX)
+
+# Never suspend again hard on the heels of a resume. Every resume reloads
+# the WCN7850 firmware, and suspending during that bring-up wedges the chip
+# beyond anything but a full power-off. The radio is already rfkill-blocked
+# by the time platform hooks run, so the interface state cannot be probed
+# from here; what proved reliable in testing is a bounded hold: a suspend
+# arriving within WINDOW_SECONDS of the last resume waits out the remainder
+# behind a blanked backlight, so the button press still looks instant.
+
+. /etc/profile
+
+[ "$(get_setting wifi.enabled)" = "1" ] || exit 0
+
+WINDOW_SECONDS=15
+MARKER="/run/.last_resume_monotonic"
+
+[ -r "${MARKER}" ] || exit 0
+LAST="$(cat ${MARKER})"
+case "${LAST}" in ''|*[!0-9]*) exit 0 ;; esac
+
+monotonic() {
+  awk '/^now at/ {print int($3/1e9); exit}' /proc/timer_list
+}
+
+DEADLINE=$((LAST + WINDOW_SECONDS))
+NOW="$(monotonic)"
+[ "${NOW}" -ge "${DEADLINE}" ] && exit 0
+
+for BL in /sys/class/backlight/*/brightness; do
+  [ -f "${BL}" ] && echo 0 >"${BL}"
+done
+
+# The screen goes dark on the button press but audio keeps playing for as
+# long as this hold lasts, which is how the delay gets noticed. Flag the
+# mute only when this hook actually changed the state, so the post hook
+# never unmutes a mute the user set themselves.
+#
+# Not while an external display is attached: the default sink is then the
+# display's, wireplumber persists mute per route, and a sink muted here that
+# is gone by resume (undocked while asleep) stays muted on disk forever with
+# nothing left to unmute it. A few seconds of audio is the cheaper trade.
+#
+# External display dependency. The helper is not part of this series; where
+# it is missing this reads as "not attached" and the mute happens just as it
+# would on a device with no external output. To drop the check, reduce the
+# condition to the pactl test alone.
+if ! { [ -x /usr/bin/external-display ] && /usr/bin/external-display connected; } && \
+   pactl get-sink-mute @DEFAULT_SINK@ 2>/dev/null | grep -q 'no$'; then
+  pactl set-sink-mute @DEFAULT_SINK@ true >/dev/null 2>&1 && touch /run/.grace-muted
+fi
+
+log $0 "WiFi bring-up still settling, holding suspend for $((DEADLINE - NOW))s."
+
+while [ "$(monotonic)" -lt "${DEADLINE}" ]; do
+  sleep 1
+done

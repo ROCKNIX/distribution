@@ -1,0 +1,58 @@
+From 4dfe10c05da623862733003de47f7dec9062d789 Mon Sep 17 00:00:00 2001
+From: Edouard Durand <edouard.durand@gmail.com>
+Date: Thu, 13 Aug 2026 10:10:47 +0800
+Subject: [PATCH] wifi: ath12k: let a pending firmware restart finish before
+ suspending
+
+ath12k reloads the firmware on every system resume: resume_early() powers the
+device up and the QMI FW_READY that follows queues restart_work, which tears
+the data path down and rebuilds it through ath12k_core_reconfigure_on_crash().
+ath12k_core_resume() waits ATH12K_RESET_TIMEOUT_HZ for it, and when that wait
+is satisfied the worker really has finished, because the completion is its last
+statement.
+
+Two windows escape that. A resume whose wait expires returns -ETIMEDOUT and
+leaves the worker running past the thaw, and a reset_work recovery queues the
+same worker with no wait in front of it at all. In both, the next suspend can
+reach ath12k_core_suspend_late() while the worker is midway through the
+firmware download and the QMI handshake, and ath12k_hif_power_down() then stops
+MHI underneath it.
+
+srng, dp and wmi have been torn down but not rebuilt at that point, so nothing
+guarantees what the device comes back as, and an rfkill cycle would not put it
+right because nothing on that path re-runs probe.
+
+This is a race found by reading the code, not one reproduced on demand. On a
+WCN7850 handheld that suspends and resumes constantly it has not been observed
+to fire, but the second window needs no unusual timing to open: a firmware
+crash can queue that worker at any moment, including while a suspend is on its
+way down, and no amount of care in userspace can see that coming.
+
+Flush restart_work before the suspend path touches the device. It costs a
+bounded wait on a path that already tolerates ATH12K_RESET_TIMEOUT_HZ.
+
+Signed-off-by: Edouard Durand <edouard.durand@gmail.com>
+---
+ drivers/net/wireless/ath/ath12k/core.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/drivers/net/wireless/ath/ath12k/core.c b/drivers/net/wireless/ath/ath12k/core.c
+index 980a12f..34d0a9e 100644
+--- a/drivers/net/wireless/ath/ath12k/core.c
++++ b/drivers/net/wireless/ath/ath12k/core.c
+@@ -121,6 +121,12 @@ int ath12k_core_suspend(struct ath12k_base *ab)
+ 	struct ath12k *ar;
+ 	int ret, i;
+ 
++	/* A firmware reload from a resume whose wait expired, or from a crash
++	 * recovery, can still be running here. Powering the device down
++	 * halfway through it leaves state only a driver reload rebuilds.
++	 */
++	flush_work(&ab->restart_work);
++
+ 	ret = ath12k_core_continue_suspend_resume(ab);
+ 	if (ret <= 0)
+ 		return ret;
+-- 
+2.49.0.windows.1
+
