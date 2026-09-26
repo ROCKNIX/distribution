@@ -44,6 +44,7 @@ GRENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
 IRES=$(get_setting internal_resolution "${PLATFORM}" "${GAME}")
 VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
 ENABLE_WIDESCREEN_PATCHES=$(get_setting enable_widescreen_patches "${PLATFORM}" "${GAME}")
+VKDRIVER=$(get_setting vulkan_driver "${PLATFORM}" "${GAME}")
 
 #Set the cores to use
 CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
@@ -208,6 +209,13 @@ fi
 
 #Graphic driver fixes
 @GRAPHICS@
+
+#Vulkan driver: Adreno 6xx/7xx builds ship ARMSX2's own Turnip. Point the
+#loader at it for this process only, unless the system driver was chosen.
+ARMSX2_ICD="/usr/share/armsx2-sa/turnip/freedreno_icd.aarch64.json"
+if [ -f "${ARMSX2_ICD}" ] && [ "${VKDRIVER}" != "system" ]; then
+  export VK_DRIVER_FILES="${ARMSX2_ICD}"
+fi
 
 #Set QT enviornment to wayland
   export QT_QPA_PLATFORM=wayland
