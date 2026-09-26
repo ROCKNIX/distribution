@@ -180,10 +180,6 @@ steam_launch_bigpicture() {
   local steam_exit_code=0
   local gamescope_exit_code=0
   local steam_exit_code_file=""
-  local mangoapp=""
-  if [ "${DEVICE_MANGOHUD_SUPPORT}" = "true" ] && [ "$(get_setting "rocknix.mangohud.enabled" "${PLATFORM}" "${GAME}")" = "1" ]; then
-    mangoapp="--mangoapp"
-  fi
   if [ "${TRANSFORM}" = "90" ]; then
     force_orientation="right"
   elif [ "${TRANSFORM}" = "180" ]; then
@@ -234,7 +230,7 @@ steam_launch_bigpicture() {
       rm -f "${steam_exit_code_file}"
       GAMESCOPE_MODE_SAVE_FILE="${gamescope_mode_file}" GAMESCOPE_FAKE_OUTPUT_MM=508x286 \
       LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} \
-      gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 ${mangoapp} --backend "${gamescope_backend}" --force-orientation "${force_orientation}" ${rotate_clamp} -e -- \
+      gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --mangoapp --backend "${gamescope_backend}" --force-orientation "${force_orientation}" ${rotate_clamp} -e -- \
       /bin/bash -c '
         exit_file="$1"
         shift
