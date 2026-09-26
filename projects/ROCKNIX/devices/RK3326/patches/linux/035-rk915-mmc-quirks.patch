@@ -1,0 +1,112 @@
+Rockchip RK915 SDIO WiFi: MMC card quirks
+
+The RK915 is not a conforming SDIO card: its CISTPL_FUNCE is shorter than the
+spec minimum, it needs a continuous card clock, and it cannot accept CMD52 while
+the DAT lines are busy.
+
+Express all three through the standard MMC card-quirks framework, matched on the
+"rockchip,rk915" compatible of the SDIO card node - the same mechanism already
+used for ti,wl1251 and silabs,wf200 - rather than vendor hacks in the MMC core.
+Nothing changes for any other card.
+
+Taken from sunshineinabox's rk915 7.1 bring-up:
+https://github.com/stolen/rk915/pull/2 -> docs/mainline-linux-7.1-rk915-quirks.patch
+Verified to apply cleanly to pristine 7.1.2; quirk bits 21-23 are unused there.
+
+--- a/include/linux/mmc/card.h
++++ b/include/linux/mmc/card.h
+@@ -331,6 +331,9 @@
+ #define MMC_QUIRK_NO_UHS_DDR50_TUNING	(1<<18) /* Disable DDR50 tuning */
+ #define MMC_QUIRK_BROKEN_MDT    (1<<19) /* Wrong manufacturing year */
+ #define MMC_QUIRK_FIXED_SECURE_ERASE_TRIM_TIME	(1<<20) /* Secure erase/trim time is fixed regardless of size */
++#define MMC_QUIRK_BROKEN_SDIO_FUNCE	(1<<21)	/* Tolerate short CISTPL_FUNCE, use default enable timeout */
++#define MMC_QUIRK_SDIO_CONT_CLOCK	(1<<22)	/* SDIO card requires a continuous clock */
++#define MMC_QUIRK_SDIO_CMD52_WAIT_DATA	(1<<23)	/* Card can't accept CMD52 while DAT lines are busy */
+ 
+ 	bool			written_flag;	/* Indicates eMMC has been written since power on */
+ 	bool			reenable_cmdq;	/* Re-enable Command Queue */
+--- a/drivers/mmc/core/quirks.h
++++ b/drivers/mmc/core/quirks.h
+@@ -219,6 +219,11 @@
+ 			      MMC_QUIRK_LENIENT_FN0 |
+ 			      MMC_QUIRK_BLKSZ_FOR_BYTE_MODE),
+ 
++	SDIO_FIXUP_COMPATIBLE("rockchip,rk915", add_quirk,
++			      MMC_QUIRK_BROKEN_SDIO_FUNCE |
++			      MMC_QUIRK_SDIO_CONT_CLOCK |
++			      MMC_QUIRK_SDIO_CMD52_WAIT_DATA),
++
+ 	END_FIXUP
+ };
+ 
+--- a/drivers/mmc/core/sdio_cis.c
++++ b/drivers/mmc/core/sdio_cis.c
+@@ -191,14 +191,19 @@
+ 			mmc_hostname(card->host));
+ 		vsn = SDIO_SDIO_REV_1_00;
+ 	} else if (size < min_size) {
+-		return -EINVAL;
++		if (!(card->quirks & MMC_QUIRK_BROKEN_SDIO_FUNCE) || size < 14)
++			return -EINVAL;
++		pr_warn("%s: broken CISTPL_FUNCE, using SDIO 1.0 defaults\n",
++			mmc_hostname(card->host));
++		vsn = SDIO_SDIO_REV_1_00;
+ 	}
+ 
+ 	/* TPLFE_MAX_BLK_SIZE */
+ 	func->max_blksize = buf[12] | (buf[13] << 8);
+ 
+ 	/* TPLFE_ENABLE_TIMEOUT_VAL, present in ver 1.1 and above */
+-	if (vsn > SDIO_SDIO_REV_1_00)
++	if (vsn > SDIO_SDIO_REV_1_00 &&
++	    !(card->quirks & MMC_QUIRK_BROKEN_SDIO_FUNCE))
+ 		func->enable_timeout = (buf[28] | (buf[29] << 8)) * 10;
+ 	else
+ 		func->enable_timeout = jiffies_to_msecs(HZ);
+--- a/drivers/mmc/host/dw_mmc.c
++++ b/drivers/mmc/host/dw_mmc.c
+@@ -253,6 +253,11 @@
+ 	     ((cmd->arg >> 9) & 0x1FFFF) == SDIO_CCCR_ABORT))
+ 		cmdr |= SDMMC_CMD_STOP;
+ 	else if (cmd->opcode != MMC_SEND_STATUS && cmd->data)
++		cmdr |= SDMMC_CMD_PRV_DAT_WAIT;
++
++	/* Some cards can't accept CMD52 while the DAT lines are busy */
++	if (cmd->opcode == SD_IO_RW_DIRECT && !(cmdr & SDMMC_CMD_STOP) &&
++	    mmc->card && (mmc->card->quirks & MMC_QUIRK_SDIO_CMD52_WAIT_DATA))
+ 		cmdr |= SDMMC_CMD_PRV_DAT_WAIT;
+ 
+ 	if (cmd->opcode == SD_SWITCH_VOLTAGE) {
+@@ -1112,6 +1117,13 @@
+ 	}
+ }
+ 
++static bool dw_mci_card_needs_cont_clock(struct dw_mci *host)
++{
++	struct mmc_card *card = host->mmc->card;
++
++	return card && (card->quirks & MMC_QUIRK_SDIO_CONT_CLOCK);
++}
++
+ static void dw_mci_setup_bus(struct dw_mci *host, bool force_clkinit)
+ {
+ 	unsigned int clock = host->clock;
+@@ -1174,7 +1186,8 @@
+ 
+ 		/* enable clock; only low power if no SDIO */
+ 		clk_en_a = SDMMC_CLKEN_ENABLE;
+-		if (!test_bit(DW_MMC_CARD_NO_LOW_PWR, &host->flags))
++		if (!test_bit(DW_MMC_CARD_NO_LOW_PWR, &host->flags) &&
++		    !dw_mci_card_needs_cont_clock(host))
+ 			clk_en_a |= SDMMC_CLKEN_LOW_PWR;
+ 		mci_writel(host, CLKENA, clk_en_a);
+ 
+@@ -1529,6 +1542,8 @@
+ 		clk_en_a = clk_en_a_old & ~clken_low_pwr;
+ 	} else {
+ 		clear_bit(DW_MMC_CARD_NO_LOW_PWR, &host->flags);
++		if (dw_mci_card_needs_cont_clock(host))
++			return;
+ 		clk_en_a = clk_en_a_old | clken_low_pwr;
+ 	}
+ 
