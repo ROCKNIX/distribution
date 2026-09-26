@@ -44,6 +44,11 @@ makeinstall_target() {
   chmod 0755 ${INSTALL}/usr/lib/inputplumber/setfacl-shim/setfacl
 }
 
+post_makeinstall_target() {
+  mkdir -p ${INSTALL}/etc
+  ln -sf /storage/.config/inputplumber ${INSTALL}/etc/inputplumber
+}
+
 post_install() {
   enable_service inputplumber.service
 }
