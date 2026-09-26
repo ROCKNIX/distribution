@@ -181,9 +181,44 @@ function mount_games() {
       exit 0
 }
 
+function external_node_present() {
+  ### True if a block device that could be the external games card is
+  ### physically present -- its kernel node exists -- even if its filesystem
+  ### is not readable yet. Used to tell "card in, not probed yet" (worth
+  ### waiting for) from "card removed" (do not delay boot). The internal
+  ### card is the disk backing /storage and is never a candidate.
+  local internal dev name sz
+  internal=$(grep " /storage " /proc/mounts | awk '{print $1}' | sed -e 's#.*/##' -e 's#p[0-9]*$##')
+  for dev in /sys/block/mmcblk[0-9] /sys/block/sd[a-z] /sys/block/nvme[0-9]n[0-9]
+  do
+    [ -e "${dev}" ] || continue
+    name=$(basename "${dev}")
+    [ "${name}" = "${internal}" ] && continue
+    sz=$(cat "${dev}/size" 2>/dev/null || echo 0)
+    ### size is in 512-byte sectors; ignore devices under ~8GB
+    [ "${sz}" -gt 16777216 ] && return 0
+  done
+  return 1
+}
+
 function find_games() {
   if /usr/bin/busybox mountpoint -q /storage
   then
+    ### A device that has mounted an external games card before
+    ### (system.merged.device=external) must not settle for the internal
+    ### card just because the external one has not enumerated yet at boot.
+    ### Binding the internal card over /storage/roms lets the boot restore
+    ### write game saves and content to the wrong card, which then lingers
+    ### and later reads as this device's own data.
+    ### So on such a device the scan is retried for up to FIND_MAX seconds
+    ### before falling back. A one-card device (setting unset or internal)
+    ### does not wait, so its boot is unchanged.
+    MS_DEVICE=$(get_setting system.merged.device)
+    FIND_TRIES=0
+    FIND_MAX=10
+    FIND_GRACE=2
+    while true
+    do
     for DEV in $(for dev in mmcblk[0-9] sd[a-z] nvme[0-9]n[0-9]; do blkid | grep ${dev} | awk 'BEGIN {FS=":"}; /ext4/ || /btrfs/ || /fat/ || /ntfs/ {print $1}' | sort -r; done)
     do
       ROOTDEV=$(echo ${DEV} | sed -e "s#^/.*/##g" -e "s#p[0-9].*\$##g")
@@ -213,9 +248,28 @@ function find_games() {
         log $0 "${DEV} not available."
       fi
     done
+    ### No external card readable this pass. Wait and rescan only when one
+    ### is expected -- this device has merged an external card before
+    ### (system.merged.device=external) or a games device is pinned
+    ### (system.gamesdevice) -- AND a card is actually present but not probed
+    ### yet. A card that is physically removed has no block node, so boot
+    ### falls straight to internal after a short grace (in case the node
+    ### itself is a moment late to appear) rather than waiting the full
+    ### timeout. A normal boot finds the card on the first pass and never
+    ### reaches here.
+    if { [ "${MS_DEVICE}" = "external" ] || [ -n "${GAMES_DEVICE}" ]; } && \
+       [ ${FIND_TRIES} -lt ${FIND_MAX} ] && \
+       { external_node_present || [ ${FIND_TRIES} -lt ${FIND_GRACE} ]; }
+    then
+      FIND_TRIES=$((FIND_TRIES + 1))
+      log $0 "Expected external games card not ready yet; waiting (${FIND_TRIES}/${FIND_MAX})."
+      sleep 1
+      continue
+    fi
+    break
+    done
     log $0 "Could not find external card to mount, assume internal."
 
-    MS_DEVICE=$(get_setting system.merged.device)
     ### If the merge target isn't defined and we do not have an external microsd, we should use the internal card by default.
     if [ -z "${MS_DEVICE}" ]
     then
