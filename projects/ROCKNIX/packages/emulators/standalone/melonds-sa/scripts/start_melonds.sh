@@ -90,14 +90,14 @@ case "$GRENDERER" in
 esac
 
 #Internal Resolution
-if [ "$IRES" > "0" ]; then
+if [ -n "$IRES" ] && [ "$IRES" != "0" ]; then
         sed -i "/^GL_ScaleFactor=/c\GL_ScaleFactor=$IRES" "${CONF_DIR}/${MELONDS_INI}"
 else
         sed -i '/^GL_ScaleFactor=/c\GL_ScaleFactor=1' "${CONF_DIR}/${MELONDS_INI}"
 fi
 
 #Screen Orientation
-if [ "$SORIENTATION" > "0" ]; then
+if [ -n "$SORIENTATION" ] && [ "$SORIENTATION" != "0" ]; then
 	sed -i "/^ScreenLayout=/c\ScreenLayout=$SORIENTATION" "${CONF_DIR}/${MELONDS_INI}"
 else
 	sed -i '/^ScreenLayout=/c\ScreenLayout=2' "${CONF_DIR}/${MELONDS_INI}"
@@ -137,10 +137,35 @@ else
 fi
 
 #Screen Rotation
-if [ "$SROTATION" ] >"0"; then
+if [ -n "$SROTATION" ] && [ "$SROTATION" != "0" ]; then
 	sed -i "/^ScreenRotation=/c\ScreenRotation=$SROTATION" "${CONF_DIR}/${MELONDS_INI}"
 else
 	sed -i '/^ScreenRotation=/c\ScreenRotation=0' "${CONF_DIR}/${MELONDS_INI}"
+fi
+
+# Scan out render size, only the OpenGL renderers have a scale factor.
+# With separate windows the second one goes on the other screen.
+melonds_ini() { awk -F= -v k="$1" '$1 == k {print $2; exit}' "${CONF_DIR}/${MELONDS_INI}"; }
+if [ "$(melonds_ini Screen1Enabled)" = "1" ] || [[ "$(melonds_ini ScreenSizing)" =~ ^[45]$ ]]; then
+    SCANOUT_W=256; SCANOUT_H=192
+else
+    case "$(melonds_ini ScreenLayout)" in
+        1) SCANOUT_W=256; SCANOUT_H=384 ;;  # vertical
+        3) SCANOUT_W=768; SCANOUT_H=384 ;;  # hybrid: one screen at 2x beside both at 1x
+        *) SCANOUT_W=512; SCANOUT_H=192 ;;  # horizontal
+    esac
+fi
+if [[ "$(melonds_ini ScreenRotation)" =~ ^[13]$ ]]; then
+    SCANOUT_T=${SCANOUT_W}; SCANOUT_W=${SCANOUT_H}; SCANOUT_H=${SCANOUT_T}
+fi
+SCANOUT_SCALE=1
+if [[ "$GRENDERER" =~ ^[12]$ ]]; then
+    SCANOUT_SCALE=$(scanout_internal_scale "$(melonds_ini GL_ScaleFactor)" "${SCANOUT_H}" 1 16)
+    sed -i "/^GL_ScaleFactor=/c\GL_ScaleFactor=${SCANOUT_SCALE}" "${CONF_DIR}/${MELONDS_INI}"
+fi
+scanout_render_size "${SCANOUT_H}" "${SCANOUT_SCALE}" "${SCANOUT_W}:${SCANOUT_H}"
+if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ] && [ "$(melonds_ini Screen1Enabled)" = "1" ]; then
+    scanout_render_size 192 "${SCANOUT_SCALE}" 256:192 second
 fi
 
 #Vsync
@@ -166,6 +191,12 @@ fi
 
 # QT platform - default to xcb
 export QT_QPA_PLATFORM=xcb
+
+# OpenGL renderers use wayland for direct scan-out. The software renderer stays
+# on xcb since its shm frames cost sway more on wayland.
+if [ "${DEVICE_SCANOUT_SCALING}" = "true" ] && [[ "$GRENDERER" =~ ^[12]$ ]]; then
+    export QT_QPA_PLATFORM=wayland
+fi
 
 # QT platform - some device / driver combinations need wayland
 case ${HW_DEVICE} in

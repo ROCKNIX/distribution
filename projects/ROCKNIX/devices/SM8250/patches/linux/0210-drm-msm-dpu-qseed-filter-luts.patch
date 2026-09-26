@@ -1,0 +1,135 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Tue, 22 Sep 2026 13:36:11 -0700
+Subject: [PATCH] drm/msm/dpu: load polyphase filter LUTs into the QSEED scaler
+
+The scaler's built-in filter is bilinear, which softens upscales and
+aliases downscales past about 1.5x. Load a separable LUT picked by the
+scale ratio instead. Upscaling uses Catmull Rom. Downscaling by 1.25x
+to 4x, the qseed3lite limit, uses area filters that weight each source
+pixel by its overlap with the output pixel.
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
+@@ -468,6 +468,101 @@ module_param_array(dpu_de_adjust_b, int, NULL, 0644);
+ static int dpu_de_adjust_c[DPU_MAX_DE_CURVES] = { 0, 0, -2 };
+ module_param_array(dpu_de_adjust_c, int, NULL, 0644);
+ 
++
++static bool dpu_filter_lut = true;
++module_param(dpu_filter_lut, bool, 0644);
++static bool dpu_nearest;
++module_param(dpu_nearest, bool, 0644);
++
++enum { DPU_LUT_CUBIC, DPU_LUT_NEAREST, DPU_LUT_AREA };
++static const u16 dpu_lut_area_ratio[] = { 125, 150, 175, 200, 250, 300, 350, 400 };
++static const u32 dpu_qseed_luts[10 * 33] = {
++	/* Catmull Rom */
++	0x00000000, 0xfe000200, 0xfc000400, 0xfbfe0700, 0xf9fd0a00, 0xf8fc0dff,
++	0xf6fb10ff, 0xf5f814ff, 0xf4f717fe, 0xf3f41bfe, 0xf2f21ffd, 0xf1ef23fd,
++	0xf0ed27fc, 0xefe92cfc, 0xefe630fb, 0xeee235fb, 0xeede3afa, 0xeeda3ff9,
++	0xedd644f9, 0xedd249f8, 0xedce4ef7, 0xedc854f7, 0xedc459f6, 0xedc05ef5,
++	0xedba64f5, 0xedb669f4, 0xeeb06ff3, 0xeeab74f3, 0xeea67af2, 0xefa07ff2,
++	0xef9b85f1, 0xf0958af1, 0xf09090f0,
++	/* nearest */
++	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
++	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
++	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
++	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
++	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
++	0x00000000, 0x00000000, 0x00000000,
++	/* area 1.25 */
++	0x1acc1a00, 0x16cd1d00, 0x13cd2000, 0x10cd2300, 0x0dcd2600, 0x0acc2a00,
++	0x06cd2d00, 0x03cd3000, 0x00cd3300, 0x00ca3600, 0x00c63a00, 0x00c33d00,
++	0x00c04000, 0x00bd4300, 0x00ba4600, 0x00b64a00, 0x00b34d00, 0x00b05000,
++	0x00ad5300, 0x00aa5600, 0x00a65a00, 0x00a35d00, 0x00a06000, 0x009d6300,
++	0x009a6600, 0x00966a00, 0x00936d00, 0x00907000, 0x008d7300, 0x008a7600,
++	0x00867a00, 0x00837d00, 0x00808000,
++	/* area 1.5 */
++	0x2baa2b00, 0x28ab2d00, 0x25ab3000, 0x23aa3300, 0x20ab3500, 0x1dab3800,
++	0x1baa3b00, 0x18ab3d00, 0x15ab4000, 0x13aa4300, 0x10ab4500, 0x0dab4800,
++	0x0baa4b00, 0x08ab4d00, 0x05ab5000, 0x03aa5300, 0x00ab5500, 0x00a85800,
++	0x00a55b00, 0x00a35d00, 0x00a06000, 0x009d6300, 0x009b6500, 0x00986800,
++	0x00956b00, 0x00936d00, 0x00907000, 0x008d7300, 0x008b7500, 0x00887800,
++	0x00857b00, 0x00837d00, 0x00808000,
++	/* area 1.75 */
++	0x37923700, 0x35923900, 0x32933b00, 0x30923e00, 0x2e924000, 0x2b934200,
++	0x29924500, 0x27924700, 0x25924900, 0x22934b00, 0x20924e00, 0x1e925000,
++	0x1b935200, 0x19925500, 0x17925700, 0x15925900, 0x12935b00, 0x10925e00,
++	0x0e926000, 0x0b936200, 0x09926500, 0x07926700, 0x05926900, 0x02936b00,
++	0x00926e00, 0x00907000, 0x008e7200, 0x008b7500, 0x00897700, 0x00877900,
++	0x00857b00, 0x00827e00, 0x00808000,
++	/* area 2 */
++	0x40804000, 0x3e804200, 0x3c804400, 0x3a804600, 0x38804800, 0x36804a00,
++	0x34804c00, 0x32804e00, 0x30805000, 0x2e805200, 0x2c805400, 0x2a805600,
++	0x28805800, 0x26805a00, 0x24805c00, 0x22805e00, 0x20806000, 0x1e806200,
++	0x1c806400, 0x1a806600, 0x18806800, 0x16806a00, 0x14806c00, 0x12806e00,
++	0x10807000, 0x0e807200, 0x0c807400, 0x0a807600, 0x08807800, 0x06807a00,
++	0x04807c00, 0x02807e00, 0x00808000,
++	/* area 2.5 */
++	0x4d664d00, 0x4b674e00, 0x4a665000, 0x48665200, 0x46675300, 0x45665500,
++	0x43675600, 0x42665800, 0x40665a00, 0x3e675b00, 0x3d665d00, 0x3b675e00,
++	0x3a666000, 0x38666200, 0x36676300, 0x35666500, 0x33676600, 0x32666602,
++	0x30676603, 0x2e676605, 0x2d676606, 0x2b676608, 0x2a66660a, 0x2867660b,
++	0x2667660d, 0x2567660e, 0x23676610, 0x22666612, 0x20676613, 0x1e676615,
++	0x1d676616, 0x1b676618, 0x1a66661a,
++	/* area 3 */
++	0x55565500, 0x54565501, 0x53555503, 0x51565504, 0x50565505, 0x4f555507,
++	0x4d565508, 0x4c565509, 0x4b55550b, 0x4956550c, 0x4856550d, 0x4755550f,
++	0x45565510, 0x44565511, 0x43555513, 0x41565514, 0x40565515, 0x3f555517,
++	0x3d565518, 0x3c565519, 0x3b55551b, 0x3956551c, 0x3856551d, 0x3755551f,
++	0x35565520, 0x34565521, 0x33555523, 0x31565524, 0x30565525, 0x2f555527,
++	0x2d565528, 0x2c565529, 0x2b55552b,
++	/* area 3.5 */
++	0x4f4e4f14, 0x4e4f4e15, 0x4e4e4e16, 0x4e4d4e17, 0x4d4e4d18, 0x4d4d4d19,
++	0x4d4c4d1a, 0x4c4d4c1b, 0x4c4c4c1c, 0x4c4b4c1d, 0x4b4b4b1f, 0x4b4a4b20,
++	0x4a4b4a21, 0x4a4a4a22, 0x4a494a23, 0x494a4924, 0x49494925, 0x48494926,
++	0x47494927, 0x46494928, 0x45494929, 0x434a492a, 0x424a492b, 0x4149492d,
++	0x4049492e, 0x3f49492f, 0x3e494930, 0x3d494931, 0x3b4a4932, 0x3a4a4933,
++	0x39494935, 0x38494936, 0x37494937,
++	/* area 4 */
++	0x49494925, 0x49484926, 0x48494827, 0x48494827, 0x48484828, 0x48474829,
++	0x4748472a, 0x4747472b, 0x4746472c, 0x4647462d, 0x4646462e, 0x4645462f,
++	0x45464530, 0x45454531, 0x45454531, 0x45444532, 0x44454433, 0x44444434,
++	0x44434435, 0x43444336, 0x43434337, 0x43434337, 0x43424338, 0x42434239,
++	0x4242423a, 0x4241423b, 0x4241423b, 0x4142413c, 0x4141413d, 0x4140413e,
++	0x4140413e, 0x4041403f, 0x40404040,
++};
++
++static unsigned int _dpu_plane_scaler_lut(u32 src_w, u32 src_h, u32 dst_w, u32 dst_h)
++{
++
++	u32 ratio = max(src_w * 100 / dst_w, src_h * 100 / dst_h);
++	unsigned int i, last = ARRAY_SIZE(dpu_lut_area_ratio) - 1;
++
++	if (ratio <= 112)
++		return DPU_LUT_CUBIC;
++	for (i = 0; i < last; i++)
++		if (ratio * 2 <= dpu_lut_area_ratio[i] + dpu_lut_area_ratio[i + 1])
++			break;
++	return DPU_LUT_AREA + i;
++}
++
+ static void _dpu_plane_setup_scaler3(struct dpu_hw_sspp *pipe_hw,
+ 		uint32_t src_w, uint32_t src_h, uint32_t dst_w, uint32_t dst_h,
+ 		struct dpu_hw_scaler3_cfg *scale_cfg,
+@@ -562,6 +657,19 @@ static void _dpu_plane_setup_scaler3(struct dpu_hw_sspp *pipe_hw,
+ 			scale_cfg->de.adjust_c[i] = clamp(dpu_de_adjust_c[i], -512, 511);
+ 		}
+ 	}
++
++	if (scaled && (dpu_nearest || dpu_filter_lut)) {
++		unsigned int lut = dpu_nearest ? DPU_LUT_NEAREST :
++				   _dpu_plane_scaler_lut(src_w, src_h, dst_w, dst_h);
++
++		scale_cfg->y_rgb_filter_cfg = DPU_SCALE_1D_SEP;
++		scale_cfg->uv_filter_cfg = DPU_SCALE_1D_SEP;
++		scale_cfg->sep_lut = (u32 *)dpu_qseed_luts;
++		scale_cfg->sep_len = sizeof(dpu_qseed_luts);
++		scale_cfg->y_rgb_sep_lut_idx = lut;
++		scale_cfg->uv_sep_lut_idx = lut;
++		scale_cfg->lut_flag = BIT(4) | BIT(5) | BIT(0);
++	}
+ }
+ 
+ static void _dpu_plane_setup_pixel_ext(struct dpu_hw_scaler3_cfg *scale_cfg,

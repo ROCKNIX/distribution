@@ -111,6 +111,13 @@ fi
     sed -i '/^Renderer =/c\Renderer = Software' ${CONF_FILE}
   fi
 
+  #Scan out render size, the software renderer draws at 1x
+  SCANOUT_SCALE=$(scanout_internal_scale "$(awk '/^ResolutionScale = / {print $3; exit}' ${CONF_FILE})" 240 1 16)
+  sed -i "/^ResolutionScale =/c\ResolutionScale = ${SCANOUT_SCALE}" ${CONF_FILE}
+  [ "$RENDERER" = "opengl" ] || [ "$RENDERER" = "vulkan" ] || SCANOUT_SCALE=1
+  case "$ASPECT" in 1) SCANOUT_ASPECT=16:9 ;; 2) SCANOUT_ASPECT=0 ;; *) SCANOUT_ASPECT=4:3 ;; esac
+  scanout_render_size 240 "${SCANOUT_SCALE}" "${SCANOUT_ASPECT}"
+
   #VSYNC
   if [ "$VSYNC" = "off" ]; then
     sed -i '/^VSync =/c\VSync = false' ${CONF_FILE}

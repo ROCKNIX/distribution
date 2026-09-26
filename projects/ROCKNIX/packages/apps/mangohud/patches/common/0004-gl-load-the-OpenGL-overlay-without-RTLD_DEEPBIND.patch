@@ -1,0 +1,97 @@
+From 012cb6d90940abf3cf8b36565c031b309c39e6cf Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Wed, 23 Sep 2026 13:22:02 -0700
+Subject: [PATCH] gl: load the OpenGL overlay without RTLD_DEEPBIND
+
+A non-PIE program copy-relocates the libstdc++ data it references, such as
+std::ctype<char>::id and std::cout, into its own image, and libstdc++
+initialises only that copy. RTLD_DEEPBIND binds the overlay to libstdc++'s
+originals instead, so its first locale lookup (std::regex in the GPU sensor
+setup) reads an unassigned facet id and crashes. Flycast, dolphin-emu-nogui
+and azahar are all affected when they render with OpenGL.
+
+Load the overlay into the normal lookup scope. Its own lookups of names the
+shim hooks go through real_dlsym() so they still reach the real libGL.
+---
+ src/gl/glad.c |  5 +++--
+ src/gl/shim.c | 13 ++++++-------
+ 2 files changed, 9 insertions(+), 9 deletions(-)
+
+diff --git a/src/gl/glad.c b/src/gl/glad.c
+index 0abde08..9b2f968 100644
+--- a/src/gl/glad.c
++++ b/src/gl/glad.c
+@@ -78,6 +78,7 @@ void close_gl(void) {
+ }
+ #else
+ #include <dlfcn.h>
++#include "real_dlsym.h"
+ static void* libGL;
+ 
+ #if !defined(__APPLE__) && !defined(__HAIKU__)
+@@ -106,7 +107,7 @@ int open_gl(void) {
+ #if defined(__APPLE__) || defined(__HAIKU__)
+             return 1;
+ #else
+-            gladGetProcAddressPtr = (PFNGLXGETPROCADDRESSPROC_PRIVATE)dlsym(libGL,
++            gladGetProcAddressPtr = (PFNGLXGETPROCADDRESSPROC_PRIVATE)real_dlsym(libGL,
+                 "glXGetProcAddressARB");
+             return gladGetProcAddressPtr != NULL;
+ #endif
+@@ -139,7 +140,7 @@ void* get_proc(const char *namez) {
+ #if defined(_WIN32) || defined(__CYGWIN__)
+         result = (void*)GetProcAddress((HMODULE) libGL, namez);
+ #else
+-        result = dlsym(libGL, namez);
++        result = real_dlsym(libGL, namez);
+ #endif
+     }
+ 
+diff --git a/src/gl/shim.c b/src/gl/shim.c
+index 3b039ef..7e4fe6e 100644
+--- a/src/gl/shim.c
++++ b/src/gl/shim.c
+@@ -9,10 +9,9 @@
+ #include <stdbool.h>
+ #include <stdlib.h>
+ 
+-#ifndef RTLD_DEEPBIND
+-#define RTLD_DEEPBIND 0
+-#endif
+-
++/* Not RTLD_DEEPBIND: a non-PIE program copy-relocates libstdc++ data (locale
++ * facet ids, std::cout) and libstdc++ initialises only its copy, so a deep-bound
++ * overlay crashes on its first std::regex. Hooked names go through real_dlsym(). */
+ static void* handle = NULL;
+ static bool mangoHudLoaded = false;
+ 
+@@ -67,7 +66,7 @@ static bool load_adjacent_opengl_lib(void)
+         return false;
+     }
+ 
+-    handle = dlopen(lib, RTLD_NOW | RTLD_LOCAL | RTLD_DEEPBIND);
++    handle = dlopen(lib, RTLD_NOW | RTLD_LOCAL);
+ 
+     if (handle == NULL)
+     {
+@@ -97,7 +96,7 @@ static void loadMangoHud() {
+ 
+         while (lib != NULL)
+         {
+-            handle = dlopen(lib, RTLD_NOW | RTLD_LOCAL | RTLD_DEEPBIND);
++            handle = dlopen(lib, RTLD_NOW | RTLD_LOCAL);
+ 
+             if (handle)
+             {
+@@ -120,7 +119,7 @@ static void loadMangoHud() {
+ 
+     if (!mangoHudLoaded)
+     {
+-        handle = dlopen("${ORIGIN}/libMangoHud_opengl.so", RTLD_NOW | RTLD_LOCAL | RTLD_DEEPBIND);
++        handle = dlopen("${ORIGIN}/libMangoHud_opengl.so", RTLD_NOW | RTLD_LOCAL);
+         if (handle) mangoHudLoaded = true;
+         else
+         {
+-- 
+2.55.0
+

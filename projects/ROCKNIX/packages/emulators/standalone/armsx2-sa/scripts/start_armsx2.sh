@@ -109,12 +109,19 @@ fi
         fi
 
   #Internal Resolution
-        if [ "$IRES" > "0" ]
+        if [ -n "$IRES" ] && [ "$IRES" != "0" ]
         then
                 sed -i "/^upscale_multiplier =/c\upscale_multiplier = $IRES" /storage/.config/ARMSX2/inis/PCSX2.ini
         else
                 sed -i '/^upscale_multiplier =/c\upscale_multiplier = 1' /storage/.config/ARMSX2/inis/PCSX2.ini
         fi
+
+  #Scan out render size, the software renderer draws at 1x
+        SCANOUT_SCALE=$(scanout_internal_scale "$(awk '/^upscale_multiplier = / {print $3; exit}' /storage/.config/ARMSX2/inis/PCSX2.ini)" 448 0.25 8 0.25)
+        sed -i "/^upscale_multiplier =/c\upscale_multiplier = ${SCANOUT_SCALE}" /storage/.config/ARMSX2/inis/PCSX2.ini
+        [ "$GRENDERER" = "3" ] && SCANOUT_SCALE=1
+        case "$ASPECT" in 1) SCANOUT_ASPECT=16:9 ;; 2) SCANOUT_ASPECT=0 ;; *) SCANOUT_ASPECT=4:3 ;; esac
+        scanout_render_size 448 "${SCANOUT_SCALE}" "${SCANOUT_ASPECT}"
 
   #Show FPS
 	if [ "$FPS" = "false" ]

@@ -1,0 +1,65 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Thu, 17 Sep 2026 21:34:26 -0700
+Subject: [PATCH] rendervulkan: keep the FSR upscale cache compressed
+
+The preemptive upscale path composites into a temp image passed as
+pOutputOverride, and the fragment composite path was off for every
+override. So the upscale image needed STORAGE usage for the compute
+stores, and turnip refuses UBWC for storage images before a7xx. Under
+FSR the one buffer that actually reaches the plane was always linear.
+
+diff -ruN gs-new/src/rendervulkan.cpp gs-fix/src/rendervulkan.cpp
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -4364,7 +4364,7 @@
+ 
+ ReshadeEffectPipeline *g_pLastReshadeEffect = nullptr;
+ 
+-std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pPipewireTexture, bool partial, gamescope::Rc<CVulkanTexture> pOutputOverride, bool increment, std::unique_ptr<CVulkanCmdBuffer> pInCommandBuffer )
++std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pPipewireTexture, bool partial, gamescope::Rc<CVulkanTexture> pOutputOverride, bool increment, std::unique_ptr<CVulkanCmdBuffer> pInCommandBuffer, bool bAllowGfxBlit )
+ {
+ 	EOTF outputTF = frameInfo->outputEncodingEOTF;
+ 	if (!frameInfo->applyOutputColorMgmt)
+@@ -4411,5 +4411,6 @@
+ 
+ 	// on tilers the fragment pass writes tile-linear, so rotation is free
+-	const bool bWantGfxBlit = g_bCompositeGraphics && !pOutputOverride;
++	// screenshots are only read back, the upscale cache is scanned out and must stay compressed
++	const bool bWantGfxBlit = g_bCompositeGraphics && ( !pOutputOverride || bAllowGfxBlit );
+ 
+ 	auto cmdBuffer = pInCommandBuffer ? std::move( pInCommandBuffer ) : g_device.commandBuffer();
+diff -ruN gs-new/src/rendervulkan.hpp gs-fix/src/rendervulkan.hpp
+--- a/src/rendervulkan.hpp
++++ b/src/rendervulkan.hpp
+@@ -457,7 +457,7 @@
+ gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width, uint32_t height, uint32_t contentWidth, uint32_t contentHeight, uint32_t drmFormat, CVulkanTexture::createFlags texCreateFlags, void *bits );
+ gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wlr_buffer *buf, gamescope::OwningRc<gamescope::IBackendFb> pBackendFb );
+ 
+-std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pScreenshotTexture, bool partial, gamescope::Rc<CVulkanTexture> pOutputOverride = nullptr, bool increment = true, std::unique_ptr<CVulkanCmdBuffer> pInCommandBuffer = nullptr );
++std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pScreenshotTexture, bool partial, gamescope::Rc<CVulkanTexture> pOutputOverride = nullptr, bool increment = true, std::unique_ptr<CVulkanCmdBuffer> pInCommandBuffer = nullptr, bool bAllowGfxBlit = false );
+ void vulkan_wait( uint64_t ulSeqNo, bool bReset );
+ gamescope::Rc<CVulkanTexture> vulkan_get_last_output_image( bool partial, bool defer );
+ gamescope::Rc<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace = k_EStreamColorspace_Unknown);
+diff -ruN gs-new/src/steamcompmgr.cpp gs-fix/src/steamcompmgr.cpp
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -7539,7 +7539,9 @@
+ 
+ 	CVulkanTexture::createFlags imageFlags;
+ 	imageFlags.bSampled = true;
+-	imageFlags.bStorage = true;
++	// storage forces linear, an attachment can stay compressed
++	imageFlags.bStorage = !g_bCompositeGraphics;
++	imageFlags.bColorAttachment = g_bCompositeGraphics;
+ 	imageFlags.bFlippable = true;
+ 	pTexture->BInit( g_nOutputWidth, g_nOutputHeight, 1, uDrmFormat, imageFlags );
+ 	TempUpscaleImage_t &image = g_pUpscaleImages.emplace_back( std::move( pTexture ), std::move( pTimeline ) );
+@@ -7700,7 +7702,7 @@
+ 				vulkan_wait( *s_ulLastPreemptiveUpscaleSeqNo, true );
+ 			}
+ 
+-			std::optional<uint64_t> seqNo = vulkan_composite( &upscaledFrameInfo, nullptr, false, pTempImage->pTexture, false, std::move( pCommandBuffer ) );
++			std::optional<uint64_t> seqNo = vulkan_composite( &upscaledFrameInfo, nullptr, false, pTempImage->pTexture, false, std::move( pCommandBuffer ), true );
+ 
+ 			if ( cv_upscale_preemptive_debug_force_sync )
+ 			{

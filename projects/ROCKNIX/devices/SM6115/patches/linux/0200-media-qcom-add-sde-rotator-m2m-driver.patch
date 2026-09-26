@@ -1,0 +1,1046 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Sat, 12 Sep 2026 10:24:51 -0700
+Subject: [PATCH] media: qcom: add a V4L2 mem2mem driver for the SDE r3 rotator
+
+Standalone driver for the offline rotator in the MDSS of sm6115.
+It handles linear RGB only, with 90/180/270 rotation and H/V flip 
+through V4L2_CID_ROTATE/HFLIP/VFLIP.
+
+diff --git a/drivers/media/platform/qcom/Kconfig b/drivers/media/platform/qcom/Kconfig
+--- a/drivers/media/platform/qcom/Kconfig
++++ b/drivers/media/platform/qcom/Kconfig
+@@ -5,3 +5,4 @@ comment "Qualcomm media platform drivers"
+ source "drivers/media/platform/qcom/camss/Kconfig"
+ source "drivers/media/platform/qcom/iris/Kconfig"
+ source "drivers/media/platform/qcom/venus/Kconfig"
++source "drivers/media/platform/qcom/sde-rotator/Kconfig"
+--- a/drivers/media/platform/qcom/Makefile
++++ b/drivers/media/platform/qcom/Makefile
+@@ -2,3 +2,4 @@
+ obj-y += camss/
+ obj-y += iris/
+ obj-y += venus/
++obj-y += sde-rotator/
+--- /dev/null
++++ b/drivers/media/platform/qcom/sde-rotator/Kconfig
+@@ -0,0 +1,12 @@
++# SPDX-License-Identifier: GPL-2.0
++config VIDEO_QCOM_SDE_ROTATOR
++	tristate "Qualcomm SDE mem2mem rotator"
++	depends on V4L_MEM2MEM_DRIVERS
++	depends on VIDEO_DEV && (ARCH_QCOM || COMPILE_TEST)
++	select VIDEOBUF2_DMA_CONTIG
++	select V4L2_MEM2MEM_DEV
++	help
++	  V4L2 mem2mem driver for the standalone SDE rotator block found in
++	  the MDSS of Qualcomm SoCs. Provides 90/180/270 rotation
++	  and H/V flip of RGB buffers in dedicated hardware,
++	  offloading rotation from the GPU.
+--- /dev/null
++++ b/drivers/media/platform/qcom/sde-rotator/Makefile
+@@ -0,0 +1,2 @@
++# SPDX-License-Identifier: GPL-2.0
++obj-$(CONFIG_VIDEO_QCOM_SDE_ROTATOR) += qcom-sde-rotator.o
+--- /dev/null
++++ b/drivers/media/platform/qcom/sde-rotator/qcom-sde-rotator.c
+@@ -0,0 +1,1000 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * V4L2 mem2mem driver for the SDE r3 rotator (ROTTOP/SSPP/WB) in the MDSS of
++ * Qualcomm SoCs. This is the linear only version.
++ *
++ * The register sequence comes from the downstream sde_rotator_r3 driver. The
++ * SSPP source format encoding matches the DPU SSPP.
++ */
++#include <linux/clk.h>
++#include <linux/io.h>
++#include <linux/iopoll.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/completion.h>
++#include <linux/interconnect.h>
++#include <linux/interrupt.h>
++#include <linux/workqueue.h>
++#include <linux/pm_qos.h>
++#include <linux/pm_runtime.h>
++
++#include <media/v4l2-ctrls.h>
++#include <media/v4l2-device.h>
++#include <media/v4l2-fh.h>
++#include <media/v4l2-ioctl.h>
++#include <media/v4l2-mem2mem.h>
++#include <media/videobuf2-dma-contig.h>
++
++#define ROT_NAME		"qcom-sde-rotator"
++#define ROT_TIMEOUT_MS		300
++#define ROT_AUTOSUSPEND_MS	100
++#define ROT_DNSC_MAX		64
++#define ROT_QOS_LATENCY_US	100
++
++/*
++ * Offsets are relative to the rotator window, which the DT maps at
++ * MDSS_base+0xA8000 to stay clear of mdss/mdp.
++ */
++#define ROTTOP_OFF		0x800
++#define ROTTOP_INTR_EN		(ROTTOP_OFF + 0x30)
++#define ROTTOP_INTR_STATUS	(ROTTOP_OFF + 0x34)
++#define ROTTOP_INTR_CLEAR	(ROTTOP_OFF + 0x38)
++#define ROTTOP_START_CTRL	(ROTTOP_OFF + 0x40)
++#define ROTTOP_STATUS		(ROTTOP_OFF + 0x44)
++#define ROTTOP_OP_MODE		(ROTTOP_OFF + 0x48)
++#define ROTTOP_OP_MODE_START	BIT(0)
++#define ROTTOP_OP_MODE_ROT90	BIT(1)
++#define ROTTOP_DNSC		(ROTTOP_OFF + 0x4C)
++#define ROTTOP_SW_RESET_OVERRIDE (ROTTOP_OFF + 0x28)
++
++/*
++ * MDSS per-client SID block inside the MDP window. The rotator uses the
++ * MDP's stream id until these are set.
++ */
++#define SID_ROT_RD		0x20
++#define SID_ROT_WR		0x24
++#define SID_ROT_ID		0x1c
++
++/* read and write XINs on the DPU's VBIF (downstream mdss-rot-xin-id) */
++#define VBIF_XIN_SSPP		10
++#define VBIF_XIN_WB		11
++#define VBIF_OT_LIMIT		32
++#define VBIF_QOS_NRT_LEVEL	3
++#define VBIF_QOS_NRT_LVLS	8
++#define VBIF_WRITE_GATHER_EN	0x0AC
++#define VBIF_IN_RD_LIM_CONF0	0x0B0
++#define VBIF_IN_WR_LIM_CONF0	0x0C0
++#define VBIF_XIN_HALT_CTRL0	0x200
++#define VBIF_XIN_HALT_CTRL1	0x204
++#define VBIF_XIN_HALT_TIMEOUT_US 0x4000
++#define VBIF_XINL_QOS_RP_REMAP_000 0x550
++#define VBIF_XINL_QOS_LVL_REMAP_000 (VBIF_XINL_QOS_RP_REMAP_000 + 0x40)
++
++
++#define ROT_ICC_PEAK_BW		MBps_to_icc(6400)
++
++#define SSPP_OFF		0x900
++#define ROT_SSPP_SRC_SIZE	(SSPP_OFF + 0x00)
++#define ROT_SSPP_SRC_IMG_SIZE	(SSPP_OFF + 0x04)
++#define ROT_SSPP_SRC_XY		(SSPP_OFF + 0x08)
++#define ROT_SSPP_OUT_SIZE	(SSPP_OFF + 0x0C)
++#define ROT_SSPP_OUT_XY		(SSPP_OFF + 0x10)
++#define ROT_SSPP_SRC0_ADDR	(SSPP_OFF + 0x14)
++#define ROT_SSPP_SRC1_ADDR	(SSPP_OFF + 0x18)
++#define ROT_SSPP_SRC2_ADDR	(SSPP_OFF + 0x1C)
++#define ROT_SSPP_SRC3_ADDR	(SSPP_OFF + 0x20)
++#define ROT_SSPP_SRC_YSTRIDE0	(SSPP_OFF + 0x24)
++#define ROT_SSPP_SRC_YSTRIDE1	(SSPP_OFF + 0x28)
++#define ROT_SSPP_SRC_FORMAT	(SSPP_OFF + 0x30)
++#define ROT_SSPP_SRC_UNPACK_PATTERN (SSPP_OFF + 0x34)
++#define ROT_SSPP_SRC_OP_MODE	(SSPP_OFF + 0x38)
++#define ROT_SSPP_UBWC_STATIC_CTRL (SSPP_OFF + 0x44)
++#define WB_NO_PARTIAL_WRITES	BIT(10)
++#define PARTIAL_WRITE_ALIGN	0x1f
++#define ROT_SSPP_FETCH_CONFIG	(SSPP_OFF + 0x48)
++#define ROT_SSPP_DANGER_LUT	(SSPP_OFF + 0x60)
++#define ROT_SSPP_SAFE_LUT	(SSPP_OFF + 0x64)
++#define ROT_SSPP_SRC_ADDR_SW_STATUS (SSPP_OFF + 0x70)
++#define ROT_SSPP_CREQ_LUT_0	(SSPP_OFF + 0x74)
++#define ROT_SSPP_CREQ_LUT_1	(SSPP_OFF + 0x78)
++#define ROT_SSPP_CDP_CNTL	(SSPP_OFF + 0x134)
++
++#define WB_OFF			0xB00
++#define ROT_WB_DST_FORMAT	(WB_OFF + 0x000)
++#define ROT_WB_DST_OP_MODE	(WB_OFF + 0x004)
++#define ROT_WB_DST_PACK_PATTERN	(WB_OFF + 0x008)
++#define ROT_WB_DST0_ADDR	(WB_OFF + 0x00C)
++#define ROT_WB_DST1_ADDR	(WB_OFF + 0x010)
++#define ROT_WB_DST2_ADDR	(WB_OFF + 0x014)
++#define ROT_WB_DST3_ADDR	(WB_OFF + 0x018)
++#define ROT_WB_DST_YSTRIDE0	(WB_OFF + 0x01C)
++#define ROT_WB_DST_YSTRIDE1	(WB_OFF + 0x020)
++#define ROT_WB_DST_WRITE_CONFIG	(WB_OFF + 0x048)
++#define ROT_WB_OUT_SIZE		(WB_OFF + 0x074)
++#define ROT_WB_DANGER_LUT	(WB_OFF + 0x084)
++#define ROT_WB_SAFE_LUT		(WB_OFF + 0x088)
++#define ROT_WB_CREQ_LUT_0	(WB_OFF + 0x098)
++#define ROT_WB_CREQ_LUT_1	(WB_OFF + 0x09C)
++#define ROT_WB_DST_ADDR_SW_STATUS (WB_OFF + 0x2B0)
++#define ROT_WB_CDP_CNTL		(WB_OFF + 0x2B4)
++#define ROT_WB_OUT_IMG_SIZE	(WB_OFF + 0x2C0)
++#define ROT_WB_OUT_XY		(WB_OFF + 0x2C4)
++
++#define SRC_FORMAT_ROT90	BIT(11)
++#define SRC_OP_FLIP_LR		BIT(13)
++#define SRC_OP_FLIP_UD		BIT(14)
++#define SRC_OP_PE_OVERRIDE	BIT(31)
++#define ROTTOP_INTR_DONE	BIT(0)
++
++#define FETCH_CFG		0x00087
++
++#define CDP_CNTL_LINEAR		(BIT(0) | BIT(3))
++#define SAFE_LUT_ALL		0xffff
++
++
++struct rot_fmt {
++	u32 fourcc;
++	u32 src_format;
++	u32 dst_format;
++	u32 unpack;
++	u8  bpp;
++};
++
++#define RGBA(fourcc, alpha, unpack)					\
++	{ (fourcc), (alpha) ? 0x000237FF : 0x000236FF,			\
++	  0x000037FF, (unpack), 4 }
++
++static const struct rot_fmt rot_formats[] = {
++	RGBA(V4L2_PIX_FMT_ARGB32, 1, 0x01000203),
++	RGBA(V4L2_PIX_FMT_XRGB32, 0, 0x01000203),
++	RGBA(V4L2_PIX_FMT_ABGR32, 1, 0x03020001),
++	RGBA(V4L2_PIX_FMT_XBGR32, 0, 0x03020001),
++	RGBA(V4L2_PIX_FMT_RGBA32, 1, 0x03010002),
++	RGBA(V4L2_PIX_FMT_RGBX32, 0, 0x03010002),
++	RGBA(V4L2_PIX_FMT_BGRA32, 1, 0x02000103),
++	RGBA(V4L2_PIX_FMT_BGRX32, 0, 0x02000103),
++	{ V4L2_PIX_FMT_RGB565, 0x000005C5, 0x000005C5, 0x00020001, 2 },
++};
++#undef RGBA
++
++struct rot_dev {
++	struct v4l2_device	v4l2_dev;
++	struct video_device	vfd;
++	struct device		*dev;
++	struct v4l2_m2m_dev	*m2m_dev;
++
++	void __iomem		*base;
++	void __iomem		*sid;
++	void __iomem		*vbif;
++	struct icc_path		*mem_path;
++	struct clk_bulk_data	clks[3];
++
++	struct mutex		dev_mutex;
++
++	struct workqueue_struct	*wq;
++	struct work_struct	done_work;
++
++	int			irq;
++	bool			irq_dead;
++	bool			job_pending;
++	struct completion	job_done;
++	struct pm_qos_request	qos;
++};
++
++struct rot_ctx {
++	struct v4l2_fh		fh;
++	struct v4l2_ctrl_handler ctrl_handler;
++	struct rot_dev		*rot;
++	const struct rot_fmt	*fmt_src;
++	const struct rot_fmt	*fmt_dst;
++	u32			width;		/* source dimensions */
++	u32			height;
++	u32			dst_w;		/* 0 = no downscale */
++	u32			dst_h;
++	u32			rotate;		/* 0/90/180/270 */
++	bool			hflip;
++	bool			vflip;
++};
++
++static inline struct rot_ctx *file2ctx(struct file *f)
++{
++	return container_of(f->private_data, struct rot_ctx, fh);
++}
++
++static inline void rot_wr(struct rot_dev *r, u32 off, u32 v)
++{
++	writel_relaxed(v, r->base + off);
++}
++
++static inline u32 rot_rd(struct rot_dev *r, u32 off)
++{
++	return readl_relaxed(r->base + off);
++}
++
++static void rot_sid_setup(struct rot_dev *rot, u32 id)
++{
++	if (!rot->sid)
++		return;
++	writel_relaxed(id, rot->sid + SID_ROT_RD);
++	writel_relaxed(id, rot->sid + SID_ROT_WR);
++}
++
++static void rot_vbif_qos_remap(struct rot_dev *rot, u32 xin, u32 level)
++{
++	u32 high = ((xin & 0x8) >> 3) * 4 + level * 8;
++	u32 shift = (xin & 0x7) * 4;
++	u32 mask = 0x7 << shift;
++	u32 val;
++
++	val = readl_relaxed(rot->vbif + VBIF_XINL_QOS_RP_REMAP_000 + high);
++	val = (val & ~mask) | ((VBIF_QOS_NRT_LEVEL << shift) & mask);
++	writel_relaxed(val, rot->vbif + VBIF_XINL_QOS_RP_REMAP_000 + high);
++
++	val = readl_relaxed(rot->vbif + VBIF_XINL_QOS_LVL_REMAP_000 + high);
++	val = (val & ~mask) | ((VBIF_QOS_NRT_LEVEL << shift) & mask);
++	writel_relaxed(val, rot->vbif + VBIF_XINL_QOS_LVL_REMAP_000 + high);
++}
++
++static void rot_vbif_limit(struct rot_dev *rot, u32 xin, bool rd, u32 limit)
++{
++	u32 off = (rd ? VBIF_IN_RD_LIM_CONF0 : VBIF_IN_WR_LIM_CONF0) +
++		  (xin / 4) * 4;
++	u32 shift = (xin % 4) * 8;
++	u32 val = readl_relaxed(rot->vbif + off);
++
++	val = (val & ~(0xff << shift)) | (limit << shift);
++	writel_relaxed(val, rot->vbif + off);
++}
++
++static void rot_vbif_halt_xin(struct rot_dev *rot, u32 xin)
++{
++	u32 val;
++
++	if (!rot->vbif)
++		return;
++
++	val = readl_relaxed(rot->vbif + VBIF_XIN_HALT_CTRL0);
++	writel_relaxed(val | BIT(xin), rot->vbif + VBIF_XIN_HALT_CTRL0);
++
++	if (readl_relaxed_poll_timeout(rot->vbif + VBIF_XIN_HALT_CTRL1, val,
++				       val & BIT(xin), 100,
++				       VBIF_XIN_HALT_TIMEOUT_US))
++		dev_warn_ratelimited(rot->dev, "vbif xin %u did not halt\n", xin);
++
++	val = readl_relaxed(rot->vbif + VBIF_XIN_HALT_CTRL0);
++	writel_relaxed(val & ~BIT(xin), rot->vbif + VBIF_XIN_HALT_CTRL0);
++}
++
++static void rot_vbif_setup(struct rot_dev *rot)
++{
++	u32 i, val;
++
++	if (!rot->vbif)
++		return;
++
++	for (i = 0; i < VBIF_QOS_NRT_LVLS; i++) {
++		rot_vbif_qos_remap(rot, VBIF_XIN_SSPP, i);
++		rot_vbif_qos_remap(rot, VBIF_XIN_WB, i);
++	}
++
++	rot_vbif_limit(rot, VBIF_XIN_SSPP, true, VBIF_OT_LIMIT);
++	rot_vbif_limit(rot, VBIF_XIN_WB, false, VBIF_OT_LIMIT);
++
++	val = readl_relaxed(rot->vbif + VBIF_WRITE_GATHER_EN);
++	writel_relaxed(val | BIT(VBIF_XIN_WB), rot->vbif + VBIF_WRITE_GATHER_EN);
++}
++
++static const struct rot_fmt *rot_find_fmt(u32 fourcc)
++{
++	unsigned int i;
++
++	for (i = 0; i < ARRAY_SIZE(rot_formats); i++)
++		if (rot_formats[i].fourcc == fourcc)
++			return &rot_formats[i];
++	return NULL;
++}
++
++static bool rot_irq_ok(struct rot_dev *rot)
++{
++	return rot->irq > 0 && !rot->irq_dead;
++}
++
++static u32 rot_dnsc_factor(u32 src, u32 want)
++{
++	u32 f = 1;
++
++	if (!want || want >= src)
++		return 1;
++	while (f < ROT_DNSC_MAX && src % (f * 2) == 0 && src / (f * 2) >= want)
++		f *= 2;
++	return f;
++}
++
++static void rot_scaled_size(struct rot_ctx *ctx, u32 *psw, u32 *psh)
++{
++	bool rot90 = (ctx->rotate == 90 || ctx->rotate == 270);
++	u32 want_w = rot90 ? ctx->dst_h : ctx->dst_w;
++	u32 want_h = rot90 ? ctx->dst_w : ctx->dst_h;
++
++	*psw = ctx->width / rot_dnsc_factor(ctx->width, want_w);
++	*psh = ctx->height / rot_dnsc_factor(ctx->height, want_h);
++}
++
++static void rot_device_run(void *priv)
++{
++	struct rot_ctx *ctx = priv;
++	struct rot_dev *rot = ctx->rot;
++	struct vb2_v4l2_buffer *src, *dst;
++	dma_addr_t src_addr, dst_addr;
++	const struct rot_fmt *sf = ctx->fmt_src;
++	const struct rot_fmt *df = ctx->fmt_dst;
++	bool rot90 = (ctx->rotate == 90 || ctx->rotate == 270);
++	u32 sw = ctx->width, sh = ctx->height;
++	u32 psw, psh, fac_w, fac_h, dw, dh;
++	u32 src_fmt, op_mode = SRC_OP_PE_OVERRIDE;
++
++	rot_scaled_size(ctx, &psw, &psh);
++	fac_w = sw / psw;
++	fac_h = sh / psh;
++	dw = rot90 ? psh : psw;
++	dh = rot90 ? psw : psh;
++
++	src = v4l2_m2m_next_src_buf(ctx->fh.m2m_ctx);
++	dst = v4l2_m2m_next_dst_buf(ctx->fh.m2m_ctx);
++	src_addr = vb2_dma_contig_plane_dma_addr(&src->vb2_buf, 0);
++	dst_addr = vb2_dma_contig_plane_dma_addr(&dst->vb2_buf, 0);
++
++	pm_runtime_get_sync(rot->dev);
++	rot_sid_setup(rot, SID_ROT_ID);
++
++	if (ctx->rotate == 180 || ctx->rotate == 270)
++		op_mode ^= (SRC_OP_FLIP_LR | SRC_OP_FLIP_UD);
++	if (ctx->hflip)
++		op_mode ^= SRC_OP_FLIP_LR;
++	if (ctx->vflip)
++		op_mode ^= SRC_OP_FLIP_UD;
++
++	src_fmt = sf->src_format | (rot90 ? SRC_FORMAT_ROT90 : 0);
++
++	rot_wr(rot, ROTTOP_START_CTRL, 0);
++
++	rot_wr(rot, ROT_SSPP_SRC_SIZE, (sh << 16) | sw);
++	rot_wr(rot, ROT_SSPP_SRC_IMG_SIZE, 0);
++	rot_wr(rot, ROT_SSPP_SRC_XY, 0);
++	rot_wr(rot, ROT_SSPP_OUT_SIZE, (sh << 16) | sw);
++	rot_wr(rot, ROT_SSPP_OUT_XY, 0);
++	rot_wr(rot, ROT_SSPP_SRC0_ADDR, src_addr);
++	rot_wr(rot, ROT_SSPP_SRC1_ADDR, 0);
++	rot_wr(rot, ROT_SSPP_SRC2_ADDR, 0);
++	rot_wr(rot, ROT_SSPP_SRC3_ADDR, 0);
++	rot_wr(rot, ROT_SSPP_SRC_YSTRIDE0, sw * sf->bpp);
++	rot_wr(rot, ROT_SSPP_SRC_YSTRIDE1, 0);
++	rot_wr(rot, ROT_SSPP_SRC_FORMAT, src_fmt);
++	rot_wr(rot, ROT_SSPP_SRC_UNPACK_PATTERN, sf->unpack);
++	rot_wr(rot, ROT_SSPP_SRC_OP_MODE, op_mode);
++	rot_wr(rot, ROT_SSPP_FETCH_CONFIG, FETCH_CFG);
++	rot_wr(rot, ROT_SSPP_UBWC_STATIC_CTRL, 0);
++	rot_wr(rot, ROT_SSPP_SRC_ADDR_SW_STATUS, 0);
++	rot_wr(rot, ROT_SSPP_CREQ_LUT_0, 0);
++	rot_wr(rot, ROT_SSPP_CREQ_LUT_1, 0);
++	rot_wr(rot, ROT_SSPP_DANGER_LUT, 0);
++	rot_wr(rot, ROT_SSPP_SAFE_LUT, SAFE_LUT_ALL);
++	rot_wr(rot, ROT_SSPP_CDP_CNTL, CDP_CNTL_LINEAR);
++
++	rot_wr(rot, ROT_WB_DST_FORMAT, df->dst_format);
++	rot_wr(rot, ROT_WB_DST_OP_MODE, 0);
++	rot_wr(rot, ROT_WB_DST_PACK_PATTERN, df->unpack);
++	rot_wr(rot, ROT_WB_DST0_ADDR, dst_addr);
++	rot_wr(rot, ROT_WB_DST1_ADDR, 0);
++	rot_wr(rot, ROT_WB_DST2_ADDR, 0);
++	rot_wr(rot, ROT_WB_DST3_ADDR, 0);
++	rot_wr(rot, ROT_WB_DST_YSTRIDE0, dw * df->bpp);
++	rot_wr(rot, ROT_WB_DST_YSTRIDE1, 0);
++	rot_wr(rot, ROT_WB_OUT_SIZE, (dh << 16) | dw);
++	rot_wr(rot, ROT_WB_OUT_IMG_SIZE, (dh << 16) | dw);
++	rot_wr(rot, ROT_WB_OUT_XY, 0);
++	rot_wr(rot, ROT_WB_DST_WRITE_CONFIG,
++	       (dw * df->bpp) & PARTIAL_WRITE_ALIGN ? 0 : WB_NO_PARTIAL_WRITES);
++	rot_wr(rot, ROT_WB_DST_ADDR_SW_STATUS, 0);
++	rot_wr(rot, ROT_WB_CREQ_LUT_0, 0);
++	rot_wr(rot, ROT_WB_CREQ_LUT_1, 0);
++	rot_wr(rot, ROT_WB_DANGER_LUT, 0);
++	rot_wr(rot, ROT_WB_SAFE_LUT, SAFE_LUT_ALL);
++	rot_wr(rot, ROT_WB_CDP_CNTL, CDP_CNTL_LINEAR);
++
++	rot_wr(rot, ROTTOP_DNSC, (fac_w > 1 || fac_h > 1) ?
++	       (fac_h | (fac_w << 16)) : 0);
++	rot_wr(rot, ROTTOP_OP_MODE,
++	       ROTTOP_OP_MODE_START | (rot90 ? ROTTOP_OP_MODE_ROT90 : 0));
++	rot_wr(rot, ROTTOP_INTR_CLEAR, ROTTOP_INTR_DONE);
++	if (rot_irq_ok(rot)) {
++		reinit_completion(&rot->job_done);
++		rot->job_pending = true;
++
++		cpu_latency_qos_add_request(&rot->qos, ROT_QOS_LATENCY_US);
++		rot_wr(rot, ROTTOP_INTR_EN, ROTTOP_INTR_DONE);
++	} else {
++		rot_wr(rot, ROTTOP_INTR_EN, 0);
++	}
++
++	wmb();
++	rot_wr(rot, ROTTOP_START_CTRL, 1);
++
++	queue_work(rot->wq, &rot->done_work);
++}
++
++static irqreturn_t rot_isr(int irq, void *data)
++{
++	struct rot_dev *rot = data;
++
++	/*
++	 * The DPU helper shares the line and the block, which may also be off,
++	 * so check the flag before touching registers.
++	 */
++	if (!rot->job_pending)
++		return IRQ_NONE;
++	if (!(rot_rd(rot, ROTTOP_INTR_STATUS) & ROTTOP_INTR_DONE))
++		return IRQ_NONE;
++
++	rot_wr(rot, ROTTOP_INTR_EN, 0);
++	rot_wr(rot, ROTTOP_INTR_CLEAR, ROTTOP_INTR_DONE);
++	rot->job_pending = false;
++	complete(&rot->job_done);
++	return IRQ_HANDLED;
++}
++
++
++static void rot_done_work(struct work_struct *work)
++{
++	struct rot_dev *rot = container_of(work, struct rot_dev, done_work);
++	struct vb2_v4l2_buffer *src, *dst;
++	struct rot_ctx *ctx;
++	u32 status;
++	int ret;
++
++	if (rot_irq_ok(rot)) {
++		ret = wait_for_completion_timeout(&rot->job_done,
++						  msecs_to_jiffies(ROT_TIMEOUT_MS))
++		      ? 0 : -ETIMEDOUT;
++		cpu_latency_qos_remove_request(&rot->qos);
++		if (ret) {
++
++			rot_wr(rot, ROTTOP_INTR_EN, 0);
++			rot->job_pending = false;
++			rot->irq_dead = true;
++			dev_warn(rot->dev, "rotator irq never fired, polling instead\n");
++		}
++	} else {
++		ret = readl_relaxed_poll_timeout(rot->base + ROTTOP_INTR_STATUS,
++						 status,
++						 status & ROTTOP_INTR_DONE, 50,
++						 ROT_TIMEOUT_MS * 1000);
++	}
++	if (ret) {
++		dev_err_ratelimited(rot->dev, "rotate timeout (status %#x)\n",
++				    rot_rd(rot, ROTTOP_STATUS));
++		rot_vbif_halt_xin(rot, VBIF_XIN_SSPP);
++		rot_vbif_halt_xin(rot, VBIF_XIN_WB);
++		rot_wr(rot, ROTTOP_SW_RESET_OVERRIDE, 1);
++		rot_wr(rot, ROTTOP_SW_RESET_OVERRIDE, 0);
++	}
++	rot_wr(rot, ROTTOP_INTR_CLEAR, ROTTOP_INTR_DONE);
++	rot_wr(rot, ROTTOP_START_CTRL, 0);
++
++
++	rot_sid_setup(rot, 0);
++
++	pm_runtime_mark_last_busy(rot->dev);
++	pm_runtime_put_autosuspend(rot->dev);
++
++	ctx = v4l2_m2m_get_curr_priv(rot->m2m_dev);
++	if (!ctx)
++		return;
++
++	src = v4l2_m2m_src_buf_remove(ctx->fh.m2m_ctx);
++	dst = v4l2_m2m_dst_buf_remove(ctx->fh.m2m_ctx);
++	if (src && dst) {
++		v4l2_m2m_buf_copy_metadata(dst, src);
++		v4l2_m2m_buf_done(src, ret ? VB2_BUF_STATE_ERROR
++					   : VB2_BUF_STATE_DONE);
++		v4l2_m2m_buf_done(dst, ret ? VB2_BUF_STATE_ERROR
++					   : VB2_BUF_STATE_DONE);
++	}
++	v4l2_m2m_job_finish(rot->m2m_dev, ctx->fh.m2m_ctx);
++}
++
++static int rot_querycap(struct file *file, void *priv,
++			struct v4l2_capability *cap)
++{
++	strscpy(cap->driver, ROT_NAME, sizeof(cap->driver));
++	strscpy(cap->card, "Qualcomm SDE rotator", sizeof(cap->card));
++	return 0;
++}
++
++static int rot_enum_fmt(struct file *file, void *priv, struct v4l2_fmtdesc *f)
++{
++	if (f->index >= ARRAY_SIZE(rot_formats))
++		return -EINVAL;
++	f->pixelformat = rot_formats[f->index].fourcc;
++	return 0;
++}
++
++static void rot_fill_pix(struct rot_ctx *ctx, struct v4l2_pix_format *pix,
++			 bool is_dst)
++{
++	const struct rot_fmt *f = is_dst ? ctx->fmt_dst : ctx->fmt_src;
++	bool rot90 = (ctx->rotate == 90 || ctx->rotate == 270);
++	u32 w = ctx->width, h = ctx->height;
++
++	if (is_dst) {
++		u32 psw, psh;
++
++		rot_scaled_size(ctx, &psw, &psh);
++		w = rot90 ? psh : psw;
++		h = rot90 ? psw : psh;
++	}
++	pix->pixelformat = f->fourcc;
++	pix->width = w;
++	pix->height = h;
++	pix->field = V4L2_FIELD_NONE;
++	pix->bytesperline = w * f->bpp;
++	pix->sizeimage = pix->bytesperline * h;
++	pix->colorspace = V4L2_COLORSPACE_SRGB;
++}
++
++static int rot_g_fmt(struct file *file, void *priv, struct v4l2_format *f)
++{
++	struct rot_ctx *ctx = file2ctx(file);
++
++	rot_fill_pix(ctx, &f->fmt.pix,
++		     f->type == V4L2_BUF_TYPE_VIDEO_CAPTURE);
++	return 0;
++}
++
++static int rot_try_fmt(struct file *file, void *priv, struct v4l2_format *f)
++{
++	struct v4l2_pix_format *pix = &f->fmt.pix;
++	const struct rot_fmt *fmt = rot_find_fmt(pix->pixelformat);
++
++	if (!fmt) {
++		fmt = &rot_formats[0];
++		pix->pixelformat = fmt->fourcc;
++	}
++	if (V4L2_TYPE_IS_CAPTURE(f->type)) {
++		struct rot_ctx *ctx = file2ctx(file);
++		bool rot90 = (ctx->rotate == 90 || ctx->rotate == 270);
++		u32 want_w = rot90 ? pix->height : pix->width;
++		u32 want_h = rot90 ? pix->width : pix->height;
++		u32 psw = ctx->width / rot_dnsc_factor(ctx->width, want_w);
++		u32 psh = ctx->height / rot_dnsc_factor(ctx->height, want_h);
++
++		pix->width = rot90 ? psh : psw;
++		pix->height = rot90 ? psw : psh;
++	} else {
++
++		pix->width = clamp_t(u32, pix->width, 16, 4096);
++		pix->height = clamp_t(u32, pix->height, 16, 4096);
++	}
++	pix->field = V4L2_FIELD_NONE;
++	pix->bytesperline = pix->width * fmt->bpp;
++	pix->sizeimage = pix->bytesperline * pix->height;
++	pix->colorspace = V4L2_COLORSPACE_SRGB;
++	return 0;
++}
++
++static int rot_s_fmt(struct file *file, void *priv, struct v4l2_format *f)
++{
++	struct rot_ctx *ctx = file2ctx(file);
++	struct v4l2_pix_format *pix = &f->fmt.pix;
++	int ret = rot_try_fmt(file, priv, f);
++
++	if (ret)
++		return ret;
++
++	if (f->type == V4L2_BUF_TYPE_VIDEO_OUTPUT) {
++		ctx->fmt_src = rot_find_fmt(pix->pixelformat);
++		ctx->width = pix->width;
++		ctx->height = pix->height;
++		ctx->dst_w = 0;
++		ctx->dst_h = 0;
++		if (!ctx->fmt_dst)
++			ctx->fmt_dst = ctx->fmt_src;
++	} else {
++		ctx->fmt_dst = rot_find_fmt(pix->pixelformat);
++		ctx->dst_w = pix->width;
++		ctx->dst_h = pix->height;
++	}
++	return 0;
++}
++
++static int rot_s_ctrl(struct v4l2_ctrl *ctrl)
++{
++	struct rot_ctx *ctx = container_of(ctrl->handler, struct rot_ctx,
++					   ctrl_handler);
++
++	switch (ctrl->id) {
++	case V4L2_CID_ROTATE:
++		ctx->rotate = ctrl->val;
++		ctx->dst_w = 0;
++		ctx->dst_h = 0;
++		break;
++	case V4L2_CID_HFLIP:
++		ctx->hflip = ctrl->val;
++		break;
++	case V4L2_CID_VFLIP:
++		ctx->vflip = ctrl->val;
++		break;
++	}
++	return 0;
++}
++
++static const struct v4l2_ctrl_ops rot_ctrl_ops = { .s_ctrl = rot_s_ctrl };
++
++static const struct v4l2_ioctl_ops rot_ioctl_ops = {
++	.vidioc_querycap	= rot_querycap,
++	.vidioc_enum_fmt_vid_cap = rot_enum_fmt,
++	.vidioc_enum_fmt_vid_out = rot_enum_fmt,
++	.vidioc_g_fmt_vid_cap	= rot_g_fmt,
++	.vidioc_g_fmt_vid_out	= rot_g_fmt,
++	.vidioc_try_fmt_vid_cap	= rot_try_fmt,
++	.vidioc_try_fmt_vid_out	= rot_try_fmt,
++	.vidioc_s_fmt_vid_cap	= rot_s_fmt,
++	.vidioc_s_fmt_vid_out	= rot_s_fmt,
++	.vidioc_reqbufs		= v4l2_m2m_ioctl_reqbufs,
++	.vidioc_querybuf	= v4l2_m2m_ioctl_querybuf,
++	.vidioc_qbuf		= v4l2_m2m_ioctl_qbuf,
++	.vidioc_dqbuf		= v4l2_m2m_ioctl_dqbuf,
++	.vidioc_prepare_buf	= v4l2_m2m_ioctl_prepare_buf,
++	.vidioc_create_bufs	= v4l2_m2m_ioctl_create_bufs,
++	.vidioc_expbuf		= v4l2_m2m_ioctl_expbuf,
++	.vidioc_streamon	= v4l2_m2m_ioctl_streamon,
++	.vidioc_streamoff	= v4l2_m2m_ioctl_streamoff,
++};
++
++static int rot_queue_setup(struct vb2_queue *vq, unsigned int *nbufs,
++			   unsigned int *nplanes, unsigned int sizes[],
++			   struct device *alloc_devs[])
++{
++	struct rot_ctx *ctx = vb2_get_drv_priv(vq);
++	const struct rot_fmt *f;
++	bool is_dst = V4L2_TYPE_IS_CAPTURE(vq->type);
++	bool rot90 = (ctx->rotate == 90 || ctx->rotate == 270);
++	u32 w = ctx->width, h = ctx->height;
++
++	f = is_dst ? ctx->fmt_dst : ctx->fmt_src;
++	if (!f)
++		return -EINVAL;
++	if (is_dst) {
++		u32 psw, psh;
++
++		rot_scaled_size(ctx, &psw, &psh);
++		w = rot90 ? psh : psw;
++		h = rot90 ? psw : psh;
++	}
++	if (*nplanes)
++		return *nplanes == 1 ? 0 : -EINVAL;
++	*nplanes = 1;
++	sizes[0] = w * f->bpp * h;
++	return 0;
++}
++
++static int rot_buf_prepare(struct vb2_buffer *vb)
++{
++	struct rot_ctx *ctx = vb2_get_drv_priv(vb->vb2_queue);
++	const struct rot_fmt *f;
++	bool is_dst = V4L2_TYPE_IS_CAPTURE(vb->vb2_queue->type);
++	bool rot90 = (ctx->rotate == 90 || ctx->rotate == 270);
++	u32 w = ctx->width, h = ctx->height;
++
++	f = is_dst ? ctx->fmt_dst : ctx->fmt_src;
++	if (is_dst && rot90) {
++		w = ctx->height;
++		h = ctx->width;
++	}
++	vb2_set_plane_payload(vb, 0, w * f->bpp * h);
++	return 0;
++}
++
++static void rot_buf_queue(struct vb2_buffer *vb)
++{
++	struct rot_ctx *ctx = vb2_get_drv_priv(vb->vb2_queue);
++
++	v4l2_m2m_buf_queue(ctx->fh.m2m_ctx, to_vb2_v4l2_buffer(vb));
++}
++
++static const struct vb2_ops rot_qops = {
++	.queue_setup	= rot_queue_setup,
++	.buf_prepare	= rot_buf_prepare,
++	.buf_queue	= rot_buf_queue,
++};
++
++static int rot_queue_init(void *priv, struct vb2_queue *src_vq,
++			  struct vb2_queue *dst_vq)
++{
++	struct rot_ctx *ctx = priv;
++	struct rot_dev *rot = ctx->rot;
++	int ret;
++
++	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
++	src_vq->io_modes = VB2_MMAP | VB2_DMABUF;
++	src_vq->drv_priv = ctx;
++	src_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
++	src_vq->ops = &rot_qops;
++	src_vq->mem_ops = &vb2_dma_contig_memops;
++	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
++	src_vq->lock = &rot->dev_mutex;
++	src_vq->dev = rot->dev;
++	ret = vb2_queue_init(src_vq);
++	if (ret)
++		return ret;
++
++	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
++	dst_vq->io_modes = VB2_MMAP | VB2_DMABUF;
++	dst_vq->drv_priv = ctx;
++	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
++	dst_vq->ops = &rot_qops;
++	dst_vq->mem_ops = &vb2_dma_contig_memops;
++	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
++	dst_vq->lock = &rot->dev_mutex;
++	dst_vq->dev = rot->dev;
++	return vb2_queue_init(dst_vq);
++}
++
++static int rot_open(struct file *file)
++{
++	struct rot_dev *rot = video_drvdata(file);
++	struct rot_ctx *ctx;
++	struct v4l2_ctrl_handler *hdl;
++	int ret = 0;
++
++	if (mutex_lock_interruptible(&rot->dev_mutex))
++		return -ERESTARTSYS;
++
++	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
++	if (!ctx) {
++		ret = -ENOMEM;
++		goto out;
++	}
++	ctx->rot = rot;
++	ctx->fmt_src = &rot_formats[0];
++	ctx->fmt_dst = &rot_formats[0];
++	ctx->width = 1920;
++	ctx->height = 1080;
++
++	v4l2_fh_init(&ctx->fh, video_devdata(file));
++	file->private_data = &ctx->fh;
++
++	hdl = &ctx->ctrl_handler;
++	v4l2_ctrl_handler_init(hdl, 3);
++	v4l2_ctrl_new_std(hdl, &rot_ctrl_ops, V4L2_CID_ROTATE, 0, 270, 90, 0);
++	v4l2_ctrl_new_std(hdl, &rot_ctrl_ops, V4L2_CID_HFLIP, 0, 1, 1, 0);
++	v4l2_ctrl_new_std(hdl, &rot_ctrl_ops, V4L2_CID_VFLIP, 0, 1, 1, 0);
++	if (hdl->error) {
++		ret = hdl->error;
++		v4l2_ctrl_handler_free(hdl);
++		kfree(ctx);
++		goto out;
++	}
++	ctx->fh.ctrl_handler = hdl;
++
++	ctx->fh.m2m_ctx = v4l2_m2m_ctx_init(rot->m2m_dev, ctx, rot_queue_init);
++	if (IS_ERR(ctx->fh.m2m_ctx)) {
++		ret = PTR_ERR(ctx->fh.m2m_ctx);
++		v4l2_ctrl_handler_free(hdl);
++		kfree(ctx);
++		goto out;
++	}
++	v4l2_fh_add(&ctx->fh, file);
++out:
++	mutex_unlock(&rot->dev_mutex);
++	return ret;
++}
++
++static int rot_release(struct file *file)
++{
++	struct rot_dev *rot = video_drvdata(file);
++	struct rot_ctx *ctx = file2ctx(file);
++
++	mutex_lock(&rot->dev_mutex);
++	v4l2_m2m_ctx_release(ctx->fh.m2m_ctx);
++	v4l2_ctrl_handler_free(&ctx->ctrl_handler);
++	v4l2_fh_del(&ctx->fh, file);
++	v4l2_fh_exit(&ctx->fh);
++	kfree(ctx);
++	mutex_unlock(&rot->dev_mutex);
++	return 0;
++}
++
++static const struct v4l2_file_operations rot_fops = {
++	.owner		= THIS_MODULE,
++	.open		= rot_open,
++	.release	= rot_release,
++	.poll		= v4l2_m2m_fop_poll,
++	.unlocked_ioctl	= video_ioctl2,
++	.mmap		= v4l2_m2m_fop_mmap,
++};
++
++static const struct v4l2_m2m_ops rot_m2m_ops = {
++	.device_run	= rot_device_run,
++};
++
++static const struct video_device rot_videodev = {
++	.name		= ROT_NAME,
++	.vfl_dir	= VFL_DIR_M2M,
++	.fops		= &rot_fops,
++	.ioctl_ops	= &rot_ioctl_ops,
++	.minor		= -1,
++	.release	= video_device_release_empty,
++	.device_caps	= V4L2_CAP_VIDEO_M2M | V4L2_CAP_STREAMING,
++};
++
++/* probe */
++static int rot_probe(struct platform_device *pdev)
++{
++	struct rot_dev *rot;
++	struct video_device *vfd;
++	struct resource *res;
++	int ret;
++
++	rot = devm_kzalloc(&pdev->dev, sizeof(*rot), GFP_KERNEL);
++	if (!rot)
++		return -ENOMEM;
++	rot->dev = &pdev->dev;
++	mutex_init(&rot->dev_mutex);
++	INIT_WORK(&rot->done_work, rot_done_work);
++
++	rot->base = devm_platform_ioremap_resource_byname(pdev, "rot");
++	if (IS_ERR(rot->base))
++		return PTR_ERR(rot->base);
++
++	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "vbif");
++	if (res)
++		rot->vbif = devm_ioremap(&pdev->dev, res->start,
++					 resource_size(res));
++
++	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "sid");
++	if (res)
++		rot->sid = devm_ioremap(&pdev->dev, res->start,
++					resource_size(res));
++
++	init_completion(&rot->job_done);
++	rot->irq = platform_get_irq_optional(pdev, 0);
++	if (rot->irq > 0) {
++		ret = devm_request_irq(&pdev->dev, rot->irq, rot_isr,
++				       IRQF_SHARED, ROT_NAME, rot);
++		if (ret)
++			return ret;
++	}
++
++	rot->mem_path = devm_of_icc_get(&pdev->dev, "mem");
++	if (IS_ERR(rot->mem_path))
++		return dev_err_probe(&pdev->dev, PTR_ERR(rot->mem_path),
++				     "no mem interconnect path\n");
++
++	rot->clks[0].id = "bus";
++	rot->clks[1].id = "iface";
++	rot->clks[2].id = "rot";
++	ret = devm_clk_bulk_get(&pdev->dev, ARRAY_SIZE(rot->clks), rot->clks);
++	if (ret)
++		return ret;
++
++	ret = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
++	if (ret)
++		return ret;
++
++	ret = v4l2_device_register(&pdev->dev, &rot->v4l2_dev);
++	if (ret)
++		return ret;
++
++	rot->m2m_dev = v4l2_m2m_init(&rot_m2m_ops);
++	if (IS_ERR(rot->m2m_dev)) {
++		ret = PTR_ERR(rot->m2m_dev);
++		goto err_v4l2;
++	}
++
++	rot->wq = alloc_ordered_workqueue(ROT_NAME, WQ_HIGHPRI);
++	if (!rot->wq) {
++		ret = -ENOMEM;
++		goto err_m2m_release;
++	}
++
++	rot->vfd = rot_videodev;
++	vfd = &rot->vfd;
++	vfd->lock = &rot->dev_mutex;
++	vfd->v4l2_dev = &rot->v4l2_dev;
++	video_set_drvdata(vfd, rot);
++
++	pm_runtime_set_autosuspend_delay(&pdev->dev, ROT_AUTOSUSPEND_MS);
++	pm_runtime_use_autosuspend(&pdev->dev);
++	pm_runtime_enable(&pdev->dev);
++	platform_set_drvdata(pdev, rot);
++
++	ret = video_register_device(vfd, VFL_TYPE_VIDEO, -1);
++	if (ret)
++		goto err_m2m;
++
++	dev_info(&pdev->dev, "SDE rotator registered as /dev/video%d (sid %d vbif %d irq %d)\n",
++		 vfd->num, !!rot->sid, !!rot->vbif, rot->irq);
++	return 0;
++
++err_m2m:
++	pm_runtime_disable(&pdev->dev);
++	pm_runtime_dont_use_autosuspend(&pdev->dev);
++	destroy_workqueue(rot->wq);
++err_m2m_release:
++	v4l2_m2m_release(rot->m2m_dev);
++err_v4l2:
++	v4l2_device_unregister(&rot->v4l2_dev);
++	return ret;
++}
++
++static void rot_power_down(struct rot_dev *rot)
++{
++	clk_bulk_disable_unprepare(ARRAY_SIZE(rot->clks), rot->clks);
++	icc_set_bw(rot->mem_path, 0, 0);
++}
++
++static void rot_remove(struct platform_device *pdev)
++{
++	struct rot_dev *rot = platform_get_drvdata(pdev);
++
++	video_unregister_device(&rot->vfd);
++	destroy_workqueue(rot->wq);
++	v4l2_m2m_release(rot->m2m_dev);
++	v4l2_device_unregister(&rot->v4l2_dev);
++	pm_runtime_disable(&pdev->dev);
++	if (!pm_runtime_status_suspended(&pdev->dev))
++		rot_power_down(rot);
++	pm_runtime_set_suspended(&pdev->dev);
++	pm_runtime_dont_use_autosuspend(&pdev->dev);
++}
++
++static int __maybe_unused rot_runtime_resume(struct device *dev)
++{
++	struct rot_dev *rot = dev_get_drvdata(dev);
++	int ret;
++
++	ret = icc_set_bw(rot->mem_path, 0, ROT_ICC_PEAK_BW);
++	if (ret)
++		return ret;
++
++	ret = clk_bulk_prepare_enable(ARRAY_SIZE(rot->clks), rot->clks);
++	if (ret) {
++		icc_set_bw(rot->mem_path, 0, 0);
++		return ret;
++	}
++
++	rot_vbif_setup(rot);
++	return 0;
++}
++
++static int __maybe_unused rot_runtime_suspend(struct device *dev)
++{
++	rot_power_down(dev_get_drvdata(dev));
++	return 0;
++}
++
++static const struct dev_pm_ops rot_pm_ops = {
++	SET_RUNTIME_PM_OPS(rot_runtime_suspend, rot_runtime_resume, NULL)
++};
++
++static const struct of_device_id rot_dt_match[] = {
++	{ .compatible = "qcom,sm6115-sde-rotator" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, rot_dt_match);
++
++static struct platform_driver rot_driver = {
++	.probe	= rot_probe,
++	.remove	= rot_remove,
++	.driver	= {
++		.name		= ROT_NAME,
++		.of_match_table	= rot_dt_match,
++		.pm		= &rot_pm_ops,
++	},
++};
++module_platform_driver(rot_driver);
++
++MODULE_DESCRIPTION("Qualcomm SDE mem2mem rotator");
++MODULE_LICENSE("GPL");

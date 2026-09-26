@@ -1,0 +1,472 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Sun, 13 Sep 2026 19:57:03 -0700
+Subject: [PATCH] wlroots: offload the output rotation to the primary plane
+
+
+diff -ruN pristine/backend/drm/atomic.c stepA/backend/drm/atomic.c
+--- a/backend/drm/atomic.c	2026-03-19 12:13:09
++++ b/backend/drm/atomic.c	2026-09-22 23:02:12
+@@ -70,6 +70,7 @@
+ 	}
+ 
+ 	int ret = drmModeAtomicCommit(drm->fd, atom->req, flags, page_flip);
++	drm->last_commit_error = ret;
+ 	if (ret != 0) {
+ 		enum wlr_log_importance log_level = WLR_ERROR;
+ 		if (flags & DRM_MODE_ATOMIC_TEST_ONLY) {
+@@ -357,7 +358,8 @@
+ static void set_plane_props(struct atomic *atom, struct wlr_drm_backend *drm,
+ 		struct wlr_drm_plane *plane, struct wlr_drm_fb *fb, uint32_t crtc_id,
+ 		const struct wlr_box *dst_box,
+-		const struct wlr_fbox *src_box) {
++		const struct wlr_fbox *src_box,
++		enum wl_output_transform transform) {
+ 	uint32_t id = plane->id;
+ 	const struct wlr_drm_plane_props *props = &plane->props;
+ 
+@@ -378,6 +380,22 @@
+ 	atomic_add(atom, id, props->crtc_y, dst_box->y);
+ 	atomic_add(atom, id, props->crtc_w, dst_box->width);
+ 	atomic_add(atom, id, props->crtc_h, dst_box->height);
++
++	if (props->rotation) {
++		uint64_t rotation = DRM_MODE_ROTATE_0;
++		switch (transform) {
++		case WL_OUTPUT_TRANSFORM_NORMAL: rotation = DRM_MODE_ROTATE_0;   break;
++		case WL_OUTPUT_TRANSFORM_90:     rotation = DRM_MODE_ROTATE_90;  break;
++		case WL_OUTPUT_TRANSFORM_180:    rotation = DRM_MODE_ROTATE_180; break;
++		case WL_OUTPUT_TRANSFORM_270:    rotation = DRM_MODE_ROTATE_270; break;
++		default:
++			atom->failed = true;
++			return;
++		}
++		atomic_add(atom, id, props->rotation, rotation);
++	} else if (transform != WL_OUTPUT_TRANSFORM_NORMAL) {
++		atom->failed = true;
++	}
+ }
+ 
+ static bool supports_cursor_hotspots(const struct wlr_drm_plane *plane) {
+@@ -438,15 +456,23 @@
+ 			atomic_add(atom, crtc->id, crtc->props.vrr_enabled, state->vrr_enabled);
+ 		}
+ 
+-		set_plane_props(atom, drm, crtc->primary, state->primary_fb, crtc->id,
+-			&state->primary_viewport.dst_box, &state->primary_viewport.src_box);
+-		if (crtc->primary->props.fb_damage_clips != 0) {
+-			atomic_add(atom, crtc->primary->id,
+-				crtc->primary->props.fb_damage_clips, state->fb_damage_clips);
++		/* re-submitting the on screen buffer would make the kernel rotate it again */
++		bool primary_unchanged = !modeset &&
++			!(state->base->committed & WLR_OUTPUT_STATE_BUFFER) &&
++			crtc->primary->queued_fb == NULL &&
++			state->primary_fb == crtc->primary->current_fb;
++		if (!primary_unchanged) {
++			set_plane_props(atom, drm, crtc->primary, state->primary_fb, crtc->id,
++				&state->primary_viewport.dst_box, &state->primary_viewport.src_box,
++				state->primary_viewport.transform);
++			if (crtc->primary->props.fb_damage_clips != 0) {
++				atomic_add(atom, crtc->primary->id,
++					crtc->primary->props.fb_damage_clips, state->fb_damage_clips);
++			}
++			if (state->primary_in_fence_fd >= 0) {
++				set_plane_in_fence_fd(atom, crtc->primary, state->primary_in_fence_fd);
++			}
+ 		}
+-		if (state->primary_in_fence_fd >= 0) {
+-			set_plane_in_fence_fd(atom, crtc->primary, state->primary_in_fence_fd);
+-		}
+ 		if (state->base->committed & WLR_OUTPUT_STATE_SIGNAL_TIMELINE) {
+ 			set_crtc_out_fence_ptr(atom, crtc, &state->out_fence_fd);
+ 		}
+@@ -463,7 +489,8 @@
+ 					.height = state->cursor_fb->wlr_buf->height,
+ 				};
+ 				set_plane_props(atom, drm, crtc->cursor, state->cursor_fb,
+-					crtc->id, &cursor_dst, &cursor_src);
++					crtc->id, &cursor_dst, &cursor_src,
++					WL_OUTPUT_TRANSFORM_NORMAL);
+ 				if (supports_cursor_hotspots(crtc->cursor)) {
+ 					atomic_add(atom, crtc->cursor->id,
+ 						crtc->cursor->props.hotspot_x, conn->cursor_hotspot_x);
+diff -ruN pristine/backend/drm/drm.c stepA/backend/drm/drm.c
+--- a/backend/drm/drm.c
++++ b/backend/drm/drm.c
+@@ -687,6 +687,17 @@
+ 			state->primary_viewport = primary->viewport;
+ 		}
+ 
++		if (output_offload_transform(&conn->output) && state->primary_fb != NULL) {
++			state->primary_viewport.src_box = (struct wlr_fbox){
++				.width = state->primary_fb->wlr_buf->width,
++				.height = state->primary_fb->wlr_buf->height,
++			};
++			state->primary_viewport.dst_box = (struct wlr_box){
++				.width = conn->output.width,
++				.height = conn->output.height,
++			};
++		}
++
+ 		if (conn->cursor_enabled) {
+ 			struct wlr_drm_plane *cursor = conn->crtc->cursor;
+ 			assert(cursor != NULL);
+@@ -773,6 +784,7 @@
+ 
+ 	output_state_get_buffer_src_box(state->base, &state->primary_viewport.src_box);
+ 	output_state_get_buffer_dst_box(state->base, &state->primary_viewport.dst_box);
++	state->primary_viewport.transform = state->base->buffer_transform;
+ 
+ 	return true;
+ }
+@@ -968,6 +980,12 @@
+ 	}
+ 
+ 	ok = drm_commit(drm, &pending_dev, flags, test_only);
++
++	if (!ok && !test_only && drm->last_commit_error != -EBUSY &&
++			drm->last_commit_error != -EAGAIN &&
++			pending.primary_viewport.transform != WL_OUTPUT_TRANSFORM_NORMAL) {
++		output_offload_transform_failed(&conn->output);
++	}
+ 
+ out:
+ 	drm_connector_state_finish(&pending);
+diff -ruN pristine/include/backend/drm/drm.h stepA/include/backend/drm/drm.h
+--- a/include/backend/drm/drm.h
++++ b/include/backend/drm/drm.h
+@@ -18,6 +18,7 @@
+ struct wlr_drm_viewport {
+ 	struct wlr_fbox src_box;
+ 	struct wlr_box dst_box;
++	enum wl_output_transform transform;
+ };
+ 
+ struct wlr_drm_plane {
+@@ -112,6 +113,9 @@
+ 
+ 	struct wl_list fbs; // wlr_drm_fb.link
+ 	struct wl_list connectors; // wlr_drm_connector.link
++
++	// -errno of the last drmModeAtomicCommit(), 0 when it succeeded
++	int last_commit_error;
+ 
+ 	struct wl_list page_flips; // wlr_drm_page_flip.link
+ 
+diff -ruN pristine/include/types/wlr_output.h stepA/include/types/wlr_output.h
+--- a/include/types/wlr_output.h	2026-03-19 12:13:09
++++ b/include/types/wlr_output.h	2026-09-22 23:01:47
+@@ -6,6 +6,9 @@
+ 
+ void output_pending_resolution(struct wlr_output *output,
+ 	const struct wlr_output_state *state, int *width, int *height);
++bool output_offload_transform(struct wlr_output *output);
++void output_offload_transform_failed(struct wlr_output *output);
++void output_offload_transform_changed(struct wlr_output *output);
+ bool output_pending_enabled(struct wlr_output *output,
+ 	const struct wlr_output_state *state);
+ 
+diff -ruN pristine/include/wlr/types/wlr_output.h stepA/include/wlr/types/wlr_output.h
+--- a/include/wlr/types/wlr_output.h	2026-03-19 12:13:09
++++ b/include/wlr/types/wlr_output.h	2026-09-22 22:59:40
+@@ -107,6 +107,7 @@
+ 	// offset is relative to the origin of this output. Double-buffered by
+ 	// WLR_OUTPUT_STATE_BUFFER along with `buffer`.
+ 	struct wlr_box buffer_dst_box;
++	enum wl_output_transform buffer_transform;
+ 
+ 	/* Request a tearing page-flip. When enabled, this may cause the output to
+ 	 * display a part of the previous buffer and a part of the current buffer at
+@@ -232,6 +233,8 @@
+ 	struct wlr_addon_set addons;
+ 
+ 	void *data;
++	// the plane refused the offloaded transform, composite it from now on
++	bool offload_transform_failed;
+ 
+ 	struct {
+ 		struct wl_listener display_destroy;
+diff -ruN pristine/types/output/cursor.c stepA/types/output/cursor.c
+--- a/types/output/cursor.c	2026-03-19 12:13:09
++++ b/types/output/cursor.c	2026-09-22 23:01:47
+@@ -91,6 +91,9 @@
+ 		struct wlr_render_pass *render_pass, const pixman_region32_t *damage) {
+ 	int width, height;
+ 	wlr_output_transformed_resolution(output, &width, &height);
++	// an offloaded transform leaves the render buffer unrotated
++	enum wl_output_transform transform = output_offload_transform(output) ?
++		WL_OUTPUT_TRANSFORM_NORMAL : output->transform;
+ 
+ 	struct wlr_output_cursor *cursor;
+ 	wl_list_for_each(cursor, &output->cursors, link) {
+@@ -107,7 +110,7 @@
+ 		struct wlr_box box;
+ 		output_cursor_get_box(cursor, &box);
+ 		wlr_box_transform(&box, &box,
+-			wlr_output_transform_invert(output->transform), width, height);
++			wlr_output_transform_invert(transform), width, height);
+ 
+ 		pixman_region32_t cursor_damage;
+ 		pixman_region32_init_rect(&cursor_damage,
+@@ -126,7 +129,7 @@
+ 			.src_box = cursor->src_box,
+ 			.dst_box = box,
+ 			.clip = &cursor_damage,
+-			.transform = output->transform,
++			.transform = transform,
+ 		});
+ 
+ 		pixman_region32_fini(&cursor_damage);
+diff -ruN pristine/types/output/output.c stepA/types/output/output.c
+--- a/types/output/output.c	2026-03-19 12:13:09
++++ b/types/output/output.c	2026-09-22 23:01:47
+@@ -8,6 +8,7 @@
+ #include <wlr/types/wlr_compositor.h>
+ #include <wlr/types/wlr_output_layer.h>
+ #include <wlr/util/log.h>
++#include <wlr/util/transform.h>
+ #include "types/wlr_output.h"
+ #include "util/env.h"
+ #include "util/global.h"
+@@ -474,6 +475,39 @@
+ 	return wl_container_of(output->modes.next, mode, link);
+ }
+ 
++bool output_offload_transform(struct wlr_output *output) {
++	// captures read the committed buffer and expect it in output orientation
++	return output->transform != WL_OUTPUT_TRANSFORM_NORMAL &&
++		!output->offload_transform_failed &&
++		output->attach_render_locks == 0 &&
++		getenv("WLR_OUTPUT_ROTATE_PLANE") != NULL;
++}
++
++void output_offload_transform_failed(struct wlr_output *output) {
++	if (output->offload_transform_failed) {
++		return;
++	}
++	wlr_log(WLR_ERROR, "Output '%s': plane rejected the offloaded transform, "
++		"compositing the rotation instead", output->name);
++	output->offload_transform_failed = true;
++	output_offload_transform_changed(output);
++}
++
++void output_offload_transform_changed(struct wlr_output *output) {
++	// the render buffer changes orientation, redraw everything
++	int width, height;
++	wlr_output_transformed_resolution(output, &width, &height);
++	pixman_region32_t damage;
++	pixman_region32_init_rect(&damage, 0, 0, width, height);
++	struct wlr_output_event_damage event = {
++		.output = output,
++		.damage = &damage,
++	};
++	wl_signal_emit_mutable(&output->events.damage, &event);
++	pixman_region32_fini(&damage);
++	wlr_output_schedule_frame(output);
++}
++
+ void output_pending_resolution(struct wlr_output *output,
+ 		const struct wlr_output_state *state, int *width, int *height) {
+ 	if (state->committed & WLR_OUTPUT_STATE_MODE) {
+@@ -481,16 +515,21 @@
+ 		case WLR_OUTPUT_STATE_MODE_FIXED:
+ 			*width = state->mode->width;
+ 			*height = state->mode->height;
+-			return;
++			break;
+ 		case WLR_OUTPUT_STATE_MODE_CUSTOM:
+ 			*width = state->custom_mode.width;
+ 			*height = state->custom_mode.height;
+-			return;
++			break;
++		default:
++			abort();
+ 		}
+-		abort();
+ 	} else {
+ 		*width = output->width;
+ 		*height = output->height;
++	}
++
++	if (output_offload_transform(output)) {
++		wlr_output_transform_coords(output->transform, width, height);
+ 	}
+ }
+ 
+diff -ruN pristine/types/output/render.c stepA/types/output/render.c
+--- a/types/output/render.c	2026-03-19 12:13:09
++++ b/types/output/render.c	2026-09-22 23:01:47
+@@ -133,11 +133,15 @@
+ }
+ 
+ void wlr_output_lock_attach_render(struct wlr_output *output, bool lock) {
++	bool offload = output_offload_transform(output);
+ 	if (lock) {
+ 		++output->attach_render_locks;
+ 	} else {
+ 		assert(output->attach_render_locks > 0);
+ 		--output->attach_render_locks;
++	}
++	if (output_offload_transform(output) != offload) {
++		output_offload_transform_changed(output);
+ 	}
+ 	wlr_log(WLR_DEBUG, "%s direct scan-out on output '%s' (locks: %d)",
+ 		lock ? "Disabling" : "Enabling", output->name,
+diff -ruN pristine/types/output/state.c stepA/types/output/state.c
+--- a/types/output/state.c	2026-03-19 12:13:09
++++ b/types/output/state.c	2026-09-22 22:59:40
+@@ -144,6 +144,7 @@
+ 	copy.buffer = NULL;
+ 	copy.buffer_src_box = (struct wlr_fbox){0};
+ 	copy.buffer_dst_box = (struct wlr_box){0};
++	copy.buffer_transform = WL_OUTPUT_TRANSFORM_NORMAL;
+ 	pixman_region32_init(&copy.damage);
+ 	copy.gamma_lut = NULL;
+ 	copy.gamma_lut_size = 0;
+@@ -154,6 +155,7 @@
+ 		wlr_output_state_set_buffer(&copy, src->buffer);
+ 		copy.buffer_src_box = src->buffer_src_box;
+ 		copy.buffer_dst_box = src->buffer_dst_box;
++		copy.buffer_transform = src->buffer_transform;
+ 	}
+ 
+ 	if (src->committed & WLR_OUTPUT_STATE_DAMAGE) {
+diff -ruN pristine/types/scene/wlr_scene.c stepA/types/scene/wlr_scene.c
+--- a/types/scene/wlr_scene.c	2026-03-19 12:13:09
++++ b/types/scene/wlr_scene.c	2026-09-22 23:01:47
+@@ -338,12 +338,20 @@
+ 	wlr_region_transform(region, region, transform, data->trans_width, data->trans_height);
+ }
+ 
++static void scene_output_buffer_size(struct wlr_output *output, int *w, int *h) {
++	*w = output->width;
++	*h = output->height;
++	if (output_offload_transform(output))
++		wlr_output_transform_coords(output->transform, w, h);
++}
++
+ static void output_to_buffer_coords(pixman_region32_t *damage, struct wlr_output *output) {
+ 	int width, height;
+ 	wlr_output_transformed_resolution(output, &width, &height);
+ 
+-	wlr_region_transform(damage, damage,
+-		wlr_output_transform_invert(output->transform), width, height);
++	enum wl_output_transform t = output_offload_transform(output) ?
++		WL_OUTPUT_TRANSFORM_NORMAL : wlr_output_transform_invert(output->transform);
++	wlr_region_transform(damage, damage, t, width, height);
+ }
+ 
+ static int scale_length(int length, int offset, float scale) {
+@@ -369,7 +377,9 @@
+ 
+ 	pixman_region32_t clipped;
+ 	pixman_region32_init(&clipped);
+-	pixman_region32_intersect_rect(&clipped, damage, 0, 0, output->width, output->height);
++	int bw, bh;
++	scene_output_buffer_size(output, &bw, &bh);
++	pixman_region32_intersect_rect(&clipped, damage, 0, 0, bw, bh);
+ 
+ 	if (!pixman_region32_empty(&clipped)) {
+ 		wlr_output_schedule_frame(scene_output->output);
+@@ -386,7 +396,9 @@
+ 	struct wlr_output *output = scene_output->output;
+ 
+ 	pixman_region32_t damage;
+-	pixman_region32_init_rect(&damage, 0, 0, output->width, output->height);
++	int bw, bh;
++	scene_output_buffer_size(output, &bw, &bh);
++	pixman_region32_init_rect(&damage, 0, 0, bw, bh);
+ 	scene_output_damage(scene_output, &damage);
+ 	pixman_region32_fini(&damage);
+ }
+@@ -1622,8 +1634,9 @@
+ 	pixman_region32_t damage;
+ 	pixman_region32_init(&damage);
+ 	pixman_region32_copy(&damage, event->damage);
+-	wlr_region_transform(&damage, &damage,
+-		wlr_output_transform_invert(output->transform), width, height);
++	enum wl_output_transform t = output_offload_transform(output) ?
++		WL_OUTPUT_TRANSFORM_NORMAL : wlr_output_transform_invert(output->transform);
++	wlr_region_transform(&damage, &damage, t, width, height);
+ 	scene_output_damage(scene_output, &damage);
+ 	pixman_region32_fini(&damage);
+ }
+@@ -1925,8 +1938,19 @@
+ 		.height = default_height,
+ 	};
+ 
+-	if (buffer->transform != data->transform) {
+-		return SCANOUT_INELIGIBLE;
++	enum wl_output_transform scanout_transform =
++		output_offload_transform(scene_output->output) ?
++		scene_output->output->transform : data->transform;
++	enum wl_output_transform plane_transform = WL_OUTPUT_TRANSFORM_NORMAL;
++	if (buffer->transform != scanout_transform) {
++		plane_transform = wlr_output_transform_compose(scanout_transform,
++			wlr_output_transform_invert(buffer->transform));
++		if (plane_transform >= WL_OUTPUT_TRANSFORM_FLIPPED) {
++			return SCANOUT_INELIGIBLE;
++		}
++		if (!output_offload_transform(scene_output->output)) {
++			return SCANOUT_INELIGIBLE;
++		}
+ 	}
+ 
+ 	// We want to ensure optimal buffer selection, but as direct-scanout can be enabled and disabled
+@@ -1954,12 +1978,29 @@
+ 	}
+ 
+ 	// Translate the position from scene coordinates to output coordinates
+-	pending.buffer_dst_box.x = entry->x - scene_output->x;
+-	pending.buffer_dst_box.y = entry->y - scene_output->y;
++	if (output_offload_transform(scene_output->output)) {
++		// the node must cover the whole output, the plane scales and rotates it onto the mode
++		int sw, sh, ow, oh;
++		scene_node_get_size(node, &sw, &sh);
++		wlr_output_effective_resolution(scene_output->output, &ow, &oh);
++		if (entry->x != scene_output->x || entry->y != scene_output->y ||
++				sw != ow || sh != oh) {
++			wlr_output_state_finish(&pending);
++			return SCANOUT_INELIGIBLE;
++		}
+ 
+-	scene_node_get_size(node, &pending.buffer_dst_box.width, &pending.buffer_dst_box.height);
+-	transform_output_box(&pending.buffer_dst_box, data);
++		pending.buffer_dst_box.x = 0;
++		pending.buffer_dst_box.y = 0;
++		pending.buffer_dst_box.width = scene_output->output->width;
++		pending.buffer_dst_box.height = scene_output->output->height;
++	} else {
++		pending.buffer_dst_box.x = entry->x - scene_output->x;
++		pending.buffer_dst_box.y = entry->y - scene_output->y;
+ 
++		scene_node_get_size(node, &pending.buffer_dst_box.width, &pending.buffer_dst_box.height);
++		transform_output_box(&pending.buffer_dst_box, data);
++	}
++
+ 	struct wlr_buffer *wlr_buffer = buffer->buffer;
+ 	struct wlr_client_buffer *client_buffer = wlr_client_buffer_get(wlr_buffer);
+ 	if (client_buffer != NULL && client_buffer->source != NULL && client_buffer->source->n_locks > 0) {
+@@ -1967,6 +2008,7 @@
+ 	}
+ 
+ 	wlr_output_state_set_buffer(&pending, wlr_buffer);
++	pending.buffer_transform = plane_transform;
+ 	if (buffer->wait_timeline != NULL) {
+ 		wlr_output_state_set_wait_timeline(&pending, buffer->wait_timeline, buffer->wait_point);
+ 	}
+@@ -2084,6 +2126,15 @@
+ 		}
+ 
+ 		render_data.transform = state->transform;
++	}
++
++	if (output_offload_transform(output)) {
++		render_data.transform = WL_OUTPUT_TRANSFORM_NORMAL;
++		state->buffer_transform = output->transform;
++		state->buffer_dst_box = (struct wlr_box){
++			.width = output->width,
++			.height = output->height,
++		};
+ 	}
+ 
+ 	if (state->committed & WLR_OUTPUT_STATE_SCALE) {

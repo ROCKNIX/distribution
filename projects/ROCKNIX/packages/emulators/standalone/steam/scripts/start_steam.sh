@@ -188,15 +188,15 @@ steam_launch_bigpicture() {
     force_orientation="left"
   fi
 
-  # The DPU inline rotator caps the pre-rotation source at 1088 lines, but the plane advertises
-  # ROTATE_90 as a static capability it cannot qualify per mode. On a rotated panel wider than
-  # that (1440x2560) gamescope keeps scanout rotation, every atomic commit is rejected and the
-  # panel stays black. Render the session at 1080p instead and let the same plane upscale it back
-  # to the mode. The flag only exists in our patched gamescope (patches/0008), and gamescope
-  # exits on an unknown argument, so it must be dropped here if that patch ever goes away.
+  # The DPU inline rotator caps the pre-rotation source at ROTATION_MAX_HEIGHT lines,
+  # but the plane advertises ROTATE_90 as a static capability it cannot qualify per mode. On a
+  # rotated panel wider than that, gamescope keeps scanout rotation, every atomic commit is rejected
+  # and the panel stays black.
   local rotate_clamp=""
-  if [[ "${TRANSFORM}" = "90" || "${TRANSFORM}" = "270" ]] && [ "${W}" -gt 1088 ]; then
-    rotate_clamp="--rotated-output-max-height 1080"
+  local rotate_max=${DEVICE_PLANE_ROTATION_MAX_HEIGHT}
+  if [[ "${TRANSFORM}" = "90" || "${TRANSFORM}" = "270" ]] && [ -n "${rotate_max}" ] && [ "${W}" -gt "${rotate_max}" ]; then
+    [ "${rotate_max}" -gt 1080 ] && rotate_max=1080
+    rotate_clamp="--rotated-output-max-height ${rotate_max}"
   fi
 
   if [[ "$1" == *.desktop && -f "$1" && "$(basename "$1")" != "Steam.desktop" ]]; then

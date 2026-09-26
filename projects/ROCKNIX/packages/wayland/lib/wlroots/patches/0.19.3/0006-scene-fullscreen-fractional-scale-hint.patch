@@ -1,0 +1,162 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Sat, 19 Sep 2026 10:19:30 -0700
+Subject: [PATCH] scene: hint a fractional scale to surfaces that fill the output
+
+Tell surfaces that cover an entire output a preferred scale of
+output_scale * factor via the fractional scale. This lets games
+on handhelds render above or below panel resolution and rely on the
+hardware plane scaler at scan our.
+
+--- a/types/scene/surface.c
++++ b/types/scene/surface.c
+@@ -1,3 +1,6 @@
++#include <stdio.h>
++#include <string.h>
++#include <wayland-server-core.h>
+ #include <assert.h>
+ #include <stdlib.h>
+ #include <wlr/types/wlr_alpha_modifier_v1.h>
+@@ -11,19 +14,117 @@
+ #include <wlr/util/transform.h>
+ #include "types/wlr_scene.h"
+ 
+-static void handle_scene_buffer_outputs_update(
+-		struct wl_listener *listener, void *data) {
+-	struct wlr_scene_surface *surface =
+-		wl_container_of(listener, surface, outputs_update);
++#define FULLSCREEN_SCALE_HINT_MAX 4.0
+ 
++static bool pid_descends_from(pid_t pid, pid_t ancestor) {
++	for (int depth = 0; depth < 64 && pid > 1; depth++) {
++		if (pid == ancestor) {
++			return true;
++		}
++		char path[64];
++		snprintf(path, sizeof(path), "/proc/%d/stat", (int)pid);
++		FILE *f = fopen(path, "r");
++		if (f == NULL) {
++			return false;
++		}
++		char buf[512];
++		size_t n = fread(buf, 1, sizeof(buf) - 1, f);
++		fclose(f);
++		buf[n] = '\0';
++		/* "<pid> (<comm>) <state> <ppid> ...", comm may contain spaces */
++		char *end = strrchr(buf, ')');
++		int ppid = 0;
++		if (end == NULL || sscanf(end + 1, " %*c %d", &ppid) != 1) {
++			return false;
++		}
++		pid = (pid_t)ppid;
++	}
++	return false;
++}
++
++static double fullscreen_scale_hint(struct wlr_surface *surface,
++		struct wlr_output *output) {
++	double factor = 0.0;
++	const char *env = getenv("WLR_FULLSCREEN_SCALE_HINT");
++	if (env != NULL) {
++		factor = atof(env);
++	}
++	const char *path = getenv("WLR_FULLSCREEN_SCALE_HINT_FILE");
++	FILE *f = path != NULL ? fopen(path, "r") : NULL;
++	if (f != NULL) {
++		pid_t client = 0;
++		wl_client_get_credentials(wl_resource_get_client(surface->resource),
++			&client, NULL, NULL);
++		bool found = false;
++		char line[128];
++		while (fgets(line, sizeof(line), f) != NULL) {
++			double file_factor = 0.0;
++			int owner = 0;
++			char name[64];
++			int n = sscanf(line, "%lf %d %63s", &file_factor, &owner, name);
++			if (n < 1 || (n >= 2 && owner > 0 &&
++					!pid_descends_from(client, (pid_t)owner))) {
++				continue;
++			}
++			if (n == 3) {
++				if (strcmp(name, output->name) == 0) {
++					factor = file_factor;
++					break;
++				}
++			} else if (!found) {
++				factor = file_factor;
++				found = true;
++			}
++		}
++		fclose(f);
++	}
++	if (factor <= 0.0 || factor > FULLSCREEN_SCALE_HINT_MAX) {
++		return 0.0;
++	}
++	return factor;
++}
++
++static bool scene_surface_fills_output(struct wlr_scene_surface *surface,
++		struct wlr_output *output) {
++	struct wlr_scene_buffer *buffer = surface->buffer;
++	int width = 0, height = 0;
++	if (buffer->dst_width > 0 && buffer->dst_height > 0) {
++		width = buffer->dst_width;
++		height = buffer->dst_height;
++	} else if (buffer->buffer != NULL) {
++		width = buffer->buffer->width;
++		height = buffer->buffer->height;
++		wlr_output_transform_coords(buffer->transform, &width, &height);
++	}
++	int out_width, out_height;
++	wlr_output_effective_resolution(output, &out_width, &out_height);
++	return width > 0 && width == out_width && height == out_height;
++}
++
++static void scene_surface_update_scale(struct wlr_scene_surface *surface) {
+ 	if (surface->buffer->primary_output == NULL) {
+ 		return;
+ 	}
+-	double scale = surface->buffer->primary_output->output->scale;
++	struct wlr_output *output = surface->buffer->primary_output->output;
++	double scale = output->scale;
++	if (scene_surface_fills_output(surface, output)) {
++		double factor = fullscreen_scale_hint(surface->surface, output);
++		if (factor > 0.0) {
++			/* round to the protocol's 1/120 steps so float noise can't bump ceil(scale) */
++			scale = round(scale * factor * 120.0) / 120.0;
++		}
++	}
+ 	wlr_fractional_scale_v1_notify_scale(surface->surface, scale);
+ 	wlr_surface_set_preferred_buffer_scale(surface->surface, ceil(scale));
+ 	wlr_surface_set_preferred_buffer_transform(surface->surface,
+ 		surface->buffer->primary_output->output->transform);
++}
++
++static void handle_scene_buffer_outputs_update(
++		struct wl_listener *listener, void *data) {
++	struct wlr_scene_surface *surface =
++		wl_container_of(listener, surface, outputs_update);
++	scene_surface_update_scale(surface);
+ }
+ 
+ static void handle_scene_buffer_output_enter(
+@@ -159,6 +266,9 @@
+ 		opacity = (float)alpha_modifier_state->multiplier;
+ 	}
+ 
++	/* going fullscreen resizes the surface without changing its outputs */
++	bool resized = scene_buffer->dst_width != width || scene_buffer->dst_height != height;
++
+ 	wlr_scene_buffer_set_opaque_region(scene_buffer, &opaque);
+ 	wlr_scene_buffer_set_source_box(scene_buffer, &src_box);
+ 	wlr_scene_buffer_set_dest_size(scene_buffer, width, height);
+@@ -213,6 +323,10 @@
+ 	}
+ 
+ 	pixman_region32_fini(&opaque);
++
++	if (resized) {
++		scene_surface_update_scale(scene_surface);
++	}
+ }
+ 
+ static void handle_scene_surface_surface_commit(
