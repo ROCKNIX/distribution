@@ -1,0 +1,139 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+### Summary
+#   External display state, and blanking that is safe around one.
+#
+#   Three callers need the same two answers and kept their own copies of
+#   both: rocknix-fake-suspend, output_monitor, and the platform power
+#   handlers for devices that have real suspend. Drifting apart on either
+#   one is a bug in itself, so they all come here now.
+###
+
+### Usage
+#   external-display connected   exit 0 if an external display is attached
+#   external-display list        connected external connectors, one per line
+#   external-display internals   internal panel outputs, as the compositor names them
+#   external-display blank [backlight]
+#   external-display unblank
+###
+
+. /etc/profile
+
+case $(get_setting system.loglevel) in
+verbose) DEBUG=true ;;
+*)       DEBUG=false ;;
+esac
+
+### Connector status is the kernel's, so it is right even when the
+### compositor missed the hotplug event. DP covers the USB-C alt mode docks
+### and any adapter behind them; the leading dash is what keeps eDP panels
+### from matching as external.
+_external_status_files() {
+  local STATUS
+  for STATUS in /sys/class/drm/card*-HDMI-A-[0-9]*/status \
+                /sys/class/drm/card*-DP-[0-9]*/status; do
+    [ -f "${STATUS}" ] && echo "${STATUS}"
+  done
+}
+
+_connector_name() {
+  local NAME="${1%/status}"
+  NAME="${NAME##*/}"
+  echo "${NAME#card*-}"
+}
+
+### Which compositor is both configured and running.
+_compositor_is() {
+  case "${UI_SERVICE}" in
+    *"${1}"*) ;;
+    *) return 1 ;;
+  esac
+  pgrep "${1}" >/dev/null 2>&1
+}
+
+_backlight() {
+  local BL
+  for BL in /sys/class/backlight/*/bl_power; do
+    [ -w "${BL}" ] && echo "${1}" >"${BL}"
+  done
+}
+
+list() {
+  local STATUS
+  for STATUS in $(_external_status_files); do
+    [ "$(cat "${STATUS}")" = "connected" ] && _connector_name "${STATUS}"
+  done
+  return 0
+}
+
+connected() {
+  local STATUS
+  for STATUS in $(_external_status_files); do
+    [ "$(cat "${STATUS}")" = "connected" ] && return 0
+  done
+  return 1
+}
+
+internals() {
+  wlr-randr 2>/dev/null | awk '/^(DSI|eDP|LVDS)-/ { print $1 }'
+}
+
+### Internal panels only. A DPMS off on an active DP output makes
+### msm_dp_display_disable() report the audio jack as unplugged, and the HPD
+### plug events that would undo it are discarded while the output is off, so
+### dock audio stays dead until a physical replug.
+blank() {
+  local OUT COUNT=0
+
+  if [ "${1}" = "backlight" ]; then
+    ${DEBUG} && log $0 "Blank: backlight"
+    _backlight 4
+    return 0
+  fi
+
+  if _compositor_is sway; then
+    for OUT in $(internals); do
+      swaymsg "output ${OUT} power off" >/dev/null 2>&1 && COUNT=$((COUNT + 1))
+    done
+  elif _compositor_is weston; then
+    weston-dpms -m off >/dev/null 2>&1 && COUNT=1
+  fi
+
+  ### No compositor, or it knew of no internal panel to blank. Without this
+  ### the screen would simply stay on.
+  if [ "${COUNT}" -eq 0 ]; then
+    ${DEBUG} && log $0 "Blank: no panel powered off via DPMS, using backlight"
+    _backlight 4
+  else
+    ${DEBUG} && log $0 "Blank: ${COUNT} panel(s) powered off"
+  fi
+}
+
+### Both layers, unconditionally: whichever one blanked the panel, the other
+### must not be left holding it dark. Every output rather than the internals
+### alone, so an external that something else powered down comes back as
+### well; powering on a display that is already on does nothing.
+unblank() {
+  ${DEBUG} && log $0 "Unblank"
+  _backlight 0
+
+  if _compositor_is sway; then
+    swaymsg "output * power on" >/dev/null 2>&1
+  elif _compositor_is weston; then
+    weston-dpms -m on >/dev/null 2>&1
+  fi
+}
+
+case "${1}" in
+  connected) connected ;;
+  list)      list ;;
+  internals) internals ;;
+  blank)     blank "${2}" ;;
+  unblank)   unblank ;;
+  *)
+    echo "usage: ${0##*/} connected|list|internals|blank [backlight]|unblank" >&2
+    exit 2
+    ;;
+esac
