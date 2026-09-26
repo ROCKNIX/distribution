@@ -1,0 +1,70 @@
+From: Jacob Cook <jacobmcook1984@gmail.com>
+Date: Thu, 27 Aug 2026 20:45:00 -0400
+Subject: [PATCH] usb: dwc2: gadget: Fix NULL pointer dereference in
+ dwc2_restore_device_registers()
+
+dwc2_restore_device_registers() applies a descriptor-DMA workaround for
+every endpoint whose backed-up D{I,O}EPCTL has EPENA set, dereferencing
+hsotg->eps_in[i] / hsotg->eps_out[i] to fetch desc_list_dma.
+
+On cores with dedicated-direction endpoints (GHWCFG1 dev_ep_dirs), only
+one direction per endpoint number is allocated in dwc2_hsotg_hw_cfg(),
+so the array slot for the opposite direction is NULL. The workaround
+dereferences it unconditionally and oopses.
+
+The crash is reachable on every system resume where the controller
+power domain was shut off during suspend: dwc2_resume() finds GUSBCFG
+cleared and calls dwc2_restore_critical_registers() ->
+dwc2_gadget_restore_critical_registers() ->
+dwc2_restore_device_registers(). Since the oops happens in the
+device-resume phase, userspace never thaws and the machine hangs.
+
+Observed on Rockchip PX30 (dev_ep_dirs = 0x6664: ep2 is OUT-only, so
+eps_in[2] == NULL) when resuming from suspend on battery power; with
+VBUS present the power domain is retained and the restore path never
+runs, masking the bug:
+
+  Unable to handle kernel NULL pointer dereference at virtual address 0000000000000098
+  pc : dwc2_restore_device_registers+0x130/0x3e8
+  lr : dwc2_gadget_restore_critical_registers+0x28/0x90
+  Call trace:
+   dwc2_restore_device_registers+0x130/0x3e8 (P)
+   dwc2_gadget_restore_critical_registers+0x28/0x90
+   dwc2_resume+0xe0/0x204
+   dpm_run_callback+0x48/0x100
+   device_resume+0xc8/0x1e8
+   dpm_resume+0x19c/0x1c0
+   dpm_resume_end+0x10/0x24
+   suspend_devices_and_enter+0x160/0x65c
+   pm_suspend+0x294/0x33c
+
+Only apply the workaround when the endpoint exists in the given
+direction.
+
+Cc: stable@vger.kernel.org
+Signed-off-by: Jacob Cook <jacobmcook1984@gmail.com>
+---
+ drivers/usb/dwc2/gadget.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/usb/dwc2/gadget.c b/drivers/usb/dwc2/gadget.c
+--- a/drivers/usb/dwc2/gadget.c
++++ b/drivers/usb/dwc2/gadget.c
+@@ -5252,7 +5252,7 @@ int dwc2_restore_device_registers(struct dwc2_hsotg *hsotg, unsigned int flags)
+ 		 * as result BNA interrupt asserted on hibernation exit
+ 		 * by restoring from saved area.
+ 		 */
+-		if (using_desc_dma(hsotg) &&
++		if (using_desc_dma(hsotg) && hsotg->eps_in[i] &&
+ 		    (dr->diepctl[i] & DXEPCTL_EPENA))
+ 			dr->diepdma[i] = hsotg->eps_in[i]->desc_list_dma;
+ 		dwc2_writel(hsotg, dr->dtxfsiz[i], DPTXFSIZN(i));
+@@ -5264,7 +5264,7 @@ int dwc2_restore_device_registers(struct dwc2_hsotg *hsotg, unsigned int flags)
+ 		 * as result BNA interrupt asserted on hibernation exit
+ 		 * by restoring from saved area.
+ 		 */
+-		if (using_desc_dma(hsotg) &&
++		if (using_desc_dma(hsotg) && hsotg->eps_out[i] &&
+ 		    (dr->doepctl[i] & DXEPCTL_EPENA))
+ 			dr->doepdma[i] = hsotg->eps_out[i]->desc_list_dma;
+ 		dwc2_writel(hsotg, dr->doepdma[i], DOEPDMA(i));
