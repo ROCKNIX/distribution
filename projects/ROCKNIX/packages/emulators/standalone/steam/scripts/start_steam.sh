@@ -188,7 +188,7 @@ steam_launch_bigpicture() {
     force_orientation="left"
   fi
 
-  # The DPU inline rotator caps the pre-rotation source at ROTATION_MAX_HEIGHT lines,
+  # The DPU inline rotator caps the pre-rotation source at DEVICE_PLANE_ROTATION lines,
   # but the plane advertises ROTATE_90 as a static capability it cannot qualify per mode. On a
   # rotated panel wider than that, gamescope keeps scanout rotation, every atomic commit is rejected
   # and the panel stays black.
@@ -196,7 +196,7 @@ steam_launch_bigpicture() {
   local rotate_max=$(plane_rotation_max_height)
   if ! plane_rotation; then
     rotate_flags="--force-composition-rotation"
-  elif [[ "${TRANSFORM}" = "90" || "${TRANSFORM}" = "270" ]] && [ -n "${rotate_max}" ] && [ "${W}" -gt "${rotate_max}" ]; then
+  elif ! plane_rotates "${TRANSFORM}" "${W}"; then
     [ "${rotate_max}" -gt 1080 ] && rotate_max=1080
     rotate_flags="--rotated-output-max-height ${rotate_max}"
   fi

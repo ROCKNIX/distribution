@@ -448,8 +448,11 @@ if [ "${DEVICE_SCANOUT_SCALING}" = "true" ] && [ "${PLATFORM}" != "steam" ] && [
     (first(.[] | select(.focused != true and .active == true)) | "OUTPUT2_NAME=\(.name)")
   ')"
 
-  prerotate_env "${OUTPUT_TRANSFORM}"
-  ${VERBOSE} && log $0 "Pre-rotation ${vk_wsi_wayland_prerotate:-none} (output ${OUTPUT_TRANSFORM})"
+  # Lines the plane has to rotate, the game's once it is scaled
+  case ${OUTPUT_TRANSFORM} in
+    90|270|flipped-90|flipped-270) ROTATE_LINES=${OUTPUT_W} ;;
+    *)                             ROTATE_LINES=${OUTPUT_H} ;;
+  esac
 
   SCALING_SHARPNESS=$(scaling_setting sharpness)
   case ${SCALING_SHARPNESS} in
@@ -501,7 +504,7 @@ if [ "${DEVICE_SCANOUT_SCALING}" = "true" ] && [ "${PLATFORM}" != "steam" ] && [
     fi
     SCALING_MAX_H=$(( SCALING_H * SCALING_MAX / 100 ))
     export SCANOUT_RENDER=${SCALING_RENDER} SCANOUT_OWNER=$$ SCANOUT_MAX_RENDER=${SCALING_MAX} \
-           SCANOUT_OUTPUT=${OUTPUT_NAME}
+           SCANOUT_OUTPUT=${OUTPUT_NAME} SCANOUT_TRANSFORM=${OUTPUT_TRANSFORM}
     [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ] && export SCANOUT_OUTPUT2=${OUTPUT2_NAME}
     SCALING_MULT=""
     case ${SCALING_RENDER} in
@@ -545,22 +548,16 @@ if [ "${DEVICE_SCANOUT_SCALING}" = "true" ] && [ "${PLATFORM}" != "steam" ] && [
       SCALING_RENDER="${SCALING_RENDER}% of screen"
     fi
 
-    # Frames taller than the plane can rotate are pre-rotated, so the plane only scales them
-    ROTATE_MAX=$(plane_rotation_max_height)
-    if [ -n "${ROTATE_MAX}" ] && [ "${SCALING_RENDER_H}" -gt "${ROTATE_MAX}" ]; then
-      case ${OUTPUT_TRANSFORM} in
-        90|270)
-          prerotate_env "${OUTPUT_TRANSFORM}" always
-          ${VERBOSE} && log $0 "Pre-rotation ${vk_wsi_wayland_prerotate} (${SCALING_RENDER_H} lines is over the plane's ${ROTATE_MAX})"
-        ;;
-      esac
-    fi
+    ROTATE_LINES=${SCALING_RENDER_H}
 
     # SDL sizes HiDPI windows from the fractional scale.
     export GDK_SCALE=1.0001
     [ -n "${OUTPUT_NAME}" ] && scanout_set_render "${OUTPUT_NAME}" "${SCALING_H}" "${SCALING_RENDER_H}"
     ${VERBOSE} && log $0 "Scaling ${SCALING_RENDER} (${SCALING_RENDER_W}x${SCALING_RENDER_H} -> ${SCALING_W}x${SCALING_H}, filter ${SCALING_FILTER})"
   fi
+
+  prerotate_env "${OUTPUT_TRANSFORM}" "${ROTATE_LINES}"
+  ${VERBOSE} && log $0 "Pre-rotation ${vk_wsi_wayland_prerotate:-none} (output ${OUTPUT_TRANSFORM}, ${ROTATE_LINES} lines)"
 else
   prerotate_env
 fi

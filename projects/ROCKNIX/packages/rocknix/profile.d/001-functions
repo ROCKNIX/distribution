@@ -255,12 +255,24 @@ function plane_rotation_max_height() {
   esac
 }
 
+# Can the plane rotate a frame of this many lines by this transform
+function plane_rotates() {
+  local max
+  plane_rotation || return 1
+  case "${1}" in
+    90|270)
+      max=$(plane_rotation_max_height)
+      [ -z "${max}" ] || { [ -n "${2}" ] && [ "${2}" -le "${max}" ]; }
+      ;;
+  esac
+}
+
+# Rotation falls back from the plane to a 2D engine blit in the client,
+# then to the compositor
 function prerotate_env() {
   unset vk_wsi_wayland_prerotate egl_wayland_prerotate
   [ "${DEVICE_PRE_ROTATION}" = "true" ] || return 0
-  if [ "${2}" != "always" ]; then
-    plane_rotation && return 0
-  fi
+  plane_rotates "${1}" "${2}" && return 0
   case "${1}" in
     90)  export vk_wsi_wayland_prerotate=270 egl_wayland_prerotate=270 ;;
     270) export vk_wsi_wayland_prerotate=90  egl_wayland_prerotate=90 ;;
@@ -376,5 +388,6 @@ function scanout_render_size() {
     *) return 0 ;;
   esac
   scanout_set_render "${out}" "${screen_h}" "${render_h}"
-  echo "Scan-out: ${lines} lines x${scale} ${aspect} on ${out}: ${render_h} of ${screen_h} lines"
+  [ "$4" = "second" ] || prerotate_env "${SCANOUT_TRANSFORM}" "${render_h}"
+  echo "Scan-out: ${lines} lines x${scale} ${aspect} on ${out}: ${render_h} of ${screen_h} lines, pre-rotation ${vk_wsi_wayland_prerotate:-none}"
 }

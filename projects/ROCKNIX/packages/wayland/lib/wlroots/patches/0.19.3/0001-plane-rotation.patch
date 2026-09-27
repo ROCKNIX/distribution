@@ -155,11 +155,12 @@ diff -ruN pristine/include/backend/drm/drm.h stepA/include/backend/drm/drm.h
 diff -ruN pristine/include/types/wlr_output.h stepA/include/types/wlr_output.h
 --- a/include/types/wlr_output.h	2026-03-19 12:13:09
 +++ b/include/types/wlr_output.h	2026-09-22 23:01:47
-@@ -6,6 +6,9 @@
+@@ -6,6 +6,10 @@
  
  void output_pending_resolution(struct wlr_output *output,
  	const struct wlr_output_state *state, int *width, int *height);
 +bool output_offload_transform(struct wlr_output *output);
++bool output_rotate_plane_fits(enum wl_output_transform transform, int lines);
 +void output_offload_transform_failed(struct wlr_output *output);
 +void output_offload_transform_changed(struct wlr_output *output);
  bool output_pending_enabled(struct wlr_output *output,
@@ -227,7 +228,7 @@ diff -ruN pristine/types/output/output.c stepA/types/output/output.c
  #include "types/wlr_output.h"
  #include "util/env.h"
  #include "util/global.h"
-@@ -474,6 +475,39 @@
+@@ -474,6 +475,47 @@
  	return wl_container_of(output->modes.next, mode, link);
  }
  
@@ -236,7 +237,15 @@ diff -ruN pristine/types/output/output.c stepA/types/output/output.c
 +	return output->transform != WL_OUTPUT_TRANSFORM_NORMAL &&
 +		!output->offload_transform_failed &&
 +		output->attach_render_locks == 0 &&
-+		getenv("WLR_OUTPUT_ROTATE_PLANE") != NULL;
++		getenv("WLR_OUTPUT_ROTATE_PLANE") != NULL &&
++		// unrotated, the render buffer is output->width lines tall
++		output_rotate_plane_fits(output->transform, output->width);
++}
++
++bool output_rotate_plane_fits(enum wl_output_transform transform, int lines) {
++	// the plane rotates by 90 or 270 degrees only up to this many source lines
++	const char *max = getenv("WLR_OUTPUT_ROTATE_PLANE_MAX_HEIGHT");
++	return max == NULL || !(transform & WL_OUTPUT_TRANSFORM_90) || lines <= atoi(max);
 +}
 +
 +void output_offload_transform_failed(struct wlr_output *output) {
@@ -267,7 +276,7 @@ diff -ruN pristine/types/output/output.c stepA/types/output/output.c
  void output_pending_resolution(struct wlr_output *output,
  		const struct wlr_output_state *state, int *width, int *height) {
  	if (state->committed & WLR_OUTPUT_STATE_MODE) {
-@@ -481,16 +515,21 @@
+@@ -481,16 +523,21 @@
  		case WLR_OUTPUT_STATE_MODE_FIXED:
  			*width = state->mode->width;
  			*height = state->mode->height;
@@ -390,7 +399,7 @@ diff -ruN pristine/types/scene/wlr_scene.c stepA/types/scene/wlr_scene.c
  	scene_output_damage(scene_output, &damage);
  	pixman_region32_fini(&damage);
  }
-@@ -1925,8 +1938,19 @@
+@@ -1925,8 +1938,21 @@
  		.height = default_height,
  	};
  
@@ -406,13 +415,15 @@ diff -ruN pristine/types/scene/wlr_scene.c stepA/types/scene/wlr_scene.c
 +		if (plane_transform >= WL_OUTPUT_TRANSFORM_FLIPPED) {
 +			return SCANOUT_INELIGIBLE;
 +		}
-+		if (!output_offload_transform(scene_output->output)) {
++		// the plane rotates a buffer it can take even when the output is composited
++		if (getenv("WLR_OUTPUT_ROTATE_PLANE") == NULL ||
++				!output_rotate_plane_fits(plane_transform, buffer->buffer->height)) {
 +			return SCANOUT_INELIGIBLE;
 +		}
  	}
  
  	// We want to ensure optimal buffer selection, but as direct-scanout can be enabled and disabled
-@@ -1954,12 +1978,29 @@
+@@ -1954,12 +1980,29 @@
  	}
  
  	// Translate the position from scene coordinates to output coordinates
@@ -446,7 +457,7 @@ diff -ruN pristine/types/scene/wlr_scene.c stepA/types/scene/wlr_scene.c
  	struct wlr_buffer *wlr_buffer = buffer->buffer;
  	struct wlr_client_buffer *client_buffer = wlr_client_buffer_get(wlr_buffer);
  	if (client_buffer != NULL && client_buffer->source != NULL && client_buffer->source->n_locks > 0) {
-@@ -1967,6 +2008,7 @@
+@@ -1967,6 +2010,7 @@
  	}
  
  	wlr_output_state_set_buffer(&pending, wlr_buffer);
@@ -454,7 +465,7 @@ diff -ruN pristine/types/scene/wlr_scene.c stepA/types/scene/wlr_scene.c
  	if (buffer->wait_timeline != NULL) {
  		wlr_output_state_set_wait_timeline(&pending, buffer->wait_timeline, buffer->wait_point);
  	}
-@@ -2084,6 +2126,15 @@
+@@ -2084,6 +2128,15 @@
  		}
  
  		render_data.transform = state->transform;
