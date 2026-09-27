@@ -3,8 +3,7 @@
 
 PKG_NAME="rocknix-abl"
 PKG_VERSION="1.1.9"
-PKG_SHA256="b217fd8a07acb0346b4704df3805298b2d7025e27fd59a7c11417a6803bab8af"
-PKG_ARCH="aarch64"
+PKG_SHA256="2fc42c9cc60fe9eb33196785a8e92608f0ffbaa0b739b7051d948ba27a3bd747"
 PKG_SITE="https://github.com/ROCKNIX/abl"
 PKG_URL="https://github.com/ROCKNIX/abl/releases/download/v${PKG_VERSION}/rocknix-abl-v${PKG_VERSION}.tar.gz"
 PKG_LONGDESC="ROCKNIX ABL."
