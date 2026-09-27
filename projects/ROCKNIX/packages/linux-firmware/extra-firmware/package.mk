@@ -10,6 +10,14 @@ PKG_URL="https://github.com/ROCKNIX/extra-firmware/archive/${PKG_VERSION}.tar.gz
 PKG_LONGDESC="extra-firmware: Extra kernel firmware needed for ROCKNIX devices"
 PKG_TOOLCHAIN="manual"
 
+# TEMP: SM6125 fw from fork until merged
+if [ "${DEVICE}" = "SM6115" ]; then
+  PKG_VERSION="f00a6e34dda08751cc194ca977f589d62af19f0b"
+  PKG_SHA256="7c653da84519e6580826832e856140cbbd82fcf7bb5fd302900c2c7fc7f9cd4d"
+  PKG_SITE="https://github.com/beebono/extra-firmware"
+  PKG_URL="https://github.com/beebono/extra-firmware/archive/${PKG_VERSION}.tar.gz"
+fi
+
 makeinstall_target() {
   mkdir -p ${INSTALL}/$(get_full_firmware_dir)
 

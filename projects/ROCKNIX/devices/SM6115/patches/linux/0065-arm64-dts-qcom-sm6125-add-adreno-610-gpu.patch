@@ -1,0 +1,144 @@
+From: Noxwell <beebono@gmail.com>
+Date: Tue, 29 Sep 2026 18:00:00 -0500
+Subject: [PATCH] arm64: dts: qcom: sm6125: add Adreno 610 GPU
+
+SM6125 carries the same Adreno 610 (chip ID 0x06010000) as SM6115,
+behind a GMU wrapper. Add the GPU clock controller, the Adreno SMMU,
+the GMU wrapper and the GPU node, modelled on sm6115.dtsi with the
+register, interrupt and frequency data from the downstream Trinket
+device tree. The fastest downstream level (950 MHz, TURBO_L1) is left
+out as the SM6125 rpmpd table has no matching corner.
+---
+--- a/arch/arm64/boot/dts/qcom/sm6125.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm6125.dtsi
+@@ -7,6 +7,7 @@
+ #include <dt-bindings/clock/qcom,dsi-phy-28nm.h>
+ #include <dt-bindings/clock/qcom,gcc-sm6125.h>
+ #include <dt-bindings/clock/qcom,rpmcc.h>
++#include <dt-bindings/clock/qcom,sm6125-gpucc.h>
+ #include <dt-bindings/dma/qcom-gpi.h>
+ #include <dt-bindings/gpio/gpio.h>
+ #include <dt-bindings/interrupt-controller/arm-gic.h>
+@@ -1247,6 +1248,122 @@
+ 			reg = <0x04690000 0x10000>;
+ 		};
+ 
++		gpu: gpu@5900000 {
++			compatible = "qcom,adreno-610.0", "qcom,adreno";
++			reg = <0x05900000 0x40000>,
++			      <0x0599e000 0x1000>,
++			      <0x05961000 0x800>;
++			reg-names = "kgsl_3d0_reg_memory",
++				    "cx_mem",
++				    "cx_dbgc";
++
++			clocks = <&gpucc GPU_CC_GX_GFX3D_CLK>,
++				 <&gpucc GPU_CC_AHB_CLK>,
++				 <&gcc GCC_BIMC_GPU_AXI_CLK>,
++				 <&gcc GCC_GPU_MEMNOC_GFX_CLK>,
++				 <&gpucc GPU_CC_CX_GMU_CLK>,
++				 <&gpucc GPU_CC_CXO_CLK>;
++			clock-names = "core",
++				      "iface",
++				      "mem_iface",
++				      "alt_mem_iface",
++				      "gmu",
++				      "xo";
++
++			interrupts = <GIC_SPI 177 IRQ_TYPE_LEVEL_HIGH>;
++
++			iommus = <&adreno_smmu 0 1>;
++			operating-points-v2 = <&gpu_opp_table>;
++			power-domains = <&rpmpd RPMPD_VDDCX>;
++			qcom,gmu = <&gmu_wrapper>;
++
++			#cooling-cells = <2>;
++
++			status = "disabled";
++
++			gpu_zap_shader: zap-shader {
++				memory-region = <&gpu_mem>;
++			};
++
++			gpu_opp_table: opp-table {
++				compatible = "operating-points-v2";
++
++				opp-320000000 {
++					opp-hz = /bits/ 64 <320000000>;
++					required-opps = <&rpmpd_opp_low_svs>;
++				};
++
++				opp-465000000 {
++					opp-hz = /bits/ 64 <465000000>;
++					required-opps = <&rpmpd_opp_svs>;
++				};
++
++				opp-600000000 {
++					opp-hz = /bits/ 64 <600000000>;
++					required-opps = <&rpmpd_opp_svs_plus>;
++				};
++
++				opp-745000000 {
++					opp-hz = /bits/ 64 <745000000>;
++					required-opps = <&rpmpd_opp_nom>;
++				};
++
++				opp-820000000 {
++					opp-hz = /bits/ 64 <820000000>;
++					required-opps = <&rpmpd_opp_nom_plus>;
++				};
++
++				opp-900000000 {
++					opp-hz = /bits/ 64 <900000000>;
++					required-opps = <&rpmpd_opp_turbo>;
++				};
++			};
++		};
++
++		gmu_wrapper: gmu@596a000 {
++			compatible = "qcom,adreno-gmu-wrapper";
++			reg = <0x0596a000 0x30000>;
++			reg-names = "gmu";
++			power-domains = <&gpucc GPU_CX_GDSC>,
++					<&gpucc GPU_GX_GDSC>;
++			power-domain-names = "cx", "gx";
++		};
++
++		gpucc: clock-controller@5990000 {
++			compatible = "qcom,sm6125-gpucc";
++			reg = <0x05990000 0x9000>;
++			clocks = <&rpmcc RPM_SMD_XO_CLK_SRC>,
++				 <&gcc GCC_GPU_GPLL0_CLK_SRC>;
++			#clock-cells = <1>;
++			#power-domain-cells = <1>;
++		};
++
++		adreno_smmu: iommu@59a0000 {
++			compatible = "qcom,sm6125-smmu-500", "qcom,adreno-smmu",
++				     "qcom,smmu-500", "arm,mmu-500";
++			reg = <0x059a0000 0x10000>;
++			interrupts = <GIC_SPI 163 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 167 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 168 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 169 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 170 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 171 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 172 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 173 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 174 IRQ_TYPE_LEVEL_HIGH>;
++
++			clocks = <&gcc GCC_GPU_MEMNOC_GFX_CLK>,
++				 <&gpucc GPU_CC_HLOS1_VOTE_GPU_SMMU_CLK>,
++				 <&gcc GCC_GPU_SNOC_DVM_GFX_CLK>;
++			clock-names = "mem",
++				      "hlos",
++				      "iface";
++			power-domains = <&gpucc GPU_CX_GDSC>;
++
++			#global-interrupts = <1>;
++			#iommu-cells = <2>;
++		};
++
+ 		mdss: display-subsystem@5e00000 {
+ 			compatible = "qcom,sm6125-mdss";
+ 			reg = <0x05e00000 0x1000>;

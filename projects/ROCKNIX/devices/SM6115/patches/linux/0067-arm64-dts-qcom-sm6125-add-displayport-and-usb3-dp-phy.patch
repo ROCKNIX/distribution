@@ -1,0 +1,174 @@
+From: Noxwell <beebono@gmail.com>
+Date: Tue, 29 Sep 2026 22:00:00 -0500
+Subject: [PATCH] arm64: dts: qcom: sm6125: add DisplayPort controller and USB3/DP PHY
+
+Add the TCSR syscon, the 14nm USB3/DP combo PHY and the DisplayPort
+controller on DPU INTF_0. The PHY register layout and TCSR mode
+registers match QCS615, so it falls back to that compatible; the DP
+controller is modelled on the SM6150 node. Register, clock and supply
+data come from the downstream Trinket device tree.
+---
+--- a/arch/arm64/boot/dts/qcom/sm6125.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm6125.dtsi
+@@ -11,6 +11,7 @@
+ #include <dt-bindings/dma/qcom-gpi.h>
+ #include <dt-bindings/gpio/gpio.h>
+ #include <dt-bindings/interrupt-controller/arm-gic.h>
++#include <dt-bindings/phy/phy-qcom-qmp.h>
+ #include <dt-bindings/power/qcom-rpmpd.h>
+ 
+ / {
+@@ -386,6 +387,11 @@
+ 			#hwlock-cells = <1>;
+ 		};
+ 
++		tcsr: syscon@3c0000 {
++			compatible = "qcom,sm6125-tcsr", "syscon";
++			reg = <0x003c0000 0x40000>;
++		};
++
+ 		tlmm: pinctrl@500000 {
+ 			compatible = "qcom,sm6125-tlmm";
+ 			reg = <0x00500000 0x400000>,
+@@ -681,6 +687,33 @@
+ 			clocks = <&rpmcc RPM_SMD_XO_CLK_SRC>, <&sleep_clk>;
+ 		};
+ 
++		usb_qmpphy: phy@1615000 {
++			compatible = "qcom,sm6125-qmp-usb3-dp-phy",
++				     "qcom,qcs615-qmp-usb3-dp-phy";
++			reg = <0x01615000 0x2000>;
++
++			clocks = <&gcc GCC_USB3_PRIM_PHY_COM_AUX_CLK>,
++				 <&gcc GCC_USB3_PRIM_CLKREF_CLK>,
++				 <&gcc GCC_AHB2PHY_USB_CLK>,
++				 <&gcc GCC_USB3_PRIM_PHY_PIPE_CLK>;
++			clock-names = "aux",
++				      "ref",
++				      "cfg_ahb",
++				      "pipe";
++
++			resets = <&gcc GCC_USB3PHY_PHY_PRIM_SP0_BCR>,
++				 <&gcc GCC_USB3_PHY_PRIM_SP0_BCR>;
++			reset-names = "phy_phy",
++				      "dp_phy";
++
++			#clock-cells = <1>;
++			#phy-cells = <1>;
++
++			qcom,tcsr-reg = <&tcsr 0xb244 0xb248>;
++
++			status = "disabled";
++		};
++
+ 		hsusb_phy1: phy@1613000 {
+ 			compatible = "qcom,msm8996-qusb2-phy";
+ 			reg = <0x01613000 0x180>;
+@@ -1431,6 +1464,13 @@
+ 							remote-endpoint = <&mdss_dsi0_in>;
+ 						};
+ 					};
++
++					port@1 {
++						reg = <1>;
++						dpu_intf0_out: endpoint {
++							remote-endpoint = <&mdss_dp0_in>;
++						};
++					};
+ 				};
+ 
+ 				mdp_opp_table: opp-table {
+@@ -1463,6 +1503,82 @@
+ 				};
+ 			};
+ 
++			mdss_dp0: displayport-controller@5e90000 {
++				compatible = "qcom,sm6125-dp", "qcom,sm8150-dp",
++					     "qcom,sm8350-dp";
++				reg = <0x05e90000 0x200>,
++				      <0x05e90200 0x200>,
++				      <0x05e90400 0x600>,
++				      <0x05e90a00 0x600>,
++				      <0x05e91000 0x600>;
++
++				interrupt-parent = <&mdss>;
++				interrupts = <12>;
++
++				clocks = <&dispcc DISP_CC_MDSS_AHB_CLK>,
++					 <&dispcc DISP_CC_MDSS_DP_AUX_CLK>,
++					 <&dispcc DISP_CC_MDSS_DP_LINK_CLK>,
++					 <&dispcc DISP_CC_MDSS_DP_LINK_INTF_CLK>,
++					 <&dispcc DISP_CC_MDSS_DP_PIXEL_CLK>;
++				clock-names = "core_iface",
++					      "core_aux",
++					      "ctrl_link",
++					      "ctrl_link_iface",
++					      "stream_pixel";
++
++				assigned-clocks = <&dispcc DISP_CC_MDSS_DP_LINK_CLK_SRC>,
++						  <&dispcc DISP_CC_MDSS_DP_PIXEL_CLK_SRC>;
++				assigned-clock-parents = <&usb_qmpphy QMP_USB43DP_DP_LINK_CLK>,
++							 <&usb_qmpphy QMP_USB43DP_DP_VCO_DIV_CLK>;
++
++				phys = <&usb_qmpphy QMP_USB43DP_DP_PHY>;
++				phy-names = "dp";
++
++				operating-points-v2 = <&dp_opp_table>;
++				power-domains = <&rpmpd RPMPD_VDDCX>;
++
++				#sound-dai-cells = <0>;
++
++				status = "disabled";
++
++				ports {
++					#address-cells = <1>;
++					#size-cells = <0>;
++
++					port@0 {
++						reg = <0>;
++						mdss_dp0_in: endpoint {
++							remote-endpoint = <&dpu_intf0_out>;
++						};
++					};
++
++					port@1 {
++						reg = <1>;
++						mdss_dp0_out: endpoint {
++						};
++					};
++				};
++
++				dp_opp_table: opp-table {
++					compatible = "operating-points-v2";
++
++					opp-162000000 {
++						opp-hz = /bits/ 64 <162000000>;
++						required-opps = <&rpmpd_opp_low_svs>;
++					};
++
++					opp-270000000 {
++						opp-hz = /bits/ 64 <270000000>;
++						required-opps = <&rpmpd_opp_svs>;
++					};
++
++					opp-540000000 {
++						opp-hz = /bits/ 64 <540000000>;
++						required-opps = <&rpmpd_opp_svs_plus>;
++					};
++				};
++			};
++
+ 			mdss_dsi0: dsi@5e94000 {
+ 				compatible = "qcom,sm6125-dsi-ctrl", "qcom,mdss-dsi-ctrl";
+ 				reg = <0x05e94000 0x400>;
+@@ -1564,8 +1680,8 @@
+ 				 <&mdss_dsi0_phy DSI_BYTE_PLL_CLK>,
+ 				 <&mdss_dsi0_phy DSI_PIXEL_PLL_CLK>,
+ 				 <0>,
+-				 <0>,
+-				 <0>,
++				 <&usb_qmpphy QMP_USB43DP_DP_LINK_CLK>,
++				 <&usb_qmpphy QMP_USB43DP_DP_VCO_DIV_CLK>,
+ 				 <&gcc GCC_DISP_AHB_CLK>,
+ 				 <&gcc GCC_DISP_GPLL0_DIV_CLK_SRC>;
+ 			clock-names = "bi_tcxo",

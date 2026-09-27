@@ -1,0 +1,234 @@
+From: Noxwell <beebono@gmail.com>
+Date: Thu, 1 Oct 2026 12:00:00 -0500
+Subject: [PATCH] drm/bridge: add WL818S DP-to-MIPI bridge
+
+The WL818S is an MCU-based DP-to-MIPI bridge hardwired to the Retroid
+Pocket Duo Lite bottom panel. Stagger its supplies, apply the vendor
+reset pulse and hold off panel enable until the MCU has warmed up. It is
+an always connected fixed sink, so claim detect and HPD for the chain.
+---
+--- a/drivers/gpu/drm/bridge/Kconfig
++++ b/drivers/gpu/drm/bridge/Kconfig
+@@ -503,6 +503,15 @@
+ 	  Driver for waveshare DSI to DPI bridge board.
+ 	  Please say Y if you have such hardware
+ 
++config DRM_WL818S
++	tristate "WL818S DP-to-MIPI bridge"
++	depends on OF
++	select DRM_KMS_HELPER
++	select DRM_PANEL_BRIDGE
++	help
++	  Driver for the WL818S DP-to-MIPI bridge MCU, hardwired to the bottom
++	  panel of the Retroid Pocket Duo Lite.
++
+ source "drivers/gpu/drm/bridge/analogix/Kconfig"
+ 
+ source "drivers/gpu/drm/bridge/adv7511/Kconfig"
+--- a/drivers/gpu/drm/bridge/Makefile
++++ b/drivers/gpu/drm/bridge/Makefile
+@@ -46,6 +46,7 @@
+ obj-$(CONFIG_DRM_TI_TFP410) += ti-tfp410.o
+ obj-$(CONFIG_DRM_TI_TPD12S015) += ti-tpd12s015.o
+ obj-$(CONFIG_DRM_WAVESHARE_BRIDGE) += waveshare-dsi.o
++obj-$(CONFIG_DRM_WL818S) += wl818s.o
+ obj-$(CONFIG_DRM_NWL_MIPI_DSI) += nwl-dsi.o
+ obj-$(CONFIG_DRM_ITE_IT66121) += ite-it66121.o
+ 
+--- /dev/null
++++ b/drivers/gpu/drm/bridge/wl818s.c
+@@ -0,0 +1,194 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * WL818S DP-to-MIPI bridge, as hardwired to the bottom panel of the
++ * Retroid Pocket Duo Lite. The bridge is an MCU with its own firmware: it
++ * only needs power and reset from here, and is a fixed, always connected
++ * sink to the DP controller.
++ */
++
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/ktime.h>
++#include <linux/mod_devicetable.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/regulator/consumer.h>
++
++#include <drm/drm_atomic_helper.h>
++#include <drm/drm_bridge.h>
++#include <drm/drm_connector.h>
++#include <drm/drm_of.h>
++
++/* The MCU ignores backlight commands this long after it is released */
++#define WL818S_WARMUP_MS	600
++
++/* Enabled one at a time, in this order, to keep the inrush down on battery */
++static const struct regulator_bulk_data wl818s_supplies[] = {
++	{ .supply = "vci" },
++	{ .supply = "vcc18" },
++	{ .supply = "vcc12" },
++	{ .supply = "dvdd" },
++};
++
++struct wl818s {
++	struct drm_bridge bridge;
++	struct drm_bridge *next_bridge;
++	struct regulator_bulk_data *supplies;
++	struct gpio_desc *reset_gpio;
++	ktime_t ready_time;
++	bool powered;
++};
++
++static inline struct wl818s *bridge_to_wl818s(struct drm_bridge *bridge)
++{
++	return container_of(bridge, struct wl818s, bridge);
++}
++
++static int wl818s_attach(struct drm_bridge *bridge, struct drm_encoder *encoder,
++			 enum drm_bridge_attach_flags flags)
++{
++	struct wl818s *ctx = bridge_to_wl818s(bridge);
++
++	return drm_bridge_attach(encoder, ctx->next_bridge, bridge, flags);
++}
++
++static void wl818s_atomic_pre_enable(struct drm_bridge *bridge,
++				     struct drm_atomic_commit *state)
++{
++	struct wl818s *ctx = bridge_to_wl818s(bridge);
++	int i, ret;
++
++	for (i = 0; i < ARRAY_SIZE(wl818s_supplies); i++) {
++		ret = regulator_enable(ctx->supplies[i].consumer);
++		if (ret) {
++			dev_err(bridge->dev->dev, "Failed to enable %s: %d\n",
++				wl818s_supplies[i].supply, ret);
++			while (--i >= 0)
++				regulator_disable(ctx->supplies[i].consumer);
++			return;
++		}
++		usleep_range(5000, 6000);
++	}
++
++	/* Reset pulse as on the vendor kernel */
++	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
++	msleep(20);
++	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++	msleep(20);
++	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
++	msleep(50);
++
++	ctx->powered = true;
++	ctx->ready_time = ktime_add_ms(ktime_get(), WL818S_WARMUP_MS);
++}
++
++/* Runs after DP link training and before the panel turns the backlight on */
++static void wl818s_atomic_enable(struct drm_bridge *bridge,
++				 struct drm_atomic_commit *state)
++{
++	struct wl818s *ctx = bridge_to_wl818s(bridge);
++	s64 remaining = ktime_ms_delta(ctx->ready_time, ktime_get());
++
++	if (remaining > 0)
++		msleep(remaining);
++}
++
++static void wl818s_atomic_post_disable(struct drm_bridge *bridge,
++				       struct drm_atomic_commit *state)
++{
++	struct wl818s *ctx = bridge_to_wl818s(bridge);
++	int i;
++
++	if (!ctx->powered)
++		return;
++
++	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++
++	for (i = ARRAY_SIZE(wl818s_supplies) - 1; i >= 0; i--)
++		regulator_disable(ctx->supplies[i].consumer);
++
++	ctx->powered = false;
++}
++
++static enum drm_connector_status wl818s_detect(struct drm_bridge *bridge,
++					       struct drm_connector *connector)
++{
++	return connector_status_connected;
++}
++
++static int wl818s_get_modes(struct drm_bridge *bridge,
++			    struct drm_connector *connector)
++{
++	struct wl818s *ctx = bridge_to_wl818s(bridge);
++
++	return drm_bridge_get_modes(ctx->next_bridge, connector);
++}
++
++static const struct drm_bridge_funcs wl818s_bridge_funcs = {
++	.atomic_duplicate_state = drm_atomic_helper_bridge_duplicate_state,
++	.atomic_destroy_state = drm_atomic_helper_bridge_destroy_state,
++	.atomic_reset = drm_atomic_helper_bridge_reset,
++	.attach = wl818s_attach,
++	.atomic_pre_enable = wl818s_atomic_pre_enable,
++	.atomic_enable = wl818s_atomic_enable,
++	.atomic_post_disable = wl818s_atomic_post_disable,
++	.detect = wl818s_detect,
++	.get_modes = wl818s_get_modes,
++};
++
++static int wl818s_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct wl818s *ctx;
++	int ret;
++
++	ctx = devm_drm_bridge_alloc(dev, struct wl818s, bridge,
++				    &wl818s_bridge_funcs);
++	if (IS_ERR(ctx))
++		return PTR_ERR(ctx);
++
++	ret = devm_regulator_bulk_get_const(dev, ARRAY_SIZE(wl818s_supplies),
++					    wl818s_supplies, &ctx->supplies);
++	if (ret)
++		return dev_err_probe(dev, ret, "Failed to get regulators\n");
++
++	ctx->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
++	if (IS_ERR(ctx->reset_gpio))
++		return dev_err_probe(dev, PTR_ERR(ctx->reset_gpio),
++				     "Failed to get reset-gpios\n");
++
++	ctx->next_bridge = devm_drm_of_get_bridge(dev, dev->of_node, 1, 0);
++	if (IS_ERR(ctx->next_bridge))
++		return dev_err_probe(dev, PTR_ERR(ctx->next_bridge),
++				     "Failed to get next bridge\n");
++
++	/*
++	 * Claiming HPD keeps the DP controller from arming its own hotplug
++	 * handling; the DP driver brings the link up from its enable path
++	 * instead, as for eDP.
++	 */
++	ctx->bridge.of_node = dev->of_node;
++	ctx->bridge.type = DRM_MODE_CONNECTOR_DisplayPort;
++	ctx->bridge.ops = DRM_BRIDGE_OP_DETECT | DRM_BRIDGE_OP_HPD |
++			  DRM_BRIDGE_OP_MODES;
++
++	return devm_drm_bridge_add(dev, &ctx->bridge);
++}
++
++static const struct of_device_id wl818s_of_match[] = {
++	{ .compatible = "retroidpocket,wl818s" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, wl818s_of_match);
++
++static struct platform_driver wl818s_driver = {
++	.probe = wl818s_probe,
++	.driver = {
++		.name = "wl818s",
++		.of_match_table = wl818s_of_match,
++	},
++};
++module_platform_driver(wl818s_driver);
++
++MODULE_DESCRIPTION("WL818S DP-to-MIPI bridge driver");
++MODULE_LICENSE("GPL");
