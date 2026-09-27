@@ -1,0 +1,306 @@
+ASoC: lpass-macro + soundwire: qcom: let the LPASS audio path power down
+
+The LPASS rx/tx/va/wsa macros and the Qualcomm SoundWire controller only
+implement runtime PM and never request an idle after probe, and the macro
+clock-gate callbacks (used by the SoundWire controllers and by the other
+macros' fsgen) write macro registers without a runtime PM reference. A
+macro that nothing pulls on therefore stays active forever, and one that is
+allowed to idle breaks the clocks it provides. Both keep MCLK/NPL requests
+to the ADSP alive.
+
+Take a runtime PM reference in the clock-gate enable paths and drop it on
+disable, let idle macros autosuspend after probe, and add system sleep
+handlers to the macros and the SoundWire controller that run the runtime
+suspend/resume paths for devices still runtime-active at suspend time, so
+a controller kept awake for codec jack alerts still clock-stops across
+system suspend.
+
+--- a/drivers/soundwire/qcom.c
++++ b/drivers/soundwire/qcom.c
+@@ -1807,7 +1807,24 @@
+ 	return 0;
+ }
+ 
++static int __maybe_unused swrm_suspend(struct device *dev)
++{
++	if (pm_runtime_status_suspended(dev))
++		return 0;
++
++	return swrm_runtime_suspend(dev);
++}
++
++static int __maybe_unused swrm_resume(struct device *dev)
++{
++	if (pm_runtime_status_suspended(dev))
++		return 0;
++
++	return swrm_runtime_resume(dev);
++}
++
+ static const struct dev_pm_ops swrm_dev_pm_ops = {
++	SET_SYSTEM_SLEEP_PM_OPS(swrm_suspend, swrm_resume)
+ 	SET_RUNTIME_PM_OPS(swrm_runtime_suspend, swrm_runtime_resume, NULL)
+ };
+ 
+--- a/sound/soc/codecs/lpass-va-macro.c
++++ b/sound/soc/codecs/lpass-va-macro.c
+@@ -1353,10 +1353,16 @@
+ 	struct regmap *regmap = va->regmap;
+ 	int ret;
+ 
++	ret = pm_runtime_resume_and_get(va->dev);
++	if (ret < 0)
++		return ret;
++
+ 	if (va->has_swr_master) {
+ 		ret = clk_prepare_enable(va->mclk);
+-		if (ret)
++		if (ret) {
++			pm_runtime_put_autosuspend(va->dev);
+ 			return ret;
++		}
+ 	}
+ 
+ 	ret = va_macro_mclk_enable(va, true);
+@@ -1379,6 +1385,9 @@
+ 	va_macro_mclk_enable(va, false);
+ 	if (va->has_swr_master)
+ 		clk_disable_unprepare(va->mclk);
++
++	pm_runtime_mark_last_busy(va->dev);
++	pm_runtime_put_autosuspend(va->dev);
+ }
+ 
+ static int fsgen_gate_is_enabled(struct clk_hw *hw)
+@@ -1668,7 +1677,7 @@
+ 
+ 	pm_runtime_set_autosuspend_delay(dev, 3000);
+ 	pm_runtime_use_autosuspend(dev);
+-	pm_runtime_mark_last_busy(dev);
++	pm_runtime_get_noresume(dev);
+ 	pm_runtime_set_active(dev);
+ 	pm_runtime_enable(dev);
+ 
+@@ -1682,6 +1691,9 @@
+ 		goto err_clkout;
+ 	}
+ 
++	pm_runtime_mark_last_busy(dev);
++	pm_runtime_put_autosuspend(dev);
++
+ 	return 0;
+ 
+ err_clkout:
+@@ -1755,7 +1767,24 @@
+ }
+ 
+ 
++static int va_macro_suspend(struct device *dev)
++{
++	if (pm_runtime_status_suspended(dev))
++		return 0;
++
++	return va_macro_runtime_suspend(dev);
++}
++
++static int va_macro_resume(struct device *dev)
++{
++	if (pm_runtime_status_suspended(dev))
++		return 0;
++
++	return va_macro_runtime_resume(dev);
++}
++
+ static const struct dev_pm_ops va_macro_pm_ops = {
++	SYSTEM_SLEEP_PM_OPS(va_macro_suspend, va_macro_resume)
+ 	RUNTIME_PM_OPS(va_macro_runtime_suspend, va_macro_runtime_resume, NULL)
+ };
+ 
+--- a/sound/soc/codecs/lpass-tx-macro.c
++++ b/sound/soc/codecs/lpass-tx-macro.c
+@@ -2149,9 +2149,14 @@
+ 	struct regmap *regmap = tx->regmap;
+ 	int ret;
+ 
++	ret = pm_runtime_resume_and_get(tx->dev);
++	if (ret < 0)
++		return ret;
++
+ 	ret = clk_prepare_enable(tx->mclk);
+ 	if (ret) {
+ 		dev_err(tx->dev, "failed to enable mclk\n");
++		pm_runtime_put_autosuspend(tx->dev);
+ 		return ret;
+ 	}
+ 
+@@ -2173,6 +2178,9 @@
+ 
+ 	tx_macro_mclk_enable(tx, false);
+ 	clk_disable_unprepare(tx->mclk);
++
++	pm_runtime_mark_last_busy(tx->dev);
++	pm_runtime_put_autosuspend(tx->dev);
+ }
+ 
+ static int swclk_gate_is_enabled(struct clk_hw *hw)
+@@ -2360,7 +2368,7 @@
+ 
+ 	pm_runtime_set_autosuspend_delay(dev, 3000);
+ 	pm_runtime_use_autosuspend(dev);
+-	pm_runtime_mark_last_busy(dev);
++	pm_runtime_get_noresume(dev);
+ 	pm_runtime_set_active(dev);
+ 	pm_runtime_enable(dev);
+ 
+@@ -2368,6 +2376,9 @@
+ 	if (ret)
+ 		goto err_clkout;
+ 
++	pm_runtime_mark_last_busy(dev);
++	pm_runtime_put_autosuspend(dev);
++
+ 	return 0;
+ 
+ err_clkout:
+@@ -2448,7 +2459,24 @@
+ 	return ret;
+ }
+ 
++static int tx_macro_suspend(struct device *dev)
++{
++	if (pm_runtime_status_suspended(dev))
++		return 0;
++
++	return tx_macro_runtime_suspend(dev);
++}
++
++static int tx_macro_resume(struct device *dev)
++{
++	if (pm_runtime_status_suspended(dev))
++		return 0;
++
++	return tx_macro_runtime_resume(dev);
++}
++
+ static const struct dev_pm_ops tx_macro_pm_ops = {
++	SYSTEM_SLEEP_PM_OPS(tx_macro_suspend, tx_macro_resume)
+ 	RUNTIME_PM_OPS(tx_macro_runtime_suspend, tx_macro_runtime_resume, NULL)
+ };
+ 
+--- a/sound/soc/codecs/lpass-rx-macro.c
++++ b/sound/soc/codecs/lpass-rx-macro.c
+@@ -3671,9 +3671,14 @@
+ 	struct rx_macro *rx = to_rx_macro(hw);
+ 	int ret;
+ 
++	ret = pm_runtime_resume_and_get(rx->dev);
++	if (ret < 0)
++		return ret;
++
+ 	ret = clk_prepare_enable(rx->mclk);
+ 	if (ret) {
+ 		dev_err(rx->dev, "unable to prepare mclk\n");
++		pm_runtime_put_autosuspend(rx->dev);
+ 		return ret;
+ 	}
+ 
+@@ -3694,6 +3699,9 @@
+ 
+ 	rx_macro_mclk_enable(rx, false);
+ 	clk_disable_unprepare(rx->mclk);
++
++	pm_runtime_mark_last_busy(rx->dev);
++	pm_runtime_put_autosuspend(rx->dev);
+ }
+ 
+ static int swclk_gate_is_enabled(struct clk_hw *hw)
+@@ -3907,7 +3915,7 @@
+ 
+ 	pm_runtime_set_autosuspend_delay(dev, 3000);
+ 	pm_runtime_use_autosuspend(dev);
+-	pm_runtime_mark_last_busy(dev);
++	pm_runtime_get_noresume(dev);
+ 	pm_runtime_set_active(dev);
+ 	pm_runtime_enable(dev);
+ 
+@@ -3915,6 +3923,9 @@
+ 	if (ret)
+ 		goto err_clkout;
+ 
++	pm_runtime_mark_last_busy(dev);
++	pm_runtime_put_autosuspend(dev);
++
+ 	return 0;
+ 
+ err_clkout:
+@@ -4014,7 +4025,24 @@
+ 	return ret;
+ }
+ 
++static int rx_macro_suspend(struct device *dev)
++{
++	if (pm_runtime_status_suspended(dev))
++		return 0;
++
++	return rx_macro_runtime_suspend(dev);
++}
++
++static int rx_macro_resume(struct device *dev)
++{
++	if (pm_runtime_status_suspended(dev))
++		return 0;
++
++	return rx_macro_runtime_resume(dev);
++}
++
+ static const struct dev_pm_ops rx_macro_pm_ops = {
++	SYSTEM_SLEEP_PM_OPS(rx_macro_suspend, rx_macro_resume)
+ 	RUNTIME_PM_OPS(rx_macro_runtime_suspend, rx_macro_runtime_resume, NULL)
+ };
+ 
+--- a/sound/soc/codecs/lpass-wsa-macro.c
++++ b/sound/soc/codecs/lpass-wsa-macro.c
+@@ -2813,7 +2813,7 @@
+ 
+ 	pm_runtime_set_autosuspend_delay(dev, 3000);
+ 	pm_runtime_use_autosuspend(dev);
+-	pm_runtime_mark_last_busy(dev);
++	pm_runtime_get_noresume(dev);
+ 	pm_runtime_set_active(dev);
+ 	pm_runtime_enable(dev);
+ 
+@@ -2821,6 +2821,9 @@
+ 	if (ret)
+ 		goto err_clkout;
+ 
++	pm_runtime_mark_last_busy(dev);
++	pm_runtime_put_autosuspend(dev);
++
+ 	return 0;
+ 
+ err_clkout:
+@@ -2898,7 +2901,24 @@
+ 	return ret;
+ }
+ 
++static int wsa_macro_suspend(struct device *dev)
++{
++	if (pm_runtime_status_suspended(dev))
++		return 0;
++
++	return wsa_macro_runtime_suspend(dev);
++}
++
++static int wsa_macro_resume(struct device *dev)
++{
++	if (pm_runtime_status_suspended(dev))
++		return 0;
++
++	return wsa_macro_runtime_resume(dev);
++}
++
+ static const struct dev_pm_ops wsa_macro_pm_ops = {
++	SYSTEM_SLEEP_PM_OPS(wsa_macro_suspend, wsa_macro_resume)
+ 	RUNTIME_PM_OPS(wsa_macro_runtime_suspend, wsa_macro_runtime_resume, NULL)
+ };
+ 

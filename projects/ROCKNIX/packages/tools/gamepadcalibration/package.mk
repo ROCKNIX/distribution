@@ -27,7 +27,8 @@ makeinstall_target() {
       sed -i 's|/sys/module/retroid/parameters|/sys/module/rsinput/parameters|g' ${INSTALL}/usr/local/share/gpcal/Klib/RPocket.py
       ;;
     SM6115)
-      sed -i 's|/sys/module/retroid/parameters|/sys/module/mangmi/parameters|g' ${INSTALL}/usr/local/share/gpcal/Klib/RPocket.py
+      sed -i 's|^PARAMETERS_DIR_PATH=.*|import os\nPARAMETERS_DIR_PATH = "/sys/module/mangmi/parameters" if os.path.exists("/sys/module/mangmi/parameters") else "/sys/module/rsinput/parameters"|' \
+        ${INSTALL}/usr/local/share/gpcal/Klib/RPocket.py
       ;;
   esac
 
