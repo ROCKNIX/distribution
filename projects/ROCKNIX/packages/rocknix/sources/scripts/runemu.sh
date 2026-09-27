@@ -546,11 +546,12 @@ if [ "${DEVICE_SCANOUT_SCALING}" = "true" ] && [ "${PLATFORM}" != "steam" ] && [
     fi
 
     # Frames taller than the plane can rotate are pre-rotated, so the plane only scales them
-    if [ -n "${DEVICE_PLANE_ROTATION_MAX_HEIGHT}" ] && [ "${SCALING_RENDER_H}" -gt "${DEVICE_PLANE_ROTATION_MAX_HEIGHT}" ]; then
+    ROTATE_MAX=$(plane_rotation_max_height)
+    if [ -n "${ROTATE_MAX}" ] && [ "${SCALING_RENDER_H}" -gt "${ROTATE_MAX}" ]; then
       case ${OUTPUT_TRANSFORM} in
         90|270)
           prerotate_env "${OUTPUT_TRANSFORM}" always
-          ${VERBOSE} && log $0 "Pre-rotation ${vk_wsi_wayland_prerotate} (${SCALING_RENDER_H} lines is over the plane's ${DEVICE_PLANE_ROTATION_MAX_HEIGHT})"
+          ${VERBOSE} && log $0 "Pre-rotation ${vk_wsi_wayland_prerotate} (${SCALING_RENDER_H} lines is over the plane's ${ROTATE_MAX})"
         ;;
       esac
     fi

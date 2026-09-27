@@ -1,0 +1,40 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Sat, 26 Sep 2026 23:55:03 -0700
+Subject: [PATCH] libliftoff: treat -ENODEV from a test commit as no fit
+
+msm answers a plane layout it has no free hardware pipe for with -ENODEV.
+Treat it like -EINVAL: keep searching instead of aborting, and don't log
+it, so gamescope caches the layout as impossible instead of retrying and
+logging it every frame.
+---
+diff --git a/subprojects/libliftoff/alloc.c b/subprojects/libliftoff/alloc.c
+index 4fe49ff..09eee1e 100644
+--- a/subprojects/libliftoff/alloc.c
++++ b/subprojects/libliftoff/alloc.c
+@@ -540,7 +540,8 @@ output_choose_layers(struct liftoff_output *output, struct alloc_result *result,
+ 			if (ret != 0) {
+ 				return ret;
+ 			}
+-		} else if (ret != -EINVAL && ret != -ERANGE && ret != -ENOSPC) {
++		} else if (ret != -EINVAL && ret != -ERANGE && ret != -ENOSPC &&
++			   ret != -ENODEV) {
+ 			return ret;
+ 		} else {
+ 			liftoff_log(LIFTOFF_DEBUG,
+diff --git a/subprojects/libliftoff/device.c b/subprojects/libliftoff/device.c
+index e84efa0..742a0d9 100644
+--- a/subprojects/libliftoff/device.c
++++ b/subprojects/libliftoff/device.c
+@@ -114,8 +114,10 @@ device_test_commit(struct liftoff_device *device, drmModeAtomicReq *req,
+ 	} while (ret == -EINTR || ret == -EAGAIN);
+ 
+ 	/* The kernel will return -EINVAL for invalid configuration, -ERANGE for
+-	 * CRTC coords overflow, and -ENOSPC for invalid SRC coords. */
+-	if (ret != 0 && ret != -EINVAL && ret != -ERANGE && ret != -ENOSPC) {
++	 * CRTC coords overflow, and -ENOSPC for invalid SRC coords. msm returns
++	 * -ENODEV when no hardware pipe is left for a plane. */
++	if (ret != 0 && ret != -EINVAL && ret != -ERANGE && ret != -ENOSPC &&
++	    ret != -ENODEV) {
+ 		liftoff_log(LIFTOFF_ERROR, "drmModeAtomicCommit: %s",
+ 			    strerror(-ret));
+ 	}
