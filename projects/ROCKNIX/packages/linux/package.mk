@@ -429,6 +429,4 @@ makeinstall_target() {
       fi
     done
   fi
-
-  makeinstall_host
 }
