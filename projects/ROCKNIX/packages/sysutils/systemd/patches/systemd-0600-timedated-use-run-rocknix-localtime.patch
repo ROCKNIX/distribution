@@ -1,6 +1,6 @@
 --- a/src/timedate/timedated.c
 +++ b/src/timedate/timedated.c
-@@ -290,34 +290,47 @@
+@@ -282,6 +282,7 @@
  static int context_write_data_timezone(Context *c) {
          _cleanup_free_ char *p = NULL;
          const char *source;
@@ -8,39 +8,27 @@
  
          assert(c);
  
--        /* No timezone is very similar to UTC. Hence in either of these cases link the UTC file in. Except if
--         * it isn't installed, in which case we remove the symlink altogether. Since glibc defaults to an
--         * internal version of UTC in that case behaviour is mostly equivalent. We still prefer creating the
--         * symlink though, since things are more self explanatory then. */
- 
-         if (isempty(c->zone) || streq(c->zone, "UTC")) {
+@@ -294,7 +295,7 @@
  
                  if (access("/usr/share/zoneinfo/UTC", F_OK) < 0) {
  
--                        if (unlink("/etc/localtime") < 0 && errno != ENOENT)
+-                        if (unlink(etc_localtime()) < 0 && errno != ENOENT)
 +                        if (unlink("/var/run/localtime") < 0 && errno != ENOENT)
                                  return -errno;
  
                          return 0;
-                 }
- 
--                source = "../usr/share/zoneinfo/UTC";
-+                source = "/usr/share/zoneinfo/UTC";
-         } else {
--                p = path_join("../usr/share/zoneinfo", c->zone);
-+                p = path_join("/usr/share/zoneinfo", c->zone);
-                 if (!p)
-                         return -ENOMEM;
- 
+@@ -309,8 +310,24 @@
                  source = p;
          }
  
--        return symlink_atomic(source, "/etc/localtime");
-+        r = symlink_atomic(source, "/var/run/localtime");
+-        return symlinkat_atomic_full(source, AT_FDCWD, etc_localtime(),
+-                                     !secure_getenv("SYSTEMD_ETC_LOCALTIME"));
++        r = symlinkat_atomic_full(source, AT_FDCWD, "/var/run/localtime",
++                                  !secure_getenv("SYSTEMD_ETC_LOCALTIME"));
 +        if (r < 0)
 +                return r;
 +
-+        /* Persist timezone across reboots via /storage/.cache/timezone */
++        /* Persist the timezone across reboots, /var/run does not survive one. */
 +        if (!isempty(c->zone)) {
 +                _cleanup_free_ char *tz_line = NULL;
 +
@@ -55,4 +43,4 @@
 +        return 0;
  }
  
- static int context_write_data_local_rtc(Context *c) {
+ static const char* etc_adjtime(void) {
