@@ -2,11 +2,11 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="armsx2-sa"
-PKG_VERSION="2.6.9"
-PKG_SHA256="e7b2b6ea6ca26a2b0a5b401b4aa1110b0fbf71a09b84df95571159d892a4cc1f"
+PKG_VERSION="19c83bf065ed21a19d8c46a1f578e37d2dab8efd"
+PKG_SHA256="361b98beb943976f6c0ec5494eba26ded04abcd41683149c74317e089b3ff860"
 PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/ARMSX2/ARMSX2"
-PKG_URL="${PKG_SITE}/archive/refs/tags/${PKG_VERSION}.tar.gz"
+PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_LONGDESC="ARMSX2 is a native ARM64 PlayStation 2 (PS2) emulator, a fork of PCSX2 that ports the EE/IOP/VU JIT recompilers to ARM64."
 PKG_DEPENDS_TARGET="toolchain llvm:host SDL3 libpng zlib libjpeg-turbo zstd lz4 libwebp freetype plutosvg curl libpcap ffmpeg libX11 libXext qt6 shaderc ecm"
 PKG_TOOLCHAIN="manual"
@@ -22,11 +22,21 @@ elif listcontains "${GRAPHIC_DRIVERS}" "(freedreno)"; then
   GRAPHICS_DRIVER="freedreno"
 fi
 
+# Ship ARMSX2's own Turnip build on the Adreno 6xx/7xx families. SM8750
+# (Adreno 8xx) keeps the system driver.
+case ${DEVICE} in
+  SM4450|SM6115|SM8250|SM8550|SM8650)
+    PKG_DEPENDS_TARGET+=" armsx2-turnip"
+    ;;
+esac
+
 pre_configure_target() {
   PCSX2_CMAKE_BASE=(
     # Reported version
-    -DARMSX2_VERSION=${PKG_VERSION}
+    -DARMSX2_VERSION=2.7.1
     -DCMAKE_BUILD_TYPE=Release
+    # Release builds don't need the unit tests or the recompiler test hooks
+    -DENABLE_TESTS=OFF
     # Full-tree IPO stays off for Qt (not worth it)...
     -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF
     # ...but stays on for just the recompiler/VU/EE/IOP core:
