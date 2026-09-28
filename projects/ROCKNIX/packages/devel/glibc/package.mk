@@ -46,6 +46,9 @@ PKG_CONFIGURE_OPTS_TARGET="BASH_SHELL=/bin/sh \
                            --disable-nscd \
                            --disable-timezone-tools"
 
+# ROCKNIX: new-compiler warning churn must not break the build
+PKG_CONFIGURE_OPTS_TARGET+=" --disable-werror"
+
 if build_with_debug; then
   PKG_CONFIGURE_OPTS_TARGET+=" --enable-debug"
 else
