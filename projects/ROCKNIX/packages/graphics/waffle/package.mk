@@ -2,8 +2,7 @@
 # Copyright (C) 2024-present ROCKNIX (https://rocknix.org)
 PKG_NAME="waffle"
 PKG_LICENSE="BSD"
-PKG_VERSION="5f1f48287e806544d745e9a8f5aed47234c61292"
-PKG_SHA256="4a3584b56fc2bb98466eb64f2578a13b75d67328ae16c95b320fa55cbc6afe00"
+PKG_VERSION="3b20e4d7bccc5471fe54db21e1b75022fa47d7d8"
 PKG_SITE="https://waffle.freedesktop.org/"
 PKG_URL="https://gitlab.freedesktop.org/mesa/waffle/-/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain wayland mesa Python3"
@@ -16,3 +15,8 @@ PKG_MESON_OPTS_TARGET+=" -Dwayland=enabled \
                        -Dsurfaceless_egl=enabled \
                        -Dglx=enabled \
                        -Dbuild-examples=false"
+
+pre_configure_target() {
+  # meson reads CMAKE as the cmake program, but setup_toolchain exports a whole command line
+  unset CMAKE
+}
