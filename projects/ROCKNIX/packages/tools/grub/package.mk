@@ -2,13 +2,15 @@
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="grub"
-PKG_VERSION="2.14-rc1"
-PKG_SHA256="49a6eefd1cfa0eb74a0ee9c844d6236341eefc161f6f2f04537a6acb62a4524a"
+PKG_VERSION="2.14"
+PKG_SHA256="6dcd64c4c5163870dd4cd89d460d1aa8f59b150e721a1e2b493f88433bc79ca9"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://www.gnu.org/software/grub/index.html"
-PKG_URL="http://git.savannah.gnu.org/cgit/grub.git/snapshot/${PKG_NAME}-${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_HOST="toolchain:host"
-PKG_DEPENDS_TARGET="toolchain flex freetype:host gettext:host grub:host"
+# grub development moved off Savannah, whose cgit snapshots are gone
+PKG_URL="https://gitlab.freedesktop.org/gnu-grub/grub/-/archive/${PKG_NAME}-${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tar.gz"
+# 2.14's bootstrap needs AX_CHECK_LINK_FLAG from autoconf-archive
+PKG_DEPENDS_HOST="toolchain:host autoconf-archive:host"
+PKG_DEPENDS_TARGET="toolchain flex freetype:host gettext:host grub:host autoconf-archive:host"
 PKG_DEPENDS_UNPACK="gnulib"
 PKG_LONGDESC="GRUB is a Multiboot boot loader."
 PKG_TOOLCHAIN="configure"
@@ -22,6 +24,9 @@ pre_configure_host() {
   unset CXXFLAGS
   unset LDFLAGS
   unset CPP
+
+  # autoconf-archive installs its macros into the sysroot, off aclocal's default path
+  export ACLOCAL_PATH="${SYSROOT_PREFIX}/usr/share/aclocal"
 
   cd ${PKG_BUILD}
     # keep grub synced with gnulib
@@ -45,6 +50,9 @@ pre_configure_target() {
   unset CXXFLAGS
   unset LDFLAGS
   unset CPP
+
+  # autoconf-archive installs its macros into the sysroot, off aclocal's default path
+  export ACLOCAL_PATH="${SYSROOT_PREFIX}/usr/share/aclocal"
 
   cd ${PKG_BUILD}
     # keep grub synced with gnulib
