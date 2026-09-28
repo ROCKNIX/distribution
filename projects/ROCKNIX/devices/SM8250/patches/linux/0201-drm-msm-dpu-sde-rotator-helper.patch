@@ -151,16 +151,16 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
  #endif /*_DPU_FORMATS_H */
 --- /dev/null
 +++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_rotator.c
-@@ -0,0 +1,867 @@
+@@ -0,0 +1,887 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +#include <linux/clk.h>
 +#include <linux/completion.h>
 +#include <linux/delay.h>
-+#include <linux/debugfs.h>
 +#include <linux/dma-fence.h>
 +#include <linux/interconnect.h>
 +#include <linux/interrupt.h>
 +#include <linux/iopoll.h>
++#include <linux/kref.h>
 +#include <linux/io.h>
 +#include <linux/ktime.h>
 +#include <linux/module.h>
@@ -169,9 +169,9 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
 +#include <linux/of_address.h>
 +#include <linux/of_irq.h>
 +#include <linux/of_platform.h>
++#include <linux/pm_opp.h>
 +#include <linux/pm_qos.h>
 +#include <linux/pm_runtime.h>
-+#include <linux/seq_file.h>
 +#include <linux/workqueue.h>
 +#include <linux/soc/qcom/ubwc.h>
 +
@@ -179,6 +179,7 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
 +#include <drm/drm_gem.h>
 +#include <drm/drm_fourcc.h>
 +#include <drm/drm_framebuffer.h>
++#include <drm/drm_vblank.h>
 +
 +#include "msm_gem.h"
 +#include "dpu_kms.h"
@@ -291,13 +292,14 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
 +#define VBIF_QOS_PRIORITY	3
 +#define VBIF_MEMTYPE		3
 +
-+#define SENTINEL		0xABABABAB
-+
 +#define ROT_ICC_IDLE_MS		100
 +
-+#define ROT_QOS_LATENCY_US	100
++#define ROT_OPP_IDLE_MS		1
 +
-+#define ROT_ICC_PEAK_BW		MBps_to_icc(6400)
++/* the first 128-line strip plus the scanout's prefetch, with margin */
++#define ROT_RACE_MIN_US		800
++
++#define ROT_QOS_LATENCY_US	100
 +
 +static const struct of_device_id dpu_hw_rotator_of_match[] = {
 +	{ .compatible = "qcom,sm6115-sde-rotator" },
@@ -447,20 +449,64 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
 +static unsigned int dpu_rot_clk_mhz;
 +module_param(dpu_rot_clk_mhz, uint, 0644);
 +MODULE_PARM_DESC(dpu_rot_clk_mhz,
-+		 "rotator clock in MHz (0: follow the DPU core clock)");
++		 "rotator clock in MHz for a job that can't race the scanout (0: fastest OPP, or the DPU core clock without an OPP table)");
 +
-+static void rot_clk_set_rate(struct dpu_hw_rotator *rot)
++static bool dpu_rot_race = true;
++module_param(dpu_rot_race, bool, 0644);
++MODULE_PARM_DESC(dpu_rot_race,
++		 "scan out a rotated frame once the rotator starts on it; it writes top down faster than the scanout, even at the lowest OPP");
++
++static bool rot_has_opp(struct dpu_hw_rotator *rot)
 +{
 +	unsigned long rate;
++	struct dev_pm_opp *opp;
 +
-+	if (dpu_rot_clk_mhz)
-+		rate = dpu_rot_clk_mhz * 1000000UL;
-+	else if (rot->core_clk)
-+		rate = clk_get_rate(rot->core_clk);
-+	else
++	if (rot->opp_max || !rot->dev || !device_is_bound(rot->dev) ||
++	    dev_pm_opp_get_opp_count(rot->dev) <= 0)
++		return rot->opp_max;
++
++	rate = 0;
++	opp = dev_pm_opp_find_freq_ceil(rot->dev, &rate);
++	if (IS_ERR(opp))
++		return false;
++	dev_pm_opp_put(opp);
++	rot->opp_min = rate;
++
++	rate = ULONG_MAX;
++	opp = dev_pm_opp_find_freq_floor(rot->dev, &rate);
++	if (IS_ERR(opp))
++		return false;
++	dev_pm_opp_put(opp);
++	rot->opp_max = rate;
++	return true;
++}
++
++/* with an OPP table the rail is raised before the clock and lowered after */
++static void rot_clk_set_rate(struct dpu_hw_rotator *rot, bool job)
++{
++	unsigned long rate = dpu_rot_clk_mhz * 1000000UL;
++
++	if (rot_has_opp(rot)) {
++		if (!job)
++			rate = rot->opp_min;
++		else if (!rate)
++			rate = rot->opp_max;
++		dev_pm_opp_set_rate(rot->dev, rate);
 +		return;
++	}
 +
-+	clk_set_rate(rot->rot_clk, clk_round_rate(rot->rot_clk, rate));
++	if (!rate && rot->core_clk)
++		rate = clk_get_rate(rot->core_clk);
++	if (rate)
++		clk_set_rate(rot->rot_clk, clk_round_rate(rot->rot_clk, rate));
++}
++
++static void rot_opp_idle(struct work_struct *work)
++{
++	struct dpu_hw_rotator *rot = container_of(to_delayed_work(work),
++						  struct dpu_hw_rotator, opp_idle);
++
++	rot_clk_set_rate(rot, false);
 +}
 +
 +static void rot_bw_idle(struct work_struct *work)
@@ -469,25 +515,26 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
 +						  struct dpu_hw_rotator, bw_idle);
 +
 +	mutex_lock(&rot->bw_lock);
-+	if (rot->bw_on) {
++	if (rot->bw) {
 +		icc_set_bw(rot->mem_path, 0, 0);
-+		rot->bw_on = false;
++		rot->bw = 0;
 +	}
 +	mutex_unlock(&rot->bw_lock);
 +}
 +
-+static void rot_bw_kick(struct dpu_hw_rotator *rot)
++/* read + write traffic at the display rate, as downstream votes it */
++static void rot_bw_kick(struct dpu_hw_rotator *rot, u64 bw)
 +{
 +	if (!rot->mem_path)
 +		return;
 +
 +	mutex_lock(&rot->bw_lock);
-+	if (!rot->bw_on) {
-+		icc_set_bw(rot->mem_path, 0, ROT_ICC_PEAK_BW);
-+		rot->bw_on = true;
++	if (rot->bw != bw) {
++		icc_set_bw(rot->mem_path, Bps_to_icc(bw), Bps_to_icc(bw));
++		rot->bw = bw;
 +	}
 +	mutex_unlock(&rot->bw_lock);
-+	mod_delayed_work(system_wq, &rot->bw_idle,
++	mod_delayed_work(system_dfl_wq, &rot->bw_idle,
 +			 msecs_to_jiffies(ROT_ICC_IDLE_MS));
 +}
 +
@@ -496,7 +543,10 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
 +{
 +	if (IS_ERR_OR_NULL(rot))
 +		return;
-+	rot_clk_set_rate(rot);
++	/* the rotator's rail vote only counts while it is runtime active */
++	if (rot_has_opp(rot) && !rot->rpm_active)
++		rot->rpm_active = !pm_runtime_resume_and_get(rot->dev);
++	rot_clk_set_rate(rot, false);
 +	if (clk_prepare_enable(rot->rot_clk))
 +		return;
 +	rot_sid_setup(rot);
@@ -509,14 +559,21 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
 +		return;
 +	cancel_delayed_work_sync(&rot->bw_idle);
 +	rot_bw_idle(&rot->bw_idle.work);
++	cancel_delayed_work_sync(&rot->opp_idle);
 +	clk_disable_unprepare(rot->rot_clk);
++	if (rot->opp_max)
++		dev_pm_opp_set_rate(rot->dev, 0);
++	if (rot->rpm_active) {
++		pm_runtime_put_sync(rot->dev);
++		rot->rpm_active = false;
++	}
 +}
 +
 +int dpu_hw_rotator_rotate(struct dpu_hw_rotator *rot,
 +			  const struct msm_format *fmt,
 +			  const struct dpu_hw_fmt_layout *src,
 +			  const struct dpu_hw_fmt_layout *dst,
-+			  u32 rotation)
++			  u32 rotation, u32 fps)
 +{
 +	bool rot90 = rotation & (DRM_MODE_ROTATE_90 | DRM_MODE_ROTATE_270);
 +	bool ubwc = MSM_FORMAT_IS_UBWC(fmt);
@@ -527,7 +584,6 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
 +	u32 src_format, dst_format, unpack, ubwc_ctrl = 0, write_cfg = 0;
 +	u32 cdp = CDP_CNTL_ENABLE | CDP_CNTL_PRELOAD_64;
 +	u32 status, intr;
-+	ktime_t t0;
 +	int ret;
 +
 +	if (rot->has_ubwc) {
@@ -575,8 +631,9 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
 +	if (rotation & (DRM_MODE_ROTATE_90 | DRM_MODE_ROTATE_180))
 +		op_mode ^= (SRC_OP_FLIP_LR | SRC_OP_FLIP_UD);
 +
-+	rot_bw_kick(rot);
-+	rot_clk_set_rate(rot);
++	rot_bw_kick(rot, (u64)(src->total_size + dst->total_size) * fps);
++	cancel_delayed_work_sync(&rot->opp_idle);
++	rot_clk_set_rate(rot, !rot->race_job);
 +	rot_sid_setup(rot);
 +	rot_vbif_setup(rot);
 +
@@ -643,8 +700,9 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
 +		rwr(rot, ROTTOP_INTR_EN, 0);
 +	}
 +	wmb();
-+	t0 = ktime_get();
 +	rwr(rot, ROTTOP_START_CTRL, 1);
++	if (rot->on_start)
++		rot->on_start(rot->on_start_data);
 +
 +
 +	if (rot_irq_ok(rot)) {
@@ -670,11 +728,6 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
 +						 100, 300000);
 +	}
 +	status = rrd(rot, ROTTOP_STATUS);
-+	rot->last_us = ktime_us_delta(ktime_get(), t0);
-+	rot->last_status = status;
-+	rot->last_intr = intr;
-+	pr_debug("dpu_hw_rotator: %ux%u->%ux%u%s rotate %u us status %#x\n",
-+		 w, h, dw, dh, ubwc ? " ubwc" : "", rot->last_us, status);
 +	if (ret || (status & (ROT_ERROR_BIT | ROT_BUSY_BIT))) {
 +		pr_err("dpu_hw_rotator: %s (status %#x intr %#x)\n",
 +		       ret ? "timeout" : "error", status, intr);
@@ -682,6 +735,8 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
 +		ret = ret ? ret : -EIO;
 +	}
 +	rwr(rot, ROTTOP_INTR_CLEAR, ROT_DONE_MASK);
++	mod_delayed_work(system_dfl_wq, &rot->opp_idle,
++			 msecs_to_jiffies(ROT_OPP_IDLE_MS));
 +	return ret;
 +}
 +
@@ -693,9 +748,14 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
 +	struct dpu_hw_fmt_layout src;
 +	struct dpu_hw_fmt_layout dst;
 +	u32 rotation;
++	u32 fps;
 +	struct dma_fence *in_fence;
 +	struct dma_fence_cb cb;
 +	struct dma_fence fence;
++	/* signalled when the frame may scan out: at the start when racing, else with fence */
++	struct dma_fence scanout;
++	struct drm_crtc *crtc;
++	struct kref ref;
 +	spinlock_t lock;
 +	struct rcu_head rcu;
 +};
@@ -710,11 +770,26 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
 +	return "rot";
 +}
 +
-+static void rot_fence_release(struct dma_fence *f)
++static const char *rot_scanout_fence_get_timeline_name(struct dma_fence *f)
 +{
-+	struct dpu_rot_job *job = container_of(f, struct dpu_rot_job, fence);
++	return "rot-scanout";
++}
++
++static void rot_job_free(struct kref *ref)
++{
++	struct dpu_rot_job *job = container_of(ref, struct dpu_rot_job, ref);
 +
 +	kfree_rcu(job, rcu);
++}
++
++static void rot_fence_release(struct dma_fence *f)
++{
++	kref_put(&container_of(f, struct dpu_rot_job, fence)->ref, rot_job_free);
++}
++
++static void rot_scanout_fence_release(struct dma_fence *f)
++{
++	kref_put(&container_of(f, struct dpu_rot_job, scanout)->ref, rot_job_free);
 +}
 +
 +static const struct dma_fence_ops rot_fence_ops = {
@@ -723,19 +798,57 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
 +	.release = rot_fence_release,
 +};
 +
++static const struct dma_fence_ops rot_scanout_fence_ops = {
++	.get_driver_name = rot_fence_get_driver_name,
++	.get_timeline_name = rot_scanout_fence_get_timeline_name,
++	.release = rot_scanout_fence_release,
++};
++
++/* time until the next frame starts scanning out */
++static s64 rot_next_frame_us(struct drm_crtc *crtc)
++{
++	struct drm_vblank_crtc *vblank = drm_crtc_vblank_crtc(crtc);
++	ktime_t now = ktime_get(), last;
++	s64 dur = vblank->framedur_ns;
++
++	drm_crtc_vblank_count_and_time(crtc, &last);
++	if (!dur || !last)
++		return 0;
++	last = ktime_add_ns(last, (div64_s64(ktime_to_ns(ktime_sub(now, last)), dur) + 1) * dur);
++	return ktime_us_delta(last, now);
++}
++
++static void rot_job_started(void *data)
++{
++	struct dpu_rot_job *job = data;
++
++	if (job->rot->race_job && rot_next_frame_us(job->crtc) >= ROT_RACE_MIN_US)
++		dma_fence_signal(&job->scanout);
++}
++
 +static void rot_job_work(struct work_struct *work)
 +{
 +	struct dpu_rot_job *job = container_of(work, struct dpu_rot_job, work);
-+	struct device *dev = &job->rot->dpu_kms->pdev->dev;
++	struct dpu_hw_rotator *rot = job->rot;
++	struct device *dev = &rot->dpu_kms->pdev->dev;
 +
 +	pm_runtime_get_sync(dev);
-+	dpu_hw_rotator_rotate(job->rot, job->fmt, &job->src, &job->dst,
-+			      job->rotation);
++	rot->on_start_data = job;
++	rot->on_start = rot_job_started;
++	/* a job that will race needs no more than the lowest OPP; one that can't gets the fast clock */
++	rot->race_job = dpu_rot_race && job->crtc &&
++			rot_next_frame_us(job->crtc) >= ROT_RACE_MIN_US;
++	dpu_hw_rotator_rotate(rot, job->fmt, &job->src, &job->dst,
++			      job->rotation, job->fps);
++	rot->race_job = false;
++	rot->on_start = NULL;
 +	pm_runtime_put_sync(dev);
++	dma_fence_signal(&job->scanout);
 +	dma_fence_signal(&job->fence);
 +	dma_fence_put(job->in_fence);
 +	msm_framebuffer_cleanup(job->fb, false);
 +	drm_framebuffer_put(job->fb);
++	dma_fence_put(&job->scanout);
 +	dma_fence_put(&job->fence);
 +}
 +
@@ -750,7 +863,9 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
 +				       struct drm_framebuffer *fb,
 +				       struct dma_fence *in_fence,
 +				       const struct dpu_hw_fmt_layout *dst,
-+				       u32 rotation)
++				       u32 rotation, u32 fps,
++				       struct drm_crtc *crtc,
++				       struct dma_fence **scanout)
 +{
 +	struct dpu_rot_job *job;
 +
@@ -778,13 +893,22 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
 +	job->fmt = msm_framebuffer_format(fb);
 +	job->dst = *dst;
 +	job->rotation = rotation;
++	job->fps = fps;
 +	job->in_fence = in_fence;
++	job->crtc = crtc;
 +	spin_lock_init(&job->lock);
 +	INIT_WORK(&job->work, rot_job_work);
++	/* one job reference per fence; the worker holds a reference on each */
++	kref_init(&job->ref);
 +	dma_fence_init(&job->fence, &rot_fence_ops, &job->lock,
 +		       rot->fence_context,
 +		       atomic64_inc_return(&rot->fence_seqno));
 +	dma_fence_get(&job->fence);
++	kref_get(&job->ref);
++	dma_fence_init(&job->scanout, &rot_scanout_fence_ops, &job->lock,
++		       rot->scanout_context,
++		       atomic64_inc_return(&rot->scanout_seqno));
++	*scanout = dma_fence_get(&job->scanout);
 +
 +	if (!in_fence || dma_fence_add_callback(in_fence, &job->cb,
 +						rot_job_in_fence_cb))
@@ -792,112 +916,6 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
 +
 +	return &job->fence;
 +}
-+
-+static const u32 QA = 0xFFFF0000, QB = 0xFF00FF00, QC = 0xFF0000FF, QD = 0xFFFFFFFF;
-+
-+static const char *qname(u32 v)
-+{
-+	return v == QA ? "R" : v == QB ? "G" : v == QC ? "B" : v == QD ? "W" : "?";
-+}
-+
-+static int rot_one_test(struct seq_file *s, struct dpu_hw_rotator *rot,
-+			u32 w, u32 h, u32 rotation)
-+{
-+	struct dpu_kms *dpu_kms = rot->dpu_kms;
-+	struct drm_device *dev = dpu_kms->dev;
-+	struct drm_gem_object *src_bo, *dst_bo;
-+	u64 src_iova, dst_iova;
-+	u32 *src, *dst;
-+	u32 x, y, nz = 0;
-+	int ret = -ENOMEM;
-+	bool rot90 = rotation & (DRM_MODE_ROTATE_90 | DRM_MODE_ROTATE_270);
-+	u32 dw = rot90 ? h : w, dh = rot90 ? w : h;
-+	char line[256];
-+	struct msm_drm_private *priv = dev->dev_private;
-+	const struct msm_format *fmt = mdp_get_format(priv->kms,
-+				DRM_FORMAT_ARGB8888, DRM_FORMAT_MOD_LINEAR);
-+	struct dpu_hw_fmt_layout src_layout, dst_layout;
-+
-+	if (!fmt)
-+		return -EINVAL;
-+
-+	src_bo = msm_gem_new(dev, w * h * 4, MSM_BO_WC);
-+	if (IS_ERR(src_bo))
-+		return PTR_ERR(src_bo);
-+	dst_bo = msm_gem_new(dev, dw * dh * 4, MSM_BO_WC);
-+	if (IS_ERR(dst_bo))
-+		goto put_src;
-+	if (msm_gem_get_and_pin_iova(src_bo, dpu_kms->base.vm, &src_iova))
-+		goto put_dst;
-+	if (msm_gem_get_and_pin_iova(dst_bo, dpu_kms->base.vm, &dst_iova))
-+		goto unpin_src;
-+
-+	src = msm_gem_get_vaddr(src_bo);
-+	dst = msm_gem_get_vaddr(dst_bo);
-+	if (IS_ERR(src) || IS_ERR(dst))
-+		goto unpin_dst;
-+
-+	for (y = 0; y < h; y++)
-+		for (x = 0; x < w; x++)
-+			src[y * w + x] = (x < w / 2) ?
-+				(y < h / 2 ? QA : QC) : (y < h / 2 ? QB : QD);
-+	for (x = 0; x < dw * dh; x++)
-+		dst[x] = SENTINEL;
-+	wmb();
-+
-+	dpu_hw_rotator_dst_layout(fmt, w, h, (u32)src_iova, &src_layout);
-+	dpu_hw_rotator_dst_layout(fmt, dw, dh, (u32)dst_iova, &dst_layout);
-+	ret = dpu_hw_rotator_rotate(rot, fmt, &src_layout, &dst_layout,
-+				    rotation);
-+	for (x = 0; x < dw * dh; x++)
-+		nz += dst[x] != SENTINEL;
-+
-+	scnprintf(line, sizeof(line),
-+		  "rot %#x %ux%u->%ux%u src %#x dst %#x: ret=%d %u us status %#x intr %#x changed %u/%u [%#x %#x %#x %#x] TL=%s TR=%s BL=%s BR=%s",
-+		  rotation, w, h, dw, dh, (u32)src_iova, (u32)dst_iova, ret,
-+		  rot->last_us, rot->last_status, rot->last_intr, nz, dw * dh,
-+		  dst[0], dst[1], dst[dw], dst[dw + 1],
-+		  qname(dst[(dh / 4) * dw + dw / 4]),
-+		  qname(dst[(dh / 4) * dw + 3 * dw / 4]),
-+		  qname(dst[(3 * dh / 4) * dw + dw / 4]),
-+		  qname(dst[(3 * dh / 4) * dw + 3 * dw / 4]));
-+	seq_printf(s, "%s\n", line);
-+	if (!ret && !nz)
-+		ret = -ENODATA;
-+
-+	msm_gem_put_vaddr(dst_bo);
-+	msm_gem_put_vaddr(src_bo);
-+unpin_dst:
-+	msm_gem_unpin_iova(dst_bo, dpu_kms->base.vm);
-+unpin_src:
-+	msm_gem_unpin_iova(src_bo, dpu_kms->base.vm);
-+put_dst:
-+	drm_gem_object_put(dst_bo);
-+put_src:
-+	drm_gem_object_put(src_bo);
-+	return ret;
-+}
-+
-+static int rot_test_show(struct seq_file *s, void *unused)
-+{
-+	struct dpu_hw_rotator *rot = s->private;
-+	struct device *dev = &rot->dpu_kms->pdev->dev;
-+	int ret;
-+
-+	seq_printf(s, "hw %#x ubwc %d hbb %u vbif %d sid %d\n", rot->hw_version,
-+		   rot->has_ubwc, rot->hbb, !!rot->vbif, !!rot->sid);
-+	seq_puts(s, "src TL=R TR=G BL=B BR=W; on-panel-correct 90 -> TL=G TR=W BL=R BR=B\n");
-+	pm_runtime_get_sync(dev);
-+	ret = rot_one_test(s, rot, 128, 64, DRM_MODE_ROTATE_270);
-+	if (!ret) {
-+		rot_one_test(s, rot, 1920, 1080, DRM_MODE_ROTATE_270);
-+		rot_one_test(s, rot, 1920, 1080, DRM_MODE_ROTATE_90);
-+	}
-+	pm_runtime_put_sync(dev);
-+	return 0;
-+}
-+DEFINE_SHOW_ATTRIBUTE(rot_test);
-+
 +
 +struct dpu_hw_rotator *dpu_hw_rotator_init(struct drm_device *dev,
 +					   struct dpu_kms *dpu_kms)
@@ -948,8 +966,8 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
 +
 +	pdev = of_find_device_by_node(np);
 +	if (pdev) {
++		rot->dev = &pdev->dev;
 +		rot->mem_path = of_icc_get(&pdev->dev, "mem");
-+		put_device(&pdev->dev);
 +		if (IS_ERR(rot->mem_path)) {
 +			DRM_DEV_INFO(dev->dev, "dpu rotator: no bandwidth path (%ld)\n",
 +				     PTR_ERR(rot->mem_path));
@@ -958,9 +976,10 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
 +	}
 +	mutex_init(&rot->bw_lock);
 +	INIT_DELAYED_WORK(&rot->bw_idle, rot_bw_idle);
++	INIT_DELAYED_WORK(&rot->opp_idle, rot_opp_idle);
 +
 +
-+	rot_clk_set_rate(rot);
++	rot_clk_set_rate(rot, false);
 +	ret = clk_prepare_enable(rot->rot_clk);
 +	if (ret)
 +		goto put_node;
@@ -980,6 +999,7 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
 +
 +	rot->wq = alloc_ordered_workqueue("dpu_rotator", WQ_HIGHPRI);
 +	rot->fence_context = dma_fence_context_alloc(1);
++	rot->scanout_context = dma_fence_context_alloc(1);
 +
 +	DRM_DEV_INFO(dev->dev, "dpu rotator %#x ubwc %d vbif %d sid %d\n",
 +		     rot->hw_version, rot->has_ubwc, !!rot->vbif, !!rot->sid);
@@ -991,19 +1011,19 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
 +	return ERR_PTR(ret);
 +}
 +
-+void dpu_hw_rotator_debugfs_init(struct dpu_hw_rotator *rot,
-+				 struct dentry *parent)
-+{
-+	if (!IS_ERR_OR_NULL(rot)) {
-+		debugfs_create_file("rotator_test", 0400, parent, rot,
-+				    &rot_test_fops);
-+	}
-+}
-+
 +static int dpu_hw_rotator_probe(struct platform_device *pdev)
 +{
++	struct device *dev = &pdev->dev;
++	int ret;
 +
-+	return devm_pm_runtime_enable(&pdev->dev);
++	ret = devm_pm_opp_set_clkname(dev, "rot");
++	if (ret)
++		return ret;
++	ret = devm_pm_opp_of_add_table(dev);
++	if (ret && ret != -ENODEV)
++		return ret;
++
++	return devm_pm_runtime_enable(dev);
 +}
 +
 +static const struct of_device_id dpu_hw_rotator_stub_match[] = {
@@ -1021,7 +1041,7 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
 +};
 --- /dev/null
 +++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_rotator.h
-@@ -0,0 +1,81 @@
+@@ -0,0 +1,87 @@
 +/* SPDX-License-Identifier: GPL-2.0-only */
 +#ifndef _DPU_HW_ROTATOR_H
 +#define _DPU_HW_ROTATOR_H
@@ -1033,7 +1053,7 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
 +#include <linux/io.h>
 +
 +struct clk;
-+struct dentry;
++struct drm_crtc;
 +struct dpu_hw_fmt_layout;
 +struct dpu_kms;
 +struct drm_device;
@@ -1052,18 +1072,25 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
 +	struct clk *rot_clk;
 +	struct clk *core_clk;
 +	struct icc_path *mem_path;
++	struct device *dev;
++	unsigned long opp_min, opp_max;
++	struct delayed_work opp_idle;
++	bool rpm_active;
 +
 +	struct mutex bw_lock;
 +	struct delayed_work bw_idle;
-+	bool bw_on;
++	u64 bw;
 +	struct workqueue_struct *wq;
 +	u64 fence_context;
 +	atomic64_t fence_seqno;
++	u64 scanout_context;
++	atomic64_t scanout_seqno;
++	void (*on_start)(void *data);
++	void *on_start_data;
++	bool race_job;
 +	u32 hw_version;
 +	u32 hbb;
 +	bool has_ubwc;
-+	u32 last_us, last_status, last_intr;
-+
 +
 +	int irq;
 +	bool irq_dead;
@@ -1083,22 +1110,21 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
 +			  const struct msm_format *fmt,
 +			  const struct dpu_hw_fmt_layout *src,
 +			  const struct dpu_hw_fmt_layout *dst,
-+			  u32 rotation);
++			  u32 rotation, u32 fps);
 +
 +struct dma_fence *dpu_hw_rotator_queue(struct dpu_hw_rotator *rot,
 +				       struct drm_framebuffer *fb,
 +				       struct dma_fence *in_fence,
 +				       const struct dpu_hw_fmt_layout *dst,
-+				       u32 rotation);
++				       u32 rotation, u32 fps,
++				       struct drm_crtc *crtc,
++				       struct dma_fence **scanout);
 +
 +struct dpu_hw_rotator *dpu_hw_rotator_init(struct drm_device *dev,
 +					   struct dpu_kms *dpu_kms);
 +
 +void dpu_hw_rotator_resume(struct dpu_hw_rotator *rot);
 +void dpu_hw_rotator_suspend(struct dpu_hw_rotator *rot);
-+
-+void dpu_hw_rotator_debugfs_init(struct dpu_hw_rotator *rot,
-+				 struct dentry *parent);
 +
 +extern struct platform_driver dpu_hw_rotator_driver;
 +
@@ -1113,15 +1139,7 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
  #include "dpu_kms.h"
  #include "dpu_plane.h"
  #include "dpu_vbif.h"
-@@ -309,6 +310,7 @@ static int dpu_kms_debugfs_init(struct msm_kms *kms, struct drm_minor *minor)
- 	dpu_debugfs_vbif_init(dpu_kms, entry);
- 	dpu_debugfs_core_irq_init(dpu_kms, entry);
- 	dpu_debugfs_sspp_init(dpu_kms, entry);
-+	dpu_hw_rotator_debugfs_init(dpu_kms->rotator, entry);
- 
- 	return dpu_core_perf_debugfs_init(dpu_kms, entry);
- }
-@@ -1226,6 +1228,12 @@ static int dpu_kms_hw_init(struct msm_kms *kms)
+@@ -1226,6 +1227,12 @@ static int dpu_kms_hw_init(struct msm_kms *kms)
  
  	dpu_kms->hw_vbif = hw;
  
@@ -1134,7 +1152,7 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
  	/* TODO: use the same max_freq as in dpu_kms_hw_init */
  	max_core_clk_rate = dpu_kms_get_clk_rate(dpu_kms, "core");
  	if (!max_core_clk_rate) {
-@@ -1438,6 +1446,7 @@ static int __maybe_unused dpu_runtime_suspend(struct device *dev)
+@@ -1438,6 +1445,7 @@ static int __maybe_unused dpu_runtime_suspend(struct device *dev)
  	struct msm_drm_private *priv = platform_get_drvdata(pdev);
  	struct dpu_kms *dpu_kms = to_dpu_kms(priv->kms);
  
@@ -1142,7 +1160,7 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
  	clk_bulk_disable_unprepare(dpu_kms->num_clocks, dpu_kms->clocks);
  
  	for (i = 0; i < dpu_kms->num_paths; i++)
-@@ -1462,6 +1471,7 @@ static int __maybe_unused dpu_runtime_resume(struct device *dev)
+@@ -1462,6 +1470,7 @@ static int __maybe_unused dpu_runtime_resume(struct device *dev)
  		DPU_ERROR("clock enable failed rc:%d\n", rc);
  		return rc;
  	}
@@ -1150,7 +1168,7 @@ Subject: [PATCH] drm/msm/dpu: add an SDE rotator helper
  
  	dpu_vbif_init_memtypes(dpu_kms);
  
-@@ -1531,10 +1541,12 @@ static struct platform_driver dpu_driver = {
+@@ -1531,10 +1540,12 @@ static struct platform_driver dpu_driver = {
  
  void __init msm_dpu_register(void)
  {

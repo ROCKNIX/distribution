@@ -7,8 +7,9 @@ without inline rotation offer 90 and 270 when the rotator is present.
 A 32-bit RGB framebuffer is rotated whole into one of three scratch
 buffers, which the SSPP scans out. Compressed framebuffers stay
 compressed through a rotator that has a decoder. The job is queued at
-prepare fb and its fence becomes the plane's fence, so the commit waits
-for the rotate.
+prepare fb and its scanout fence becomes the plane's fence: it signals
+when the rotate completes, or when it starts if the rotator can stay
+ahead of the scanout.
 
 --- a/drivers/gpu/drm/msm/Makefile
 +++ b/drivers/gpu/drm/msm/Makefile
@@ -136,7 +137,7 @@ for the rotate.
  
 --- /dev/null
 +++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_plane_rot.c
-@@ -0,0 +1,298 @@
+@@ -0,0 +1,317 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +
 +#include <linux/dma-fence.h>
@@ -189,6 +190,21 @@ for the rotate.
 +
 +	return dpu_hw_rotator_accepts(dpu_kms->rotator,
 +				      msm_framebuffer_format(state->fb));
++}
++
++static u32 dpu_plane_rot_fps(struct drm_plane_state *state)
++{
++	struct drm_crtc_state *crtc_state = NULL;
++	int fps;
++
++	if (state->state)
++		crtc_state = drm_atomic_get_new_crtc_state(state->state,
++							   state->crtc);
++	if (!crtc_state)
++		crtc_state = state->crtc->state;
++	fps = drm_mode_vrefresh(&crtc_state->mode);
++
++	return fps > 0 ? fps : 60;
 +}
 +
 +static void dpu_plane_rot_bufs_release(struct kref *ref)
@@ -369,7 +385,7 @@ for the rotate.
 +	unsigned int idx = (rot->idx + 1) % 3;
 +	struct dpu_plane_rot_bufs *bufs;
 +	struct dpu_hw_fmt_layout dst;
-+	struct dma_fence *done;
++	struct dma_fence *done, *scanout = NULL;
 +	int ret;
 +
 +	ret = dpu_hw_rotator_dst_layout(fmt, fb->height, fb->width, 0, &dst);
@@ -390,11 +406,14 @@ for the rotate.
 +	dpu_hw_rotator_dst_layout(fmt, fb->height, fb->width,
 +				  (u32)bufs->iova[idx], &dst);
 +	done = dpu_hw_rotator_queue(dpu_kms->rotator, fb, new_state->fence,
-+				    &dst, new_state->rotation);
++				    &dst, new_state->rotation,
++				    dpu_plane_rot_fps(new_state),
++				    new_state->crtc, &scanout);
 +	if (done) {
++		/* scratch reuse waits for the rotate, the flip only for scanout */
 +		dma_fence_put(bufs->fence[idx]);
-+		bufs->fence[idx] = dma_fence_get(done);
-+		new_state->fence = done;
++		bufs->fence[idx] = done;
++		new_state->fence = scanout;
 +		pstate->rot_dst_iova = (u32)bufs->iova[idx];
 +		rot->idx = idx;
 +	}
@@ -426,7 +445,8 @@ for the rotate.
 +					      dst_iova, &dst))
 +			return;
 +		dpu_hw_rotator_rotate(dpu_kms->rotator, fmt, &pstate->layout,
-+				      &dst, new_state->rotation);
++				      &dst, new_state->rotation,
++				      dpu_plane_rot_fps(new_state));
 +		rot->idx = idx;
 +	} else if (dpu_hw_rotator_dst_layout(fmt, fb->height, fb->width,
 +					     dst_iova, &dst)) {
