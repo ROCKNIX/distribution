@@ -104,6 +104,9 @@ post_makeinstall_target() {
   cp ${PKG_DIR}/system.d/pipewire-pulse.service ${PKG_DIR}/system.d/pipewire-pulse.socket \
      ${INSTALL}/usr/lib/systemd/system
 
+  mkdir -p ${INSTALL}/usr/share/dbus-1/system.d
+    cp ${PKG_DIR}/config/pipewire-pulse-dbus.conf ${INSTALL}/usr/share/dbus-1/system.d
+
   if [ -n "${PKG_PIPEWIRE_QUANTUM}" ]; then
     mkdir -p ${INSTALL}/usr/share/pipewire/pipewire.conf.d
     cat >${INSTALL}/usr/share/pipewire/pipewire.conf.d/50-rocknix-latency.conf <<EOF
