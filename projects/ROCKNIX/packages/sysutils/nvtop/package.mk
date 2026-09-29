@@ -13,7 +13,19 @@ PKG_TOOLCHAIN="cmake"
 
 case ${TARGET_ARCH} in
   x86_64)
-    PKG_CMAKE_OPTS_TARGET+=" -DNVIDIA_SUPPORT=ON -DAMDGPU_SUPPORT=ON -DINTEL_SUPPORT=ON -DPANFROST_SUPPORT=OFF -DPANTHOR_SUPPORT=OFF -DMSM_SUPPORT=OFF"
+    PKG_CMAKE_OPTS_TARGET+=" -DNVIDIA_SUPPORT=ON -DPANFROST_SUPPORT=OFF -DPANTHOR_SUPPORT=OFF -DMSM_SUPPORT=OFF"
+
+    # The AMD and Intel backends include libdrm headers that libdrm itself
+    # only installs when the matching Gallium driver is in GRAPHIC_DRIVERS -
+    # amdgpu.h with radeonsi, xe_drm.h with the intel drivers. Mirror those
+    # gates rather than assuming every x86_64 device is AMD64: a target
+    # shipping only virtio has neither header, and no GPU those backends
+    # could report on either.
+    listcontains "${GRAPHIC_DRIVERS}" "radeonsi" &&
+      PKG_CMAKE_OPTS_TARGET+=" -DAMDGPU_SUPPORT=ON" || PKG_CMAKE_OPTS_TARGET+=" -DAMDGPU_SUPPORT=OFF"
+
+    listcontains "${GRAPHIC_DRIVERS}" "(crocus|i915|iris)" &&
+      PKG_CMAKE_OPTS_TARGET+=" -DINTEL_SUPPORT=ON" || PKG_CMAKE_OPTS_TARGET+=" -DINTEL_SUPPORT=OFF"
     ;;
   aarch64)
     PKG_CMAKE_OPTS_TARGET+=" -DPANFROST_SUPPORT=ON -DPANTHOR_SUPPORT=ON -DMSM_SUPPORT=ON -DNVIDIA_SUPPORT=OFF -DAMDGPU_SUPPORT=OFF -DINTEL_SUPPORT=OFF"

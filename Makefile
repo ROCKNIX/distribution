@@ -26,7 +26,7 @@ src-pkg:
 docs:
 	./tools/foreach './scripts/clean emulators && ./scripts/build emulators'
 
-world: RK3588 RK3576 RK3566 RK3326 RK3399 S922X SM8250 SM8550 H700 SM8650 SM8750
+world: RK3588 RK3576 RK3566 RK3326 RK3399 S922X SM8250 SM8550 H700 SM8650 SM8750 GENERIC_X64
 
 kconfig-olddefconfig-%:
 	DEVICE=$* ./tools/adjust_kernel_config olddefconfig
@@ -101,6 +101,10 @@ SM8750:
 	unset DEVICE_ROOT
 	PROJECT=ROCKNIX DEVICE=SM8750 ARCH=aarch64 ./scripts/build_distro
 
+GENERIC_X64:
+	unset DEVICE_ROOT
+	PROJECT=ROCKNIX DEVICE=GENERIC_X64 ARCH=x86_64 ./scripts/build_distro
+
 update:
 	PROJECT=ROCKNIX DEVICE=RK3588 ARCH=aarch64 ./scripts/update_packages
 
@@ -152,9 +156,6 @@ docker-%: INTERACTIVE=$(shell [ -t 0 ] && echo "-it")
 # By default pass through anything after `docker-` back into `make`
 docker-%: COMMAND=make $*
 
-# Get .env file ready
-docker-%: $(shell ./scripts/get_env > .env)
-
 # If the user issues a `make docker-shell` just start up bash as the shell to run commands
 docker-shell: COMMAND=bash
 
@@ -169,5 +170,17 @@ docker-image-pull:
 	$(DOCKER_CMD) pull $(DOCKER_IMAGE)
 
 # Wire up docker to call equivalent make files using % to match and $* to pass the value matched by %
+# .env carries the forwarded environment into the container, credentials
+# included when a build has them (scripts/get_env drops the rest). It is
+# written here, in the recipe, and not as a prerequisite: a $(shell) there
+# ran whenever make read this file, for any target. rm first, so an older
+# copy's mode is never reused and umask 077 makes it owner-only -- and an
+# older copy that cannot be removed stops the recipe, since umask does not
+# tighten a file that already exists (set -C refuses to write into one); the
+# trap removes it when the container exits or the recipe is interrupted, and
+# a get_env that fails starts no container.
 docker-%:
+	rm -f .env && [ ! -e .env ] || { echo "an older .env cannot be removed: no container started" >&2; exit 1; }; \
+	trap 'rm -f .env' EXIT; trap 'exit 130' INT TERM HUP; \
+	( umask 077 && set -C && ./scripts/get_env > .env ) || { echo "scripts/get_env failed: no container started" >&2; exit 1; }; \
 	BUILD_DIR=$(DOCKER_WORK_DIR) $(DOCKER_CMD) run $(PODMAN_ARGS) $(INTERACTIVE) --init --env-file .env --rm --user $(UID):$(GID) $(GLOBAL_SETTINGS) $(LOCAL_SSH_KEYS_FILE) $(EMULATIONSTATION_SRC) -v $(PWD):$(DOCKER_WORK_DIR) -w $(DOCKER_WORK_DIR) $(DOCKER_EXTRA_OPTS) $(DOCKER_IMAGE) $(COMMAND)

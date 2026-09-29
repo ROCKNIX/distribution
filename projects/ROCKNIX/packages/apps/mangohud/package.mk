@@ -7,7 +7,7 @@ PKG_SHA256="edd61f4716710681a9e3b535556831ee0c6187b7b6f90d29f8d8ac234448f4a5"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/flightlessmango/MangoHud"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain glslang mesa Python3 wayland libxcb dbus"
+PKG_DEPENDS_TARGET="toolchain glslang mesa Python3 wayland libxcb dbus mangohud-vulkan-headers mangohud-vulkan-utility-libraries"
 PKG_LONGDESC="A Vulkan and OpenGL overlay for monitoring FPS, temperatures, CPU/GPU load and more."
 
 PKG_PATCH_DIRS+=" common"
@@ -42,14 +42,26 @@ pre_configure_target() {
   # Download Sub Modules
   mkdir -p ${PKG_BUILD}/subprojects/
 
-  ### vulkan-headers
-  curl -Lo ${PKG_BUILD}/subprojects/vulkan-headers.tar.gz https://github.com/KhronosGroup/Vulkan-Headers/archive/v1.3.283.tar.gz
-  tar -xvf ${PKG_BUILD}/subprojects/vulkan-headers.tar.gz -C ${PKG_BUILD}/subprojects/
-  #curl -Lo ${PKG_BUILD}/subprojects/vulkan-headers_patch_1.3.283-1.zip https://wrapdb.mesonbuild.com/v2/vulkan-headers_1.3.283-1/get_patch
-  #unzip -o ${PKG_BUILD}/subprojects/vulkan-headers_patch_1.3.283-1.zip -d ${PKG_BUILD}/subprojects
-  unzip -o ${PKG_DIR}/meson-patches/vulkan-headers_patch_1.3.283-1.zip -d ${PKG_BUILD}/subprojects
-  rm -rf ${PKG_BUILD}/subprojects/vulkan-headers.tar.gz
-  rm -rf ${PKG_BUILD}/subprojects/vulkan-headers_patch_1.3.283-1.zip
+  ### vulkan-headers and vulkan-utility-libraries: from meson's package cache,
+  # never from the network. mangohud's meson.build calls subproject() for both
+  # unconditionally, and its own wraps name the release each needs (1.4.346
+  # at v0.8.4; the 1.3.283 tarball this hook used to fetch and unpack sat
+  # unused beside them, since the wrap's directory named another). The build
+  # refuses meson's download (scripts/build, --wrap-mode=nodownload), so the
+  # two tarballs come in as sources through the mangohud-vulkan-headers and
+  # mangohud-vulkan-utility-libraries packages, hash-checked at download, and
+  # are copied under the file name the wrap expects; meson unpacks them from
+  # there and applies the wrap's packagefiles. The wrap and the package must
+  # agree, or the build stops here and says which to bump.
+  mkdir -p ${PKG_BUILD}/subprojects/packagecache
+  local wrap want have
+  for wrap in vulkan-headers vulkan-utility-libraries; do
+    want=$(sed -n 's/^source_filename = //p' ${PKG_BUILD}/subprojects/${wrap}.wrap)
+    have=$(sed -n 's/^source_hash = //p' ${PKG_BUILD}/subprojects/${wrap}.wrap)
+    [ -n "${want}" ] && [ -f "${SOURCES}/mangohud-${wrap}/${want}" ] || die "mangohud: subprojects/${wrap}.wrap wants '${want:-?}' and the mangohud-${wrap} package does not supply it -- bump that package to the wrap's version"
+    [ "$(sha256sum "${SOURCES}/mangohud-${wrap}/${want}" | cut -d' ' -f1)" = "${have}" ] || die "mangohud: the mangohud-${wrap} tarball's hash is not the wrap's source_hash -- the package and the wrap disagree"
+    cp "${SOURCES}/mangohud-${wrap}/${want}" ${PKG_BUILD}/subprojects/packagecache/${want}
+  done
 
   ### imgui
   curl -Lo ${PKG_BUILD}/subprojects/imgui.tar.gz https://github.com/ocornut/imgui/archive/refs/tags/v1.91.6.tar.gz

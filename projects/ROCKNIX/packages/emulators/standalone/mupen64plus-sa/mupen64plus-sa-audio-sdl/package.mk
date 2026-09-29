@@ -7,7 +7,11 @@ PKG_SHA256="38361dcfd10e99ecc2ce99e4e33b1e27b686686d22723cee9ae727d1881438f8"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/mupen64plus/mupen64plus-audio-sdl"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain libpng SDL2 SDL2_net zlib freetype nasm:host mupen64plus-sa-core"
+# speexdsp: the plugin's Makefile links it, for its speex resamplers, when
+# pkg-config finds it in the sysroot, on every architecture; declaring it
+# makes that certain instead of hanging on pulseaudio having built first.
+# (No libsamplerate: make_target passes NO_SRC=1, so nothing links it.)
+PKG_DEPENDS_TARGET="toolchain libpng SDL2 SDL2_net zlib freetype nasm:host mupen64plus-sa-core speexdsp"
 PKG_DEPENDS_UNPACK="mupen64plus-sa-core"
 PKG_LONGDESC="Mupen64Plus Standalone Audio SDL"
 PKG_TOOLCHAIN="manual"

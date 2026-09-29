@@ -8,6 +8,14 @@ PKG_LICENSE="proprietary"
 PKG_URL="https://github.com/ROCKNIX/packages/raw/main/drastic.tar.gz"
 PKG_DEPENDS_TARGET="toolchain rocknix-hotkey"
 PKG_LONGDESC="Install Drastic Launcher script, will download bin on first run"
+# aarch64 only, restored after the 2026-09 upstream cleanup dropped it
+# (28e750db32): the download is an arm64 binary with no x86_64 build to
+# fetch. virtual/emulators adds this package only in aarch64 device arms
+# (the base PKG_EMUS names amiberry and yabasanshiro-sa for every device,
+# not this one), so PKG_ARCH is belt and braces here -- it keeps the recipe
+# off x86_64 should a device arm or `make world` ever list it there (the
+# earlier comment claimed the base list did; audit #258 PL-010).
+PKG_ARCH="aarch64"
 PKG_TOOLCHAIN="make"
 
 make_target() {

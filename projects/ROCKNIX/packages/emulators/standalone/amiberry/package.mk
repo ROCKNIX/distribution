@@ -8,6 +8,13 @@ PKG_SITE="https://github.com/midwan/amiberry"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain linux glibc bzip2 zlib SDL2 SDL2_image SDL2_ttf capsimg freetype libxml2 flac libogg mpg123 libpng libmpeg2 libserialport"
 PKG_LONGDESC="Amiberry is an optimized Amiga emulator for ARM-based boards."
+# Not built for GENERIC_X64, the fork's QA device: PKG_EMUS lists amiberry
+# for every device and its Makefile's platform block is written for ARM
+# boards. Every other device, AMD64 included, builds it as upstream does
+# since its cleanup (28e750db32) dropped the aarch64-only restriction.
+if [ "${DEVICE}" = "GENERIC_X64" ]; then
+  PKG_ARCH="aarch64"
+fi
 PKG_TOOLCHAIN="make"
 
 if [ ! "${OPENGL}" = "no" ]; then
