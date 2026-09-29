@@ -1,0 +1,54 @@
+image_cache: a temp name per process and thread for a badge download
+
+download_static_image wrote <target>.tmp and renamed it into place. Two
+workers fetching one asset -- the pool's four threads on a set whose
+locked and unlocked badges share a file, or the service's pool and a bulk
+cache's in another process (ROCKNIX runs one beside the service) -- both
+passed the target.exists() test, both wrote the one .tmp, one's rename
+moved the other's half-written bytes into place, and one's cleanup
+unlinked the file the other was still writing (ROCKNIX audit #186 PL-33).
+
+The temp name now carries the pid and the thread id, and the move is
+os.replace, so the second writer to finish overwrites the first's
+identical bytes instead of failing on an existing target. The duplicate
+request itself remains -- a per-asset in-flight set is the next step and
+is left to the project.
+
+Written for ROCKNIX (fork issue maxengel/rocknix#186, PL-33). Offered
+upstream as-is (ROCKNIX D-RA-016).
+
+--- a/linux/raofflineproxy/image_cache.py
++++ b/linux/raofflineproxy/image_cache.py
+@@ -2,7 +2,9 @@ from __future__ import annotations
+ 
+ import json
+ import logging
++import os
+ import shutil
++import threading
+ import urllib.request
+ from concurrent.futures import ThreadPoolExecutor
+ from pathlib import Path
+@@ -165,11 +167,20 @@ def download_static_image(
+                 headers={"User-Agent": user_agent, "Accept-Encoding": "identity"},
+                 method="GET",
+             )
+-            tmp = target.with_suffix(target.suffix + ".tmp")
++            # A name of this process's and this thread's: two workers
++            # fetching one asset -- the pool's four threads, or the service's
++            # pool and a bulk cache's in another process -- used to share
++            # <target>.tmp, so one's rename moved the other's half-written
++            # bytes into place and one's cleanup unlinked the other's file.
++            # os.replace, so the second to finish overwrites the first's
++            # identical bytes rather than failing on an existing target.
++            tmp = target.with_name(
++                f"{target.name}.{os.getpid()}.{threading.get_ident()}.tmp"
++            )
+             try:
+                 with urllib.request.urlopen(request, timeout=10) as response:
+                     tmp.write_bytes(response.read())
+-                tmp.rename(target)
++                os.replace(tmp, target)
+                 tmp = None
+             finally:
+                 if tmp is not None:

@@ -1,0 +1,46 @@
+[Unit]
+Description=RAOfflineProxy (offline RetroAchievements)
+# The marker is the off-switch, the way avahi's and sshd's are:
+# raofflineproxy-ctl enable writes it, disable removes it, and the boot-time
+# daemons pass re-derives it from global.retroachievements.offlineproxy in
+# system.cfg (fork #165).
+ConditionPathExists=/storage/.cache/services/raofflineproxy.conf
+# The proxy tolerates no network (that is its purpose); it only needs the
+# interface list and system.cfg to be in place. network-base.service by name,
+# as avahi does: network.target does not order after the units wanted by it.
+After=network.target network-base.service rocknix-sysconfig.service
+# Up -- listening, through ExecStartPost below -- before a game can be
+# launched, so an emulator's first RetroAchievements call finds the port
+# listening rather than refused: a refused connection makes rcheevos disable
+# achievements for the whole session.
+Before=emustation.service essway.service
+# Five starts, then no more: in [Unit], where systemd has read the start
+# limit since 230 (#308 F-RA-20). A failed start lasts the readiness wait
+# (ExecStartPost, 30 s) and RestartSec (5 s), so the interval has to hold
+# five of them -- at sixty seconds no more than two fit, the limit never
+# tripped, and a proxy that could never listen restarted for ever (audit of
+# the fixes, claude G-D-05). 5 x 35 = 175; three hundred leaves room.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+Environment=RAOFFLINEPROXY_CONFIG_DIR=/storage/.config/raofflineproxy
+Environment=HOME=/storage
+Environment=XDG_CONFIG_HOME=/storage/.config
+# Measured upstream on a 103 MB device: 32 -> 19 MB RSS.
+Environment=MALLOC_ARENA_MAX=2
+ExecStart=/usr/bin/python3 -m raofflineproxy.main run-service
+# Started means listening: Type=simple counts the service up the moment its
+# process forks, seconds before Python has bound the port on a handheld, and
+# enable routes the emulators to it as soon as `systemctl start` returns; a
+# launch meeting a refused connection loses achievements for its session.
+# Bounded at thirty looks a second apart; a proxy that never listens fails
+# the start, and enable puts the device back as it was (#308 F-RA-26).
+ExecStartPost=/usr/bin/raofflineproxy-ctl listening --wait 30
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

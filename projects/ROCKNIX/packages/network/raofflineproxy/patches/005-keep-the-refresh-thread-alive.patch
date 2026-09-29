@@ -1,0 +1,182 @@
+proxy_service: keep the refresh thread alive through a failed pass
+
+PeriodicRefresh has no exception boundary: refresh_game_patch raises
+CacheGameError on any network or API failure, and one such raised out of
+run(), ended the daemon thread, and the service ran on with no refresh
+and no eviction until its next start -- Restart=on-failure never sees a
+dead thread (ROCKNIX audit #186 PL-25). A pass now catches per game: a
+refused sign-in (CacheGameAuthError) ends the pass without a request for
+every remaining game, three failures in a row end it, anything else is
+logged and the next game is tried; and run() catches around the whole
+pass, so the next pass runs an hour later whatever happened in this one.
+
+This patch used to bound the pass as well -- the oldest patch rows first,
+50 a pass, a 24 h floor -- because the fork lifts the 100-game cap (patch
+004) and the client then refreshed every cached game every hour. Upstream
+59b167c scopes the pass to the games played in the last seven days, which
+bounds it by what the player plays rather than by the size of the library,
+so that half was retired when the fork moved to 0711f0b (fork
+maxengel/rocknix#259, ROCKNIX D-RA-029).
+
+Written for ROCKNIX (fork issue maxengel/rocknix#186, PL-25). Offered
+upstream as-is (ROCKNIX D-RA-016: whatever the fork changes in the proxy
+goes back).
+
+--- a/linux/raofflineproxy/proxy_service.py
++++ b/linux/raofflineproxy/proxy_service.py
+@@ -46,6 +46,7 @@ from .network import (
+     response_content_type,
+ )
+ from .rom_cache import (
++    CacheGameAuthError,
+     build_achievement_game_ids,
+     build_unlocks_array,
+     cache_session,
+@@ -80,6 +81,9 @@ FAKE_OFFLINE_SUCCESS_ACTIONS = {"ping", "postactivity"}
+ REFRESH_PLAYED_WINDOW_DAYS = 7
+ ONLINE_REFRESH_IDLE_DELAY_SECONDS = 5 * 60
+ REFRESH_PLAYED_WINDOW_MS = REFRESH_PLAYED_WINDOW_DAYS * 24 * 60 * 60 * 1000
++# Fetches that fail in a row before a refresh pass gives up (the link, the
++# server); a refused sign-in ends a pass at once, without a request per game.
++REFRESH_MAX_FAILURES_IN_A_ROW = 3
+ ALWAYS_TRY_UPSTREAM_ACTIONS = {"login", "login2"}
+ # A 4xx RetroAchievements sends for a dorequest.php call it understood but
+ # cannot satisfy -- 404 "Unknown game" for a hash with no set, 400 for a bad
+@@ -1054,35 +1058,50 @@ class PeriodicRefresh(threading.Thread):
+         self.stop_event.set()
+ 
+     def run(self) -> None:
++        # A pass that fails -- a request that raised, the store unreadable
++        # for a moment -- costs that pass and nothing more: the thread lives
++        # for the service's lifetime, and with it the eviction it carries.
++        # Without this it dies on the first exception, silently, with
++        # Restart=on-failure none the wiser, and the service runs on with no
++        # refresh and no eviction until its next start.
+         while not self.stop_event.wait(self.interval_seconds):
+-            if not self.server.is_online():
+-                continue
+-            user_agent = self_user_agent()
+-            credentials = resolve_credentials(
+-                self.server.storage,
+-                self.server.config_data,
+-                user_agent,
+-            )
+-            if credentials is None:
+-                continue
+-            if not self.wait_until_idle():
+-                continue
+-            patch_entries = self.server.storage.get_all_cache_by_prefix(
+-                cache_keys.PREFIX_PATCH
+-            )
+-            recently_played = load_recently_played_game_ids(
+-                self.server.storage, current_millis() - REFRESH_PLAYED_WINDOW_MS
+-            )
+-            due_game_ids = due_refresh_game_ids(patch_entries, recently_played)
+-            LOGGER.info(
+-                "Periodic refresh: %d of %d cached game(s) played in the last %d day(s)",
+-                len(due_game_ids),
+-                len(patch_entries),
+-                REFRESH_PLAYED_WINDOW_DAYS,
+-            )
+-            self.refresh_games(due_game_ids, credentials, user_agent)
+-            before = current_millis() - (self.cache_ttl_seconds * 1000)
+-            self.server.storage.evict_cache_older_than(before)
++            try:
++                self.run_pass()
++            except Exception:
++                LOGGER.exception(
++                    "Periodic refresh pass failed; the next runs in %ss",
++                    self.interval_seconds,
++                )
++
++    def run_pass(self) -> None:
++        if not self.server.is_online():
++            return
++        user_agent = self_user_agent()
++        credentials = resolve_credentials(
++            self.server.storage,
++            self.server.config_data,
++            user_agent,
++        )
++        if credentials is None:
++            return
++        if not self.wait_until_idle():
++            return
++        patch_entries = self.server.storage.get_all_cache_by_prefix(
++            cache_keys.PREFIX_PATCH
++        )
++        recently_played = load_recently_played_game_ids(
++            self.server.storage, current_millis() - REFRESH_PLAYED_WINDOW_MS
++        )
++        due_game_ids = due_refresh_game_ids(patch_entries, recently_played)
++        LOGGER.info(
++            "Periodic refresh: %d of %d cached game(s) played in the last %d day(s)",
++            len(due_game_ids),
++            len(patch_entries),
++            REFRESH_PLAYED_WINDOW_DAYS,
++        )
++        self.refresh_games(due_game_ids, credentials, user_agent)
++        before = current_millis() - (self.cache_ttl_seconds * 1000)
++        self.server.storage.evict_cache_older_than(before)
+ 
+     def wait_until_idle(self) -> bool:
+         idle_delay = self.server.activity.idle_delay_seconds()
+@@ -1095,26 +1114,42 @@ class PeriodicRefresh(threading.Thread):
+ 
+     def refresh_games(self, game_ids: list[int], credentials: dict, user_agent: str) -> int:
+         refreshed = 0
++        failures_in_a_row = 0
+         for game_id in game_ids:
+             if self.server.activity.idle_delay_seconds() > 0:
+                 LOGGER.info("Periodic refresh paused; proxy became active")
+                 break
+-            refresh_game_patch(
+-                game_id,
+-                credentials,
+-                user_agent,
+-                self.server.storage,
+-                self.server.config_data,
+-                cache_images=image_caching_enabled(self.server.config_data),
+-            )
+-            cache_unlocks(
+-                game_id,
+-                credentials,
+-                user_agent,
+-                self.server.config_data,
+-                self.server.storage,
+-            )
+-            cache_session(game_id, credentials, self.server.storage)
++            try:
++                refresh_game_patch(
++                    game_id,
++                    credentials,
++                    user_agent,
++                    self.server.storage,
++                    self.server.config_data,
++                    cache_images=image_caching_enabled(self.server.config_data),
++                )
++                cache_unlocks(
++                    game_id,
++                    credentials,
++                    user_agent,
++                    self.server.config_data,
++                    self.server.storage,
++                )
++                cache_session(game_id, credentials, self.server.storage)
++            except CacheGameAuthError as exc:
++                LOGGER.warning("Periodic refresh: sign-in refused (%s); ending the pass", exc)
++                break
++            except Exception as exc:
++                failures_in_a_row += 1
++                LOGGER.warning("Periodic refresh: game %s not refreshed: %s", game_id, exc)
++                if failures_in_a_row >= REFRESH_MAX_FAILURES_IN_A_ROW:
++                    LOGGER.warning(
++                        "Periodic refresh: %d fetches failed in a row; ending the pass",
++                        failures_in_a_row,
++                    )
++                    break
++                continue
++            failures_in_a_row = 0
+             refreshed += 1
+         return refreshed
+ 

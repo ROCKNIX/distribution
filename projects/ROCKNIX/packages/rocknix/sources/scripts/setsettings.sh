@@ -44,6 +44,20 @@ SNAPSHOT="${SNAPSHOT#*--snapshot=*}"
 CONTROLLERS="$@"
 CONTROLLERS="${CONTROLLERS#*--controllers=*}"
 
+#State file: the save state manager's -state_file, handed over by runemu as
+#one --state_file= argument ahead of --controllers=. The value is a path, and
+#ROM names carry spaces, parentheses and " - ", so it is read from the argument
+#it arrived in, never cut out of the joined "$@" (fork #196, D-UI-057).
+STATEFILE=""
+for SETSETTINGS_ARGUMENT in "$@"
+do
+    case "${SETSETTINGS_ARGUMENT}" in
+        --state_file=*)
+            STATEFILE="${SETSETTINGS_ARGUMENT#--state_file=}"
+        ;;
+    esac
+done
+
 ###
 ### Arrays containing various supported/non-supported attributes.
 ###
@@ -246,10 +260,19 @@ done
 ### Core functions
 ###
 
+# Every line goes through redact_credentials (001-functions): the value under
+# a credential key reads <redacted> and the key stays, so the log still says
+# the setting was applied. cheevos_password went into exec.log in the clear
+# through this function -- the Added setting line and game_setting's Fetch
+# line -- and rocknix-evidence bundled it (fork #176, D-INFRA-010). The
+# timestamp is built in-process now; the one subshell per line is the
+# redaction's, which forks a sed only for a line that names a credential.
 function log() {
     if [ ${LOGGING} = "verbose" ]
     then
-        echo "$(printf '%(%c)T\n' -1): setsettings: $*" >> ${LOG_DIR}/${LOG_FILE} 2>&1
+        local TS
+        printf -v TS '%(%c)T' -1
+        echo "${TS}: setsettings: $(redact_credentials "$*")" >> ${LOG_DIR}/${LOG_FILE} 2>&1
     fi
 }
 
@@ -266,6 +289,22 @@ function game_setting() {
         log "Fetch \"${1}\" \"${PLATFORM}\" \"${ROM}\"] (${SETTING})"
         echo ${SETTING}
     fi
+}
+
+# Like add_setting, for a setting that has had two spellings: the one
+# EmulationStation writes today and an older one a hand-edited config may
+# still carry. The switches on the RetroAchievements page wrote
+# retroachievements.challenge_indicators, .encore and .unofficial while this
+# script read .challengeindicators, .active and .testunofficial, so those
+# three switches never reached RetroArch and it used its own defaults --
+# challenge indicators on whatever the switch said (2026-09-07).
+function add_setting_either() {
+    local OS_SETTING="$(game_setting ${1})"
+    if [ -z "${OS_SETTING}" ]
+    then
+        OS_SETTING="$(game_setting ${2})"
+    fi
+    add_setting "none" "${3}" "${OS_SETTING}"
 }
 
 function clear_setting() {
@@ -449,16 +488,60 @@ function set_cheevos() {
         add_setting "retroachievements.verbose" "cheevos_verbose_enable"
         add_setting "retroachievements.screenshot" "cheevos_auto_screenshot"
         add_setting "retroachievements.richpresence" "cheevos_richpresence_enable"
-        add_setting "retroachievements.challengeindicators" "cheevos_challenge_indicators"
-        add_setting "retroachievements.testunofficial" "cheevos_test_unofficial"
+        add_setting_either "retroachievements.challenge_indicators" "retroachievements.challengeindicators" "cheevos_challenge_indicators"
+        # The bottom-right count toward an achievement; EmulationStation's
+        # PROGRESS TRACKER switch. A different widget from the indicators.
+        add_setting "retroachievements.progress_tracker" "cheevos_visibility_progress_tracker"
+        add_setting_either "retroachievements.unofficial" "retroachievements.testunofficial" "cheevos_test_unofficial"
         add_setting "retroachievements.badges" "cheevos_badges_enable"
-        add_setting "retroachievements.active" "cheevos_start_active"
+        add_setting_either "retroachievements.encore" "retroachievements.active" "cheevos_start_active"
         local CHEEVOS_SOUND_ENABLE=$(game_setting "retroachievements.sound")
         if [ "${CHEEVOS_SOUND_ENABLE}" != "none" ]; then
             add_setting "none" "cheevos_unlock_sound_enable" "true"
             add_setting "retroachievements.sound" "cheevos_unlock_sound"
         else
             add_setting "none" "cheevos_unlock_sound_enable" "false"
+        fi
+        # OFFLINE RETROACHIEVEMENTS (fork #165, D-RA-002): RetroArch talks to
+        # the RAOfflineProxy service on loopback, which caches game data and
+        # queues casual awards earned without a connection. System-wide, so
+        # the global key and not game_setting. Three conditions, all of them
+        # fail-closed to the direct path RetroArch has today:
+        #   - the toggle is on (raofflineproxy-ctl enable set it);
+        #   - this game's effective hardcore is off -- the toggle turns the
+        #     global off, but a per-game override still wins, and the proxy
+        #     refuses hardcore awards, so such a game keeps the direct path;
+        #   - the proxy's port answers. A host with nothing behind it would
+        #     make rcheevos disable achievements for the whole session, so
+        #     when the service is not up yet the launch goes direct and says
+        #     so in the log.
+        # The host goes into this launch's appendconfig and nowhere else, so
+        # nothing persistent is written, nothing needs reverting, and no proxy
+        # host travels in a settings backup (retroarch.cfg and system.cfg both
+        # do). The empty value in the other branches clears any
+        # cheevos_custom_host a restored retroarch.cfg may still carry from
+        # the upstream installer's patcher, so a device with the toggle off is
+        # never left pointing at a dead port.
+        # The hardcore test asks for "0", not "anything but 1": get_setting
+        # answers nothing for a key it could not read as it does for one
+        # that is unset, and an unknown hardcore must not route awards to a
+        # proxy that refuses hardcore ones (audit #186 PL-31). With the
+        # toggle on the key is always written -- raofflineproxy-ctl enable
+        # sets global.retroachievements.hardcore=0 -- so an empty read is a
+        # read that failed, and that launch goes direct.
+        local OFFLINE_PROXY=$(get_setting "global.retroachievements.offlineproxy")
+        local CHEEVOS_HARDCORE=$(game_setting "retroachievements.hardcore")
+        if [ "${OFFLINE_PROXY}" = "1" ] && [ "${CHEEVOS_HARDCORE}" = "0" ]
+        then
+            if netstat -ltn 2>/dev/null | grep -q '127\.0\.0\.1:8080 '
+            then
+                add_setting "none" "cheevos_custom_host" "127.0.0.1:8080"
+            else
+                log "offline RetroAchievements is on but nothing answers on 127.0.0.1:8080; launching direct"
+                add_setting "none" "cheevos_custom_host" ""
+            fi
+        else
+            add_setting "none" "cheevos_custom_host" ""
         fi
     else
         add_setting "none" "cheevos_enable" "false"
@@ -776,15 +859,24 @@ function set_rewind() {
 function set_savestates() {
     local SAVESTATES="$(game_setting incrementalsavestates)"
     local MAXINCREMENTALSAVES="$(game_setting maxincrementalsaves)"
+    # The interface stores "" for INCREMENT PER SAVE and "2" for DO NOT
+    # INCREMENT; a device upgraded from before the row had two spellings can
+    # hold "0". Batocera's launcher turns auto-index on unless the value reads
+    # false, so "2" and "0" are off (fork #209, D-UI-083). "2" used to fall
+    # through to on, and the save hotkey never wrote the launched slot.
     case ${SAVESTATES} in
-        0|false|none)
+        0|2|false|none)
             add_setting "none" "savestate_auto_index" "false"
         ;;
         *)
             add_setting "none" "savestate_auto_index" "true"
         ;;
     esac
-    add_setting "none" "savestate_max_keep" "${MAXINCREMENTALSAVES}"
+    # Only when set: an empty savestate_max_keep is a value RetroArch has to guess at.
+    if [ -n "${MAXINCREMENTALSAVES}" ]
+    then
+        add_setting "none" "savestate_max_keep" "${MAXINCREMENTALSAVES}"
+    fi
 }
 
 function set_autosave() {
@@ -814,12 +906,50 @@ function set_autosave() {
         mkdir "${SNAPSHOTS}/${PLATFORM}"
     fi
 
-    if [ ! -z "${SNAPSHOT}" ]
+    # RetroArch's current slot: the numbered tile's number, or -1 -- its
+    # own Auto slot, the .auto file -- for the AUTO SAVE tile (fork #249),
+    # so the quick menu says Auto and the load hotkey reloads the state the
+    # game started from, as it does for a numbered tile. It used to stay at
+    # whatever it was, 0, and the hotkey loaded slot 0 instead.
+    local SLOT="${SNAPSHOT}"
+
+    # The state the interface asked to start from (--state_file=, the save
+    # state manager's -state_file), on the contract Batocera's launcher keeps
+    # (configgen libretroConfig.py, libretroGenerator.py -- fork #196,
+    # D-UI-057): the .auto file turns RetroArch's auto-load on for this run;
+    # any other file is RetroArch's entry slot, "-e <slot>", which it loads
+    # instead of the auto save and makes the current slot. Its exit auto save
+    # is untouched either way, so the quit state lands in .state.auto whatever
+    # tile the game was started from. The argument reaches runemu through
+    # stdout, as --host and --set-shader do; a slot that is not a number gets
+    # no -e, since the line is spliced into a command that is eval'd.
+    local SETAUTOLOAD=${SETAUTOSAVE}
+    if [ -n "${STATEFILE}" ]
     then
-        add_setting "none" "state_slot" "${SNAPSHOT}"
+        case "${STATEFILE}" in
+            *.auto)
+                SETAUTOLOAD=true
+                SLOT="-1"
+            ;;
+            *)
+                case "${SNAPSHOT}" in
+                    ""|*[!0-9]*)
+                        log "State file ${STATEFILE} without a numeric slot (${SNAPSHOT}): no entry slot"
+                    ;;
+                    *)
+                        echo -n " -e ${SNAPSHOT}"
+                    ;;
+                esac
+            ;;
+        esac
     fi
 
-    add_setting "none" "savestate_auto_load" "${SETAUTOSAVE}"
+    if [ ! -z "${SLOT}" ]
+    then
+        add_setting "none" "state_slot" "${SLOT}"
+    fi
+
+    add_setting "none" "savestate_auto_load" "${SETAUTOLOAD}"
     add_setting "none" "savestate_auto_save" "${SETAUTOSAVE}"
 }
 

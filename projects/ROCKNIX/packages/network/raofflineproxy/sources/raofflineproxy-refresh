@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+#
+# raofflineproxy-refresh -- re-read a game's RetroAchievements state now.
+#
+# The service already re-reads, each online hour while the proxy is idle,
+# the patch, unlocks and session of every cached game played in the last
+# seven days (upstream 59b167c; D-RA-029). That covers the ordinary case and
+# needs nobody's attention. It does not cover the case a player is standing
+# in front of: they have just reset an achievement on retroachievements.org,
+# or earned one on another device, and they want to play this game offline in
+# five minutes -- possibly a game they have not played this week.
+#
+#   raofflineproxy-refresh --game <id>     one game
+#   raofflineproxy-refresh --all           every cached game
+#   raofflineproxy-refresh                 what the service's pass would take now
+#
+# It is the same work the service's own pass does -- refresh_game_patch for
+# the set and its images, then cache_unlocks for what the player has earned --
+# run when asked instead of when due. Both, because the names mislead: the
+# "patch" refresh does not touch unlocks. Nothing here
+# changes what a pass is allowed to do: the client's own throttle, batch
+# cooldown and 429 backoff still pace every request, and the run is bounded
+# by --seconds so a player who asks for 500 games does not wait forever.
+#
+# Refuses while offline: a refresh is a conversation with the server, and
+# there is nothing useful to do without one. Speaks the ctl's `>>> ` protocol
+# so the interface can show progress (fork maxengel/rocknix#223).
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+
+from raofflineproxy import cache_keys
+from raofflineproxy.auth import resolve_credentials
+from raofflineproxy.config import configure_logging, load_config
+from raofflineproxy.storage import Storage
+from raofflineproxy.utils import proxy_user_agent, self_user_agent
+import raofflineproxy.proxy_service as proxy_service
+
+
+def tell(text: str) -> None:
+    print(f">>> {text}", flush=True)
+
+
+def note(text: str) -> None:
+    print(text, flush=True)
+
+
+def cached_games(storage: Storage) -> list[dict]:
+    """Every patch row, as due_refresh_game_ids wants them."""
+    rows = []
+    for row in storage.get_all_cache_by_prefix(cache_keys.PREFIX_PATCH):
+        if row.get("responseBody"):
+            rows.append(row)
+    return rows
+
+
+def game_ids(rows: list[dict]) -> list[int]:
+    ids = []
+    for row in rows:
+        key = str(row.get("cacheKey") or "")
+        parts = key.split(":")
+        if len(parts) > 1 and parts[1].isdigit():
+            ids.append(int(parts[1]))
+    return ids
+
+
+def drop_startsession(storage: Storage, game_id: int) -> int:
+    """Remove the cached session response for a game. Returns rows removed.
+
+    Raises when a row could not be removed: the session response carries the
+    player's unlocks, so a refresh that leaves a stale one has not done its
+    job, and the game is counted failed rather than re-read (#307 PL-058 --
+    the same shape as 2026-09-19, when this helper reported half its work as
+    all of it)."""
+    removed = 0
+    prefix = f"{cache_keys.PREFIX_STARTSESSION}{game_id}:"
+    try:
+        for row in storage.get_all_cache_by_prefix(cache_keys.PREFIX_STARTSESSION):
+            key = str(row.get("cacheKey") or "")
+            if key.startswith(prefix):
+                storage.delete_cache(key)
+                removed += 1
+    except Exception as exc:
+        raise RuntimeError(f"the startsession row could not be dropped ({exc})") from exc
+    return removed
+
+
+def row_ages(storage: Storage, game_id: int) -> str:
+    """The four per-game rows and their ages, so staleness is visible."""
+    now_ms = int(time.time() * 1000)
+    ages = []
+    # achievementsets is keyed by the ROM's hash, not by the game id, so it
+    # cannot be looked up from here; saying "none" for it would be a false
+    # statement about a row that exists. It is named and left unchecked.
+    for prefix in (cache_keys.PREFIX_PATCH,
+                   cache_keys.PREFIX_UNLOCKS, cache_keys.PREFIX_STARTSESSION):
+        try:
+            rows = [r for r in storage.get_all_cache_by_prefix(prefix)
+                    if f":{game_id}:" in f":{str(r.get('cacheKey') or '')}:"
+                    or str(r.get("cacheKey") or "").startswith(f"{prefix}{game_id}:")]
+        except Exception:
+            rows = []
+        if not rows:
+            ages.append(f"{prefix.rstrip(':')}=none")
+            continue
+        try:
+            stamp = int(rows[0].get("cachedAt") or 0)
+            stamp = stamp // 1000 if stamp > 1e11 else stamp
+            ages.append(f"{prefix.rstrip(':')}={max(0, now_ms // 1000 - stamp)}s")
+        except Exception:
+            ages.append(f"{prefix.rstrip(':')}=?")
+    ages.append("achievementsets=hash-keyed, not checked here")
+    return " ".join(ages)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(add_help=True)
+    parser.add_argument("--game", type=int, help="one game id")
+    parser.add_argument("--all", action="store_true", help="every cached game")
+    parser.add_argument("--seconds", type=float, default=300.0)
+    args = parser.parse_args()
+
+    configure_logging()
+    config_data = load_config()
+
+    tell("doing refresh")
+    try:
+        storage = Storage()
+    except Exception as exc:
+        note(f"the store could not be opened: {exc}")
+        tell("why STORE_UNREADABLE")
+        return 2
+    try:
+        credentials = resolve_credentials(storage, config_data, self_user_agent())
+    except Exception as exc:
+        note(f"no account to refresh as: {exc}")
+        tell("why NO_ACCOUNT")
+        return 2
+    user_agent = proxy_user_agent(self_user_agent())
+
+    rows = cached_games(storage)
+    if args.game:
+        wanted = [args.game]
+    elif args.all:
+        wanted = game_ids(rows)
+    else:
+        # Exactly what the service's pass would take, so this is also a way
+        # to make the next pass's work happen now.
+        played = proxy_service.load_recently_played_game_ids(
+            storage, int(time.time() * 1000) - proxy_service.REFRESH_PLAYED_WINDOW_MS
+        )
+        wanted = proxy_service.due_refresh_game_ids(rows, played)
+    if not wanted:
+        note(f"nothing is due; no cached game was played in the last "
+             f"{proxy_service.REFRESH_PLAYED_WINDOW_DAYS} days")
+        tell("note NOTHING_DUE")
+        tell("done 0|0")
+        return 0
+
+    note(f"{len(wanted)} game(s) to re-read, from {len(rows)} cached")
+    tell(f"total {len(wanted)}")
+    deadline = time.monotonic() + max(1.0, args.seconds)
+    done = 0
+    failed = 0
+    # Failures in a row, reset by a game that goes through: three unrelated
+    # failures across a long --all are not the server refusing, and the
+    # message says "in a row" (#308 F-RA-12, F-RA-19). failed stays the total.
+    in_a_row = 0
+    for index, gid in enumerate(wanted, 1):
+        if time.monotonic() > deadline:
+            left = len(wanted) - done - failed
+            note(f"stopped at the {args.seconds:.0f}s ceiling; {left} game(s) left")
+            tell(f"note LEFT {left}")
+            tell(f"done {done}|{left}")
+            return 1
+        try:
+            answer = proxy_service.refresh_game_patch(
+                gid, credentials, user_agent, storage, config_data
+            )
+            # The patch is only half of it. refresh_game_patch re-reads the
+            # set; the player's unlocks are a separate call, and a refresh
+            # that skips it reports success while leaving the device
+            # believing in achievements the site no longer holds -- which is
+            # exactly what it did on the RG SP on 2026-09-19, after two
+            # achievements were reset on the site: patch 28 s old, unlocks
+            # 87,168 s old, and the two still reading as earned.
+            proxy_service.cache_unlocks(
+                gid, credentials, user_agent, config_data, storage
+            )
+            # And the third row. A game has four cached rows -- patch,
+            # achievementsets, unlocks and startsession -- and startsession
+            # carries the player's unlocks *inside the session response*, so
+            # a stale one tells RetroArch at launch that achievements are
+            # already earned however fresh `unlocks` is. That is exactly what
+            # happened on the RG SP on 2026-09-19: two achievements reset on
+            # the site, patch and unlocks refreshed, and the game still
+            # announced both as unlocked from a startsession row two days old.
+            #
+            # It is deleted rather than re-fetched because there is nothing to
+            # fetch outside a real session, and deleting is safe: proved on
+            # guest d, an offline launch with no cached startsession loads the
+            # game and reports the right count, because the proxy rebuilds the
+            # session from the unlocks row (build_unlocks_array).
+            dropped = drop_startsession(storage, gid)
+            done += 1
+            in_a_row = 0
+            # It is documented as returning the title and returns the patch
+            # body, so take the title out of it rather than printing a page
+            # of JSON into the ctl's output.
+            title = ""
+            if answer:
+                try:
+                    title = (json.loads(answer).get("PatchData") or {}).get("Title") or ""
+                except Exception:
+                    title = str(answer)[:40]
+            note(f"re-read {index}/{len(wanted)}: game {gid}" + (f" '{title}'" if title else "")
+                 + (f"; dropped {dropped} startsession row(s)" if dropped else "")
+                 + f"; {row_ages(storage, gid)}")
+            tell(f"refresh {index}|{len(wanted)}")
+        except Exception as exc:
+            failed += 1
+            in_a_row += 1
+            note(f"game {gid}: {exc}")
+            if in_a_row >= 3:
+                note("three failures in a row; stopping rather than hammering")
+                tell("why REPEATED_FAILURES")
+                tell(f"done {done}|{len(wanted) - done}")
+                return 1
+
+    note(f"re-read {done} game(s), {failed} failed")
+    tell(f"done {done}|{failed}")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

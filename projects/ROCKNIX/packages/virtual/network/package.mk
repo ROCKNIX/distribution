@@ -8,6 +8,9 @@ PKG_LICENSE="various"
 PKG_SITE="https://libreelec.tv"
 PKG_URL=""
 PKG_DEPENDS_TARGET="toolchain iwd networkmanager netbase ethtool openssh iw wireless-regdb rsync tailscale avahi miniupnpc nss-mdns speedtest-cli"
+# The offline RetroAchievements proxy (fork #165): a loopback service the
+# emulators talk to, off until the player turns it on.
+PKG_DEPENDS_TARGET="${PKG_DEPENDS_TARGET} raofflineproxy"
 PKG_SECTION="virtual"
 PKG_LONGDESC="Metapackage for various packages to install network support"
 

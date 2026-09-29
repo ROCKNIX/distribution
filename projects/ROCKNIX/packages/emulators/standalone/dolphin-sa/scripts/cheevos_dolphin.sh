@@ -14,7 +14,8 @@ token=$(get_setting "global.retroachievements.token")
 enabled=$(get_setting "global.retroachievements")
 hardcore=$(get_setting "global.retroachievements.hardcore")
 encore=$(get_setting "global.retroachievements.encore")
-unofficial=$(get_setting "global.retroachievements.testunofficial")
+unofficial=$(get_setting "global.retroachievements.unofficial")
+[ -z "${unofficial}" ] && unofficial=$(get_setting "global.retroachievements.testunofficial")  # the spelling before 2026-09; EmulationStation writes .unofficial
 hosturl=$(get_setting "global.retroachievements.customhost")
 
 # Check if RetroAchievements are enabled in Emulation Station

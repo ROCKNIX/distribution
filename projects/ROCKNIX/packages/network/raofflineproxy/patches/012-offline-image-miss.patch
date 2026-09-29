@@ -1,0 +1,143 @@
+proxy_service: an image the store does not hold is a 404 at once, offline or store-only
+
+A game's icon or an achievement's badge is asked of this process on the
+path RetroArch uses (/Images/..., /Badge/..., /UserPic/...) and answered
+from the image cache when it is there. When it was not, the process asked
+is_online(), and if the answer was yes fetched the image from
+media.retroachievements.org with a ten-second timeout -- ten seconds that
+do not bound the name lookup -- before answering 204. is_online() is not
+free either: while the reachability tracker says unreachable it probes on
+every call (network.should_probe_retroachievements), a HEAD to
+retroachievements.org with a five-second timeout of the same kind, spared
+only when no interface but lo has operstate "up"; and the request handler
+had already asked it once more, for its log line. So on a link that is up
+and leads nowhere -- a hotspot with no data, a router whose uplink is down,
+the fifteen seconds after any drop before the monitor's next probe -- an
+image the store does not hold costs a fetch that has to fail, or two
+probes: tens of seconds, and ROCKNIX's summary page asks for one per
+visible row while it shows the device's copy (fork #199).
+
+Now such a miss is answered 404 at once, with no probe and no upstream
+attempt, when the request carries X-RA-Store-Only: 1 (patch 010's header,
+which ROCKNIX's interface sends on every request whose host is this proxy)
+or when this process's own state is offline -- the tracker as the monitor
+last left it, the same state online_state.json carries -- and the handler's
+log line reads that state instead of probing for an image request. A miss
+while the state is online fetches and caches as before; a hit is served as
+before; a dorequest.php call is untouched; nothing else changes. 404 rather
+than the 204 a failed fetch gives: RetroArch writes a badge for a 200 only
+(cheevos_client.c) and logs both alike, and a client that saves the body to
+a file keeps a non-2xx answer out of its image cache, where a 204 lands as
+an empty file it then has to notice and remove (ROCKNIX #180).
+
+No lock serialises these requests: the runtime server is a
+socketserver.ThreadingMixIn TCPServer, one thread per connection, and the
+tracker's lock is held for a read. The 137 s that opened #199 -- four
+/Images/ requests logged in one second, nothing for 137 s, the list "134 s
+after A" -- was not this process waiting: the proof's own frames show the
+list on screen 1.7 s after A (the frame it took for the wait card is
+byte-identical to the list frame it took 135 s later), so its timer was
+waiting for a change from a screen that had already changed, and the key
+press that ended the wait scrolled new rows, and new icon requests, into
+view. The link there was down, so the probe short-circuited on operstate
+and each miss was a 204 at once; the cost this patch removes is the one a
+link that is up and dead would have charged.
+
+Written for ROCKNIX (fork issue maxengel/rocknix#199). Offered upstream
+as-is (ROCKNIX D-RA-002, D-RA-016: whatever the fork changes in the proxy
+goes back).
+
+--- a/linux/raofflineproxy/proxy_service.py
++++ b/linux/raofflineproxy/proxy_service.py
+@@ -100,6 +100,11 @@ AUTH_FAILURE_STATUSES = {401, 403}
+ # the login body, so there is no field in it the proxy could say this in.
+ PROXY_HEADER = ("X-RA-Proxy", "1")
+ OFFLINE_LOGIN_HEADER = ("X-RA-Offline", "1")
++# ROCKNIX (fork #190, #199): the request header that asks for the store and
++# nothing else. On a dorequest.php call it is served by handle_offline_request
++# whatever this process believes about the link; on an image it is the
++# store's copy or a 404, at once.
++STORE_ONLY_HEADER = "X-RA-Store-Only"
+ 
+ 
+ def is_passthrough_client_error(path: str, status: int) -> bool:
+@@ -115,6 +120,11 @@ def is_static_asset_request(path: str) -> bool:
+     return any(clean_path.startswith(prefix) for prefix in IMAGE_PATH_PREFIXES)
+ 
+ 
++def store_only_requested(headers: dict[str, str]) -> bool:
++    value = next((v for k, v in headers.items() if k.lower() == STORE_ONLY_HEADER.lower()), None)
++    return value == "1"
++
++
+ def guess_content_type(path: Path) -> str:
+     suffix = path.suffix.lower()
+     if suffix == ".png":
+@@ -233,6 +243,16 @@ def game_id_cache_miss() -> bytes:
+     )
+ 
+ 
++def image_not_cached() -> bytes:
++    # ROCKNIX (fork #199): the store's answer for an image it does not hold,
++    # when it is not to look further. A 404 rather than the 204 a failed
++    # fetch gives: RetroArch writes a badge for a 200 only and treats the two
++    # alike, and a client that saves the body to a file keeps a non-2xx
++    # answer out of its image cache, where a 204 lands as an empty file it
++    # then has to notice and remove.
++    return error_json(404, "image not cached")
++
++
+ def _start_image_downloads(
+     downloads: list[tuple[str, str]],
+     user_agent: str | None,
+@@ -281,12 +301,21 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
+         body = self.rfile.read(content_length).decode("utf-8") if content_length else ""
+         headers = {key: value for key, value in self.headers.items()}
+ 
++        # ROCKNIX (fork #199): is_online() probes on every call while the
++        # tracker says unreachable -- a HEAD to retroachievements.org whose
++        # name lookup its five-second timeout does not bound -- and an image
++        # request is answered below without asking the link anything, so its
++        # log line reads the state as last probed rather than probing again.
++        if is_static_asset_request(self.path):
++            online = is_retroachievements_reachable()
++        else:
++            online = self.server.is_online()
+         LOGGER.info(
+             "Request: %s %s body=%s online=%s",
+             self.command,
+             redact_query_tokens(self.path),
+             redact_form_tokens(body),
+-            self.server.is_online(),
++            online,
+         )
+ 
+         response = self.server.process_proxy_request(
+@@ -374,6 +403,17 @@ class ProxyRuntimeServer(ThreadingTCPServer):
+                 cached_asset = resolve_cached_static_asset(path)
+                 if cached_asset is not None:
+                     return raw_response_bytes(200, cached_asset.read_bytes(), guess_content_type(cached_asset), "OK")
++                # ROCKNIX (fork #199): an image the store does not hold is a
++                # 404 at once -- no probe, no upstream attempt -- when the
++                # client asked for the store only, or when this process's own
++                # state is offline: the tracker as the monitor last left it,
++                # the same state online_state.json carries. is_online() is not
++                # asked on that path: while the tracker says unreachable it
++                # probes on every call, and the fetch behind a yes is ten
++                # seconds more on a link that is up and leads nowhere. A miss
++                # while the state is online fetches and caches as before.
++                if store_only_requested(headers) or not is_retroachievements_reachable():
++                    return image_not_cached()
+                 if self.is_online():
+                     return self._forward_static_asset(path, headers)
+             return raw_response_bytes(204, b"", "application/octet-stream", "No Content")
+@@ -438,8 +478,7 @@ class ProxyRuntimeServer(ThreadingTCPServer):
+         # online (the monitor probes every fifteen seconds), every request
+         # first tries upstream with a fifteen-second timeout, and a summary
+         # over a few hundred games on a link that has just gone is hours.
+-        store_only = headers.get("X-RA-Store-Only") or headers.get("x-ra-store-only")
+-        if store_only == "1":
++        if store_only_requested(headers):
+             return self.handle_offline_request(path, raw_body, action)
+ 
+         if self.is_online():

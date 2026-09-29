@@ -1,0 +1,63 @@
+proxy_service: pass a 4xx from dorequest.php through instead of answering 503
+
+RetroAchievements answers a dorequest.php call it understood but cannot
+satisfy with a 4xx whose body names the reason -- 404 with
+{"Success":false,"Error":"Unknown game",...} for a hash that has no
+achievement set, 400 for a malformed parameter. handle_online_request turned
+every non-2xx into 503 {"Success":false,"Error":"upstream unavailable"}, so
+an emulator behind the proxy reports "Load failed (-27): upstream
+unavailable" for a ROM the server had in fact answered about, where the same
+launch without the proxy reads "Load failed (-29): Unknown game". The player
+is sent looking for a connection problem that does not exist, and the
+message is false: upstream answered.
+
+Pass a 4xx from dorequest.php through as it came, status and body, except
+401 and 403. An auth failure keeps today's 503, so this change touches
+nothing about how the proxy handles credentials (the login actions' cached
+responses, the token the flusher carries). 5xx and network errors keep the
+503 and the offline path as before; forward_to_upstream and the login and
+award paths already passed an http_error through unchanged, so this brings
+the general online path in line with them.
+
+Seen on ROCKNIX (fork issue maxengel/rocknix#166) with the proxy at
+64d03d30633ca6e7719c26d732cef3c97dedcc27: RetroArch through the proxy logged
+"Load failed (-27): upstream unavailable" for a fixture ROM RA answered 404
+for, and "Load failed (-29): Unknown game" without it. Offered upstream
+as-is (ROCKNIX D-RA-002: whatever the fork changes in the proxy goes back).
+
+--- a/linux/raofflineproxy/proxy_service.py
++++ b/linux/raofflineproxy/proxy_service.py
+@@ -81,6 +81,20 @@ REFRESH_PLAYED_WINDOW_DAYS = 7
+ ONLINE_REFRESH_IDLE_DELAY_SECONDS = 5 * 60
+ REFRESH_PLAYED_WINDOW_MS = REFRESH_PLAYED_WINDOW_DAYS * 24 * 60 * 60 * 1000
+ ALWAYS_TRY_UPSTREAM_ACTIONS = {"login", "login2"}
++# A 4xx RetroAchievements sends for a dorequest.php call it understood but
++# cannot satisfy -- 404 "Unknown game" for a hash with no set, 400 for a bad
++# parameter -- carries the reason the emulator shows the player, and passes
++# through as it came. 401 and 403 do not: an auth failure keeps the 503, so
++# nothing about how credentials are handled changes here.
++AUTH_FAILURE_STATUSES = {401, 403}
++
++
++def is_passthrough_client_error(path: str, status: int) -> bool:
++    return (
++        path.startswith("/dorequest.php")
++        and 400 <= status < 500
++        and status not in AUTH_FAILURE_STATUSES
++    )
+ 
+ 
+ def is_static_asset_request(path: str) -> bool:
+@@ -527,6 +541,12 @@ class ProxyRuntimeServer(ThreadingTCPServer):
+             return self.handle_offline_request(path, raw_body, action)
+ 
+         if upstream[0] != "success":
++            if upstream[0] == "http_error" and is_passthrough_client_error(
++                path, upstream[1]
++            ):
++                return raw_response_bytes(
++                    upstream[1], upstream[3], upstream[4], upstream[2]
++                )
+             return error_json(503, "upstream unavailable")
+ 
+         status_code = upstream[1]

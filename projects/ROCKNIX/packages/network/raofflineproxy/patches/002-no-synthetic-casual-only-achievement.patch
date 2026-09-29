@@ -1,0 +1,59 @@
+rom_cache: drop RetroAchievements' client warning from achievementsets too
+
+RetroAchievements answers achievementsets for a client it allows only casual
+unlocks from -- RAOfflineProxy's User-Agent suffix is registered that way --
+with a synthetic achievement prepended to the first set: CLIENT_WARNING_ID
+101000001, "Warning: Casual Only" / "Hardcore unlocks cannot be earned using
+this emulator.", MemAddr 1=1.300. so it pops five seconds in, 0 points
+(RAWeb app/Connect/Actions/GetAchievementSetsAction.php and
+CreateWarningAchievementAction.php). The server builds it with
+Flags = FLAG_PROMOTED (3), the same flag as a core achievement.
+
+The proxy already strips that id from patch, unlocks and startsession
+responses (filter_warning_achievement_from_*), and rom_browser and storage
+know the id too. The achievementsets filter, filter_warning_achievement_
+definitions, keeps achievements by Flags == 3 alone -- so the server's
+warning passes through it, online and from the cache, and an emulator on
+the achievementsets API (RetroArch 1.22) sees every set one larger than the
+site shows, awards 101000001 at every launch ("Achievement 101000001
+awarded, new score: 0") with an unlock toast, and forwards that award to
+RetroAchievements each time, since the server never records it as unlocked.
+
+Drop the warning id in that filter as well, before the Flags test. Cached
+achievementsets bodies are filtered on the way out (handle_offline_request
+and the online path both go through filter_warning_achievements_for_action),
+so a cache that already holds the warning serves sets without it from the
+next launch; nothing else awards or re-awards the id once the emulator no
+longer sees it. The Flags filter is unchanged.
+
+Seen on ROCKNIX (fork issue maxengel/rocknix#166) with the proxy at
+64d03d30633ca6e7719c26d732cef3c97dedcc27: three homebrew sets read 29/7/13
+through the proxy against 28/6/12 direct, the extra being 101000001, awarded
+five seconds into every proxied session. The Android filter
+(ProxyServer.kt filterWarningAchievementDefinitions) has the same shape and
+the same gap. Offered upstream as-is (ROCKNIX D-RA-002, D-RA-003: whatever
+the fork changes in the proxy goes back).
+
+--- a/linux/raofflineproxy/rom_cache.py
++++ b/linux/raofflineproxy/rom_cache.py
+@@ -37,6 +37,12 @@ def filter_warning_achievement_ids(ids: list[int]) -> list[int]:
+ 
+ 
+ def filter_warning_achievement_definitions(payload: dict) -> dict:
++    # RetroAchievements prepends its client warning (CLIENT_WARNING_ID,
++    # "Warning: Casual Only" for a client it allows casual unlocks from) to
++    # the first set with Flags=3, the same flag as a core achievement, so the
++    # Flags filter below keeps it. Drop it by id as the patch, unlocks and
++    # startsession filters do, or the emulator counts it in the set and
++    # awards it a few seconds into every session.
+     filtered_payload = json.loads(json.dumps(payload))
+ 
+     sets = filtered_payload.get("Sets")
+@@ -53,6 +59,7 @@ def filter_warning_achievement_definitions(payload: dict) -> dict:
+                 achievement
+                 for achievement in achievements
+                 if isinstance(achievement, dict)
++                and achievement.get("ID") != WARNING_ACHIEVEMENT_ID
+                 and achievement.get("Flags", RC_ACHIEVEMENT_FLAG_CORE) == RC_ACHIEVEMENT_FLAG_CORE
+             ]
+ 

@@ -1,0 +1,188 @@
+From: Max Engel <max@awecelot.com>
+Date: Tue, 15 Sep 2026 05:43:27 +0000
+Subject: [PATCH] cheevos: say "(offline)" when the offline proxy answered the login from its store
+
+On ROCKNIX, RetroArch's RetroAchievements requests go through RAOfflineProxy
+on the device (cheevos_custom_host = 127.0.0.1:8080, written per launch by
+setsettings.sh) whenever OFFLINE ACHIEVEMENTS is on. With the Wi-Fi off the
+proxy answers the login (r=login2) from its store, and the stock toast
+reads `RetroAchievements: Logged in as "<name>".` -- true, and misleading
+to a player who knows the device is offline (fork #194, the RG SP,
+2026-09-15: "we might want to say ... 'offline' in parentheses after
+'logged in' to make it clear").
+
+RetroArch cannot tell from the body: rcheevos takes the display name
+straight from the login answer and reads nothing else the proxy could carry
+the fact in without changing the account name RetroArch then uses. The
+proxy (its patch 011) says it in the headers instead: `X-RA-Proxy: 1` on
+every answer it writes, `X-RA-Offline: 1` on a login it served from the
+store because upstream could not be reached. The response headers already
+reach rcheevos_client_http_task_callback (http_transfer_data_t.headers, one
+"Name: value" line each, CRLF stripped).
+
+So: the callback records both headers in rcheevos_locals
+(last_response_via_proxy, last_response_offline) just before it hands the
+answer to rc_client, whose login callback runs synchronously inside that
+call -- rcheevos_client_login_callback therefore reads the login's own
+answer. When it was offline the toast is MSG_CHEEVOS_LOGGED_IN_AS_USER_OFFLINE,
+`RetroAchievements: Logged in as "%s" (offline).` (French beside it in
+intl/msg_hash_fr.h; every other language falls back to English, as
+msg_hash_to_str does); through the proxy with a connection, or without the
+proxy, the stock string. The English wording lives in intl/msg_hash_us.h
+and nowhere else. One line goes to the log whenever the proxy was in the
+path; it names no credential.
+
+Nothing else changes: cheevos_visibility_account still gates the toast, the
+128-byte message buffer holds the longer string with a 32-character account
+name, and without the proxy no header is present and both flags stay false.
+
+diff --git a/cheevos/cheevos.c b/cheevos/cheevos.c
+index f5cb08b..ba98428 100644
+--- a/cheevos/cheevos.c
++++ b/cheevos/cheevos.c
+@@ -1542,11 +1542,25 @@ static void rcheevos_client_login_callback(int result,
+          CHEEVOS_LOG(RCHEEVOS_TAG "Login did not return token\n");
+       }
+ 
++      /* ROCKNIX: the login's answer came through the offline proxy, and
++       * offline it came from the proxy's store (X-RA-Proxy / X-RA-Offline,
++       * read in rcheevos_client_http_task_callback). Logged for the record;
++       * the words below change only for the offline case. */
++      if (rcheevos_locals.last_response_via_proxy)
++         CHEEVOS_LOG(RCHEEVOS_TAG "Login answered through the offline proxy%s\n",
++            rcheevos_locals.last_response_offline ? ", from its store (offline)" : "");
++
+       /* show notification (if enabled) */
+       if (settings->bools.cheevos_visibility_account)
+       {
+          char msg[128];
+-         size_t _len = snprintf(msg, sizeof(msg), msg_hash_to_str(MSG_CHEEVOS_LOGGED_IN_AS_USER),
++         /* ROCKNIX: "(offline)" when the proxy answered from its store; the
++          * stock words through the proxy with a connection, or without it.
++          * Both strings live in intl/msg_hash_us.h (French in _fr.h). */
++         enum msg_hash_enums msg_id = rcheevos_locals.last_response_offline
++            ? MSG_CHEEVOS_LOGGED_IN_AS_USER_OFFLINE
++            : MSG_CHEEVOS_LOGGED_IN_AS_USER;
++         size_t _len = snprintf(msg, sizeof(msg), msg_hash_to_str(msg_id),
+             user->display_name);
+          runloop_msg_queue_push(msg, _len, 0, 2 * 60, false, NULL,
+             MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
+diff --git a/cheevos/cheevos_client.c b/cheevos/cheevos_client.c
+index 1322b8d..42ea1c6 100644
+--- a/cheevos/cheevos_client.c
++++ b/cheevos/cheevos_client.c
+@@ -243,6 +243,42 @@ typedef struct rc_client_http_task_data_t
+    void* callback_data;
+ } rc_client_http_task_data_t;
+ 
++/* ROCKNIX: true when a response header line reads "<name> 1" -- the name
++ * compared without case, blanks after the colon skipped, the value exactly
++ * 1. net_http keeps each header line as "Name: value", CRLF stripped. */
++static bool rcheevos_client_header_is_set(const char* header, const char* name)
++{
++   if (!header || !string_starts_with_case_insensitive(header, name))
++      return false;
++   header += strlen(name);
++   while (*header == ' ' || *header == '\t')
++      header++;
++   return (header[0] == '1'
++         && (header[1] == '\0' || header[1] == ' ' || header[1] == '\t' || header[1] == '\r'));
++}
++
++/* ROCKNIX: record what the answer's headers say about where it came from
++ * (see rcheevos_locals_t), for the callback that is about to run. */
++static void rcheevos_client_read_proxy_headers(const http_transfer_data_t* http_data)
++{
++   rcheevos_locals_t* rcheevos_locals = (rcheevos_locals_t*)get_rcheevos_locals();
++   rcheevos_locals->last_response_via_proxy = false;
++   rcheevos_locals->last_response_offline   = false;
++
++   if (http_data && http_data->headers)
++   {
++      size_t i;
++      for (i = 0; i < http_data->headers->size; i++)
++      {
++         const char* header = http_data->headers->elems[i].data;
++         if (rcheevos_client_header_is_set(header, "X-RA-Proxy:"))
++            rcheevos_locals->last_response_via_proxy = true;
++         else if (rcheevos_client_header_is_set(header, "X-RA-Offline:"))
++            rcheevos_locals->last_response_offline = true;
++      }
++   }
++}
++
+ static void rcheevos_client_http_task_callback(retro_task_t* task,
+    void* task_data, void* user_data, const char* error)
+ {
+@@ -251,6 +287,8 @@ static void rcheevos_client_http_task_callback(retro_task_t* task,
+    rc_api_server_response_t server_response;
+    memset(&server_response, 0, sizeof(server_response));
+ 
++   rcheevos_client_read_proxy_headers(http_data);
++
+    if (!http_data)
+    {
+       CHEEVOS_LOG(RCHEEVOS_TAG "http_task returned null\n");
+diff --git a/cheevos/cheevos_locals.h b/cheevos/cheevos_locals.h
+index 95e03d1..1d96314 100644
+--- a/cheevos/cheevos_locals.h
++++ b/cheevos/cheevos_locals.h
+@@ -124,6 +124,16 @@ typedef struct rcheevos_locals_t
+    bool core_supports;                /* false if core explicitly disables achievements */
+    bool badges_loaded;                /* true once all badges have been loaded */
+    bool badges_loading;               /* true if the download queue is running */
++
++   /* ROCKNIX: what the headers of the answer whose rc_client callback is
++    * running said about where it came from. RAOfflineProxy marks every
++    * answer it writes X-RA-Proxy: 1, and a login it answered from its
++    * store because upstream could not be reached X-RA-Offline: 1 (the
++    * proxy's patch 011). Set by rcheevos_client_http_task_callback just
++    * before it hands the answer to rc_client, so the login callback reads
++    * the login's own answer. */
++   bool last_response_via_proxy;      /* the answer came through the offline proxy */
++   bool last_response_offline;        /* the proxy answered from its store, offline */
+ } rcheevos_locals_t;
+ 
+ rcheevos_locals_t* get_rcheevos_locals(void);
+diff --git a/intl/msg_hash_fr.h b/intl/msg_hash_fr.h
+index c12a608..aeb2285 100644
+--- a/intl/msg_hash_fr.h
++++ b/intl/msg_hash_fr.h
+@@ -14738,6 +14738,10 @@ MSG_HASH(
+    MSG_CHEEVOS_LOGGED_IN_AS_USER,
+    "RetroSuccès (RetroAchievements) : Connecté en tant que \"%s\"."
+    )
++MSG_HASH(
++   MSG_CHEEVOS_LOGGED_IN_AS_USER_OFFLINE,
++   "RetroSuccès (RetroAchievements) : Connecté en tant que \"%s\" (hors ligne)."
++   )
+ MSG_HASH(
+    MSG_CHEEVOS_LOAD_STATE_PREVENTED_BY_HARDCORE_MODE,
+    "Vous devez mettre en pause ou désactiver les succès en mode Hardcore pour charger des sauvegardes instantanées."
+diff --git a/intl/msg_hash_us.h b/intl/msg_hash_us.h
+index 812aab9..108fcb7 100644
+--- a/intl/msg_hash_us.h
++++ b/intl/msg_hash_us.h
+@@ -15578,6 +15578,10 @@ MSG_HASH(
+    MSG_CHEEVOS_LOGGED_IN_AS_USER,
+    "RetroAchievements: Logged in as \"%s\"."
+    )
++MSG_HASH(
++   MSG_CHEEVOS_LOGGED_IN_AS_USER_OFFLINE,
++   "RetroAchievements: Logged in as \"%s\" (offline)."
++   )
+ MSG_HASH(
+    MSG_CHEEVOS_LOAD_STATE_PREVENTED_BY_HARDCORE_MODE,
+    "You must pause or disable Achievements Hardcore Mode to load states."
+diff --git a/msg_hash.h b/msg_hash.h
+index f2d9d90..5818b62 100644
+--- a/msg_hash.h
++++ b/msg_hash.h
+@@ -3955,6 +3955,7 @@ enum msg_hash_enums
+    MSG_CHEAT_SEARCH_ADD_MATCH_FAIL,
+    MSG_CHEAT_SEARCH_DELETE_MATCH_SUCCESS,
+    MSG_CHEEVOS_LOGGED_IN_AS_USER,
++   MSG_CHEEVOS_LOGGED_IN_AS_USER_OFFLINE,
+    MSG_CHEEVOS_LOAD_STATE_PREVENTED_BY_HARDCORE_MODE,
+    MSG_CHEEVOS_LOAD_SAVEFILE_PREVENTED_BY_HARDCORE_MODE,
+    MSG_CHEEVOS_HARDCORE_MODE_DISABLED,

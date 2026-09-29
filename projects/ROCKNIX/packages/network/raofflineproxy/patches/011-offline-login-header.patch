@@ -1,0 +1,122 @@
+proxy_service: say in the headers where an answer came from
+
+An emulator behind this process cannot tell an answer from the store from
+one that came from RetroAchievements: both arrive as 200 OK with the same
+body, by design. So when the store answers a login because the link is
+down, RetroArch's own toast reads "RetroAchievements: Logged in as
+"<name>"." -- true, and misleading to a player who knows the Wi-Fi is off
+and expects to be told something has changed (ROCKNIX fork #194, the RG SP,
+2026-09-15). The login body cannot carry the fact: rcheevos takes the
+account name straight from it and reads no other field the proxy could
+mark.
+
+Two response headers say it instead. `X-RA-Proxy: 1` is on every response
+this process writes, online or offline -- a client can tell the proxy is
+in the path. `X-RA-Offline: 1` is on the answer handle_offline_login gives,
+a login served from the store because upstream could not be reached.
+Nothing else changes: the status lines, the bodies and Content-Length are
+as before, the login path is otherwise untouched, and a client that does
+not look at the headers sees what it saw. RetroArch on ROCKNIX reads the
+second header and says "(offline)" in its toast (patch
+0013-cheevos-offline-proxy-toast in the fork's retroarch package).
+
+Written for ROCKNIX (fork issue maxengel/rocknix#194). Offered upstream
+as-is (ROCKNIX D-RA-002, D-RA-016: whatever the fork changes in the proxy
+goes back); the headers are additive and cost a client nothing.
+
+--- a/linux/raofflineproxy/proxy_service.py
++++ b/linux/raofflineproxy/proxy_service.py
+@@ -92,6 +92,14 @@ ALWAYS_TRY_UPSTREAM_ACTIONS = {"login", "login2"}
+ # through as it came. 401 and 403 do not: an auth failure keeps the 503, so
+ # nothing about how credentials are handled changes here.
+ AUTH_FAILURE_STATUSES = {401, 403}
++# ROCKNIX (fork #194): two response headers say where an answer came from,
++# for an emulator that wants to tell the player. X-RA-Proxy: 1 is on every
++# response this process writes; X-RA-Offline: 1 is on a login the store
++# answered because upstream could not be reached. RetroArch's sign-in toast
++# can then read "(offline)" -- rcheevos takes the account name straight from
++# the login body, so there is no field in it the proxy could say this in.
++PROXY_HEADER = ("X-RA-Proxy", "1")
++OFFLINE_LOGIN_HEADER = ("X-RA-Offline", "1")
+ 
+ 
+ def is_passthrough_client_error(path: str, status: int) -> bool:
+@@ -160,16 +168,33 @@ def should_cache_action(action: str | None, path: str) -> bool:
+     )
+ 
+ 
+-def response_bytes(code: int, body: str, reason: str | None = None) -> bytes:
+-    text = body.encode("utf-8")
++def response_head(
++    code: int,
++    reason: str | None,
++    content_type: str,
++    content_length: int,
++    extra_headers: Sequence[tuple[str, str]] = (),
++) -> bytes:
+     reason_phrase = reason or canonical_reason_phrase(code)
+-    head = (
+-        f"HTTP/1.1 {code} {reason_phrase}\r\n"
+-        f"Content-Type: application/json\r\n"
+-        f"Content-Length: {len(text)}\r\n"
+-        f"Connection: close\r\n\r\n"
+-    ).encode("utf-8")
+-    return head + text
++    lines = [
++        f"HTTP/1.1 {code} {reason_phrase}",
++        f"Content-Type: {content_type}",
++        f"Content-Length: {content_length}",
++        f"{PROXY_HEADER[0]}: {PROXY_HEADER[1]}",
++    ]
++    lines.extend(f"{name}: {value}" for name, value in extra_headers)
++    lines.append("Connection: close")
++    return ("\r\n".join(lines) + "\r\n\r\n").encode("utf-8")
++
++
++def response_bytes(
++    code: int,
++    body: str,
++    reason: str | None = None,
++    extra_headers: Sequence[tuple[str, str]] = (),
++) -> bytes:
++    text = body.encode("utf-8")
++    return response_head(code, reason, "application/json", len(text), extra_headers) + text
+ 
+ 
+ def raw_response_bytes(
+@@ -177,20 +202,14 @@ def raw_response_bytes(
+     body: bytes,
+     content_type: str | None,
+     reason: str | None = None,
++    extra_headers: Sequence[tuple[str, str]] = (),
+ ) -> bytes:
+-    reason_phrase = reason or canonical_reason_phrase(code)
+     mime_type = content_type or "application/octet-stream"
+-    head = (
+-        f"HTTP/1.1 {code} {reason_phrase}\r\n"
+-        f"Content-Type: {mime_type}\r\n"
+-        f"Content-Length: {len(body)}\r\n"
+-        f"Connection: close\r\n\r\n"
+-    ).encode("utf-8")
+-    return head + body
++    return response_head(code, reason, mime_type, len(body), extra_headers) + body
+ 
+ 
+-def ok_json(body: str) -> bytes:
+-    return response_bytes(200, body, "OK")
++def ok_json(body: str, extra_headers: Sequence[tuple[str, str]] = ()) -> bytes:
++    return response_bytes(200, body, "OK", extra_headers)
+ 
+ 
+ def error_json(code: int, message: str) -> bytes:
+@@ -442,7 +461,9 @@ class ProxyRuntimeServer(ThreadingTCPServer):
+         if cached is None:
+             return None
+ 
+-        return ok_json(cached["responseBody"])
++        # The store's answer, given because upstream could not be reached:
++        # X-RA-Offline: 1 says so to a client that wants to tell the player.
++        return ok_json(cached["responseBody"], extra_headers=(OFFLINE_LOGIN_HEADER,))
+ 
+     def handle_award_request(
+         self, path: str, raw_body: str, headers: dict[str, str]

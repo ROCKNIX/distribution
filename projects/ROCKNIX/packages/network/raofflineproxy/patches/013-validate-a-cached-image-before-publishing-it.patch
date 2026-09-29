@@ -1,0 +1,120 @@
+image_cache: an image is published only when it is whole and is an image
+
+download_static_image wrote response.read() to a temp file and renamed it
+into place. The rename is atomic, so a killed process cannot publish half a
+file -- but a short read can: nothing compared the bytes against the length
+the server declared, so a connection that dropped mid-body was published
+under the asset's real name, and from then on every existence check called
+it cached. target.exists() here, resolve_cached_static_asset in the proxy,
+and ROCKNIX's own image pass all test presence, never content, so a
+truncated badge or icon stays in the cache until something deletes it by
+hand -- and offline it is served, whole or not.
+
+Two tests before the rename that makes the file the cache's answer: the
+Content-Length the server declared, when it declared one, and for a .png
+path png_problem -- the signature, every chunk's length and CRC up to and
+including IEND, and IDAT data that inflates. The chunk walk ends at IEND
+wherever it is, so a whole PNG an encoder followed with a few bytes is
+whole (a trailer test in the last twelve bytes refused it at every fetch;
+ROCKNIX audit #308 F-RA-13), and png_problem is a function of its own so
+the same test can be put to a file already cached (ROCKNIX's image pass,
+--verify; audit #308 F-RA-12). A body that fails either test is dropped
+and the asset stays missing, which the callers already handle -- a miss is
+re-requested while online and answered 404 at once while offline (ROCKNIX
+patch 012). Nothing is retried here:
+best-effort is this function's contract, and a missing asset is a state the
+cache is allowed to be in, while a damaged one that claims to be cached is
+not.
+
+Checked on a ROCKNIX guest: a fixture that closes the connection after half
+the body leaves no file where it used to leave a truncated PNG, and a
+second pass fetches the asset whole.
+
+Written for ROCKNIX (fork issue maxengel/rocknix#213). Offered upstream
+as-is.
+
+--- a/linux/raofflineproxy/image_cache.py
++++ b/linux/raofflineproxy/image_cache.py
+@@ -6,6 +6,7 @@ import os
+ import shutil
+ import threading
+ import urllib.request
++import zlib
+ from concurrent.futures import ThreadPoolExecutor
+ from pathlib import Path
+ 
+@@ -179,7 +180,30 @@ def download_static_image(
+             )
+             try:
+                 with urllib.request.urlopen(request, timeout=10) as response:
+-                    tmp.write_bytes(response.read())
++                    declared = response.headers.get("Content-Length")
++                    payload = response.read()
++                # An image is published only when it is whole and is an
++                # image. response.read() returns what arrived, so a
++                # connection that drops mid-body used to be written under
++                # the asset's real name and every later existence check --
++                # this function's own target.exists(), the proxy's
++                # resolve_cached_static_asset, ROCKNIX's image pass -- called
++                # it cached for good. Two tests, before the rename that makes
++                # it the cache's answer: the length the server declared if it
++                # declared one, and for a .png the whole-PNG test below
++                # (png_problem). A body that fails either is dropped and the
++                # asset stays missing, which is a state the callers already
++                # handle (a miss is re-requested, or answered 404 at once
++                # offline). Written for ROCKNIX (fork maxengel/rocknix#213).
++                if declared is not None and declared.isdigit() and len(payload) != int(declared):
++                    raise ValueError(
++                        f"short read: {len(payload)} of {declared} bytes"
++                    )
++                if image_path.lower().endswith(".png"):
++                    problem = png_problem(payload)
++                    if problem is not None:
++                        raise ValueError(problem)
++                tmp.write_bytes(payload)
+                 os.replace(tmp, target)
+                 tmp = None
+             finally:
+@@ -250,3 +274,42 @@ def delete_cached_images_for_game(game_i
+ def clear_all_cached_images() -> None:
+     if IMAGE_CACHE_DIR.exists():
+         shutil.rmtree(IMAGE_CACHE_DIR, ignore_errors=True)
++
++
++def png_problem(payload: bytes) -> str | None:
++    """Why payload is not a whole PNG, or None when it is.
++
++    The signature; every chunk's length and CRC, up to and including IEND;
++    and IDAT data that inflates. The frame alone -- signature and an IEND in
++    the last twelve bytes -- admitted a body whose image data was garbage
++    (ROCKNIX audit #258, the seat's G-01) and refused a whole PNG an encoder
++    had followed with a few bytes after its IEND, which readers ignore (audit
++    #308 F-RA-13): such a badge was dropped at every fetch and never cached.
++    So the chunk walk is the test, and it ends at IEND wherever IEND is. A
++    few microseconds per badge. One test for a download and for a file
++    already cached (ROCKNIX's raofflineproxy-cache-images --verify, #308
++    F-RA-12). Written for ROCKNIX (fork maxengel/rocknix#213).
++    """
++    if not payload.startswith(b"\x89PNG\r\n\x1a\n"):
++        return "not a PNG"
++    pos, idat, ended = 8, b"", False
++    while pos + 12 <= len(payload):
++        length = int.from_bytes(payload[pos:pos + 4], "big")
++        ctype = payload[pos + 4:pos + 8]
++        data = payload[pos + 8:pos + 8 + length]
++        crc = payload[pos + 8 + length:pos + 12 + length]
++        if len(data) != length or len(crc) != 4 or (zlib.crc32(ctype + data) & 0xFFFFFFFF) != int.from_bytes(crc, "big"):
++            return f"PNG chunk {ctype!r} fails its CRC"
++        if ctype == b"IDAT":
++            idat += data
++        pos += 12 + length
++        if ctype == b"IEND":
++            ended = True
++            break
++    if not ended:
++        return "no IEND: the PNG is cut short"
++    try:
++        zlib.decompress(idat)
++    except zlib.error as exc:
++        return f"PNG image data does not inflate: {exc}"
++    return None

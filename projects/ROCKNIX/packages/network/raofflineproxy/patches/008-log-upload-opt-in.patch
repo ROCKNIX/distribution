@@ -1,0 +1,86 @@
+proxy_service: send a storage-corruption report only where config opts in
+
+After a data file is found corrupt and quarantined, retry_storage_
+corruption_report uploads a log bundle to the project's endpoint at every
+online start until one gets through -- from the service, with no one's
+yes, at the one moment nobody is watching. On a handheld a power cut
+mid-write is an ordinary evening, so the trigger is not rare; the bundle
+is redacted (t=, p=) and carries the account name; and an OS that ships
+the service under its own privacy terms cannot today keep the upload off
+short of patching it out (ROCKNIX audit #186 PL-12; on the sqlite backend
+the incident is recorded only by the JSON store today, so the path is
+unreachable on ROCKNIX's image -- this is the guard for a client that
+starts recording incidents for sqlite too).
+
+config.py gains log_upload_enabled: true only when config.json carries
+"upload_logs": true -- the JSON true and nothing else, since a consent
+boundary is not Python's truthiness ("false", 1 and "yes" are not an
+opt-in; ROCKNIX audit #308 F-RA-27) -- and the automatic retry returns
+after one log line when it is off. The menu's own manual upload is a choice made on screen
+and is not gated. Default off, so an OS integrating the service opts in
+knowingly; the project's own bundle can set the key in the config it
+ships.
+
+Written for ROCKNIX (fork issue maxengel/rocknix#186, PL-12). Offered
+upstream as-is (ROCKNIX D-RA-016), the default being the project's to
+decide.
+
+--- a/linux/raofflineproxy/config.py
++++ b/linux/raofflineproxy/config.py
+@@ -332,6 +332,13 @@ def load_config() -> dict:
+     return data
+ 
+ 
++def log_upload_enabled(config_data: dict | None = None) -> bool:
++    """Whether the service may upload a log bundle on its own. Off unless
++    config.json says "upload_logs": true -- the JSON true, nothing else; the
++    menu's manual upload, a choice made on screen, is not gated by this."""
++    return (config_data or {}).get("upload_logs") is True
++
++
+ def image_caching_enabled(config_data: dict | None = None) -> bool:
+     config_data = config_data or {}
+     configured = config_data.get("cache_images")
+--- a/linux/raofflineproxy/proxy_service.py
++++ b/linux/raofflineproxy/proxy_service.py
+@@ -22,6 +22,7 @@ from .config import (
+     FALLBACK_USER_AGENT,
+     RA_MEDIA_HOST,
+     image_caching_enabled,
++    log_upload_enabled,
+     proxy_host,
+     proxy_port,
+     upstream_host,
+@@ -1163,7 +1164,7 @@ def due_refresh_game_ids(patch_entries: list[dict], recently_played: set[int]) -
+     return due
+ 
+ 
+-def retry_storage_corruption_report() -> None:
++def retry_storage_corruption_report(config_data: dict | None = None) -> None:
+     # The menu only ever attempts this once (on first open after the incident) and shows
+     # the user the outcome regardless of success, so it doesn't nag them again — if that
+     # one attempt happened while offline, the report would otherwise never reach us. The
+@@ -1171,6 +1172,14 @@ def retry_storage_corruption_report() -> None:
+     incident = storage_corruption.load_incident()
+     if incident is None or incident.get("reported"):
+         return
++    # Only where the configuration opts in. The report is a log bundle sent
++    # to a third-party endpoint, from a service, without anyone's yes, at a
++    # moment nobody is watching -- after a data file was found corrupt, on a
++    # handheld a power cut is an ordinary evening for. An OS that wants the
++    # reports sets "upload_logs": true in config.json.
++    if not log_upload_enabled(config_data):
++        LOGGER.info("Storage corruption report not sent: upload_logs is off")
++        return
+     try:
+         upload_id = log_uploader.report_storage_corruption(incident)
+     except Exception as exc:
+@@ -1210,7 +1219,7 @@ def run_proxy_service(
+         save_online_state(initial_online)
+         if initial_online:
+             server.flush_pending_awards()
+-            retry_storage_corruption_report()
++            retry_storage_corruption_report(config_data)
+         connectivity_monitor.start()
+         periodic_refresh.start()
+ 

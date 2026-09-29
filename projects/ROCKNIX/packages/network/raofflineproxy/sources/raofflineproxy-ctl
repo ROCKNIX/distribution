@@ -1,0 +1,2426 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+#
+# raofflineproxy-ctl - the backend of the OFFLINE RETROACHIEVEMENTS toggle
+# (fork #165; D-RA-001, D-RA-002). One system-wide switch, off by default:
+#
+#   enable   write the on-marker the unit conditions on, start the service,
+#            then in system.cfg record the hardcore setting as it was
+#            (once -- a second enable keeps the first record), turn hardcore
+#            off and set the toggle -- the toggle last, each write read back
+#            before the next, and a step that does not hold undoes every
+#            step this run made before it (audit #186 PL-16): a failed
+#            enable leaves the device exactly as it was, the toggle off. The
+#            proxy is casual-only and refuses hardcore awards, so the switch
+#            is made here, on purpose, with the sentence on screen in
+#            EmulationStation -- never silently.
+#   disable  clear the toggle, stop a scan or top-up still running (it is
+#            signalled through the pid in its lock file and given STOP_WAIT
+#            seconds; #186 PL-30), stop the service, remove the marker, and
+#            put hardcore back the way the record says it was; the record
+#            goes. Each step is read back before the next uses it up: a
+#            toggle that will not clear stops nothing, and a hardcore that
+#            will not go back keeps the record for the next disable (#308
+#            F-RA-18).
+#   start    systemctl start; the marker must already be there.
+#   stop     systemctl stop.
+#   status   enabled=, marker=, service=, hardcore= on stdout; exit 0 when the
+#            toggle is on, 1 when off.
+#   pending  how many casual awards the proxy is holding for the next
+#            connection: the count of pending rows in its store, on one
+#            line; exit 0 when there is at least one, 1 when none. With the
+#            toggle off the answer is 0: the service is stopped, so a row
+#            left in the store is not on its way anywhere, and the sentence
+#            the count feeds ("... WILL BE SENT NEXT TIME YOU'RE CONNECTED")
+#            would be a promise nobody keeps. Exit 2, nothing on stdout,
+#            when the store could not be read -- an unknown count is never
+#            reported as one, so nothing is promised on its strength.
+#   flushed  the stamp the service leaves after a flush that sent awards
+#            (patches/003: "<epoch> <flushed>", once per such flush),
+#            printed as written and removed, exit 0; exit 1 when there is
+#            none, or none worth the name. Whoever asks is told once: the
+#            stamp is taken (renamed) before it is read, so one the service
+#            writes a moment later is the next caller's, and two callers
+#            cannot both report the same one (#186 PL-32).
+#
+#   EmulationStation asks pending as the exit sync card ends and flushed as
+#   the next sync card that reached the network does (fork #173, D-RA-004);
+#   both answers are read through CloudText, so the shapes above are the
+#   contract.
+#
+#   And two read-only answers for the achievements pages, which read the
+#   proxy's cache when the device is offline (fork #180, D-RA-009):
+#
+#   pending-ids  the signed-in account's casual awards still waiting (an
+#            award's request names the account that earned it; one that
+#            names none counts, #308 F-RA-09), one per line as
+#            "<achievementId> <epoch>" (when it was earned, in seconds),
+#            oldest first; exit 0 with at least one, 1 with none. The page
+#            marks those achievements as earned and waiting to be sent. The
+#            same refusals as pending: toggle off or no store answers
+#            nothing with exit 1, a store that cannot be read exit 2.
+#   summary  one line of JSON per game the store holds for the signed-in
+#            account -- id, title, icon, achievements, points, unlocked,
+#            unlockedPoints, pending -- from one read of sqlite: the page's
+#            whole offline summary without a request per game (fork #190).
+#            A game a launch cached (its achievementsets row, no patch row)
+#            is listed too, and unlocked and unlockedPoints are null when the
+#            game's unlock row is missing or cannot be read (#307 PL-057).
+#            Exit 1 with the toggle off, no account or no store; 2 when the
+#            store cannot be read (the reader's 3, said through cannot_tell
+#            as every read here says it; #308 F-RA-28).
+#   account  the signed-in account's points as RetroAchievements last told
+#            the proxy, from its cached sign-in: "score=<n> softcore=<n>" on
+#            one line, exit 0; exit 1 when the toggle is off, nothing is
+#            cached for this account, or the cached sign-in carries no
+#            points -- the proxy writes one without them when it signs in
+#            from a token rather than a password (auth.py
+#            cache_token_credentials), and an absent number is not 0 (#186
+#            PL-26); exit 2 when the store cannot be read. Reads the row
+#            that also holds the session token and prints the two numbers
+#            and nothing else.
+#
+# And the three verbs of SCAN GAMES FOR OFFLINE ACHIEVEMENTS (fork #179,
+# D-RA-010; fork #184, D-RA-013): the proxy serves a game offline only from
+# what it cached while online, so a game never started with a connection
+# earned nothing offline until somebody started it once online. The scan
+# caches every game on the console that RetroAchievements knows, and the
+# top-up keeps the cache following the library without anyone pressing
+# anything.
+#
+#   Both follow the interface's own game index (D-RA-013). INDEX NEW GAMES
+#   AT STARTUP and INDEX GAMES (the hasher) write each game's <cheevosHash>
+#   and, where RetroAchievements knows the hash, its <cheevosId> into the
+#   system's gamelist.xml -- through the interface's recovery/<system>/ files
+#   until it writes the gamelist at its next clean exit; this reads both.
+#   The rule, per system: where an index exists (any game with a cheevosHash)
+#   only the games with a cheevosId are cached, from the id and the hash the
+#   interface already has -- the ROM is never read again -- and the games
+#   without an entry are left to the index (they are the ones it found no
+#   set for, or the ones added since it ran, which the next index picks up);
+#   where no index exists at all, every ROM under the folder is hashed and
+#   looked up as before. So a library that was indexed never has its
+#   leftovers hashed one at a time on every run, and a device that never
+#   indexed still gets the whole scan. The work is done by
+#   raofflineproxy-cache-indexed beside this script, over a job list
+#   list_jobs writes (its header has the two line shapes).
+#
+#   scan     list the jobs (above), and hand them to the helper: an indexed
+#            game costs the proxy's patch, unlocks and achievementsets
+#            requests and no hash lookup; an unindexed one the client's own
+#            add_rom_to_cache (hash, gameid, then the same three). A page in
+#            EmulationStation (GuiOfflineScan) runs it and reads its ">>> "
+#            lines: `doing listing`, `total <n>`, `game <i>|<n>|<name>`,
+#            `cached <c>|<s>`, `note <TOKEN>`, `errors <n>`, `why <TOKEN>`,
+#            `done <c>|<s>|<ready>|<limit>`. Refuses -- with an exit code
+#            the page names and no stamp -- when the toggle is off (78), no
+#            account is signed in (77), the device is offline by the proxy's
+#            own probe (69), or another scan or top-up holds the lock (75).
+#            Stops after three lookups in a row that RetroAchievements did
+#            not answer, on a refused sign-in, or should the client ever
+#            report a cache limit (none on ROCKNIX since patch 004). Writes
+#            last-scan (below) and exits 0 when every game it tried was
+#            cached or passed over as one RetroAchievements does not know,
+#            1 when it could not finish -- and a game whose fetch failed,
+#            even one among many that went through, is a run that could
+#            not finish (`why SOME_GAMES_NOT_SAVED`, `errors <n>`; #186
+#            PL-24): the next scan or top-up tries those games again, since
+#            nothing marks them cached. Every scan ends with the image pass
+#            (a scan with nothing new included), and a pass that left
+#            images behind makes the scan one that could not finish too,
+#            `why SOME_IMAGES_NOT_SAVED` (#307 PL-060; a top-up that cached
+#            a game runs it and says it the same way). The walk over an unindexed folder
+#            stops at the client's cap of files (rom_browser
+#            MAX_SCAN_ENTRIES), counted over the files not yet cached and
+#            begun where the last walk the cap cut stopped (scan-cursor,
+#            kept only by a run that worked through its jobs), so
+#            a second scan reaches what the first did not, past files that
+#            never cache too (#186 PL-17, #307 PL-059); a walk the cap cut
+#            says `note TRUNCATED` to the page and truncated=1 in the stamp.
+#   topup    every game the index knows and the client has not cached, then
+#            the client's `run-smart-cache` (RetroArch's recent history,
+#            PPSSPP's recent list) for what the index missed -- so a game
+#            added and indexed, or played once online, is cached even if the
+#            scan was never pressed. For EmulationStation's network-up hook:
+#            silent (nothing on stdout), bounded -- one attempt per half
+#            hour, and one deadline of TOPUP_TIMEOUT seconds from the moment
+#            it starts that the wait for the lock, the probes, the listing
+#            and both passes all spend from (#186 PL-28); a first top-up over
+#            a library nobody scanned caches what fits and the next connect
+#            carries on -- the same refusals as scan with the same codes,
+#            and it writes last-scan only when it cached something or could
+#            not finish; a top-up that found nothing new leaves the last
+#            scan's line alone. The hook fires when the address arrives,
+#            which on a hotspot is before its resolver answers (#175), so
+#            the probe has the token check's patience: up to PROBE_TRIES
+#            tries PROBE_INTERVAL seconds apart, inside the deadline. The
+#            half-hour mark is set only once a probe has reached
+#            RetroAchievements -- a probe that could not is no attempt, and
+#            the next link event tries again (#186 PL-04).
+#   topup --after-index
+#            the same, started by EmulationStation as its hasher finishes
+#            with the toggle on: the index has just grown, so this one does
+#            not count the half hour since the last attempt against itself,
+#            and it waits for a top-up already running rather than giving
+#            way to one that read the index before it grew -- the wait
+#            spending from the same deadline.
+#   index-offline
+#            EmulationStation's index had games to identify and the hash
+#            library did not come: leaves index-pending, the marker the
+#            after-index run leaves when its probe fails, so the next
+#            link-return topup lists the library once (fork #299, D-UI-104).
+#            No probe; exit 0. What that listing can find is the games the
+#            index did identify -- the case the after-index run's marker is
+#            for. The games this index could not identify have no
+#            cheevosId yet, so no listing finds them: what caches them is
+#            the interface running its index again when the link comes up
+#            (NetworkThread, while the hash library has not come this
+#            session and INDEX NEW GAMES AT STARTUP is on) and the topup
+#            --after-index that follows it (#308 F-RA-22).
+#   listening [--wait N]
+#            whether something takes an IPv4 connection to 127.0.0.1:8080, the
+#            proxy's address -- a listener on it in LISTEN: exit 0
+#            when it is, 1 when not -- read from /proc/net/tcp and tcp6, no
+#            tool run. With --wait it looks N times a second apart. The
+#            unit's ExecStartPost, so the service is started when it can be
+#            reached, not when its process has forked (#308 F-RA-26).
+#   ready    how many games are cached: the count in the client's own
+#            cached_game_ids.txt export (one id per line, rewritten on every
+#            cache change by the service and the client alike), on one line.
+#
+#   running  /storage/.config/raofflineproxy/running while a scan or top-up is
+#            at its jobs (fork #189): one line, `route=<scan|topup> at=<epoch>
+#            [index=<i> total=<n> name=<game>]`, rewritten as each game
+#            finishes (index is the game it is on now), removed when the
+#            run ends -- the interface shows a run it did not start from it,
+#            and treats one older than the bound as gone.
+#   last-scan is /storage/.config/raofflineproxy/last-scan, one line:
+#   "<epoch> <rc> <scan|topup> cached=<n> skipped=<m> ready=<total>
+#   limit=<0|1> indexed=<i> errors=<e> added=<k>[ truncated=1][ why=<TOKEN>]" -- how the last run
+#   went, read by the page for the line under the row
+#   (CloudText::parseScanStamp, which passes over keys it does not know).
+#   `added` is how many games the run made ready for this account (fork
+#   #298), read from the store before and after -- a game is ready with the
+#   account's unlocks row and an achievementsets row of the game (audit of
+#   the fixes, claude G-D-08) -- rather than counted from the run's cache
+#   operations: a game the recently played pass (the client's
+#   run-smart-cache, which takes only games not yet cached) caches for the
+#   first time is added, and a second dump of a game already ready is
+#   cached but not added (#308 F-RA-10, F-RA-15). The card says "added" of
+#   those and "ready" otherwise. When the store could not be read before or
+#   after a run that cached games, added=unknown: a count nobody measured
+#   is never written as one (PL-031).
+#   `skipped` is the ROMs RetroAchievements does not know, which the client
+#   refuses one at a time and the scan counts rather than reports (the
+#   proxy's own docs skip them silently); `indexed` is how many of `cached`
+#   came from the interface's index without a hash; `errors` is how many
+#   games a fetch failed for, which is what makes rc 1 with
+#   why=SOME_GAMES_NOT_SAVED; a scan the player cancelled from its page
+#   (SIGINT from the interface, D-UI-078) is rc 130 with why=CANCELLED and
+#   the counts it had reached. Tokens, never sentences: the page says them
+#   in the player's language. scan.log beside it carries the helper's line for
+#   every game -- which RetroAchievements actions it cost, so an indexed
+#   game shows patch,unlocks,achievementsets and never gameid; the client
+#   redacts the token in what it logs and prints file names and reasons
+#   only, and nothing here prints a value from system.cfg.
+#
+# The toggle is global.retroachievements.offlineproxy in system.cfg, the
+# setting setsettings.sh (RetroArch) and cheevos_ppsspp.sh read at every
+# launch to point the emulator at 127.0.0.1:8080 -- into that launch's own
+# config, so no host ever lands in a file a settings backup carries.
+# system.cfg travels with the toggle in it; the marker under /storage/.cache
+# does not, and /usr/lib/autostart/daemons/006-raofflineproxy re-derives it
+# at boot. Everything the proxy itself writes lives under
+# /storage/.config/raofflineproxy, which backuptool holds back whole (its
+# token cache and award queue never travel, D-INFRA-010).
+#
+# The store this reads -- read-only, through the service's own sqlite3
+# module, never written here -- is the client's schema at the commit
+# package.mk pins (248ce5acae75113d09500cd7c6661a12fee4b93c, storage.py
+# _initialize_sqlite, read 2026-09-28 for audit #308 F-RA-07 at c1bd3724
+# and unchanged since, as are cache_keys.py and proxy_service.py; the
+# header named 4e9bab48, three pins back, until then): pending_awards(id,
+# achievementId, queryString, requestBody, queuedAt, status) for pending,
+# pending-ids and summary; api_cache(cacheKey, responseBody, sourceRomPath,
+# cachedAt) for account, summary, the ready set behind added= and the
+# scan's "already cached" test, the keys as cache_keys.py spells them
+# (login2::<user>, patch:<id>:<user>, unlocks:<id>:<user>:0,
+# achievementsets:<hash>:<user>). The client carries no schema version row
+# (an upstream item, #186 PL-22); a schema it changes shows here as
+# cannot_tell (exit 2), never as a number -- and first in the scripts
+# suite, which runs these reads against a store the pinned client's own
+# Storage wrote and checks that this paragraph names the pin package.mk
+# pins, so a pin that moves makes somebody read the schema again.
+
+# Machine-facing. The last line of stdout after enable or disable is
+# hardcore=<0|1>, the setting as it stands afterwards; EmulationStation
+# reads it to keep its HARDCORE MODE row truthful. Everything else goes to
+# the log. Exit 0 when done, 1 when a step could not be made to hold, 2 on
+# usage or when an answer could not be read; scan and topup add the four
+# sysexits codes above, which CloudExit.h in EmulationStation spells the
+# same way.
+
+# No set -u: get_setting and set_setting come from /etc/profile and read
+# positional parameters they were not given; every value this script relies
+# on is read back and tested below instead.
+. /etc/profile
+
+MARKER_DIR="/storage/.cache/services"
+MARKER="${MARKER_DIR}/raofflineproxy.conf"
+UNIT="raofflineproxy.service"
+KEY="global.retroachievements.offlineproxy"
+HARDCORE_KEY="global.retroachievements.hardcore"
+HARDCORE_WAS_KEY="global.retroachievements.offlineproxy.hardcore_was"
+# Where the service keeps everything it writes: RAOFFLINEPROXY_CONFIG_DIR in
+# the unit, and the default the proxy resolves on a ROCKNIX image without it.
+PROXY_DIR="/storage/.config/raofflineproxy"
+QUEUE="${PROXY_DIR}/proxy.sqlite3"
+FLUSH_STAMP="${PROXY_DIR}/last-flush"
+
+# The scan's files, all beside the proxy's own so backuptool holds them back
+# with the rest (D-INFRA-010) and `disable` leaves them where the cache is.
+SCAN_STAMP="${PROXY_DIR}/last-scan"
+# Where the walk over unindexed folders stopped at the cap, so the next scan
+# walks on from there (#307 PL-059): the path of the last file it took.
+SCAN_CURSOR="${PROXY_DIR}/scan-cursor"
+SCAN_LOG="${PROXY_DIR}/scan.log"
+RUNNING="${PROXY_DIR}/running"
+TOPUP_MARK="${PROXY_DIR}/last-topup-attempt"
+# An index run that could not reach RetroAchievements (a game list updated
+# offline) leaves this, and the next link-return run lists the library
+# once for it, so the games an index identified while the device was
+# offline are cached when it is next online (fork #299; the games an index
+# could not identify are the interface's next index's, #308 F-RA-22). It is
+# removed only by a run whose listing and indexed pass both went through, so
+# a run that fails or is stopped part-way leaves it for the next (#307
+# PL-055).
+INDEX_PENDING="${PROXY_DIR}/index-pending"
+READY_FILE="${PROXY_DIR}/cached_game_ids.txt"
+SCAN_LOCK="/var/run/raofflineproxy-scan.lock"
+ROMS_ROOT="/storage/roms"
+# The interface's own folder: es_systems.cfg, and the two places its game
+# index is kept on disk (gamelists/<system>/ and recovery/<system>/).
+ES_DIR="/storage/.config/emulationstation"
+# The account keys EmulationStation writes (the token after a sign-in). Read
+# for presence only, never printed.
+USER_KEY="global.retroachievements.username"
+TOKEN_KEY="global.retroachievements.token"
+PASSWORD_KEY="global.retroachievements.password"
+
+# sysexits.h, as CloudExit.h names them: a run that did nothing, and why.
+EX_USAGE=64         # a bad argument; the usage line was printed (refresh, audit #258 PL-012)
+EX_UNAVAILABLE=69   # offline by the proxy's probe
+EX_TEMPFAIL=75      # another scan or top-up holds the lock
+EX_NOPERM=77        # no RetroAchievements account signed in
+EX_CONFIG=78        # the toggle is off
+
+# The top-up's probe schedule: the token check's (#175, CheevosRetry.h --
+# nine tries ten seconds apart), for the same reason: the hook fires when
+# the address arrives, and a hotspot's resolver answers 20-45 s later.
+PROBE_TRIES=9
+PROBE_INTERVAL=10
+# How long disable waits for a scan or top-up it has asked to stop.
+STOP_WAIT=10
+# Lookups RetroAchievements did not answer, in a row, before the scan stops
+# asking: every one is a request spent on a link or a sign-in that is not
+# working, and the page can say so sooner.
+ERRORS_IN_A_ROW=3
+# One automatic top-up attempt per this many seconds, and no single run
+# longer than TOPUP_TIMEOUT: a link that flaps must not turn into a request
+# storm, and a hook that never returns is a hook nobody can reason about.
+TOPUP_INTERVAL=1800
+TOPUP_TIMEOUT=900
+
+# The client resolves its folder the way the unit sets it, and RetroArch's
+# `~` in content_history_path and playlist_directory is /storage on ROCKNIX
+# (the proxy expands it with HOME, and EmulationStation's may differ).
+export RAOFFLINEPROXY_CONFIG_DIR="${PROXY_DIR}"
+export HOME=/storage
+export XDG_CONFIG_HOME=/storage/.config
+PROXY_PY="python3 -m raofflineproxy.main"
+
+# The ROCKNIX ROM folders of the systems RetroAchievements has sets for, by
+# RetroAchievements' console list (2026-09) mapped onto the folder names
+# es_systems.cfg uses on this image, both spellings where two images differ
+# (coleco/colecovision, odyssey/odyssey2, pc88/pc-8800, fbneo/fbn,
+# sgfx/supergrafx). A folder that is not here is never walked: the proxy
+# would only hash it and be told no, one request per file, and a computer
+# or Windows library can be tens of gigabytes. Arcade folders hash by file
+# name (rc_hash's arcade rule), so they cost no reading. The hack folders
+# (nesh, snesh, ...) stay: RetroAchievements has sets for many hacks, and
+# the ones it does not know are skipped like any other ROM.
+SCAN_SYSTEMS="
+  nes famicom fds nesh snes sfc snesh snesmsu1 satellaview sufami
+  gb gbh gbc gbch gba gbah n64 n64dd nds ndsiware gamecube wii
+  pokemini virtualboy megaduck supervision arduboy wasm4 uzebox
+  channelf odyssey odyssey2 videopac intellivision coleco colecovision vectrex
+  mastersystem megadrive genesis megadrive-japan megadriveh genh sega32x
+  segacd megacd saturn dreamcast gamegear gamegearh ggh sg-1000
+  psx ps2 psp pspminis
+  atari2600 atari7800 atarijaguar atarijaguarcd atarilynx
+  pcengine tg16 pcenginecd tg16cd sgfx supergrafx pcfx pc88 pc-8800
+  ngp ngpc neocd wonderswan wonderswancolor msx msx2 amstradcpc apple2 3do
+  arcade mame fbneo fbn neogeo cps1 cps2 cps3
+"
+
+say() {
+    logger -t raofflineproxy-ctl "$*"
+}
+
+fail() {
+    say "$*"
+    echo "raofflineproxy-ctl: $*" >&2
+    exit 1
+}
+
+# A setting as system.cfg holds it; empty when absent.
+setting() {
+    get_setting "${1}"
+}
+
+# 0 or 1, from a value that may be empty or anything else.
+as_flag() {
+    if [ "${1:-}" = "1" ]; then echo 1; else echo 0; fi
+}
+
+have_systemctl() {
+    command -v systemctl >/dev/null 2>&1
+}
+
+service_state() {
+    if have_systemctl; then
+        systemctl is-active "${UNIT}" 2>/dev/null || true
+    else
+        echo unknown
+    fi
+}
+
+do_start() {
+    have_systemctl || fail "no systemctl to start ${UNIT} with"
+    systemctl start "${UNIT}" || fail "${UNIT} did not start"
+}
+
+do_stop() {
+    have_systemctl || return 0
+    systemctl stop "${UNIT}" || say "${UNIT} did not stop cleanly; carrying on"
+}
+
+# What this run of enable changed, for enable_undo to put back: the marker
+# and the service only when this run made or started them (a second enable
+# finds both in place and leaves them), the record only when this run wrote
+# it, and each setting's value from before the run.
+E_MARKER_WAS=0; E_SERVICE_WAS=0; E_STARTED=0; E_RECORD_WROTE=0
+E_HARDCORE_BEFORE=""; E_HARDCORE_CHANGED=0; E_KEY_BEFORE=""; E_KEY_CHANGED=0
+
+# A setting back to what it was: its old value, or gone when it had none.
+put_back() {
+    if [ -n "${2}" ]; then set_setting "${1}" "${2}"; else set_setting "${1}" default; fi
+}
+
+# A step of enable did not hold: undo every step this run made, in the
+# order that keeps the device consistent at each point -- the toggle first
+# (the launchers and the boot pass read it and nothing else), the settings,
+# then the service and the marker -- and fail. A device on which enable
+# failed is a device on which enable never ran (#186 PL-16).
+enable_undo() {
+    say "enable: $*; putting the device back as it was"
+    [ "${E_KEY_CHANGED}" -eq 1 ] && put_back "${KEY}" "${E_KEY_BEFORE}"
+    [ "${E_HARDCORE_CHANGED}" -eq 1 ] && put_back "${HARDCORE_KEY}" "${E_HARDCORE_BEFORE}"
+    [ "${E_RECORD_WROTE}" -eq 1 ] && set_setting "${HARDCORE_WAS_KEY}" default
+    [ "${E_STARTED}" -eq 1 ] && [ "${E_SERVICE_WAS}" -eq 0 ] && do_stop
+    [ "${E_MARKER_WAS}" -eq 0 ] && rm -f "${MARKER}"
+    fail "$*"
+}
+
+do_enable() {
+    E_KEY_BEFORE="$(setting "${KEY}")"
+    E_HARDCORE_BEFORE="$(setting "${HARDCORE_KEY}")"
+    [ -e "${MARKER}" ] && E_MARKER_WAS=1
+    [ "$(service_state)" = "active" ] && E_SERVICE_WAS=1
+
+    # The marker first, the service second: if the service cannot start,
+    # nothing about the player's settings has changed yet, and the marker
+    # goes again so the next boot does not start what could not run now.
+    mkdir -p "${MARKER_DIR}" || fail "cannot create ${MARKER_DIR}"
+    touch "${MARKER}" || fail "cannot write ${MARKER}"
+    if have_systemctl; then
+        if ! systemctl start "${UNIT}"; then
+            [ "${E_MARKER_WAS}" -eq 0 ] && rm -f "${MARKER}"
+            fail "${UNIT} did not start; the toggle stays off"
+        fi
+        E_STARTED=1
+    fi
+
+    # Then the settings, each read back before the next is written, the
+    # toggle last of all: until it reads 1 nothing routes through the proxy,
+    # so a failure anywhere before it leaves the device as it was once
+    # enable_undo has run, and a failure after it cannot happen -- it is
+    # the last write.
+    #
+    # Record hardcore as it was, once. A second enable finds the record and
+    # keeps it, so the value disable puts back is the player's and not the 0
+    # the first enable wrote.
+    if [ -z "$(setting "${HARDCORE_WAS_KEY}")" ]; then
+        set_setting "${HARDCORE_WAS_KEY}" "$(as_flag "${E_HARDCORE_BEFORE}")"
+        E_RECORD_WROTE=1
+        [ -n "$(setting "${HARDCORE_WAS_KEY}")" ] || enable_undo "${HARDCORE_WAS_KEY} did not take"
+    fi
+    set_setting "${HARDCORE_KEY}" 0
+    E_HARDCORE_CHANGED=1
+    [ "$(setting "${HARDCORE_KEY}")" = "0" ] || enable_undo "${HARDCORE_KEY} did not take"
+    set_setting "${KEY}" 1
+    E_KEY_CHANGED=1
+    [ "$(setting "${KEY}")" = "1" ] || enable_undo "${KEY} did not take"
+    [ -e "${MARKER}" ] || enable_undo "${MARKER} is gone"
+
+    say "offline RetroAchievements on: hardcore was $(setting "${HARDCORE_WAS_KEY}"), now 0; ${UNIT} $(service_state)"
+    echo "hardcore=0"
+}
+
+# A scan or top-up the interface started is no child of this process; its
+# lock file carries its pid (take_lock writes it), so it is asked to stop
+# (SIGTERM: its trap ends the helper and cleans up) and given STOP_WAIT
+# seconds to let go of the lock. Nothing else is matched by name or pattern.
+# Exit 0 when nothing was running or it stopped, 1 when it did not.
+stop_running_run() {
+    [ -e "${SCAN_LOCK}" ] || return 0
+    exec 7<>"${SCAN_LOCK}" || return 0
+    if flock -n 7; then exec 7>&-; return 0; fi
+    local PID WAITED=0
+    PID="$(head -n 1 "${SCAN_LOCK}" 2>/dev/null)"
+    case "${PID}" in ''|*[!0-9]*) PID="" ;; esac
+    if [ -n "${PID}" ]; then
+        say "disable: a scan or top-up is running (pid ${PID}); asking it to stop"
+        kill -TERM "${PID}" 2>/dev/null
+    else
+        say "disable: a scan or top-up holds the lock and left no pid; waiting for it"
+    fi
+    until flock -n 7; do
+        if [ "${WAITED}" -ge "${STOP_WAIT}" ]; then
+            say "disable: the running scan or top-up did not stop within ${STOP_WAIT}s; carrying on"
+            exec 7>&-
+            return 1
+        fi
+        sleep 1
+        WAITED=$((WAITED + 1))
+    done
+    exec 7>&-
+    say "disable: the running scan or top-up stopped"
+    return 0
+}
+
+do_disable() {
+    # The toggle first: a scan or top-up starting from now on is refused by
+    # its own check, and the launchers route direct from the next launch.
+    # Each step is read back before the next one uses it up (#308 F-RA-18):
+    # a toggle that did not clear stops nothing, so the device stays on --
+    # service, marker and record together -- rather than half off.
+    set_setting "${KEY}" 0
+    [ "$(setting "${KEY}")" = "0" ] || fail "${KEY} did not clear; the service, the marker and the hardcore record are left as they were"
+    stop_running_run
+    do_stop
+    rm -f "${MARKER}"
+
+    # Put hardcore back as the record says, and remove the record only once
+    # hardcore reads back as it says: a write that did not hold keeps the
+    # record, so the next disable can still put the player's setting back
+    # (#308 F-RA-18). No record -- a device that never had the toggle on, or
+    # a second disable -- leaves it alone.
+    local WAS
+    WAS="$(setting "${HARDCORE_WAS_KEY}")"
+    if [ -n "${WAS}" ]; then
+        set_setting "${HARDCORE_KEY}" "$(as_flag "${WAS}")"
+        [ "$(setting "${HARDCORE_KEY}")" = "$(as_flag "${WAS}")" ] || fail "${HARDCORE_KEY} was not put back; the record is kept for the next disable"
+        set_setting "${HARDCORE_WAS_KEY}" default
+        [ -z "$(setting "${HARDCORE_WAS_KEY}")" ] || fail "${HARDCORE_WAS_KEY} was not cleared"
+    fi
+
+    [ ! -e "${MARKER}" ] || fail "${MARKER} could not be removed"
+
+    say "offline RetroAchievements off: hardcore ${WAS:+put back to }${WAS:-left as it was}; ${UNIT} $(service_state)"
+    echo "hardcore=$(as_flag "$(setting "${HARDCORE_KEY}")")"
+}
+
+do_status() {
+    local ON
+    ON="$(as_flag "$(setting "${KEY}")")"
+    echo "enabled=${ON}"
+    if [ -e "${MARKER}" ]; then echo "marker=1"; else echo "marker=0"; fi
+    echo "service=$(service_state)"
+    echo "hardcore=$(as_flag "$(setting "${HARDCORE_KEY}")")"
+    [ "${ON}" = "1" ]
+}
+
+# The count could not be read: nothing on stdout, the reason on stderr and in
+# the log, exit 2. A guard that cannot run has not passed -- and a number
+# that is not known is not printed as one.
+cannot_tell() {
+    say "$*"
+    echo "raofflineproxy-ctl: $*" >&2
+    exit 2
+}
+
+do_pending() {
+    if [ "$(as_flag "$(setting "${KEY}")")" != "1" ] || [ ! -e "${QUEUE}" ]; then
+        echo 0
+        return 1
+    fi
+    # The same interpreter and sqlite3 module the service writes the store
+    # with (the package depends on Python3 for the service itself), opened
+    # read-only, with a second's patience for a write in flight. The image
+    # also carries a sqlite3 binary, but not by this package's asking.
+    local N
+    N="$(python3 -c '
+import sqlite3, sys
+db = sqlite3.connect("file:%s?mode=ro" % sys.argv[1], uri=True, timeout=1.0)
+print(db.execute("SELECT COUNT(*) FROM pending_awards WHERE status = ?", ("pending",)).fetchone()[0])
+' "${QUEUE}" 2>/dev/null)" || cannot_tell "the award queue at ${QUEUE} could not be read"
+    case "${N}" in
+        ''|*[!0-9]*) cannot_tell "the award queue answered '${N}', not a count" ;;
+    esac
+    echo "${N}"
+    [ "${N}" -gt 0 ]
+}
+
+# The pending awards by id, oldest first, each with the second it was earned
+# (the store keeps milliseconds). Read the way pending reads: read-only, the
+# service's own sqlite3 module, a second's patience.
+do_pending_ids() {
+    if [ "$(as_flag "$(setting "${KEY}")")" != "1" ] || [ ! -e "${QUEUE}" ]; then
+        return 1
+    fi
+    # The signed-in account's awards, and those that name no account: the
+    # page marks these as this player's, so another account's award on this
+    # device is not among them (#308 gpt F-RA-09). No account set: all, as
+    # before.
+    local ROWS
+    ROWS="$(python3 -c '
+import sqlite3, sys
+from urllib.parse import parse_qs
+user = sys.argv[2].strip().lower()
+def owner(query, body):
+    for text in ((query or "").split("?", 1)[-1], body or ""):
+        values = parse_qs(text, keep_blank_values=True).get("u")
+        if values and values[0].strip():
+            return values[0].strip().lower()
+    return ""
+db = sqlite3.connect("file:%s?mode=ro" % sys.argv[1], uri=True, timeout=1.0)
+for aid, queued, query, body in db.execute("SELECT achievementId, queuedAt, queryString, requestBody FROM pending_awards WHERE status = ? ORDER BY queuedAt ASC, id ASC", ("pending",)):
+    if not user or owner(query, body) in ("", user):
+        print(int(aid), int(queued) // 1000)
+' "${QUEUE}" "$(setting "${USER_KEY}")" 2>/dev/null)" || cannot_tell "the award queue at ${QUEUE} could not be read"
+    [ -n "${ROWS}" ] || return 1
+    printf '%s\n' "${ROWS}"
+    return 0
+}
+
+# summary: the page's whole offline summary in one read of the store (fork
+# #190: 247 saved games were 494 requests to the service, each tried
+# upstream first while the service still believed it was online -- hours on
+# a link that had just gone). One JSON object a line, sorted by id:
+#   {"id":4902,"title":"Bobl","icon":"http://127.0.0.1:8080/Images/x.png",
+#    "achievements":12,"points":110,"unlocked":1,"unlockedPoints":5,"pending":1}
+# A game is the account's patch row, or -- for a game a launch cached and
+# nothing else did -- its achievementsets row (RetroArch asks achievementsets,
+# not patch; #307 PL-057), read as the interface's game page reads one: the
+# set of Type core, else the first. The core set (Flags 3, positive ids) as
+# the interface reads a patch; a game whose set is empty is not a cached game
+# (audit #186 PL-26); unlocked counts the store's unlocks and the casual
+# awards still waiting, as the service's own offline unlocks answer does --
+# and when the store's unlock row for the game is missing or cannot be read,
+# unlocked and unlockedPoints are null: unknown, never 0 (#307 PL-057). The
+# icon carries the service's address as the service would rewrite it. Exit
+# 1 with the toggle off, no account set or no store; the store that cannot
+# be read is a cannot_tell (exit 2).
+do_summary() {
+    if [ "$(as_flag "$(setting "${KEY}")")" != "1" ] || [ ! -e "${QUEUE}" ]; then
+        return 1
+    fi
+    local USER
+    USER="$(setting "${USER_KEY}")"
+    [ -n "${USER}" ] || return 1
+    python3 - "${QUEUE}" "${USER}" <<'PY_SUMMARY'
+import json, sqlite3, sys
+from urllib.parse import parse_qs, urlsplit
+store, user = sys.argv[1], sys.argv[2].strip().lower()
+base = "http://127.0.0.1:8080"
+def icon_url(text):
+    text = (text or "").strip()
+    if not text:
+        return ""
+    if text.startswith("/"):
+        return base + text
+    if "://" in text:
+        path = urlsplit(text).path
+        return base + path if path else ""
+    return base + "/" + text
+def core_of(achievements):
+    return [a for a in (achievements or []) if isinstance(a, dict) and int(a.get("Flags") or 3) == 3 and int(a.get("ID") or 0) > 0]
+def set_achievements(data):
+    # OfflineAchievementsText::parseAchievementSets: the set of Type core, else the first.
+    if isinstance(data.get("Achievements"), list):
+        return data["Achievements"]
+    chosen = None
+    for one in data.get("Sets") or []:
+        if not isinstance(one, dict):
+            continue
+        if chosen is None:
+            chosen = one
+        if one.get("Type") == "core":
+            chosen = one
+            break
+    return (chosen or {}).get("Achievements") or []
+try:
+    db = sqlite3.connect("file:%s?mode=ro" % store, uri=True, timeout=1.0)
+    patches = db.execute("SELECT cacheKey, responseBody FROM api_cache WHERE cacheKey LIKE ? ORDER BY cacheKey", ("patch:%:" + user,)).fetchall()
+    sets = db.execute("SELECT cacheKey, responseBody FROM api_cache WHERE cacheKey LIKE ? ORDER BY cacheKey", ("achievementsets:%:" + user,)).fetchall()
+    unlock_rows = dict(db.execute("SELECT cacheKey, responseBody FROM api_cache WHERE cacheKey LIKE ?", ("unlocks:%:" + user + ":0",)).fetchall())
+    awards = db.execute("SELECT achievementId, queryString, requestBody FROM pending_awards WHERE status = 'pending'").fetchall()
+except Exception:
+    sys.exit(3)
+def owner(query, body):
+    # The account an award was earned by: its request's u=, in the query or
+    # the body, as the service reads it (utils.extract_request_param).
+    for text in ((query or "").split("?", 1)[-1], body or ""):
+        values = parse_qs(text, keep_blank_values=True).get("u")
+        if values and values[0].strip():
+            return values[0].strip().lower()
+    return ""
+# Awards waiting for this account, or naming none: another account's award
+# on this device is that account's, not whoever is signed in now (#308 gpt
+# F-RA-09).
+pending = {int(aid) for aid, query, body in awards if owner(query, body) in ("", user)}
+found = {}   # id -> (title, icon, core set)
+for key, body in patches:
+    parts = key.split(":")
+    if len(parts) != 3 or parts[2] != user:
+        continue
+    try:
+        gid = int(parts[1])
+        patch = (json.loads(body) or {}).get("PatchData") or {}
+        core = core_of(patch.get("Achievements"))
+    except Exception:
+        continue
+    found[gid] = (str(patch.get("Title") or ""), patch.get("ImageIcon"), core)
+for key, body in sets:
+    parts = key.split(":")
+    if len(parts) != 3 or parts[2] != user:
+        continue
+    try:
+        data = json.loads(body) or {}
+        gid = int(data.get("GameId") or 0)
+        core = core_of(set_achievements(data))
+    except Exception:
+        continue
+    if gid > 0 and core and not (gid in found and found[gid][2]):
+        found[gid] = (str(data.get("Title") or ""), data.get("ImageIconUrl") or data.get("ImageIcon"), core)
+games = []
+for gid, (title, icon, core) in found.items():
+    if gid <= 0 or not core:
+        continue
+    points = {int(a["ID"]): int(a.get("Points") or 0) for a in core}
+    queued = pending & set(points)
+    unlocked = None   # unknown until the store's unlock row is read
+    row = unlock_rows.get("unlocks:%d:%s:0" % (gid, user))   # the casual row (cache_keys.unlocks: a trailing 0)
+    if row is not None:
+        try:
+            data = json.loads(row)
+            values = data.get("UserUnlocks") if isinstance(data, dict) and data.get("Success") is not False else None
+            if isinstance(values, list):
+                unlocked = ({int(u) for u in values} | queued) & set(points)
+        except Exception:
+            unlocked = None
+    games.append({"id": gid, "title": title, "icon": icon_url(icon),
+                  "achievements": len(points), "points": sum(points.values()),
+                  "unlocked": None if unlocked is None else len(unlocked),
+                  "unlockedPoints": None if unlocked is None else sum(points[i] for i in unlocked),
+                  "pending": len(queued)})
+for game in sorted(games, key=lambda g: g["id"]):
+    print(json.dumps(game, separators=(",", ":"), ensure_ascii=False))
+PY_SUMMARY
+    local RC=$?
+    [ "${RC}" -eq 0 ] || cannot_tell "the proxy's store at ${QUEUE} could not be read"
+}
+
+# The account's points from the proxy's cached sign-in (the login2 row of the
+# signed-in user, keyed by the user name in lower case as cache_keys.py
+# normalises it). The row carries the session token; the two numbers are
+# all that leaves this function.
+do_account() {
+    if [ "$(as_flag "$(setting "${KEY}")")" != "1" ] || [ ! -e "${QUEUE}" ]; then
+        return 1
+    fi
+    local USER LINE
+    USER="$(setting "${USER_KEY}")"
+    [ -n "${USER}" ] || return 1
+    # Exit 1 is "no such row", said apart from a store that cannot be read
+    # (exit 3): an account nobody signed in is not the same as a store the
+    # page should not trust, and only the second is a cannot_tell.
+    LINE="$(python3 -c '
+import json, sqlite3, sys
+try:
+    db = sqlite3.connect("file:%s?mode=ro" % sys.argv[1], uri=True, timeout=1.0)
+    row = db.execute("SELECT responseBody FROM api_cache WHERE cacheKey = ?", ("login2::" + sys.argv[2].strip().lower(),)).fetchone()
+except Exception:
+    sys.exit(3)
+if row is None:
+    sys.exit(1)
+try:
+    body = json.loads(row[0])
+except Exception:
+    sys.exit(3)
+# The row the proxy writes from a token (auth.cache_token_credentials) has no
+# Score: nothing is cached about the points, and an absent number is never
+# printed as 0.
+if not isinstance(body, dict) or body.get("Score") is None or body.get("SoftcoreScore") is None:
+    sys.exit(1)
+try:
+    score = int(body["Score"])
+    softcore = int(body["SoftcoreScore"])
+except Exception:
+    sys.exit(3)
+print("score=%d softcore=%d" % (score, softcore))
+' "${QUEUE}" "${USER}" 2>/dev/null)"
+    local RC=$?
+    if [ "${RC}" -eq 1 ]; then
+        return 1
+    elif [ "${RC}" -ne 0 ]; then
+        cannot_tell "the proxy's store at ${QUEUE} could not be read"
+    fi
+    case "${LINE}" in
+        score=*\ softcore=*) ;;
+        *) cannot_tell "the proxy's store answered '${LINE}', not the account's points" ;;
+    esac
+    echo "${LINE}"
+    return 0
+}
+
+do_flushed() {
+    [ -e "${FLUSH_STAMP}" ] || return 1
+    # Taken before it is read: the rename is one step, so a stamp the
+    # service replaces after this moment is a new file this call never
+    # touches (it is the next caller's), and of two callers only the one
+    # whose rename succeeded has anything to report. Whatever was taken is
+    # removed before it is judged, so a stamp that says nothing went, or
+    # nothing readable, is gone too and never read twice.
+    local MINE="${FLUSH_STAMP}.$$" LINE
+    mv -f "${FLUSH_STAMP}" "${MINE}" 2>/dev/null || return 1
+    LINE="$(head -n 1 "${MINE}" 2>/dev/null)"
+    rm -f "${MINE}"
+    if [[ "${LINE}" =~ ^[0-9]+\ [1-9][0-9]*$ ]]; then
+        echo "${LINE}"
+        return 0
+    fi
+    return 1
+}
+
+# ---- the scan -------------------------------------------------------------
+
+# The progress file (fork #189): whole or not at all (temp + rename), so a
+# reader never sees half a line; RUN_ROUTE is set by the route before its
+# first mark. $1 is the rest of the line (" index=<i> total=<n> name=<g>").
+mark_running() {
+    printf 'route=%s at=%s%s\n' "${RUN_ROUTE:-run}" "$(date +%s)" "${1:-}" > "${RUNNING}.tmp" 2>/dev/null \
+        && mv -f "${RUNNING}.tmp" "${RUNNING}" 2>/dev/null
+}
+unmark_running() { rm -f "${RUNNING}" "${RUNNING}.tmp"; }
+
+# A line for the page: ">>> <word> <fields>". Everything else on stdout is
+# the client's own output, which the page shows nothing of.
+tell() {
+    printf '>>> %s\n' "$*"
+}
+
+# The scan's own log, rotated once past a megabyte. The client's lines are
+# file names and reasons; nothing from system.cfg is ever written here.
+slog() {
+    mkdir -p "${PROXY_DIR}" 2>/dev/null
+    if [ -e "${SCAN_LOG}" ] && [ "$(stat -c %s "${SCAN_LOG}" 2>/dev/null || echo 0)" -gt 1048576 ]; then
+        mv -f "${SCAN_LOG}" "${SCAN_LOG}.1"
+    fi
+    printf '%s %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S')" "$*" >> "${SCAN_LOG}"
+}
+
+# How many games are cached, from the client's export. One id per line, so
+# the count is the line count; absent means none yet. Falls back to asking
+# the client when the export is missing but a store exists, and to 0 when
+# even that cannot be read -- a number that is not known is never invented.
+# RetroArch's play history (fork #299): the link's return looks for games
+# played since the last attempt and nothing else, so a wake with no game
+# played costs nothing and shows nothing. RetroArch 1.22 with
+# content_history_directory = "default" writes it under playlist_directory
+# as builtin/content_history.lpl, beside the video, music and image
+# histories -- not at content_history_path, which the config still names
+# and which the RG35XX SP never had (fork #306: the check read "no game
+# played" at every link for a day). Both are read from retroarch.cfg (~ is
+# /storage) and the newest file wins; a missing file loses to one that
+# exists. PPSSPP's ppsspp.ini is read beside them: it is the toggle's other
+# emulator (D-RA-002), the recently played pass reads its [Recent] list as
+# well as RetroArch's history (the client's load_content_history_paths), and
+# the file is written at every PPSSPP launch (cheevos_ppsspp.sh) and exit, so
+# a game played in PPSSPP alone is a game played (#308 F-RA-13).
+# RAOFFLINEPROXY_HISTORY overrides them all (the scripts suite's fixture).
+PPSSPP_INI=/storage/.config/ppsspp/PSP/SYSTEM/ppsspp.ini
+history_path() {
+    local CFG=/storage/.config/retroarch/retroarch.cfg P D BUILTIN NEWEST=""
+    if [ -n "${RAOFFLINEPROXY_HISTORY:-}" ]; then
+        printf '%s\n' "${RAOFFLINEPROXY_HISTORY}"
+        return 0
+    fi
+    P="$(sed -n 's/^content_history_path = "\(.*\)"$/\1/p' "${CFG}" 2>/dev/null | head -n 1)"
+    case "${P}" in "~/"*) P="/storage/${P#\~/}" ;; esac
+    P="${P:-/storage/.config/retroarch/content_history.lpl}"
+    D="$(sed -n 's/^playlist_directory = "\(.*\)"$/\1/p' "${CFG}" 2>/dev/null | head -n 1)"
+    case "${D}" in "~/"*) D="/storage/${D#\~/}" ;; esac
+    BUILTIN="${D:-/storage/playlists}/builtin/content_history.lpl"
+    for F in "${BUILTIN}" "${P}" "${PPSSPP_INI}"; do
+        [ -e "${F}" ] || continue
+        if [ -z "${NEWEST}" ] || [ "${F}" -nt "${NEWEST}" ]; then NEWEST="${F}"; fi
+    done
+    printf '%s\n' "${NEWEST:-${BUILTIN}}"
+}
+
+count_ready() {
+    local N=""
+    if [ -s "${READY_FILE}" ]; then
+        N="$(grep -c -E '^[0-9]+$' "${READY_FILE}" 2>/dev/null)"
+    elif [ -e "${QUEUE}" ]; then
+        N="$(${PROXY_PY} cached-games-count 2>/dev/null | tail -n 1)"
+    fi
+    case "${N}" in ''|*[!0-9]*) N=0 ;; esac
+    echo "${N}"
+}
+
+do_ready() {
+    count_ready
+}
+
+# listening [--wait N] (#308 F-RA-26): the unit was Type=simple, so
+# `systemctl start` -- and with it enable, which routes the emulators to
+# the proxy once it returns, and the Before= that holds the interface --
+# returned the moment Python began importing, seconds before the port was
+# bound on a handheld; a launch in that window met a refused connection,
+# which makes rcheevos give up achievements for the session. The unit's
+# ExecStartPost runs this, bounded, so "started" means "listening". The
+# socket table is read, not a tool's output (netstat is not a dependency
+# of anything here); 127.0.0.1, 0.0.0.0 and ::ffff:127.0.0.1 on port 8080
+# (1F90) in state LISTEN (0A) count -- the listeners that take the IPv4
+# connection to 127.0.0.1:8080 the emulators are given. ::1 does not take
+# it, and :: may be IPv6-only, which the table does not say, so neither
+# counts (audit of the fixes, gpt G-D-02). Leaving :: out turns the proxy
+# away never: its sockets are IPv4 -- proxy_service.py's ThreadingTCPServer
+# keeps socketserver.TCPServer's AF_INET (patched client, line 267), boot.py
+# makes and adopts AF_INET sockets (lines 32 and 58), and nothing here sets
+# proxy_host, whose default is 127.0.0.1 (config.py:367) -- and the scripts
+# suite runs the pinned client's run-service in a network namespace of its
+# own and holds this check to its socket, so a pin that moves to `::` fails
+# there first (audit of the fix round, claude G2-D-01, the blind pass's
+# S-26, PL-033). RAOFFLINEPROXY_PROC_NET stands in for /proc/net (the
+# scripts suite's fixture).
+port_listening() {
+    local F SL LOCAL REM ST REST
+    for F in "${RAOFFLINEPROXY_PROC_NET:-/proc/net}/tcp" "${RAOFFLINEPROXY_PROC_NET:-/proc/net}/tcp6"; do
+        [ -r "${F}" ] || continue
+        while read -r SL LOCAL REM ST REST; do
+            [ "${ST}" = "0A" ] || continue
+            case "${LOCAL}" in
+                0100007F:1F90|00000000:1F90|0000000000000000FFFF00000100007F:1F90) return 0 ;;
+            esac
+        done < "${F}"
+    done
+    return 1
+}
+
+do_listening() {
+    local TRIES=1 T=0
+    if [ -n "${1:-}" ]; then
+        if [ "${1}" != "--wait" ] || [ -z "${2:-}" ] || [ -n "${2//[0-9]/}" ]; then
+            echo "usage: raofflineproxy-ctl listening [--wait <seconds>]" >&2
+            exit ${EX_USAGE}
+        fi
+        TRIES="${2}"
+    fi
+    while :; do
+        T=$((T + 1))
+        port_listening && return 0
+        [ "${T}" -lt "${TRIES}" ] || break
+        sleep 1
+    done
+    say "listening: nothing is listening on 127.0.0.1:8080 after ${T} look(s)"
+    return 1
+}
+
+# The games ready for the signed-in account, one id a line into $1: those
+# with the account's unlocks row and an achievementsets row of the game --
+# the rows a launch reads (RetroArch asks achievementsets, not patch), so a
+# game a launch cached is ready before any patch row exists. The walk's
+# "already cached" (list_jobs whole_games) is the same rule (audit of the
+# fixes, claude G-D-08, gpt G-D-04). A sets row's GameId is read from the
+# first 512 characters, where the service writes it, and from the whole body
+# only when they do not hold it, so the store's bodies are not parsed whole
+# at every run. The head answers only with the body's own key -- not a
+# nested set's (Sets[].GameId) -- and a number that ends inside it -- not
+# one the cut ends in ("GameId":15 of 153); anything less is the whole
+# body's parse, so the two ways of reading a row cannot disagree (audit of
+# the fix round, gpt G2-D-01, claude G2-D-08). head_game_id is the same text
+# in list_jobs' whole_games. added= is how many ids a run adds to this set
+# -- the games that became ready for this player (fork #298's "games new to
+# the store"), counted from the store rather than from the run's cache
+# operations (#308 F-RA-10, F-RA-15). Exit non-zero when the store cannot
+# be read.
+ready_games_into() {
+    : > "$1" || return 1
+    [ -e "${QUEUE}" ] || return 0
+    python3 -c '
+import json, re, sqlite3, sys
+store, user = sys.argv[1], sys.argv[2].strip().lower()
+db = sqlite3.connect("file:%s?mode=ro" % store, uri=True, timeout=1.0)
+HEAD_VALUE = re.compile(r"\s*:\s*(\d+)\s*[,}]")
+HEAD_COLON = re.compile(r"\s*:")
+def head_game_id(head):
+    depth, i, n = 0, 0, len(head)
+    while i < n:
+        c = head[i]
+        if c == "\"":
+            j = i + 1
+            while j < n and head[j] != "\"":
+                j += 2 if head[j] == "\\" else 1
+            if j >= n:
+                return None
+            if depth == 1 and head[i + 1:j] == "GameId":
+                whole = HEAD_VALUE.match(head, j + 1)
+                if whole:
+                    return int(whole.group(1))
+                if HEAD_COLON.match(head, j + 1):
+                    return None
+            i = j + 1
+            continue
+        if c in "{[":
+            depth += 1
+        elif c in "}]":
+            depth -= 1
+        i += 1
+    return None
+unlocks, sets = set(), set()
+for key, head in db.execute("SELECT cacheKey, substr(responseBody, 1, 512) FROM api_cache WHERE cacheKey LIKE ? OR cacheKey LIKE ?", ("unlocks:%", "achievementsets:%")).fetchall():
+    parts = key.split(":")
+    if parts[0] == "unlocks":
+        if len(parts) == 4 and parts[2] == user and parts[3] == "0" and parts[1].isdigit():
+            unlocks.add(int(parts[1]))
+        continue
+    if len(parts) != 3 or parts[2] != user:
+        continue
+    gid = head_game_id(head or "")
+    if gid is None:
+        try:
+            body = db.execute("SELECT responseBody FROM api_cache WHERE cacheKey = ?", (key,)).fetchone()[0]
+            gid = int((json.loads(body) or {}).get("GameId") or 0)
+        except Exception:
+            gid = 0
+    if gid > 0:
+        sets.add(gid)
+for g in sorted(unlocks & sets):
+    print(g)
+' "${QUEUE}" "$(setting "${USER_KEY}")" > "$1" 2>/dev/null
+}
+
+# How many games a run made ready: the ids in the after file ($2) that the
+# before file ($1) does not hold. Prints nothing and fails when either could
+# not be read; the caller says so through added_count, and never puts a
+# count of its own in this one's place.
+games_made_ready() {
+    [ -n "${1}" ] && [ -n "${2}" ] && [ -e "${1}" ] && [ -e "${2}" ] || return 1
+    local NEWIDS RC N=0
+    # grep says 0 when it selected lines, 1 when none, 2 when it could not
+    # read: only the first two are an answer. A count taken after the pipe
+    # read a failed comparison as 0 new games (audit of the fixes, gpt
+    # G-D-05).
+    NEWIDS="$(grep -vxF -f "$1" "$2" 2>/dev/null)"
+    RC=$?
+    [ "${RC}" -le 1 ] || return 1
+    [ -n "${NEWIDS}" ] && N="$(printf '%s\n' "${NEWIDS}" | grep -c .)"
+    echo "${N}"
+}
+
+# added= as the stamp and the log say it: the measured count ($1) when there
+# is one; 0 when the run cached nothing ($2), since a run that cached
+# nothing made nothing ready; otherwise the word unknown. Never the run's
+# cache operations: they count a second dump of a game already ready, and
+# the top-up card says MORE GAMES ARE READY from this number (audit of the
+# fix round, gpt G2-D-02, the blind pass's S-24, PL-031). The interface's
+# reader (CloudText::parseScanStamp) passes over a value that is not a
+# number, as for a stamp that does not say.
+added_count() { # <measured count, or empty> <cached>
+    if [ -n "${1}" ]; then
+        echo "${1}"
+    elif [ "${2:-0}" -gt 0 ] 2>/dev/null; then
+        echo unknown
+    else
+        echo 0
+    fi
+}
+
+# "<epoch> <rc> <route> cached=<n> skipped=<m> ready=<total> limit=<0|1>
+# indexed=<i> errors=<e> added=<k> [why=<TOKEN>]", written whole or not at all (a
+# rename), so the page never reads half a line. The page reads the keys it
+# knows and passes over the rest (CloudText::parseScanStamp), so indexed=
+# and errors= are for the log and for whoever reads the file.
+write_stamp() {
+    local RC="$1" ROUTE="$2" CACHED="$3" SKIPPED="$4" READY="$5" LIMIT="$6" INDEXED="${7:-0}" ERRORS="${8:-0}" WHY="${9:-}"
+    # added (fork #298): the games this run made ready for the account, as
+    # measured -- the tenth argument; a run that gives none, or whose
+    # measurement failed, is said by added_count, never counted as every
+    # game it cached (PL-031).
+    local ADDED
+    ADDED="$(added_count "${10:-}" "${CACHED}")"
+    # truncated=1 (#307 PL-059): the walk over unindexed folders stopped at
+    # the cap, and the games past it are the next scan's. Written only when
+    # it is 1; CloudText::parseScanStamp reads it.
+    local TRUNCATED="${11:-0}"
+    local LINE="$(date +%s) ${RC} ${ROUTE} cached=${CACHED} skipped=${SKIPPED} ready=${READY} limit=${LIMIT} indexed=${INDEXED} errors=${ERRORS} added=${ADDED}"
+    [ "${TRUNCATED}" = "1" ] && LINE="${LINE} truncated=1"
+    [ -n "${WHY}" ] && LINE="${LINE} why=${WHY}"
+    mkdir -p "${PROXY_DIR}" || return 1
+    printf '%s\n' "${LINE}" > "${SCAN_STAMP}.tmp" && mv -f "${SCAN_STAMP}.tmp" "${SCAN_STAMP}"
+}
+
+# The walk's proposed cursor (scan-cursor.next, from list_jobs) becomes the
+# cursor: a path to walk on from, or none when the walk came round. Kept
+# only after a run that worked through its jobs (audit of the fixes, claude
+# G-D-06), and read back once written, since the continuation the page
+# promises rests on it (gpt G-D-06). Exit 1 when it could not be kept.
+commit_cursor() {
+    local WANT
+    [ -f "${SCAN_CURSOR}.next" ] || return 1
+    WANT="$(cat "${SCAN_CURSOR}.next" 2>/dev/null)" || return 1
+    if [ -z "${WANT}" ]; then
+        rm -f "${SCAN_CURSOR}.next"
+        rm -f "${SCAN_CURSOR}" 2>/dev/null
+        [ ! -e "${SCAN_CURSOR}" ]
+        return
+    fi
+    [ ! -d "${SCAN_CURSOR}" ] && mv -f "${SCAN_CURSOR}.next" "${SCAN_CURSOR}" 2>/dev/null \
+        && [ "$(cat "${SCAN_CURSOR}" 2>/dev/null)" = "${WANT}" ]
+}
+
+# The account EmulationStation signed in with: a user name and either the
+# token it wrote after the sign-in or the password it will sign in with.
+# Presence only; the values stay in system.cfg.
+have_account() {
+    [ -n "$(setting "${USER_KEY}")" ] || return 1
+    [ -n "$(setting "${TOKEN_KEY}")" ] || [ -n "$(setting "${PASSWORD_KEY}")" ]
+}
+
+# The proxy's own answer to "is RetroAchievements reachable": probe-online
+# sends one HEAD to retroachievements.org (a fresh process asks every time;
+# its thirty-second memory is per process) and writes the answer to
+# online_state.json in its config folder, printing nothing. It is pointed
+# at a folder of its own for the call: the service's online_state.json is
+# the service's (its monitor writes it at start and on a change, and the
+# interface reads it as the proxy's own view, D-RA-011), and a probe from
+# here that lands in a resolver lag would otherwise write "false" over it
+# with nothing to correct it until the service's next transition (#186
+# PL-03). Anything but a readable "online": true reads as offline -- a
+# check that cannot run has not passed.
+is_online() {
+    local SCRATCH ANSWER=1
+    SCRATCH="$(mktemp -d /tmp/raofflineproxy-probe.XXXXXX)" || return 1
+    if RAOFFLINEPROXY_CONFIG_DIR="${SCRATCH}" ${PROXY_PY} probe-online >/dev/null 2>&1; then
+        grep -q -E '"online": *true' "${SCRATCH}/online_state.json" 2>/dev/null && ANSWER=0
+    fi
+    rm -rf "${SCRATCH}"
+    return ${ANSWER}
+}
+
+# Seconds left of a run's deadline, from its START; never negative.
+time_left() {
+    local L=$(( TOPUP_TIMEOUT - ($(date +%s) - ${1}) ))
+    [ "${L}" -gt 0 ] || L=0
+    echo "${L}"
+}
+
+# A sleep that a SIGTERM interrupts: the shell waits on a background sleep,
+# and wait returns the moment a trapped signal arrives, so disable is not
+# kept waiting for a probe interval to run out.
+pause() {
+    sleep "${1}" &
+    wait $! 2>/dev/null
+}
+
+# What both verbs refuse before they touch anything, in the order a player
+# would fix them: the toggle, then the account. Exit codes only; the page
+# says them.
+refuse_unless_ready() {
+    local VERB="$1"
+    if [ "$(as_flag "$(setting "${KEY}")")" != "1" ]; then
+        say "${VERB}: refused, offline RetroAchievements is off"
+        tell "why TOGGLE_OFF"
+        exit ${EX_CONFIG}
+    fi
+    if ! have_account; then
+        say "${VERB}: refused, no RetroAchievements account is signed in"
+        tell "why NO_ACCOUNT"
+        exit ${EX_NOPERM}
+    fi
+}
+
+# One scan or top-up at a time (the lock is held for the rest of the run;
+# the fd closes with the process). Exit 75 when another holds it -- except
+# for the top-up that follows the interface's index (topup --after-index),
+# which waits its turn for what is left of its deadline ($3, the run's
+# START; the wait spends from the same fifteen minutes as the rest, #186
+# PL-28): it is the one run that knows the index has just grown, and the
+# top-up ahead of it read the index before that. Busybox flock has no -w,
+# so the wait is a loop. The file is opened without truncating it, and the
+# holder writes its pid on the first line once it has the lock, which is
+# how disable finds a run to stop (#186 PL-30) -- a run that finds the lock
+# taken has not wiped the holder's pid by opening the file.
+take_lock() {
+    local VERB="$1" WAIT="${2:-0}" START="${3:-0}"
+    exec 9<>"${SCAN_LOCK}" || fail "cannot open ${SCAN_LOCK}"
+    until flock -n 9; do
+        if [ "${WAIT}" -eq 0 ] || [ "$(time_left "${START}")" -le 10 ]; then
+            say "${VERB}: another scan or top-up is running"
+            exit ${EX_TEMPFAIL}
+        fi
+        pause 10
+    done
+    printf '%s\n' "$$" >&9
+    # The lock is held, so no run is live: a progress file still here was a
+    # run that died without its EXIT trap (a kill -9, a power cut), and the
+    # interface has been ignoring it since its 900 s bound. Removed here, at
+    # the one point every verb passes (#189 box 3's "and removed"; the
+    # seat's G-08 under audit #258).
+    rm -f "${RUNNING}" "${RUNNING}.tmp"
+}
+
+# The games to cache, one job per line into $1, in the client's own terms
+# where it has any, and in the interface's where it has the better ones
+# (D-RA-013):
+#
+#   I<TAB><gameId><TAB><hash><TAB><path>   from the interface's index
+#   H<TAB><TAB><TAB><path>                 to be hashed and looked up
+#
+# The interface's index is what the hasher wrote (INDEX NEW GAMES AT
+# STARTUP, INDEX GAMES): per system, the games' <cheevosHash> and
+# <cheevosId> in gamelist.xml -- beside the ROMs, else under the interface's
+# gamelists/<system>/ -- overlaid with the per-game files under its
+# recovery/<system>/, which is where a change lives until the interface
+# writes the gamelist at its next clean exit (a recovery file whose
+# parentHash is not the current gamelist's size is stale, and skipped as
+# the interface skips it). A system has an index when any
+# of its games carries a cheevosHash: the hasher writes the hash for every
+# game it looked at and the id only for the ones RetroAchievements knows, so
+# a system whose games all came back without a set is indexed too, and
+# nothing in it is hashed again. In an indexed system the jobs are the games
+# with a cheevosId whose file is still there and whose id the client has not
+# cached (its own export of cached ids, the count `ready` reads); the rest
+# of the system -- games with no set, and games added since the index ran --
+# is left to the index. A system with no index at all keeps today's walk
+# (mode all): every ROM under its folder, in the client's own terms -- its
+# extension list decides what is a ROM (is_supported_browser_file, archives
+# included), its cached-path record what is already done, its history reader
+# what was played (most recent first, then newest file first) -- less hidden
+# files and folders, the scraper's folders, empty files, and a .bin beside a
+# .cue, .gdi or .m3u. Mode indexed writes the I jobs alone: the top-up on
+# connect never hashes a library nobody asked it to.
+#
+# "Already cached" is asked of the signed-in account's rows and this hash's
+# (#186 PL-23): the proxy serves a launch from patch:<id>:<user>,
+# unlocks:<id>:<user>:0 and achievementsets:<hash>:<user>, so a game is
+# cached when all three are there for this account and this dump, and a
+# job again when any is missing -- a fetch that failed after the first row
+# was written, a set the client's eviction took at sixty days (#186 PL-02),
+# a second account on the device, a second dump of a game. The account
+# name reaches the listing through the environment (RA_SCAN_USER), never a
+# command line. The walk's "already done" stays the client's own record
+# (the ROM's path on this account's patch rows).
+#
+# The systems and their folders come from the interface's own files, read
+# as it reads them: the base es_systems.cfg (custom, user or image copy) and
+# the es_systems_*.cfg merged into it (#308 F-RA-06); the walk's
+# folders from SCAN_SYSTEMS as before, less any folder an indexed system
+# owns. The walk stops at the client's cap of files (MAX_SCAN_ENTRIES),
+# counted over the files not yet cached and begun from the cursor the last
+# cut walk left (scan-cursor, $6), so the cap bounds one run's work and never
+# the library: a second run walks past what the first cached (#186 PL-17)
+# and past what the first could not cache (#307 PL-059). $3 bounds the
+# listing in seconds (0: no bound). Prints
+# "found=<seen> new=<jobs> cached=<seen-jobs> indexed=<I> hashing=<H>
+# truncated=<0|1>" on stdout.
+list_jobs() {
+    local BUDGET="${3:-0}"
+    local -a BOUND=()
+    [ "${BUDGET}" -gt 0 ] && BOUND=(timeout "${BUDGET}")
+    RA_SCAN_USER="$(setting "${USER_KEY}")" "${BOUND[@]}" python3 - "$1" "${2:-all}" "${ROMS_ROOT}" "${ES_DIR}" "${SCAN_SYSTEMS}" "${SCAN_CURSOR}" <<'PY'
+import json, os, re, sqlite3, sys
+import xml.etree.ElementTree as ET
+from pathlib import Path
+from raofflineproxy import cache_keys
+from raofflineproxy.config import DATABASE_FILE, load_config
+from raofflineproxy.rom_browser import (
+    MAX_SCAN_ENTRIES, is_supported_browser_file, normalize_cached_rom_path,
+)
+from raofflineproxy.smart_cache import load_content_history_paths
+from raofflineproxy.storage import Storage
+
+out, mode, roms_root, es_dir = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]), Path(sys.argv[4])
+walk_systems = sys.argv[5].split()
+cursor_file = Path(sys.argv[6]) if len(sys.argv) > 6 and sys.argv[6] else None
+user = cache_keys.normalize_user(os.environ.get("RA_SCAN_USER", ""))
+SKIP_DIRS = {
+    "images", "videos", "manuals", "media", "downloaded_images", "downloaded_videos",
+    "downloaded_manuals", "imgs", "savestates", "screenshots", "saves", "savefiles",
+}
+DISC_SHEETS = (".cue", ".gdi", ".m3u")
+
+
+def es_systems():
+    """(name, folder) per <system>, read as the interface reads them (#308
+    F-RA-06): SystemData::getConfigPath takes the first of the user's
+    es_systems_custom.cfg, the user's es_systems.cfg, the one beside the
+    binary and the image's as the base -- a custom file is the whole base
+    there too -- and loadAdditionnalConfig then merges every es_systems_*.cfg
+    in the user's folder and beside the binary into it by name: a known
+    system's tags replaced (a tag with no text dropped, <emulators> kept), a
+    new one appended, and a file that does not parse ends the merging, as it
+    does there."""
+    root = None
+    for cfg in (es_dir / "es_systems_custom.cfg", es_dir / "es_systems.cfg",
+                Path("/usr/bin/es_systems.cfg"), Path("/etc/emulationstation/es_systems.cfg"),
+                Path("/usr/config/emulationstation/es_systems.cfg")):
+        if not cfg.is_file():
+            continue
+        try:
+            root = ET.parse(cfg).getroot()
+        except Exception:
+            continue
+        break
+    if root is None:
+        return []
+    order, tags = [], {}
+    for system in root.iter("system"):
+        name = (system.findtext("name") or "").strip()
+        if name and name not in tags:
+            order.append(name)
+            tags[name] = {child.tag: child.text or "" for child in system}
+    merging = True
+    for folder in dict.fromkeys((es_dir, Path("/usr/bin"))):
+        if not merging:
+            break
+        try:
+            extras = sorted(e for e in folder.iterdir() if e.name.startswith("es_systems_") and e.suffix == ".cfg")
+        except OSError:
+            continue
+        for extra in extras:
+            try:
+                extra_root = ET.parse(extra).getroot()
+            except Exception:
+                merging = False
+                break
+            if extra_root.tag != "systemList":
+                merging = False
+                break
+            for system in extra_root.findall("system"):
+                name = (system.findtext("name") or "").strip()
+                if not name:
+                    continue
+                if name not in tags:
+                    order.append(name)
+                    tags[name] = {child.tag: child.text or "" for child in system}
+                    continue
+                for child in system:
+                    if child.tag == "name":
+                        continue
+                    tags[name].pop(child.tag, None)
+                    if child.tag == "emulators" or (child.text or ""):
+                        tags[name][child.tag] = child.text or ""
+    found = []
+    for name in order:
+        folder = (tags[name].get("path") or "").strip()
+        if folder:
+            found.append((name, Path(os.path.expanduser(folder))))
+    return found
+
+
+def game_path(folder, text):
+    text = text.strip()
+    if text.startswith("./"):
+        return folder / text[2:]
+    if text.startswith("/"):
+        return Path(text)
+    return folder / text
+
+
+def read_index(name, folder):
+    """{path: (cheevosHash, cheevosId)} for one system, read as the
+    interface reads it (Gamelist.cpp parseGamelist): gamelist.xml, then the
+    recovery files over it. A recovery file is a game's whole metadata as the
+    interface last had it, so its values replace the gamelist's -- but only
+    while its parentHash names the gamelist it was written beside (the
+    gamelist's size in bytes, 0 when there is none); one that names another
+    is stale and skipped, as the interface skips it."""
+    entries = {}
+
+    def take(doc, parent=None):
+        try:
+            root = ET.parse(doc).getroot()
+        except Exception:
+            return
+        if parent is not None:
+            try:
+                written_beside = int(root.get("parentHash", "0"))
+            except ValueError:
+                return
+            if written_beside != parent:
+                return
+        for game in root.iter("game"):
+            text = game.findtext("path") or ""
+            if not text.strip():
+                continue
+            entries[game_path(folder, text)] = (
+                (game.findtext("cheevosHash") or "").strip(),
+                (game.findtext("cheevosId") or "").strip(),
+            )
+
+    gamelist = folder / "gamelist.xml"
+    if not gamelist.is_file():
+        gamelist = es_dir / "gamelists" / name / "gamelist.xml"
+    size = 0
+    if gamelist.is_file():
+        try:
+            size = gamelist.stat().st_size
+        except OSError:
+            size = 0
+        take(gamelist)
+    recovery = es_dir / "recovery" / name
+    if recovery.is_dir():
+        for dirpath, dirnames, filenames in os.walk(recovery):
+            dirnames.sort()
+            for fn in sorted(filenames):
+                if fn.lower().endswith(".xml"):
+                    take(Path(dirpath) / fn, parent=size)
+    return entries
+
+
+config = load_config()
+storage = Storage()
+
+
+def is_cached(game_id, hash_value):
+    """Everything a launch reads, for this account and this dump."""
+    return (
+        storage.get_cache(cache_keys.patch(game_id, user)) is not None
+        and storage.get_cache(cache_keys.unlocks(game_id, user)) is not None
+        and storage.get_cache(cache_keys.achievementsets(hash_value, user)) is not None
+    )
+
+
+# The ROMs this account's patch rows name (rom_browser.load_cached_rom_paths,
+# narrowed to the account), in the client's own two-component form -- where
+# the game is ready for this account (whole_games: its unlocks row and an
+# achievementsets row of the game), as is_cached asks of an indexed game. A patch row alone (a fetch that failed after the first write, or
+# rows an older client's eviction thinned) used to pass the ROM over for
+# ever; now it is a job again (#308 F-RA-14). The dump's own sets row cannot
+# be asked here -- an unindexed ROM's hash is what the job finds out.
+HEAD_VALUE = re.compile(r"\s*:\s*(\d+)\s*[,}]")
+HEAD_COLON = re.compile(r"\s*:")
+def head_game_id(head):
+    depth, i, n = 0, 0, len(head)
+    while i < n:
+        c = head[i]
+        if c == "\"":
+            j = i + 1
+            while j < n and head[j] != "\"":
+                j += 2 if head[j] == "\\" else 1
+            if j >= n:
+                return None
+            if depth == 1 and head[i + 1:j] == "GameId":
+                whole = HEAD_VALUE.match(head, j + 1)
+                if whole:
+                    return int(whole.group(1))
+                if HEAD_COLON.match(head, j + 1):
+                    return None
+            i = j + 1
+            continue
+        if c in "{[":
+            depth += 1
+        elif c in "}]":
+            depth -= 1
+        i += 1
+    return None
+
+
+def whole_games():
+    """The games ready for this account -- the unlocks row and an
+    achievementsets row of the game, the rows a launch reads -- by the same
+    rule as the shell's ready_games_into (audit of the fixes, claude G-D-08,
+    gpt G-D-04). A sets row's GameId is read from its first 512 characters,
+    where the service writes it, and from the whole body only when they do
+    not hold it: every body parsed whole at every listing was tens of
+    megabytes on a large store. The head answers only with the body's own
+    key and a number that ends inside it (head_game_id above, the same text
+    as in the shell's ready_games_into; audit of the fix round, gpt
+    G2-D-01, claude G2-D-08)."""
+    unlocks, sets = set(), set()
+    try:
+        db = sqlite3.connect("file:%s?mode=ro" % DATABASE_FILE, uri=True, timeout=1.0)
+        rows = db.execute("SELECT cacheKey, substr(responseBody, 1, 512) FROM api_cache WHERE cacheKey LIKE ? OR cacheKey LIKE ?", ("unlocks:%", "achievementsets:%")).fetchall()
+    except Exception:
+        db = None
+        rows = [(e.get("cacheKey") or "", e.get("responseBody") or "") for prefix in (cache_keys.PREFIX_UNLOCKS, cache_keys.PREFIX_ACHIEVEMENTSETS) for e in storage.get_all_cache_by_prefix(prefix)]
+    for key, head in rows:
+        parts = str(key).split(":")
+        if parts[0] == "unlocks":
+            if len(parts) == 4 and parts[2] == user and parts[3] == "0" and parts[1].isdigit():
+                unlocks.add(int(parts[1]))
+            continue
+        if len(parts) != 3 or parts[2] != user:
+            continue
+        gid = head_game_id((head or "")[:512])
+        if gid is None:
+            try:
+                body = db.execute("SELECT responseBody FROM api_cache WHERE cacheKey = ?", (key,)).fetchone()[0] if db is not None else head
+                gid = int((json.loads(body) or {}).get("GameId") or 0)
+            except Exception:
+                gid = 0
+        if gid > 0:
+            sets.add(gid)
+    if db is not None:
+        db.close()
+    return unlocks & sets
+
+
+whole = whole_games()
+cached_paths = {
+    normalize_cached_rom_path(entry["sourceRomPath"])
+    for entry in storage.get_all_cache_by_prefix(cache_keys.PREFIX_PATCH)
+    if isinstance(entry.get("sourceRomPath"), str) and entry["sourceRomPath"].strip()
+    and entry["cacheKey"].endswith(":" + user)
+    and cache_keys.parse_game_id_from_patch_key(entry["cacheKey"]) in whole
+}
+try:
+    history = [str(p) for p in load_content_history_paths(config)]
+except Exception:
+    history = []
+
+
+def mtime(p):
+    try:
+        return p.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def by_history(paths):
+    """The played ones first, most recent first; then the rest, newest first."""
+    order = {p: i for i, p in enumerate(history)}
+    played = sorted((p for p in paths if str(p) in order), key=lambda p: order[str(p)])
+    rest = sorted((p for p in paths if str(p) not in order), key=mtime, reverse=True)
+    return played + rest
+
+
+indexed_dirs = set()
+indexed_seen = 0
+indexed_jobs = {}
+for name, folder in es_systems():
+    if not folder.is_dir():
+        continue
+    index = read_index(name, folder)
+    if not any(h for h, _ in index.values()):
+        continue
+    try:
+        indexed_dirs.add(folder.resolve())
+    except OSError:
+        indexed_dirs.add(folder)
+    for path, (hash_value, id_text) in index.items():
+        try:
+            game_id = int(id_text)
+        except ValueError:
+            game_id = 0
+        if game_id <= 0 or not hash_value or not path.is_file():
+            continue
+        indexed_seen += 1
+        if path in indexed_jobs or is_cached(game_id, hash_value):
+            continue
+        indexed_jobs[path] = (game_id, hash_value)
+storage.close()
+
+def read_cursor():
+    try:
+        return cursor_file.read_text(encoding="utf-8", errors="surrogateescape").rstrip("\n") if cursor_file else ""
+    except OSError:
+        return ""
+
+
+def propose_cursor(value):
+    """The cursor this walk proposes -- the path of the last file it took,
+    or nothing when the walk came round -- written whole to
+    scan-cursor.next for the ctl to keep once the run has worked through its
+    jobs (commit_cursor): a run cancelled or stopped after its listing
+    leaves the cursor where it was, so the next scan takes the same slice
+    (audit of the fixes, claude G-D-06). False when it could not be written
+    -- and the ctl says so rather than promising a continuation it cannot
+    keep (gpt G-D-06)."""
+    if cursor_file is None:
+        return True
+    proposal = cursor_file.with_name(cursor_file.name + ".next")
+    tmp = proposal.with_name(proposal.name + ".tmp")
+    try:
+        tmp.write_text(value + "\n" if value else "", encoding="utf-8", errors="surrogateescape")
+        os.replace(tmp, proposal)
+        return True
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        return False
+
+
+# The walk is a circle from a cursor (#307 PL-059). Cached files are passed
+# over before the cap counts (#186 PL-17), but a file that never caches -- a
+# ROM RetroAchievements does not know is skipped, and stays uncached --
+# counted every run, so the first MAX_SCAN_ENTRIES such files held the front
+# of the walk for ever and the files past them were never reached. So a walk
+# the cap cuts proposes the path of the last file it took (scan-cursor.next),
+# the ctl keeps it as scan-cursor once the run has worked through its jobs,
+# and the next walk takes the files after it first, then comes round to the
+# start. A walk that fits under the cap removes the cursor; a cursor that
+# names a file the walk no longer meets (deleted, or its folder now indexed)
+# starts the circle from the top.
+walked = []
+walked_cached = 0
+truncated = 0
+cursor_saved = 1
+if mode == "all":
+    cursor = read_cursor()
+    passed = not cursor
+    before, after = [], []   # the candidates up to the cursor, and past it
+    full = False
+    for name in walk_systems:
+        root = roms_root / name
+        if not root.is_dir():
+            continue
+        try:
+            if root.resolve() in indexed_dirs:
+                continue
+        except OSError:
+            pass
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = sorted(d for d in dirnames if not d.startswith(".") and d.lower() not in SKIP_DIRS)
+            has_sheet = any(f.lower().endswith(DISC_SHEETS) for f in filenames)
+            for fn in sorted(filenames):
+                if fn.startswith("."):
+                    continue
+                path = Path(dirpath) / fn
+                at_cursor = not passed and str(path) == cursor
+                # Before the cursor only the first cap's worth is ever
+                # taken (the circle's tail), so past that the walk only
+                # looks for the cursor.
+                if not passed and len(before) > MAX_SCAN_ENTRIES:
+                    passed = passed or at_cursor
+                    continue
+                take = False
+                if is_supported_browser_file(path) and not (has_sheet and fn.lower().endswith(".bin")):
+                    try:
+                        take = path.is_file() and path.stat().st_size > 0
+                    except OSError:
+                        take = False
+                if take and normalize_cached_rom_path(path) in cached_paths:
+                    walked_cached += 1
+                    take = False
+                if take:
+                    (after if passed else before).append(path)
+                passed = passed or at_cursor
+                if len(after) > MAX_SCAN_ENTRIES:
+                    full = True
+                    break
+            if full:
+                break
+        if full:
+            break
+    candidates = after + before
+    walked = candidates[:MAX_SCAN_ENTRIES]
+    truncated = 1 if len(candidates) > MAX_SCAN_ENTRIES else 0
+    cursor_saved = 1 if propose_cursor(str(walked[-1]) if truncated and walked else "") else 0
+
+hash_jobs = walked
+
+lines = [f"I\t{indexed_jobs[p][0]}\t{indexed_jobs[p][1]}\t{p}\n" for p in by_history(list(indexed_jobs))]
+lines += [f"H\t\t\t{p}\n" for p in by_history(hash_jobs)]
+out.write_text("".join(lines), encoding="utf-8")
+found = indexed_seen + len(walked) + walked_cached
+new = len(lines)
+print(f"found={found} new={new} cached={found - new} indexed={len(indexed_jobs)} hashing={len(hash_jobs)} truncated={truncated} cursor_saved={cursor_saved}")
+PY
+}
+
+# One field of list_jobs' summary line, or 0.
+count_of() {
+    local V="${1#*${2}=}"
+    V="${V%% *}"
+    case "${V}" in ''|*[!0-9]*) echo 0 ;; *) echo "${V}" ;; esac
+}
+
+# The helper that works the job list: beside this script, so a copy of the
+# two files runs from anywhere they are put together.
+case "$0" in
+    */*) HELPER="${0%/*}/raofflineproxy-cache-indexed"; IMAGE_HELPER="${0%/*}/raofflineproxy-cache-images"; REFRESH_HELPER="${0%/*}/raofflineproxy-refresh" ;;
+    *)   HELPER="/usr/bin/raofflineproxy-cache-indexed"; IMAGE_HELPER="/usr/bin/raofflineproxy-cache-images"; REFRESH_HELPER="/usr/bin/raofflineproxy-refresh" ;;
+esac
+
+# Run the job list $2 of $3 games through the helper and read its lines as
+# they come -- "OK i/n <file>", "FAIL i/n <file>: <reason>", "DONE cached=
+# failed= indexed=" -- stopping it after three lookups in a row that
+# RetroAchievements did not answer, or on a refused sign-in, or when the
+# client reports its cap. $1 is page (the >>> lines for GuiOfflineScan) or
+# quiet (nothing on stdout, for the top-up); $4 a bound in seconds, 0 for
+# none. Leaves R_CACHED R_SKIPPED R_ERRORS R_LIMIT R_WHY R_STOPPED R_INDEXED
+# R_CLIENT_RC for the caller, and the helper's stderr in the scan log. The
+# helper's stdout goes through a fifo so it can be stopped between two lines.
+run_jobs() {
+    local MODE="$1" LIST="$2" TOTAL="$3" BUDGET="${4:-0}"
+    local -a PATHS
+    mapfile -t PATHS < "${LIST}"
+    JOBS_FIFO="$(mktemp -u /tmp/raofflineproxy-scan-out.XXXXXX)"
+    mkfifo "${JOBS_FIFO}" || fail "cannot create ${JOBS_FIFO}"
+    if [ "${BUDGET}" -gt 0 ]; then
+        timeout "${BUDGET}" python3 "${HELPER}" "${LIST}" > "${JOBS_FIFO}" 2>>"${SCAN_LOG}" &
+    else
+        python3 "${HELPER}" "${LIST}" > "${JOBS_FIFO}" 2>>"${SCAN_LOG}" &
+    fi
+    CLIENT=$!
+    exec 8< "${JOBS_FIFO}"
+
+    R_CACHED=0; R_SKIPPED=0; R_ERRORS=0; R_LIMIT=0; R_WHY=""; R_STOPPED=0; R_INDEXED=0; R_DONE=0
+    local IN_A_ROW=0 line index name
+    if [ "${TOTAL}" -gt 0 ]; then
+        name="${PATHS[0]##*/}"
+        mark_running " index=1 total=${TOTAL} name=${name//[[:space:]]/_}"
+        [ "${MODE}" = page ] && tell "game 1|${TOTAL}|${name%.*}"
+    fi
+    while IFS= read -r line <&8; do
+        slog "client: ${line}"
+        case "${line}" in
+            OK\ *)
+                R_CACHED=$((R_CACHED + 1)); IN_A_ROW=0 ;;
+            DONE\ *)
+                # The helper's verdict on the games: whatever the process does
+                # afterwards (badge downloads outliving the bound, fork #188) is
+                # not the run's outcome.
+                R_INDEXED="$(count_of "${line}" indexed)"; R_DONE=1
+                continue ;;
+            *"Cache limit reached"*)
+                # The client says it will cache no more (no ROCKNIX client
+                # does since patch 004; kept for one that says so): every
+                # further ROM would be hashed and looked up only to be
+                # refused.
+                R_LIMIT=1; R_STOPPED=1
+                slog "run: the client reports its cache limit; stopping"
+                kill "${CLIENT}" 2>/dev/null
+                break ;;
+            *"No RetroAchievements match"*|*"Hash failed"*|*": not found")
+                # Not a game RetroAchievements knows, or not a file it can
+                # read: the proxy's docs skip these silently, and so does
+                # the page -- counted here for the log and the stamp.
+                R_SKIPPED=$((R_SKIPPED + 1)); IN_A_ROW=0 ;;
+            *"login required"*|*"HTTP Error 401"*|*"HTTP Error 403"*)
+                # The account, not the link: no retry changes it.
+                R_WHY=SIGN_IN_REFUSED; R_STOPPED=1
+                kill "${CLIENT}" 2>/dev/null
+                break ;;
+            FAIL\ *)
+                # A lookup or a fetch that did not come back: the link, the
+                # server, a 429. A run of them is the scan asking a question
+                # nobody is answering.
+                R_ERRORS=$((R_ERRORS + 1)); IN_A_ROW=$((IN_A_ROW + 1))
+                if [ "${IN_A_ROW}" -ge "${ERRORS_IN_A_ROW}" ]; then
+                    R_WHY=RETROACHIEVEMENTS_STOPPED_ANSWERING; R_STOPPED=1
+                    kill "${CLIENT}" 2>/dev/null
+                    break
+                fi ;;
+            *)
+                continue ;;
+        esac
+        # The helper finished game i (1-based); what it is on now is i+1.
+        index="${line#* }"; index="${index%%/*}"
+        case "${index}" in ''|*[!0-9]*) index=0 ;; esac
+        if [ "${index}" -gt 0 ] && [ "${index}" -lt "${TOTAL}" ]; then
+            name="${PATHS[${index}]##*/}"
+            mark_running " index=$((index + 1)) total=${TOTAL} name=${name//[[:space:]]/_}"
+        fi
+        [ "${MODE}" = page ] || continue
+        tell "cached ${R_CACHED}|${R_SKIPPED}"
+        if [ "${index}" -gt 0 ] && [ "${index}" -lt "${TOTAL}" ]; then
+            tell "game $((index + 1))|${TOTAL}|${name%.*}"
+        fi
+    done
+    exec 8<&-
+    wait "${CLIENT}" 2>/dev/null
+    R_CLIENT_RC=$?
+    unset CLIENT
+    rm -f "${JOBS_FIFO}"; JOBS_FIFO=""
+    unmark_running
+    if [ "${R_DONE}" -eq 1 ] && [ "${R_CLIENT_RC}" -ne 0 ]; then
+        slog "run: the helper had reported DONE and ended with rc ${R_CLIENT_RC} afterwards (badge downloads cut short) -- not the run's verdict (#188)"
+    fi
+}
+
+# A run asked to stop (disable's SIGTERM, #186 PL-30) exits through its
+# EXIT trap: the helper is ended, the run's files go, no stamp is written --
+# the line under the row keeps the last run that finished.
+stopped() {
+    say "${1}: stopped; offline RetroAchievements was turned off"
+    exit 143
+}
+
+# A scan the player cancelled from its page (SIGINT from the interface,
+# fork #241, D-UI-078). Not a failure: what the run saved stays saved, and
+# the next scan passes over those games. So the stamp is written with the
+# counts the run had reached -- the line under the row says SKIPPED and the
+# ready count is right -- the page is told why, and the run exits 130
+# through its EXIT trap (the helper ended, the run's files gone). R_CACHED
+# and the rest are the run's so far; before run_jobs they are unset, and
+# read as 0. added= is measured as the run's own end measures it -- the
+# ready set the run took before its jobs against the store now -- and is
+# unknown when either cannot be read, never the games cached so far
+# (PL-031).
+cancelled() {
+    local READY MADE=""
+    READY="$(count_ready)"
+    if [ -n "${READY_BEFORE:-}" ] && READY_AFTER="$(mktemp /tmp/raofflineproxy-ready.XXXXXX 2>/dev/null)" && ready_games_into "${READY_AFTER}"; then
+        MADE="$(games_made_ready "${READY_BEFORE}" "${READY_AFTER}")"
+    fi
+    tell "why CANCELLED"
+    write_stamp 130 "${1}" "${R_CACHED:-0}" "${R_SKIPPED:-0}" "${READY}" 0 "${R_INDEXED:-0}" "${R_ERRORS:-0}" CANCELLED "${MADE}"
+    slog "${1} cancelled by the player: cached=${R_CACHED:-0} skipped=${R_SKIPPED:-0} errors=${R_ERRORS:-0} ready=${READY}"
+    say "${1}: cancelled"
+    exit 130
+}
+
+# The images of what is cached, fetched until none is missing (#212). A
+# game's achievements and its images are one action to a player -- the
+# maintainer, 2026-09-18: "whenever we cache the achievements, we cache the
+# images for the achievements" -- so this runs at the end of a scan and of a
+# top-up that cached anything, and on its own as the `images` verb.
+#
+# The helper walks the store, not the library: every cached set row, every
+# image path in it, and the ones with no file get fetched. Idempotent (the
+# check is the file's existence and the client's own download no-ops on one)
+# and resumable (nothing marks a game done but its files), so a run that
+# stops at its ceiling costs the next one nothing. Bounded by what is left of
+# the caller's deadline, or IMAGE_PASS_SECONDS on its own.
+#
+# Its verdict is part of the run's (#307 PL-060). A game whose badges are
+# missing offline reads as half working (D-RA-027), and a run whose parts
+# disagree is COULDN'T FINISH (D-UI-030), so a pass that left images behind
+# -- the helper's `why` line, or an exit it gives no reason for -- leaves
+# R_IMAGES_WHY=SOME_IMAGES_NOT_SAVED for the caller to stamp, the games
+# still counted as cached. A verify slice that did not come round the store
+# (the helper's exit 3) is the sweep doing its work a slice a run, by design
+# (D-RA-024), and is no failure; every other exit is, a crash included. An
+# image the image server does not have (404, 410) is recorded absent by the
+# helper and is no failure either: SOME_IMAGES_NOT_SAVED means images that
+# did not come this time -- a timeout, a 5xx, a short read -- and are asked
+# for again (PL-060's follow-up).
+IMAGE_PASS_SECONDS="${RAOFFLINEPROXY_IMAGE_PASS_SECONDS:-300}"
+
+run_image_pass() {
+    local VERB="$1" SECONDS_LEFT="${2:-${IMAGE_PASS_SECONDS}}" MODE="${3:-}" RC=0
+    R_IMAGES_WHY=""
+    [ -x "${IMAGE_HELPER}" ] || { slog "${VERB}: no image helper at ${IMAGE_HELPER}"; return 0; }
+    # No time left is no pass: the images were not looked at, and the run
+    # does not say it finished (audit of the fixes, gpt G-D-01).
+    [ "${SECONDS_LEFT}" -gt 10 ] 2>/dev/null || { slog "${VERB}: no time left for the image pass (${SECONDS_LEFT}s); not run"; R_IMAGES_WHY=TOOK_TOO_LONG; return 0; }
+    slog "${VERB}: image pass, up to ${SECONDS_LEFT}s${MODE:+ (${MODE})}"
+    # In the background and waited for, as the jobs and the recently played
+    # pass are: bash runs a trap only once the foreground command has
+    # returned, so with the helper in the foreground the page's CANCEL (INT)
+    # and a stop from disable or STOP IT AND PLAY (TERM) waited for the whole
+    # pass before the run could answer either (#307 PL-013, #308 F-RA-11).
+    # wait returns the moment a trapped signal arrives, and CLIENT is what
+    # the EXIT trap ends. CLIENT is timeout, which puts itself and the
+    # helper in a process group of their own: the interface's SIGINT to the
+    # run's group reaches this script, not the helper, and the EXIT trap's
+    # kill of timeout is forwarded to the helper as SIGTERM -- the path the
+    # harness's D23 runs under GNU timeout (audit of the fixes, claude
+    # G-D-03).
+    # Bounded at the process as well (#308 F-RA-10): the helper checks its
+    # --seconds between one blocking call and the next, so it is given ten
+    # seconds less than the pass has and timeout ends it at the pass's
+    # bound whatever it is blocked on (a timeout is images not saved).
+    # shellcheck disable=SC2086 -- MODE is one flag or empty, on purpose
+    timeout "${SECONDS_LEFT}" "${IMAGE_HELPER}" --seconds "$(( SECONDS_LEFT - 10 ))" ${MODE} >>"${SCAN_LOG}" 2>&1 &
+    CLIENT=$!
+    wait "${CLIENT}" || RC=$?
+    unset CLIENT
+    # 0: every image there. 3: every image there, a verify slice left for
+    # the next pass. Anything else -- images left behind (1), no store or
+    # account (2), a helper that died -- is the pass not done.
+    case "${RC}" in
+        0|3) ;;
+        *) R_IMAGES_WHY=SOME_IMAGES_NOT_SAVED ;;
+    esac
+    slog "${VERB}: image pass rc=${RC}${R_IMAGES_WHY:+ why=${R_IMAGES_WHY}}"
+    return "${RC}"
+}
+
+do_images() {
+    local MODE=""
+    [ "${1:-}" = "--verify" ] && MODE=--verify
+    refuse_unless_ready images
+    if ! is_online; then
+        say "images: refused, this device is offline"
+        tell "why NO_NETWORK"
+        exit ${EX_UNAVAILABLE}
+    fi
+    # The lock carries this pid, so `disable` can ask the run to stop
+    # (stop_running_run, #186 PL-30); the TERM trap ends the helper and
+    # the EXIT trap clears the progress file, as scan's do. The progress
+    # line is route=images at=<epoch>: RUN_ROUTE names the verb, and
+    # mark_running's argument is the rest of the line, not the verb --
+    # `mark_running images` wrote at=<epoch>images (audit #258 PL-013).
+    trap 'stopped images' TERM
+    RUN_ROUTE=images
+    take_lock images
+    mark_running
+    trap 'unmark_running; [ -n "${CLIENT:-}" ] && kill "${CLIENT}" 2>/dev/null' EXIT
+    local RC=0
+    # Bounded at the process too, a grace past the helper's own --seconds
+    # (#308 F-RA-10).
+    # shellcheck disable=SC2086 -- MODE is one flag or empty, on purpose
+    timeout "$(( IMAGE_PASS_SECONDS + 10 ))" "${IMAGE_HELPER}" --seconds "${IMAGE_PASS_SECONDS}" ${MODE} &
+    CLIENT=$!
+    wait "${CLIENT}" || RC=$?
+    CLIENT=""
+    slog "images: rc=${RC}${MODE:+ (${MODE})}"
+    exit "${RC}"
+}
+
+# refresh [--game <id>|--all]. The service's own pass re-reads, each online
+# hour while the proxy is idle, the cached games played in the last seven
+# days (upstream 59b167c, D-RA-029; patch 005 keeps only its exception
+# boundary), which covers the ordinary case -- not every cached game, and not
+# daily, as this said until #308 F-RA-28. This is for the player standing in
+# front of the device who has just changed
+# something on the site -- reset an achievement, earned one elsewhere -- and
+# wants it true here before going offline (#223).
+do_refresh() {
+    local WHICH=()
+    case "${1:-}" in
+        --all)  WHICH=(--all) ;;
+        --game) [ -n "${2:-}" ] || { echo "usage: raofflineproxy-ctl refresh [--all|--game <id>]" >&2; exit ${EX_USAGE}; }
+                WHICH=(--game "${2}") ;;
+        "")     ;;
+        *)      echo "usage: raofflineproxy-ctl refresh [--all|--game <id>]" >&2; exit ${EX_USAGE} ;;
+    esac
+    refuse_unless_ready refresh
+    if ! is_online; then
+        say "refresh: refused, this device is offline"
+        tell "why NO_NETWORK"
+        exit ${EX_UNAVAILABLE}
+    fi
+    # As images: the pid in the lock, a TERM trap over the helper, the
+    # verb in RUN_ROUTE (audit #258 PL-013).
+    trap 'stopped refresh' TERM
+    RUN_ROUTE=refresh
+    take_lock refresh
+    mark_running
+    trap 'unmark_running; [ -n "${CLIENT:-}" ] && kill "${CLIENT}" 2>/dev/null' EXIT
+    local RC=0
+    # The helper looks at its --seconds between games; a game's requests
+    # can block past it, so the process is bounded too, a minute's grace
+    # past the helper's own ceiling (#308 F-RA-10).
+    timeout "$(( TOPUP_TIMEOUT + 60 ))" "${REFRESH_HELPER}" --seconds "${TOPUP_TIMEOUT}" "${WHICH[@]}" &
+    CLIENT=$!
+    wait "${CLIENT}" || RC=$?
+    CLIENT=""
+    slog "refresh: rc=${RC} ${WHICH[*]}"
+    exit "${RC}"
+}
+
+do_scan() {
+    trap 'stopped scan' TERM
+    trap 'cancelled scan' INT
+    RUN_ROUTE=scan
+    take_lock scan
+    refuse_unless_ready scan
+    mkdir -p "${PROXY_DIR}" || fail "cannot create ${PROXY_DIR}"
+    if ! is_online; then
+        say "scan: refused, RetroAchievements is not reachable"
+        slog "scan refused: offline by the proxy's probe"
+        exit ${EX_UNAVAILABLE}
+    fi
+
+    local LIST
+    LIST="$(mktemp /tmp/raofflineproxy-scan.XXXXXX)" || fail "cannot create the list"
+    # Everything of the run's goes when the run does, however it ends.
+    trap 'rm -f "${LIST}" "${JOBS_FIFO:-}" "${READY_BEFORE:-}" "${READY_AFTER:-}" "${SCAN_CURSOR}.next" "${RUNNING}" "${RUNNING}.tmp"; [ -n "${CLIENT:-}" ] && kill "${CLIENT}" 2>/dev/null' EXIT
+
+    local COUNTS
+    R_IMAGES_WHY=""
+    mark_running
+    tell "doing listing"
+    if ! COUNTS="$(list_jobs "${LIST}" all 0 2>>"${SCAN_LOG}")"; then
+        slog "scan: the library could not be listed"
+        tell "why LIBRARY_UNREADABLE"
+        write_stamp 1 scan 0 0 "$(count_ready)" 0 0 0 LIBRARY_UNREADABLE
+        exit 1
+    fi
+    local FOUND NEW TRUNC
+    FOUND="$(count_of "${COUNTS}" found)"
+    NEW="$(count_of "${COUNTS}" new)"
+    TRUNC="$(count_of "${COUNTS}" truncated)"
+    slog "scan start: ${COUNTS}"
+    if [ "${TRUNC}" -eq 1 ]; then
+        slog "scan: the walk stopped at the client's cap of files per run; the next scan walks on from ${SCAN_CURSOR}"
+    fi
+
+    local READY
+    if [ "${FOUND}" -eq 0 ]; then
+        READY="$(count_ready)"
+        slog "scan: no games found under ${ROMS_ROOT}"
+        tell "why NO_GAMES_FOUND"
+        write_stamp 1 scan 0 0 "${READY}" 0 0 0 NO_GAMES_FOUND
+        exit 1
+    fi
+    tell "total ${NEW}"
+    if [ "${NEW}" -eq 0 ]; then
+        tell "note NOTHING_NEW"
+        commit_cursor || slog "scan: an old cursor could not be removed; the next walk starts from the top all the same"
+        # No game to cache, but the images of what is cached may still be
+        # missing -- a pass the last run cut, a badge that did not come --
+        # and pressing SCAN again is how a player asks for them (#307
+        # PL-060). The same pass, the same verdict.
+        run_image_pass scan "${IMAGE_PASS_SECONDS}"
+        READY="$(count_ready)"
+        local RC0=0 WHY0="${R_IMAGES_WHY}"
+        [ -n "${WHY0}" ] && { RC0=1; tell "why ${WHY0}"; }
+        slog "scan done: nothing new, ready=${READY}${WHY0:+ why=${WHY0}}"
+        write_stamp "${RC0}" scan 0 0 "${READY}" 0 0 0 "${WHY0}"
+        tell "done 0|0|${READY}|0"
+        exit "${RC0}"
+    fi
+
+    READY_BEFORE="$(mktemp /tmp/raofflineproxy-ready.XXXXXX 2>/dev/null)" && { ready_games_into "${READY_BEFORE}" || { rm -f "${READY_BEFORE}"; READY_BEFORE=""; }; }
+    run_jobs page "${LIST}" "${NEW}" 0
+
+    READY="$(count_ready)"
+    local ADDED=""
+    READY_AFTER="$(mktemp /tmp/raofflineproxy-ready.XXXXXX 2>/dev/null)" && ready_games_into "${READY_AFTER}" && ADDED="$(games_made_ready "${READY_BEFORE}" "${READY_AFTER}")"
+    rm -f "${READY_BEFORE}" "${READY_AFTER}"; READY_BEFORE=""; READY_AFTER=""
+    # A measurement that failed is said as one (added_count, PL-031).
+    ADDED="$(added_count "${ADDED}" "${R_CACHED}")"
+    [ "${ADDED}" = "unknown" ] && slog "scan: the store could not be read before or after the jobs; how many games they made ready is not known (added=unknown)"
+    local RC=0 WHY="${R_WHY}"
+    if [ -n "${WHY}" ]; then
+        RC=1
+    elif [ "${R_STOPPED}" -eq 0 ] && [ "${R_CLIENT_RC}" -ne 0 ] && [ "${R_DONE}" -eq 0 ]; then
+        # The helper died on its own, before its DONE, without a reason the
+        # lines above named: the log has its traceback. (After DONE the games
+        # are cached and the exit is the badge downloads', fork #188.)
+        RC=1; WHY=SOMETHING_WENT_WRONG
+    elif [ "${R_ERRORS}" -gt 0 ]; then
+        # A fetch that failed for any game, even between games that went
+        # through, is a run that did not finish (D-UI-030: a run whose
+        # parts disagree is COULDN'T FINISH); the next run tries them again.
+        RC=1; WHY=SOME_GAMES_NOT_SAVED
+    fi
+    # The images of what this run cached, and of anything cached before it
+    # that is still missing one (#212): the same action, finished.
+    # The scan has no deadline of its own (the top-up's TOPUP_TIMEOUT is the
+    # one clock here), so the pass gets its own ceiling.
+    # Whenever the run worked through its jobs -- cached one or not: a
+    # library with a ROM RetroAchievements does not know lists a job at
+    # every scan, and gating the pass on a cached game left such a scan
+    # COMPLETED over badges it never looked at (audit of the fixes, claude
+    # G-D-02 = gpt G-D-01). Not after a stop on a refused sign-in or a
+    # server that stopped answering.
+    [ "${R_STOPPED}" -eq 0 ] && run_image_pass scan "${IMAGE_PASS_SECONDS}"
+    # The games' own why comes first; a pass that left images behind is the
+    # run's why when the games went through (#307 PL-060).
+    if [ -z "${WHY}" ] && [ -n "${R_IMAGES_WHY}" ]; then
+        RC=1; WHY="${R_IMAGES_WHY}"
+    fi
+
+    # The walk's cursor is kept once the run has worked through its jobs; a
+    # run stopped short leaves it where it was (claude G-D-06). A cut walk
+    # whose cursor could not be kept promises no continuation: the run could
+    # not finish, and neither the page nor the stamp says TRUNCATED (gpt
+    # G-D-06).
+    if [ "${R_DONE}" -eq 1 ] && [ "${R_STOPPED}" -eq 0 ]; then
+        if [ "${TRUNC}" -eq 1 ]; then
+            if [ "$(count_of "${COUNTS}" cursor_saved)" -ne 1 ] || ! commit_cursor; then
+                slog "scan: the walk's cursor could not be saved; the next scan would take the same slice"
+                TRUNC=0
+                [ -z "${WHY}" ] && { RC=1; WHY=SOMETHING_WENT_WRONG; }
+            fi
+        else
+            commit_cursor || slog "scan: an old cursor could not be removed; the next walk starts from the top all the same"
+        fi
+    elif [ "${TRUNC}" -eq 1 ]; then
+        slog "scan: the run stopped short of its jobs; the cursor stays where it was"
+    fi
+    rm -f "${SCAN_CURSOR}.next"
+    [ "${R_LIMIT}" -eq 1 ] && tell "note LIMIT_REACHED"
+    # Not every folder was walked: the page says so (GuiOfflineScan's
+    # NOT EVERY FOLDER WAS LOOKED AT. SCAN AGAIN TO CONTINUE.) and the stamp
+    # carries it -- the log alone said it before (#307 PL-059).
+    [ "${TRUNC}" -eq 1 ] && tell "note TRUNCATED"
+    [ "${R_ERRORS}" -gt 0 ] && tell "errors ${R_ERRORS}"
+    [ -n "${WHY}" ] && tell "why ${WHY}"
+    write_stamp "${RC}" scan "${R_CACHED}" "${R_SKIPPED}" "${READY}" "${R_LIMIT}" "${R_INDEXED}" "${R_ERRORS}" "${WHY}" "${ADDED}" "${TRUNC}"
+    slog "scan done: rc=${RC} cached=${R_CACHED} indexed=${R_INDEXED} skipped=${R_SKIPPED} errors=${R_ERRORS} ready=${READY} limit=${R_LIMIT}${WHY:+ why=${WHY}}"
+    say "scan: cached ${R_CACHED} (${R_INDEXED} from the index), skipped ${R_SKIPPED}, ${READY} ready${WHY:+; ${WHY}}"
+    tell "done ${R_CACHED}|${R_SKIPPED}|${READY}|${R_LIMIT}"
+    exit "${RC}"
+}
+
+# index-offline: the interface's index had games to identify and
+# RetroAchievements' hash library did not come -- offline, nearly always
+# (fork #299, D-UI-104). The marker the after-index run leaves when its
+# probe fails is written here without a probe, since the interface already
+# knows the library did not come: the next link-return topup lists the
+# library once, inside the half hour or not, and clears it once that
+# listing's games are handled. The games this index could not identify are
+# not among them -- they have no cheevosId until an index with the library
+# gives them one; the interface runs that index when the link comes up, and
+# its topup --after-index caches them (#308 F-RA-22). Nothing else is
+# touched; exit 0.
+# index-pending holds a token -- when it was written and by which process --
+# so a top-up can tell the marker its listing was made for from a newer one
+# an index writes while it runs (audit of the fixes, gpt G-D-03). Whole or
+# not at all. A marker an earlier build left is an empty file, and reads as
+# one token like any other.
+#
+# The marker has a lock of its own (audit of the fix round, gpt G2-D-03):
+# the top-up's token check and its removal are one step under it
+# (ack_index_pending), and a write takes it too, so an index's newer marker
+# cannot land between that check and that removal and go with the older
+# one. It is held for a read, a rename or an unlink, never across anything
+# that waits. Busybox flock has no -w: five tries a second apart. A lock
+# that cannot be had leaves the safe side -- the write goes ahead, since a
+# notification lost leaves the player's games uncached, and the removal
+# does not, since a marker kept costs one more listing.
+PENDING_LOCK="/var/run/raofflineproxy-index-pending.lock"
+pending_lock() {
+    local TRY=0
+    exec 6<>"${PENDING_LOCK}" 2>/dev/null || return 1
+    until flock -n 6; do
+        TRY=$((TRY + 1))
+        if [ "${TRY}" -ge 5 ]; then exec 6>&-; return 1; fi
+        sleep 1
+    done
+}
+
+pending_unlock() {
+    exec 6>&-
+}
+
+write_index_pending() {
+    local LOCKED=0 RC=0
+    if pending_lock; then LOCKED=1; else say "index-pending: its lock could not be had; written without it"; fi
+    printf '%s %s %s\n' "$(date +%s)" "$$" "${RANDOM}" > "${INDEX_PENDING}.tmp" 2>/dev/null \
+        && mv -f "${INDEX_PENDING}.tmp" "${INDEX_PENDING}" || RC=1
+    [ "${LOCKED}" -eq 1 ] && pending_unlock
+    return "${RC}"
+}
+
+# ack_index_pending <token>: remove index-pending if it is still the marker
+# the caller's listing was made for. 0 removed, 1 kept (a newer marker), 2
+# kept because the lock could not be had.
+ack_index_pending() {
+    # Taken aside by rename before it is read: a writer that could not have
+    # the lock renames a newer marker into place (write_index_pending's
+    # fallback), and a compare-then-rm on the shared path removed that newer
+    # one (the audit of the fixes, gpt G3-D-03). Whatever lands on the path
+    # after the rename is somebody else's and stays; a moved marker that is
+    # not the caller's token goes back.
+    local RC=1 mine="${INDEX_PENDING}.ack.$$"
+    pending_lock || return 2
+    if mv -f "${INDEX_PENDING}" "${mine}" 2>/dev/null; then
+        if [ "$(cat "${mine}" 2>/dev/null)" = "${1}" ]; then
+            rm -f "${mine}" && [ ! -e "${mine}" ] && RC=0
+        else
+            [ -e "${INDEX_PENDING}" ] || mv -f "${mine}" "${INDEX_PENDING}" 2>/dev/null
+            rm -f "${mine}" 2>/dev/null
+        fi
+    fi
+    pending_unlock
+    return "${RC}"
+}
+
+do_index_offline() {
+    mkdir -p "${PROXY_DIR}" || fail "cannot create ${PROXY_DIR}"
+    write_index_pending || fail "cannot write ${INDEX_PENDING}"
+    slog "index ran offline: the hash library did not come (index-pending); the library is listed once at the link's return"
+}
+
+# topup [--after-index]. --after-index is the run the interface starts as
+# its hasher finishes (ThreadedHasher, with the toggle on): it waits for a
+# top-up already running instead of giving way to it, and it does not count
+# the half-hour since the last attempt against itself -- the index has just
+# grown, and that is the one moment a top-up is sure to have something to
+# do. It marks the attempt like any other, once its probe has answered.
+do_topup() {
+    local AFTER_INDEX=0 AI_NOTE=""
+    RUN_ROUTE=topup
+    if [ "${1:-}" = "--after-index" ]; then AFTER_INDEX=1; AI_NOTE=" (after the index)"; fi
+    trap 'stopped topup' TERM
+    # One deadline, taken before anything can wait: the lock, the probes,
+    # the listing and both passes all spend from it, so the run ends within
+    # TOPUP_TIMEOUT of this moment whatever each part costs (#186 PL-28).
+    local START
+    START="$(date +%s)"
+    take_lock topup "${AFTER_INDEX}" "${START}"
+    refuse_unless_ready topup >/dev/null
+    mkdir -p "${PROXY_DIR}" || fail "cannot create ${PROXY_DIR}"
+
+    # Bounded: one attempt per interval, whatever the link does. The mark
+    # is read here and set only below, once a probe has reached the server.
+    # An index that ran offline (index-pending, below) is the one reason to
+    # run inside the interval: the player added games and the toast said
+    # they are looked up next time the device is connected (fork #299,
+    # D-UI-104), and "next time" is this link, not the one after the half
+    # hour. Only a marker written since the last attempt: one a failed
+    # attempt left behind (#307 PL-055, below) waits out the half hour like
+    # any other run, so a link that flaps does not turn it into a request
+    # storm.
+    local PENDING_DUE=0
+    if [ -e "${INDEX_PENDING}" ] && { [ ! -e "${TOPUP_MARK}" ] || [ "${INDEX_PENDING}" -nt "${TOPUP_MARK}" ]; }; then
+        PENDING_DUE=1
+    fi
+    if [ "${AFTER_INDEX}" -eq 0 ] && [ -e "${TOPUP_MARK}" ] && [ "${PENDING_DUE}" -eq 0 ]; then
+        local AGE=$(( $(date +%s) - $(stat -c %Y "${TOPUP_MARK}" 2>/dev/null || echo 0) ))
+        if [ "${AGE}" -ge 0 ] && [ "${AGE}" -lt "${TOPUP_INTERVAL}" ]; then
+            exit 0
+        fi
+        # The link's return has one question -- was a game played since the
+        # last attempt? -- and no game means nothing to look for: out before
+        # the probe, the mark untouched (fork #299, D-RA-035: the maintainer,
+        # a nine-second check at wake with nothing to add).
+        local HIST
+        HIST="$(history_path)"
+        if [ ! -e "${INDEX_PENDING}" ] && { [ ! -e "${HIST}" ] || [ ! "${HIST}" -nt "${TOPUP_MARK}" ]; }; then
+            slog "topup: no game played since the last attempt (${HIST} is not newer than the mark); nothing to look for, skipped"
+            exit 0
+        fi
+    fi
+
+    # The hook fires when the address arrives, which can be well before the
+    # resolver answers (fork #175: 20-45 s behind on that boot shape), so
+    # the probe gets the token check's patience -- PROBE_TRIES tries,
+    # PROBE_INTERVAL apart, inside the deadline. A probe that never reached
+    # RetroAchievements is not an attempt: no mark, so the next link event
+    # (or the after-index run) tries again rather than waiting out the half
+    # hour on a connect that was never tested (#186 PL-04).
+    local TRY=0 ONLINE=0
+    while [ "${TRY}" -lt "${PROBE_TRIES}" ]; do
+        TRY=$((TRY + 1))
+        if is_online; then ONLINE=1; break; fi
+        [ "${TRY}" -lt "${PROBE_TRIES}" ] || break
+        [ "$(time_left "${START}")" -gt "${PROBE_INTERVAL}" ] || break
+        pause "${PROBE_INTERVAL}"
+    done
+    if [ "${ONLINE}" -eq 0 ]; then
+        slog "topup refused: offline by the proxy's probe (${TRY} probes); not counted as an attempt"
+        if [ "${AFTER_INDEX}" -eq 1 ]; then
+            write_index_pending
+            slog "topup: the index's games wait for the link (index-pending)"
+        fi
+        exit ${EX_UNAVAILABLE}
+    fi
+    touch "${TOPUP_MARK}"
+
+    local LIST
+    LIST="$(mktemp /tmp/raofflineproxy-topup.XXXXXX)" || fail "cannot create the list"
+    trap 'rm -f "${LIST}" "${JOBS_FIFO:-}" "${SC_OUT:-}" "${READY_BEFORE:-}" "${READY_AFTER:-}" "${RUNNING}" "${RUNNING}.tmp"; [ -n "${CLIENT:-}" ] && kill "${CLIENT}" 2>/dev/null' EXIT
+    mark_running
+    # The games ready for this account before either pass, for added=.
+    READY_BEFORE="$(mktemp /tmp/raofflineproxy-ready.XXXXXX 2>/dev/null)" && { ready_games_into "${READY_BEFORE}" || { rm -f "${READY_BEFORE}"; READY_BEFORE=""; }; }
+
+    # First, every game the interface's index knows and the client has not
+    # cached -- the games added and indexed since the last run, and with a
+    # library nobody scanned, as many as the deadline allows (the rest next
+    # time). Nothing is hashed here.
+    local COUNTS LRC NEW=0 CACHED=0 SKIPPED=0 INDEXED=0 LIMIT=0 ERRORS=0 WHY="" LEFT ADDED="" LISTED=0 LIST_WHY=""
+    local PENDING_SEEN=0 PENDING_TOKEN=""
+    LEFT="$(time_left "${START}")"
+    if [ "${LEFT}" -le 0 ]; then
+        WHY=TOOK_TOO_LONG
+        slog "topup${AI_NOTE}: the deadline passed while waiting for the lock and the probe"
+    elif [ "${AFTER_INDEX}" -eq 0 ] && [ ! -e "${INDEX_PENDING}" ]; then
+        # New games are the index's to find -- at startup and with UPDATE
+        # GAMELISTS, both of which end in this run with --after-index -- so
+        # the link's return does not list the library (fork #299, D-RA-035),
+        # unless an index ran offline and left its marker: then once, below.
+        slog "topup at the link's return: the recently played pass alone (new games are the index's)"
+    else
+        # The marker stays until the listing it stands for, and the games
+        # that listing found, have been handled -- removed below, never
+        # here: a listing that failed, a run cut by the deadline or stopped
+        # part-way (STOP IT AND PLAY, disable), a game whose fetch failed,
+        # each left no marker and so no retry (#307 PL-055).
+        if [ "${AFTER_INDEX}" -eq 0 ]; then
+            slog "topup at the link's return: an index ran offline (index-pending); the library listed once for it -- again after the half hour if this run does not finish"
+        fi
+        # The marker this listing answers, as it reads now: one written
+        # after this moment is a newer promise, and stays (gpt G-D-03).
+        if [ -e "${INDEX_PENDING}" ]; then PENDING_SEEN=1; PENDING_TOKEN="$(cat "${INDEX_PENDING}" 2>/dev/null)"; fi
+        COUNTS="$(list_jobs "${LIST}" indexed "${LEFT}" 2>>"${SCAN_LOG}")"
+        LRC=$?
+        if [ "${LRC}" -eq 0 ]; then
+            LISTED=1
+            NEW="$(count_of "${COUNTS}" new)"
+            slog "topup start${AI_NOTE}: ${COUNTS}"
+        elif [ "${LRC}" -eq 124 ]; then
+            WHY=TOOK_TOO_LONG
+            slog "topup${AI_NOTE}: the listing did not finish inside the deadline"
+        else
+            # The recently played pass still runs -- it needs no index -- but
+            # a run a part of which failed is one that could not finish
+            # (D-UI-030): the why is kept for the stamp below (audit of the
+            # fixes, claude G-D-13; it read COMPLETED before).
+            slog "topup${AI_NOTE}: the interface's index could not be read; the recently played pass runs alone"
+            LIST_WHY=LIBRARY_UNREADABLE
+        fi
+    fi
+    if [ -z "${WHY}" ] && [ "${NEW}" -gt 0 ]; then
+        LEFT="$(time_left "${START}")"
+        if [ "${LEFT}" -le 0 ]; then
+            WHY=TOOK_TOO_LONG
+        else
+            run_jobs quiet "${LIST}" "${NEW}" "${LEFT}"
+            CACHED="${R_CACHED}"; SKIPPED="${R_SKIPPED}"; INDEXED="${R_INDEXED}"; LIMIT="${R_LIMIT}"; ERRORS="${R_ERRORS}"; WHY="${R_WHY}"
+            # A helper killed by the bound after its DONE finished its games
+            # (fork #188: badge downloads kept it alive); only one cut before
+            # DONE makes the run one that did not finish.
+            if [ -z "${WHY}" ] && [ "${R_STOPPED}" -eq 0 ] && [ "${R_CLIENT_RC}" -ne 0 ] && [ "${R_DONE}" -eq 0 ]; then
+                WHY=RETROACHIEVEMENTS_STOPPED_ANSWERING
+                [ "${R_CLIENT_RC}" -eq 124 ] && WHY=TOOK_TOO_LONG
+            fi
+            # As in scan: a game whose fetch failed is a run that did not
+            # finish, and the next top-up tries it again (#186 PL-24).
+            [ -z "${WHY}" ] && [ "${ERRORS}" -gt 0 ] && WHY=SOME_GAMES_NOT_SAVED
+            slog "topup indexed pass: cached=${CACHED} indexed=${INDEXED} skipped=${SKIPPED} errors=${ERRORS} rc=${R_CLIENT_RC}${WHY:+ why=${WHY}}"
+        fi
+    fi
+
+    # The index's games are handled -- listed, and each cached or passed
+    # over -- so whatever index-pending stood for is done; after-index runs
+    # included, since their listing is the same (#307 PL-055).
+    # The check and the removal are one step under the marker's lock
+    # (ack_index_pending, gpt G2-D-03).
+    if [ "${LISTED}" -eq 1 ] && [ -z "${WHY}" ] && [ -e "${INDEX_PENDING}" ]; then
+        local ACK=1
+        [ "${PENDING_SEEN}" -eq 1 ] && { ack_index_pending "${PENDING_TOKEN}"; ACK=$?; }
+        case "${ACK}" in
+            0) slog "topup: the pending index's listing and its games are handled; index-pending removed" ;;
+            1) slog "topup: an index left index-pending while this run was at its jobs; kept for the next run" ;;
+            *) slog "topup: index-pending's lock could not be had; the marker is kept and the next run lists for it again" ;;
+        esac
+    fi
+
+    # Then the client's own recently-played pass for what the index missed
+    # -- RetroArch's history, PPSSPP's recent list -- each not yet cached,
+    # with the client's own pause between requests, in what is left of the
+    # deadline. Its progress lines are JSON; the last line is the result.
+    # Run in the background and waited for, so a stop request (disable)
+    # reaches this process at once and its EXIT trap ends the client.
+    LEFT="$(time_left "${START}")"
+    if [ -z "${WHY}" ] && [ "${LEFT}" -ge 60 ]; then
+        local SRC RESULT
+        SC_OUT="$(mktemp /tmp/raofflineproxy-topup-sc.XXXXXX)" || fail "cannot create the result file"
+        mark_running
+        timeout "${LEFT}" ${PROXY_PY} run-smart-cache > "${SC_OUT}" 2>>"${SCAN_LOG}" &
+        CLIENT=$!
+        wait "${CLIENT}" 2>/dev/null
+        SRC=$?
+        unset CLIENT
+        unmark_running
+        RESULT="$(grep '"type":"result"' "${SC_OUT}" 2>/dev/null | tail -n 1)"
+        rm -f "${SC_OUT}"; SC_OUT=""
+        local SC=0 SS=0 SL=0
+        if [ -n "${RESULT}" ]; then
+            read -r SC SS SL < <(python3 -c '
+import json, sys
+r = json.loads(sys.argv[1])
+print(int(r.get("cached", 0)), int(r.get("skipped", 0)), 1 if r.get("limit_reached") else 0)
+' "${RESULT}" 2>/dev/null || echo "0 0 0")
+        fi
+        CACHED=$((CACHED + SC)); SKIPPED=$((SKIPPED + SS)); [ "${SL}" -eq 1 ] && LIMIT=1
+        slog "topup recently played: rc=${SRC} cached=${SC} skipped=${SS} limit=${SL}"
+        if [ "${SRC}" -ne 0 ]; then
+            WHY=RETROACHIEVEMENTS_STOPPED_ANSWERING
+            [ "${SRC}" -eq 124 ] && WHY=TOOK_TOO_LONG
+        fi
+    elif [ -z "${WHY}" ]; then
+        slog "topup: no time left for the recently played pass (${LEFT}s)"
+    fi
+
+    # A listing that could not be read is the run's why when nothing later
+    # had one of its own.
+    [ -z "${WHY}" ] && [ -n "${LIST_WHY}" ] && WHY="${LIST_WHY}"
+    local READY MADE
+    READY="$(count_ready)"
+    # added=: the games the two passes made ready for this account, from the
+    # store before and after (#308 F-RA-10, F-RA-15); unknown when the store
+    # could not be read, never the passes' cache operations in its place
+    # (added_count, PL-031).
+    READY_AFTER="$(mktemp /tmp/raofflineproxy-ready.XXXXXX 2>/dev/null)" && ready_games_into "${READY_AFTER}" && MADE="$(games_made_ready "${READY_BEFORE}" "${READY_AFTER}")" && ADDED="${MADE}"
+    rm -f "${READY_BEFORE}" "${READY_AFTER}"; READY_BEFORE=""; READY_AFTER=""
+    ADDED="$(added_count "${ADDED}" "${CACHED}")"
+    [ "${ADDED}" = "unknown" ] && slog "topup${AI_NOTE}: the store could not be read before or after the passes; how many games they made ready is not known (added=unknown)"
+    slog "topup done: cached=${CACHED} added=${ADDED} indexed=${INDEXED} skipped=${SKIPPED} errors=${ERRORS} ready=${READY} limit=${LIMIT} took=$(( $(date +%s) - START ))s${WHY:+ why=${WHY}}"
+
+    # The line under the row changes only when the top-up has something to
+    # say: games it added, or a run that could not finish. Nothing new
+    # leaves the last scan's line as it was.
+    if [ -n "${WHY}" ]; then
+        write_stamp 1 topup "${CACHED}" "${SKIPPED}" "${READY}" "${LIMIT}" "${INDEXED}" "${ERRORS}" "${WHY}" "${ADDED}"
+        say "topup could not finish (${WHY}); cached ${CACHED}, ${READY} ready"
+        exit 1
+    fi
+    if [ "${CACHED}" -gt 0 ]; then
+        # The top-up is the background run, so it is where the store is
+        # verified as well as filled: a slice per run from the cursor, so
+        # the whole store comes round without any one run being long (#213).
+        run_image_pass topup "$(time_left "${START}")" --verify
+        if [ -n "${R_IMAGES_WHY}" ]; then
+            # The games are cached; their images are not all there (#307
+            # PL-060): a run whose parts disagree could not finish.
+            write_stamp 1 topup "${CACHED}" "${SKIPPED}" "${READY}" "${LIMIT}" "${INDEXED}" "${ERRORS}" "${R_IMAGES_WHY}" "${ADDED}"
+            say "topup could not finish (${R_IMAGES_WHY}); cached ${CACHED}, ${READY} ready"
+            exit 1
+        fi
+        write_stamp 0 topup "${CACHED}" "${SKIPPED}" "${READY}" "${LIMIT}" "${INDEXED}" "${ERRORS}" "" "${ADDED}"
+        say "topup: cached ${CACHED} game(s), ${INDEXED} from the index; ${READY} ready"
+    fi
+    exit 0
+}
+
+case "${1:-}" in
+    enable)  do_enable ;;
+    disable) do_disable ;;
+    start)   do_start ;;
+    stop)    do_stop ;;
+    status)  do_status ;;
+    pending) do_pending ;;
+    pending-ids) do_pending_ids ;;
+    account) do_account ;;
+    summary) do_summary ;;
+    flushed) do_flushed ;;
+    scan)    do_scan ;;
+    topup)   do_topup "${2:-}" ;;
+    index-offline) do_index_offline ;;
+    ready)   do_ready ;;
+    listening) do_listening "${2:-}" "${3:-}" ;;
+    images)  do_images "${2:-}" ;;
+    refresh) do_refresh "${2:-}" "${3:-}" ;;
+    *)
+        echo "Usage: raofflineproxy-ctl {enable|disable|start|stop|status|pending|pending-ids|account|summary|flushed|scan|topup [--after-index]|index-offline|images [--verify]|refresh [--all|--game <id>]|listening [--wait <seconds>]|ready}" >&2
+        exit 2
+    ;;
+esac

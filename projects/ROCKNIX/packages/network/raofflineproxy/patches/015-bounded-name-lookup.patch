@@ -1,0 +1,279 @@
+network, proxy_service: a name lookup is given three seconds, on the probe and on every upstream attempt
+
+The reachability probe's HEAD and every upstream request carry a timeout,
+and neither timeout covers the resolver. With a route on the interface and
+no working DNS -- a handheld still associated to a hotspot whose uplink has
+gone, or one whose Wi-Fi switch leaves the interface up -- glibc's resolver
+gives up after about twenty seconds, and this process paid them on every
+request while the tracker said unreachable: the request handler probed to
+write online= in its log line before doing anything else, so a store-only
+dorequest.php from the interface was answered twenty seconds after it
+arrived, five after the interface had given up and gone to the web, which
+timed out again ("An error occurred. Timeout was reached." on the RG35XX
+SP, 2026-09-22, ROCKNIX fork #242). A game's launch paid twice: the log
+line's probe, then login2's upstream attempt, before the store answered
+the sign-in; the player saw no achievements for as long as that took.
+
+Three changes. resolve_host_bounded looks a host up on a thread of its own
+and gives it LOOKUP_SECONDS (3.0); the probe's HEAD and the upstream
+forwarder call it first and report "unreachable" at once when it fails or
+runs over, leaving a hung lookup to end on its daemon thread. And the
+request log line reads the reachability tracker for every request rather
+than probing -- the request's own path asks is_online() where the answer
+decides something. Three tests: a lookup that hangs returns within the
+bound, a failed lookup names its error, and the HEAD is never attempted
+after a failed lookup.
+
+The bounded lookup is followed by the connection's own, by name, which
+nothing bounded: a resolver that answered once and then stopped held the
+request as long as ever (ROCKNIX audit #308 F-RA-20). So the answer the
+bounded lookup got is kept for REMEMBER_SECONDS (30), and socket.getaddrinfo
+answers that host from it -- the port and socket type the caller asks for
+put in -- while every other lookup goes to the resolver as before. The
+bounded lookup itself always asks the resolver, so it is still the probe
+it was, and a hotspot whose uplink has gone is still found out in three
+seconds.
+
+Written for ROCKNIX (fork issue maxengel/rocknix#242). Offered upstream
+as-is (ROCKNIX D-RA-002, D-RA-016).
+
+diff -ruN a/linux/raofflineproxy/network.py b/linux/raofflineproxy/network.py
+--- a/linux/raofflineproxy/network.py
++++ b/linux/raofflineproxy/network.py
+@@ -3,6 +3,7 @@ from __future__ import annotations
+ import json
+ import logging
+ import os
++import socket
+ import ssl
+ import threading
+ import time
+@@ -20,6 +21,16 @@ REDACTED_QUERY_KEYS = {"p", "t", "token", "password"}
+ REACHABILITY_INTERVAL_SECONDS = 30.0
+ PROBE_ATTEMPTS = 3
+ PROBE_RETRY_DELAY_SECONDS = 1.0
++# ROCKNIX (fork #242): how long a name lookup may take before the host is
++# called unreachable. urlopen's timeout bounds the connection and the read,
++# never the resolver: with a route but no working DNS -- a handheld still
++# associated to a hotspot whose uplink is gone, or one whose Wi-Fi switch
++# leaves the interface up -- glibc's resolver gives up after about twenty
++# seconds, and every request-path probe and every upstream attempt paid
++# them. The interface's pages wait fifteen seconds for this process and
++# then fell through to the web, which timed out again; RetroArch's sign-in
++# at launch paid it twice.
++LOOKUP_SECONDS = 3.0
+ HTTP_TOO_MANY_REQUESTS = 429
+ HTTP_GET_MAX_429_RETRIES = 4
+ HTTP_GET_INITIAL_429_BACKOFF_SECONDS = 2.0
+@@ -251,7 +262,94 @@ def probe_retroachievements(
+     return False
+ 
+ 
++# ROCKNIX (audit #308 F-RA-20): the answer the bounded lookup got, kept for
++# the connection that follows. The lookup is bounded, and then the request
++# opens its connection by name -- a second lookup, which nothing bounded and
++# nothing caches on a handheld (no nscd): a resolver that answered once and
++# stopped would hold the request for the twenty seconds the first lookup is
++# bounded against. So socket.getaddrinfo answers a host the bounded lookup
++# resolved in the last REMEMBER_SECONDS from that answer (the port and the
++# socket type the caller asks for put in); every other lookup, and the
++# bounded lookup itself -- which asks the resolver every time, so it stays
++# the probe it was -- goes to the resolver as before.
++REMEMBER_SECONDS = 30.0
++_remembered: dict[str, tuple[float, list]] = {}
++_remembered_lock = threading.Lock()
++_asking_resolver = threading.local()
++# The resolver's own function, even when this module is loaded a second time.
++_resolver_getaddrinfo = getattr(socket.getaddrinfo, "__wrapped__", socket.getaddrinfo)
++
++
++def _getaddrinfo_remembering(host, port, family=0, type=0, proto=0, flags=0):
++    if isinstance(host, str) and not getattr(_asking_resolver, "active", False):
++        with _remembered_lock:
++            entry = _remembered.get(host.lower())
++        if entry is not None and time.monotonic() - entry[0] < REMEMBER_SECONDS:
++            try:
++                number = 0 if port is None else int(port)
++            except (TypeError, ValueError):
++                number = None
++            answer = []
++            for fam, kind, prot, canon, address in entry[1] if number is not None else ():
++                if family and fam != family:
++                    continue
++                if type and kind and kind != type:
++                    continue
++                if proto and prot and prot != proto:
++                    continue
++                item = (fam, kind or type, prot or proto, canon, (address[0], number, *address[2:]))
++                if item not in answer:
++                    answer.append(item)
++            if answer:
++                return answer
++    return _resolver_getaddrinfo(host, port, family, type, proto, flags)
++
++
++_getaddrinfo_remembering.__wrapped__ = _resolver_getaddrinfo
++socket.getaddrinfo = _getaddrinfo_remembering
++
++
++def resolve_host_bounded(host: str, seconds: float = LOOKUP_SECONDS) -> tuple[bool, str]:
++    """Look the host up in a thread of its own and give it `seconds`.
++
++    ROCKNIX (fork #242). (True, "") when the name resolved in time; (False,
++    why) when it did not or could not. A lookup still running when the time
++    is up is left to finish on its own daemon thread; the answer it was going
++    to give is "unreachable" either way, and the caller must not wait for it.
++    The resolver is asked every time, and a lookup that succeeded is kept for
++    REMEMBER_SECONDS, so the connection that follows is answered from it
++    rather than by a second lookup nothing bounds (audit #308 F-RA-20).
++    """
++    if not host:
++        return False, "no host to look up"
++    result: dict[str, str | bool] = {}
++
++    def work() -> None:
++        _asking_resolver.active = True
++        try:
++            answer = socket.getaddrinfo(host, None)
++            with _remembered_lock:
++                _remembered[host.lower()] = (time.monotonic(), list(answer))
++            result["ok"] = True
++        except Exception as error:  # noqa: BLE001 - every resolver error is the same answer
++            result["error"] = str(error)
++
++    thread = threading.Thread(target=work, name="ra-name-lookup", daemon=True)
++    thread.start()
++    thread.join(seconds)
++    if thread.is_alive():
++        return False, f"name lookup of {host} took longer than {seconds:g} s"
++    if result.get("ok"):
++        return True, ""
++    return False, f"name lookup of {host} failed: {result.get('error', 'unknown')}"
++
++
+ def _head_upstream(url: str, user_agent: str | None) -> tuple[bool, str]:
++    # ROCKNIX (fork #242): the lookup first, bounded; the HEAD's own timeout
++    # starts only once there is an address to connect to.
++    resolved, reason = resolve_host_bounded(urlsplit(url).hostname or "")
++    if not resolved:
++        return False, reason
+     request = urllib.request.Request(
+         url,
+         headers={
+--- a/linux/raofflineproxy/proxy_service.py
++++ b/linux/raofflineproxy/proxy_service.py
+@@ -44,6 +44,7 @@ from .network import (
+     mark_retroachievements_unreachable,
+     probe_retroachievements,
+     read_response_bytes,
++    resolve_host_bounded,
+     response_content_type,
+ )
+ from .rom_cache import (
+@@ -301,15 +302,15 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
+         body = self.rfile.read(content_length).decode("utf-8") if content_length else ""
+         headers = {key: value for key, value in self.headers.items()}
+ 
+-        # ROCKNIX (fork #199): is_online() probes on every call while the
+-        # tracker says unreachable -- a HEAD to retroachievements.org whose
+-        # name lookup its five-second timeout does not bound -- and an image
+-        # request is answered below without asking the link anything, so its
+-        # log line reads the state as last probed rather than probing again.
+-        if is_static_asset_request(self.path):
+-            online = is_retroachievements_reachable()
+-        else:
+-            online = self.server.is_online()
++        # ROCKNIX (fork #199, #242): is_online() probes on every call while
++        # the tracker says unreachable, and the log line is not worth a
++        # probe for any request: it reads the state as last probed. The
++        # request's own path asks is_online() below where the answer decides
++        # something. Before #242 every dorequest.php call paid a probe here
++        # -- twenty seconds of name lookup on a link with no DNS -- before it
++        # was even logged, which is how the interface's fifteen-second wait
++        # for a store-only answer ran out on the RG35XX SP.
++        online = is_retroachievements_reachable()
+         LOGGER.info(
+             "Request: %s %s body=%s online=%s",
+             self.command,
+@@ -850,6 +851,23 @@ class ProxyRuntimeServer(ThreadingTCPServer):
+     ) -> tuple[str, int, str, bytes, str | None, str | None]:
+         url = f"{upstream_host(self.config_data)}{path}"
+         request_headers = build_forward_headers(headers)
++        # ROCKNIX (fork #242): the lookup first, bounded, so an attempt on a
++        # link with no DNS fails in seconds rather than the resolver's twenty
++        # -- the sign-in at a game's launch tries upstream before the store,
++        # and RetroArch showed no achievements for as long as that took.
++        resolved, reason = resolve_host_bounded(urlsplit(url).hostname or "")
++        if not resolved:
++            mark_retroachievements_unreachable()
++            LOGGER.warning("Upstream request skipped: %s", reason)
++            body_text = json.dumps({"Success": False, "Error": reason})
++            return (
++                "network_error",
++                503,
++                "Service Unavailable",
++                body_text.encode("utf-8"),
++                "application/json",
++                body_text,
++            )
+         try:
+             if method == "POST":
+                 status, reason, response_body = http_post(
+--- a/linux/tests/test_linux_network.py
++++ b/linux/tests/test_linux_network.py
+@@ -16,6 +16,55 @@ class LinuxNetworkTests(unittest.TestCase):
+         os.environ.pop("RAOFFLINEPROXY_CA_FILE", None)
+         os.environ.pop("SSL_CERT_FILE", None)
+ 
++    def test_resolve_host_bounded_gives_up_on_a_lookup_that_hangs(self) -> None:
++        # ROCKNIX (fork #242): a resolver with a route and no answer takes
++        # about twenty seconds; the probe must not.
++        import time as _time
++        original = network.socket.getaddrinfo
++        network.socket.getaddrinfo = lambda *_args, **_kwargs: _time.sleep(5)
++        try:
++            started = _time.monotonic()
++            ok, reason = network.resolve_host_bounded("retroachievements.org", seconds=0.2)
++            elapsed = _time.monotonic() - started
++        finally:
++            network.socket.getaddrinfo = original
++        self.assertFalse(ok)
++        self.assertIn("took longer than", reason)
++        self.assertLess(elapsed, 2.0)
++
++    def test_resolve_host_bounded_reports_a_failed_lookup(self) -> None:
++        original = network.socket.getaddrinfo
++
++        def failing(*_args, **_kwargs):
++            raise OSError("Temporary failure in name resolution")
++
++        network.socket.getaddrinfo = failing
++        try:
++            ok, reason = network.resolve_host_bounded("retroachievements.org", seconds=1.0)
++        finally:
++            network.socket.getaddrinfo = original
++        self.assertFalse(ok)
++        self.assertIn("Temporary failure in name resolution", reason)
++
++    def test_head_upstream_does_not_connect_when_the_lookup_fails(self) -> None:
++        original_lookup = network.socket.getaddrinfo
++        original_urlopen = network.urllib.request.urlopen
++        calls = []
++
++        def failing(*_args, **_kwargs):
++            raise OSError("Temporary failure in name resolution")
++
++        network.socket.getaddrinfo = failing
++        network.urllib.request.urlopen = lambda *args, **kwargs: calls.append(args) or (_ for _ in ()).throw(AssertionError("urlopen must not be called"))
++        try:
++            reachable, reason = network._head_upstream("https://retroachievements.org/", None)
++        finally:
++            network.socket.getaddrinfo = original_lookup
++            network.urllib.request.urlopen = original_urlopen
++        self.assertFalse(reachable)
++        self.assertIn("name lookup", reason)
++        self.assertEqual(calls, [])
++
+     def test_redacted_url_hides_sensitive_query_values(self) -> None:
+         url = "https://retroachievements.org/dorequest.php?r=login2&u=user&p=password&t=secret"
+ 

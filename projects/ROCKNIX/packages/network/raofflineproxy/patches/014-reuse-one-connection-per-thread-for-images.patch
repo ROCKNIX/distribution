@@ -1,0 +1,169 @@
+image_cache: reuse one connection per thread instead of one per image
+
+Every static asset was fetched with its own urllib.request.urlopen, so a
+badge whose median size is 5.6 KB paid a TCP connect and a TLS handshake of
+its own. Measured on a ROCKNIX guest against media.retroachievements.org:
+161 ms per image on a fresh connection against 28 ms over one already open,
+and 14.9 images/s through the real caching pass against 83.6/s with a
+connection per worker. For a first-time fill of a 494-game library -- 30,546
+images -- that is the difference between about half an hour of fetching and
+about six minutes, nearly all of it handshake.
+
+It is also the politer shape, which is why it is worth doing rather than
+raising concurrency: the same request count and the same bytes, a fraction
+of the connection setup. The pool stays at the size it was.
+
+A pooled connection can be closed by the server between uses and nothing
+says so until the next write fails, so every fetch retries once on a fresh
+connection. Response bodies are always read in full -- an unread body
+poisons the connection for the next caller -- and a non-2xx raises
+urllib.error.HTTPError exactly as urlopen did, so callers that treat any
+failure as "not cached" are unchanged. Redirects are followed up to three
+deep, cross-host included.
+
+The length and PNG checks added by 013 are untouched: the declared length
+now comes from the pooled response's headers, and nothing is published until
+it has passed both.
+
+Written for ROCKNIX (fork maxengel/rocknix#217).
+
+--- a/linux/raofflineproxy/image_cache.py
++++ b/linux/raofflineproxy/image_cache.py
+@@ -1,10 +1,13 @@
+ from __future__ import annotations
+ 
++import http.client
+ import json
+ import logging
+ import os
+ import shutil
+ import threading
++import urllib.error
++import urllib.parse
+ import urllib.request
+ import zlib
+ from concurrent.futures import ThreadPoolExecutor
+@@ -144,6 +147,95 @@ def rewrite_image_urls(
+     return json.dumps(data, separators=(",", ":")), downloads
+ 
+ 
++# One connection per thread per host, reused across images.
++#
++# Every badge was fetched with its own urllib.request.urlopen, which means a
++# TCP connect and a TLS handshake for a file whose median size is 5.6 KB. On a
++# guest that measured 161 ms per image against 28 ms over a connection already
++# open -- so a first-time fill of a 494-game library spent over half an hour
++# almost entirely in handshakes (ROCKNIX fork maxengel/rocknix#217).
++#
++# Reuse is also the politer shape: the same bytes and the same request count,
++# a fraction of the setup, so it is not a licence to raise concurrency and the
++# pool size is deliberately unchanged.
++#
++# A pooled connection can be closed by the server between uses and there is no
++# way to tell until the write fails, so every fetch retries once on a fresh
++# connection before giving up. Bodies are always read in full, because a
++# response left unread poisons the connection for the next caller.
++_pool = threading.local()
++
++
++def _pooled_connection(scheme: str, host: str, timeout: float, fresh: bool = False):
++    connections = getattr(_pool, "connections", None)
++    if connections is None:
++        connections = _pool.connections = {}
++    key = (scheme, host)
++    existing = connections.get(key)
++    if fresh and existing is not None:
++        try:
++            existing.close()
++        except Exception:
++            pass
++        existing = None
++        connections.pop(key, None)
++    if existing is None:
++        if scheme == "https":
++            existing = http.client.HTTPSConnection(host, timeout=timeout)
++        else:
++            existing = http.client.HTTPConnection(host, timeout=timeout)
++        connections[key] = existing
++    return existing
++
++
++def _drop_connection(scheme: str, host: str) -> None:
++    connections = getattr(_pool, "connections", None) or {}
++    connection = connections.pop((scheme, host), None)
++    if connection is not None:
++        try:
++            connection.close()
++        except Exception:
++            pass
++
++
++def fetch_static_asset(url: str, headers: dict, timeout: float = 10.0, _redirects: int = 3):
++    """GET url over a reused connection. Returns (response headers, body).
++
++    Raises on a non-2xx status, as urlopen did, so callers that already treat
++    any failure as "not cached" keep their behaviour.
++    """
++    parsed = urllib.parse.urlsplit(url)
++    scheme = parsed.scheme or "https"
++    host = parsed.netloc
++    target = parsed.path or "/"
++    if parsed.query:
++        target = f"{target}?{parsed.query}"
++
++    last_error: Exception | None = None
++    for attempt in (False, True):
++        connection = _pooled_connection(scheme, host, timeout, fresh=attempt)
++        try:
++            connection.request("GET", target, headers=headers)
++            response = connection.getresponse()
++            body = response.read()  # always, or the connection cannot be reused
++            status = response.status
++            if status in (301, 302, 303, 307, 308) and _redirects > 0:
++                location = response.headers.get("Location")
++                if location:
++                    return fetch_static_asset(
++                        urllib.parse.urljoin(url, location), headers, timeout, _redirects - 1
++                    )
++            if status < 200 or status >= 300:
++                raise urllib.error.HTTPError(url, status, response.reason, response.headers, None)
++            return response.headers, body
++        except urllib.error.HTTPError:
++            raise
++        except Exception as exc:  # a closed or broken connection: retry once
++            last_error = exc
++            _drop_connection(scheme, host)
++    raise last_error if last_error else RuntimeError("fetch failed")
++
++
+ def download_static_image(
+     url: str,
+     image_path: str,
+@@ -163,11 +255,6 @@ def download_static_image(
+         target = STATIC_DIR / clean_path
+         if not target.exists():
+             target.parent.mkdir(parents=True, exist_ok=True)
+-            request = urllib.request.Request(
+-                url,
+-                headers={"User-Agent": user_agent, "Accept-Encoding": "identity"},
+-                method="GET",
+-            )
+             # A name of this process's and this thread's: two workers
+             # fetching one asset -- the pool's four threads, or the service's
+             # pool and a bulk cache's in another process -- used to share
+@@ -179,9 +266,12 @@ def download_static_image(
+                 f"{target.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+             )
+             try:
+-                with urllib.request.urlopen(request, timeout=10) as response:
+-                    declared = response.headers.get("Content-Length")
+-                    payload = response.read()
++                headers, payload = fetch_static_asset(
++                    url,
++                    {"User-Agent": user_agent, "Accept-Encoding": "identity"},
++                    timeout=10,
++                )
++                declared = headers.get("Content-Length")
+                 # An image is published only when it is whole and is an
+                 # image. response.read() returns what arrived, so a
+                 # connection that drops mid-body used to be written under

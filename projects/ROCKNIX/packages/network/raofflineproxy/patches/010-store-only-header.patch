@@ -1,0 +1,36 @@
+proxy_service: a request that asks for the store only is answered from it
+
+ROCKNIX's interface shows the device's copy of a game's achievements and of
+the account's summary on its own pages (fork #180, #190). It asks this
+process for them one request at a time, and while the process still
+believes it is online -- the connectivity monitor probes every fifteen
+seconds, so for up to that long after a link drops -- every one of those
+requests first tries upstream with a fifteen-second timeout. On a handheld
+with 247 saved games and Wi-Fi just switched off that is 494 requests of
+up to fifteen seconds each: PLEASE WAIT for hours (ROCKNIX fork #190, the
+RG SP, 2026-09-15).
+
+A request carrying `X-RA-Store-Only: 1` is now served by handle_offline_request
+whatever is_online() says: the store's copy, or the store's "not cached", at
+once. Nothing else changes; a client that does not send the header is
+served as before. Awards never take this path (they are handled first).
+--- a/linux/raofflineproxy/proxy_service.py
++++ b/linux/raofflineproxy/proxy_service.py
+@@ -412,6 +412,17 @@ class ProxyRuntimeServer(ThreadingTCPServer):
+             if cached_login_response is not None:
+                 return cached_login_response
+ 
++        # ROCKNIX (fork #190): a client that wants the store and nothing else
++        # -- the interface's pages, which show the device's copy -- says so
++        # with X-RA-Store-Only: 1 and is answered from the store whatever this
++        # process believes about the link. While it still believes it is
++        # online (the monitor probes every fifteen seconds), every request
++        # first tries upstream with a fifteen-second timeout, and a summary
++        # over a few hundred games on a link that has just gone is hours.
++        store_only = headers.get("X-RA-Store-Only") or headers.get("x-ra-store-only")
++        if store_only == "1":
++            return self.handle_offline_request(path, raw_body, action)
++
+         if self.is_online():
+             return self.handle_online_request(method, path, raw_body, action, headers)
+ 

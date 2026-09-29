@@ -1,0 +1,80 @@
+auth: take a cached sign-in only when it is the configured account's
+
+resolve_credentials tried a token, then the first login row in the store
+(Storage.load_login_credentials: the first row with the login2:: prefix,
+whoever's), then a password. A device that had signed in as one account
+and now holds another's password with no token yet -- an OS that signs in
+through its own interface and writes the token later, or a QA guest that
+carries a test account and the developer's in turn -- kept caching,
+refreshing and flushing as the first account for as long as its row was
+not marked invalid (ROCKNIX audit #186 PL-23, the credential half).
+
+When the configured password names an account, the cached row consulted
+is that account's own (cache_keys.login(user)), and a row of any other
+account is not a sign-in for this one; with no password configured the
+first cached row is taken as before. The order of sources is otherwise
+unchanged: a token wins, then the cache, then a fresh login2.
+
+Written for ROCKNIX (fork issue maxengel/rocknix#186, PL-23). Offered
+upstream as-is (ROCKNIX D-RA-016).
+
+--- a/linux/raofflineproxy/auth.py
++++ b/linux/raofflineproxy/auth.py
+@@ -47,10 +47,6 @@ def resolve_credentials(
+     if token_credentials is not None:
+         return cache_token_credentials(storage, token_credentials)
+ 
+-    cached = storage.load_login_credentials()
+-    if cached is not None and not storage.is_token_invalid(cached["token"]):
+-        return cached
+-
+     # spruce keeps its credentials in its own settings file and only copies them into
+     # the RetroArch config when a game launches, so before the first launch that file is
+     # the only source.
+@@ -60,6 +56,23 @@ def resolve_credentials(
+         or load_rocknix_system_password_credentials(rocknix_system_cfg)
+         or load_spruce_credentials()
+     )
++
++    # A cached sign-in is taken only when it is the configured account's.
++    # When a password names the account, the cached row looked up is that
++    # user's; the first login row in the store, whoever's it is, was what
++    # this returned before -- so a device that had signed in as one account
++    # and now holds another's password (and no token yet) kept caching,
++    # refreshing and flushing as the first.
++    expected_user = ""
++    if password_credentials is not None:
++        expected_user = cache_keys.normalize_user(str(password_credentials.get("user") or ""))
++    if expected_user:
++        cached = load_cached_login_for(storage, expected_user)
++    else:
++        cached = storage.load_login_credentials()
++    if cached is not None and not storage.is_token_invalid(cached["token"]):
++        return cached
++
+     if password_credentials is not None:
+         refreshed = login_and_cache_token(
+             storage, config_data, password_credentials, user_agent
+@@ -70,6 +83,22 @@ def resolve_credentials(
+     return cached
+ 
+ 
++def load_cached_login_for(storage: Storage, user: str) -> dict | None:
++    """The cached sign-in of one account, by its login row, or None."""
++    entry = storage.get_cache(cache_keys.login(user))
++    if entry is None:
++        return None
++    try:
++        payload = json.loads(entry["responseBody"])
++    except Exception:
++        return None
++    cached_user = payload.get("User")
++    token = payload.get("Token")
++    if not cached_user or not token:
++        return None
++    return {"user": cached_user, "token": token}
++
++
+ def cache_token_credentials(storage: Storage, credentials: dict) -> dict | None:
+     user = credentials.get("user")
+     token = credentials.get("token")

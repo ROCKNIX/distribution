@@ -1,0 +1,81 @@
+flusher: leave a stamp after a flush that sent awards, for the OS to read
+
+An OS that integrates the service natively wants to tell the player, on a
+surface of its own, that the awards earned without a connection have now
+reached RetroAchievements. The service knows exactly when that happens --
+flush_pending_awards logs "Flush complete: ... flushed=N" -- but a log is not
+a signal another process can consume: it rotates, it holds every request
+line, and reading it back for one event is guesswork.
+
+So, after a flush that sent at least one award, write <CONFIG_DIR>/last-flush
+holding one line, "<epoch> <flushed>", whole or not at all (a temp file and
+os.replace, as es_export does for cached_game_ids.txt). A flush that sent
+nothing writes nothing: a stamp means awards went. The reader removes the
+file once it has said so, which is what makes the message fire once per
+flush rather than once per look. Nothing in the service reads it.
+
+Written for ROCKNIX (fork issue maxengel/rocknix#173), whose EmulationStation
+reads and clears the stamp when its next sync card runs: "OFFLINE
+ACHIEVEMENTS HAVE BEEN SENT TO RETROACHIEVEMENTS." Offered upstream as-is
+(ROCKNIX D-RA-002: whatever the fork changes in the proxy goes back); the
+same file would serve the KNULLI integration, which already reads
+cached_game_ids.txt.
+
+--- a/linux/raofflineproxy/flusher.py
++++ b/linux/raofflineproxy/flusher.py
+@@ -2,13 +2,14 @@ from __future__ import annotations
+ 
+ import json
+ import logging
++import os
+ import time
+ from dataclasses import dataclass
+ 
+ from . import cache_keys
+ from .auth import resolve_credentials
+ from .award_signing import public_key_base64, sign_award, verify_award
+-from .config import FALLBACK_USER_AGENT, MAX_PROXY_PORT, upstream_host
++from .config import CONFIG_DIR, FALLBACK_USER_AGENT, MAX_PROXY_PORT, upstream_host
+ from .network import build_api_url, http_post
+ from .rom_cache import (
+     CacheGameAuthError,
+@@ -39,6 +40,11 @@ from .utils import (
+ MAX_RETRIES = 5
+ GENESIS_HASH = "genesis"
+ MAX_AWARD_OFFSET_SECONDS = 14 * 24 * 60 * 60
++# "<epoch> <flushed>", written after a flush that sent at least one award, for
++# an OS integration to read (and remove, once it has told the player) -- the
++# same kind of file as es_export's cached_game_ids.txt. The log says the same
++# thing, but a log is not a signal anyone else can consume.
++FLUSH_STAMP_FILE = CONFIG_DIR / "last-flush"
+ LOGGER = logging.getLogger("raofflineproxy")
+ 
+ 
+@@ -486,6 +492,8 @@ def flush_pending_awards(storage: Storage, config_data: dict) -> FlushOutcome:
+         skipped_stale,
+         pending_remaining,
+     )
++    if flushed:
++        write_flush_stamp(flushed)
+ 
+     return FlushOutcome(
+         flushed=flushed,
+@@ -496,6 +504,18 @@ def flush_pending_awards(storage: Storage, config_data: dict) -> FlushOutcome:
+     )
+ 
+ 
++def write_flush_stamp(flushed: int) -> None:
++    # Whole or not at all: a reader on another thread or in another process
++    # must never see half a line.
++    try:
++        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
++        tmp_path = FLUSH_STAMP_FILE.with_name(FLUSH_STAMP_FILE.name + ".tmp")
++        tmp_path.write_text(f"{int(time.time())} {int(flushed)}\n")
++        os.replace(tmp_path, FLUSH_STAMP_FILE)
++    except Exception:
++        LOGGER.exception("Failed to write the flush stamp")
++
++
+ def purge_processed_awards_if_safe(storage: Storage) -> None:
+     if storage.pending_awards_exist_by_status(PENDING_AWARD_STATUS_PENDING):
+         return

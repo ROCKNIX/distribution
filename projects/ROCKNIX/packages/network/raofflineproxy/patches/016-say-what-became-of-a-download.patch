@@ -1,0 +1,80 @@
+image_cache: say what became of a download, absent apart from transient
+
+download_static_image caught every exception and logged it at debug, so a
+caller learned nothing but that the file was not there. A caller that
+fetches a whole store's images -- ROCKNIX's image pass, which runs at the
+end of every scan and top-up -- could not tell an image the server does not
+have from one that did not come this time, and one badge the server never
+had (a 404) failed every pass for good.
+
+It now returns what became of the image: "cached" (there already, or
+fetched whole), "absent" (the server answered 404 or 410) or "transient"
+(anything else: a timeout, a 5xx, a refused connection, a short or damaged
+body), and an image it did not cache is logged at info with that class,
+the URL and the HTTP status. Nothing is raised, as before; callers that
+ignore the return value -- the service's own pool -- are unchanged.
+
+Written for ROCKNIX (fork issue maxengel/rocknix#307, PL-060's
+follow-up). Offered upstream as-is.
+
+--- a/linux/raofflineproxy/image_cache.py
++++ b/linux/raofflineproxy/image_cache.py
+@@ -236,19 +236,35 @@ def fetch_static_asset(url: str, headers
+     raise last_error if last_error else RuntimeError("fetch failed")
+ 
+ 
++# What became of a download (ROCKNIX, audit #307 PL-060's follow-up). A
++# server that does not have an image says so, and saying so is permanent in
++# a way a timeout is not: a caller that fetches a whole store's images needs
++# to tell the two apart, or one badge the server never had fails its every
++# pass. So download_static_image returns one of these, and logs the class,
++# the URL and the HTTP status of any image it did not cache.
++IMAGE_CACHED = "cached"        # there already, or fetched whole
++IMAGE_ABSENT = "absent"        # the server answered 404 or 410: it does not have it
++IMAGE_TRANSIENT = "transient"  # anything else: a timeout, a 5xx, a refused
++                               # connection, a short or damaged body -- try again
++ABSENT_HTTP_STATUSES = (404, 410)
++
++
+ def download_static_image(
+     url: str,
+     image_path: str,
+     user_agent: str,
+     game_id: int | None = None,
+-) -> None:
++) -> str:
+     """
+     Downloads an image from url and stores it in the static cache at image_path
+     (e.g. "/Badge/496014.png"). No-ops if already cached.
+ 
+     If game_id is provided and image_path starts with /Images/, also copies the
+-    downloaded file to the per-game directory for UI display. All failures are
+-    silently swallowed — images are best-effort.
++    downloaded file to the per-game directory for UI display. Failures are not
++    raised -- images are best-effort -- but they are no longer silent: the
++    return value is IMAGE_CACHED, IMAGE_ABSENT (404 or 410) or IMAGE_TRANSIENT
++    (anything else), and an image not cached is logged with its class, URL and
++    HTTP status. Callers that ignore the return value are unchanged.
+     """
+     try:
+         clean_path = image_path.lstrip("/").split("?", 1)[0]
+@@ -308,8 +324,18 @@ def download_static_image(
+             if not icon_file.exists():
+                 icon_file.parent.mkdir(parents=True, exist_ok=True)
+                 icon_file.write_bytes(target.read_bytes())
++        return IMAGE_CACHED
+     except Exception as exc:
+-        LOGGER.debug("Failed to cache image path=%s: %s", image_path, exc)
++        status = getattr(exc, "code", None)
++        outcome = IMAGE_ABSENT if status in ABSENT_HTTP_STATUSES else IMAGE_TRANSIENT
++        LOGGER.info(
++            "Image not cached (%s): %s%s -- %s",
++            outcome,
++            url,
++            f" HTTP {status}" if status is not None else "",
++            exc,
++        )
++        return outcome
+ 
+ 
+ def schedule_image_download(

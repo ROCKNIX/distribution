@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+#
+# raofflineproxy-cache-indexed - cache games for offline achievements from a
+# job list raofflineproxy-ctl writes, one game per line (fork #184 note 5b,
+# D-RA-013):
+#
+#   I<TAB><gameId><TAB><hash><TAB><path>   a game the interface's own index
+#                                          already identified: cached from
+#                                          the id and the hash, the ROM is
+#                                          never read
+#   H<TAB><TAB><TAB><path>                 a game with no index entry: the
+#                                          client's own add_rom_to_cache
+#                                          (hash the ROM, ask RetroAchievements
+#                                          which game it is, cache it)
+#
+# It speaks cache-roms' lines on stdout so the ctl's reader is unchanged --
+# "OK <i>/<n> <file>", "FAIL <i>/<n> <file>: <reason>", "DONE cached=<c>
+# failed=<f> indexed=<i>" (the last field is how many of the cached came
+# from the index) -- and says on stderr, per game, which RetroAchievements
+# actions it asked, so the scan log shows an indexed game costing patch,
+# unlocks and achievementsets and never gameid. The client's own courtesies
+# stay: its throttle between requests, its cooldown per batch, its backoff
+# on 429 (network.py), and its redaction of the token in what it logs.
+#
+# An indexed game is cached the way add_rom_to_cache would have cached it
+# after the lookup: cache_game (the patch by id, the player's unlocks, the
+# achievement sets by hash, a session), the gameid alias for the hash (a
+# RetroArch that asks gameid before patch is answered offline), and the ROM's
+# path on the patch row (the client's browser and the ctl's own walk read it
+# as "already cached"). Nothing here prints a value from system.cfg; the
+# credentials pass through the client's resolve_credentials and no further.
+from __future__ import annotations
+
+import json
+import os
+import sys
+import threading
+from pathlib import Path
+
+from raofflineproxy import cache_keys, image_cache, network, rom_browser, rom_cache
+from raofflineproxy.auth import resolve_credentials
+from raofflineproxy.config import configure_logging, image_caching_enabled, load_config
+from raofflineproxy.network import apply_scan_batch_cooldown
+from raofflineproxy.rom_browser import add_rom_to_cache, normalize_cached_rom_path
+from raofflineproxy.rom_cache import cache_game
+from raofflineproxy.storage import Storage
+from raofflineproxy.utils import proxy_user_agent, self_user_agent
+
+# Every RetroAchievements action a game cost, in order. http_get is bound by
+# name in the two modules that call it, so both names are wrapped.
+ASKED: list[str] = []
+_real_http_get = network.http_get
+
+
+def _counting_http_get(url: str, user_agent: str) -> str:
+    ASKED.append(network.api_action_from_url(url) or "?")
+    return _real_http_get(url, user_agent)
+
+
+network.http_get = _counting_http_get
+rom_browser.http_get = _counting_http_get
+rom_cache.http_get = _counting_http_get
+
+
+def note(text: str) -> None:
+    print(text, file=sys.stderr, flush=True)
+
+
+def wait_for_badges(seconds: float) -> None:
+    """The badge images the games queued are still coming down in image_cache's
+    pool, whose workers are not daemon threads: left alone, the process would
+    live until the last one landed -- on the RG SP 83 s past its DONE, until
+    the ctl's bound killed it and read the kill as the verdict (fork #188).
+    Give them `seconds`, then drop what has not started (the games are cached
+    either way; a badge that did not come is fetched when a page asks for it
+    online, and offline the page shows the blank it already tolerates)."""
+    waiter = threading.Thread(target=lambda: image_cache._image_download_executor.shutdown(wait=True), daemon=True)
+    waiter.start()
+    waiter.join(timeout=max(0.0, seconds))
+    if waiter.is_alive():
+        note(f"badge downloads still running after {int(seconds)} s; the rest are dropped (fetched when a page asks for them online)")
+        image_cache.shutdown_image_downloads()
+
+
+def cache_indexed(game_id: int, hash_value: str, path: Path, credentials: dict,
+                  storage: Storage, config_data: dict) -> str:
+    """Cache one game from its id and hash. Returns the title cached."""
+    hash_value = cache_keys.normalize_hash(hash_value)
+    user_agent = proxy_user_agent(self_user_agent())
+    cache_game(
+        game_id,
+        hash_value,
+        credentials,
+        user_agent,
+        storage,
+        config_data,
+        cache_images=image_caching_enabled(config_data),
+    )
+    storage.upsert_cache(
+        cache_keys.game_id(hash_value),
+        json.dumps({"GameID": game_id}, separators=(",", ":")),
+    )
+    patch_key = cache_keys.patch(game_id, credentials["user"])
+    patch_entry = storage.get_cache(patch_key)
+    if patch_entry is None:
+        raise rom_cache.CacheGameError("patch data was not stored")
+    storage.upsert_cache(
+        patch_key,
+        patch_entry["responseBody"],
+        source_rom_path=normalize_cached_rom_path(path),
+    )
+    try:
+        title = (json.loads(patch_entry["responseBody"]).get("PatchData") or {}).get("Title")
+    except Exception:
+        title = None
+    return title or f"Game {game_id}"
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        print("usage: raofflineproxy-cache-indexed <jobs-file>", file=sys.stderr)
+        return 2
+    configure_logging()
+    config_data = load_config()
+
+    jobs: list[tuple[str, int, str, Path]] = []
+    for raw in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
+        if not raw.strip():
+            continue
+        fields = raw.split("\t", 3)
+        if len(fields) != 4 or fields[0] not in ("I", "H"):
+            note(f"job line not understood, skipped: {raw[:80]}")
+            continue
+        kind, game_id, hash_value, path = fields
+        try:
+            jobs.append((kind, int(game_id) if game_id else 0, hash_value.strip(), Path(path)))
+        except ValueError:
+            note(f"job line not understood, skipped: {raw[:80]}")
+    if not jobs:
+        print("DONE cached=0 failed=0 indexed=0", flush=True)
+        return 0
+
+    cached = failed = indexed = 0
+    total = len(jobs)
+    storage = Storage()
+    try:
+        # Once, before the first game: the same source the client itself
+        # reads (a token from system.cfg, else the proxy's cached sign-in,
+        # else a sign-in from the password). None is the client's own
+        # "login required", said on every line as cache-roms says it.
+        credentials = resolve_credentials(storage, config_data, self_user_agent())
+        for index, (kind, game_id, hash_value, path) in enumerate(jobs, start=1):
+            apply_scan_batch_cooldown(index - 1)
+            label = path.name
+            ASKED.clear()
+            if credentials is None:
+                failed += 1
+                print(f"FAIL {index}/{total} {label}: RetroAchievements login required", flush=True)
+                continue
+            if kind == "I" and game_id > 0 and hash_value:
+                try:
+                    title = cache_indexed(game_id, hash_value, path, credentials, storage, config_data)
+                except Exception as error:
+                    failed += 1
+                    print(f"FAIL {index}/{total} {label}: {error}", flush=True)
+                    note(f"indexed {index}/{total} {label}: game {game_id} could not be cached; asked {','.join(ASKED) or 'nothing'}")
+                    continue
+                cached += 1
+                indexed += 1
+                print(f"OK {index}/{total} {label}", flush=True)
+                note(f"indexed {index}/{total} {label}: game {game_id} '{title}' cached from the index, hash reused, not hashed; asked {','.join(ASKED) or 'nothing'}")
+                continue
+
+            if not path.is_file():
+                failed += 1
+                print(f"FAIL {index}/{total} {label}: not found", flush=True)
+                continue
+            try:
+                result = add_rom_to_cache(path, storage, config_data)
+            except Exception as error:
+                failed += 1
+                print(f"FAIL {index}/{total} {label}: {error}", flush=True)
+                continue
+            if result.success:
+                cached += 1
+                print(f"OK {index}/{total} {label}", flush=True)
+            else:
+                failed += 1
+                print(f"FAIL {index}/{total} {label}: {result.message}", flush=True)
+            note(f"hashed {index}/{total} {label}: no index entry, the ROM was hashed and looked up; asked {','.join(ASKED) or 'nothing'}")
+    finally:
+        storage.close()
+
+    print(f"DONE cached={cached} failed={failed} indexed={indexed}", flush=True)
+    wait_for_badges(float(os.environ.get("RAOFFLINEPROXY_IMAGE_WAIT", "120")))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
