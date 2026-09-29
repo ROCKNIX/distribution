@@ -18,8 +18,12 @@ performance
 # $4 = Emulator
 
 ARGUMENTS="$@"
-PLATFORM="${ARGUMENTS##*-P}"  # read from -P onwards
-PLATFORM="${PLATFORM%% *}"  # until a space is found
+### The platform is the first -P<platform> argument after the ROM, taken
+### whole. ${ARGUMENTS##*-P} read from the LAST "-P" anywhere in the joined
+### line, so a netplay nick such as My-Player made the platform "layer"
+### (#308, stream E2's reading of the launch command).
+PLATFORM=""
+for ARG in "${@:2}"; do case "${ARG}" in -P?*) PLATFORM="${ARG#-P}"; break ;; esac; done
 CORE="${ARGUMENTS##*--core=}"  # read from --core= onwards
 CORE="${CORE%% *}"  # until a space is found
 EMULATOR="${ARGUMENTS##*--emulator=}"  # read from --emulator= onwards
@@ -42,6 +46,16 @@ SET_SETTINGS_TMP="/tmp/shader"
 OUTPUT_LOG="${LOG_DIRECTORY}/${LOG_FILE}"
 SCRIPT_NAME=$(basename "$0")
 
+### The marker the global exit hotkey leaves behind (input_sense,
+### execute_kill): cleared before the emulator starts, consumed by the exit
+### mapping at the bottom of this script -- fork #92, D-LAUNCH-002. It sits
+### in /tmp beside the kill data the same hotkey reads
+### (/tmp/.process-kill-data) because /tmp is a tmpfs: a power cut wipes it,
+### which is exactly what is wanted of a flag that must never outlive the
+### boot. input.service and this script both run as root, so each can write
+### and remove the other's marker.
+EXIT_HOTKEY_MARKER="/tmp/.process-kill-requested"
+
 ### Export Game Guide Path
 GAME_GUIDE_PATH_CHECK="${1%.*}.txt"
 if [ ! -f "${GAME_GUIDE_PATH_CHECK}" ]; then
@@ -50,6 +64,15 @@ fi
   /usr/bin/game-guides-tool "${1}"
 
 ### Function Library
+### Every line this script logs -- to exec.log or to its own stdout, which
+### the journal keeps -- goes through redact_credentials (001-functions): a
+### credential's value reads <redacted>, its key or flag stays. The
+### "Executing ..." line carries an emulator's whole command line, and a
+### standalone emulator can take a password there (gopher64's --ra-password);
+### exec.log is what rocknix-evidence bundles (fork #176, D-INFRA-010). The
+### emulator's own output is still redirected straight into the file below,
+### not piped through a filter: a game's life must not depend on a second
+### process staying alive to read its stdout. The bundle is filtered whole.
 function log() {
         if [ ${LOG} == true ]
         then
@@ -57,20 +80,24 @@ function log() {
                 then
                         mkdir -p "$LOG_DIRECTORY"
                 fi
-                echo "${SCRIPT_NAME}: $*" 2>&1 | tee -a ${LOG_DIRECTORY}/${LOG_FILE}
+                redact_credentials "${SCRIPT_NAME}: $*" 2>&1 | tee -a ${LOG_DIRECTORY}/${LOG_FILE}
         else
-                echo "${SCRIPT_NAME}: $*"
+                redact_credentials "${SCRIPT_NAME}: $*"
         fi
 }
 
 function loginit() {
+        # The launch log is one launch's, whatever the log level (fork #280).
+        # The emulator's output is appended to it below whether or not this
+        # script logs, and it used to be truncated only when the level was not
+        # none -- so on a device with system.loglevel=none every launch since
+        # the file was last removed sat in it, the interface read a rotated
+        # game's SET_ROTATION line as the next game's, and rocknix-evidence
+        # bundled weeks of launches as one. Truncate first, then the header.
+        rm -f ${LOG_DIRECTORY}/${LOG_FILE}
         if [ ${LOG} == true ]
         then
-                if [ -e ${LOG_DIRECTORY}/${LOG_FILE} ]
-                then
-                        rm -f ${LOG_DIRECTORY}/${LOG_FILE}
-                fi
-                cat <<EOF >${LOG_DIRECTORY}/${LOG_FILE}
+                redact_credentials <<EOF >${LOG_DIRECTORY}/${LOG_FILE}
 Emulation Run Log - Started at $(date)
 
 ARG1: $1
@@ -89,6 +116,7 @@ GAME GUIDE PATH: ${GAME_GUIDE_PATH_CHECK}
 
 EOF
         else
+                : >${LOG_DIRECTORY}/${LOG_FILE}
                 log $0 "Emulation Run Log - Started at $(date)"
         fi
 }
@@ -151,6 +179,56 @@ set_kill stop
 
 ### Determine which emulator we're launching and make appropriate adjustments before launching.
 ${VERBOSE} && log $0 "Configuring for ${EMULATOR}"
+### The save state manager's arguments follow --controllers= on the command
+### line. The interface writes them, this script reads them, setsettings.sh
+### turns them into RetroArch's configuration (fork #196, D-UI-057):
+###   -autosave 0|1       the exit auto save and auto-load, off or on, for this run
+###   -state_slot N       RetroArch's current slot (-1 is its auto slot)
+###   -state_file <path>  the state to start from: the .auto file, or a slot's
+### Since es_savestates.cfg each of them can arrive on its own -- "-autosave 1
+### -state_file <auto>" for the AUTO SAVE tile and for a plain launch with AUTO
+### SAVE/LOAD on, "-autosave 0" alone for START NEW GAME, "-state_slot N
+### -state_file <slot file>" for a numbered slot -- where the interface's
+### built-in fallback always sent -state_slot with them. Sets CONTROLLERCONFIG,
+### SNAPSHOT, AUTOSAVE and STATEFILE; call it with the script's own "$@".
+function parse_savestate_arguments() {
+  CONTROLLERCONFIG="${ARGUMENTS#*--controllers=*}"
+  SNAPSHOT=""
+  AUTOSAVE=""
+  STATEFILE=""
+
+  ### Each value is the argument after its flag, from the argument list --
+  ### the shell already split it. The state file is a path, and ROM names
+  ### carry spaces, parentheses and " - " (Mario Tennis - Power Tour (USA,
+  ### Australia)), so it was always taken this way; the slot and the auto
+  ### save were cut out of the joined line, where the FIRST " -state_slot "
+  ### could be inside the ROM's own name ("Demo -state_slot 2 - Part.sfc")
+  ### and win over the real flag (#308, the gpt seat's F-PB-17).
+  local PREVIOUS="" ARGUMENT FLAGGED=0
+  for ARGUMENT in "$@"
+  do
+    case "${PREVIOUS}" in
+      -state_slot) SNAPSHOT="${ARGUMENT}" ;;
+      -autosave)   AUTOSAVE="${ARGUMENT}" ;;
+      -state_file) STATEFILE="${ARGUMENT}" ;;
+    esac
+    case "${ARGUMENT}" in
+      -state_slot|-autosave|-state_file) FLAGGED=1 ;;
+    esac
+    PREVIOUS="${ARGUMENT}"
+  done
+
+  if [ "${FLAGGED}" -eq 1 ]
+  then
+    ### The controllers value ends where the first of them begins.
+    CONTROLLERCONFIG="${CONTROLLERCONFIG%% -state_slot *}"
+    CONTROLLERCONFIG="${CONTROLLERCONFIG%% -autosave *}"
+    CONTROLLERCONFIG="${CONTROLLERCONFIG%% -state_file *}"
+  else
+    CONTROLLERCONFIG="${CONTROLLERCONFIG%% --*}"  # until a -- is found
+  fi
+}
+
 case ${EMULATOR} in
   mednafen)
     set_kill set "-9 mednafen"
@@ -222,25 +300,7 @@ case ${EMULATOR} in
 
     RUNTHIS='${EMUPERF} /usr/bin/${RABIN} -L /tmp/cores/${CORE}_libretro.so --config ${RETROARCH_TEMP_CONFIG} --appendconfig ${RETROARCH_APPEND_CONFIG} "${ROMNAME}"'
 
-    CONTROLLERCONFIG="${ARGUMENTS#*--controllers=*}"
-
-    if [[ "${ARGUMENTS}" == *"-state_slot"* ]]
-    then
-      CONTROLLERCONFIG="${CONTROLLERCONFIG%% -state_slot*}"  # until -state is found
-      SNAPSHOT="${ARGUMENTS#*-state_slot *}" # -state_slot x
-      SNAPSHOT="${SNAPSHOT%% -*}"
-        if [[ "${ARGUMENTS}" == *"-autosave"* ]]; then
-          CONTROLLERCONFIG="${CONTROLLERCONFIG%% -autosave*}"  # until -autosave is found
-          AUTOSAVE="${ARGUMENTS#*-autosave *}" # -autosave x
-          AUTOSAVE="${AUTOSAVE%% -*}"
-        else
-          AUTOSAVE=""
-        fi
-    else
-      CONTROLLERCONFIG="${CONTROLLERCONFIG%% --*}"  # until a -- is found
-      SNAPSHOT=""
-      AUTOSAVE=""
-    fi
+    parse_savestate_arguments "$@"
 
     # Configure platform specific requirements
     case ${PLATFORM} in
@@ -259,8 +319,11 @@ case ${EMULATOR} in
     then
       rm -f "${SET_SETTINGS_TMP}"
     fi
-    ${VERBOSE} && log $0 "Execute setsettings (${PLATFORM} ${ROMNAME} ${CORE} --controllers=${CONTROLLERCONFIG} --autosave=${AUTOSAVE} --snapshot=${SNAPSHOT})"
-    (/usr/bin/setsettings.sh "${PLATFORM}" "${ROMNAME}" "${CORE}" --controllers="${CONTROLLERCONFIG}" --autosave="${AUTOSAVE}" --snapshot="${SNAPSHOT}" >${SET_SETTINGS_TMP})
+    ### --state_file= goes ahead of --controllers=: setsettings reads CONTROLLERS
+    ### as everything after --controllers=, and a state file's path is a ROM
+    ### name, which can hold "p1" and would read as a controller (#196).
+    ${VERBOSE} && log $0 "Execute setsettings (${PLATFORM} ${ROMNAME} ${CORE} --state_file=${STATEFILE} --controllers=${CONTROLLERCONFIG} --autosave=${AUTOSAVE} --snapshot=${SNAPSHOT})"
+    (/usr/bin/setsettings.sh "${PLATFORM}" "${ROMNAME}" "${CORE}" --state_file="${STATEFILE}" --controllers="${CONTROLLERCONFIG}" --autosave="${AUTOSAVE}" --snapshot="${SNAPSHOT}" >${SET_SETTINGS_TMP})
 
     ### Enable RetroArch Network Control for this session on dual-screen devices
     ### so the bottom-screen UI can forward save-state / load-state / resume commands.
@@ -411,6 +474,13 @@ if [ "${DEVICE_MANGOHUD_SUPPORT}" == "true" ]; then
   fi
 fi
 
+### Clear the exit hotkey marker on the way into the emulator, so a press
+### left over from an earlier launch -- or from the carousel, where the same
+### hotkey kills EmulationStation -- can never be read as this launch ending
+### (fork #92). Both dispatch paths below run through here, and nothing above
+### it starts an emulator; keep it that way.
+rm -f "${EXIT_HOTKEY_MARKER}"
+
 # If the rom is a shell script just execute it, useful for DOSBOX and ScummVM scan scripts
 if [[ "${ROMNAME}" == *".sh" ]] && [ ! "${PLATFORM}" = "ports" ] && [ ! "${PLATFORM}" = "windows" ]; then
         ${VERBOSE} && log $0 "Executing shell script ${ROMNAME}"
@@ -484,26 +554,32 @@ fi
 ### Disable GPU profiling
 gpu_profiling "off"
 
-### Backup save games
-CLOUD_BACKUP=$(get_setting "cloud.backup")
-if [ "${CLOUD_BACKUP}" = "1" ]
-then
-  INETUP=$(/usr/bin/amionline >/dev/null 2>&1)
-  if [ $? == 0 ]
-  then
-    log $0 "backup saves to the cloud."
-    /usr/bin/run /usr/bin/cloud_backup
-  fi
-fi
+### Capture and the game-exit save sync run from EmulationStation (FileData::launchGame, fork #21).
+### Never spawn a second uploader here: it would run before ES resumes, so before capture, as a second writer on one remote (#21 DOES-NOT-BUILD).
 
 ${VERBOSE} && log $0 "Checking errors: ${ret_error} "
 ### Report how the launch ended. EmulationStation records play count, play time
-### and last-played only on 0 (FileData::launchGame) and passes the same code to
-### whatever runs after the game. The global exit hotkey (input_sense, execute_kill) ends
+### and last-played only on 0 (FileData::launchGame) and hands the same code to
+### cloud_capture --exit. The global exit hotkey (input_sense, execute_kill) ends
 ### a standalone emulator with killall -9 and RetroArch with SIGTERM, so 137 and
 ### 143 are the player leaving, not a failed launch: a clean exit. Every other
 ### non-zero status still collapses to 1 -- ES keeps 200-300 for messages it can
 ### name, and an emulator's own codes would land in that range.
+###
+### 137/143 cover an emulator that dies on the signal. RetroArch does not: it
+### catches SIGTERM and ends with its own exit(1), which is the same status as
+### "Failed to load content", so no rule reading the code alone can tell a
+### forced quit from a failed launch. The hotkey therefore says so itself --
+### execute_kill touches ${EXIT_HOTKEY_MARKER} immediately before the killall,
+### and a non-zero status that follows a press is read as the player leaving
+### (fork #92, D-LAUNCH-002). A launch with no marker behaves exactly as before.
+### Consume the marker here whatever happened, so it cannot reach another launch.
+EXIT_HOTKEY_PRESSED=false
+if [ -e "${EXIT_HOTKEY_MARKER}" ]
+then
+        EXIT_HOTKEY_PRESSED=true
+        rm -f "${EXIT_HOTKEY_MARKER}"
+fi
 case "${ret_error}" in
   0)
         quit 0
@@ -513,6 +589,11 @@ case "${ret_error}" in
         quit 0
   ;;
   *)
+        if [ "${EXIT_HOTKEY_PRESSED}" = true ]
+        then
+                log $0 "emulator exited ${ret_error} after the exit hotkey was pressed (marker consumed); a clean exit"
+                quit 0
+        fi
         log $0 "exiting with ${ret_error}"
         quit 1
   ;;

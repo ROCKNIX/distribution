@@ -1,0 +1,775 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+# cloud_migrate_layout - move a device off the original cloud folder layout.
+#
+# The first layout put everything under /GAMES, with the settings backups nested
+# inside the saves folder at /GAMES/backup. Both are wrong in ways that bite:
+#
+#   - /GAMES is a name somebody may well have used for something else, and we
+#     write into it as though it were ours.
+#   - a backup folder inside the saves folder is inside the path that a `sync`
+#     backup mirrors, so the archive is deletable by the operation meant to
+#     protect it.
+#
+# The default has been /ROCKNIX/Saves and /ROCKNIX/Backups since b35c5832b1,
+# but cloud_sync_helper only ever adds keys that are missing -- it never
+# rewrites one already in the file -- so every device configured before that
+# is still on the old layout and will stay there for ever unless asked.
+#
+# This is an offer, never automatic. Where somebody's saves live is theirs to
+# decide, and the safe answer is always to leave it alone.
+#
+#   cloud_migrate_layout --check     what would move, and whether it is safe
+#   cloud_migrate_layout --apply     do it
+#
+# Only the two folders we wrote are moved. Anything else under the old folder
+# is left exactly where it is, because it is not ours.
+
+. /etc/profile 2>/dev/null
+
+SYNC_CONF="/storage/.config/cloud_sync.conf"
+NEW_SAVES="/ROCKNIX/Saves"
+NEW_BACKUPS="/ROCKNIX/Backups"
+NEW_CONTENT="/ROCKNIX/Content"
+
+say() { echo "$@"; }
+
+remote_name() {
+    rclone listremotes 2>/dev/null | head -1
+}
+
+# The shared reader (cloud_setup's, the content scripts', D-CLOUD-149): a
+# single-quoted or bare pointer used to come back as the whole line from
+# `cut -d'"' -f2`, and the new folder logic then moved the pointer off the
+# player's saves (the audit of the fixes, claude G3-D-05).
+conf_get() { # <KEY> (the content scripts' reader, mirrored so every reader agrees, D-CLOUD-149): its value, quotes off; nothing when absent; exit 2 when unreadable, and why on stdout
+    [ -f ${SYNC_CONF} ] || return 0
+    awk -v k="$1" '
+        { t = $0; gsub(/\t/, "", t); if (t ~ /[[:cntrl:]]/ && !cntrl) cntrl = NR }
+        index($0, k "=") != 1 && !other \
+            && $0 ~ ("^[ \t]*((export|declare|typeset|readonly|local)([ \t]+-[A-Za-z]+)*[ \t]+)?" k "[ \t]*[+]?=") { other = NR }
+        index($0, k "=") == 1 {
+            s = substr($0, length(k) + 2); v = ""; r = ""; ok = 1; why = ""
+            c = substr(s, 1, 1)
+            if (c == "\"") {
+                # Inside double quotes bash reads \" \\ \$ and \` as the one
+                # character each (PL-015), and so does this; an unescaped $
+                # or backtick is an expansion this reader does not make, and
+                # any other backslash is refused as conf_valid refuses it.
+                n = length(s); i = 2; closed = 0
+                while (i <= n) {
+                    d = substr(s, i, 1)
+                    if (d == "\"") { closed = 1; break }
+                    if (d == "\\") {
+                        e = substr(s, i + 1, 1)
+                        if (e == "\"" || e == "\\" || e == "$" || e == "`") { v = v e; i += 2; continue }
+                        ok = 0
+                        why = (e == "") ? "a value continued onto the next line, which this reader does not follow" \
+                                        : "a backslash inside double quotes that is not one of the escapes bash reads there"
+                        break
+                    }
+                    if (d == "$" || d == "`") { ok = 0; why = "a $ or a backtick inside double quotes"; break }
+                    v = v d; i++
+                }
+                if (ok && !closed) { ok = 0; why = "a double-quoted value that does not close on its line" }
+                if (ok) r = substr(s, i + 1)
+            } else if (c == "'"'"'") {
+                j = index(substr(s, 2), c)
+                if (j) { v = substr(s, 2, j - 1); r = substr(s, j + 2) } else { ok = 0; why = "a single-quoted value that does not close on its line" }
+            } else {
+                match(s, /^[A-Za-z0-9_.\/:@%+,=-]*/); v = substr(s, 1, RLENGTH); r = substr(s, RLENGTH + 1)
+            }
+            if (ok && r !~ /^([ \t]+(#.*)?)?$/) { ok = 0; why = "something after the value that is not a # comment" }
+            if (!found) { found = 1; first = v; firstok = ok; firstwhy = "line " NR ": " why }
+        }
+        END {
+            if (cntrl) { print "line " cntrl ": a control character other than a tab"; exit 2 }
+            if (other) { print "line " other ": " k " set in a form this reader does not read"; exit 2 }
+            if (found && !firstok) { print firstwhy; exit 2 }
+            if (found) print first
+        }
+    ' ${SYNC_CONF}
+}
+conf_value() {
+    local v
+    v=$(conf_get "$1"); case $? in 2) echo "cloud_migrate_layout: ${SYNC_CONF}: ${v}" >&2; return 2 ;; esac
+    printf '%s\n' "${v}"
+}
+
+# One folder, one spelling (the audit of the fix round, PL-001). The guards
+# in main that decide whether a tier has already landed compared the conf's
+# raw string with /ROCKNIX/Saves, so SAVES_REMOTE="/ROCKNIX/Saves/" -- a
+# trailing slash, from a hand edit or an older setup -- read as the old
+# layout: --check offered the move, and --apply copied the saves onto
+# themselves (rclone's copy of a folder onto itself exits 0 and changes
+# nothing), checked them clean against themselves, and deleted every file
+# it had listed; the content folder went the same way. So a pointer is read
+# as the folder it names:
+#
+#   clean_path     runs of / as one, no "." component, no trailing /; a
+#                  leading / kept only if it had one, so the path handed to
+#                  rclone is the one the other scripts use; it fails on a
+#                  ".." component, which rclone resolves by rules of its
+#                  own, so main leaves such a layout alone;
+#   folder_key     that from the root, in one case when the cloud folds case
+#                  (Dropbox, OneDrive) or cannot say whether it does;
+#   same_folder    two keys equal;
+#   inside_folder  the first strictly under the second, and rel_inside the
+#                  part below, in the first one's own spelling.
+CASE_INSENSITIVE=1
+clean_path() { # <path>
+    local p="$1" lead="" out="" part
+    local -a parts=()
+    case "${p}" in /*) lead="/" ;; esac
+    IFS=/ read -r -a parts <<< "${p}"
+    for part in "${parts[@]}"; do
+        case "${part}" in
+            ""|.) ;;
+            ..) return 1 ;;
+            *) out="${out:+${out}/}${part}" ;;
+        esac
+    done
+    printf '%s%s' "${lead}" "${out}"
+}
+folder_abs() { # <cleaned path>: the same folder from the root, in its own spelling
+    printf '/%s' "${1#/}"
+}
+folder_key() { # <path>
+    local p
+    p=$(clean_path "$1") || p="$1"
+    p="/${p#/}"
+    [ "${CASE_INSENSITIVE}" = 1 ] && p="${p,,}"
+    printf '%s' "${p}"
+}
+same_folder() { # <path> <path>
+    [ "$(folder_key "$1")" = "$(folder_key "$2")" ]
+}
+inside_folder() { # <path> <path>: the first strictly under the second
+    local ka kb
+    ka=$(folder_key "$1"); kb=$(folder_key "$2")
+    [ "${ka}" != "${kb}" ] || return 1
+    [ "${kb}" = "/" ] && return 0
+    case "${ka}" in "${kb}"/*) return 0 ;; esac
+    return 1
+}
+rel_inside() { # <path> <path>: the part of the first below the second (inside_folder holds)
+    local a b
+    a=$(clean_path "$1") || a="$1"; b=$(clean_path "$2") || b="$2"
+    a=$(folder_abs "${a}"); b=$(folder_abs "${b}")
+    if [ "${b}" = "/" ]; then printf '%s' "${a#/}"; else printf '%s' "${a:$(( ${#b} + 1 ))}"; fi
+}
+
+# A listing's bound (#143): three low-level retries, the value every other
+# cloud script lists with.
+readonly -a RCLONE_LIST_OPTS=(--contimeout 15s --timeout 30s --low-level-retries 3 --retries 1)
+# Every other call's (#308 claude F-CS-23): RCLONE_NET_OPTS from the conf,
+# or the shipped value when the conf has none -- the bound the transfers
+# carry everywhere else, where this script ran on rclone's own defaults
+# (a 60 s connect, a 5 min idle, ten low-level retries, three runs: the
+# behaviour #101 removed from every other script). Set in main.
+RCLONE_NET_OPTS_FALLBACK="--contimeout 15s --timeout 30s --low-level-retries 10 --retries 1"
+RCLONE_NET_OPTS_ARRAY=()
+# What a verification compares by: size and hash where the remote keeps
+# hashes, the bytes themselves where it keeps none (WebDAV, SFTP, SMB,
+# FTP), where `rclone check` would otherwise compare sizes alone. Set in
+# main from `rclone backend features`; a remote whose features cannot be
+# read is checked by content too.
+CHECK_OPTS=()
+
+# One cloud transfer at a time (F-CS-23): the lock every other cloud script
+# takes, for --apply only -- the check reads and writes nothing, as the
+# match preview does. Without it a startup or game-exit sync could write
+# into the folder this was moving. The same descriptor discipline as the
+# others: the body runs with fd 9 closed, so nothing it starts holds the
+# lock. Exit 75 is the skip EmulationStation names.
+CLOUD_SYNC_LOCK=/var/run/cloud_sync.lock
+take_cloud_lock() {
+    local tries=0
+    exec 9>"${CLOUD_SYNC_LOCK}"
+    while ! flock -n 9; do
+        if [ "${tries}" -ge 4 ]; then
+            echo "Skipped: another cloud sync is already running. Try again when it's done."
+            exit 75
+        fi
+        tries=$((tries + 1))
+        sleep 0.25
+    done
+}
+
+# A cloud that did not answer is not an empty cloud (audit #307 PL-027).
+# Every presence test here used to be `[ -n "$(rclone lsf ... 2>/dev/null |
+# head -1)" ]`, which discards rclone's exit: a listing that failed read as
+# a folder with nothing in it, and --apply went on to rewrite the pointers
+# with nothing copied. A listing now ends one of three ways: it listed
+# (LISTING holds what it said, perhaps nothing), the folder is not there
+# (rclone's 3/4, or the nearest listable parent lacks it -- #142's walk,
+# for a server whose "missing" rclone does not map to 3), or the cloud
+# could not be read -- and then the run stops where it is, saying so, with
+# every pointer that has not already landed left where it was.
+unreadable() { # <path> <rclone exit>
+    local rc="$2"
+    [ "${rc}" -gt 0 ] 2>/dev/null || rc=1
+    say "Couldn't read your cloud, so nothing more was changed. Try again when you're online."
+    [ "${MODE}" = "--apply" ] && echo ">>> why YOUR CLOUD STOPPED ANSWERING"
+    logger -t cloud_migrate_layout "could not list $1 (rclone exit $2); stopped" 2>/dev/null
+    exit "${rc}"
+}
+
+# Is this remote path missing, rather than unreadable? cloud_content_restore's
+# walk, verbatim: up to the nearest level that lists; a level that lists and
+# lacks the next name is a path not created yet (0), one that holds it means
+# the failure was something else (1), and a root that will not list is
+# broken (1).
+absent_not_broken() {
+    local path="${1%/}" remote rel name parent listing
+    remote="${path%%:*}:"; rel="${path#*:}"; rel="${rel#/}"
+    while [ -n "${rel}" ]; do
+        name="${rel##*/}"; parent="${rel%/*}"
+        [ "${parent}" = "${rel}" ] && parent=""
+        if listing=$(rclone lsf --dirs-only "${remote}/${parent:+${parent}/}" "${RCLONE_LIST_OPTS[@]}" 2>/dev/null); then
+            printf '%s\n' "${listing}" | grep -qFx -- "${name}/" && return 1
+            return 0
+        fi
+        [ -n "${parent}" ] || return 1
+        rel="${parent}"
+    done
+    return 1
+}
+
+# LISTING=what rclone lsf [args] <path> lists; nothing for a folder that is
+# not there; the run stops for one that cannot be read. Never called inside
+# $(...), so the stop is the script's.
+LISTING=""
+list_or_stop() { # <path> [lsf args...]
+    local path="$1" rc
+    shift
+    LISTING=$(rclone lsf "$@" "${path}" "${RCLONE_LIST_OPTS[@]}" 2>/dev/null); rc=$?
+    case "${rc}" in
+        0) return 0 ;;
+        3|4) LISTING=""; return 0 ;;
+    esac
+    if absent_not_broken "${path}"; then
+        LISTING=""
+        return 0
+    fi
+    unreadable "${path}" "${rc}"
+}
+
+# Does a remote path exist and hold anything?
+has_entries() {
+    list_or_stop "$1"
+    [ -n "${LISTING}" ]
+}
+
+# Does it hold actual files, ignoring the backup folder underneath it?
+#
+# Not the same question as "is it empty". The original layout has the backups
+# nested inside the saves folder, so a saves folder with nothing in it but
+# that subdirectory still lists an entry -- and reading that as "the saves are
+# here" would move the backups into the middle of the saves.
+#
+# The same exclusions are what the saves relocation carries (audit #307
+# PL-025): a test that looks past backup/ and Backups/ and a copy that then
+# moves them is how the original layout's settings archives landed in
+# Saves/backup/. Anchored at the folder's root, where the nested layout put
+# them; the caller adds the tiers nested deeper. Every argument is passed
+# as it is given -- the exclusion used to travel as one unquoted word
+# (${extra}), which the shell split and glob-expanded against the working
+# directory (#308 claude F-CS-23).
+SAVES_EXCLUDES=(--exclude '/backup/**' --exclude '/Backups/**')
+has_files() { # <path> [more lsf arguments...]
+    local path="$1"
+    shift
+    list_or_stop "${path}" --files-only -R "${SAVES_EXCLUDES[@]}" "$@"
+    [ -n "${LISTING}" ]
+}
+
+# Does a remote path exist?
+#
+# NOT `rclone lsjson --stat`, which is what this used to be. On bucket-based
+# remotes (S3, B2, Minio) stat synthesises a directory entry for *any* path --
+# verified against Minio on rclone 1.60 and 1.74, where
+# "utterly-bogus-never-created" reports success with IsDir true. So it can
+# never report absence there, and every caller that branched on it took the
+# "exists" path unconditionally.
+#
+# A listing can report absence. Two questions, because a directory can be real
+# without holding files: does it contain anything, or does its parent list it
+# (which is what an --s3-directory-markers marker object produces)?
+exists() {
+    list_or_stop "$1"
+    [ -n "${LISTING}" ] && return 0
+    local parent name
+    parent="${1%/}"; name="${parent##*/}"; parent="${parent%/*}"
+    [ -n "${name}" ] || return 1
+    list_or_stop "${parent}/" --dirs-only
+    printf '%s\n' "${LISTING}" | grep -qxF -- "${name}/"
+}
+
+# Did a `rclone check` find the two sides the same? Only when it says so
+# both ways: its exit status is 0, and its count of differences is exactly
+# zero. The count alone was the test here, as a substring -- and "10
+# differences found" contains "0 differences found", so a check that found
+# ten changed files let the pointer move and the old folder go, and a new
+# folder holding ten other versions of the same names read as a partial
+# copy to resume into (the audit of the fixes to #307, G-A-01).
+check_clean() { # <rclone check's exit status> <its output>
+    [ "$1" -eq 0 ] 2>/dev/null || return 1
+    printf '%s\n' "$2" | grep -qE '(^|[^0-9])0 differences found'
+}
+
+# Relocate a folder by copy, verify, delete -- never `rclone move`.
+#
+# move deletes as it goes, so an interruption -- a handheld dropping off wifi is
+# the normal case, not the exception -- leaves the library split across two
+# paths with no record of which files went where (#57, upgrade-and-install.md).
+# Copy first: a second run finds the copied files already present and skips
+# them. Verify by content with `rclone check`, reading its whole output rather
+# than one line of it (engineering-practices.md: rclone prints "N matching
+# files" last, and a check against the last line matched nothing). Only a
+# verified pass removes the source; a failed one leaves both sides intact and
+# says so.
+#
+# Pipelines are avoided on purpose: `rclone ... | tail` reports tail's status,
+# which is how a short backup once announced itself a success.
+#
+# The tier's pointer is written the moment its copy is verified, before its
+# source is removed (audit #307 PL-026). Both pointers used to be written
+# after both moves, so a run that moved the saves and was cut before the
+# end left SAVES_REMOTE at the emptied folder -- a device syncing to a
+# folder with nothing in it -- and the next run, finding the new folder
+# already there, refused it. Now a cut run leaves each tier either where it
+# was (not yet verified) or where it went (pointer written), and the next
+# run moves only what has not landed.
+#
+# Any filter arguments after the fourth are the tier's own (PL-025): they
+# decide which files are the tier's, so a folder nested in the source that
+# belongs to another tier -- the original layout's backup/ and Content/
+# inside the saves folder -- is neither moved with it nor deleted with it.
+#
+# And the source loses only what was copied and verified (audit #307
+# PL-053). The files are listed once, by those filters, and the list is the
+# whole job: the copy, the check and the deletion each take exactly it
+# (--files-from-raw, which keeps a name's spaces), and the empty folders go
+# after. The old folder used to be purged after a point-in-time check, so a
+# save another device wrote into it between the check and the purge was
+# lost; now it is not on the list, stays where it was written, and is
+# still there for that device's own migration.
+#
+# 0 when the tier moved; 1 when its copy or check failed, the old folder
+# whole; 2 when its pointer could not be written, which set_pointer has
+# said, the old folder whole too.
+relocate() { # <src> <dst> <what> <pointer key> [filter arguments...]
+    local src="$1" dst="$2" what="$3" key="$4" out list
+    shift 4
+    local -a filt=("$@")
+    # One folder under two spellings is not a move (PL-001): copied onto
+    # itself it checks clean, and the delete after it removes every file
+    # it listed. Refused here whatever the caller compared.
+    if same_folder "${src#*:}" "${dst#*:}"; then
+        say "REFUSING: ${src} and ${dst} are the same folder, so nothing was copied or removed."
+        logger -t cloud_migrate_layout "relocate: ${src} and ${dst} are one folder; refused" 2>/dev/null
+        return 1
+    fi
+    # A destination inside the source -- a saves folder at /ROCKNIX moving
+    # to /ROCKNIX/Saves -- is never listed as the source's own: a run cut
+    # after its copy left part of it there, and the resume moved that copy
+    # into /ROCKNIX/Saves/Saves (PL-001, found with the spelling cases).
+    if inside_folder "${dst#*:}" "${src#*:}"; then
+        filt+=(--exclude "/$(rel_inside "${dst#*:}" "${src#*:}")/**")
+    fi
+    list_or_stop "${src}" -R --files-only "${filt[@]}"
+    if [ -z "${LISTING}" ]; then
+        set_pointer "${key}" "${dst#*:}" || return 2
+        return 0
+    fi
+    list=$(mktemp /tmp/cloud_migrate_layout.XXXXXX) || { say "Couldn't make a working file on this device; nothing was moved."; return 1; }
+    printf '%s\n' "${LISTING}" > "${list}"
+    say "Copying ${what}..."
+    if ! out=$(rclone copy "${src}" "${dst}" --files-from-raw "${list}" --create-empty-src-dirs=false "${RCLONE_NET_OPTS_ARRAY[@]}" 2>&1); then
+        printf '%s\n' "${out}" | tail -3
+        # A copy that stopped part-way has put some files in the new
+        # folder; only the old one is as it was (G-A-12).
+        say "Couldn't finish copying ${what}. Nothing was removed from the old folder; some files may already be in the new one."
+        rm -f "${list}"
+        return 1
+    fi
+    say "Verifying ${what}..."
+    out=$(rclone check "${src}" "${dst}" --files-from-raw "${list}" --one-way "${CHECK_OPTS[@]}" "${RCLONE_NET_OPTS_ARRAY[@]}" 2>&1)
+    if ! check_clean $? "${out}"; then
+        printf '%s\n' "${out}" | grep -iE "differ|missing|error" | head -3
+        say "The copy of ${what} didn't match, so nothing was removed from the old folder."
+        rm -f "${list}"
+        return 1
+    fi
+    # The source goes only once the pointer has landed (G-A-02): a pointer
+    # that could not be written leaves the device on the old folder, so the
+    # old folder must still hold everything -- the next run finds the copy
+    # already there and resumes.
+    if ! set_pointer "${key}" "${dst#*:}"; then
+        rm -f "${list}"
+        return 2
+    fi
+    say "Removing the old ${what} folder..."
+    { rclone delete "${src}" --files-from-raw "${list}" "${RCLONE_NET_OPTS_ARRAY[@]}" \
+        && rclone rmdirs "${src}" "${RCLONE_NET_OPTS_ARRAY[@]}"; } >/dev/null 2>&1 \
+        || say "(could not remove the old folder; the copy is complete and verified)"
+    rm -f "${list}"
+    return 0
+}
+
+# Point a key of the conf at a tier's new folder: the line rewritten in
+# place, or added when the conf has none -- and then read back. A write
+# that did not land (a full or read-only /storage, a path sed's
+# replacement would mangle) is a failure the caller must stop on, before
+# anything is removed (the audit of the fixes to #307, G-A-02): its result
+# used to go unread, and relocate deleted the old folder after it either
+# way, leaving the device pointed at a folder the run had just emptied.
+# 0 when the conf now says <remote path>, 1 when it does not.
+set_pointer() { # <key> <remote path>
+    if grep -q "^$1=" "${SYNC_CONF}" 2>/dev/null; then
+        sed -i "s|^$1=.*|$1=\"$2\"|" "${SYNC_CONF}" 2>/dev/null
+    else
+        printf '%s="%s"\n' "$1" "$2" >> "${SYNC_CONF}" 2>/dev/null
+    fi
+    if [ "$(conf_value "$1")" != "$2" ]; then
+        say "Couldn't save the new folder in this device's settings. It still uses the old one, and nothing was removed from it."
+        [ "${MODE}" = "--apply" ] && echo ">>> why YOUR CLOUD SYNC SETTINGS COULDN'T BE SAVED"
+        logger -t cloud_migrate_layout "could not write $1 to ${SYNC_CONF}; stopped before removing anything" 2>/dev/null
+        return 1
+    fi
+    say "Now using ${2} for your $(tier_words "$1")."
+}
+
+# A tier as the player knows it (es-player-text.md: the four tiers), for
+# the tidy page's lines -- which named the config key (audit of the fixes,
+# claude G-A-11).
+tier_words() { # <pointer key>
+    case "$1" in
+        SAVES_REMOTE) echo "saves" ;;
+        SETTINGS_REMOTE) echo "settings backups" ;;
+        CONTENT_REMOTE) echo "ROMs, BIOS, and game content" ;;
+        *) echo "files" ;;
+    esac
+}
+
+# Is an existing destination a partial copy of this source, and nothing else?
+#
+# The refusals below exist so two devices' libraries are never merged. But a
+# copy interrupted half-way also leaves a destination that exists, and the same
+# refusal would then block the resume forever. The two cases differ in one
+# checkable way: a partial copy holds nothing that did not come from the
+# source. The reverse one-way check asks exactly that -- every file in dst is
+# present and identical in src -- so a foreign file in dst fails it and the
+# refusal stands.
+resumable() {
+    local src="$1" dst="$2" out
+    out=$(rclone check "${dst}" "${src}" --one-way "${CHECK_OPTS[@]}" "${RCLONE_NET_OPTS_ARRAY[@]}" 2>&1)
+    check_clean $? "${out}"
+}
+
+# What cloud_sync_helper would have derived CONTENT_REMOTE to be for a given
+# SAVES_REMOTE. The helper deliberately derives it rather than taking the shipped
+# default, so that ROMs and saves stay in one namespace -- its own comment
+# calls a split "worse than either layout alone".
+#
+# That is exactly what this script used to produce: it moved saves and backups
+# to /ROCKNIX and left CONTENT_REMOTE behind, so a migrated device looked for its
+# ROMs under a /GAMES that no longer had anything in it. Matching against the
+# derived value is how we tell our own pointer from one the owner chose --
+# theirs is left alone.
+derived_content() {
+    local sync="$1" parent
+    parent=$(dirname "${sync}")
+    [ "${parent}" = "/" ] && parent="${sync}"
+    echo "${parent%/}/Content"
+}
+
+# Move content to the current namespace if it is safe to, and repoint the
+# config. Never merges into an existing destination -- that is the same
+# interruptible half-migrated state the saves move refuses.
+migrate_content() {
+    local remote="$1" content="$2" mode="$3"
+
+    if has_entries "${remote}${content}/"; then
+        if exists "${remote}${NEW_CONTENT}" && ! resumable "${remote}${content}" "${remote}${NEW_CONTENT}"; then
+            say "REFUSING: ${remote}${NEW_CONTENT} already exists, and ${remote}${content}"
+            say "holds files. Nothing moved and the config is unchanged -- merging two"
+            say "content folders is not something to do without being asked."
+            [ "${mode}" = "--apply" ] && echo ">>> why THE NEW FOLDER ALREADY HAS FILES IN IT"
+            return 4
+        fi
+        say "Would copy, verify, then remove  ${remote}${content}  ->  ${remote}${NEW_CONTENT}"
+        if [ "${mode}" != "--apply" ]; then
+            say "Nothing has been changed. Run with --apply to do it."
+            return 0
+        fi
+        local rrc=0
+        relocate "${remote}${content}" "${remote}${NEW_CONTENT}" "content" CONTENT_REMOTE || rrc=$?
+        if [ "${rrc}" -ne 0 ]; then
+            # 2 is a pointer that could not be written, which has said so.
+            if [ "${rrc}" -ne 2 ]; then
+                say "The config is unchanged."
+                echo ">>> why SOME FILES DIDN'T FINISH"
+            fi
+            return 5
+        fi
+        say "Content is now at ${remote}${NEW_CONTENT}."
+        return 0
+    else
+        say "Nothing is stored at ${remote}${content}, so only the setting changes."
+        if [ "${mode}" != "--apply" ]; then
+            say "Nothing has been changed. Run with --apply to do it."
+            return 0
+        fi
+    fi
+
+    set_pointer CONTENT_REMOTE "${NEW_CONTENT}" || return 5
+    say "Content is now at ${remote}${NEW_CONTENT}."
+    return 0
+}
+
+MODE="--check"
+main() {
+    # Every pointer this tool reads must be readable by the shared grammar
+    # before anything is compared or moved (the audit of the fixes, claude
+    # G3-D-05): a value the reader cannot read ends the run with its why,
+    # as cloud_setup ends, never as an empty pointer that reads as a folder.
+    local _k _v
+    for _k in SAVESPATH SETTINGS_BACKUPS SAVES_REMOTE SETTINGS_REMOTE CONTENT_REMOTE RCLONE_NET_OPTS; do
+        _v=$(conf_get "${_k}"); case $? in 2) echo "Your cloud sync settings couldn't be read (${SYNC_CONF}: ${_v})." >&2; exit 2 ;; esac
+    done
+    local mode="${1:---check}"
+    local remote saves backups content old_root
+    MODE="${mode}"
+
+    remote=$(remote_name)
+    if [ -z "${remote}" ]; then
+        say "No cloud remote is configured; nothing to migrate."
+        return 1
+    fi
+
+    # The cloud answers before anything is asked of it (PL-027): a remote
+    # that does not list at its root is unreadable, and nothing below --
+    # a presence test, a pointer -- is reached.
+    local probe_rc
+    rclone lsd "${remote}" "${RCLONE_LIST_OPTS[@]}" >/dev/null 2>&1; probe_rc=$?
+    [ "${probe_rc}" -eq 0 ] || unreadable "${remote}" "${probe_rc}"
+
+    local net_opts
+    net_opts=$(conf_value RCLONE_NET_OPTS | tr -s ' ' | sed 's/^ //; s/ $//')
+    [ -n "${net_opts}" ] || net_opts="${RCLONE_NET_OPTS_FALLBACK}"
+    read -r -a RCLONE_NET_OPTS_ARRAY <<< "${net_opts}"
+    # The query creates the remote, a round trip on most backends, so it
+    # carries the listing bound like every other call here (audit of the
+    # fixes, G-A-11/G-A-10); one that fails or times out reads as "no
+    # hashes", the safe side.
+    local features
+    features=$(rclone backend features "${remote}" "${RCLONE_LIST_OPTS[@]}" 2>/dev/null | tr -d ' \t\n')
+    case "${features}" in *'"Hashes":["'*) ;; *) CHECK_OPTS=(--download) ;; esac
+    # And whether it keeps case apart (PL-001): only a cloud that says so
+    # holds /rocknix/saves and /ROCKNIX/Saves as two folders. One that folds
+    # case, or whose features cannot be read, holds them as one, and a
+    # pointer spelled either way is the new folder, so nothing moves -- the
+    # safe side, since the other side deletes a folder copied onto itself.
+    case "${features}" in *'"CaseInsensitive":false'*) CASE_INSENSITIVE=0 ;; *) CASE_INSENSITIVE=1 ;; esac
+
+    saves=$(conf_value SAVES_REMOTE)
+    backups=$(conf_value SETTINGS_REMOTE)
+
+    content=$(conf_value CONTENT_REMOTE)
+
+    # Each pointer as the folder it names (PL-001): cleaned for the paths
+    # below and compared by folder_key, never as a string. A ".." cannot be
+    # read as one folder without the cloud's own rules -- rclone resolves
+    # /ROCKNIX/Old/../Saves to /ROCKNIX/Saves -- so a layout holding one is
+    # left exactly as it is.
+    local ptr cleaned
+    for ptr in saves backups content; do
+        if ! cleaned=$(clean_path "${!ptr}"); then
+            say "REFUSING: a folder in this device's cloud settings has .. in it, so it can't be told which folder it means. Nothing was changed."
+            [ "${mode}" = "--apply" ] && echo ">>> why YOUR CLOUD SYNC SETTINGS COULDN'T BE READ"
+            logger -t cloud_migrate_layout "a pointer has a .. component; nothing done" 2>/dev/null
+            return 4
+        fi
+        printf -v "${ptr}" '%s' "${cleaned}"
+    done
+
+    # A layout the owner chose is current too. CHANGE CLOUD FOLDER writes the
+    # settings and content folders as SIBLINGS of the saves folder -- the
+    # parent's Backups and Content, or the folder's own when it sits at the
+    # root -- and a device on /Custom/Saves, /Custom/Backups, /Custom/Content
+    # has nothing to migrate. Until 2026-09-11 only the /ROCKNIX names counted
+    # as current, so this check offered to move a deliberately chosen layout
+    # back to the default one (#74). The nested first layout, backups INSIDE
+    # the saves folder, is the only shape this tool exists to move.
+    local sabs sib_parent
+    sabs=$(folder_abs "${saves}")
+    sib_parent="${sabs%/*}"; [ -n "${sib_parent}" ] || sib_parent="${sabs}"
+    if ! same_folder "${saves}" "${NEW_SAVES}" && same_folder "${backups}" "${sib_parent}/Backups"; then
+        if [ -z "${content}" ] || same_folder "${content}" "${sib_parent}/Content"; then
+            say "Already on a sibling layout of your own (${saves}, ${backups}); nothing to move."
+            return 3
+        fi
+    fi
+
+    if same_folder "${saves}" "${NEW_SAVES}" && same_folder "${backups}" "${NEW_BACKUPS}"; then
+        # Saves and backups are current, but a device migrated before
+        # CONTENT_REMOTE was carried along is still pointing its ROMs at the old
+        # namespace. Repair that here rather than making it a separate flow --
+        # this is the state every early migration left behind.
+        # The old SAVES_REMOTE is gone by now, so the derived value cannot be
+        # recomputed. The signature is enough: the helper always appends
+        # "/Content", so a path shaped that way and not already the current
+        # one is one of ours, left behind.
+        if [ -n "${content}" ] && ! same_folder "${content}" "${NEW_CONTENT}"; then
+            case "${content}" in
+                */Content)
+                    say "Saves and backups are current, but content still points at ${remote}${content}."
+                    migrate_content "${remote}" "${content}"  "${mode}"
+                    return $?
+                ;;
+            esac
+        fi
+        say "Already on the current layout (${NEW_SAVES}, ${NEW_BACKUPS})."
+        return 3
+    fi
+
+    say "This device stores:"
+    say "  saves    ${remote}${saves}"
+    say "  backups  ${remote}${backups}"
+    say ""
+    say "The current layout is:"
+    say "  saves    ${remote}${NEW_SAVES}"
+    say "  backups  ${remote}${NEW_BACKUPS}"
+    say ""
+
+    # Where the saves actually are. Under the original layout SAVES_REMOTE was the
+    # folder itself; a device whose owner has already tidied them into a
+    # subfolder is the more useful case to handle, since that is what somebody
+    # does after losing files to a mirror.
+    local saves_src="${saves}" nested
+    # "at the root" must not count the saves subfolder, or a recursive listing
+    # finds the files inside it and concludes they were at the root all along
+    # -- which would move the whole folder, backups included, into Saves. Nor
+    # the other tiers nested in it: the content folder derived beside the
+    # saves (/GAMES/Content) holds files, and read as "saves at the root" it
+    # sent a tidied saves/ subfolder into Saves/saves/ (found by F-CS-23's
+    # case, a gap in the PL-025 commit).
+    local -a root_nested=()
+    for nested in "${backups}" "${content}"; do
+        [ -n "${nested}" ] && inside_folder "${nested}" "${saves}" \
+            && root_nested+=(--exclude "/$(rel_inside "${nested}" "${saves}")/**")
+    done
+    if ! has_files "${remote}${saves}/" --exclude '/saves/**' "${root_nested[@]}" \
+       && has_files "${remote}${saves}/saves/"; then
+        saves_src="${saves%/}/saves"
+        say "Saves are in ${remote}${saves_src}, not at the root."
+    fi
+    # The other tiers nested inside the saves source ride with neither its
+    # presence test nor its move (PL-025): the settings folder of the
+    # original layout (/GAMES/backup) and the content folder derived beside
+    # the saves (/GAMES/Content) each move to a place of their own.
+    for nested in "${backups}" "${content}"; do
+        [ -n "${nested}" ] && inside_folder "${nested}" "${saves_src}" \
+            && SAVES_EXCLUDES+=(--exclude "/$(rel_inside "${nested}" "${saves_src}")/**")
+    done
+
+    # Refuse to move onto something already there. A move into an existing
+    # directory is done file by file, which is exactly the interruptible,
+    # half-migrated state worth avoiding -- and it could merge two devices'
+    # libraries without anyone asking for that.
+    #
+    # Each tier is judged against its own source (PL-026): the backups
+    # destination used to be compared with the saves source, so a copy of
+    # the backups cut half-way could never be resumed. A tier whose pointer
+    # already names the new folder has landed, and is left alone; one whose
+    # source holds nothing has nothing to merge, and only its pointer moves --
+    # the state an earlier build left when it was cut after its moves and
+    # before its pointers.
+    local blocked=0
+    if ! same_folder "${backups}" "${NEW_BACKUPS}" && has_entries "${remote}${backups}/" \
+       && exists "${remote}${NEW_BACKUPS}" \
+       && ! resumable "${remote}${backups}" "${remote}${NEW_BACKUPS}"; then
+        say "REFUSING: ${remote}${NEW_BACKUPS} already exists."
+        blocked=1
+    fi
+    if ! same_folder "${saves}" "${NEW_SAVES}" && has_files "${remote}${saves_src}/" \
+       && exists "${remote}${NEW_SAVES}" \
+       && ! resumable "${remote}${saves_src}" "${remote}${NEW_SAVES}"; then
+        say "REFUSING: ${remote}${NEW_SAVES} already exists."
+        blocked=1
+    fi
+    [ "${blocked}" = "1" ] && return 4
+
+    say "Would move, server-side, leaving anything else where it is:"
+    ! same_folder "${backups}" "${NEW_BACKUPS}" && has_entries "${remote}${backups}/" \
+        && say "  ${remote}${backups}  ->  ${remote}${NEW_BACKUPS}"
+    ! same_folder "${saves}" "${NEW_SAVES}" && has_files "${remote}${saves_src}/" \
+        && say "  ${remote}${saves_src}  ->  ${remote}${NEW_SAVES}"
+
+    if [ "${mode}" != "--apply" ]; then
+        say ""
+        say "Nothing has been changed. Run with --apply to do it."
+        return 0
+    fi
+
+    say ""
+    # The backups first (PL-025). In the original layout they sit inside the
+    # saves folder; moved first, they are out of it before the saves move
+    # looks, as well as excluded from it. Each pointer is written as its
+    # tier lands (PL-026), only once the data is where it will point: a
+    # config updated first, then a move that failed, is a device looking at
+    # an empty folder and reporting that it has no saves. A tier with
+    # nothing stored only has its pointer moved.
+    if ! same_folder "${backups}" "${NEW_BACKUPS}"; then
+        if has_entries "${remote}${backups}/"; then
+            if ! relocate "${remote}${backups}" "${remote}${NEW_BACKUPS}" "backups" SETTINGS_REMOTE; then
+                say "Nothing else attempted."
+                return 5
+            fi
+        else
+            set_pointer SETTINGS_REMOTE "${NEW_BACKUPS}" || return 5
+        fi
+    fi
+
+    local moved_saves=0
+    if ! same_folder "${saves}" "${NEW_SAVES}"; then
+        if has_files "${remote}${saves_src}/"; then
+            relocate "${remote}${saves_src}" "${remote}${NEW_SAVES}" "saves" SAVES_REMOTE "${SAVES_EXCLUDES[@]}" || return 5
+            moved_saves=1
+        else
+            set_pointer SAVES_REMOTE "${NEW_SAVES}" || return 5
+        fi
+    fi
+
+    # ROMs move with the saves they belong to, when the pointer is one we
+    # derived. A CONTENT_REMOTE the owner set themselves is theirs, and stays.
+    # Its result is the run's (audit #307 PL-071): a content move that was
+    # refused or failed used to be followed by "Done." and exit 0, so the
+    # card said the tidy had completed while the ROMs stayed behind.
+    local content_rc=0
+    # Compared as folders, and never onto itself (PL-001): a saves folder at
+    # /ROCKNIX derives /ROCKNIX/Content, the new folder itself, which the
+    # string compare sent through the move and so onto itself.
+    if [ -n "${content}" ] && ! same_folder "${content}" "${NEW_CONTENT}" \
+       && same_folder "${content}" "$(derived_content "$(folder_abs "${saves}")")"; then
+        migrate_content "${remote}" "${content}" "${mode}" || content_rc=$?
+    elif [ -n "${content}" ] && ! same_folder "${content}" "${NEW_CONTENT}"; then
+        say "Leaving CONTENT_REMOTE at ${content} -- it is not a path this migration set."
+    fi
+
+    say ""
+    if [ "${content_rc}" -ne 0 ]; then
+        say "Saves are at ${remote}${NEW_SAVES} and backups at ${remote}${NEW_BACKUPS}, but your ROMs and BIOS files didn't move. Try again."
+        return "${content_rc}"
+    fi
+    say "Done. Saves are at ${remote}${NEW_SAVES}, backups at ${remote}${NEW_BACKUPS}."
+    [ "${moved_saves}" = "1" ] && say "Old folders were left in place if anything else was in them."
+    return 0
+}
+
+[ "${1:-}" = "--apply" ] && take_cloud_lock
+main "$@" 9>&-

@@ -1,24 +1,49 @@
 # Cloud Sync Default Configuration
 # This file defines the default values used when creating a new configuration
 
-# Base Directory Paths
-# -------------------
-# Directory where Retroarch saves, savestates, and screenshots are located
-DEFAULT_BACKUPPATH="/storage/roms"
+# Where things live
+# ----------------
+# Three kinds of thing move through cloud sync, and each key below says which:
+#
+#   settings  the configuration archive `backuptool` writes: emulator and
+#             interface settings, input mapping, themes, collections, bezels.
+#             No saves, no ROMs, no operating system.
+#   saves     game saves, save states, and screenshots -- files copied in
+#             place, matched by cloud_sync-rules.txt
+#   content   ROMs and BIOS files
+#
+# Keys ending in _REMOTE are folders on the cloud remote; the others are on
+# this device. Older configs used BACKUPPATH, RESTOREPATH, BACKUPFOLDER,
+# SYNCPATH, SYNCPATH_BACKUP and CONTENTPATH; cloud_sync_helper carries a
+# customised value across to the new name once, and the old keys are then
+# ignored. RESTOREPATH is gone: saves have one local folder, and a config
+# that still points it somewhere else makes every saves transfer refuse.
 
-# Changing the below to be different from BACKUPPATH will prevent data from being replaced on restore
-DEFAULT_RESTOREPATH="/storage/roms"
+# Saves on this device. Game saves, save states, and screenshots are found
+# under here by the rules file.
+DEFAULT_SAVESPATH="/storage/roms"
 
-# Local path where backups are stored (defined in backuptool)
-DEFAULT_BACKUPFOLDER="/storage/roms/backup"
+# Settings backups on this device (written by backuptool)
+DEFAULT_SETTINGS_BACKUPS="/storage/roms/backup"
 
-# Cloud Storage Paths
-# ------------------
-# Directory on the remote where save data should be stored
-DEFAULT_SYNCPATH="/GAMES"
+# Saves on the cloud remote
+DEFAULT_SAVES_REMOTE="/ROCKNIX/Saves"
 
-# Remote path where backups are stored
-DEFAULT_SYNCPATH_BACKUP="/GAMES/backup"
+# Settings backups on the cloud remote. Must be a sibling of SAVES_REMOTE,
+# never inside it -- a mirror of the saves folder would delete the archives.
+DEFAULT_SETTINGS_REMOTE="/ROCKNIX/Backups"
+
+# ROMs and BIOS files on the cloud remote, one folder per system plus "bios".
+# Previously unset, which put them at the remote root and scattered system
+# folders among whatever else lived there.
+#
+# Unlike the saves folder this key is derived for an upgrading config rather
+# than defaulted, so a device set up under an older layout keeps its ROMs
+# beside its saves -- except a saves folder at the top level (/GAMES), which
+# has no parent to put them beside: that config gets "" (the remote root,
+# where its ROMs already were) for its owner to set. Clear it back to "" to
+# use the remote root.
+DEFAULT_CONTENT_REMOTE="/ROCKNIX/Content"
 
 # Logging Options
 # --------------
@@ -29,21 +54,72 @@ DEFAULT_LOG_LEVEL="INFO"
 # ---------------
 # rclone sync rules - modify these options to change transfer behavior
 # IMPORTANT: Each option must be preceded by a backslash (\) except the first one
+# The saves allowlist (--filter-from /storage/.config/cloud_sync-rules.txt) is
+# applied whether or not it appears here: dropping it from this line does not
+# drop it from the transfer (#71). To change what syncs, edit the rules file.
 DEFAULT_RCLONEOPTS="--progress \
 --log-file /var/log/cloud_sync.log \
---filter-from /storage/.config/cloud_sync-rules.txt \
---delete-excluded"
+--filter-from /storage/.config/cloud_sync-rules.txt"
+
+# Network bounds
+# --------------
+# Timeouts and retry limits for every rclone command the cloud scripts run
+# against the cloud -- transfers, listings, probes, the settings archive's
+# upload and its size check. Without them rclone's own defaults apply: a
+# 60 s connect timeout, a 5 minute idle timeout, 10 low-level retries and
+# 3 whole-run retries, so a Wi-Fi link that drops in the middle of a run
+# holds the process for well over ten minutes. On the RG SP that left the
+# startup sync's card frozen at 113/113 with the launch gate held (#101,
+# #102).
+#
+# --timeout is rclone's IDLE timeout: it fires when no byte has moved for
+# that long, so a large transfer that is making progress is unaffected.
+# Size it for a stalled link, not a slow one. That is what bounds a dead
+# link, and it is the part that matters for #101/#102.
+#
+# The two retry counts are different things and only one of them may be cut.
+# --retries is whole-run: a failed run is repeated by the exit sync, the next
+# boot, or the player, so one attempt is right and the run is not repeated
+# here. --low-level-retries is per HTTP operation, and it is what every
+# rclone user relies on to ride out a provider's transient errors. Cutting it
+# to 2 broke Dropbox outright: Dropbox serialises writes per folder and
+# answers concurrent ones with a lock error, so a saves backup that replaced
+# more than one file failed every time -- the exit sync after a game, for a
+# save already in the cloud, which is the ordinary case. Measured on the
+# maintainer's RG SP (2026-09-10): replacing 12 files, 6 moves failed at 2
+# low-level retries and 0 failed at 10. It is back at rclone's default.
+#
+# One line, split on spaces by the scripts. An empty value gives these same
+# numbers, never rclone's defaults: the scripts fall back to them.
+DEFAULT_RCLONE_NET_OPTS="--contimeout 15s --timeout 30s --low-level-retries 10 --retries 1"
+DEFAULT_RCLONE_SYNC_NET_OPTS="--contimeout 5s --timeout 5s --retries 1 --max-duration 90s --low-level-retries 5 --transfers 1"
+DEFAULT_SYNC_CEILING_SECONDS=90
 
 # Backup Options
 # -------------
 ## Backup method
-### The default is "sync", which creates a 1:1 match between the local path and remote
-### Switching to "copy" will overwrite newer files at the remote with the local version, but leave other files and folders in place
-DEFAULT_BACKUPMETHOD="sync"
+### The default is "copy", which sends each save that differs and never deletes
+### anything in the cloud; whatever it replaces is kept for one cycle in the
+### folder beside the saves folder named <saves folder>-replaced.
+### "sync" also deletes from the cloud whatever this device does not have --
+### every other device's saves, in a folder they share. It is honoured if set
+### here; no menu offers it.
+### --delete-excluded is removed from RCLONEOPTS before every run, whatever
+### this file says, so a mirror never reaches past the rules file.
+DEFAULT_BACKUPMETHOD="copy"
 
-## Enable backing-up the system backup file
-### The default is "yes", which will include the system backup file in the backup
-### Switching to "no" will exclude the system backup file from the backup
+## How many dated settings backups to keep in the cloud, per device
+### Each is a full archive (~17MB). Older ones beyond this are removed
+### after a successful upload. Set to a larger number to keep more
+### history, at the cost of cloud storage.
+### Only archives carrying this device's name, between the date and
+### ROCKNIX (<date>-<device>-ROCKNIX_SETTINGS.tar.gz), are counted and
+### removed; one carrying another device's name, or none, is left alone.
+DEFAULT_CLOUD_BACKUP_KEEP="3"
+
+## Enable backing-up the settings backup file
+### The default is "yes", which will include the settings backup file in the backup
+### Switching to "no" will exclude the settings backup file from the backup
 DEFAULT_BACKUPFILE_BACKUP_OPTION="yes"
 
 # Restore Options
@@ -53,9 +129,9 @@ DEFAULT_BACKUPFILE_BACKUP_OPTION="yes"
 ### Switching to "sync" will replace all local files in the restore path with what is on the remote
 DEFAULT_RESTOREMETHOD="copy"
 
-## Enable restoring the system backup file
-### The default is "no", which will exclude the system backup file from the restore
-### Switching to "yes" will include the system backup file in the restore
+## Enable restoring the settings backup file
+### The default is "no", which will exclude the settings backup file from the restore
+### Switching to "yes" will include the settings backup file in the restore
 DEFAULT_BACKUPFILE_RESTORE_OPTION="no"
 
 # Maintenance Options

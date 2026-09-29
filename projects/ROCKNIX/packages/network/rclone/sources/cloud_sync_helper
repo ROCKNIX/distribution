@@ -24,6 +24,16 @@ log_to_file() {
   echo "[${timestamp}] [${level}] [${script_name}] ${message}" >> ${log_file}
 }
 
+# Is this rules file whole? The allowlist's last rule is the catch-all
+# "- /**", written last, so a file cut anywhere lacks it -- and without it
+# the allowlist admits everything under the saves folder, the ROMs
+# included. The line itself, whole: "- /**/*.db" starts the same way and
+# stands near the top of every rules file (audit #308, claude F-CS-06; the
+# test was an unanchored '^- /\*\*', which it matched).
+rules_whole() {
+  [ -s "$1" ] && grep -qx -- '- /\*\*' "$1"
+}
+
 # Merges default rules with user-customized rules
 # 
 # This function preserves user customizations while adding new default rules.
@@ -36,50 +46,280 @@ log_to_file() {
 #   0 on success, 1 if default rules file not found
 update_cloud_sync_rules() {
   local log_file="${1:-/var/log/cloud_sync.log}"
+  local rules="/storage/.config/cloud_sync-rules.txt"
   
   log_to_file "${log_file}" "Checking cloud sync rules file..."
   
   # Check if user has a custom cloud_sync-rules.txt
-  if [ -f "/storage/.config/cloud_sync-rules.txt" ]; then
-    # Create a backup of the user's custom rules
-    cp -f /storage/.config/cloud_sync-rules.txt /storage/.config/cloud_sync-rules.txt.bak
-    
+  if [ -f "${rules}" ]; then
     # Check if defaults file exists
     if [ ! -f "/usr/config/cloud_sync-rules.txt.defaults" ]; then
       log_to_file "${log_file}" "Default rules file not found" "WARN"
       return 1
     fi
     
-    # Copy default rules to a temporary file
-    cp -f /usr/config/cloud_sync-rules.txt.defaults /tmp/cloud_sync-rules.new
-    
     log_to_file "${log_file}" "Merging custom rules with defaults"
-    
-    # Check each user rule and preserve it
+
+    # Collect the user's own rules - lines that are not in the defaults.
+    # The -e flag ensures grep treats the entire line as a fixed pattern,
+    # preventing misinterpretation of spaces and special characters in rules.
+    #
+    # Except the rules that never took effect (#308 claude F-CS-11). The
+    # helper this replaced -- upstream's, and every device's before this
+    # fork's merge -- appended each non-default rule AFTER the catch-all,
+    # where rclone never reached it; moving all of them to the top on the
+    # first merge woke whatever anybody had ever typed, working or not, with
+    # no word said: a `+ /roms/**` somebody tried once would send the ROM
+    # library into the saves folder on the next sync. So on the first merge
+    # this build makes (no marker yet), a rule found below the catch-all is
+    # kept as it was -- inert -- written after the defaults as a comment,
+    # "# inert: <rule>", and logged; that line is carried as it stands by
+    # every later merge. From then on a rule anywhere is the player's and
+    # goes first, as the merge intends.
+    local marker=/storage/.config/.cloud_sync-rules-user-first-applied first_merge=0 past_catch_all=0
+    [ -e "${marker}" ] || first_merge=1
+    : > /tmp/cloud_sync-rules.user
+    : > /tmp/cloud_sync-rules.inert
     while IFS= read -r line; do
-      # Skip comment lines and empty lines for comparison
+      case "${line}" in
+        "# inert: "*) echo "${line#\# inert: }" >> /tmp/cloud_sync-rules.inert; continue ;;
+        "- /**") past_catch_all=1 ;;
+      esac
       if [[ "$line" != \#* ]] && [[ -n "$line" ]]; then
-        # Check if the rule is already in the defaults
-        # The -e flag ensures grep treats the entire line as a fixed pattern,
-        # preventing misinterpretation of spaces and special characters in rules
-        if ! grep -Fxq -e "$line" /tmp/cloud_sync-rules.new; then
-          # If not in defaults, append it to preserve user customization
-          echo "$line" >> /tmp/cloud_sync-rules.new
+        if ! grep -Fxq -e "$line" /usr/config/cloud_sync-rules.txt.defaults; then
+          if [ "${first_merge}" = 1 ] && [ "${past_catch_all}" = 1 ]; then
+            echo "$line" >> /tmp/cloud_sync-rules.inert
+            log_to_file "${log_file}" "rule '${line}' sat below the catch-all and never took effect; kept, commented out, as it was" "WARN"
+          else
+            echo "$line" >> /tmp/cloud_sync-rules.user
+          fi
         fi
       fi
-    done < /storage/.config/cloud_sync-rules.txt
-    
-    # Replace the user's file with the merged version
-    mv /tmp/cloud_sync-rules.new /storage/.config/cloud_sync-rules.txt
+    done < "${rules}"
+
+    # User rules go FIRST, then the defaults. rclone filters are
+    # first-match-wins, so position is the only thing that grants precedence:
+    # appended after the defaults these were unreachable - every one of them
+    # sat below the catch-all "- /**", so a customization was silently
+    # ignored while still being visible in the file. Placing them ahead of
+    # the defaults is also what lets a user's "+ include" beat a default
+    # exclusion, which moving them above the catch-all alone would not.
+    # Assembled beside the file it replaces, then renamed over it. It used
+    # to be built under /tmp and moved: /tmp is another filesystem, so that
+    # mv was a copy and an unlink -- a truncate-then-write of the live rules
+    # file, with the catch-all (written last) the first line to be missing
+    # from a cut copy (D-CLOUD-078, #105). Same directory, so it is a rename.
+    #
+    # And only a whole candidate replaces it (audit #307 PL-020). Every write
+    # below is checked, and the candidate must carry the catch-all before
+    # the rename: a card that fills while the defaults are being appended
+    # used to leave a candidate cut before "- /**", and the unconditional
+    # rename made that the live allowlist -- one that admits the ROMs.
+    local built=0
+    : > "${rules}.new" && built=1
+    if [ "${built}" = 1 ] && [ -s /tmp/cloud_sync-rules.user ]; then
+      {
+        echo "# ----------------------------------------------------------------"
+        echo "# Your own rules, kept across updates."
+        echo "# These come first because rclone uses the first matching rule,"
+        echo "# so anything here takes precedence over the defaults below."
+        echo "# ----------------------------------------------------------------"
+        cat /tmp/cloud_sync-rules.user
+        echo
+        echo "# ----------------------------- defaults -------------------------"
+      } >> "${rules}.new" || built=0
+    fi
+    [ "${built}" = 1 ] && { cat /usr/config/cloud_sync-rules.txt.defaults >> "${rules}.new" || built=0; }
+    if [ "${built}" = 1 ] && [ -s /tmp/cloud_sync-rules.inert ]; then
+      {
+        echo
+        echo "# ----------------------------------------------------------------"
+        echo "# Rules that sat below the catch-all before this update, where they"
+        echo "# never took effect. Kept as they were: to use one, write it again"
+        echo "# at the top of this file."
+        echo "# ----------------------------------------------------------------"
+        sed 's/^/# inert: /' /tmp/cloud_sync-rules.inert
+      } >> "${rules}.new" || built=0
+    fi
+    rm -f /tmp/cloud_sync-rules.user /tmp/cloud_sync-rules.inert
+    if [ "${built}" != 1 ] || ! rules_whole "${rules}.new"; then
+      rm -f "${rules}.new"
+      log_to_file "${log_file}" "the merged rules file was not whole (a write failed before its catch-all line); it was not installed and the rules file was left as it was" "WARN"
+      return 1
+    fi
+
+    # A merge that changes nothing writes nothing (#308 claude F-CS-18): the
+    # helper runs before every sync, the one after each game included, and
+    # rewrote the rules file and its .bak every time -- flash writes and an
+    # mtime that changes for no reason, which the settings backup then
+    # carries as a change.
+    if cmp -s "${rules}.new" "${rules}"; then
+      rm -f "${rules}.new"
+      touch "${marker}" 2>/dev/null
+      return 0
+    fi
+
+    # Keep a copy of the user's rules before replacing them -- but only of a
+    # file that is plainly whole: the allowlist ends in its catch-all
+    # "- /**", and a file cut before that line is not a rules file. Copying
+    # whatever was there put a truncated file over the last good copy on
+    # the very next run (D-CLOUD-078, #105). Written beside the copy and
+    # renamed, so the copy itself is never half-written either.
+    if rules_whole "${rules}"; then
+      cp -f "${rules}" "${rules}.bak.tmp" && mv -f "${rules}.bak.tmp" "${rules}.bak"
+    else
+      rm -f "${rules}.bak.tmp"
+      log_to_file "${log_file}" "rules file has no catch-all line; not taking a .bak from it" "WARN"
+    fi
+
+    # Replace the user's file with the merged version -- one rename -- and
+    # mark the first merge done only once it has landed.
+    mv -f "${rules}.new" "${rules}" && touch "${marker}" 2>/dev/null
     
     log_to_file "${log_file}" "Updated cloud_sync-rules.txt with new defaults while preserving custom rules"
   else
     # No existing rules file, just copy the defaults
     log_to_file "${log_file}" "No existing rules file, copying defaults"
-    cp -f /usr/config/cloud_sync-rules.txt.defaults /storage/.config/cloud_sync-rules.txt
+    if cp -f /usr/config/cloud_sync-rules.txt.defaults "${rules}.new" && rules_whole "${rules}.new"; then
+      mv -f "${rules}.new" "${rules}"
+    else
+      rm -f "${rules}.new"
+      log_to_file "${log_file}" "the default rules file could not be copied whole; no rules file was installed" "WARN"
+      return 1
+    fi
   fi
   
   return 0
+}
+
+# Is this a cloud_sync.conf that can be run with? bash -n, and a grammar
+# nothing but assignments of text can pass. Every line is blank, a
+# comment, or KEY=value, where the value is
+#   - "double quoted": any text but a backtick, a $ that is not a plain
+#     $NAME or ${NAME}, and a backslash that is not the line's last
+#     character (the continuation RCLONEOPTS is written with) or one of
+#     bash's own escapes inside double quotes, \" \\ \$ and \`, each of
+#     which is the one character bash makes of it;
+#   - 'single quoted' on one line, with no $( or backtick in it;
+#   - or a bare word of letters, digits and . / : @ % + , = _ -;
+# and after it nothing, or blanks and a # comment. The shape check matters
+# because a torn line -- SAVES_REMOTE="/ROCK, cut mid-value -- can have its
+# quote closed by whatever is appended after it, and then parses.
+#
+# The escapes were refused until the audit of the fix round (PL-015): the
+# validator before this grammar passed them, so an upgraded device whose
+# hand-edited RCLONEOPTS read --exclude \"*.tmp\" was told its settings
+# could not be read on every run. A backslash before anything else is
+# still refused; bash would keep it, and nothing needs it.
+#
+# A blank is a space or a tab, and nothing else is: no line may carry a
+# control character but a tab (the audit of the fix round, PL-002). Bash
+# does not split a word on a carriage return, a vertical tab or a form
+# feed, so EXTRA="x"<CR>#$(cmd) is one word whose $(cmd) runs, and so is a
+# "comment" line <CR>#$(cmd) -- and this grammar read all three as blanks
+# ([ \t\r] after a value, [[:space:]] before a comment) and passed them.
+#
+# And nothing in it runs when it is sourced (audit #307 PL-051's script
+# half). The setup page writes the folder values from what a player typed
+# or picked, and an earlier build wrote one that held "$(...)" as it
+# stood, which every `source` of this file then ran; a folder value
+# (SAVESPATH, SETTINGS_BACKUPS, SAVES_REMOTE, SETTINGS_REMOTE,
+# CONTENT_REMOTE) is plain text on one line, with no $, backtick,
+# backslash or control character. The first cut of this refused only $(
+# and a backtick, and let a continued line through unchecked: a quoted
+# value continued onto a line that closed the quote and went on
+# (`RCLONEOPTS="--progress \` then `"; touch x; : ""`), a value closed and
+# followed by `; command`, and ${W@P}, which runs the command a value
+# spells out, all passed and ran (the audit of the fixes, G-A-05). A
+# config that fails is not sourced: the caller falls back to the good
+# copy or refuses (YOUR CLOUD SYNC SETTINGS COULDN'T BE READ).
+#
+# CONF_WHY says why a file was refused -- "line N: <its shape>", never the
+# value -- for the caller's log (PL-015): a refusal that names nothing
+# leaves whoever reads the log to guess which line of a hand edit it was.
+conf_valid() {
+    CONF_WHY=""
+    if [ ! -s "$1" ]; then CONF_WHY="the file is missing or empty"; return 1; fi
+    if ! bash -n "$1" 2>/dev/null; then CONF_WHY="bash cannot parse it"; return 1; fi
+    # A NUL byte ends awk's record on the device's busybox, so the grammar below
+    # would read "EXTRA=x"<NUL>"#$(cmd)" as EXTRA=x (the audit of the fixes,
+    # claude G3-D-02); counted before anything reads the file.
+    if [ "$(tr -d '\000' < "$1" 2>/dev/null | wc -c)" -ne "$(wc -c < "$1")" ]; then CONF_WHY="a NUL byte"; return 1; fi
+    CONF_WHY=$(awk '
+        function bad(why) { if (!failed) print "line " NR ": " why; failed = 1; exit 1 }
+        # A double-quoted value from position i of s: the position after
+        # its closing quote, or 0 when the line ends in a continuation.
+        function dq(s, i,    n, c, d) {
+            n = length(s)
+            while (i <= n) {
+                c = substr(s, i, 1)
+                if (c == "\"") return i + 1
+                if (c == "`") bad("a backtick inside double quotes")
+                if (c == "\\") {
+                    if (i == n) return 0
+                    d = substr(s, i + 1, 1)
+                    if (d == "$" && substr(s, i + 2, 1) ~ /[(\[{]/) bad("a \\$ followed by (, [ or { -- a literal $( that a shell context could still run (audit of the fixes, G3-D-01)")
+                    if (d == "\"" || d == "\\" || d == "$" || d == "`") { val = val c d; i += 2; continue }
+                    bad("a backslash inside double quotes that is not one of the escapes bash reads there")
+                }
+                if (c == "$") {
+                    d = substr(s, i + 1)
+                    if (match(d, /^[A-Za-z_][A-Za-z0-9_]*/) || match(d, /^\{[A-Za-z_][A-Za-z0-9_]*\}/)) {
+                        val = val c substr(d, 1, RLENGTH); i += 1 + RLENGTH; continue
+                    }
+                    bad("a $ inside double quotes that is not a plain $NAME or ${NAME}")
+                }
+                val = val c; i++
+            }
+            bad("a double-quoted value that runs on past the line without a backslash")
+        }
+        # After a value: nothing, or blanks and a comment.
+        function rest(s, i) { if (substr(s, i) !~ /^([ \t]+(#.*)?)?$/) bad("something after the value that is not a # comment") }
+        function whole() {
+            if (key ~ /^(SAVESPATH|SETTINGS_BACKUPS|SAVES_REMOTE|SETTINGS_REMOTE|CONTENT_REMOTE)$/ \
+                && (val ~ /[$`\\]/ || val ~ /[[:cntrl:]]/ || lines > 1)) bad("a folder value that is not plain text on one line")
+        }
+        {
+            s = $0
+            t = s; gsub(/\t/, "", t)
+            if (t ~ /[[:cntrl:]]/) bad("a control character other than a tab")
+            if (indq) {
+                lines++
+                j = dq(s, 1)
+                if (j == 0) next
+                indq = 0; rest(s, j); whole(); next
+            }
+            if (s ~ /^[ \t]*(#|$)/) next
+            if (!match(s, /^[A-Za-z_][A-Za-z0-9_]*=/)) bad("a line that is not KEY=value, a comment or blank")
+            key = substr(s, 1, RLENGTH - 1); i = RLENGTH + 1; val = ""; lines = 1
+            # A name the shell owns is refused whatever its value: bash evaluates an
+            # assignment to RANDOM, SECONDS or LINENO as arithmetic, and arithmetic
+            # runs a $( ) it finds (the audit of the fixes, gpt G3-D-01: a sourced
+            # RANDOM="BASH_VERSINFO[\\$(cmd)0]" ran cmd on the host); PATH, IFS and
+            # the rest change what every later command means.
+            if (key ~ /^(RANDOM|SRANDOM|SECONDS|LINENO|HISTCMD|BASHPID|BASH_[A-Z_]*|EPOCH[A-Z]*|FUNCNAME|GROUPS|DIRSTACK|PIPESTATUS|SHELLOPTS|BASHOPTS|COMP_[A-Z_]*|READLINE_[A-Z_]*|PATH|IFS|ENV|BASH_ENV|CDPATH|HOME|PS[0-4]|PROMPT_COMMAND|TMPDIR|SHELL|LANG|LC_[A-Z_]*|GLOBIGNORE|HISTFILE|TMOUT|OPTIND|OPTARG|PWD|OLDPWD|SHLVL|UID|EUID|PPID|LD_[A-Z_]*)$/) bad("a name the shell owns (" key ")")
+            c = substr(s, i, 1)
+            if (c == "\"") {
+                j = dq(s, i + 1)
+                if (j == 0) { indq = 1; next }
+                rest(s, j); whole(); next
+            }
+            if (c == "'"'"'") {
+                j = index(substr(s, i + 1), "'"'"'")
+                if (!j) bad("a single-quoted value that does not close on its line")
+                val = substr(s, i + 1, j - 1)
+                if (val ~ /\$\(|`/) bad("a $( or a backtick inside single quotes")
+                rest(s, i + j + 1); whole(); next
+            }
+            match(substr(s, i), /^[A-Za-z0-9_.\/:@%+,=-]*/)
+            val = substr(s, i, RLENGTH)
+            rest(s, i + RLENGTH); whole()
+        }
+        END {
+            if (failed) exit 1
+            if (indq) { print "line " NR ": a double-quoted value that never closes"; exit 1 }
+        }
+    ' "$1")
 }
 
 # Updates user configuration file with new defaults while preserving customizations
@@ -94,13 +334,28 @@ update_cloud_sync_rules() {
 #   0 on success, 1 if default config file not found
 update_cloud_sync_config() {
   local log_file="${1:-/var/log/cloud_sync.log}"
+  local conf="/storage/.config/cloud_sync.conf"
+  # Every change below lands in this copy, beside the live file; the live
+  # file is replaced by one rename once the copy parses. Until 2026-09-10
+  # each new key was appended to the live file, so a kill mid-append left a
+  # partial trailing line that `source` then tripped over -- and the callers
+  # went on with the variables it never reached (D-CLOUD-078, #105).
+  local work="${conf}.new"
   
   log_to_file "${log_file}" "Checking cloud sync configuration..."
   
   # Check if user has a config file
-  if [ -f "/storage/.config/cloud_sync.conf" ]; then
-    # Create a backup of the user's config
-    cp -f /storage/.config/cloud_sync.conf /storage/.config/cloud_sync.conf.bak
+  if [ -f "${conf}" ]; then
+    # Nothing is merged onto a config that does not parse: appending to a
+    # torn file can close its open quote and hand the callers a config that
+    # parses and means nothing. The callers fall back to the .bak, or refuse.
+    # The .bak itself is taken below, from this file, only when the merge
+    # changes it (#308 claude F-CS-18).
+    if ! conf_valid "${conf}"; then
+      rm -f "${conf}.bak.tmp"
+      log_to_file "${log_file}" "config is not whole (${CONF_WHY}); not taking a .bak from it and not updating it" "WARN"
+      return 1
+    fi
     
     # Check if defaults file exists
     if [ ! -f "/usr/config/cloud_sync.conf.defaults" ]; then
@@ -109,46 +364,206 @@ update_cloud_sync_config() {
     fi
     
     log_to_file "${log_file}" "Updating configuration with new defaults"
+    cp -f "${conf}" "${work}" || { log_to_file "${log_file}" "could not copy the config to work on" "WARN"; return 1; }
     
-    # Extract all configuration variables from defaults - FIXED VERSION
-    while IFS='=' read -r key value; do
+    # Carry a customised value across to a renamed key, once.
+    #
+    # The 2026-09 vocabulary sweep (D-UI-022) renamed the path keys so each
+    # says which tier it belongs to and which side it is on. The append loop
+    # below only adds a key that is missing, with the shipped default -- so
+    # without this step a device that had customised SYNCPATH would gain a
+    # SAVES_REMOTE pointing at /ROCKNIX/Saves and silently stop syncing to
+    # its own folder. That is the "renamed key resets everyone's preference"
+    # trap upgrade-and-install.md names. The old key is left in place and
+    # ignored; the .bak beside the file keeps the pre-migration text.
+    #
+    # RESTOREPATH is not carried: saves have one local folder now
+    # (D-CLOUD-040). A value that differs from the saves folder is reported
+    # here and refused by every saves transfer until it is removed.
+    migrate_key() {
+      local old="$1" new="$2" value
+      if grep -q "^${old}=" "${work}" \
+         && ! grep -q "^${new}=" "${work}"; then
+        value=$(grep -m1 "^${old}=" "${work}" | cut -d= -f2-)
+        echo "${new}=${value}" >> "${work}"
+        log_to_file "${log_file}" "Carried ${old} across to ${new} (${value})"
+      fi
+    }
+    migrate_key BACKUPPATH      SAVESPATH
+    migrate_key BACKUPFOLDER    SETTINGS_BACKUPS
+    migrate_key SYNCPATH        SAVES_REMOTE
+    migrate_key SYNCPATH_BACKUP SETTINGS_REMOTE
+    migrate_key CONTENTPATH     CONTENT_REMOTE
+    # A value that equals a superseded default is the default, not a choice
+    # (upgrade-and-install.md: a fix that changes what we write does nothing
+    # for what is already written). The append loop leaves a key that exists
+    # alone, so a device configured by an earlier image keeps its old number
+    # for ever unless it is moved here. The automatic sync's ceiling rose from
+    # 20 s to 90 s on 2026-09-25 (D-CLOUD-137, #282): the old default follows
+    # the new one; a value somebody changed is left as it is.
+    migrate_default() {
+      local key="$1" old="$2" new="$3" value
+      grep -q "^${key}=" "${work}" || return 0
+      value=$(grep -m1 "^${key}=" "${work}" | cut -d= -f2-)
+      if [ "${value}" = "${old}" ]; then
+        sed -i "s|^${key}=.*|${key}=${new}|" "${work}"
+        log_to_file "${log_file}" "Moved ${key} from the superseded default ${old} to ${new}"
+      fi
+    }
+    migrate_default SYNC_CEILING_SECONDS 20 90
+    migrate_default RCLONE_SYNC_NET_OPTS \
+      '"--contimeout 5s --timeout 5s --retries 1 --max-duration 20s --low-level-retries 5 --transfers 1"' \
+      '"--contimeout 5s --timeout 5s --retries 1 --max-duration 90s --low-level-retries 5 --transfers 1"'
+    # The settings-only rows' last-run stamps carried the old name; move them
+    # so the rows do not read "never" after the update.
+    for pair in last-system-backup:last-settings-backup \
+                last-system-restore:last-settings-restore \
+                system-backup.uploaded:settings-backup.uploaded; do
+      old_stamp="/storage/.cache/cloud_sync/${pair%%:*}"; new_stamp="/storage/.cache/cloud_sync/${pair##*:}"
+      if [ -f "${old_stamp}" ] && [ ! -f "${new_stamp}" ]; then
+        mv "${old_stamp}" "${new_stamp}"
+        log_to_file "${log_file}" "Carried ${pair%%:*} across to ${pair##*:}"
+      fi
+    done
+    if grep -q '^RESTOREPATH=' "${work}"; then
+      restore_root=$(grep -m1 '^RESTOREPATH=' "${work}" | cut -d'"' -f2)
+      saves_root=$(grep -m1 '^SAVESPATH=' "${work}" | cut -d'"' -f2)
+      if [ -n "${restore_root}" ] && [ "${restore_root}" != "${saves_root}" ]; then
+        log_to_file "${log_file}" "RESTOREPATH (${restore_root}) differs from SAVESPATH (${saves_root}); saves transfers will refuse until it is removed" "WARN"
+      fi
+    fi
+
+    # Extract all configuration variables from defaults. A value that runs
+    # over several lines with backslashes (RCLONEOPTS) is carried whole:
+    # until 2026-09-10 only its first line was appended, leaving an open
+    # quote that broke the file for every reader (found by
+    # tools/last-good-scripts-test).
+    local line entry pending="" key value
+    while IFS= read -r line || [ -n "${line}" ]; do
+      if [ -n "${pending}" ]; then
+        pending="${pending}"$'\n'"${line}"
+        case "${line}" in *\\) continue ;; esac
+        entry="${pending}"; pending=""
+      else
+        case "${line}" in
+          DEFAULT_*=*) ;;
+          *) continue ;;
+        esac
+        case "${line}" in *\\) pending="${line}"; continue ;; esac
+        entry="${line}"
+      fi
+      key="${entry%%=*}"; value="${entry#*=}"
       # Only process DEFAULT_ variables
       if [[ "$key" == DEFAULT_* ]]; then
         # Strip the DEFAULT_ prefix
         var_name="${key#DEFAULT_}"
         
         # Check if this variable exists in the user config - FIX the grep pattern to avoid space issues
-        if ! grep -qF "${var_name}=" /storage/.config/cloud_sync.conf; then
-          # Variable doesn't exist, add it with proper quoting
-          echo "${var_name}=${value}" >> /storage/.config/cloud_sync.conf
+        if ! grep -qF "${var_name}=" "${work}"; then
+          # A new key inherits the shape of the config it is joining, not the
+          # shipped default, where the two would disagree.
+          #
+          # CONTENT_REMOTE is the case that matters. The saves folder already
+          # exists in every config (carried across from SYNCPATH above), so
+          # an upgrading device keeps whatever it had - "/GAMES" for anyone set
+          # up before the /ROCKNIX layout. Adding the literal default would put
+          # their saves in one namespace and their ROMs in another, which is
+          # worse than either layout alone. Derive it from their saves folder.
+          #
+          # A saves folder at the top level (/GAMES) has no parent to put a
+          # sibling in, and the folder's own Content -- what this derived
+          # until PL-015 -- sits inside the saves folder, the nesting the
+          # setup page now refuses where the folder is typed (stream C's
+          # half of PL-015). So nothing is derived for one: CONTENT_REMOTE is
+          # written empty -- the remote's root, where content lived before
+          # CONTENT_REMOTE existed, so an upgraded device finds its ROMs where
+          # they were -- for the owner to set, and the log says so. A value
+          # an earlier build already derived is a key that exists, and this
+          # never reaches it.
+          if [ "${var_name}" = "CONTENT_REMOTE" ]; then
+            user_sync=$(grep -m1 '^SAVES_REMOTE=' "${work}" | cut -d'"' -f2)
+            if [ -n "${user_sync}" ]; then
+              parent=$(dirname "${user_sync}")
+              if [ "${parent}" = "/" ]; then
+                value='""'
+                log_to_file "${log_file}" "SAVES_REMOTE ${user_sync} is at the top level, with no parent to put a content folder beside it; none is derived inside it -- CONTENT_REMOTE is left empty (the remote's root) for the owner to set" "WARN"
+              else
+                value="\"${parent}/Content\""
+                log_to_file "${log_file}" "Derived CONTENT_REMOTE from SAVES_REMOTE ${user_sync}"
+              fi
+            fi
+          fi
+          echo "${var_name}=${value}" >> "${work}"
           log_to_file "${log_file}" "Added new configuration option: ${var_name}"
         fi
       fi
     done < /usr/config/cloud_sync.conf.defaults
     
-    log_to_file "${log_file}" "Configuration file updated while preserving customizations"
+    # The merged copy replaces the live file only if it parses; otherwise the
+    # live file -- and the .bak beside it -- stay exactly as they were. And
+    # only if it differs (#308 claude F-CS-18): a run with nothing to add
+    # writes neither the conf nor its .bak. When it does replace it, the
+    # copy of the user's config -- a file that parses, checked above -- is
+    # taken first, whole or not at all.
+    if ! conf_valid "${work}"; then
+      rm -f "${work}"
+      log_to_file "${log_file}" "merged configuration does not parse (${CONF_WHY}); the config was left as it was" "WARN"
+    elif cmp -s "${work}" "${conf}"; then
+      rm -f "${work}"
+    elif cp -f "${conf}" "${conf}.bak.tmp" && mv -f "${conf}.bak.tmp" "${conf}.bak" \
+         && mv -f "${work}" "${conf}"; then
+      log_to_file "${log_file}" "Configuration file updated while preserving customizations"
+    else
+      rm -f "${work}" "${conf}.bak.tmp"
+      log_to_file "${log_file}" "the configuration could not be updated; the config was left as it was" "WARN"
+    fi
   else
     # No existing config file, create one with defaults
     log_to_file "${log_file}" "No existing config file, creating from template"
     
     # Strip the DEFAULT_ prefix; sed preserves multi-line backslash-continued values
-    sed 's/^DEFAULT_//' /usr/config/cloud_sync.conf.defaults > /storage/.config/cloud_sync.conf
+    sed 's/^DEFAULT_//' /usr/config/cloud_sync.conf.defaults > "${work}" && mv -f "${work}" "${conf}"
   fi
   
   return 0
 }
 
 # Main function that handles all updates
+# The log lives on /storage since fork #104 (var-log.mount binds /var/log
+# there), so it must not grow without bound -- every run appends and nothing
+# ever rotated it; a device in the field already carried 80 KiB of it in RAM.
+# Over 1 MiB it is cut to its last 512 KiB, on a line boundary, through a
+# temporary and a rename, so a writer mid-line loses nothing. Run once per
+# script start, from main, under the caller's run lock, so two scripts never
+# trim at once. Sized for months of ordinary runs.
+trim_cloud_log() {
+  local log="${1}" size
+  [ -n "${log}" ] && [ -f "${log}" ] || return 0
+  size=$(stat -c %s "${log}" 2>/dev/null) || return 0
+  [ "${size}" -gt 1048576 ] 2>/dev/null || return 0
+  if tail -c 524288 "${log}" | sed '1d' > "${log}.tmp" 2>/dev/null; then
+    mv -f "${log}.tmp" "${log}"
+    log_to_file "${log}" "log trimmed from ${size} bytes to its last 512 KiB"
+  else
+    rm -f "${log}.tmp"
+  fi
+  return 0
+}
+
 main() {
   local log_file="${1:-/var/log/cloud_sync.log}"
-  
+  trim_cloud_log "${log_file}"
+
   # Update both rules and config
   update_cloud_sync_rules "${log_file}"
   update_cloud_sync_config "${log_file}"
   
   # Remove conflicting --verbose flags from existing user config to prevent parameter conflicts
   # This is needed for users upgrading from older versions where --verbose was used
-  if [ -f "/storage/.config/cloud_sync.conf" ]; then
+  # Only when there is one: sed -i rewrites the file whether or not it
+  # matched (#308 claude F-CS-18).
+  if [ -f "/storage/.config/cloud_sync.conf" ] \
+     && grep -qE -- '--verbose|-v ' /storage/.config/cloud_sync.conf; then
     log_to_file "${log_file}" "Removing conflicting --verbose flags from configuration"
     sed -i 's/--verbose//g' /storage/.config/cloud_sync.conf
     sed -i 's/-v / /g' /storage/.config/cloud_sync.conf
@@ -156,7 +571,80 @@ main() {
     sed -i 's/  \+/ /g' /storage/.config/cloud_sync.conf
     log_to_file "${log_file}" "Configuration cleaned of conflicting flags"
   fi
-  
+
+  # Turn an existing mirror backup into a copy.
+  #
+  # One cloud folder is shared by every handheld, and BACKUPMETHOD="sync"
+  # makes it match whichever device ran last -- deleting everything the others
+  # put there. It cost a real user 70 files: another handheld's whole save
+  # library, from the shipped default, in one run.
+  #
+  # The default is "copy" now, but a default only reaches a device that has no
+  # value yet: update_cloud_sync_config appends keys it cannot find and never
+  # touches one already written. So every device set up before this stays on
+  # sync for ever unless the value is rewritten, which is what the --verbose
+  # strip above is doing for the same reason.
+  #
+  # Deliberately not asking. This changes a destructive setting to a
+  # non-destructive one, the previous file is kept beside it, and anybody who
+  # actually wants a mirror can set it back -- where somebody who does not
+  # want one has no way of learning that they had it until their saves are
+  # gone.
+  # Once, and only once. Rewriting on every run does not migrate anybody off a
+  # bad default -- it takes the setting away, so somebody who reads the docs,
+  # decides they want a mirror and sets it gets silently overruled on their
+  # next backup. The marker is what makes this a migration rather than a veto.
+  # Found by testing: a run with sync deliberately set came back as copy.
+  if [ -f "/storage/.config/cloud_sync.conf" ] \
+     && [ ! -f "/storage/.config/.cloud_sync-copy-default-applied" ] \
+     && grep -q '^BACKUPMETHOD="\?sync"\?' /storage/.config/cloud_sync.conf; then
+    cp /storage/.config/cloud_sync.conf \
+       /storage/.config/cloud_sync.conf.pre-copy-default.tmp 2>/dev/null \
+      && mv -f /storage/.config/cloud_sync.conf.pre-copy-default.tmp \
+               /storage/.config/cloud_sync.conf.pre-copy-default 2>/dev/null
+    sed -i 's|^BACKUPMETHOD=.*|BACKUPMETHOD="copy"|' /storage/.config/cloud_sync.conf
+    touch /storage/.config/.cloud_sync-copy-default-applied 2>/dev/null
+    log_to_file "${log_file}" "BACKUPMETHOD was 'sync', which deletes other devices' saves from the shared folder; set to 'copy'. Previous config kept as cloud_sync.conf.pre-copy-default until the next run that completes (D-CLOUD-079). This is done once; setting it back to sync will be respected."
+  fi
+
+  # The shipped rclone retry bounds, for a device that already has the old
+  # ones. update_cloud_sync_config only appends keys it cannot find, so a
+  # value written before today stays for ever -- and the value written before
+  # today (--low-level-retries 2) makes every saves backup fail on Dropbox
+  # once a save is already in the cloud, because Dropbox answers concurrent
+  # writes to one folder with a lock error and two retries do not outlast it.
+  # Rewritten only when it is still exactly what we shipped, so a hand-tuned
+  # value is left alone, and only once, with a marker -- the same shape as the
+  # BACKUPMETHOD migration above and for the same reason.
+  if [ -f "/storage/.config/cloud_sync.conf" ] \
+     && [ ! -f "/storage/.config/.cloud_sync-net-opts-retries-applied" ] \
+     && grep -qF 'RCLONE_NET_OPTS="--contimeout 15s --timeout 30s --low-level-retries 2 --retries 1"' \
+             /storage/.config/cloud_sync.conf; then
+    sed -i 's|^RCLONE_NET_OPTS=.*|RCLONE_NET_OPTS="--contimeout 15s --timeout 30s --low-level-retries 10 --retries 1"|' \
+        /storage/.config/cloud_sync.conf
+    touch /storage/.config/.cloud_sync-net-opts-retries-applied 2>/dev/null
+    log_to_file "${log_file}" "RCLONE_NET_OPTS still held the two-low-level-retry bound, which fails a Dropbox backup whenever a save is replaced; set back to rclone's ten. This is done once; a value you have edited yourself is left alone."
+  fi
+
+  # The automatic sync's bound, for a device that got its first cut
+  # (2026-09-12, ten low-level retries left to the caller) before the
+  # maintainer's baseline of five retries and one transfer at a time
+  # (D-CLOUD-121) shipped the same day. Same shape as above: rewritten only
+  # while it is still exactly the first-cut value, once, with a marker.
+  # Straight to today's value (#308 gpt F-CS-29): this runs after
+  # update_cloud_sync_config's 20 s -> 90 s step (D-CLOUD-137), which matches
+  # only the suffixed 20 s value, so writing the suffixed 20 s here left the
+  # first cut on 20 s until the helper's next run.
+  if [ -f "/storage/.config/cloud_sync.conf" ] \
+     && [ ! -f "/storage/.config/.cloud_sync-sync-net-opts-five-applied" ] \
+     && grep -qF 'RCLONE_SYNC_NET_OPTS="--contimeout 5s --timeout 5s --retries 1 --max-duration 20s"' \
+             /storage/.config/cloud_sync.conf; then
+    sed -i 's|^RCLONE_SYNC_NET_OPTS=.*|RCLONE_SYNC_NET_OPTS="--contimeout 5s --timeout 5s --retries 1 --max-duration 90s --low-level-retries 5 --transfers 1"|' \
+        /storage/.config/cloud_sync.conf
+    touch /storage/.config/.cloud_sync-sync-net-opts-five-applied 2>/dev/null
+    log_to_file "${log_file}" "RCLONE_SYNC_NET_OPTS held the first-cut automatic bound; set to today's: five low-level retries, one transfer at a time, a 90 s ceiling (D-CLOUD-121, D-CLOUD-137)"
+  fi
+
   return 0
 }
 

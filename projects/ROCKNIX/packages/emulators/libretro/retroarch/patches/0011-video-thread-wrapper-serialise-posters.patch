@@ -1,0 +1,85 @@
+From: Max Engel <max@awecelot.com>
+Date: Mon, 8 Sep 2026 05:10:00 +0000
+Subject: [PATCH] video_thread_wrapper: one poster at a time on the command mailbox
+
+The wrapper's command mailbox holds one packet (cmd_data / send_cmd /
+reply_cmd) and video_thread_wait_reply matches on the command *type*.
+Two threads posting the same type concurrently -- the main thread
+uploading an achievement badge (rcheevos_get_badge_texture ->
+gfx_display_reset_textures_list -> video_driver_texture_load ->
+video_thread_texture_handle) while the automatic-screenshot task reads
+the frame through the same wrapper -- wake each other: the second poster
+returns with the first's reply, its stack-allocated gl3_texture_cmd_t
+dies, and the video thread then executes a packet whose data pointer is
+into that dead frame. On an Anbernic RG35XX SP (H700, glcore, threaded
+video) RetroArch 1.22.2 segfaults in video_texture_load_wrap_gl3_mipmap
+at the instant an achievement unlocks with automatic screenshot on --
+three times in one evening, once with a core dump:
+
+    #0  video_texture_load_wrap_gl3_mipmap ()   ldr x0,[x0] with x0 = 0xffff00000002 (cmd->gl)
+    #1  video_thread_loop ()                    CMD_CUSTOM_COMMAND
+    #2  thread_wrap ()
+
+A mutex, user_lock, serialises posters: only one thread is inside
+send-and-wait at a time. The video thread never takes it, so a poster
+blocked on it cannot deadlock against the thread it waits for, and a
+thread cannot re-enter it while blocked in wait_reply. Every marshalled
+entry point in 1.22.2 goes through video_thread_send_and_wait_user_to_thread.
+
+Upstream: RetroArch master closes the same hole with a re-entrant poster
+slot, https://github.com/libretro/RetroArch/pull/19518 (report #19517),
+merged 2026-09-08 as d1fcc5fd364d. The pinned 1.22.2 predates it; this
+patch is its stand-in, to be dropped when PKG_VERSION carries that commit.
+
+--- a/gfx/video_thread_wrapper.h	2026-09-08 04:27:17.741913066 +0000
++++ b/gfx/video_thread_wrapper.h	2026-09-08 04:27:17.749330632 +0000
+@@ -173,6 +173,15 @@
+    retro_time_t last_time;
+ 
+    slock_t *lock;
++   /* Serialises the threads that post commands to the video thread.
++    * The command mailbox (cmd_data/send_cmd/reply_cmd) holds one packet,
++    * and wait_reply matches on the command type, so two threads posting
++    * the same type concurrently -- the main thread uploading an
++    * achievement badge while the screenshot task reads the frame -- wake
++    * each other and the video thread then runs a packet whose data
++    * pointer belongs to a caller that has already returned. Only one
++    * poster is inside send-and-wait at a time. */
++   slock_t *user_lock;
+    scond_t *cond_cmd;
+    scond_t *cond_thread;
+    sthread_t *thread;
+--- a/gfx/video_thread_wrapper.c	2026-09-08 04:27:17.741945545 +0000
++++ b/gfx/video_thread_wrapper.c	2026-09-08 04:27:17.749792421 +0000
+@@ -93,8 +93,14 @@
+ /* user -> thread */
+ static void video_thread_send_and_wait_user_to_thread(thread_video_t *thr, thread_packet_t *pkt)
+ {
++   /* One poster at a time: see user_lock in the header. Never taken by
++    * the video thread itself, so a poster blocked here cannot deadlock
++    * against the thread it is waiting for; a second poster waits for
++    * the first's reply to be consumed before its packet goes in. */
++   slock_lock(thr->user_lock);
+    video_thread_send_packet(thr, pkt);
+    video_thread_wait_reply(thr, pkt);
++   slock_unlock(thr->user_lock);
+ }
+ 
+ static void thread_update_driver_state(thread_video_t *thr)
+@@ -697,6 +703,8 @@
+ 
+    if (!(thr->lock        = slock_new()))
+       return false;
++   if (!(thr->user_lock   = slock_new()))
++      return false;
+    if (!(thr->alpha_lock  = slock_new()))
+       return false;
+    if (!(thr->frame.lock  = slock_new()))
+@@ -863,6 +871,7 @@
+ 
+       slock_free(thr->frame.lock);
+       slock_free(thr->alpha_lock);
++      slock_free(thr->user_lock);
+       slock_free(thr->lock);
+       scond_free(thr->cond_cmd);
+       scond_free(thr->cond_thread);

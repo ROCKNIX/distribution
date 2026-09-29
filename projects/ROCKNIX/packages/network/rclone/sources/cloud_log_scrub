@@ -1,0 +1,206 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+# cloud_log_scrub - take out of the logs the credentials earlier builds wrote
+# into them. Once per device, at boot, before anything writes those logs.
+#
+# Until e2d45ec7ec, cloud_remote logged every failed rclone call whole:
+# "rclone config create <name> <type> url=... user=... pass=<the password>
+# ... failed (1): <rclone's words>", every value the player had typed,
+# passwords and keys among them; and cloud_oauth logged rclone's words when
+# a sign-in could not be saved -- words that could carry the token. The
+# fix stopped new lines (audit #307 PL-074). The old ones stayed: /var/log is
+# /storage/.cache/log on every device since D-SYS-001 (2026-09-10), and
+# cloud_sync.log is only trimmed past 1 MiB, which is months of ordinary
+# runs (the audit of the fix round, PL-014).
+#
+# The interface's own logs sit in the same folder. EmulationStation logged
+# cloud_remote's whole output at the Info level -- "cloud_remote create:
+# <output>", rclone's error among it, the output's later lines raw after
+# that record -- from ES cf09fc2f8 (2026-08-29) until ES 731252c61
+# (2026-09-28) masked it, and es_log*.txt keeps five interface starts, which
+# on a handheld is days.
+#
+# So, once, two families of file under /storage/.cache/log, each file
+# rewritten through a temp and a rename:
+#   cloud_sync.log* -- the log, a copy a trim left behind when it was cut
+#     off, any rotation:
+#     - an old cloud_remote failure line put in the shape this build writes,
+#       "rclone <verb> failed (<code>)", its arguments and rclone's words
+#       gone (a line cut off before its "failed" has every key=value
+#       masked);
+#     - cloud_oauth's "could not finish the sign-in: <rclone's words>" with
+#       the words <redacted>, unless they are one of the fixed sentences the
+#       scripts themselves wrote;
+#   es_log*.txt -- the interface's log and its rotations:
+#     - a "cloud_remote create: <output>" record keeps its timestamp and its
+#       words and has the output <redacted>, unless the output is the
+#       success line OK=<name>; every line after it up to the next
+#       timestamped record -- the rest of that output -- is <redacted> whole;
+#   and in both, every line through redact_credentials (001-functions), the
+#   one place that knows what a credential looks like in a line.
+# Lines hold their places: a file comes back with as many lines as it had,
+# or it is not replaced. A file that grew while it was read is read again.
+# The folder is /storage/.cache/log whether /var/log is bound over it or not
+# (/storage/.cache/volatile-log): the old lines are on the card either way.
+#
+# Done is recorded in /storage/.cache/cloud_sync/log-scrubbed, one line per
+# family, each written only once every file of its family was rewritten or
+# needed nothing: "scrubbed=<epoch> files=<n> lines=<n>" for the cloud log --
+# the line this script wrote before it covered the interface's logs, so a
+# device that ran it then does not read its cloud log again -- and
+# "es_log_scrubbed=<epoch> files=<n> lines=<n>" for the interface's. A
+# family not recorded is tried again at the next boot. A device with no log
+# folder -- a clean install -- is recorded as done: no earlier build wrote
+# anything there.
+
+LOG_DIR=/storage/.cache/log
+STAMP=/storage/.cache/cloud_sync/log-scrubbed
+
+recorded() { grep -q "^$1=" "${STAMP}" 2>/dev/null; }
+recorded scrubbed && recorded es_log_scrubbed && exit 0
+set -o pipefail
+
+# The filter or nothing: without it a password in a line this script has no
+# rule for would be kept and the log recorded as clean.
+. /etc/profile.d/001-functions 2>/dev/null
+if ! type redact_credentials >/dev/null 2>&1; then
+    echo "cloud_log_scrub: redact_credentials is not in /etc/profile.d/001-functions; nothing was scrubbed, and the next boot tries again"
+    exit 1
+fi
+
+# The shapes earlier builds wrote to the cloud log, by the script that wrote
+# them. The cloud_remote rule for "config" verbs and the one for the others
+# are kept apart so neither reads this build's own "rclone config create
+# failed (1)" as an old line: that has no argument between the verb and
+# "failed".
+SCRUB_SED='
+/\[cloud_remote\] rclone config /{
+s/^(.*\[cloud_remote\] rclone config [a-z]+) [^ ]+( .*)? failed \(([0-9-]+)\)(: .*)?$/\1 failed (\3)/
+# A record cut before its "failed (...)" suffix (the log truncated mid-line) is
+# masked key by key: a quoted value is masked whole, spaces and all, and one cut
+# inside its quotes is masked to the end of the line -- the unquoted rule alone
+# stopped at the first space and left a quoted value'"'"'s tail readable (the audit
+# of the fixes, gpt G3-D-09).
+s/ ([A-Za-z0-9_.-]+)="[^"]*"/ \1=<redacted>/g
+s/ ([A-Za-z0-9_.-]+)='"'"'[^'"'"']*'"'"'/ \1=<redacted>/g
+s/ ([A-Za-z0-9_.-]+)="[^"]*$/ \1=<redacted>/
+s/ ([A-Za-z0-9_.-]+)='"'"'[^'"'"']*$/ \1=<redacted>/
+s/ ([A-Za-z0-9_.-]+)=[^ ]*/ \1=<redacted>/g
+}
+/\[cloud_remote\] rclone config /!s/^(.*\[cloud_remote\] rclone [a-z]+) [^ ]+( .*)? failed \(([0-9-]+)\)(: .*)?$/\1 failed (\3)/
+/\[cloud_oauth\] could not finish the sign-in: /{
+/sign-in: (a remote called .* already exists|signed in, but the remote did not respond|rclone rejected the token|The sign-in worked, but it couldn.t be saved on your handheld\.|The sign-in worked, but your handheld.s cloud settings couldn.t be read\.|That sign-in was closed before it finished\.)$/!s/(could not finish the sign-in: ).*$/\1<redacted>/
+}
+'
+
+# The interface's record starts "%F %T<TAB>" (Log::stream, since ES
+# e478a1eda); a line that does not is the rest of the record before it.
+# Each line goes out with the newline that ended the one before it, and the
+# last one's only when the file had it (nl): a log cut off mid-line -- the
+# interface killed as it wrote -- keeps its shape, as sed keeps it for the
+# cloud log.
+ES_AWK='
+function out(s) { if (NR > 1) printf "\n"; printf "%s", s }
+/^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9]\t/ { inrec = 0 }
+inrec {
+    if ($0 != "" && $0 !~ /^OK=[A-Za-z0-9_.-]*$/) $0 = "<redacted>"
+    out($0); next
+}
+{
+    i = index($0, "cloud_remote create: ")
+    if (i) {
+        inrec = 1
+        rest = substr($0, i + 21)
+        if (rest != "" && rest !~ /^OK=[A-Za-z0-9_.-]*$/) $0 = substr($0, 1, i + 20) "<redacted>"
+    }
+    out($0)
+}
+END { if (NR > 0 && nl) printf "\n" }
+'
+
+lines_in() { awk 'END { print NR }' "$1"; }
+
+first_pass() { # <file> <cloud|es>
+    if [ "$2" = es ]; then
+        awk -v nl="$([ -z "$(tail -c 1 "$1")" ] && echo 1 || echo 0)" "${ES_AWK}" "$1"
+    else
+        sed -E -e "${SCRUB_SED}" "$1"
+    fi
+}
+
+# scrub <file> <cloud|es>: rewrite it in place, through a temp and a rename;
+# prints the number of lines it changed. Non-zero when the file could not be
+# rewritten whole, which leaves it as it was.
+scrub() {
+    local f="$1" tmp="$1.scrub.$$" before after tries=0 changed
+    while :; do
+        before=$(wc -c < "${f}") || return 1
+        if ! first_pass "${f}" "$2" | redact_credentials > "${tmp}"; then
+            rm -f "${tmp}"; return 1
+        fi
+        after=$(wc -c < "${f}") || { rm -f "${tmp}"; return 1; }
+        [ "${before}" = "${after}" ] && break
+        tries=$((tries + 1))
+        [ "${tries}" -lt 3 ] || { rm -f "${tmp}"; return 1; }
+    done
+    if [ "$(lines_in "${tmp}")" != "$(lines_in "${f}")" ]; then
+        rm -f "${tmp}"; return 1
+    fi
+    changed=$(awk 'NR == FNR { a[FNR] = $0; next } a[FNR] != $0 { n++ } END { print n + 0 }' "${f}" "${tmp}") \
+        || { rm -f "${tmp}"; return 1; }
+    if [ "${changed}" -eq 0 ]; then
+        rm -f "${tmp}"
+    elif ! mv -f "${tmp}" "${f}"; then
+        rm -f "${tmp}"; return 1
+    fi
+    echo "${changed}"
+}
+
+# family <cloud|es> <file...>: scrub every regular file named; sets FILES and
+# LINES, and returns non-zero if any could not be rewritten.
+family() {
+    local kind="$1" f n bad=0; shift
+    FILES=0 LINES=0
+    for f in "$@"; do
+        [ -f "${f}" ] && [ ! -L "${f}" ] || continue
+        case "${f}" in *.scrub.*) continue ;; esac
+        if n=$(scrub "${f}" "${kind}"); then
+            FILES=$((FILES + 1)); LINES=$((LINES + n))
+        else
+            bad=1
+            echo "cloud_log_scrub: ${f##*/} could not be rewritten; it is as it was, and the next boot tries again"
+        fi
+    done
+    return "${bad}"
+}
+
+# record <key> <files> <lines>: the family's line in the stamp, the lines
+# already there kept, through a temp and a rename.
+record() {
+    mkdir -p "${STAMP%/*}" \
+        && { grep -v "^$1=" "${STAMP}" 2>/dev/null
+             printf '%s=%s files=%s lines=%s\n' "$1" "$(date +%s)" "$2" "$3"; } > "${STAMP}.tmp" \
+        && mv -f "${STAMP}.tmp" "${STAMP}" \
+        || { rm -f "${STAMP}.tmp"; echo "cloud_log_scrub: the record of the scrub could not be written; the next boot runs it again"; return 1; }
+}
+
+failed=0
+if ! recorded scrubbed; then
+    if family cloud "${LOG_DIR}"/cloud_sync.log "${LOG_DIR}"/cloud_sync.log.*; then
+        record scrubbed "${FILES}" "${LINES}" || failed=1
+        [ "${LINES}" -eq 0 ] || echo "cloud_log_scrub: ${LINES} line(s) in ${FILES} cloud log file(s) had credentials an earlier build wrote; masked"
+    else
+        failed=1
+    fi
+fi
+if ! recorded es_log_scrubbed; then
+    if family es "${LOG_DIR}"/es_log*.txt; then
+        record es_log_scrubbed "${FILES}" "${LINES}" || failed=1
+        [ "${LINES}" -eq 0 ] || echo "cloud_log_scrub: ${LINES} line(s) in ${FILES} interface log file(s) had cloud credentials an earlier build wrote; masked"
+    else
+        failed=1
+    fi
+fi
+exit "${failed}"

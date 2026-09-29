@@ -1,0 +1,57 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+# Cloud saves at boot.
+#
+# The startup saves sync (Cloud Settings > SYNC SAVES DURING STARTUP) is
+# EmulationStation's now, not this file's: with the toggle on, ES runs the
+# same pair the SYNC SAVES WITH THE CLOUD row runs, through the progress card
+# the game-exit sync uses, so a player sees it run and how it ended (fork
+# #94). Until 2026-09-09 this autostart ran that pair headless -- a ping loop,
+# then cloud_restore and cloud_backup with their output discarded -- which
+# left no sign on screen that it had run at all, and sat outside the launch
+# gate that keeps a game from starting mid-transfer (D-CLOUD-038). A second,
+# headless copy here would only race the visible one for the transfer lock
+# and report SKIPPED into /dev/null. So this file no longer syncs anything.
+#
+# What it still does is the full capture pass, below -- and, once per
+# device, the cloud log's scrub before it.
+
+. /etc/profile.d/001-functions
+
+# Passwords and keys an earlier build wrote into the cloud log and the
+# interface's log, masked once per device (the audit of the fix round,
+# PL-014). Here, in the foreground, because nothing else writes those logs
+# yet: the capture pass below writes the cloud log, and EmulationStation
+# starts only after every autostart script has run. After the first boot it
+# reads its record and returns.
+[ -x /usr/bin/cloud_log_scrub ] && /usr/bin/cloud_log_scrub
+
+# The full capture pass (fork #21): re-hash every save the manifest already
+# claims, so an edit from a shell, a session EmulationStation itself aborted,
+# a power loss, or a rewrite that kept the size and mtime of a game nobody
+# has played since is caught -- none of those reach the exit-path capture.
+# Boot is the one moment no game can have just exited, so it cannot race one.
+#
+# Only a device that has turned cloud saves on runs it: a device with both
+# toggles off has no consumer for the manifest, and boot time is not ours to
+# spend (#84, D-CLOUD-057). Detached and niced, so it never delays boot and
+# never holds the autostart runner; it needs no network and takes no lock.
+#
+# Two residuals of running it detached, both accepted (D-CLOUD-064):
+# - It can still be finishing when the first game exits, so the two are
+#   concurrent writers of one manifest. Capture takes no lock; the loser sees
+#   the file change under it and, for an exit capture, re-runs once against
+#   the winner's document, so the first version a game wrote is not lost to
+#   the race. --full itself never retries.
+# - On a two-card device that has never synced there is no saves-root record,
+#   so `cloud_saves_root check --wait` returns at once and this pass may hash
+#   the internal card's copies before the automount binds the second card;
+#   the next exit then records the real file with `replaces` pointing at that
+#   stale hash. A flip DURING the pass is discarded; the pre-first-sync window
+#   is not, and a device that has never synced has published nothing yet.
+if [ "$(get_setting cloudsaves.startup)" = "1" ] || [ "$(get_setting cloudsaves.gameexit)" = "1" ]
+then
+  setsid nohup nice -n 10 /usr/bin/cloud_capture --full >/dev/null 2>&1 &
+fi

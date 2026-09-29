@@ -1,0 +1,181 @@
+command, runtime_file: a launch's Auto save slot survives content load
+
+ROCKNIX's launcher writes state_slot = "-1" -- RetroArch's Auto slot,
+the .state.auto file -- into a launch's append config for a game started
+from its auto save, so that the load-state hotkey reloads the state the
+player launched with. Two things replaced it before the game's first
+frame:
+
+- command_event_set_savestate_auto_index() ran at every content load
+  and set the slot to the highest numbered one it could find (0 when
+  there is none, logged as "found_last_state_slot: #0"), or to 0
+  outright with savestate_auto_index off.
+- runtime_log_init() restored the slot the game was last left on from
+  the runtime log (runtime_file.c), through runloop_st->entry_state_slot,
+  which runloop.c then applies -- so a game left on slot 0 came back on
+  slot 0 whatever this launch had asked for.
+
+So the hotkey built its path from slot 0 and loaded a file that does not
+exist -- "[State] Loading state ".../mspacman.state", 0 bytes. / Failed
+to load state" on an RG35XX SP, 2026-09-25, after a launch whose append
+config carried state_slot = "-1"; and again on the QA guest with the
+first half alone patched (2026-09-26), where the log's remembered 0 was
+the second half. With both halves, on the QA guest (image a8175c6193,
+2026-09-26): no found_last_state_slot line, and the load-state key --
+sent through the guest's monitor, not a pad -- loaded Probe.state.auto.
+That run carried the first cut, which kept any negative slot. The
+narrower guard below passed the same run on a guest at 1b0d233657,
+while it still read the append files a second time; reading the answer
+from the load's own entries (2026-09-28) has not yet run on a guest.
+
+Both leave the slot alone only when this launch's append config sets it
+negative, and say so in the log. The answer is read from the load
+itself: config_load_file notes the state_slot entry the main config
+holds before it reads the --appendconfig files, and config_append_file
+points the key at the entry of the last file that sets it, so an entry
+that differs afterwards is an append file's and carries the value the
+load applies. Nothing is read twice: a file removed or rewritten after
+the load cannot change the answer, and a file that could not be read
+set nothing. A -1 that reached the main config instead -- a
+configuration saved while Auto was selected -- is not this launch's
+request: it is scanned, reset or restored over as upstream does, so a
+launch that asks for no slot behaves as it always has.
+
+diff --git a/command.c b/command.c
+--- a/command.c
++++ b/command.c
+@@ -1903,6 +1903,40 @@ int command_event_get_next_savestate_auto_index(settings_t *settings)
+    return new_state_slot;
+ }
+ 
++/* ROCKNIX: append auto slot begin */
++/* Whether a launch's append config (--appendconfig, where ROCKNIX's
++ * launcher writes one launch's settings) asks for RetroArch's Auto slot,
++ * the .state.auto file. The answer is read from the load itself:
++ * config_load_file notes the state_slot entry the main config holds before
++ * it reads the append files, and config_append_file points the key at the
++ * entry of the last file that sets it -- so an entry that differs
++ * afterwards is an append file's, and its value is the one the load
++ * applies. Nothing is read a second time, so a file removed or rewritten
++ * after the load cannot change the answer. A negative that reached the
++ * main config instead (a configuration saved while Auto was selected) is
++ * not a launch's request and does not count. */
++static bool command_append_auto_slot = false;
++
++/* conf: the configuration as loaded, append files included (NULL when
++ * there were none); main_slot: its state_slot entry before the append
++ * files were read (NULL when it had none). */
++void command_record_append_config(config_file_t *conf,
++      const struct config_entry_list *main_slot)
++{
++   int slot = 0;
++
++   command_append_auto_slot = conf
++         && config_get_entry(conf, "state_slot") != main_slot
++         && config_get_int(conf, "state_slot", &slot)
++         && slot < 0;
++}
++
++bool command_append_config_sets_auto_slot(void)
++{
++   return command_append_auto_slot;
++}
++/* ROCKNIX: append auto slot end */
++
+ /**
+  * Determines most recent savestate slot in case of content load.
+  *
+@@ -1913,6 +1947,18 @@ void command_event_set_savestate_auto_index(settings_t *settings)
+ {
+    unsigned max_idx          = 0;
+    bool savestate_auto_index = settings->bools.savestate_auto_index;
++   /* ROCKNIX: the launcher sets state_slot = -1 in this launch's append
++    * config for a game started from its auto save, so that the load-state
++    * hotkey reloads the state the player launched with; resetting it here
++    * to 0, or to the last numbered slot, sent that hotkey to a slot 0 file
++    * that does not exist. That Auto is left alone. Any other slot -- a
++    * numbered one, or a -1 saved into the main config -- is scanned or
++    * reset as upstream does. */
++   if (settings->ints.state_slot < 0 && command_append_config_sets_auto_slot())
++   {
++      RARCH_LOG("[State] Keeping the Auto slot this launch's configuration asks for.\n");
++      return;
++   }
+    if (savestate_auto_index)
+    {
+       command_scan_states(
+diff --git a/command.h b/command.h
+--- a/command.h
++++ b/command.h
+@@ -400,6 +400,13 @@ bool command_event_load_auto_state(void);
+ void command_event_set_savestate_auto_index(
+       settings_t *settings);
+ 
++/* ROCKNIX: whether a launch's append config asks for the Auto slot --
++ * recorded by config_load_file from the entries it loaded, read at
++ * content load */
++void command_record_append_config(config_file_t *conf,
++      const struct config_entry_list *main_slot);
++bool command_append_config_sets_auto_slot(void);
++
+ int command_event_get_next_savestate_auto_index(
+       settings_t *settings);
+ 
+diff --git a/configuration.c b/configuration.c
+--- a/configuration.c
++++ b/configuration.c
+@@ -3974,6 +3974,10 @@ static bool config_load_file(global_t *global,
+    {
+       char tmp_append_path[PATH_MAX_LENGTH];
+       const char *ptr         = NULL;
++      /* ROCKNIX: the main config's state_slot entry, before the append
++       * files are read (command.c) */
++      const struct config_entry_list *main_slot =
++            config_get_entry(conf, "state_slot");
+ 
+       strlcpy(tmp_append_path, path_get(RARCH_PATH_CONFIG_APPEND),
+             sizeof(tmp_append_path));
+@@ -4014,7 +4018,13 @@ static bool config_load_file(global_t *global,
+ 
+       /* Re-check verbosity settings */
+       check_verbosity_settings(conf, settings);
++
++      /* ROCKNIX: whether the append files just read ask for the Auto
++       * slot, from the entries this load chose (command.c) */
++      command_record_append_config(conf, main_slot);
+    }
++   else
++      command_record_append_config(NULL, NULL);
+ 
+    if (!path_is_empty(RARCH_PATH_CONFIG_OVERRIDE) && !without_overrides)
+    {
+diff --git a/runtime_file.c b/runtime_file.c
+--- a/runtime_file.c
++++ b/runtime_file.c
+@@ -37,6 +37,8 @@
+ #include "file_path_special.h"
+ #include "paths.h"
+ #include "runloop.h"
++#include "configuration.h"
++#include "command.h"
+ #include "core_info.h"
+ #include "verbosity.h"
+ #include "msg_hash.h"
+@@ -290,7 +292,16 @@ parsed:
+          && state_slot < 1000)
+    {
+       runloop_state_t *runloop_st  = runloop_state_get_ptr();
+-      runloop_st->entry_state_slot = state_slot;
++      /* ROCKNIX: the log remembers the slot the game was last left on, and
++       * restoring it here overrode the state_slot = -1 (Auto) the launcher
++       * sets in this launch's append config for a game started from its
++       * auto save, so the load-state hotkey went to a slot 0 file that does
++       * not exist. That Auto is kept; otherwise -- a numbered slot, or a -1
++       * saved into the main config -- the log's slot is restored as
++       * upstream does. */
++      if (     config_get_ptr()->ints.state_slot >= 0
++            || !command_append_config_sets_auto_slot())
++         runloop_st->entry_state_slot = state_slot;
+    }
+ 
+    /* If we reach this point then all is well

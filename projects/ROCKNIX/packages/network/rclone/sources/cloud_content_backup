@@ -1,0 +1,752 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+# cloud_content_backup - push game content (ROMs, BIOS, ...) to the cloud.
+#
+# Mirror of cloud_content_restore: an explicit, user-initiated copy of chosen
+# local directories from /storage/roms to the cloud content root. Copy-only -
+# it never deletes anything on the remote. Save/state/screenshot directories
+# are excluded here; they travel via the saves sync.
+#
+# Usage:
+#   cloud_content_backup --list           print local content directories
+#   cloud_content_backup --list-sizes     print them as name|bytes
+#   cloud_content_backup <dir> [<dir>..]  copy local dirs to the cloud
+#   cloud_content_backup --all            copy all local content directories
+#
+# The remote content root defaults to the remote's root; set CONTENT_REMOTE in
+# /storage/.config/cloud_sync.conf to point somewhere else (e.g. "GAMES").
+
+. /etc/profile
+
+LOG_FILE="/var/log/cloud_sync.log"
+SCRIPT_NAME=$(basename "$0")
+DEST="/storage/roms"
+
+# The exit that means "nothing ran: another cloud sync holds the lock", which
+# EmulationStation names (SKIPPED - ANOTHER CLOUD SYNC IS RUNNING). It was 3
+# until 2026-09-09, which is also rclone's "directory not found", so a failed
+# unit carrying rclone's code to the final exit read as a sync that was never
+# running (#99, blindspot 33). sysexits.h's EX_TEMPFAIL sits above everything
+# rclone returns (0-9) and below the 128+signal range, so nothing this script
+# forwards can produce it. The same two numbers (75, and 69 for no network --
+# raised here when the link goes away under a running unit, see
+# stop_no_network) are what EmulationStation reads; scripts and ES ship
+# together.
+readonly EXIT_LOCK_HELD=75 EXIT_NO_NETWORK=69
+
+log_message() {
+    echo "[$(date "+%Y-%m-%d %H:%M:%S")] [INFO] [${SCRIPT_NAME}] ${1}" >> ${LOG_FILE}
+}
+
+# One cloud transfer at a time, whoever asked for it.
+#
+# Three callers can start one: EmulationStation at boot (the startup sync,
+# which ran headless from autostart/102-cloud-saves until #94), EmulationStation
+# after a game exits, and a person in the menu. Until
+# 2026-09-04 the game-exit path was an OS hook with a pgrep guard; moving it
+# into ES kept the visible progress and dropped the guard, so exiting a game
+# during the boot sync started a second rclone against the same remote. Two
+# writers on one folder is how a mirror deleted another handheld's saves
+# (D-CLOUD-014); two copies racing is milder, and still nothing anybody asked
+# for.
+#
+# The lock lives here, in the script, so no caller has to know about the
+# others. /var/run is tmpfs, so a lock cannot survive a reboot and go stale.
+# Non-blocking, because a request that queues silently behind a twenty-minute
+# transfer looks exactly like one that hung. Exit EXIT_LOCK_HELD (75) means
+# "skipped: another sync is running" -- the UI names it, and no last-run stamp
+# is written for work that did not happen.
+#
+# The descriptor is this shell's and nothing else's. A shell redirection
+# carries no close-on-exec, so `exec 9>` hands fd 9 to every child the
+# script starts, and rclone then holds the lock for the whole of a transfer
+# (watched in /proc on the VM, #124). While the script outlives its
+# children that is invisible, because bash waits for each of them before it
+# exits. The moment it does not -- killed or orphaned while rclone is still
+# copying, a child left in the background -- the lock outlives the run that
+# took it and every sync afterwards is refused with "another cloud sync is
+# running" when nothing is running at all. So the body runs with fd 9
+# closed ("9>&-"): bash keeps the lock on a descriptor of its own, which it
+# does mark close-on-exec, and nothing this script starts can see it.
+#
+# The refusal also waits a moment before saying no, as belt and braces for
+# a holder this script does not own: a descriptor leaked by an older build,
+# or a process in the act of exiting, frees itself in milliseconds, while a
+# real concurrent transfer does not. One second of patience turns a raced
+# skip into a run that works and costs a genuinely blocked run one second.
+CLOUD_SYNC_LOCK=/var/run/cloud_sync.lock
+take_cloud_lock() {
+    local tries=0
+    exec 9>"${CLOUD_SYNC_LOCK}"
+    while ! flock -n 9; do
+        if [ "${tries}" -ge 4 ]; then
+            echo "Skipped: another cloud sync is already running. Try again when it's done."
+            log_message "skipped: another cloud sync holds ${CLOUD_SYNC_LOCK}"
+            exit "${EXIT_LOCK_HELD}"
+        fi
+        tries=$((tries + 1))
+        sleep 0.25
+    done
+}
+
+if [ ! -e "/storage/.config/rclone/rclone.conf" ]; then
+    echo ">>> why YOUR CLOUD STORAGE ISN'T SET UP YET"
+    echo "Your cloud storage isn't set up yet. Set it up under GAME SETTINGS > MANAGE CLOUD STORAGE first."
+    exit 1
+fi
+
+# The two values this script needs from cloud_sync.conf, read as text and
+# never sourced (audit #307 PL-051's script half): a folder value an earlier
+# build wrote with "$(...)" in it ran on every `source`. A CONTENT_REMOTE
+# that carries a $, a backtick, a backslash or a control character is not a
+# folder name, and the run refuses it rather than use it as a path.
+#
+# Read in the forms `source` reads (the audit of the fixes, G-A-06/G-A-02):
+# the value double quoted, single quoted or bare; after it nothing, or
+# blanks and a # comment. The first cut took only KEY=value or KEY="value"
+# whole: a trailing comment or single quotes gave an empty CONTENT_REMOTE --
+# the cloud's root -- where the folder had been, and the backup went there.
+# A line it cannot read as plain text exits 2, and CONTENT_REMOTE's refuses
+# the run; nothing is read as the root that did not say the root. Of two
+# lines for one key, the first: every saves run EmulationStation starts is
+# --yes, which runs cloud_sync_cleanup_duplicates.sh, which keeps the first,
+# so that is the value the saves scripts run with and the file is left with.
+#
+# And a file with a control character but a tab anywhere in it is
+# unreadable here as it is to the saves scripts' conf_valid (the audit of
+# the fix round, PL-002): this reader never sources the file, but a blank
+# is a space or a tab to both, so the tiers run with one reading of one
+# file -- a carriage return after a value used to pass here as a blank.
+#
+# The key set in a form `source` reads and this does not -- indented,
+# exported, declared, appended to, or with a blank before the = -- is
+# unreadable, never absent (the audit of the fix round, lead G2-A-03):
+# read as absent it was the cloud's root, and a content backup went there.
+# The saves scripts' conf_valid refuses such a file whole.
+conf_get() { # <KEY>: its value, quotes off; nothing when absent; exit 2 when unreadable, and why on stdout
+    [ -f /storage/.config/cloud_sync.conf ] || return 0
+    awk -v k="$1" '
+        { t = $0; gsub(/\t/, "", t); if (t ~ /[[:cntrl:]]/ && !cntrl) cntrl = NR }
+        index($0, k "=") != 1 && !other \
+            && $0 ~ ("^[ \t]*((export|declare|typeset|readonly|local)([ \t]+-[A-Za-z]+)*[ \t]+)?" k "[ \t]*[+]?=") { other = NR }
+        index($0, k "=") == 1 {
+            s = substr($0, length(k) + 2); v = ""; r = ""; ok = 1; why = ""
+            c = substr(s, 1, 1)
+            if (c == "\"") {
+                # Inside double quotes bash reads \" \\ \$ and \` as the one
+                # character each (PL-015), and so does this; an unescaped $
+                # or backtick is an expansion this reader does not make, and
+                # any other backslash is refused as conf_valid refuses it.
+                n = length(s); i = 2; closed = 0
+                while (i <= n) {
+                    d = substr(s, i, 1)
+                    if (d == "\"") { closed = 1; break }
+                    if (d == "\\") {
+                        e = substr(s, i + 1, 1)
+                        if (e == "\"" || e == "\\" || e == "$" || e == "`") { v = v e; i += 2; continue }
+                        ok = 0
+                        why = (e == "") ? "a value continued onto the next line, which this reader does not follow" \
+                                        : "a backslash inside double quotes that is not one of the escapes bash reads there"
+                        break
+                    }
+                    if (d == "$" || d == "`") { ok = 0; why = "a $ or a backtick inside double quotes"; break }
+                    v = v d; i++
+                }
+                if (ok && !closed) { ok = 0; why = "a double-quoted value that does not close on its line" }
+                if (ok) r = substr(s, i + 1)
+            } else if (c == "'"'"'") {
+                j = index(substr(s, 2), c)
+                if (j) { v = substr(s, 2, j - 1); r = substr(s, j + 2) } else { ok = 0; why = "a single-quoted value that does not close on its line" }
+            } else {
+                match(s, /^[A-Za-z0-9_.\/:@%+,=-]*/); v = substr(s, 1, RLENGTH); r = substr(s, RLENGTH + 1)
+            }
+            if (ok && r !~ /^([ \t]+(#.*)?)?$/) { ok = 0; why = "something after the value that is not a # comment" }
+            if (!found) { found = 1; first = v; firstok = ok; firstwhy = "line " NR ": " why }
+        }
+        END {
+            if (cntrl) { print "line " cntrl ": a control character other than a tab"; exit 2 }
+            if (other) { print "line " other ": " k " set in a form this reader does not read"; exit 2 }
+            if (found && !firstok) { print firstwhy; exit 2 }
+            if (found) print first
+        }
+    ' /storage/.config/cloud_sync.conf
+}
+if ! CONTENT_REMOTE=$(conf_get CONTENT_REMOTE); then
+    # On a refusal conf_get says why, for the log: the line and its shape,
+    # never the value (PL-015).
+    log_message "cloud_sync.conf was not read: ${CONTENT_REMOTE}"
+    echo ">>> why YOUR CLOUD SYNC SETTINGS COULDN'T BE READ"
+    echo "Your cloud sync settings couldn't be read. Set up cloud storage again under GAME SETTINGS > MANAGE CLOUD STORAGE."
+    exit 1
+fi
+# The bound falls back to the shipped value below when this is empty; a
+# line it cannot read is that too, and the log says so.
+if ! RCLONE_NET_OPTS=$(conf_get RCLONE_NET_OPTS); then
+    log_message "RCLONE_NET_OPTS was not read (${RCLONE_NET_OPTS}); the shipped bound stands in"
+    RCLONE_NET_OPTS=""
+fi
+case "${CONTENT_REMOTE}" in
+    *[\$\`\\]*|*[[:cntrl:]]*)
+        echo ">>> why YOUR CLOUD SYNC SETTINGS COULDN'T BE READ"
+        echo "Your cloud sync settings couldn't be read. Set up cloud storage again under GAME SETTINGS > MANAGE CLOUD STORAGE."
+        exit 1 ;;
+esac
+
+REMOTENAME=$(rclone listremotes | head -1)
+if [ -z "${REMOTENAME}" ]; then
+    echo ">>> why YOUR CLOUD STORAGE ISN'T SET UP YET"
+    echo "Your cloud storage isn't set up yet. Set it up under GAME SETTINGS > MANAGE CLOUD STORAGE first."
+    exit 1
+fi
+
+ROOT="${REMOTENAME}${CONTENT_REMOTE:+${CONTENT_REMOTE}/}"
+
+# The bound on every rclone command below that opens a socket: RCLONE_NET_OPTS
+# from cloud_sync.conf, or the same shipped values when the config has no
+# such line yet -- this script reads the config without running
+# cloud_sync_helper, so on the first run after an update it may not, and the
+# bound is a guard that a missing line must not switch off. The reasoning
+# for the numbers is beside the option in cloud_sync.conf.defaults; the
+# short version is that rclone's own defaults (60 s connect, 5 min idle, 10
+# low-level retries, 3 whole-run retries) hold a run for over ten minutes
+# on a link that drops mid-run (#101, #102, #103). Keep the fallback in step
+# with the default.
+RCLONE_NET_OPTS_FALLBACK="--contimeout 15s --timeout 30s --low-level-retries 10 --retries 1"
+_net_opts=$(echo "${RCLONE_NET_OPTS:-}" | tr '\n\\' '  ' | tr -s ' ' | sed 's/^ //; s/ $//')
+[ -n "${_net_opts}" ] || _net_opts="${RCLONE_NET_OPTS_FALLBACK}"
+read -r -a RCLONE_NET_OPTS_ARRAY <<< "${_net_opts}"
+# A probe is a single listing that exists to answer quickly: one attempt,
+# tighter than the transfers (the same values the saves scripts probe with).
+readonly -a RCLONE_PROBE_OPTS=(--contimeout 10s --timeout 20s --low-level-retries 1 --retries 1)
+# A listing's bound (#143): three low-level retries, not a transfer's ten --
+# rclone's S3 backend hands the count to the AWS SDK as attempts with
+# exponential backoff (see cloud_backup for the measurement).
+readonly -a RCLONE_LIST_OPTS=(--contimeout 15s --timeout 30s --low-level-retries 3 --retries 1)
+
+# Whole or not at all: to a temporary name beside the stamp, then renamed
+# over it, as ThreadedCloudSync::recordOutcome does. A kill mid-write leaves
+# the previous stamp; it used to leave an empty file (D-CLOUD-078, #105).
+# LAST_WHY, when a `>>> why` line was printed, becomes the stamp's third
+# field as a token (spaces to underscores) for the row to read (D-UI-028).
+LAST_WHY=""
+write_stamp() {
+    local file="$1" line="$2" tmp
+    mkdir -p "$(dirname "${file}")" 2>/dev/null
+    tmp="${file}.tmp.$$"
+    { printf '%s\n' "${line}" > "${tmp}"; } 2>/dev/null \
+        && mv -f "${tmp}" "${file}" 2>/dev/null \
+        || rm -f "${tmp}" 2>/dev/null
+}
+record_outcome() { # <stamp-name> <rc>
+    local why=""
+    case "$2" in
+        0|9|"${EXIT_NO_NETWORK}"|"${EXIT_LOCK_HELD}") ;;
+        *) [ -n "${LAST_WHY}" ] && why=" $(printf '%s' "${LAST_WHY}" | tr ' ' '_')" ;;
+    esac
+    write_stamp "/storage/.cache/cloud_sync/last-$1" "$(date +%s) $2${why}"
+}
+
+# Why a unit did not finish, in the player's words (D-UI-028, D-CLOUD-077):
+# one `>>> why <SENTENCE>` protocol line per failing unit, which the page
+# and the card read; rclone's code stays in the log. The sentences are the
+# vocabulary table's in es-native-ui.md.
+say_why() {
+    LAST_WHY="$1"
+    echo ">>> why $1"
+    log_message "why: $1"
+}
+why_for() {
+    case "$1" in
+        3|4) echo "COULDN'T FIND YOUR CLOUD FOLDER" ;;
+        5)   echo "YOUR CLOUD STOPPED ANSWERING" ;;
+        6)   echo "SOME FILES DIDN'T FINISH" ;;
+        7|8) echo "YOUR CLOUD WOULDN'T TAKE THE FILES" ;;
+        130) echo "IT WAS STOPPED" ;;
+        *)   echo "SOMETHING WENT WRONG" ;;
+    esac
+}
+
+has_default_route() {
+    ip -4 route show default 2>/dev/null | grep -q . \
+        || ip -6 route show default 2>/dev/null | grep -q .
+}
+
+# Is the network gone? Asked after rclone failed, so the run can say why it
+# ended rather than hand up a code that reads as FAILED and sends somebody
+# to a log. Gone: no default route, or a route through which neither the
+# remote nor anything else answers a bounded probe. Not gone: the remote
+# answers again (a blip rclone did not survive), or the internet answers
+# while the remote does not (the provider, or the sign-in) -- that is
+# rclone's failure to report, and the caller passes rclone's code through
+# as before. The same three questions cloud_backup asks (#101, #103).
+network_gone() {
+    has_default_route || return 0
+    rclone lsd "${REMOTENAME}" "${RCLONE_PROBE_OPTS[@]}" >/dev/null 2>&1 && return 1
+    ping -q -c1 -W 3 1.1.1.1 >/dev/null 2>&1 && return 1
+    ping -q -c1 -W 3 8.8.8.8 >/dev/null 2>&1 && return 1
+    return 0
+}
+
+# The network went away under a running unit. Says so, records that the run
+# did not complete -- never a 0, which would read as a backup that happened
+# -- and exits EXIT_NO_NETWORK, which EmulationStation names (SKIPPED - NO
+# NETWORK CONNECTION on the card, SKIPPED, NO NETWORK on the row). No
+# further unit is attempted: each would stall for another minute against
+# the same dead link. rclone copy writes each file under a temporary name
+# and renames it when complete, so nothing partial is left in the cloud.
+#
+# SKIPPED means nothing was touched (#308 claude F-CS-24): once a unit has
+# completed, a run the network then ends stamps "69 gaps <why>", which the
+# rows read as COULDN'T FINISH; the exit stays 69.
+# Did this run's rclone move a file since <offset> into the log? Progress,
+# for the stamp stop_no_network writes, is what rclone logged moving --
+# "<path>: Copied (...)", "Moved (...)", "Deleted" -- not a unit that
+# completed (the audit of the fixes, G-A-08/G-A-13): files a unit moved
+# before its own failure did not count, and a unit that moved nothing did.
+# Every transfer here logs at INFO to LOG_FILE, and the transfer lock
+# keeps any other cloud script from writing it meanwhile.
+log_offset() { stat -c %s "${LOG_FILE}" 2>/dev/null || echo 0; }
+moved_since() { # <byte offset into LOG_FILE>
+    local now
+    now=$(stat -c %s "${LOG_FILE}" 2>/dev/null) || return 1
+    [ "${now}" -gt "$1" ] 2>/dev/null || return 1
+    tail -c +$(( $1 + 1 )) "${LOG_FILE}" 2>/dev/null | grep -qE ': (Copied|Moved) \(|: Deleted$'
+}
+PROGRESS_MADE=0
+stop_no_network() {
+    local rc="$1" unit="$2"
+    echo "Couldn't finish: lost the network while backing up ${unit}. Try again when you're online."
+    log_message "stopped: the network went away while backing up ${unit} (rclone exit ${rc}); exit ${EXIT_NO_NETWORK}"
+    if [ "${PROGRESS_MADE}" = 1 ]; then
+        write_stamp "/storage/.cache/cloud_sync/last-content-backup" "$(date +%s) ${EXIT_NO_NETWORK} gaps YOU WENT OFFLINE PART-WAY THROUGH"
+    else
+        record_outcome content-backup "${EXIT_NO_NETWORK}"
+    fi
+    exit "${EXIT_NO_NETWORK}"
+}
+
+# What this device calls a game system.
+#
+# EmulationStation declares one <path> per system, and on a handheld those are
+# the /storage/roms subdirectories that hold games. Deriving the list from the
+# device's own config means it is right per device -- an H700 has 122, a
+# Snapdragon target has more -- and it never drifts, because the image that
+# adds a system also adds it here.
+#
+# Match on <path>, not <name>: they differ for a dozen systems (ES calls the
+# folder "coleco" and the system "colecovision", "fbneo"/"fbn", "pc88"/"pc-88"),
+# and matching names silently drops those folders from the backup.
+ES_SYSTEMS=""
+for c in /storage/.config/emulationstation/es_systems.cfg \
+         /usr/config/emulationstation/es_systems.cfg; do
+    [ -r "${c}" ] && { ES_SYSTEMS="${c}"; break; }
+done
+
+system_folders() {
+    [ -n "${ES_SYSTEMS}" ] || return 0
+    sed -n 's:.*<path>/storage/roms/\([^</]*\).*:\1:p' "${ES_SYSTEMS}" | sort -u
+}
+
+# Local content directories, by allowlist.
+#
+# This used to be a denylist -- everything under /storage/roms except four
+# names -- so any directory that appeared there was uploaded as though it were
+# a game system. That is the same shape of mistake as a denylist sync filter:
+# what gets included is decided by what happens to be on the disk rather than
+# by anything anyone chose. bezels, themes, music and a stray scummvm folder
+# were all being swept up that way, none of them systems (ES keeps scummvm's
+# games in /storage/.config/scummvm/games and music's playlists in
+# /storage/.config/gmu/playlists -- the /storage/roms folders of those names
+# are leftovers).
+#
+# In scope: the systems ES declares, and bios. Everything else is out, and
+# stays out until somebody decides otherwise.
+# The content-tier files under a directory, as one find(1) definition.
+#
+# Extra find arguments are appended, so a caller can list them, count them or
+# total their sizes without restating the exclusions. "Does this hold
+# anything?" and "how much does it hold?" answering about different file sets
+# is exactly how a badge ends up contradicting the size printed next to it.
+#
+# Kept in step with SAVE_EXCLUDES and CONFLICT_EXCLUDES below by hand -- there
+# is no shared parser, and a pattern added there must be added here. The
+# conflict patterns matter as much as the save ones: without them --list-sizes
+# counts another sync client's duplicate as content this device holds, and the
+# picker's badge reports a size the cloud will never agree with.
+content_files() {
+    local dir="$1"; shift
+    # One rule for both sides (D-CLOUD-048), set by MEDIA_MODE (D-CLOUD-050):
+    #   roms  -- ROMs and BIOS only: the scraper's folders and the game list
+    #            are neither listed nor moved
+    #   with  -- ROMs and game content together
+    #   only  -- game content alone: the scraper's folders and gamelist.xml
+    # The game list is game content (D-CLOUD-049): the scraper writes it
+    # beside the artwork, and a restored-then-scraped device must read as
+    # matching its cloud under ROMs alone. At any depth, as the transfers
+    # move it (the ROMs pass excludes "**/gamelist.xml", the game-list pass
+    # includes it): a list below a system's own folder was counted as a ROM
+    # (the audit of the fixes, G-A-10).
+    local -a media=()
+    local d
+    case "${MEDIA_MODE:-roms}" in
+        roms) for d in ${MEDIA_DIRS:-images videos manuals screenshots fanart boxart wheel mix maps media}; do media+=( ! -path "${dir%/}/${d}/*" ); done
+              media+=( ! -name gamelist.xml ) ;;
+        only) media+=( "(" -name gamelist.xml )
+              for d in ${MEDIA_DIRS:-images videos manuals screenshots fanart boxart wheel mix maps media}; do media+=( -o -path "${dir%/}/${d}/*" ); done
+              media+=( ")" ) ;;
+    esac
+    find "${dir}" -type f \
+        ! -name '*.srm' ! -name '*.sav' ! -name '*.fs' ! -name '*.state*' \
+        ! -name '*.auto' ! -name '*.dsv*' ! -name '*.eep' ! -name '*.mpk' \
+        ! -name '*.sra' ! -name '*.fla' ! -name '*.mcd' ! -name '*.mcr' \
+        ! -path '*/save/*' ! -path '*/memcards/*' \
+        ! -path '*/shared/savefiles/*' ! -path '*/PPSSPP/*' \
+        ! -path '*conflicted copy*' ! -name '*.sync-conflict-*' \
+        ! -name '*.????????.partial' \
+        ! -path "${dir%/}/README.txt" \
+        "${media[@]}" "$@" 2>/dev/null
+}
+
+# Does this directory hold anything the content tier would actually transfer?
+has_content() {
+    content_files "$1" | head -1 | grep -q .
+}
+
+# How many bytes of it. Compared against the cloud's own total to answer
+# whether a system on this device matches what is stored -- an equal total is
+# not proof of identical files (see #53), so the caller must not phrase it as
+# one, but a different total is proof they differ, which is the case worth
+# flagging.
+content_bytes() {
+    content_files "$1" -exec stat -c '%s' {} + \
+        | awk '{ t += $1 } END { print t+0 }'
+}
+
+list_local_dirs() {
+    local allow
+    allow=$(system_folders)
+    for d in "${DEST}"/*/; do
+        [ -d "${d}" ] || continue
+        base=$(basename "${d}")
+        # The saves sync owns these, and ES declares screenshots and
+        # savestates as systems of its own -- so the allowlist alone lets them
+        # through, and content sync would upload the same files the saves sync
+        # is already keeping, into a second place, under different rules.
+        # Membership of the content tier is the intersection: a system ES
+        # declares, and not something another tier already owns.
+        case "${base}" in
+            savefiles|savestates|screenshots|backup) continue ;;
+        esac
+        if [ "${base}" != "bios" ]; then
+            printf '%s\n' "${allow}" | grep -qxF "${base}" || continue
+        fi
+        # Skip a directory with nothing this tier would carry.
+        #
+        # "Not empty" is the wrong test: RetroArch writes .srm and .state next
+        # to the ROM, so a system whose only contents are saves looks populated
+        # while a content transfer would send nothing from it. That made --list
+        # claim the device "has" GBA when what it had was GBA saves, and the
+        # picker's badge repeated the claim.
+        #
+        has_content "${d}" || continue
+        echo "${base}"
+    done
+}
+
+# Where a local directory belongs in the cloud.
+#
+# The cloud layout is for a person looking at it on a computer, not a mirror of
+# the device's storage. There, "bios" is just another folder beside the game
+# systems, which is an accident of how the handheld stores things and tells a
+# reader nothing. Two named folders do: ROMs and BIOS.
+remote_for() {
+    case "$1" in
+        bios) echo "${ROOT}BIOS" ;;
+        *)    echo "${ROOT}ROMs/$1" ;;
+    esac
+}
+
+# The systems this device syncs, chosen once and changeable. See
+# cloud_content_restore for why this lives in /storage/.cache rather than in
+# anything the settings backup captures. A device that does not want PS2 coming
+# down does not want it going up either, so both directions read the same file.
+SELECTION="/storage/.cache/cloud_sync/content-systems"
+
+# Only a system folder's name is ever acted on (audit #307 PL-030):
+# --set-systems refuses any other since that change, and a selection an
+# earlier build wrote without the check is read past a line that is not
+# one, never with it.
+selected_systems() {
+    [ -r "${SELECTION}" ] || return 0
+    grep -E '^[A-Za-z0-9_][A-Za-z0-9._-]*$' "${SELECTION}" 2>/dev/null
+}
+
+# --with-media: include scraped game content (D-CLOUD-048). Off by default:
+# the scraper's folders under a system are neither moved nor counted unless
+# the switch is on, so a restored-then-scraped device does not read as
+# "different" from its cloud copy. Taken from anywhere on the command line.
+MEDIA_MODE=roms
+_ARGS=()
+for _a in "$@"; do
+    case "${_a}" in
+        --with-media) MEDIA_MODE=with ;;
+        --media-only) MEDIA_MODE=only ;;
+        *) _ARGS+=("${_a}") ;;
+    esac
+done
+set -- "${_ARGS[@]}"
+MEDIA_DIRS="images videos manuals screenshots fanart boxart wheel mix maps media"
+# What the main rclone pass carries, per mode. The game list never rides the
+# main pass: it has its own --update pass below (newest wins), which runs
+# only when game content is in scope.
+MEDIA_EXCLUDES=()
+case "${MEDIA_MODE}" in
+    roms) for _d in ${MEDIA_DIRS}; do MEDIA_EXCLUDES+=(--exclude "/${_d}/**"); done ;;
+    only) for _d in ${MEDIA_DIRS}; do MEDIA_EXCLUDES+=(--include "/${_d}/**"); done ;;
+esac
+
+case "${1}" in
+    --selected)
+        # Only the selected systems that this device actually has content for.
+        mapfile -t ALLDIRS < <(list_local_dirs)
+        DIRS=()
+        for d in "${ALLDIRS[@]}"; do
+            selected_systems | grep -qxF "${d}" && DIRS+=("${d}")
+        done
+        # BIOS is not a system and not a pick (D-CLOUD-043): it comes with
+        # the ROMs tier whenever this device holds any, exactly as restore
+        # brings it whenever the cloud does. Found in the VM on 2026-09-06:
+        # a device's BIOS folder never went up once the picker stopped
+        # listing it. Not with game content alone -- BIOS is not that.
+        if [ "${MEDIA_MODE}" != only ] && printf '%s\n' "${ALLDIRS[@]}" | grep -qx bios \
+            && ! printf '%s\n' "${DIRS[@]}" | grep -qx bios; then
+            DIRS+=("bios")
+        fi
+        # Nothing here to send is nothing to do -- a run that completed, not
+        # one that failed (#308 claude F-CS-15): it exited 1, and the page
+        # read COULDN'T FINISH - SOMETHING WENT WRONG. Exit 0, the sentence,
+        # and the stamp saying the last press completed.
+        if [ ${#DIRS[@]} -eq 0 ]; then
+            echo "Nothing to back up: none of the systems you picked have anything on this device."
+            record_outcome content-backup 0
+            exit 0
+        fi
+    ;;
+    --list)
+        list_local_dirs
+        exit $?
+    ;;
+    --list-sizes)
+        # name|bytes for what this device holds, the mirror of
+        # cloud_content_restore --scan. The picker needs both sides to say
+        # whether a system here matches the copy in the cloud.
+        while IFS= read -r base; do
+            [ -n "${base}" ] || continue
+            printf '%s|%s\n' "${base}" "$(content_bytes "${DEST}/${base}")"
+        done < <(list_local_dirs)
+        exit 0
+    ;;
+    --all)
+        mapfile -t DIRS < <(list_local_dirs)
+        if [ ${#DIRS[@]} -eq 0 ]; then
+            echo "Nothing to back up: there are no ROMs or BIOS files on this device."
+            record_outcome content-backup 0
+            exit 0
+        fi
+    ;;
+    "")
+        echo "Usage: ${SCRIPT_NAME} --list | --list-sizes | --all | <dir> [<dir>...]" >&2
+        exit 1
+    ;;
+    *)
+        DIRS=("$@")
+    ;;
+esac
+
+# Another sync client's unresolved dispute is not our content.
+#
+# Dropbox and Nextcloud rename the losing side of a concurrent write to
+# "X (Someone's conflicted copy 2026-09-03)"; Syncthing appends
+# ".sync-conflict-<date>". Carrying those onto a handheld doubles the storage
+# for no benefit -- the player cannot resolve a conflict from a games menu --
+# and it makes the artifacts immortal: a device that downloaded them uploads
+# them again on the next backup, so deleting them in the cloud looks like the
+# provider putting them back. That happened here, to 271 directories of BIOS
+# (2026-09-04).
+#
+# Resolution belongs on the computer where both sides can be seen. We decline
+# to move them in either direction, which is also the only way a cleanup on
+# one side stays done.
+CONFLICT_EXCLUDES=(
+    --exclude "**conflicted copy**"
+    --exclude "**.sync-conflict-**"
+    --exclude "*.????????.partial"
+)
+
+# gamelist.xml travels on its own terms.
+#
+# It is the scraping payload -- names, descriptions, genres, ratings, media
+# paths and the cheevos hashes that cost a hash of every ROM -- and all of that
+# is device-independent, so sharing it means scraping once rather than once per
+# handheld. Paths inside it are relative ("./Mega Man 3 (USA).zip"), so it
+# carries across devices unchanged.
+#
+# It degrades well in both directions, which is why this is safe at all:
+#
+#   * Reading, EmulationStation builds its list from the filesystem first and
+#     skips any entry whose ROM is absent ("does not exist ... Ignoring"), so a
+#     52-entry list on a handheld holding 10 of those games shows 10 games and
+#     no phantoms. That holds while ParseGamelistOnly is false, which is the
+#     default.
+#   * Writing, updateGamelist re-reads the file and rewrites only the entries
+#     whose metadata changed, preserving entries for ROMs this device does not
+#     have -- deliberately, per its own comment.
+#
+# What neither of those protects against is rclone, which replaces a file
+# wholesale. A device that scans its own ROMs and uploads before it has ever
+# restored would push a thin list over a rich one. That is an ordering problem,
+# not a merge problem, and --update solves it: skip when the destination is
+# newer, so the freshest list wins rather than the last writer.
+#
+# Hence a separate pass. --update on the whole content transfer would also
+# apply to ROMs, where "destination is newer" is not a reason to skip a file
+# somebody deliberately re-uploaded.
+#
+# Three fields remain genuinely per-device -- playcount, lastplayed and
+# gametime, which EmulationStation itself marks isStatistic and refuses to let
+# a scrape overwrite. A file-level sync cannot make that distinction, so those
+# are last-writer-wins across devices. Everything else in the file is authored
+# or scraped, and favorite is explicitly not a statistic in ES's model.
+GAMELIST_ONLY=( --include "gamelist.xml" --include "**/gamelist.xml" )
+
+# What the saves tier owns, and content must never carry.
+#
+# A system directory holds more than games: RetroArch writes .srm and .state
+# next to the ROM, and several systems keep memory cards in a subfolder. The
+# saves allowlist claims all of it ("+ /**/*.srm" and friends in
+# cloud_sync-rules.txt), so uploading a system folder wholesale puts saves
+# in a second cloud location under different rules -- two writers and no
+# reconciliation, which is exactly how 70 files were deleted on 2026-09-01.
+#
+# Worse in the other direction: a content restore would then copy stale saves
+# back over live ones.
+#
+# The earlier allowlist fix (d77d4ea44d) covered directories another tier
+# owns. This is the same rule one level down, for files. Kept in step with
+# cloud_sync-rules.txt by hand -- there is no shared parser, and a pattern
+# added there must be added here. .fla was added there (#89, N64's flash
+# saves beside the ROM) and not here, so a content backup uploaded it and
+# a match removed it as content (the audit's gpt F-CS-02).
+SAVE_EXCLUDES=(
+    --exclude "*.srm" --exclude "*.sav" --exclude "*.fs"
+    --exclude "*.state*" --exclude "*.auto" --exclude "*.dsv*"
+    --exclude "*.eep" --exclude "*.mpk" --exclude "*.sra" --exclude "*.fla"
+    --exclude "*.mcd" --exclude "*.mcr"
+    --exclude "save/**" --exclude "memcards/**"
+    --exclude "shared/savefiles/**" --exclude "PPSSPP/**"
+)
+
+STATUS=0
+take_cloud_lock
+# Everything from here to the end of the script runs with the lock
+# descriptor closed, so no child of this run can hold the lock once this
+# shell is gone -- see take_cloud_lock. The brace group is the whole of
+# the change: it adds no subshell, so exits, traps and variables behave
+# exactly as they did.
+{
+UNIT_N=${#DIRS[@]}; UNIT_I=0
+for DIR in "${DIRS[@]}"; do
+    # Local -> remote. This script uploads; cloud_content_restore is the one
+    # that brings content back down.
+    SRC="${DEST}/${DIR}"
+    TARGET="$(remote_for "${DIR}")"
+    UNIT_I=$((UNIT_I + 1))
+    log_message "Content backup: ${SRC} -> ${TARGET}"
+    # The marker the transfer page reads: what is being copied, and which of
+    # how many. Restore has emitted it since D-UI-024; backup never did, so
+    # the page kept the previous script's last label -- SETTINGS BACKUP --
+    # through every system it uploaded (maintainer, 2026-09-06).
+    echo ">>> unit ${DIR:-everything}|${UNIT_I}|${UNIT_N}"
+    echo "Backing up ${DIR:-everything} to the cloud..."
+    # --progress is what puts the stats on stdout. With only --log-file they
+    # go to the log and the caller sees nothing -- which is why the progress
+    # card sat at "0 B / 0 B, -, 0 B/s" through a restore that was in fact
+    # copying Mega Drive ROMs the whole time. The saves path has always passed
+    # it; these two never did.
+    #
+    # And NOT --stats-one-line: that collapses the display to a totals line,
+    # losing the per-file block. A transfer of a thousand small BIOS files
+    # spends minutes between percentage changes, and the only thing that says
+    # it is alive rather than stuck is the name of the file it is on right
+    # now. --stats 1s keeps that moving.
+    #
+    # No --progress-terminal-width: the flag does not exist on every rclone we
+    # ship against (the saves scripts test for it with "rclone help | grep"
+    # before using it), and an unknown flag is a usage error that transfers
+    # nothing. rclone pads the file name out to a guessed width; the reader
+    # trims it, so the flag bought nothing worth a version check.
+    #
+    # The folder first, on its own. rclone creates a missing destination as
+    # part of a copy, but only after listing it, and a server that answers a
+    # missing folder with an error rather than "not found" (an FTP server's
+    # 501 where the standard reply is 550) fails that listing. Under
+    # --retries 1 that one attempt is the whole run: reported as failed,
+    # with files that may or may not have landed (#142, from the #133
+    # matrix: 2 of 3). mkdir is one round trip, idempotent, and on a bucket
+    # under directory markers it writes the marker the folder's parent then
+    # lists (D-CLOUD-120). Its own failure is left to the copy to report.
+    rclone mkdir "${TARGET}" "${RCLONE_LIST_OPTS[@]}" 2>/dev/null
+    UNIT_LOG0=$(log_offset)
+    # The setup's note at a unit's root (BIOS/README.txt, cloud_setup
+    # --seed-folders) is not content, and neither side counts it (#308 gpt
+    # F-CS-30): it came down into /storage/roms/bios and read ever after as a
+    # file this device has and the cloud does not.
+    rclone copy "${SRC}" "${TARGET}" "${RCLONE_NET_OPTS_ARRAY[@]}" \
+        "${SAVE_EXCLUDES[@]}" "${CONFLICT_EXCLUDES[@]}" "${MEDIA_EXCLUDES[@]}" \
+        --exclude "gamelist.xml" --exclude "**/gamelist.xml" --exclude "/README.txt" \
+        --progress --stats 1s \
+        --log-file "${LOG_FILE}" --log-level INFO
+    RC=$?
+
+    # The game list: newest wins, rather than whoever ran last. Game content
+    # only (D-CLOUD-049) -- under ROMs alone the file stays where it is. Its
+    # result is the unit's, by the same 0|9 rule (audit #307 PL-066): it
+    # was discarded with `|| true`, so a game list that did not move left a
+    # unit, a stamp and a page that said the unit had.
+    if [ "${MEDIA_MODE}" != roms ]; then
+        rclone copy "${SRC}" "${TARGET}" "${RCLONE_NET_OPTS_ARRAY[@]}" \
+            "${GAMELIST_ONLY[@]}" --update \
+            --stats 0 \
+            --log-file "${LOG_FILE}" --log-level INFO
+        GL_RC=$?
+        case "${RC}" in
+            0|9) case "${GL_RC}" in 0|9) ;; *) RC=${GL_RC} ;; esac ;;
+        esac
+    fi
+
+    # What moved in this unit, whatever its result (G-A-08/G-A-13).
+    moved_since "${UNIT_LOG0}" && PROGRESS_MADE=1
+    if [ ${RC} -ne 0 ] && [ ${RC} -ne 9 ]; then
+        # A failed unit says why: the network gone ends the run as 69 here,
+        # anything else carries rclone's own code up as before.
+        network_gone && stop_no_network "${RC}" "${DIR:-everything}"
+        log_message "backup of ${DIR:-everything}: rclone exit ${RC}"
+        echo "Couldn't finish backing up ${DIR:-everything}: $(why_for "${RC}" | tr 'A-Z' 'a-z')."
+        say_why "$(why_for "${RC}")"
+        STATUS=${RC}
+    else
+        echo "Backed up ${DIR:-everything}."
+    fi
+done
+
+# The progress card is gone by the time somebody who walked away comes back, so
+# leave the outcome where the menu can read it later. Device-local state, so it
+# lives under /storage/.cache and not in the settings backup.
+record_outcome content-backup "${STATUS}"
+
+# A failed unit leaves with rclone's own code, unremapped: nothing rclone
+# returns can read as the lock sentinel now that it is 75 (#99).
+exit ${STATUS}
+} 9>&-

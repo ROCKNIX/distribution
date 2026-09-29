@@ -1,0 +1,89 @@
+video_thread_wrapper: run a posted command once, not once per wake
+
+The video thread's loop wakes for either a command or a frame update,
+then copies thr->cmd_data and dispatches it unconditionally. Whether
+there is anything to run is inferred afterwards from the packet's own
+type -- and cmd_data.type is cleared by the POSTER, in
+video_thread_wait_reply, after it wakes.
+
+So between video_thread_reply() and the poster being scheduled,
+cmd_data still holds the command that just finished. A frame update
+arriving in that window wakes the loop, which copies that completed
+packet and runs its method a second time. Every caller of
+video_thread_texture_handle passes the address of a local --
+gl3_load_texture and twenty-odd siblings across gl1, gl2, gl3, vulkan,
+d3d8..d3d12 and rsx -- so the second run dereferences a dead stack
+frame.
+
+Captured on an Anbernic RG SP (H700, glcore, threaded video) with a
+core dump: SIGSEGV in video_texture_load_wrap_gl3_mipmap+0xc, the
+ldr x0,[x0] of cmd->gl, x0 = 0xffff0000000b, lr in video_thread_loop's
+CMD_CUSTOM_COMMAND case -- while the posting thread sat in
+rc_evaluate_trigger, long returned from its post. The build carried the
+poster lock from #19518, which closes a different hole: that one was
+two posters colliding, this is one packet executed twice.
+
+The same doubling reaches font_driver_release_renderer_state, whose
+method is renderer->free(). A doubled dispatch there is a double free,
+which corrupts the heap and surfaces later somewhere unrelated.
+
+send_cmd is set to CMD_VIDEO_NONE by video_thread_reply when a command
+completes, so it is the one flag the consumer owns; the fix reads it
+while the lock is held and gates the dispatch on it.
+
+Proved by a fixture that extracts send_packet, wait_reply, reply,
+send_and_wait_user_to_thread and this dequeue verbatim from the source
+and drives them with a poster whose cmd is a local and a thread setting
+frame.updated: as shipped, 2000 posts ran the method 2017 times; with
+the gate, exactly 2000.
+
+Written for ROCKNIX (fork maxengel/rocknix#211, #225). Upstream-bound.
+
+--- a/gfx/video_thread_wrapper.c
++++ b/gfx/video_thread_wrapper.c
+@@ -431,6 +431,7 @@
+ {
+    thread_packet_t pkt;
+    bool updated;
++   bool have_cmd;
+    thread_video_t *thr = (thread_video_t*)data;
+ 
+    for (;;)
+@@ -441,13 +442,36 @@
+ 
+       updated = thr->frame.updated;
+ 
++      /* Whether there is a command to run is decided here, while the lock
++       * is held, and not from the packet's own type afterwards.
++       *
++       * cmd_data.type is cleared by the POSTER, in video_thread_wait_reply,
++       * after it wakes -- so between video_thread_reply() and the poster
++       * being scheduled, cmd_data still holds the command that has just
++       * finished. A frame update arriving in that window wakes this loop,
++       * which would copy that completed packet and run its method a second
++       * time. By then the poster has usually returned, and every caller of
++       * video_thread_texture_handle passes the address of a LOCAL (see
++       * gl3_load_texture and its twenty-odd siblings), so the second run
++       * dereferences a dead stack frame.
++       *
++       * That is fork issue maxengel/rocknix#211: RetroArch segfaulting in
++       * video_texture_load_wrap_gl3_mipmap at cmd->gl, with the posting
++       * thread already elsewhere, on a build that carries the poster lock
++       * from libretro/RetroArch#19518. The same doubling reaches
++       * font_driver_release_renderer_state, where the method is a free.
++       *
++       * send_cmd is set to CMD_VIDEO_NONE by video_thread_reply when a
++       * command completes, so it is the one flag the consumer owns. */
++      have_cmd = (thr->send_cmd != CMD_VIDEO_NONE);
++
+       /* To avoid race condition where send_cmd is updated
+        * right after the switch is checked. */
+       pkt     = thr->cmd_data;
+ 
+       slock_unlock(thr->lock);
+ 
+-      if (video_thread_handle_packet(thr, &pkt))
++      if (have_cmd && video_thread_handle_packet(thr, &pkt))
+          return;
+ 
+       if (updated)

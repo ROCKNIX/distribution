@@ -179,6 +179,47 @@ stop_volume_repeat() {
 execute_kill() {
   if [ -e "/tmp/.process-kill-data" ]; then
     TO_KILL="$(cat /tmp/.process-kill-data)"
+    ### Say that the player asked to leave, before the signal goes out. runemu.sh
+    ### maps 137/143 to a clean exit already, which covers every emulator that
+    ### dies on the signal -- but RetroArch catches SIGTERM and ends with its own
+    ### exit(1), the same status as "Failed to load content", so the exit code
+    ### alone cannot tell a forced quit from a failed launch (fork #92,
+    ### D-LAUNCH-002). The marker sits beside the kill data this function already
+    ### reads, in /tmp, because /tmp is a tmpfs: a power cut wipes it, and a
+    ### marker that outlived the boot would make the next launch's failure read
+    ### as clean. runemu.sh clears it on the way into the emulator and consumes
+    ### it at exit; both it and this service run as root.
+    touch "/tmp/.process-kill-requested" 2>/dev/null
+
+    ### One press, one signal. The combo re-fires this on every further B or C
+    ### press while A is held, and RetroArch takes about half a second to shut
+    ### down -- so a player who holds the combo a moment too long, or presses
+    ### again because the game has not vanished yet, delivers a second SIGTERM
+    ### into that window. RetroArch answers the second one with exit(1) and
+    ### WITHOUT flushing SRAM: measured on the VM with a battery-backed
+    ### cartridge, one press wrote the .srm and two left none at all, losing
+    ### everything since the last autosave (fork #117). The first press already
+    ### ends it cleanly in ~0.5 s, so a repeat inside the window is the player
+    ### waiting, not asking again -- it is dropped. A deliberate second attempt
+    ### after the window still goes through, which is what a genuinely stuck
+    ### emulator needs.
+    ###
+    ### date +%s, not a sub-second clock: busybox date has no %N on every
+    ### build, and a whole second of granularity is plenty against a window
+    ### measured in seconds.
+    ###
+    ### The state is a shell variable rather than a file because there is one
+    ### reader to remember it: the several evtest processes started above all
+    ### pipe into the single `while read line` loop below, and both callers of
+    ### this function are inside that loop. A file would need the same
+    ### power-cut reasoning as the marker above and buy nothing.
+    now="$(date +%s)"
+    if [ -n "${LAST_KILL_AT}" ] && [ "$((now - LAST_KILL_AT))" -lt 3 ]; then
+      ${DEBUG} && log $0 "Ignoring a repeat kill $((now - LAST_KILL_AT))s after the last one; the emulator is still shutting down"
+      return 0
+    fi
+    LAST_KILL_AT="${now}"
+
     ${DEBUG} && log $0 "Execute: killall ${TO_KILL}"
     killall ${TO_KILL} 2>/dev/null
   fi

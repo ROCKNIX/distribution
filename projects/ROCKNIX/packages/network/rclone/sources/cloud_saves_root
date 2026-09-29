@@ -1,0 +1,205 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+# cloud_saves_root - which card the saves folder is on, and whether that
+# changed since saves were last synced.
+#
+# On a device with two microSD cards the second one is bound over
+# /storage/roms by the automount script, which first unmounts whatever is
+# there. For a moment at every boot -- and the interface starts in that
+# same moment -- /storage/roms is the internal card. A saves transfer that
+# begins then writes a whole tree onto the wrong card, and a stale copy on
+# whichever card is mounted later reads as this device's newest save.
+# Seen on an RG SP on 2026-09-08: 101 files on the internal card written
+# by boot restores, with both cards in the device the whole time (fork
+# #83, D-CLOUD-054).
+#
+# So the filesystem under SAVESPATH is remembered when saves are synced,
+# a transfer waits a little for the usual card to come back before it
+# refuses, and it refuses to record a run during which the card changed.
+#
+#   cloud_saves_root identity            print the identity of the filesystem under SAVESPATH
+#   cloud_saves_root check [--wait N]    exit 0 and print the identity when it matches the
+#                                        record (or there is none), waiting up to N seconds
+#                                        for a mismatch to clear; exit 1 with the reason on
+#                                        stdout when it does not
+#   cloud_saves_root record [IDENTITY] [--no-write]
+#                                        remember the current identity after a successful
+#                                        sync; with IDENTITY (the one check printed before
+#                                        the transfer), refuse with exit 1 when the folder
+#                                        is on a different card now. --no-write compares
+#                                        and records nothing: what a transfer that failed
+#                                        asks, so a card change still names itself
+#                                        without a failed run becoming the record. A
+#                                        record that cannot be written is exit 1 too.
+#   cloud_saves_root accept              the owner says the current card is right: remember it
+#
+# The identity is the filesystem UUID of the mount holding SAVESPATH, from
+# blkid; where there is none, the device number. The record lives under
+# /storage/.cache, which is always the internal card, so it is the same
+# file whichever card /storage/roms is on -- that is the point.
+
+RECORD="/storage/.cache/cloud_sync/saves-root"
+CONF="/storage/.config/cloud_sync.conf"
+
+saves_path() {
+    local p
+    p=$(sed -n 's/^SAVESPATH="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "${CONF}" 2>/dev/null | head -1)
+    [ -n "${p}" ] || p=$(sed -n 's/^BACKUPPATH="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "${CONF}" 2>/dev/null | head -1)
+    echo "${p:-/storage/roms}"
+}
+
+# The mount that holds a path: the longest mount point that is a prefix of
+# it. /proc/mounts lists the most recent mount of a path last, which is the
+# one in effect -- the bind of the second card over /storage/roms.
+mount_of() {
+    local target="$1" best="" bestlen=0 dev mp
+    while read -r dev mp _; do
+        case "${target}/" in
+            "${mp%/}/"*)
+                if [ ${#mp} -ge ${bestlen} ]; then
+                    best="${dev}"; bestlen=${#mp}
+                fi
+            ;;
+        esac
+    done < /proc/mounts
+    echo "${best}"
+}
+
+identity() {
+    local root dev uuid
+    root=$(saves_path)
+    dev=$(mount_of "${root}")
+    uuid=""
+    case "${dev}" in
+        /dev/*) uuid=$(blkid -o value -s UUID "${dev}" 2>/dev/null) ;;
+    esac
+    if [ -n "${uuid}" ]; then
+        echo "uuid:${uuid}"
+    else
+        # No block device or no UUID (overlay, bind of a directory): the
+        # device number still tells one filesystem from another this boot.
+        echo "dev:$(stat -c %d "${root}" 2>/dev/null || echo unknown)"
+    fi
+}
+
+# The record, whole or not at all: written beside itself and renamed over,
+# so a kill mid-write leaves the previous record and never an empty file
+# (which check would then have to refuse -- D-CLOUD-078, #105).
+#
+# And it says whether it landed (#308 gpt F-CS-20): the callers exited 0
+# whatever happened here, so a full or read-only /storage/.cache left the
+# guard with no record while every run reported it made one.
+write_record() {
+    mkdir -p "$(dirname "${RECORD}")" 2>/dev/null
+    if { printf '%s\n' "$1" > "${RECORD}.tmp.$$"; } 2>/dev/null \
+        && mv -f "${RECORD}.tmp.$$" "${RECORD}" 2>/dev/null; then
+        return 0
+    fi
+    rm -f "${RECORD}.tmp.$$" 2>/dev/null
+    return 1
+}
+
+# Re-read the identity once a second until it equals $1 or $2 seconds pass;
+# print what it is at the end.
+wait_for() {
+    local want="$1" deadline now
+    deadline=$(( $(date +%s) + ${2} ))
+    now=$(identity)
+    while [ "${now}" != "${want}" ] && [ "$(date +%s)" -lt "${deadline}" ]; do
+        sleep 1
+        now=$(identity)
+    done
+    echo "${now}"
+}
+
+case "${1:-}" in
+    identity)
+        identity
+    ;;
+    check)
+        shift
+        WAIT=0
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --wait) WAIT="${2:-0}"; shift 2 ;;
+                *) shift ;;
+            esac
+        done
+        now=$(identity)
+        if [ -e "${RECORD}" ] && [ ! -s "${RECORD}" ]; then
+            # A record that exists and says nothing is not "no record": it is
+            # a record that was being written when something killed the
+            # writer, and it must not pass the transfer unchecked (the #83
+            # guard failing open). Refuse until a good run rewrites it, or
+            # the owner accepts the card.
+            echo ">>> why COULDN'T TELL WHICH CARD YOUR SAVES ARE ON"
+            echo "We can't tell which card your saves were last synced from, so nothing was transferred."
+            echo "If both cards are in the device, try again."
+            logger -t cloud_saves_root "refused: the record at ${RECORD} exists and is empty; to accept the current card deliberately run: cloud_setup --accept-saves-root" 2>/dev/null
+            exit 1
+        fi
+        if [ -s "${RECORD}" ]; then
+            last=$(head -1 "${RECORD}")
+            if [ "${now}" != "${last}" ] && [ "${WAIT}" -gt 0 ] 2>/dev/null; then
+                # At boot the second card is bound over the saves folder a
+                # moment after the interface starts; give it that moment.
+                echo "The saves folder is not on its usual card yet; waiting up to ${WAIT}s for it." >&2
+                now=$(wait_for "${last}" "${WAIT}")
+            fi
+            if [ "${now}" != "${last}" ]; then
+                # The why line first, for the caller to relay (D-UI-028);
+                # then the reason and what to do, in the player's words. How
+                # to accept the new card deliberately is a command, so it goes
+                # to the log, not the screen -- no menu row offers it yet.
+                echo ">>> why YOUR SAVES ARE ON A DIFFERENT CARD"
+                echo "Your saves are on a different card than the last time they were synced."
+                echo "Nothing was transferred. If your second card is missing, put it back and try again."
+                logger -t cloud_saves_root "refused: saves root ${now}, recorded ${last}; to accept the current card deliberately run: cloud_setup --accept-saves-root" 2>/dev/null
+                exit 1
+            fi
+        fi
+        echo "${now}"
+        exit 0
+    ;;
+    record)
+        now=$(identity)
+        WANT="" NO_WRITE=0
+        shift
+        for _a in "$@"; do
+            case "${_a}" in
+                --no-write) NO_WRITE=1 ;;
+                *) WANT="${_a}" ;;
+            esac
+        done
+        if [ -n "${WANT}" ] && [ "${now}" != "${WANT}" ]; then
+            echo ">>> why YOUR SAVES CHANGED CARDS PART-WAY THROUGH"
+            echo "Your saves changed cards part-way through, so some files may have gone to the other card."
+            echo "Nothing was recorded. Try the transfer again once both cards are back in place."
+            logger -t cloud_saves_root "refused to record: saves root $(saves_path) started on ${WANT} and is on ${now} now" 2>/dev/null
+            exit 1
+        fi
+        [ "${NO_WRITE}" -eq 1 ] && exit 0
+        if ! write_record "${now}"; then
+            echo ">>> why COULDN'T RECORD WHICH CARD YOUR SAVES ARE ON"
+            echo "Your saves moved, but this device couldn't note which card they're on."
+            echo "If its storage is full, free some space and try again."
+            logger -t cloud_saves_root "could not write ${RECORD}" 2>/dev/null
+            exit 1
+        fi
+        exit 0
+    ;;
+    accept)
+        if ! write_record "$(identity)"; then
+            echo "Couldn't save which card your saves are on. If this device's storage is full, free some space and try again."
+            exit 1
+        fi
+        echo "Saves folder accepted: $(cat "${RECORD}" 2>/dev/null)"
+        exit 0
+    ;;
+    *)
+        echo "usage: cloud_saves_root identity|check [--wait N]|record [IDENTITY]|accept" >&2
+        exit 2
+    ;;
+esac
