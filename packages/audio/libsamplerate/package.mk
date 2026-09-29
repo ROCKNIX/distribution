@@ -15,6 +15,7 @@ PKG_TOOLCHAIN="autotools"
 # package specific configure options
 PKG_CONFIGURE_OPTS_TARGET="--disable-shared \
                            --enable-static \
+                           --with-pic \
                            --datadir=/usr/share \
                            --disable-fftw \
                            --disable-sndfile"

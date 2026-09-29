@@ -7,9 +7,15 @@ PKG_VERSION="1"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="http://libreelec.tv/"
 PKG_URL=""
-PKG_DEPENDS_TARGET="toolchain busybox newt parted e2fsprogs syslinux grub"
+PKG_DEPENDS_TARGET="toolchain busybox newt parted e2fsprogs syslinux"
 PKG_LONGDESC="LibreELEC.tv Install manager to install the system on any disk"
 PKG_TOOLCHAIN="manual"
+
+# grub is only needed for aarch64-EFI devices; GENERIC_X64 (x86_64) uses syslinux
+# for both BIOS and UEFI (syslinux ships bootx64.efi), so skip grub there.
+if [ "${DEVICE}" != "GENERIC_X64" ]; then
+  PKG_DEPENDS_TARGET+=" grub"
+fi
 
 post_install() {
   mkdir -p ${INSTALL}/usr/bin

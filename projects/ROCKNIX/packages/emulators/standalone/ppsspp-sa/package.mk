@@ -93,7 +93,14 @@ makeinstall_target() {
     curl -Lo ${INSTALL}/usr/config/ppsspp/PSP/Cheats/cheat.db https://raw.githubusercontent.com/Saramagrean/CWCheat-Database-Plus-/${CHEAT_DB_VERSION}/cheat.db
 
   mkdir -p ${INSTALL}/usr/config/ppsspp/PSP/SYSTEM
-    cp -aL ${PKG_DIR}/sources/${DEVICE}/* ${INSTALL}/usr/config/ppsspp/PSP/SYSTEM
+    # Guarded, as it was before the 2026-09 upstream cleanup (28e750db32)
+    # made it unconditional: not every device has a per-device directory
+    # here, and a device without one -- GENERIC_X64, the fork's QA VM --
+    # fails the whole install on `cp: cannot stat`. Devices that have one
+    # behave exactly as before.
+    if [ -d "${PKG_DIR}/sources/${DEVICE}" ]; then
+      cp -aL ${PKG_DIR}/sources/${DEVICE}/* ${INSTALL}/usr/config/ppsspp/PSP/SYSTEM
+    fi
 }
 
 post_install() {

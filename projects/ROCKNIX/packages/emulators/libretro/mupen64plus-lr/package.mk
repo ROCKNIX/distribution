@@ -12,6 +12,14 @@ PKG_LONGDESC="mupen64plus + RSP-HLE + GLideN64 + libretro"
 PKG_BUILD_FLAGS="-lto"
 PKG_PATCH_DIRS+=" ${DEVICE}"
 
+# GENERIC_X64 is the fork's x86_64 VM device. The Makefile only knows the
+# platform names our per-device patches teach it (@DEVICE@ is substituted by
+# scripts/unpack), and an unknown name falls into a branch that includes
+# windows.h. It takes AMD64's patch, which is the same architecture.
+case ${DEVICE} in
+  GENERIC_X64) PKG_PATCH_DIRS+=" AMD64" ;;
+esac
+
 PKG_MAKE_OPTS_TARGET="OS_LINUX=1 platform=${DEVICE}"
 
 if [ "${OPENGL}" = "yes" ] && [ ! "${PREFER_GLES}" = "yes" ]; then

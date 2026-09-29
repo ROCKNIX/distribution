@@ -44,6 +44,28 @@ if [[ ! -f "${CUSTOMINP}" ]]; then
     cp ${SHARE}/default.ini ${CUSTOMINP}
 fi
 
+# ROCKNIX: GENERIC_X64 repair begin
+# GENERIC_X64's seed carried six lines of an InputAutoCfg.ini block inside
+# [Input-SDL-Control1] until the fork fixed it (a "; Retroid Pocket Gamepad"
+# comment, a [Retroid Pocket Gamepad] header and four settings), so a copy
+# made from it holds Control1's mappings in a section nothing reads. Those
+# six lines, and nothing else, leave such a copy -- written to a temporary
+# file and moved over the old one only when it has content; the player's
+# other settings stay. Other devices' copies are not touched.
+if [ "${HW_DEVICE}" = "GENERIC_X64" ] && grep -qx '\[Retroid Pocket Gamepad\]' "${M64PCONF}" 2>/dev/null; then
+    awk 'BEGIN { b[1] = "; Retroid Pocket Gamepad - default.ini"; b[2] = "[Retroid Pocket Gamepad]"
+                 b[3] = "plugged = True"; b[4] = "mouse = False"; b[5] = "AnalogDeadzone = 0,0"; b[6] = "AnalogPeak = 32768,32768" }
+         { l[NR] = $0 }
+         END { for (i = 1; i <= NR; i++) {
+                   m = (i + 5 <= NR)
+                   for (j = 1; m && j <= 6; j++) if (l[i + j - 1] != b[j]) m = 0
+                   if (m) { i += 5; continue }
+                   print l[i] } }' "${M64PCONF}" > "${M64PCONF}.repair" \
+      && [ -s "${M64PCONF}.repair" ] && mv -f "${M64PCONF}.repair" "${M64PCONF}" \
+      || rm -f "${M64PCONF}.repair"
+fi
+# ROCKNIX: GENERIC_X64 repair end
+
 # Copy files to TMP
 cp ${M64PCONF} ${TMP}
 if [ "${CON}" = "custom" ]; then

@@ -1,0 +1,40 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+### Takes back, once, the rescue and emergency masks an earlier quirk set.
+#
+# Until 2026-09, 097-disable-rescue-completely ran `systemctl mask` on
+# rescue.target, emergency.target, rescue.service and emergency.service at
+# every boot. systemctl writes a mask into this image's unit directory,
+# /storage/.config/system.d, so the masks outlived the quirk, and a boot whose
+# local filesystems fail stops with no emergency target to reach -- the
+# behaviour every other ROCKNIX device keeps. (Its stub targets under /lib
+# never existed: /lib is the read-only image.) Only a mask -- a link to
+# /dev/null -- is removed; a unit of somebody's own under one of these names
+# is theirs. It runs until the four are gone, says on the journal what it
+# unmasked, and then stops (STAMP): a mask somebody makes afterwards is
+# theirs. A guest that goes back to a build with the old quirk has them
+# masked again at every boot; on a QEMU guest, where that build's device
+# quirks ran too, 091-retired-vm-fixes knows it by their files coming back
+# and removes STAMP, so the four are taken back at the boot after. NOTE
+# tells it that STAMP was written this boot, and is not to be removed. (On
+# another hypervisor nothing tells: remove STAMP to take them back again.)
+STAMP=/storage/.cache/retired-rescue-masks
+NOTE=/run/retired-rescue-masks.stamped
+[ -e "${STAMP}" ] && exit 0
+D=/storage/.config/system.d
+masked() { [ -L "${D}/${1}" ] && [ "$(readlink "${D}/${1}")" = /dev/null ]; }
+GONE=""
+for unit in rescue.target emergency.target rescue.service emergency.service; do
+  if masked "${unit}"; then
+    rm -f "${D}/${unit}"
+    masked "${unit}" || GONE="${GONE} ${unit}"
+  fi
+done
+[ -n "${GONE}" ] && echo "097-retired-rescue-masks: unmasked what an earlier build masked:${GONE}" >&2
+for unit in rescue.target emergency.target rescue.service emergency.service; do
+  masked "${unit}" && exit 0
+done
+mkdir -p "${STAMP%/*}" && echo "the rescue and emergency masks an earlier build set were taken back" > "${STAMP}" && : > "${NOTE}"
+exit 0

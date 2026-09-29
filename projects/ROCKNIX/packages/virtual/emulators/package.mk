@@ -99,6 +99,16 @@ case "${DEVICE}" in
     LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr"
 esac
 
+# GENERIC_X64 (x86_64): drop libretro cores that don't yet build for x86_64.
+# These are tracked in issue #16 to fix/re-enable per-core later (e.g. parallel-n64-lr's
+# x86 hacktarux dynarec defines fsqrt(), which collides with glibc's C23 fsqrt).
+if [ "${DEVICE}" = "GENERIC_X64" ]; then
+  X64_SKIP_CORES="parallel-n64-lr flycast2021-lr duckstation-lr idtech-lr"
+  for _core in ${X64_SKIP_CORES}; do
+    LIBRETRO_CORES="$(echo " ${LIBRETRO_CORES} " | sed "s/ ${_core} / /g")"
+  done
+fi
+
 # Split building emulators into 2 stages, needed to fit the jobs into the 6 hour GH runner time limit.
 case "${TARGET_TYPE}" in
   cores_only)
@@ -1722,4 +1732,30 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/autostart/common
   cp ${PKG_DIR}/autostart/* ${INSTALL}/usr/lib/autostart/common
   chmod 0755 ${INSTALL}/usr/lib/autostart/common/*
+
+  ### Core version pins for the save manifest (fork #21, D-CLOUD-017).
+  ### One line per emulator core package built into this image,
+  ### "<package> <PKG_VERSION>". The capture step maps a core name to its
+  ### package and records the version as the manifest's core_build -- the
+  ### value two devices compare to know whether a save state will load
+  ### (#19). Only the build knows every pin, so it is emitted here; a core
+  ### the capture step cannot map records "unknown".
+  ###
+  ### Every list a core can arrive through: the libretro cores, the 32-bit
+  ### set (desmume-lr/gpsp-lr on H700, RK3326, RK3399), the standalones
+  ### (mupen64plus-sa writes the N64 .eep/.mpk row), and the cores idtech-lr
+  ### pulls in for its per-game launcher, which carry no line of their own.
+  ### The filter keeps box86/box64/portmaster and the retroarch assets out.
+  ### Two standalones are named without the dash (hatarisa, scummvmsa) and
+  ### are admitted by name, so a round-two unit row for either finds its pin
+  ### rather than "unknown"; a new standalone spelled that way joins them here.
+  IDTECH_CORES="boom3-lr ecwolf-lr prboom-lr tyrquake-lr vitaquake2-lr vitaquake3-lr"
+  mkdir -p ${INSTALL}/usr/share/rocknix
+  : > ${INSTALL}/usr/share/rocknix/core-pins
+  for _core_pkg in ${LIBRETRO_CORES} ${EMUS_32BIT} ${PKG_EMUS} ${IDTECH_CORES}; do
+    case "${_core_pkg}" in *-lr|*_lr|*-sa|hatarisa|scummvmsa) ;; *) continue ;; esac
+    _core_ver="$(get_pkg_version "${_core_pkg}" 2>/dev/null)"
+    [ -n "${_core_ver}" ] && echo "${_core_pkg} ${_core_ver}" >> ${INSTALL}/usr/share/rocknix/core-pins
+  done
+  sort -u -o ${INSTALL}/usr/share/rocknix/core-pins ${INSTALL}/usr/share/rocknix/core-pins
 }

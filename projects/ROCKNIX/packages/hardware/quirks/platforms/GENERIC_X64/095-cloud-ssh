@@ -1,0 +1,76 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+# QEMU dev builds: when the guest is reached through a forward on the host
+# machine, the SSH command a tester must run targets the host's loopback
+# forward, not this guest's own (unreachable) address. The host side
+# supplies the forwarded port through fw_cfg (opt/org.rocknix.cloud_ssh_port
+# - only the port: UTM splits QEMU arguments on whitespace, so a full
+# command string cannot survive the trip). Assemble the command here and
+# publish it as the cloud-setup connection override; never leave a stale
+# one of ours behind.
+#
+# The same file is the manual fallback the VM README documents: a tester
+# whose guest is reached some other way (a bridged or host-network UTM mode,
+# a forward of their own) writes the command that works into it. That one
+# is theirs. This quirk replaces or removes only a command it wrote itself:
+# one RECORD names (RECORD names the old command and the new one before the
+# file changes, so a boot cut short between the two still knows it), or --
+# with no RECORD yet -- exactly the command this boot would write: an
+# earlier build wrote that very line, and taking it changes nothing now. A
+# loopback command on another port with no record could be a tester's own
+# forward and is left, as is anything else. Delete the file to go back to
+# the automatic command.
+
+FWCFG="/sys/firmware/qemu_fw_cfg/by_name/opt/org.rocknix.cloud_ssh_port/raw"
+TARGET="/storage/.config/cloud_setup_ssh"
+RECORD="/storage/.config/.cloud_setup_ssh.generated"
+
+# Retired override from the web-GUI era; clean up so no stale file lingers.
+rm -f /storage/.config/cloud_setup_url
+
+# A port is one to five digits, 1 to 65535; anything else on fw_cfg is no
+# port at all, never a shortened one.
+PORT=""
+if [ -r "${FWCFG}" ]; then
+  RAW=$(tr -cd '0-9' < "${FWCFG}")
+  case "${#RAW}" in
+    1|2|3|4|5) [ "${RAW}" -ge 1 ] && [ "${RAW}" -le 65535 ] && PORT="${RAW}" ;;
+  esac
+fi
+# The -L tunnel carries rclone's provider sign-in page (guest port 53682)
+# to the browser of the machine running SSH - see rclone.org/remote_setup.
+CMD=""
+[ -n "${PORT}" ] && CMD="ssh -L 53682:localhost:53682 -p ${PORT} root@127.0.0.1"
+
+ours() {
+  [ -e "${TARGET}" ] || return 0
+  [ "$(wc -l < "${TARGET}")" -le 1 ] || return 1
+  LINE="$(cat "${TARGET}")"
+  [ -n "${LINE}" ] || return 1
+  if [ -f "${RECORD}" ]; then
+    grep -qxF -- "${LINE}" "${RECORD}"
+    return
+  fi
+  [ -n "${CMD}" ] && [ "${LINE}" = "${CMD}" ]
+}
+record() { printf '%s\n' "$@" > "${RECORD}.new" && mv "${RECORD}.new" "${RECORD}"; }
+
+if [ -n "${CMD}" ]; then
+  ours || exit 0
+  if [ "$(cat "${TARGET}" 2>/dev/null)" != "${CMD}" ]; then
+    if [ -e "${TARGET}" ]; then
+      record "$(cat "${TARGET}")" "${CMD}" || exit 0
+    else
+      record "${CMD}" || exit 0
+    fi
+    echo "${CMD}" > "${TARGET}.new" && mv "${TARGET}.new" "${TARGET}" || exit 0
+  fi
+  # The file holds CMD: the record names it alone from here.
+  [ "$(cat "${TARGET}")" = "${CMD}" ] && [ "$(cat "${RECORD}" 2>/dev/null)" != "${CMD}" ] && record "${CMD}"
+elif ours; then
+  rm -f "${TARGET}"
+  [ -e "${TARGET}" ] || rm -f "${RECORD}"
+fi
+exit 0

@@ -1,0 +1,113 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+### RetroArch draws at the panel's size, on whatever mode the guest has.
+#
+# The image used to ship video_fullscreen_x/y = 0 here, and under wayland
+# that gave RetroArch a fullscreen surface the size of the game's picture
+# (240x256 for an NES core) that sway then scaled to the 640x480 output.
+# Every RetroArch frame ever read off a QA guest -- text, widgets, the
+# achievement banner -- was that small surface resampled up, and every
+# stem in every letter was two grey columns wide whatever the font size
+# (fork #263; #251's measurements described the scaling). The H700 ships
+# 640/480 and never drew this way.
+#
+# The shipped cfg says 640x480; a guest on another mode (the 1280x800 QA
+# guest) gets its own here, and keeps following it -- a guest kept and
+# re-run at another --res gets the new size -- for as long as the values
+# are this quirk's:
+#   - a size RECORD (beside the cfg, so a settings backup carries it with
+#     the values it describes) names as its own;
+#   - the shipped values, 640x480 or 0x0, with or without a record: that is
+#     the cfg after RESET RETROARCH CONFIG TO DEFAULT, which replaces
+#     retroarch.cfg and leaves RECORD, and either on another mode is the
+#     scaling this quirk exists to end -- so a hand-set 640x480 or 0x0
+#     follows the mode too. The pair, never one axis: the first version
+#     rewrote each axis into the mode's own size, so 640x0 and 0x480 are
+#     somebody's (short of a boot cut between its two writes on a
+#     640-wide mode);
+#   - with no RECORD yet, exactly the size this boot writes: an earlier
+#     build's write for this mode, or a hand-set pair equal to it, and
+#     taking it changes nothing now.
+# Anything else was set by somebody, or by an earlier build at a mode it
+# can no longer be told from, and is left alone; setting the two values to 0
+# hands them back. The cfg is only ever rewritten with RECORD already naming
+# both the old size and the new one, so a boot cut short between the two
+# writes still knows the cfg's size is its own. RetroArch does not write
+# these back (config_save_on_exit is off).
+CFG="/storage/.config/retroarch/retroarch.cfg"
+RECORD="/storage/.config/retroarch/.fullscreen-surface"
+[ -f "${CFG}" ] || exit 0
+
+# RetroArch's driver. This device's cfg named vulkan until 2026-09, and the
+# image carries no Vulkan driver, so RetroArch exited without drawing a
+# frame; gl is what a guest draws with (virgl, or llvmpipe with --gl none).
+# A cfg still naming vulkan moves to gl -- only while no Vulkan ICD exists
+# in the loader's system directories or in root's own (home is /storage).
+ICD=no
+for f in /usr/share/vulkan/icd.d/*.json /usr/local/share/vulkan/icd.d/*.json \
+         /etc/vulkan/icd.d/*.json /storage/.local/share/vulkan/icd.d/*.json \
+         /storage/.config/vulkan/icd.d/*.json; do
+  [ -e "${f}" ] && ICD=yes
+done
+if [ "${ICD}" = no ] && grep -q '^video_driver = "vulkan"$' "${CFG}"; then
+  sed -i 's/^video_driver = "vulkan"$/video_driver = "gl"/' "${CFG}"
+fi
+
+# The mode sway will take: the preferred (first) mode of the connected
+# output. The compositor has not started at this point of the boot, so
+# there is no current mode to read, and sway takes the preferred one. An
+# interlaced mode is named 1920x1080i; its height is still 1080.
+MODE=""
+for c in /sys/class/drm/card*-*; do
+  [ "$(cat "${c}/status" 2>/dev/null)" = connected ] || continue
+  MODE="$(head -n 1 "${c}/modes" 2>/dev/null)"
+  [ -n "${MODE}" ] && break
+done
+MODE="${MODE%i}"
+case "${MODE}" in
+  [1-9]*x[1-9]*) W="${MODE%%x*}"; H="${MODE#*x}" ;;
+  *) exit 0 ;;
+esac
+case "${W}${H}" in *[!0-9]*) exit 0 ;; esac
+WANT="${W}x${H}"
+
+value() { sed -n "s/^$1 = \"\\([0-9]*\\)\"\$/\\1/p" "${CFG}" | head -n 1; }
+X="$(value video_fullscreen_x)"; Y="$(value video_fullscreen_y)"
+[ -n "${X}" ] && [ -n "${Y}" ] || exit 0
+SIZE="${X}x${Y}"
+
+# The sizes RECORD names: surface=WxH lines, or its first form (a5a03bd9fa),
+# one video_fullscreen_x= and one video_fullscreen_y= line.
+recorded() {
+  [ -f "${RECORD}" ] || return 1
+  grep -qx "surface=${1}" "${RECORD}" && return 0
+  [ "$(sed -n 's/^video_fullscreen_x=\([0-9]*\)$/\1/p' "${RECORD}")x$(sed -n 's/^video_fullscreen_y=\([0-9]*\)$/\1/p' "${RECORD}")" = "${1}" ]
+}
+record() {
+  { echo "# 092-retroarch-surface (GENERIC_X64): the fullscreen sizes of its own that retroarch.cfg may hold"
+    for s in "$@"; do echo "surface=${s}"; done; } > "${RECORD}.new" && mv "${RECORD}.new" "${RECORD}"
+}
+
+OURS=no
+if recorded "${SIZE}"; then
+  OURS=yes
+elif [ "${SIZE}" = 640x480 ] || [ "${SIZE}" = 0x0 ]; then
+  OURS=yes
+elif [ ! -f "${RECORD}" ] && [ "${SIZE}" = "${WANT}" ]; then
+  OURS=yes
+fi
+[ "${OURS}" = yes ] || exit 0
+
+if [ "${SIZE}" != "${WANT}" ]; then
+  record "${SIZE}" "${WANT}" || exit 0
+  sed -i -e "s/^video_fullscreen_x = .*/video_fullscreen_x = \"${W}\"/" \
+         -e "s/^video_fullscreen_y = .*/video_fullscreen_y = \"${H}\"/" "${CFG}"
+  [ "$(value video_fullscreen_x)x$(value video_fullscreen_y)" = "${WANT}" ] || exit 0
+fi
+# The cfg holds WANT: the record names it alone from here.
+if [ "$(grep -v '^#' "${RECORD}" 2>/dev/null)" != "surface=${WANT}" ]; then
+  record "${WANT}"
+fi
+exit 0

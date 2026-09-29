@@ -1,0 +1,97 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+### Takes back what the retired QEMU quirks left in /storage.
+#
+# Until 2026-09 this directory held twelve more scripts (091 to 101, two of
+# them 092) that wrote systemd units, drop-ins, a D-Bus policy and a
+# generator into /etc and /usr. Those are the read-only image, so none of it
+# ever existed on a guest; the journal kept only the "Read-only file system"
+# lines. What did land went through the image's links into /storage, and
+# some of it acts on every later boot: three tmpfiles.d rules (one makes a
+# regular file where D-Bus's socket goes, one a directory where journald's
+# does), a sysctl.d file (pid_max, file-max), a modules-load.d list, a udev
+# file under a name udev never reads, and drop-ins under
+# /storage/.config/systemd/system, which systemd never reads either (its unit
+# directory here is /storage/.config/system.d).
+#
+# WRITTEN below is exactly the paths those scripts wrote -- 091-systemd-fixes
+# and 092-vm-service-fixes for the drop-ins, the others through /etc -- each
+# with the sha256 of what they wrote there, one line per shipped version
+# (73b20caf86, and 8bb74015e6, which changed only the mount-points rule).
+# Nothing else in those directories is touched.
+#
+# Until STAMP exists, every file at those paths is theirs: the old quirks
+# rewrote each one at every boot (cat <<EOF >), so no other content outlived
+# their next boot. Each is taken back by name, the take-back says on the
+# journal what it removed, and STAMP is written once they are all gone.
+#
+# From then on a file under one of these names is somebody's -- unless its
+# bytes are exactly what an old quirk wrote there. That is an earlier build's
+# file again: the guest went back to a build with the old quirks and forward
+# again (they write it all at every boot), or a settings restore made on one
+# brought it back. It is taken back too, and the take-back says so; and as
+# that earlier build masked the rescue and emergency units as well,
+# 097-retired-rescue-masks (a platform quirk, run before this one) is handed
+# its take-back again: its stamp is removed and it runs at the next boot --
+# unless it wrote that stamp this very boot (its note under /run).
+STAMP=/storage/.cache/retired-vm-fixes
+MASKS_STAMP=/storage/.cache/retired-rescue-masks
+MASKS_NOTE=/run/retired-rescue-masks.stamped
+C=/storage/.config
+WRITTEN="tmpfiles.d/10-generic-x64-journald.conf 19150cff7302b180510b2bd80fb41964b80b00d3030ab471fdbb88217778d1df
+tmpfiles.d/20-x64-fd-improvements.conf 96ab18a16991032a444fea138361bc36d71ec562f3857e7cdc7107a832e2451e
+tmpfiles.d/30-x64-mount-points.conf 4263be9dd4644fe760a3240abf1121e30545b9bb83338d89ae33f8be3d5568a7
+tmpfiles.d/30-x64-mount-points.conf 037fe40d87be53412a5f62d7907951c88e0d419ebd215440367fd502445a7eb1
+sysctl.d/10-generic-x64.conf 417118a7c1716634f9403959f7c989b7f5e944692c2d08f8d80ffa379899d00a
+modules-load.d/x64-virtual-modules.conf 15d6d1aec8bdf77dc37d6af0a2ce536e92ee2971d4eba8c45beae6631eff4741
+udev.rules.d/90-x64-virtual-devices.conf 7b04661ab6d615fe14d6a099828147ee34f2988d2cac5d6572f495c1adaab75f
+profile.d/091-generic-x64-services 24846d015f9bfc222814d4b9a2c29e449c0aff199f5f2e3a5aebd1614f70f4d9
+systemd/system/systemd-hostnamed.service.d/10-generic-x64.conf 475da31cf58f36d538942c684f2f4698bf5296726c78cec12710f54e12025766
+systemd/system/systemd-journald.service.d/10-generic-x64.conf 23870a3400aab7167e3e1bf0ee3fff599a11c62c7c962c89ace2f2e0a29edacd
+systemd/system/dbus.service.d/10-generic-x64.conf d54e80196835b2dc92409af7b15cbc65695a27e20e40b8d82cd9c730dc5b6721
+systemd/system/smbd.service.d/10-generic-x64.conf 88d4582727b8add3775f593de6c3f02c85f19b908e1738f514119a16d7fd6838
+systemd/system/nmbd.service.d/10-generic-x64.conf 062d486cce2397d5a3f083c1866dcd43d4b149bbb2b17fbe6bd0287e2c5f86f9
+systemd/system/smbd.service.d/10-vm-config.conf bf57855ba2549222226033711c1215de124bac7734b8b70c79b1770682216ff7
+systemd/system/nmbd.service.d/10-vm-config.conf 1622d167d158bd3b3cc04f395a517a1f913c0c06ea7d7f4fd6b77618e58d7fde
+systemd/system/weston.service.d/10-vm-config.conf d886d5975de31f2f5764bc059ee79182767931a0bd14b4749e4202f79c68c476
+systemd/system/dbus.service.d/20-vm-enhanced.conf 2a9de26f6fc12ee2f086a0d092c8c8f64ed25d1ddfd74c019770273ea62660cc"
+
+AGAIN=no; [ -e "${STAMP}" ] && AGAIN=yes
+GONE=""
+while read -r f sum; do
+  if [ "${AGAIN}" = no ]; then
+    [ -e "${C}/${f}" ] || continue
+  else
+    [ -f "${C}/${f}" ] && [ ! -L "${C}/${f}" ] || continue
+    h="$(sha256sum < "${C}/${f}")"
+    [ "${h%% *}" = "${sum}" ] || continue
+  fi
+  rm -f "${C}/${f}"
+  [ -e "${C}/${f}" ] || GONE="${GONE} ${f}"
+done <<EOF
+${WRITTEN}
+EOF
+if [ -n "${GONE}" ]; then
+  for unit in systemd-hostnamed systemd-journald dbus smbd nmbd weston; do
+    rmdir "${C}/systemd/system/${unit}.service.d" 2>/dev/null
+  done
+  rmdir "${C}/systemd/system" "${C}/systemd" 2>/dev/null
+fi
+if [ "${AGAIN}" = yes ]; then
+  [ -n "${GONE}" ] || exit 0
+  echo "091-retired-vm-fixes: an earlier build's files came back to ${C} (a downgrade, or a settings restore made on one); taken back again:${GONE}" >&2
+  if [ -e "${MASKS_STAMP}" ] && [ ! -e "${MASKS_NOTE}" ]; then
+    rm -f "${MASKS_STAMP}" && echo "091-retired-vm-fixes: the rescue and emergency masks that build sets are taken back at the next boot" >&2
+  fi
+  exit 0
+fi
+[ -n "${GONE}" ] && echo "091-retired-vm-fixes: removed what the retired QEMU quirks left in ${C}:${GONE}" >&2
+while read -r f sum; do
+  [ -e "${C}/${f}" ] && exit 0
+done <<EOF
+${WRITTEN}
+EOF
+mkdir -p "${STAMP%/*}" && echo "the files the retired QEMU quirks left in ${C} were taken back" > "${STAMP}"
+exit 0

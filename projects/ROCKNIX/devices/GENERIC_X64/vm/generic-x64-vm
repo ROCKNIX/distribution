@@ -1,0 +1,817 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 ROCKNIX (https://github.com/ROCKNIX)
+
+import argparse
+import json
+import os
+import platform
+import plistlib
+import re
+import shlex
+import shutil
+import socket
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+import zipfile
+from pathlib import Path
+
+
+VM_DIR = Path(__file__).resolve().parent
+
+PROFILE_PATH = VM_DIR / "profile.json"
+
+
+def pick_render_node(choice):
+    """The host render node for --gl: None for the software path."""
+    if choice in (None, "", "none", "off"):
+        return None
+    if choice != "auto":
+        if not os.path.exists(choice):
+            raise ValueError(f"--gl {choice}: no such render node")
+        return choice
+    for node in sorted(Path("/dev/dri").glob("renderD*")):
+        driver = Path("/sys/class/drm") / node.name / "device" / "driver"
+        name = os.path.basename(os.path.realpath(driver)) if driver.exists() else ""
+        if name == "nvidia":
+            continue
+        if os.access(node, os.R_OK | os.W_OK):
+            return str(node)
+    return None
+
+
+def load_profile():
+    with PROFILE_PATH.open(encoding="utf-8") as stream:
+        profile = json.load(stream)
+
+    if profile["architecture"] != "x86_64":
+        raise ValueError("GENERIC_X64 profile architecture must be x86_64")
+    if profile["disk"]["logical_block_size"] != 512:
+        raise ValueError("GENERIC_X64 boot disk must expose 512-byte logical sectors")
+    if profile["disk"]["virtual_size_bytes"] < 16 * 1024**3:
+        raise ValueError("GENERIC_X64 VM disk must be at least 16 GiB")
+    return profile
+
+
+def qemu_img_info(disk):
+    qemu_img = shutil.which("qemu-img")
+    if not qemu_img:
+        raise RuntimeError("qemu-img is required")
+    result = subprocess.run(
+        [qemu_img, "info", "--output=json", str(disk)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
+def find_ovmf(explicit, candidates, label):
+    if explicit:
+        path = Path(explicit).resolve()
+        if path.is_file():
+            return path
+        raise FileNotFoundError(f"{label} does not exist: {path}")
+    for candidate in candidates:
+        path = Path(candidate)
+        if path.is_file():
+            return path
+    raise FileNotFoundError(f"could not locate {label}; pass its path explicitly")
+
+
+# OVMF code and its vars template come as a pair from one firmware build: a
+# 4 MiB code image with a 2 MiB vars store does not boot. Each entry is one
+# distribution's pair; the first whose two files both exist is taken.
+OVMF_PAIRS = (
+    ("/usr/share/OVMF/OVMF_CODE_4M.fd", "/usr/share/OVMF/OVMF_VARS_4M.fd"),
+    ("/usr/share/edk2/x64/OVMF_CODE.fd", "/usr/share/edk2/x64/OVMF_VARS.fd"),
+    ("/usr/share/edk2/ovmf/OVMF_CODE.fd", "/usr/share/edk2/ovmf/OVMF_VARS.fd"),
+)
+
+
+def find_ovmf_pair(code_arg, vars_arg):
+    """The OVMF code image and vars template, as one pair. Both given: taken as
+    given. One given: its partner from the same pair, or the other flag is
+    needed. Neither: the first pair whose two files exist."""
+    if code_arg and vars_arg:
+        return (
+            find_ovmf(code_arg, (), "OVMF code"),
+            find_ovmf(vars_arg, (), "OVMF vars template"),
+        )
+    if code_arg or vars_arg:
+        given = Path(code_arg or vars_arg).resolve()
+        side = 0 if code_arg else 1
+        for pair in OVMF_PAIRS:
+            if Path(pair[side]).resolve() == given:
+                partner = find_ovmf(None, (pair[1 - side],), "OVMF vars template" if side == 0 else "OVMF code")
+                found = find_ovmf(str(given), (), "OVMF code" if side == 0 else "OVMF vars template")
+                return (found, partner) if side == 0 else (partner, found)
+        raise FileNotFoundError(
+            f"{given} is not a known OVMF pair's; pass --ovmf-code and --ovmf-vars-template together"
+        )
+    for code, vars_template in OVMF_PAIRS:
+        if Path(code).is_file() and Path(vars_template).is_file():
+            return Path(code), Path(vars_template)
+    raise FileNotFoundError(
+        "could not locate an OVMF code image and vars template from one firmware build; "
+        "pass --ovmf-code and --ovmf-vars-template"
+    )
+
+
+def qemu_opt(value):
+    """A value inside one of QEMU's comma-separated option strings: a comma in
+    it is doubled, which is how QEMU reads a literal one (a path is otherwise
+    split at it into an option that does not exist)."""
+    return str(value).replace(",", ",,")
+
+
+def auto_accel():
+    """KVM when this host can accelerate an x86_64 guest with it: the host is
+    x86_64 and /dev/kvm is open to us. /dev/kvm on an aarch64 host is ARM KVM,
+    which cannot run this guest; TCG emulates it instead."""
+    host = platform.machine().lower()
+    if host in ("x86_64", "amd64") and os.access("/dev/kvm", os.R_OK | os.W_OK):
+        return "kvm"
+    return "tcg,thread=multi"
+
+
+def run_paths(args):
+    """The files a start makes or replaces: the OVMF vars store, the monitor
+    socket, and the serial socket with --headless (None otherwise). The
+    socket paths are made absolute but not resolved: a symlink there must
+    be seen as one (stale_socket), not followed to whatever it names."""
+    disk = Path(args.disk).resolve()
+    vars_path = (
+        Path(args.ovmf_vars).resolve()
+        if args.ovmf_vars
+        else disk.with_name(f"{disk.stem}.ovmf-vars.fd")
+    )
+    serial = Path(os.path.abspath(args.serial)) if args.headless else None
+    return vars_path, Path(os.path.abspath(args.monitor)), serial
+
+
+# How long a socket that still answers may take to stop: a guest's QEMU sent
+# SIGTERM a moment ago (vm-pair's down, then up) is let finish closing.
+SOCKET_GRACE_SECONDS = 5.0
+
+
+def socket_answers(path):
+    """Whether something still listens on the unix socket at path -- a running
+    QEMU's monitor or serial console. Only a refused connection says nobody
+    does; a connection, a timeout, a socket of another type or no permission
+    to ask all read as held, so a check that cannot tell refuses."""
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    probe.settimeout(1.0)
+    try:
+        probe.connect(os.fspath(path))
+    except (ConnectionRefusedError, FileNotFoundError):
+        return False
+    except OSError:
+        return True
+    finally:
+        probe.close()
+    return True
+
+
+def stale_socket(path):
+    """Whether a start may clear path for a socket QEMU binds: True for a
+    socket nobody listens on (a previous QEMU's), False for nothing there.
+    A symlink, a file that is not a socket -- a disk image given as
+    --monitor -- or a socket a running guest still listens on is refused
+    (ValueError) and left as it is."""
+    try:
+        mode = os.lstat(path).st_mode
+    except FileNotFoundError:
+        return False
+    if stat.S_ISLNK(mode):
+        raise ValueError(f"{path} is a symlink; refusing to remove what it points at")
+    if not stat.S_ISSOCK(mode):
+        raise ValueError(f"{path} exists and is not a socket; refusing to remove it")
+    deadline = time.monotonic() + SOCKET_GRACE_SECONDS
+    while socket_answers(path):
+        if time.monotonic() >= deadline:
+            raise ValueError(
+                f"{path} is a socket a running guest still listens on; stop that "
+                "guest, or give this one another --monitor/--serial"
+            )
+        time.sleep(0.25)
+    return True
+
+
+def prepare_run(profile, args):
+    """What a start does before QEMU runs, and only a start: the vars store
+    made from its template if the guest has none yet, and the socket paths
+    cleared of a previous QEMU's sockets. Every socket path is checked before
+    any is cleared, so a start refused at one has removed nothing. qemu-args
+    never calls this -- it prints, and touches nothing."""
+    vars_path, monitor, serial = run_paths(args)
+    _, vars_template = find_ovmf_pair(args.ovmf_code, args.ovmf_vars_template)
+    stale = [sock for sock in (monitor, serial) if sock is not None and stale_socket(sock)]
+    for sock in stale:
+        sock.unlink(missing_ok=True)
+    if not vars_path.exists():
+        shutil.copyfile(vars_template, vars_path)
+
+
+def qemu_command(profile, args):
+    """The QEMU command for this profile and these arguments. It reads and
+    checks; it creates, removes and changes nothing (prepare_run does that,
+    for a start)."""
+    disk = Path(args.disk).resolve()
+    if not disk.is_file():
+        raise FileNotFoundError(f"disk does not exist: {disk}")
+
+    qemu = shutil.which(os.environ.get("QEMU_SYSTEM_X86_64", "qemu-system-x86_64"))
+    if not qemu:
+        raise RuntimeError("qemu-system-x86_64 is required")
+
+    code, vars_template = find_ovmf_pair(args.ovmf_code, args.ovmf_vars_template)
+    vars_path, monitor, serial = run_paths(args)
+    # A vars store the guest already has is its UEFI settings and is kept --
+    # unless it was made from another firmware build's template (a 2 MiB
+    # store beside a 4 MiB code image, from before the code and template
+    # were chosen as a pair), which this firmware cannot use. Refused, named
+    # and left in place: moving it aside is the owner's call.
+    if vars_path.exists() and vars_path.stat().st_size != vars_template.stat().st_size:
+        raise ValueError(
+            f"{vars_path} is {vars_path.stat().st_size} bytes and this firmware's vars template "
+            f"({vars_template}) is {vars_template.stat().st_size}: it was made for another OVMF build. "
+            "Move it aside and the next start makes a new one from the template (the guest's UEFI "
+            "settings start over; the image boots from its default EFI path)"
+        )
+
+    disk_info = qemu_img_info(disk)
+    # The canonical disk size is a floor for a Linux launch as for a UTM
+    # bundle: under it the first boot's copy of the interface's resources
+    # runs out of space and the menus come up broken (generic-x64-vm-testing).
+    if disk_info["virtual-size"] < profile["disk"]["virtual_size_bytes"]:
+        raise ValueError(
+            f"{disk} is {disk_info['virtual-size']} bytes, under the profile's 16 GiB "
+            f"({profile['disk']['virtual_size_bytes']} bytes); grow it before the first boot: "
+            f"qemu-img resize {disk} 16G"
+        )
+    disk_profile = profile["disk"]
+    display = profile["display"]
+    network = profile["network"]
+    sound = profile["sound"]
+    accel = args.accel
+    if accel == "auto":
+        accel = auto_accel()
+
+    # Headless (a build host with no desktop): virtio-gpu-gl-pci refuses
+    # -display none, so the GL-less device stands in; a VNC display on
+    # loopback keeps a scanout committed, which is what makes the monitor's
+    # screendump return a frame rather than black; the serial console moves
+    # from stdio to a unix socket so a script can hold a root shell in the
+    # guest (SSH is off on a fresh image); and a pidfile makes stopping the
+    # VM a kill by PID rather than a pkill by pattern (which has killed the
+    # shell running it). Unix socket paths over 107 bytes fail to bind, and a
+    # session scratch directory is longer than that -- keep them under /tmp.
+    display_device = display["device"]
+    display_arg = args.display
+    vnc_args = []
+    serial_arg = "stdio"
+    pidfile_args = []
+    daemonize_args = []
+    if args.headless:
+        # Hardware GL for a headless guest (fork #291): virtio-gpu-gl-pci
+        # with egl-headless on a host render node, so the guest's Mesa
+        # renders through virgl on the host's GPU instead of softpipe --
+        # RetroArch dropped six frames in ten on the software path and
+        # one in two thousand on this one. --gl auto takes the first render
+        # node whose driver is not nvidia (virglrenderer wants Mesa's EGL);
+        # --gl none is the software path; --gl /dev/dri/renderDNNN names
+        # one. The monitor's screendump has no surface under a GL scanout;
+        # the VNC display stays and the harness takes its frames there.
+        gl_node = pick_render_node(args.gl)
+        if gl_node:
+            display_arg = f"egl-headless,rendernode={gl_node}"
+        else:
+            display_device = display_device.replace("-gl-", "-")
+            display_arg = "none"
+        vnc_args = ["-vnc", f"127.0.0.1:{args.vnc}"]
+        serial_arg = f"unix:{qemu_opt(serial)},server,nowait"
+        pidfile_args = ["-pidfile", str(Path(args.pidfile).resolve())]
+        for sock in (monitor, serial):
+            if len(str(sock).encode()) > 107:
+                raise ValueError(f"unix socket path too long to bind (>107 bytes): {sock}")
+        if args.daemonize:
+            daemonize_args = ["-daemonize"]
+    elif args.daemonize:
+        raise ValueError("--daemonize needs --headless (a windowed QEMU has nowhere to go)")
+    # The guest's preferred mode. virtio-gpu-pci and virtio-gpu-gl-pci both
+    # take xres/yres, which set the EDID's preferred mode; the guest's DRM
+    # picks it and EmulationStation renders at it, so a handheld's 640x480
+    # is a VM check first (fork #97, D-QA-007). Without the flag QEMU's own
+    # default stands (1280x800), as before.
+    if args.res:
+        xres, yres = args.res
+        display_device = f"{display_device},xres={xres},yres={yres}"
+
+    # SSH keeps a loopback bind unless --net lan is given (the image ships
+    # a well-known root password).
+    ssh_bind = "0.0.0.0" if args.net == "lan" else "127.0.0.1"
+    svc_bind = "0.0.0.0"
+
+    # Running two guests at once needs a second forward: the profile pins one
+    # port, and a second VM would fail to bind it. The port the guest is told
+    # about has to move with it, or cloud_setup would print an SSH command
+    # pointing at the other machine.
+    if args.ssh_port or args.mac:
+        network = dict(network)
+    if args.ssh_port:
+        network["ssh_host_port"] = args.ssh_port
+        advertised = dict(network.get("advertised_ssh") or {})
+        advertised["host_port"] = args.ssh_port
+        network["advertised_ssh"] = advertised
+    # And its own MAC. NAT keeps two guests on the profile's address from
+    # colliding on any network, but cloud_device_id hashes the permanent MAC,
+    # so to the cloud they were one device (fork #91): the same folder, the
+    # same manifest, and two-device fixtures agreeing with themselves.
+    if args.mac:
+        network["mac_address"] = args.mac
+
+    command = [
+        qemu,
+        "-name",
+        profile["name"],
+        "-machine",
+        profile["machine"],
+        "-accel",
+        accel,
+        "-cpu",
+        profile["cpu"],
+        "-smp",
+        str(profile["cpu_count"]),
+        "-m",
+        str(profile["memory_mib"]),
+        "-drive",
+        f"if=pflash,unit=0,readonly=on,format=raw,file={qemu_opt(code)}",
+        "-drive",
+        f"if=pflash,unit=1,format=raw,file={qemu_opt(vars_path)}",
+        "-drive",
+        (
+            f"if=none,id=rocknix,format={disk_info['format']},"
+            f"file={qemu_opt(disk)}"
+        ),
+        "-device",
+        (
+            f"{disk_profile['device']},drive=rocknix,"
+            f"logical_block_size={disk_profile['logical_block_size']},"
+            f"physical_block_size={disk_profile['physical_block_size']}"
+        ),
+        "-vga",
+        "none",
+        "-device",
+        display_device,
+        "-display",
+        display_arg,
+        *vnc_args,
+        "-netdev",
+        (
+            f"bridge,id=net0,br={args.bridge}"
+            if args.net == "bridged"
+            else (
+                "user,id=net0,"
+                f"hostfwd=tcp:{ssh_bind}:{network['ssh_host_port']}-:"
+                f"{network['ssh_guest_port']}"
+                + "".join(
+                    f",hostfwd=tcp:{svc_bind}:{fwd['host_port']}-:{fwd['guest_port']}"
+                    for fwd in network.get("extra_forwards", [])
+                )
+            )
+        ),
+        "-device",
+        f"{network['device']},netdev=net0,mac={network['mac_address']}",
+        "-device",
+        "qemu-xhci",
+        "-device",
+        "usb-kbd",
+        "-device",
+        "usb-tablet",
+        "-device",
+        sound["device"],
+        "-device",
+        sound["codec"],
+        "-monitor",
+        f"unix:{qemu_opt(monitor)},server,nowait",
+        # Behind the NAT forward the guest's own address is unreachable, so
+        # the cloud-setup screen must show the loopback SSH command instead.
+        # Only the forwarded port is injected (a space-free token: UTM
+        # splits its argument list on whitespace, so a full command string
+        # would be broken apart); the guest quirk assembles the command.
+        *(
+            [
+                "-fw_cfg",
+                (
+                    f"name={network['advertised_ssh']['fwcfg_name']},"
+                    f"string={network['advertised_ssh']['host_port']}"
+                ),
+            ]
+            if args.net != "bridged"
+            else []
+        ),
+        "-serial",
+        serial_arg,
+        *pidfile_args,
+        *daemonize_args,
+    ]
+    if profile["rng"]:
+        command += [
+            "-object",
+            "rng-random,id=rng0,filename=/dev/urandom",
+            "-device",
+            "virtio-rng-pci,rng=rng0",
+        ]
+    # A hardware watchdog, so the guest mirrors a handheld: systemd arms it
+    # (RuntimeWatchdogSec) and a kernel that stops scheduling is reset by it
+    # rather than left frozen (fork #104). i6300esb is QEMU's standard one and
+    # the kernel the image ships has its driver; "reset" is what the SoC's
+    # watchdog does on a device.
+    command += ["-device", "i6300esb", "-action", "watchdog=reset"]
+    return command
+
+
+def utm_config(profile, image_name):
+    disk = profile["disk"]
+    display = profile["display"]
+    network = profile["network"]
+    sound = profile["sound"]
+    input_config = profile["input"]
+    notes = (
+        f"Canonical ROCKNIX GENERIC_X64 VM profile v{profile['profile_version']}: "
+        f"{profile['cpu']}, {profile['cpu_count']} vCPU, "
+        f"{profile['memory_mib']} MiB RAM, {profile['machine']} + UEFI, "
+        "VirtIO 512-byte disk, and virtio-gpu-gl."
+    )
+    return {
+        "Backend": "QEMU",
+        "ConfigurationVersion": 4,
+        "Display": [
+            {
+                "DownscalingFilter": display["downscaling_filter"],
+                "DynamicResolution": display["dynamic_resolution"],
+                "Hardware": display["device"],
+                "NativeResolution": display["native_resolution"],
+                "UpscalingFilter": display["upscaling_filter"],
+            }
+        ],
+        "Drive": [
+            {
+                "Identifier": "rocknix",
+                "ImageName": image_name,
+                "ImageType": "Disk",
+                "Interface": disk["utm_interface"],
+                "InterfaceVersion": 1,
+                "ReadOnly": False,
+            }
+        ],
+        "Information": {
+            "IconCustom": False,
+            "Name": profile["name"],
+            "Notes": notes,
+            # Freshly generated per bundle: UTM identifies VMs by UUID, and
+            # identical UUIDs across downloaded revisions make UTM cross-wire
+            # library entries (manifesting as efi_vars.fd lock errors).
+            "UUID": str(uuid.uuid4()).upper(),
+        },
+        "Input": {
+            "MaximumUsbShare": input_config["maximum_usb_share"],
+            "UsbBusSupport": input_config["usb_bus_support"],
+            "UsbSharing": input_config["usb_sharing"],
+        },
+        "Network": [
+            {
+                "Hardware": network["device"],
+                "IsolateFromHost": False,
+                # Random per bundle (QEMU OUI): bridged VMs join the LAN,
+                # and duplicate MACs across copies would collide.
+                "MacAddress": "52:54:00:%02X:%02X:%02X"
+                % tuple(os.urandom(3)),
+                # Bridged: the guest joins the LAN with its own address, like
+                # real hardware (QR codes, phone access, SSH all work
+                # verbatim). Port forwards only apply to emulated/shared NAT
+                # modes, where services stay reachable through the host.
+                "Mode": network["mode"],
+                "PortForward": (
+                    []
+                    if network["mode"] == "Bridged"
+                    else [
+                        {
+                            "GuestPort": network["ssh_guest_port"],
+                            "HostAddress": "127.0.0.1",
+                            "HostPort": network["ssh_host_port"],
+                            "Protocol": "TCP",
+                        }
+                    ]
+                    + [
+                        {
+                            "GuestPort": fwd["guest_port"],
+                            "HostAddress": "0.0.0.0",
+                            "HostPort": fwd["host_port"],
+                            "Protocol": "TCP",
+                        }
+                        for fwd in network.get("extra_forwards", [])
+                    ]
+                ),
+            }
+        ],
+        "QEMU": {
+            "AdditionalArguments": [
+                "-global",
+                f"virtio-blk-pci.logical_block_size={disk['logical_block_size']}",
+                "-global",
+                f"virtio-blk-pci.physical_block_size={disk['physical_block_size']}",
+            ]
+            # Behind the NAT forward the guest's own address is unreachable,
+            # so the cloud-setup screen must show the loopback SSH command
+            # instead. Only the forwarded port is injected (a space-free
+            # token: UTM splits its argument list on whitespace, so a full
+            # command string would be broken apart); the guest quirk
+            # assembles the command.
+            + (
+                []
+                if network["mode"] == "Bridged"
+                else [
+                    "-fw_cfg",
+                    (
+                        f"name={network['advertised_ssh']['fwcfg_name']},"
+                        f"string={network['advertised_ssh']['host_port']}"
+                    ),
+                ]
+            ),
+            "BalloonDevice": profile["balloon"],
+            # QA artifact: keep QEMU debug logging on so boot failures leave
+            # Data/debug.log inside the bundle for triage.
+            "DebugLog": True,
+            "Hypervisor": False,
+            "PS2Controller": False,
+            "RNGDevice": profile["rng"],
+            "RTCLocalTime": False,
+            "TPMDevice": profile["tpm"],
+            "TSO": False,
+            "UEFIBoot": True,
+        },
+        "Serial": [
+            {
+                "Mode": "Terminal",
+                "Target": "Auto",
+                "Terminal": {
+                    "CursorBlink": True,
+                    "Font": "Menlo",
+                    "FontSize": 12,
+                    "Theme": "Default",
+                },
+            }
+        ],
+        "Sharing": {
+            "ClipboardSharing": False,
+            "DirectoryShareMode": "None",
+            "DirectoryShareReadOnly": False,
+        },
+        "Sound": [{"Hardware": sound["device"]}],
+        "System": {
+            "Architecture": profile["architecture"],
+            "CPU": profile["cpu"],
+            "CPUCount": profile["cpu_count"],
+            "CPUFlagsAdd": [],
+            "CPUFlagsRemove": [],
+            "ForceMulticore": profile["force_multicore"],
+            "JITCacheSize": 0,
+            "MemorySize": profile["memory_mib"],
+            "Target": profile["machine"],
+        },
+    }
+
+
+def build_utm(profile, args):
+    disk = Path(args.disk).resolve()
+    if not disk.is_file():
+        raise FileNotFoundError(f"disk does not exist: {disk}")
+    info = qemu_img_info(disk)
+    if info["format"] != "qcow2":
+        raise ValueError("UTM bundle input must be qcow2")
+    if info["virtual-size"] < profile["disk"]["virtual_size_bytes"]:
+        raise ValueError("qcow2 is smaller than the canonical 16 GiB VM disk")
+    # The bundle carries this one file, so a disk that needs another -- an
+    # overlay's backing image, an external data file -- would arrive on the
+    # other machine unable to open. Flatten it first (qemu-img convert).
+    backing = info.get("full-backing-filename") or info.get("backing-filename")
+    if backing:
+        raise ValueError(
+            f"qcow2 has a backing file ({backing}); a UTM bundle carries one file -- "
+            "flatten it first: qemu-img convert -O qcow2 <in> <out>"
+        )
+    data_file = ((info.get("format-specific") or {}).get("data") or {}).get("data-file")
+    if data_file:
+        raise ValueError(
+            f"qcow2 keeps its data in another file ({data_file}); a UTM bundle carries one file -- "
+            "convert it first: qemu-img convert -O qcow2 <in> <out>"
+        )
+
+    output = Path(args.output).resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    bundle_name = output.name
+    for suffix in (".zip", ".utm"):
+        if bundle_name.endswith(suffix):
+            bundle_name = bundle_name[: -len(suffix)]
+    bundle_name += ".utm"
+    image_name = "ROCKNIX-GENERIC_X64.qcow2"
+    config = utm_config(profile, image_name)
+
+    with tempfile.TemporaryDirectory(prefix="rocknix-utm-") as temp_dir:
+        config_path = Path(temp_dir) / "config.plist"
+        with config_path.open("wb") as stream:
+            plistlib.dump(config, stream, fmt=plistlib.FMT_XML, sort_keys=False)
+
+        # The archive is written under a name only this build holds, beside
+        # the output (so the final rename stays on one filesystem), and
+        # renamed over the output once whole. A fixed name here let a second
+        # build for the same output remove the first one's unfinished file,
+        # or have its own published by the first.
+        handle, temporary_name = tempfile.mkstemp(
+            dir=output.parent, prefix=f".{output.name}.", suffix=".partial"
+        )
+        os.close(handle)
+        temporary_output = Path(temporary_name)
+        try:
+            with zipfile.ZipFile(
+                temporary_output, "w", compression=zipfile.ZIP_STORED, allowZip64=True
+            ) as archive:
+                archive.write(config_path, f"{bundle_name}/config.plist")
+                archive.write(disk, f"{bundle_name}/Data/{image_name}")
+                # Quick-start notes shipped next to the bundle (not inside it:
+                # macOS treats .utm as an opaque document).
+                archive.write(
+                    VM_DIR / "utm-bundle-readme.txt", "READ ME FIRST.txt"
+                )
+            # mkstemp makes the file 0600; give it what a plain create would
+            # have had under the caller's umask, no more.
+            umask = os.umask(0)
+            os.umask(umask)
+            os.chmod(temporary_output, 0o666 & ~umask)
+            os.replace(temporary_output, output)
+        except BaseException:
+            temporary_output.unlink(missing_ok=True)
+            raise
+    print(output)
+
+
+def add_qemu_options(parser):
+    parser.add_argument("disk", help="ROCKNIX qcow2 disk")
+    parser.add_argument("--accel", default="auto", help="QEMU accelerator (default: auto)")
+    parser.add_argument(
+        "--net",
+        choices=["user", "lan", "bridged"],
+        default="user",
+        help=(
+            "networking: 'user' (default; SSH forward on loopback only), "
+            "'lan' (exposes the SSH forward on the LAN), or 'bridged' (guest joins "
+            "the LAN directly; needs a host bridge + qemu-bridge-helper "
+            "allow rule)"
+        ),
+    )
+    parser.add_argument("--bridge", default="br0", help="bridge name for --net bridged (default: br0)")
+    parser.add_argument(
+        "--display",
+        default=os.environ.get("ROCKNIX_QEMU_DISPLAY", "gtk,gl=on"),
+        help="QEMU -display value (default: gtk,gl=on)",
+    )
+    parser.add_argument("--monitor", default="/tmp/rocknix-qemu-monitor.sock")
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help=(
+            "no window: virtio-gpu-pci with -display none, a VNC scanout on "
+            "loopback (--vnc), the serial console on a unix socket (--serial) "
+            "and a --pidfile; for build hosts without a desktop"
+        ),
+    )
+    parser.add_argument("--serial", default="/tmp/rocknix-qemu-serial.sock", help="serial console socket with --headless")
+    parser.add_argument(
+        "--gl",
+        default=os.environ.get("ROCKNIX_QEMU_GL", "auto"),
+        help=(
+            "hardware GL for a --headless guest through virgl: auto (the first "
+            "host render node not driven by nvidia; the default, also "
+            "ROCKNIX_QEMU_GL), none (software rendering), or a /dev/dri/renderD* node"
+        ),
+    )
+    parser.add_argument("--vnc", type=int, default=9, help="VNC display number with --headless (default: 9, port 5909)")
+    parser.add_argument("--pidfile", default="/tmp/rocknix-qemu.pid", help="QEMU pidfile with --headless")
+    parser.add_argument(
+        "--daemonize",
+        action="store_true",
+        help="with --headless: return once the VM is up, leaving it running (stop it with kill $(cat pidfile))",
+    )
+    parser.add_argument(
+        "--ssh-port",
+        type=tcp_port,
+        default=None,
+        help=(
+            "host port to forward to the guest's SSH (default: the profile's). "
+            "Give a second VM its own port -- and its own --monitor -- to run "
+            "two at once for multi-device testing"
+        ),
+    )
+    parser.add_argument(
+        "--mac",
+        type=mac_address,
+        default=None,
+        help=(
+            "the guest NIC's MAC address (default: the profile's). Give a second "
+            "VM its own: cloud_device_id hashes the permanent MAC, so two guests "
+            "on the profile's address are one device to the cloud"
+        ),
+    )
+    parser.add_argument(
+        "--res",
+        type=resolution,
+        default=None,
+        metavar="WxH",
+        help=(
+            "the guest display's preferred mode, e.g. 640x480 -- appended to the "
+            "virtio-gpu device as xres/yres, for the desktop and headless variants "
+            "alike (default: QEMU's own, 1280x800). Check a handheld panel's look "
+            "on the VM first"
+        ),
+    )
+    parser.add_argument("--ovmf-code")
+    parser.add_argument("--ovmf-vars-template")
+    parser.add_argument("--ovmf-vars")
+
+
+def resolution(value):
+    """WxH, both decimal and nonzero, as the (W, H) pair. QEMU would reject a
+    malformed xres= only once it starts; argparse says no before that."""
+    m = re.fullmatch(r"(\d+)x(\d+)", value)
+    if not m or "0" in (m.group(1).lstrip("0") or "0", m.group(2).lstrip("0") or "0"):
+        raise argparse.ArgumentTypeError(f"not a resolution (WxH, e.g. 640x480): {value!r}")
+    return int(m.group(1)), int(m.group(2))
+
+
+def tcp_port(value):
+    """A TCP port, 1 to 65535. QEMU rejects anything else only once it starts,
+    after the sockets and pidfile have been claimed; argparse says no before
+    that."""
+    try:
+        port = int(value, 10)
+    except ValueError:
+        port = 0
+    if not 1 <= port <= 65535:
+        raise argparse.ArgumentTypeError(f"not a TCP port (1-65535): {value!r}")
+    return port
+
+
+def mac_address(value):
+    """Six hex pairs joined by colons. QEMU rejects anything else only once it
+    starts, after the sockets and pidfile have been claimed; argparse says no
+    before that."""
+    if not re.fullmatch(r"(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}", value):
+        raise argparse.ArgumentTypeError(f"not a MAC address (aa:bb:cc:dd:ee:ff): {value!r}")
+    return value
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Run and package the canonical ROCKNIX GENERIC_X64 VM profile"
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    subparsers.add_parser("profile", help="print the canonical profile")
+
+    args_parser = subparsers.add_parser("qemu-args", help="print the Linux QEMU command")
+    add_qemu_options(args_parser)
+
+    run_parser = subparsers.add_parser("run", help="run the profile with QEMU")
+    add_qemu_options(run_parser)
+
+    utm_parser = subparsers.add_parser("utm", help="build a macOS .utm.zip bundle")
+    utm_parser.add_argument("disk", help="pre-sized ROCKNIX qcow2 disk")
+    utm_parser.add_argument("--output", required=True)
+
+    args = parser.parse_args()
+    profile = load_profile()
+    if args.command == "profile":
+        print(json.dumps(profile, indent=2))
+    elif args.command == "utm":
+        build_utm(profile, args)
+    else:
+        command = qemu_command(profile, args)
+        if args.command == "qemu-args":
+            print(shlex.join(command))
+        else:
+            prepare_run(profile, args)
+            os.execv(command[0], command)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (FileNotFoundError, PermissionError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        sys.exit(1)
