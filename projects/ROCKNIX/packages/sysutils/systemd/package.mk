@@ -202,7 +202,13 @@ post_makeinstall_target() {
   sed -e "s,^.*RuntimeMaxUse=.*$,RuntimeMaxUse=2M,g" -i ${INSTALL}/etc/systemd/journald.conf
   sed -e "s,^.*RuntimeMaxFileSize=.*$,RuntimeMaxFileSize=128K,g" -i ${INSTALL}/etc/systemd/journald.conf
   sed -e "s,^.*SplitMode=.*$,SplitMode=none,g" -i ${INSTALL}/etc/systemd/journald.conf
-  sed -e "s,^.*SystemMaxUse=.*$,SystemMaxUse=10M,g" -i ${INSTALL}/etc/systemd/journald.conf
+  # The journal is persistent since fork #104 (var-log.mount binds /var/log to
+  # /storage/.cache/log), so these are limits on the card, not on RAM: 64M
+  # holds days of an ordinary device's logging, and the journal is synced to
+  # disk every minute rather than every five, so a freeze costs at most the
+  # last minute of low-priority lines (crit and above are synced at once).
+  sed -e "s,^.*SystemMaxUse=.*$,SystemMaxUse=64M,g" -i ${INSTALL}/etc/systemd/journald.conf
+  sed -e "s,^.*SyncIntervalSec=.*$,SyncIntervalSec=1min,g" -i ${INSTALL}/etc/systemd/journald.conf
   if [ "${BUILD_WITH_DEBUG}" = "yes" ]; then
     sed -e "s,^.*ForwardToConsole=.*$,ForwardToConsole=yes,g" -i ${INSTALL}/etc/systemd/journald.conf
     sed -e "s,^.*TTYPath=.*$,TTYPath=${DEBUG_TTY},g" -i ${INSTALL}/etc/systemd/journald.conf
@@ -270,6 +276,13 @@ post_makeinstall_target() {
 
   # journald
   ln -sf /storage/.cache/journald.conf.d ${INSTALL}/usr/lib/systemd/journald.conf.d
+
+  # systemd-pstore's archive directory is a symlink into /storage (tmpfiles
+  # z_01_rocknix.conf, fork #104). systemd's own tmpfiles line creates it as
+  # a plain directory, sorts first, and tmpfiles ignores the later line for
+  # the same path as a duplicate -- so the symlink was never made and the
+  # dump was archived into tmpfs (VM, 2026-09-10). One line for the path.
+  sed -e '/^d \/var\/lib\/systemd\/pstore/d' -i ${INSTALL}/usr/lib/tmpfiles.d/systemd-pstore.conf
 }
 
 post_install() {

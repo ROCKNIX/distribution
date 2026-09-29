@@ -45,26 +45,34 @@ while true; do
     CURRENT_MODE="${AC_STATUS}"
   fi
   ### Until we have an overlay. :rofl:
-  BATLEFT=$(battery_percent)
-  if (( "${BATCNT}" >= "20" )) && [[ "${AC_STATUS}" =~ Disch ]]; then
-    AUDIBLEALERT=$(get_setting system.battery.warning)
-    AUDIBLEALERT_THRESHOLD=$(get_setting system.battery.warning_threshold)
-    [[ -z $AUDIBLEALERT_THRESHOLD ]] && AUDIBLEALERT_THRESHOLD=25
+  # One reading, the first battery if there are several. No battery at all
+  # (the GENERIC_X64 guest) or a driver that has not probed yet leaves this
+  # empty, and an empty operand in (( )) is an arithmetic error -- logged
+  # every two seconds for the life of the boot, so it was the last line of
+  # every VM journal (#121). Nothing to compare means nothing to do this
+  # pass; a battery that comes up late is read on the next one.
+  BATLEFT=$(battery_percent | head -n1)
+  if [[ "${BATLEFT}" =~ ^[0-9]+$ ]]; then
+    if (( "${BATCNT}" >= "20" )) && [[ "${AC_STATUS}" =~ Disch ]]; then
+      AUDIBLEALERT=$(get_setting system.battery.warning)
+      AUDIBLEALERT_THRESHOLD=$(get_setting system.battery.warning_threshold)
+      [[ -z $AUDIBLEALERT_THRESHOLD ]] && AUDIBLEALERT_THRESHOLD=25
 
-    if [[ ${BATLEFT} -le ${AUDIBLEALERT_THRESHOLD} ]]; then
-      if [ "${DEVICE_LED_CONTROL}" = "true" ] && [ ! "${DEVICE_BATTERY_LED_STATUS}" = "true" ]; then
-        # Flash the RGB or power LED if available.
-        led_flash
-        BATCNT=0
-      elif [ "${AUDIBLEALERT}" = "1" ]; then
-        say "BATTERY AT ${BATLEFT}%"
-        BATCNT=0
+      if [[ ${BATLEFT} -le ${AUDIBLEALERT_THRESHOLD} ]]; then
+        if [ "${DEVICE_LED_CONTROL}" = "true" ] && [ ! "${DEVICE_BATTERY_LED_STATUS}" = "true" ]; then
+          # Flash the RGB or power LED if available.
+          led_flash
+          BATCNT=0
+        elif [ "${AUDIBLEALERT}" = "1" ]; then
+          say "BATTERY AT ${BATLEFT}%"
+          BATCNT=0
+        fi
       fi
-    fi
-  elif (( "${BATLEFT}" > "97" )); then
-    if [ "${DEVICE_LED_CHARGING}" = "true" ]; then
-      # Reset the LED as if the battery was full.
-      ledcontrol discharging
+    elif (( "${BATLEFT}" > "97" )); then
+      if [ "${DEVICE_LED_CHARGING}" = "true" ]; then
+        # Reset the LED as if the battery was full.
+        ledcontrol discharging
+      fi
     fi
   fi
   BATCNT=$(( ${BATCNT} + 1 ))

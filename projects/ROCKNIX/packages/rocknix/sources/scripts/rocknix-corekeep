@@ -1,0 +1,250 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+#
+# rocknix-corekeep - keep the core dump of a crash, so the next one can be read.
+#
+# Invoked by the kernel, never by hand: kernel.core_pattern pipes the dump to
+# this script's stdin (99-coredump.conf). Arguments, in core(5)'s order:
+#
+#   rocknix-corekeep %e %p %t %s %E
+#     %e executable name   %p pid   %t seconds since the epoch
+#     %s the fatal signal  %E the executable path, with ! for /
+#
+# Why this exists. Four emulator crashes were recorded on the handhelds
+# between 2026-09-07 and 2026-09-17 (fork #79). Exactly one could be
+# explained, and only because core_pattern had been pointed at a file by hand
+# for that session: the dump named video_texture_load_wrap_gl3_mipmap and a
+# command struct read from a returned stack frame, which is the whole reason
+# the threaded-video fix exists (libretro/RetroArch#19518). The other three
+# left a single kernel line saying the dump had been discarded. A crash that
+# cannot be read is a crash that gets argued about instead of fixed.
+#
+# What it writes, under /storage/.cache/log/cores (beside the logs the
+# var-log bind mount already keeps across a power cut):
+#
+#   core.<exe>.<epoch>.<pid>.gz   the dump, gzipped as it arrives
+#   core.<exe>.<epoch>.<pid>.txt  who died, when, on what signal, on which
+#                                 build, and whether the dump is whole
+#
+# Three rules it obeys, because this runs on somebody's game machine:
+#
+#   * It is bounded. A dump is streamed through gzip and cut off at
+#     CORE_MAX_BYTES of the raw dump (head -c before gzip, so the cap is the
+#     dump's size, not the archive's); the note says it was cut. The ring
+#     keeps the CORE_KEEP newest crashes, by the time in their names, notes
+#     and dumps together, and deletes the rest, oldest first.
+#   * It refuses rather than fills the card. Under CORE_MIN_FREE_KB free it
+#     writes only the note, saying so. A player who cannot save their game
+#     because a crash dump filled the disk has been failed twice.
+#   * It never leaves the device by itself. A core is a copy of the process's
+#     memory, so it holds whatever that process held -- a RetroAchievements
+#     token, a Wi-Fi key, a password typed a minute ago. It is 0600, it is
+#     deliberately NOT collected into rocknix-evidence archives (which are
+#     built to be sent to a stranger and are redacted; a core cannot be), and
+#     nothing uploads it. Reading one is a deliberate act: copy it off with
+#     scp, knowing what is in it.
+#
+# Reading one, on a build host that has the unstripped binary:
+#
+#   gunzip -c core.retroarch.*.gz > core
+#   gdb-multiarch build.ROCKNIX-<DEVICE>.aarch64/build/retroarch-*/retroarch core
+#   (gdb) bt
+#
+# Fork-only (#104's neighbourhood, #79, #211).
+
+# Off unless somebody asked for it. The handler ships in every image and does
+# nothing until this marker exists, so a QA build and a release build are the
+# same image and there is no debug setting to remember to revert before a
+# release candidate (the maintainer's ask, 2026-09-19). Turn it on for a
+# device with:
+#
+# The marker lives on /storage, so it SURVIVES AN IN-PLACE UPDATE: a device
+# armed for troubleshooting stays armed across the next image unless it is
+# turned off. Disarm before handing a device an image meant to be evaluated
+# as it ships (D-QA-029).
+#
+#   rocknix-corekeep --on     # writes the marker, says where dumps will land
+#   rocknix-corekeep --off    # removes it; nothing is kept again
+#   rocknix-corekeep --status
+#
+# Whether this should instead be on for everyone is a real question -- four
+# unreadable crashes argue yes, and a core holds the device's credentials
+# (as /storage/.config/system/configs/system.cfg already does, on the same
+# partition) -- and it is recorded as an open decision rather than settled
+# here by default.
+CORE_MARKER="/storage/.config/keep-core-dumps"
+CORE_DIR="/storage/.cache/log/cores"
+# The cap is on the RAW bytes kept (head -c before gzip), per executable: a
+# whole RetroArch core is well under 256 MB; the interface's is mostly
+# texture memory and ran to 866 MB on x86_64, so it gets a gigabyte before
+# the stacks are lost (fork #247). CORE_MAX_BYTES in the environment sets
+# one cap for a run, which is how the scripts harness proves both notes.
+CORE_MAX_BYTES_DEFAULT=$(( 256 * 1024 * 1024 ))
+CORE_MAX_BYTES_INTERFACE=$(( 1024 * 1024 * 1024 ))
+CORE_MAX_BYTES="${CORE_MAX_BYTES:-}"
+CORE_KEEP=3
+# 512 MB of headroom, or we only write the note. The test below adds the cap
+# to it: a dump is admitted only when the card could take the whole cap and
+# still keep the headroom, since gzip -1 over texture memory can be close to
+# incompressible and a 1 GiB dump admitted at 600 MB free would fill the
+# card (audit #258, the seat's G-03). Overridable for the harness.
+CORE_MIN_FREE_KB="${CORE_MIN_FREE_KB:-$(( 512 * 1024 ))}"
+
+case "${1:-}" in
+    --on)
+        mkdir -p "$(dirname "${CORE_MARKER}")" 2>/dev/null
+        date -u '+armed %Y-%m-%d %H:%M:%S UTC' > "${CORE_MARKER}"
+        echo "core dumps will be kept under ${CORE_DIR} (ring of ${CORE_KEEP}; raw caps ${CORE_MAX_BYTES_DEFAULT} bytes, ${CORE_MAX_BYTES_INTERFACE} for the interface)"
+        echo "a core is process memory: assume it holds this device's tokens and keys"
+        exit 0 ;;
+    --off)
+        rm -f "${CORE_MARKER}"
+        echo "core dumps are discarded again; ${CORE_DIR} left as it is"
+        exit 0 ;;
+    --status)
+        if [ -f "${CORE_MARKER}" ]; then
+            echo "on ($(cat "${CORE_MARKER}" 2>/dev/null))"
+            ls -1 "${CORE_DIR}"/core.*.gz 2>/dev/null | wc -l | tr -d '\n'; echo " dump(s) kept"
+        else
+            echo "off -- no ${CORE_MARKER}"
+        fi
+        exit 0 ;;
+esac
+
+# The kernel is the only other caller, and it passes no such flag. Without the
+# marker nothing is read: the handler exits, the kernel's next write to the
+# pipe fails and it abandons the dump (core_pipe_limit is 0 here, so it does
+# not wait on the helper either). This read the whole dump to /dev/null "for
+# the kernel", which it does not need -- an 800 MB interface core cost
+# seconds of a 1 GB handheld's memory bandwidth before the crashed process
+# could be restarted (#308 claude F-PB-16).
+if [ ! -f "${CORE_MARKER}" ]; then
+    exit 0
+fi
+
+EXE="${1:-unknown}"
+PID="${2:-0}"
+WHEN="${3:-0}"
+SIG="${4:-0}"
+EXEPATH="${5:-}"
+
+# A name that cannot escape the directory: the kernel gives %e from the
+# process, and a process can be named almost anything.
+#
+# The interface's cap follows its path (%E, "!usr!bin!emulationstation"), not
+# its name: %e is the task's comm, which the kernel cuts to 15 characters, so
+# it arrives as "emulationstatio" and never matched the case below -- the
+# interface's dumps were cut at the 256 MB default (#308, the gpt seat's
+# F-PB-20, found again by stream F2). The cut name is taken too, for a
+# kernel that passes no path.
+if [ -z "${CORE_MAX_BYTES}" ]; then
+    case "${EXEPATH##*!}" in
+        emulationstation) CORE_MAX_BYTES="${CORE_MAX_BYTES_INTERFACE}" ;;
+        *) case "${EXE}" in
+               emulationstatio|emulationstation) CORE_MAX_BYTES="${CORE_MAX_BYTES_INTERFACE}" ;;
+               *) CORE_MAX_BYTES="${CORE_MAX_BYTES_DEFAULT}" ;;
+           esac ;;
+    esac
+fi
+SAFE=$(printf '%s' "${EXE}" | tr -c 'A-Za-z0-9._-' '_' | cut -c1-40)
+[ -n "${SAFE}" ] || SAFE=unknown
+BASE="${CORE_DIR}/core.${SAFE}.${WHEN}.${PID}"
+
+mkdir -p "${CORE_DIR}" 2>/dev/null || exit 0
+chmod 0700 "${CORE_DIR}" 2>/dev/null
+
+# One crash at a time, from the space check through the prune: two handlers
+# that each saw room for one dump could together fill the card, the floor
+# notwithstanding (#308, the gpt seat's F-PB-21). An flock on the folder
+# itself; a second handler waits (the kernel holds its dump in the pipe
+# meanwhile). The lock is a precondition of keeping a dump, not a
+# convenience: without it (no flock, a folder that cannot be opened) the
+# crash gets its note and no dump, since two unserialised dumps are the
+# failure the floor exists to prevent (#307, the audit of the fixes, gpt
+# G-B-14).
+LOCKED=0
+{ exec 8<"${CORE_DIR}"; } 2>/dev/null && command -v flock >/dev/null 2>&1 && flock 8 && LOCKED=1
+
+# The ring: the newest CORE_KEEP crashes stay, by the time in their names --
+# core.<exe>.<epoch>.<pid>.txt, read from the right because the name may
+# hold dots -- counting every crash that left a note, dump or not. Sorted by
+# name it went by executable first, so a new "emulationstation" dump sorted
+# ahead of three older "retroarch" ones and was the one deleted; and the
+# notes of dumps refused for space were never counted, so they grew without
+# bound (#308, the gpt seat's F-PB-15). Run on every way out.
+prune_ring() {
+    ls -1 "${CORE_DIR}"/core.*.txt 2>/dev/null \
+        | awk -F. '{ print $(NF-2) "\t" $0 }' | sort -rn | cut -f2- \
+        | awk -v k="${CORE_KEEP}" 'NR > k' \
+        | while IFS= read -r OLD; do rm -f "${OLD}" "${OLD%.txt}.gz"; done
+}
+
+note() { printf '%s\n' "$*" >> "${BASE}.txt"; }
+
+umask 077
+note "executable   ${EXE}"
+note "path         $(printf '%s' "${EXEPATH}" | tr '!' '/')"
+note "pid          ${PID}"
+note "signal       ${SIG}"
+note "when         ${WHEN} ($(date -u -d "@${WHEN}" '+%Y-%m-%d %H:%M:%S UTC' 2>/dev/null))"
+# busybox paste has no -s, and its usage text would land in the note.
+note "build        $(sed -n 's/^BUILD_ID=//p' /etc/os-release 2>/dev/null | tr -d '"' | tr '\n' ' ')"
+note "version      $(sed -n 's/^VERSION_ID=//p;s/^VERSION=//p' /etc/os-release 2>/dev/null | tr -d '"' | tr '\n' ' ')"
+note "kernel       $(uname -r 2>/dev/null)"
+
+if [ "${LOCKED}" -ne 1 ]; then
+    note "dump         NOT KEPT -- the cores folder could not be locked, and one dump at a time is what keeps the free-space floor"
+    logger -t rocknix-corekeep "${EXE} died on signal ${SIG}; dump discarded, the cores folder could not be locked"
+    exit 0
+fi
+
+# Free space first: the dump is the thing we can do without, the player's
+# saves are not.
+FREE_KB=$(df -k "${CORE_DIR}" 2>/dev/null | awk 'NR==2{print $4}')
+case "${FREE_KB}" in
+  ''|*[!0-9]*) FREE_KB=0 ;;
+esac
+NEED_KB=$(( CORE_MIN_FREE_KB + CORE_MAX_BYTES / 1024 ))
+if [ "${FREE_KB}" -lt "${NEED_KB}" ]; then
+    note "dump         NOT KEPT -- only ${FREE_KB} KB free, under the ${NEED_KB} KB needed (the ${CORE_MIN_FREE_KB} KB floor plus the ${CORE_MAX_BYTES} byte cap)"
+    logger -t rocknix-corekeep "${EXE} died on signal ${SIG}; dump discarded, ${FREE_KB} KB free"
+    prune_ring
+    exit 0
+fi
+
+# Stream the dump through gzip, bounded. head -c stops reading at the cap,
+# so the kernel's writer sees the pipe close and the rest is dropped -- which
+# is the intent: a truncated dump still usually carries the stack, and an
+# unbounded one can be the size of RAM.
+#
+# One byte past the cap is asked for, so whole or cut is read off the count
+# alone: more than the cap arrived only if the process offered more. The
+# second head that used to ask "is there one more byte?" asked a stream the
+# first had already read ahead of -- busybox head -c reads a buffer, not the
+# count -- so a dump up to a few KB over the cap read back as whole (#308
+# claude F-PB-16). A cut dump keeps the cap plus that one byte.
+if head -c "$(( CORE_MAX_BYTES + 1 ))" | gzip -1 > "${BASE}.gz" 2>/dev/null; then
+    SIZE=$(stat -c%s "${BASE}.gz" 2>/dev/null || echo 0)
+    # Whole or cut is decided by the raw count gzip records, never by the
+    # compressed size: a cut dump of zeros compresses to nothing and used to
+    # read "whole" (fork #247). At the cap, head stopped reading, so the
+    # process offered more than was kept.
+    RAW=$(gzip -l "${BASE}.gz" 2>/dev/null | awk 'NR==2{print $2}')
+    case "${RAW}" in ''|*[!0-9]*) RAW=0 ;; esac
+    # A dump of exactly the cap's size is whole, not cut (the seat's G-06).
+    if [ "${RAW}" -gt "${CORE_MAX_BYTES}" ]; then
+        note "dump         ${BASE}.gz (CUT at the cap: ${RAW} raw bytes kept of more, ${SIZE} compressed; cap ${CORE_MAX_BYTES})"
+    else
+        note "dump         ${BASE}.gz (whole: ${RAW} raw bytes, ${SIZE} compressed)"
+    fi
+    logger -t rocknix-corekeep "${EXE} died on signal ${SIG}; kept ${BASE}.gz (${SIZE} bytes)"
+else
+    note "dump         NOT KEPT -- gzip failed"
+    logger -t rocknix-corekeep "${EXE} died on signal ${SIG}; dump could not be written"
+fi
+
+note "credentials  a core is process memory: assume it holds tokens and keys. 0600, never collected, never uploaded."
+
+prune_ring
+exit 0

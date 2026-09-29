@@ -6,7 +6,11 @@ PKG_VERSION=""
 PKG_LICENSE="GPLv2"
 PKG_SITE=""
 PKG_URL=""
-PKG_DEPENDS_TARGET="toolchain autostart"
+# zip is a *runtime* dependency of the backuptool script, so nothing failed
+# at build time when upstream dropped the package (a3d0ad0430) -- the image
+# simply shipped without it and "backuptool backup" could not run. Declaring
+# it here turns an invisible runtime dependency into one the build enforces.
+PKG_DEPENDS_TARGET="toolchain autostart zip"
 PKG_LONGDESC="ROCKNIX Meta Package"
 PKG_TOOLCHAIN="make"
 
@@ -44,7 +48,12 @@ EOF
   fi
   # Always install the update script
   mkdir -p $INSTALL/usr/share/bootloader
-  find_file_path bootloader/update.sh && cp -av ${FOUND_PATH} ${INSTALL}/usr/share/bootloader
+  # A device without an in-place bootloader updater ships none: GENERIC_X64's
+  # copied nothing and was removed (#307 PL-073). A bare `a && b` as the
+  # function's last statement returns a's failure and fails the install.
+  if find_file_path bootloader/update.sh; then
+    cp -av ${FOUND_PATH} ${INSTALL}/usr/share/bootloader
+  fi
 }
 
 post_install() {
@@ -77,6 +86,11 @@ EOF
 
   ### Take a backup of the system configuration on shutdown
   enable_service save-sysconfig.service
+  # what the device looked like before it froze, kept on /storage (fork #104)
+  enable_service rocknix-evidence.timer
+
+  ### Put system.cfg right (from its last good copy) before the hostname is read
+  enable_service rocknix-sysconfig.service
 
   sed -i "s#@DEVICENAME@#${DEVICE}#g" ${INSTALL}/usr/config/system/configs/system.cfg
 

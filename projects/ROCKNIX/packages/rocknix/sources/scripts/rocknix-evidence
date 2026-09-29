@@ -1,0 +1,265 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+#
+# rocknix-evidence - what the device knew, kept where a power cut cannot reach it.
+#
+#   rocknix-evidence snapshot   # one page of device state into a ring of five
+#   rocknix-evidence collect    # everything worth reading after a freeze, in one archive
+#   rocknix-evidence show       # the snapshots and archives that exist
+#
+# The RG SP froze during a startup sync and the forced power-off erased every
+# log that could have said why: the kernel's, the journal, EmulationStation's,
+# the cloud scripts' -- all in RAM (fork #102, #104). Since then /var/log is a
+# bind mount of /storage/.cache/log (var-log.mount), so those survive on their
+# own. This script adds the two things a log does not hold:
+#
+#   snapshot  -- what the device looked like a few minutes before it stopped:
+#                memory, load, temperature, the processes running, the last
+#                kernel lines, the cloud stamps. A timer runs it a minute after
+#                boot and every five minutes after that; five pages are kept,
+#                so a freeze is bracketed by the last 25 minutes of state.
+#   collect   -- one archive with the previous boot's journal, the kernel log,
+#                any pstore dump, the EmulationStation and cloud logs, the
+#                snapshots, and the size (never the content) of the config
+#                files. Run it after a device has misbehaved, before anything
+#                else is done to it; the archive is what to read and to send.
+#
+# Nothing here reads system.cfg or rclone.conf beyond their size, and every
+# file that goes into an archive or a snapshot passes through
+# redact_credentials (001-functions) first: a password, token or API key
+# reads <redacted>, the key or flag it sat under is kept. This file used to
+# say the logs carry no credential; they did -- a launch log in verbose mode
+# carried the RetroAchievements password, and a process list can carry one
+# on an emulator's command line -- so it is enforced here on the way out
+# rather than assumed of every writer (fork #176, D-INFRA-010). Without the
+# filter nothing is collected: an archive is what a player sends to a
+# stranger, and no archive beats an unfiltered one.
+# The tree is named after the log it lives beside, not after this script, so
+# a person who finds /storage/.cache/log finds everything in one place.
+
+. /etc/profile.d/001-functions 2>/dev/null
+
+EVIDENCE_DIR="/storage/.cache/log/evidence"
+RING=5
+SNAPSHOT_BYTES_MAX=$((256 * 1024))
+
+device_label() {
+  local model
+  [ -r /proc/device-tree/model ] && model=$(tr -d '\0' < /proc/device-tree/model 2>/dev/null)
+  [ -n "${model}" ] || model=$(cat /sys/class/dmi/id/product_name 2>/dev/null)
+  [ -n "${model}" ] || model="device"
+  printf '%s' "${model}" | sed -E 's/[^A-Za-z0-9]+/-/g; s/^-+//; s/-+$//' | cut -c1-40
+}
+
+section() { printf '\n===== %s\n' "$1"; }
+
+# One page of state. Every command is best-effort and time-boxed so a device
+# that is already struggling is not held up by its own diagnostics.
+write_snapshot() {
+  echo "rocknix-evidence snapshot $(date '+%Y-%m-%d %H:%M:%S %Z')"
+  echo "boot_id $(cat /proc/sys/kernel/random/boot_id 2>/dev/null)"
+  echo "uptime $(cut -d' ' -f1 /proc/uptime 2>/dev/null)s   loadavg $(cat /proc/loadavg 2>/dev/null)"
+  echo "build $(sed -n 's/^BUILD_ID=//p' /etc/os-release 2>/dev/null | tr -d '"')"
+  section "memory"; free -m 2>/dev/null
+  section "pressure"; for p in cpu memory io; do [ -r "/proc/pressure/${p}" ] && { printf '%s: ' "${p}"; head -1 "/proc/pressure/${p}"; }; done
+  section "storage"; df -h /storage /tmp 2>/dev/null
+  section "thermal"; for z in /sys/class/thermal/thermal_zone*; do [ -r "${z}/temp" ] && printf '%s %s %s\n' "$(basename "${z}")" "$(cat "${z}/type" 2>/dev/null)" "$(cat "${z}/temp" 2>/dev/null)"; done
+  section "watchdog"; ls /sys/class/watchdog/ 2>/dev/null || echo "none"
+  for w in /sys/class/watchdog/watchdog*; do [ -d "${w}" ] && printf '%s identity=%s state=%s timeout=%s\n' "$(basename "${w}")" "$(cat "${w}/identity" 2>/dev/null)" "$(cat "${w}/state" 2>/dev/null)" "$(cat "${w}/timeout" 2>/dev/null)"; done
+  section "pstore (unread dumps)"; ls -la /sys/fs/pstore/ 2>/dev/null | tail -n +2
+  section "processes"; timeout 10 top -b -n 1 2>/dev/null | head -25
+  section "cloud sync"; ls -la /storage/.cache/cloud_sync/ 2>/dev/null | tail -n +2
+  if flock -n /var/run/cloud_sync.lock true 2>/dev/null; then echo "lock: free"; else echo "lock: HELD (a sync is running)"; fi
+  section "kernel, last 40 lines"; timeout 10 journalctl -k -n 40 --no-pager -o short-monotonic 2>/dev/null
+}
+
+# systemd-pstore.service archives a crash dump at boot, but its condition
+# (/sys/fs/pstore not empty) is checked about two seconds in, and on a UEFI
+# machine the previous boot's dump is not visible there yet: the panic left
+# fifteen chunks in the variable store and the service was skipped as "unmet
+# condition" while the chunks appeared a little later (VM, 2026-09-10).
+# ramoops on a handheld is visible from the first moment, so this is belt
+# and braces there -- but a dump left unread is the one piece of evidence
+# this whole tree exists for, so the first snapshot after boot archives
+# whatever the early service missed, with systemd's own tool.
+archive_unread_pstore() {
+  [ -n "$(ls -A /sys/fs/pstore 2>/dev/null)" ] || return 0
+  [ -x /usr/lib/systemd/systemd-pstore ] || return 0
+  /usr/lib/systemd/systemd-pstore >/dev/null 2>&1 && logger -t rocknix-evidence "archived a crash dump the boot-time service had not seen"
+  return 0
+}
+
+# The filter every file leaves through. A missing helper is an image fault;
+# say so once and write nothing, never an unfiltered page.
+have_filter() {
+  type redact_credentials >/dev/null 2>&1 && return 0
+  logger -t rocknix-evidence "redact_credentials is missing from /etc/profile.d/001-functions; nothing written"
+  return 1
+}
+
+# Every regular file under a directory, through the filter, in place, its
+# mtime kept (when a log was last written is evidence). A file the filter
+# cannot rewrite -- or whose filtered copy cannot be moved into its place --
+# is removed rather than left as it was, and named. A file that can be
+# neither filtered nor removed is raw and still there: that ends the
+# collection before any archive is written (returns non-zero). Until #307
+# PL-046 the move's status was not read, the file was counted as filtered,
+# and the raw log was archived under a summary that said it had been
+# through the filter. sed passes bytes it does not match through untouched,
+# and the pstore dumps are kernel text, so nothing here is damaged by the
+# pass. The list is taken before the pass, so no .redacting file is walked.
+FILTERED=0; LEFT_OUT=0; RAW=0
+filter_tree() {
+  local f list
+  list=$(mktemp) || return 1
+  # The list is whole or nothing is archived: a walk that failed part-way
+  # (a full /tmp) left files off it, and those went into the archive raw
+  # (#307, the audit of the fixes, gpt G-B-07).
+  if ! find "$1" -type f -print0 > "${list}" 2>/dev/null; then
+    rm -f "${list}"
+    RAW=$((RAW + 1))
+    echo "Couldn't list every file to filter."
+    return 1
+  fi
+  while IFS= read -r -d '' f; do
+    if redact_credentials < "${f}" > "${f}.redacting" 2>/dev/null; then
+      touch -r "${f}" "${f}.redacting" 2>/dev/null
+      if mv -f "${f}.redacting" "${f}" 2>/dev/null; then
+        FILTERED=$((FILTERED + 1))
+        continue
+      fi
+    fi
+    rm -f "${f}" "${f}.redacting" 2>/dev/null
+    if [ -e "${f}" ]; then
+      RAW=$((RAW + 1))
+      echo "Couldn't filter or remove ${f#${1}/}."
+    else
+      LEFT_OUT=$((LEFT_OUT + 1))
+      echo "Left out ${f#${1}/}: the credential filter couldn't rewrite it."
+    fi
+  done < "${list}"
+  rm -f "${list}"
+  [ "${RAW}" -eq 0 ]
+}
+
+snapshot() {
+  have_filter || exit 0
+  mkdir -p "${EVIDENCE_DIR}" || exit 0
+  archive_unread_pstore
+  local tmp="${EVIDENCE_DIR}/state.tmp" i
+  write_snapshot 2>/dev/null | redact_credentials | head -c "${SNAPSHOT_BYTES_MAX}" > "${tmp}" || { rm -f "${tmp}"; exit 0; }
+  # Rotate like EmulationStation rotates its log: newest is state.0.txt.
+  rm -f "${EVIDENCE_DIR}/state.$((RING - 1)).txt"
+  for ((i = RING - 2; i >= 0; i--)); do
+    [ -f "${EVIDENCE_DIR}/state.${i}.txt" ] && mv -f "${EVIDENCE_DIR}/state.${i}.txt" "${EVIDENCE_DIR}/state.$((i + 1)).txt"
+  done
+  mv -f "${tmp}" "${EVIDENCE_DIR}/state.0.txt"
+}
+
+# Copy a file if it exists; never fail the collection over one missing piece.
+take() { [ -e "$1" ] && cp -a "$1" "$2" 2>/dev/null; return 0; }
+
+collect() {
+  if ! have_filter; then
+    echo "Couldn't load the credential filter (redact_credentials, /etc/profile.d/001-functions); nothing collected."
+    exit 1
+  fi
+  mkdir -p "${EVIDENCE_DIR}" || { echo "Couldn't write to ${EVIDENCE_DIR}."; exit 1; }
+  # One collection at a time, and the pieces of one killed before its
+  # filter -- raw journals and logs in a .collect.* folder -- cleared by the
+  # next (#307, the audit of the fixes, claude G-B-15).
+  { exec 7<"${EVIDENCE_DIR}"; } 2>/dev/null && flock -n 7 || { echo "Another collection is running."; exit 1; }
+  rm -rf "${EVIDENCE_DIR}"/.collect.* 2>/dev/null
+  local stamp label name stage dir tmp out n
+  stamp=$(date '+%Y_%m_%d-%H%M%S'); label=$(device_label)
+  name="${stamp}-${label}-evidence"
+  # A staging folder of this run's own, and an archive name nobody has yet:
+  # two collections in the same second shared one folder and one name, so
+  # one could copy a raw log into the tree the other had just filtered and
+  # was archiving, and the second archive replaced the first (#307 PL-077,
+  # the gpt seat's F-PB-03).
+  stage=$(mktemp -d "${EVIDENCE_DIR}/.collect.XXXXXX") || { echo "Couldn't write to ${EVIDENCE_DIR}."; exit 1; }
+  dir="${stage}/${name}"
+  mkdir -p "${dir}/pstore" "${dir}/snapshots" "${dir}/logs" "${dir}/stamps"
+
+  {
+    echo "collected $(date '+%Y-%m-%d %H:%M:%S %Z') on ${label}"
+    echo "uptime $(cut -d' ' -f1 /proc/uptime)s"
+    echo
+    echo "credential filter: every file in this archive has passed through redact_credentials"
+    echo "  (/etc/profile.d/001-functions). A password, token, API key or similar value reads"
+    echo "  <redacted>; the key or flag it belonged to is kept. The count is at the end of this file."
+    echo; cat /etc/os-release
+    echo; echo "cmdline: $(cat /proc/cmdline)"
+    echo; echo "boots known to the journal:"; journalctl --list-boots --no-pager 2>/dev/null
+    echo; echo "hang policy:"; for k in kernel.panic kernel.softlockup_panic kernel.hung_task_panic kernel.hung_task_timeout_secs kernel.panic_on_oops; do printf '  %s = %s\n' "${k}" "$(sysctl -n "${k}" 2>&1 | head -1)"; done
+    echo; echo "watchdog:"; ls /sys/class/watchdog/ 2>/dev/null || echo "  none"
+    for w in /sys/class/watchdog/watchdog*; do [ -d "${w}" ] && printf '  %s identity=%s state=%s timeout=%s\n' "$(basename "${w}")" "$(cat "${w}/identity" 2>/dev/null)" "$(cat "${w}/state" 2>/dev/null)" "$(cat "${w}/timeout" 2>/dev/null)"; done
+    echo; echo "persistent log mount:"; grep -E ' /var/log ' /proc/mounts || echo "  /var/log is NOT a bind mount (logs are volatile)"
+    echo; echo "config files, by size (content deliberately not collected):"
+    ls -la /storage/.config/system/configs/system.cfg* /storage/.config/emulationstation/es_settings.cfg* /storage/.config/rclone/rclone.conf 2>/dev/null | awk '{print "  " $5 "  " $6 " " $7 " " $8 "  " $9}'
+    echo; echo "what chksysconfig said at the last boots:"; journalctl --no-pager -o short-iso 2>/dev/null | grep -i 'chksysconfig' | tail -20
+  } > "${dir}/summary.txt" 2>&1
+
+  journalctl -b -1 --no-pager -o short-precise > "${dir}/journal-previous-boot.txt" 2>&1
+  journalctl -k -b -1 --no-pager -o short-precise > "${dir}/kernel-previous-boot.txt" 2>&1
+  journalctl -b 0 --no-pager -o short-precise > "${dir}/journal-this-boot.txt" 2>&1
+  dmesg > "${dir}/dmesg-this-boot.txt" 2>&1
+  cp -a /var/lib/systemd/pstore/. "${dir}/pstore/" 2>/dev/null
+  for f in /sys/fs/pstore/*; do take "${f}" "${dir}/pstore/unread-$(basename "${f}")"; done
+  for f in /var/log/es_log*.txt; do take "${f}" "${dir}/logs/"; done
+  [ -f /var/log/cloud_sync.log ] && tail -c 1048576 /var/log/cloud_sync.log > "${dir}/logs/cloud_sync.log"
+  take /var/log/exec.log "${dir}/logs/"
+  take /var/log/boot.log "${dir}/logs/"
+  for f in "${EVIDENCE_DIR}"/state.*.txt; do take "${f}" "${dir}/snapshots/"; done
+  for f in /storage/.cache/cloud_sync/*; do take "${f}" "${dir}/stamps/"; done
+
+  # Last, over everything that landed above, whatever wrote it: the filter
+  # is applied to the tree, not trusted of each writer. Then the count goes
+  # into the summary -- our own words and numbers, nothing that needs the pass.
+  if ! filter_tree "${dir}"; then
+    echo "Nothing was archived: the credential filter couldn't finish. The pieces are in ${dir}."
+    exit 1
+  fi
+  printf '\ncredential filter: %s file(s) rewritten, %s left out\n' "${FILTERED}" "${LEFT_OUT}" >> "${dir}/summary.txt"
+
+  # Written inside the staging folder, then linked to the first free name
+  # (ln fails when the name exists): <stamp>-<label>-evidence.tar.gz, or
+  # <stamp>-<label>-2-evidence.tar.gz and on for a second in the same
+  # second -- every name still ends in -evidence.tar.gz.
+  tmp="${stage}/out.tar.gz"; out=""
+  if tar -czf "${tmp}" -C "${stage}" "${name}" 2>/dev/null; then
+    n=1; out="${EVIDENCE_DIR}/${name}.tar.gz"
+    while ! ln "${tmp}" "${out}" 2>/dev/null; do
+      n=$((n + 1))
+      [ "${n}" -le 50 ] || { out=""; break; }
+      out="${EVIDENCE_DIR}/${stamp}-${label}-${n}-evidence.tar.gz"
+    done
+  fi
+  if [ -n "${out}" ]; then
+    rm -rf "${stage}"
+    echo "Evidence collected: ${out} ($(du -h "${out}" | cut -f1))"
+    echo "Every file in it has been through the credential filter (${FILTERED} rewritten, ${LEFT_OUT} left out)."
+    echo "Start with summary.txt, then journal-previous-boot.txt and pstore/."
+  else
+    rm -f "${tmp}"
+    echo "Couldn't write the archive; the pieces are in ${dir}."
+    exit 1
+  fi
+}
+
+show() {
+  echo "Snapshots (newest first):"
+  ls -la "${EVIDENCE_DIR}"/state.*.txt 2>/dev/null | awk '{print "  " $6 " " $7 " " $8 "  " $9}' || echo "  none yet"
+  echo "Archives:"
+  ls -la "${EVIDENCE_DIR}"/*-evidence.tar.gz 2>/dev/null | awk '{print "  " $5 "  " $6 " " $7 " " $8 "  " $9}' || echo "  none"
+  echo "Journal boots on record:"; journalctl --list-boots --no-pager 2>/dev/null | tail -5
+}
+
+case "${1}" in
+  snapshot) snapshot ;;
+  collect)  collect ;;
+  show|"")  show ;;
+  *) sed -n '5,9p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac
