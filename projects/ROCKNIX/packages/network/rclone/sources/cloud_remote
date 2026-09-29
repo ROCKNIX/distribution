@@ -1,0 +1,418 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+# cloud_remote - configure rclone remotes without rclone's interactive TUI.
+#
+# `rclone config` asks its questions in a terminal, which on a handheld means
+# an SSH session from another computer. That flow fails in ways the player
+# cannot act on: rclone's own prompt tells them to answer N at "Use auto
+# config?" (correct advice for a headless machine, fatal here), the auth link
+# only exists in terminal scrollback, and the whole thing needs a machine that
+# can reach the handheld over the LAN. See fork issue #51.
+#
+# rclone supports being configured programmatically -- `rclone config create`
+# writes a remote non-interactively, and every OAuth backend accepts a finished
+# token as a plain config value. So we ask the questions ourselves, in a UI the
+# player already has in their hands, and hand rclone the answers.
+#
+# Commands (all output is machine-readable, for the ES front end):
+#   providers            TSV: tier, name, label
+#   subproviders <type>  TSV: value, label -- the sub-provider choice a few
+#                        backends make before their other options mean anything
+#   fields <type> [prov] TSV: name, required, password, sensitive, type,
+#                        default, help, choices -- filtered to the options
+#                        that apply to sub-provider `prov`. `choices` is how
+#                        many suggested values the option has, so the caller
+#                        can pick an input widget without fetching them.
+#   choices <type> <field> [prov]  TSV: value, label
+#   create <name> <type> [key=value ...]    create, verify, roll back on failure
+#   list                 TSV: name, type
+#
+# Tiers:
+#   keys      no OAuth at all - a form is enough
+#   oauth     needs a provider sign-in, which cloud_oauth handles on-device
+#   plumbing  not a storage provider at all - see NOT_PROVIDERS
+#
+# Exit codes: 0 ok, 1 usage/arguments, 2 rclone failed, 3 verification failed.
+
+import json
+import os
+import subprocess
+import sys
+
+RCLONE = "/usr/bin/rclone"
+LOG_FILE = "/var/log/cloud_sync.log"
+
+# Every OAuth backend goes through cloud_oauth, which wraps rclone's own
+# `authorize` rather than reimplementing any provider's flow, so nothing here
+# is per-provider: the "oauth" tier is whatever rclone can authorize. (A
+# DRIVABLE_OAUTH constant and a table of device-flow and PKCE-paste backends
+# described a design that was not built; nothing read them, and they went in
+# #308, claude F-RS-14.) That a provider's authorize link resolves to the
+# provider was probed for dropbox, drive, onedrive, box, pcloud and yandex;
+# that its sign-in completes on the device is proved per provider.
+
+# rclone's backend list is not a list of cloud services. These wrap or
+# transform another remote, or are not remote at all, and offering them as
+# "where your saves go" ranges from meaningless to harmful: `local` would
+# have someone back their saves up onto the same storage the saves are on,
+# which is not a backup and only looks like one.
+NOT_PROVIDERS = {
+    "alias", "cache", "chunker", "combine", "compress", "crypt", "hasher",
+    "local", "memory", "union",
+}
+
+
+def log(message):
+    """Append to the shared cloud-sync log, matching the other tools' format."""
+    import datetime
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        with open(LOG_FILE, "a") as handle:
+            handle.write("[%s] [INFO] [cloud_remote] %s\n" % (stamp, message))
+    except OSError:
+        # A full or read-only /var/log must not take the setup flow down.
+        pass
+
+
+def rclone(*args, check=True):
+    """Run rclone and return (exit code, stdout, stderr)."""
+    proc = subprocess.run(
+        [RCLONE] + list(args),
+        capture_output=True, text=True,
+    )
+    if check and proc.returncode != 0:
+        # The verb and the exit code -- never the arguments, never rclone's
+        # words. `config create` carries every key=value the player typed,
+        # passwords among them, and this line put them in cloud_sync.log in
+        # the clear whenever a create failed (audit #307, gpt F-RS-04: the
+        # finding the audit refuted for cloud_oauth holds here).
+        verb = " ".join(args[:2]) if args[:1] == ("config",) else (args[0] if args else "")
+        log("rclone %s failed (%d)" % (verb, proc.returncode))
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def load_providers():
+    """rclone's own backend catalogue, as a list of dicts."""
+    code, out, err = rclone("config", "providers")
+    if code != 0:
+        sys.stderr.write("could not read rclone's provider list\n")
+        sys.exit(2)
+    try:
+        return json.loads(out)
+    except json.JSONDecodeError as exc:
+        sys.stderr.write("rclone's provider list was not valid JSON: %s\n" % exc)
+        sys.exit(2)
+
+
+def tier_of(provider):
+    """Which setup path this backend can use."""
+    if provider.get("Name") in NOT_PROVIDERS:
+        return "plumbing"
+    names = {opt.get("Name") for opt in provider.get("Options") or []}
+    if "token" not in names:
+        return "keys"
+    return "oauth"
+
+
+def option_applies(opt, subprovider):
+    """Is this option relevant once `subprovider` has been chosen?
+
+    Several backends gate their options on a sub-provider: koofr carries
+    three separate options all named `password`, one each for Koofr,
+    Digi Storage and "other", and only one of them is ever real. S3 goes
+    further, with 51 sub-providers and options like ibm_api_key that mean
+    nothing unless you picked IBMCOS. Rendering them all gives duplicate
+    fields and questions about vendors the player is not using.
+    """
+    constraint = (opt.get("Provider") or "").strip()
+    if not constraint:
+        return True
+    if constraint.startswith("!"):
+        excluded = {p.strip() for p in constraint[1:].split(",") if p.strip()}
+        return subprovider not in excluded
+    allowed = {p.strip() for p in constraint.split(",") if p.strip()}
+    return subprovider in allowed
+
+
+def cmd_subproviders(backend_type):
+    """The sub-provider choice, where a backend has one."""
+    for provider in load_providers():
+        if provider.get("Name") != backend_type:
+            continue
+        for opt in provider.get("Options") or []:
+            if opt.get("Name") != "provider":
+                continue
+            for example in opt.get("Examples") or []:
+                help_text = (example.get("Help") or "").splitlines()
+                print("%s\t%s" % (
+                    example.get("Value") or "",
+                    help_text[0] if help_text else (example.get("Value") or ""),
+                ))
+            return 0
+        return 0
+    sys.stderr.write("unknown backend type: %s\n" % backend_type)
+    return 1
+
+
+def cmd_providers():
+    """Every backend with the setup path it can use. Sorted for a stable UI."""
+    rows = []
+    for provider in load_providers():
+        name = provider.get("Name") or ""
+        label = (provider.get("Description") or name).splitlines()[0]
+        rows.append((tier_of(provider), name, label))
+    for tier, name, label in sorted(rows, key=lambda r: (r[0], r[1])):
+        print("%s\t%s\t%s" % (tier, name, label))
+    return 0
+
+
+def cmd_fields(backend_type, subprovider=""):
+    """The options a player actually has to answer for one backend.
+
+    rclone exposes every knob a backend has, most of which are advanced
+    tuning nobody should meet during setup. Show the non-advanced ones, and
+    let the caller decide how to render required vs optional.
+    """
+    for provider in load_providers():
+        if provider.get("Name") != backend_type:
+            continue
+        for opt in provider.get("Options") or []:
+            if opt.get("Advanced") or opt.get("Hide"):
+                continue
+            # The sub-provider choice itself is made on its own screen.
+            if opt.get("Name") == "provider":
+                continue
+            if not option_applies(opt, subprovider):
+                continue
+            # These are two different things and must not be collapsed.
+            # IsPassword means the value is a credential: mask the input and
+            # let rclone obscure it on the way in. Sensitive only means "do
+            # not echo this into logs" -- rclone marks sftp's host and user
+            # that way, and password-masking a hostname would leave the
+            # player unable to see what they typed.
+            help_text = (opt.get("Help") or "").splitlines()
+            print("%s\t%d\t%d\t%d\t%s\t%s\t%s\t%d" % (
+                opt.get("Name") or "",
+                1 if opt.get("Required") else 0,
+                1 if opt.get("IsPassword") else 0,
+                1 if opt.get("Sensitive") else 0,
+                opt.get("Type") or "string",
+                opt.get("DefaultStr") or "",
+                help_text[0] if help_text else "",
+                len(opt.get("Examples") or []),
+            ))
+        return 0
+    sys.stderr.write("unknown backend type: %s\n" % backend_type)
+    return 1
+
+
+def cmd_choices(backend_type, field, subprovider=""):
+    """The suggested values for one option.
+
+    rclone marks none of these Exclusive, so they are suggestions rather than
+    a closed set -- but for something like webdav's `vendor` the player has
+    no way to guess "other", so offering the list is the difference between
+    a form they can fill in and one they cannot.
+    """
+    for provider in load_providers():
+        if provider.get("Name") != backend_type:
+            continue
+        for opt in provider.get("Options") or []:
+            if opt.get("Name") != field:
+                continue
+            if not option_applies(opt, subprovider):
+                continue
+            for example in opt.get("Examples") or []:
+                help_text = (example.get("Help") or "").splitlines()
+                value = example.get("Value")
+                if value is None:
+                    continue
+                label = help_text[0] if help_text else str(value)
+                print("%s\t%s" % (value, label))
+            return 0
+        return 0
+    sys.stderr.write("unknown backend type: %s\n" % backend_type)
+    return 1
+
+
+def existing_remotes():
+    """Configured remote names, without the trailing colon -- or None when
+    rclone could not say. A listing that failed used to read as "no remotes",
+    and cmd_create's refusal to touch an existing remote fell open exactly
+    when rclone could not be asked (#308 gpt F-RS-23)."""
+    code, out, _ = rclone("listremotes", check=False)
+    if code != 0:
+        return None
+    return [line.strip().rstrip(":") for line in out.splitlines() if line.strip()]
+
+
+def cmd_list():
+    code, out, _ = rclone("config", "dump", check=False)
+    if code != 0:
+        return 0
+    try:
+        config = json.loads(out or "{}")
+    except json.JSONDecodeError:
+        return 0
+    for name in sorted(config):
+        print("%s\t%s" % (name, config[name].get("type", "")))
+    return 0
+
+
+def cmd_create(name, backend_type, settings):
+    """Create a remote from already-answered values, then prove it works.
+
+    Refuses to touch a remote that already exists. A device that is already
+    syncing has a working configuration and possibly cloud data laid out to
+    match it; silently rewriting that is how someone loses access to their
+    own files (see fork issue #51).
+    """
+    existing = existing_remotes()
+    if existing is None:
+        sys.stderr.write("could not read the configured remotes; not creating one\n")
+        return 2
+    if name in existing:
+        sys.stderr.write(
+            "remote '%s' already exists; not modifying it\n" % name)
+        return 1
+
+    providers = load_providers()
+    known = {t.get("Name") for t in providers}
+    if backend_type not in known:
+        sys.stderr.write("unknown backend type: %s\n" % backend_type)
+        return 1
+    # The values of this backend's password options, to be taken out of
+    # anything of rclone's this passes on (see below).
+    secret_names = {opt.get("Name") for t in providers if t.get("Name") == backend_type
+                    for opt in (t.get("Options") or []) if opt.get("IsPassword")}
+    secret_values = [value for key, value in settings if key in secret_names and value]
+
+    args = ["config", "create", name, backend_type]
+    for key, value in settings:
+        args.append("%s=%s" % (key, value))
+    # Bucket-based clouds have no directories: a folder is a prefix on
+    # object names, so an empty one does not exist and mkdir makes nothing.
+    # rclone's answer (v1.63+) is a directory marker -- the zero-byte "name/"
+    # object the AWS and MinIO consoles write for "Create folder" -- behind
+    # directory_markers, off by default. On, mkdir and the folder seeding
+    # behave on a bucket as on Dropbox and an empty folder survives; the
+    # restore judges a folder by its parent's listing either way
+    # (D-CLOUD-120, 2026-09-12). Only where rclone documents the option.
+    if backend_type in ("s3", "gcs", "azureblob") and not any(k == "directory_markers" for k, _ in settings):
+        args.append("directory_markers=true")
+    # --non-interactive so rclone reports a question as data instead of
+    # blocking on stdin that no one is attached to. --obscure so passwords
+    # are stored the way rclone expects rather than in the clear.
+    args += ["--non-interactive", "--obscure"]
+
+    log("creating remote %s (type %s) with %d option(s)"
+        % (name, backend_type, len(settings)))
+    code, out, err = rclone(*args)
+    if code != 0:
+        # rclone's reason goes on to the interface, which shows it under THE
+        # CONNECTION COULDN'T BE SAVED so a mistyped key can be fixed -- with
+        # any password value it echoed taken out first (the audit of stream
+        # C, G-C-09: the log was cleaned in PL-074, this channel was not).
+        said = err.strip()
+        for value in secret_values:
+            said = said.replace(value, "<hidden>")
+        sys.stderr.write((said or "rclone config create failed") + "\n")
+        return 2
+
+    # rclone --non-interactive answers with a JSON blob when it still needs
+    # something. Exit 0 there would otherwise look like success while leaving
+    # a half-configured remote behind.
+    question = None
+    try:
+        parsed = json.loads(out or "{}")
+        if isinstance(parsed, dict) and parsed.get("State"):
+            question = parsed.get("Option") or {}
+    except json.JSONDecodeError:
+        pass
+    if question:
+        remove_remote(name)
+        sys.stderr.write(
+            "backend needs more input: %s\n" % (question.get("Name") or "unknown"))
+        return 2
+
+    # Prove it before telling anyone it worked. A remote that lists is a
+    # remote the sync tools can use; an exit code from create only says the
+    # file got written.
+    code, _, err = rclone("lsd", "%s:" % name,
+                          "--contimeout", "10s", "--timeout", "20s",
+                          "--low-level-retries", "1", "--retries", "1",
+                          check=False)
+    if code != 0:
+        log("remote %s failed verification, rolling back" % name)
+        remove_remote(name)
+        sys.stderr.write(
+            "the remote was created but could not be reached; it has been "
+            "removed so nothing half-working is left behind\n")
+        return 3
+
+    log("remote %s created and verified" % name)
+    print("OK=%s" % name)
+    return 0
+
+
+def remove_remote(name):
+    """Undo a failed create. Best effort - never mask the original error."""
+    rclone("config", "delete", name, check=False)
+
+
+def usage():
+    sys.stderr.write(
+        "usage: cloud_remote providers\n"
+        "       cloud_remote subproviders <type>\n"
+        "       cloud_remote fields <type> [subprovider]\n"
+        "       cloud_remote choices <type> <field> [subprovider]\n"
+        "       cloud_remote create <name> <type> [key=value ...]\n"
+        "       cloud_remote list\n")
+    return 1
+
+
+def main(argv):
+    if len(argv) < 2:
+        return usage()
+    command = argv[1]
+
+    if command == "providers":
+        return cmd_providers()
+
+    if command == "subproviders":
+        if len(argv) != 3:
+            return usage()
+        return cmd_subproviders(argv[2])
+
+    if command == "choices":
+        if len(argv) not in (4, 5):
+            return usage()
+        return cmd_choices(argv[2], argv[3], argv[4] if len(argv) == 5 else "")
+
+    if command == "fields":
+        if len(argv) not in (3, 4):
+            return usage()
+        return cmd_fields(argv[2], argv[3] if len(argv) == 4 else "")
+
+    if command == "list":
+        return cmd_list()
+
+    if command == "create":
+        if len(argv) < 4:
+            return usage()
+        settings = []
+        for pair in argv[4:]:
+            if "=" not in pair:
+                sys.stderr.write("expected key=value, got: %s\n" % pair)
+                return 1
+            key, value = pair.split("=", 1)
+            settings.append((key, value))
+        return cmd_create(argv[2], argv[3], settings)
+
+    return usage()
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

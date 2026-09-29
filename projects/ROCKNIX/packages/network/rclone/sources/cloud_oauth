@@ -1,0 +1,2615 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+# cloud_oauth - sign in to a cloud provider from the handheld and a phone.
+#
+# rclone's OAuth already works; what it needs is somewhere to happen. Its
+# `authorize` command runs a web server on 127.0.0.1:53682 and waits for the
+# provider to redirect a browser back to it -- which assumes the browser is on
+# the same machine. On a handheld there is no browser at all, so the shipped
+# path was an SSH session from a computer, tunnelling that port back, and that
+# is the flow that has failed everyone who has tried it.
+#
+# Nothing about the OAuth needs to change. The bytes just have to move:
+#
+#   1. `rclone authorize <backend>` starts and prints a local URL.
+#   2. Following that URL from here yields the provider's real sign-in URL,
+#      carrying rclone's own client id and its state parameter.
+#   3. This serves that link on the LAN, so a phone can open it.
+#   4. The player signs in. The provider redirects the phone to
+#      localhost:53682, which the phone cannot load -- but the address bar
+#      now holds ?code=...&state=...
+#   5. They paste that back here, and this replays it to rclone's waiting
+#      server, which completes the exchange and prints a token.
+#   6. The token goes into rclone.conf.
+#
+# So no OAuth application is registered by ROCKNIX, no client secret ships, and
+# no provider-specific code exists here: every backend rclone can authorize
+# goes through the same six steps. Verified against dropbox, drive, onedrive,
+# box, pcloud and yandex, which resolve to their own providers unchanged.
+#
+#   cloud_oauth serve <backend> [--name NAME] [--port N] [--timeout SECONDS]
+#   cloud_oauth url                     the full link, PIN included, for a QR
+#   cloud_oauth info                    URL/ADDRESS/PIN, one KEY=VALUE per line
+#   cloud_oauth status                  waiting | signed-in | failed | idle
+#   cloud_oauth cancel
+#
+# `url` and `info` differ in what they are for. The QR carries the PIN, so
+# scanning it skips a step; the handheld's screen shows the bare address and
+# the PIN apart, because those are read off a small panel and typed on a
+# phone -- and "?pin=7677" in a URL bar is where that goes wrong.
+#
+# The listener binds the LAN only while a sign-in is running, times out on its
+# own, and requires a PIN shown on the handheld -- so reaching it takes the
+# device in your hands, not merely a seat on the wifi.
+
+import contextlib
+import errno
+import fcntl
+import hashlib
+import http.server
+import itertools
+import json
+import os
+import re
+import secrets
+import select
+import shutil
+import signal
+import socket
+import struct
+import subprocess
+import sys
+import threading
+import time
+import shlex
+import urllib.parse
+import urllib.request
+
+STATE_DIR = "/var/run/cloud_oauth"
+RCLONE = "/usr/bin/rclone"
+LOCAL_AUTH = "http://127.0.0.1:53682"
+# How long `rclone authorize` has to print its local link.
+AUTHORIZE_WAIT = 20
+LOG_FILE = "/var/log/cloud_sync.log"
+
+
+def log(message):
+    import datetime
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        with open(LOG_FILE, "a") as handle:
+            handle.write("[%s] [INFO] [cloud_oauth] %s\n" % (stamp, message))
+    except OSError:
+        pass
+
+
+def state_path(name):
+    return os.path.join(STATE_DIR, name)
+
+
+# session.json is written by three threads of the serve (the collector, the
+# request handlers, the main thread) and read by other processes (`status`,
+# `info`, the interface). It was truncated and rewritten in place, and
+# read_state turns a half-written file into {} -- a status that read idle
+# for a moment while a sign-in was completing, and a merge that could write
+# that emptiness back (#308 claude F-RS-23, gpt F-RS-17). So: one writer at
+# a time within the process, and every write a whole file renamed over the
+# old one, which a reader in any process sees before or after, never during.
+#
+# And one writer across processes too: a serve being cancelled and the one
+# replacing it write the same file, so a read-modify-write holds an flock on
+# session.lock as well (the audit of stream C, G-C-02). flock is bound here,
+# not looked up through the fcntl module, so a test that stands in for the
+# module's ioctl leaves it alone.
+_STATE_LOCK = threading.Lock()
+_flock, _LOCK_EX = fcntl.flock, fcntl.LOCK_EX
+
+
+@contextlib.contextmanager
+def _state_locked():
+    with _STATE_LOCK:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        fd = os.open(state_path("session.lock"), os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            _flock(fd, _LOCK_EX)
+            yield
+        finally:
+            os.close(fd)
+
+
+def _write_whole(data):
+    os.makedirs(STATE_DIR, exist_ok=True)
+    path = state_path("session.json")
+    tmp = "%s.%d.tmp" % (path, os.getpid())
+    with open(tmp, "w") as handle:
+        json.dump(data, handle)
+    os.replace(tmp, path)
+
+
+def write_state(**fields):
+    with _state_locked():
+        existing = read_state()
+        existing.update(fields)
+        _write_whole(existing)
+
+
+def write_owned(attempt, owner=None, from_status=None, **fields):
+    """write_state, if the state still belongs to this serve's attempt.
+
+    Each serve stamps the state with an attempt id of its own (cmd_serve's
+    reset_state). A collector from a serve that has since been replaced --
+    its rclone killed by the replacement, or dying as the old serve tears
+    down -- would otherwise write its failure over the new attempt's state,
+    and the merge kept that error beside the new attempt's "waiting" (G-C-02
+    claude). An attempt of None owns whatever is there: a Session made
+    outside a serve.
+
+    owner, when given, is the session within the serve that must still be
+    the one the state names (SessionHolder.start writes it): a restart
+    replaces the session and keeps the serve. from_status, when given, is
+    the statuses this write may move the state from. Together they keep the
+    state moving forward: a dead attempt is not republished as waiting, and
+    an attempt that was replaced, cancelled or timed out is not reopened as
+    signed-in (the audit of the fix round, PL-032). A state with no status
+    yet -- a Session made outside a serve -- counts as None. Checked and
+    written under the state's lock. Returns whether it wrote.
+    """
+    with _state_locked():
+        existing = read_state()
+        if attempt is not None and existing.get("attempt") != attempt:
+            return False
+        if owner is not None and existing.get("session") != owner:
+            return False
+        if from_status is not None and existing.get("status") not in from_status:
+            return False
+        existing.update(fields)
+        _write_whole(existing)
+        return True
+
+
+def reset_state(**fields):
+    """Replace the state, rather than merging into it.
+
+    write_state merges, which is right while one sign-in is running and wrong
+    between two: a finished attempt leaves its address, PIN and provider link
+    behind, and the next page to read them shows a previous session's code as
+    though it were live. Anyone typing it in gets a flat refusal from a
+    listener that is waiting for a different number.
+    """
+    os.makedirs(STATE_DIR, exist_ok=True)
+    # The markers are part of the state. A completion marker left by the last
+    # attempt would tell the next one's window to show "Finishing up" before
+    # anybody had signed in to anything.
+    for name in ("open-browser", "close-browser", "signed-in", "page",
+                 "phone-keyboard", "field"):
+        try:
+            os.unlink(state_path(name))
+        except OSError:
+            pass
+    with _state_locked():
+        _write_whole(dict(fields))
+
+
+def read_state():
+    try:
+        with open(state_path("session.json")) as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return {}
+
+
+def lan_address():
+    """The address a phone on the same network would use.
+
+    Asks the routing table which source address reaches the outside world,
+    without sending anything -- a connected UDP socket only picks a route.
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.connect(("192.0.2.1", 9))  # TEST-NET-1: routable, never answers
+        return probe.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        probe.close()
+
+
+def provider_url(local_url):
+    """Turn rclone's local auth URL into the provider's real sign-in URL.
+
+    rclone answers /auth with a redirect carrying its own client id, scopes
+    and state. Following it here rather than in the player's browser is the
+    whole trick: the phone then goes straight to the provider and never needs
+    to reach this device.
+    """
+    request = urllib.request.Request(local_url)
+
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *args, **kwargs):
+            return None
+
+    opener = urllib.request.build_opener(NoRedirect)
+    try:
+        opener.open(request, timeout=10)
+    except urllib.error.HTTPError as exc:
+        location = exc.headers.get("Location")
+        if location:
+            return location
+    except OSError:
+        pass
+    return None
+
+
+class Session:
+    """One sign-in attempt: rclone's process, its URL, and the result."""
+
+    def __init__(self, backend, remote_name, timeout):
+        self.backend = backend
+        self.remote_name = remote_name
+        self.timeout = timeout
+        self.proc = None
+        self.provider = None
+        self.token = None
+        # Set by the holder, so a sign-in that finishes on the device can
+        # close the window without this needing to know what a window is.
+        self.on_signed_in = None
+        # True once the remote exists and has answered -- never earlier (see
+        # _write_config).
+        self.configured = False
+        self._config_lock = threading.Lock()
+        self._config_result = None
+        # Set by the holder when this attempt stops speaking for the state:
+        # another attempt replaced it (whose start kills this one's rclone),
+        # or the serve is ending (holder.end kills it). Either way this
+        # one's collector is woken by a death it must not report as a
+        # failed sign-in (PL-050, G-C-02).
+        self.superseded = False
+        # The serve's attempt id, which the state carries (write_owned), and
+        # this session's own within it (SessionHolder.start): a restart keeps
+        # the serve and replaces the session (PL-032).
+        self.attempt = None
+        self.gen = None
+        # The thread that collects rclone's output and finishes the job;
+        # SessionHolder.end lets one that is saving a remote finish.
+        self.collector = None
+        self.error = None
+        # rclone's own last words. It exits fatally when the exchange fails,
+        # and what it says -- "code doesn't exist or has expired" against
+        # anything else -- is the difference between "you were too slow, here
+        # is another link" and "something is actually wrong". Reporting a
+        # generic failure for both sent the tester back to the handheld when
+        # one tap would have done.
+        self.rclone_says = ""
+
+    def finished(self):
+        return self.proc is not None and self.proc.poll() is not None
+
+    def start(self):
+        # A previous attempt still holding 53682 would make this one fail with
+        # "address already in use", which reads as a provider problem.
+        subprocess.run(["pkill", "-f", "rclone authorize"],
+                       capture_output=True)
+        time.sleep(1)
+
+        self.proc = subprocess.Popen(
+            [RCLONE, "authorize", self.backend, "--auth-no-open-browser"],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+        # The wait for the link is bounded by the clock, not by rclone. It
+        # was a readline() under a deadline checked between lines, so an
+        # authorize that printed nothing held this -- and the interface's
+        # sign-in page -- for as long as it cared to (#308 gpt F-RS-19).
+        # Raw reads under select(), then: whatever arrived after the link
+        # goes to the collector with the rest.
+        deadline = time.time() + AUTHORIZE_WAIT
+        fd = self.proc.stdout.fileno()
+        pending = b""
+        local = None
+        while local is None:
+            left = deadline - time.time()
+            if left <= 0:
+                break
+            ready, _, _ = select.select([fd], [], [], left)
+            if not ready:
+                break
+            chunk = os.read(fd, 4096)
+            if not chunk:
+                break
+            pending += chunk
+            match = re.search(rb"(http://127\.0\.0\.1:53682/auth\?state=\S+)\s", pending)
+            if match:
+                local = match.group(1).decode()
+        self.early_output = pending.decode("utf-8", "replace")
+        if not local:
+            self.error = "rclone did not offer a sign-in link"
+            if self.proc.poll() is None:
+                self.proc.terminate()
+                try:
+                    self.proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    self.proc.kill()
+            return False
+
+        self.provider = provider_url(local)
+        if not self.provider:
+            self.error = "could not read the provider's sign-in address"
+            return False
+
+        # Everything after this point is rclone waiting for the redirect, so
+        # collect its output off-thread; the token appears there when the
+        # replay lands.
+        self.collector = threading.Thread(target=self._collect, daemon=True)
+        self.collector.start()
+        log("sign-in started for %s" % self.backend)
+        return True
+
+    def _collect(self):
+        # What start() read past the link comes first, through the same
+        # checks: a provider that refuses at once puts rclone's last words in
+        # that first read, and they went into the buffer without being looked
+        # at, so the failure said nothing of why (the audit of stream C,
+        # G-C-10).
+        buffer = ""
+        early = getattr(self, "early_output", "")
+        for line in itertools.chain(early.splitlines(True), self.proc.stdout):
+            buffer += line
+            if line.startswith("Error: ") or "Fatal error:" in line:
+                self.rclone_says = line.split("error: ")[-1].strip() or line.strip()
+            if "<---End paste" in buffer or "Paste the following" in buffer:
+                match = re.search(r"(\{.*\})", buffer, re.S)
+                if match:
+                    self.token = match.group(1).strip()
+                    break
+        self.proc.wait()
+
+        # Finish the job. rclone's own server takes the redirect when the page
+        # is on the handheld, so nothing is ever pasted back and submit() --
+        # which was the only caller of _write_config -- never runs. The token
+        # arrived, was collected here, and stopped: no remote was created and
+        # the status stayed "waiting", so a sign-in that had actually
+        # succeeded was reported as unfinished and had to be started again.
+        if self.token and not self.configured:
+            ok, detail = self._write_config()
+            if ok:
+                log("sign-in completed on the device")
+                if self.on_signed_in:
+                    try:
+                        self.on_signed_in()
+                    except Exception as exc:      # never take the thread down
+                        log("post-sign-in step failed: %s" % exc)
+            else:
+                log("could not finish the sign-in: %s" % detail)
+                # Only while this attempt still speaks for the state: a
+                # restart may have replaced it while its remote was being
+                # created (G-C-02 gpt).
+                if not self.superseded:
+                    self._fail_owned(detail, ("starting", "waiting", "failed"))
+        elif not self.token and not self.superseded:
+            # rclone ended without a token: the provider refused, the
+            # exchange failed, or it was killed. Nothing else is going to
+            # finish this attempt, and the on-device path has no page to
+            # say so -- the status stayed "waiting" until the serve timed
+            # out, and the interface's STILL WAITING told the player to
+            # finish an attempt that was already dead (audit #307 PL-050).
+            if self._fail_owned(self.failure_reason(), ("starting", "waiting")):
+                log("the sign-in ended without a token")
+
+    def _fail_owned(self, error, from_status):
+        """Mark the attempt failed -- only while this serve's attempt owns
+        the state and the status is one of from_status, checked and written
+        under the state's lock."""
+        with _state_locked():
+            existing = read_state()
+            if self.attempt is not None and existing.get("attempt") != self.attempt:
+                return False
+            if self.gen is not None and existing.get("session") != self.gen:
+                return False
+            if existing.get("status") not in from_status:
+                return False
+            existing.update(status="failed", error=error)
+            _write_whole(existing)
+            return True
+
+    def failure_reason(self):
+        """Why the attempt died, in words a player can act on."""
+        said = self.rclone_says
+        if "expired" in said or "invalid_grant" in said:
+            return ("That address had already expired — they are only good "
+                    "for a couple of minutes.")
+        if said:
+            return "The provider refused it: %s" % said[:160]
+        return "The provider did not accept that address."
+
+    def submit(self, pasted):
+        """Replay the provider's redirect to rclone's waiting server.
+
+        Accepts the whole failed URL or just the code, because the player is
+        copying from a phone's address bar on a page that did not load, and
+        which of the two they manage to grab is not something to be strict
+        about.
+        """
+        pasted = pasted.strip()
+        query = None
+        if "code=" in pasted:
+            parsed = urllib.parse.urlparse(pasted)
+            query = parsed.query or pasted.split("?", 1)[-1]
+        elif pasted:
+            state = urllib.parse.parse_qs(
+                urllib.parse.urlparse(self.provider).query).get("state", [""])[0]
+            query = urllib.parse.urlencode({"code": pasted, "state": state})
+        if not query:
+            # Nothing was replayed, so the attempt is still alive and they can
+            # simply paste again -- worth distinguishing from the dead-session
+            # case below.
+            return False, ("Nothing was pasted. Go to the page that failed "
+                           "to load, copy its whole address from the browser "
+                           "bar, and paste it here.")
+
+        try:
+            urllib.request.urlopen("%s/?%s" % (LOCAL_AUTH, query), timeout=15).read()
+        except urllib.error.HTTPError:
+            pass  # rclone answers the redirect with its own page; not an error
+        except OSError as exc:
+            return False, "could not hand the code back to rclone: %s" % exc
+
+        for _ in range(40):
+            if self.token:
+                return self._write_config()
+            if self.proc.poll() is not None and not self.token:
+                # rclone's authorize server serves exactly one redirect and
+                # then exits, so a wrong or expired code ends the attempt
+                # rather than allowing another go. Say that, because the
+                # player is looking at a page that still has a working-looking
+                # form on it and would otherwise keep pasting into a session
+                # that no longer exists.
+                return False, self.failure_reason()
+            time.sleep(0.5)
+        return False, "Timed out waiting for the provider."
+
+    def _write_config(self):
+        """Create the remote, once per attempt, and say how it went.
+
+        Two paths can reach this -- the redirect landing on rclone directly
+        (the collector) and a code pasted back from a phone (submit) -- and
+        they can overlap. The first does the work; the second waits for it
+        and is handed the same answer. `configured` used to be set on the
+        way in, so a second caller was told "Connected" while the first was
+        still creating and checking the remote, and even when that then
+        failed (audit #307 PL-048). It is set now only from the result.
+        """
+        with self._config_lock:
+            if self._config_result is None:
+                self._config_result = self._create_remote()
+                self.configured = bool(self._config_result[0])
+            return self._config_result
+
+    def _create_remote(self):
+        # One create at a time within the serve: an attempt that finishes
+        # late removes what it made (below) before a newer one asks whether
+        # that name is taken.
+        with _CREATE_LOCK:
+            return self._create_remote_locked()
+
+    def _create_remote_locked(self):
+        name = self.remote_name or self.backend
+        # Replaced or closed before its token could be saved: nothing is
+        # made (PL-032).
+        if self.superseded:
+            log("the sign-in was closed before its remote was saved; nothing was saved")
+            return False, CLOSED_EARLY
+        # Which remotes exist, or no create at all: a listing that failed
+        # read as "none of that name" and the create went ahead over
+        # whatever was there (#308 gpt F-RS-23).
+        listed = subprocess.run([RCLONE, "listremotes"],
+                                capture_output=True, text=True)
+        if listed.returncode != 0:
+            log("could not list the configured remotes (exit %d); not creating one"
+                % listed.returncode)
+            return False, ("The sign-in worked, but your handheld's cloud "
+                           "settings couldn't be read.")
+        if "%s:" % name in listed.stdout.split():
+            return False, "a remote called '%s' already exists" % name
+
+        result = subprocess.run(
+            [RCLONE, "config", "create", name, self.backend,
+             "token=%s" % self.token, "--non-interactive"],
+            capture_output=True, text=True)
+        if result.returncode != 0:
+            # A fixed sentence, and rclone's exit code in the log -- never its
+            # words. They went to cloud_sync.log as "could not finish the
+            # sign-in: <rclone's stderr>" and into the page, and an rclone
+            # that echoed a parameter would have put the token there (audit
+            # #307 PL-074).
+            log("rclone could not save the remote (exit %d)" % result.returncode)
+            return False, ("The sign-in worked, but it couldn't be saved on "
+                           "your handheld.")
+
+        # Prove it before saying so. A token that parses is not a token that
+        # works, and cloud_remote takes the same posture.
+        check = subprocess.run(
+            [RCLONE, "lsd", "%s:" % name, "--contimeout", "10s",
+             "--timeout", "20s", "--low-level-retries", "1", "--retries", "1"],
+            capture_output=True, text=True)
+        if check.returncode != 0:
+            gone = subprocess.run([RCLONE, "config", "delete", name],
+                                  capture_output=True)
+            if gone.returncode != 0:
+                log("remote %s did not respond and could not be removed either "
+                    "(rclone config delete exited %d); it stays until the next "
+                    "sign-in replaces it" % (name, gone.returncode))
+            return False, "signed in, but the remote did not respond"
+
+        # Published only while this attempt still speaks for the state, and
+        # only from starting or waiting. The write's answer used to be
+        # dropped: an attempt a restart had replaced, or one the serve had
+        # already closed -- its timeout's failed, a cancel's idle -- went on
+        # to return success, and its caller stopped the pad and wrote the
+        # signed-in marker `wait` returns on, over a state that said
+        # otherwise; a remote no screen had reported stayed, and the next
+        # sign-in of that name was refused as already there (the audit of
+        # the fix round, PL-032: gpt G2-C-03, the blind pass's S-25, claude
+        # G2-C-03). Refused, the remote this attempt made is taken away
+        # again, so what the device holds is what the state says.
+        if not write_owned(self.attempt, owner=self.gen,
+                           from_status=(None, "starting", "waiting"),
+                           status="signed-in", remote=name):
+            # Checked, not assumed (the audit of the fixes, gpt G3-D-06): a
+            # delete that fails leaves the remote installed, and the log
+            # said it was gone.
+            gone = subprocess.run([RCLONE, "config", "delete", name],
+                                  capture_output=True)
+            if gone.returncode == 0:
+                log("the sign-in finished after it had been closed or replaced; "
+                    "the remote it made was removed")
+            else:
+                log("the sign-in finished after it had been closed or replaced; "
+                    "the remote it made could NOT be removed (rclone config "
+                    "delete exited %d) and stays until the next sign-in "
+                    "replaces it" % gone.returncode)
+            return False, CLOSED_EARLY
+        log("remote %s created for %s" % (name, self.backend))
+        return True, name
+
+
+# What a closed or replaced attempt's own late ending says, on the phone and
+# in the log, when it has one to say.
+CLOSED_EARLY = "That sign-in was closed before it finished."
+
+# One remote created at a time in this process (Session._create_remote).
+_CREATE_LOCK = threading.Lock()
+
+
+# rclone's backend names are lowercase identifiers ("dropbox", "onedrive").
+# They are not what the provider calls itself, and a page headed "Connect
+# dropbox" reads like a typo on the one screen where the player is deciding
+# whether to trust us with their storage. The handheld passes the curated name
+# it already shows in its own menu; this map is the fallback for a backend
+# reached some other way, and title-casing is the fallback for that.
+DISPLAY_NAMES = {
+    "acd": "Amazon Drive", "box": "Box", "drive": "Google Drive",
+    "dropbox": "Dropbox", "gcs": "Google Cloud Storage",
+    "gphotos": "Google Photos", "hidrive": "HiDrive", "jottacloud": "Jottacloud",
+    "mailru": "Mail.ru Cloud", "onedrive": "Microsoft OneDrive",
+    "opendrive": "OpenDrive", "pcloud": "pCloud",
+    "premiumizeme": "premiumize.me", "putio": "put.io",
+    "sharefile": "Citrix ShareFile", "sugarsync": "SugarSync",
+    "yandex": "Yandex Disk", "zoho": "Zoho WorkDrive",
+    "filefabric": "Enterprise File Fabric",
+}
+
+
+def display_name(backend, label=None):
+    # Our curated name wins where we have one: rclone's descriptions are
+    # written for its documentation ("Google Cloud Storage (this is not Google
+    # Drive)"), which is accurate and wrong as a page heading. The passed
+    # label -- rclone's description, by way of the handheld's menu -- covers
+    # everything else, and title-casing covers a backend reached from a shell.
+    if backend in DISPLAY_NAMES:
+        return DISPLAY_NAMES[backend]
+    if label:
+        return label
+    return backend.replace("_", " ").title()
+
+
+# Single %, not %%: this is substituted into the templates as a *value*
+# (%(style)s), so its percent signs are never seen by the formatter. Escaping
+# them the way the templates do shipped "width:100%%" as literal CSS, which
+# every browser discards -- which is how a four-character PIN box ended up
+# rendering at its default twenty-character width with wide letter spacing,
+# overflowing the card on a phone.
+STYLE = """
+body{font:16px/1.5 system-ui,sans-serif;margin:0;padding:20px;background:#111;color:#eee}
+.card{max-width:34rem;margin:0 auto}
+h1{font-size:1.3rem;margin:0 0 .25rem}
+h2{font-size:1rem;margin:1.5rem 0 .5rem;color:#9cf;text-transform:uppercase;
+   letter-spacing:.05em}
+ol{padding-left:1.3rem;margin:.5rem 0}li{margin:.4rem 0}
+a.go{display:block;background:#2d7;color:#000;padding:14px;border-radius:8px;
+     text-align:center;font-weight:600;text-decoration:none;margin:.5rem 0}
+input{width:100%;padding:12px;font-size:16px;border-radius:8px;border:1px solid #555;
+      background:#1c1c1c;color:#eee;box-sizing:border-box}
+/* Four characters do not need the width of a phone. Sized in ch so it tracks
+   the font rather than assuming one, and capped against the card so it still
+   shrinks rather than overflowing on a narrow screen. */
+input.pin{font-size:24px;letter-spacing:.5em;text-align:center;
+          width:7ch;max-width:100%;padding-left:.6em}
+form.narrow{text-align:center}
+form.narrow button{width:auto;min-width:9rem}
+button{margin-top:10px;padding:12px 20px;font-size:16px;border-radius:8px;
+       border:0;background:#4af;color:#000;font-weight:600;width:100%}
+button.minor{background:#333;color:#ddd;font-weight:500}
+.note{color:#aaa;font-size:.9rem}
+.err{background:#722;padding:12px;border-radius:8px;margin:1rem 0}
+.ok{background:#272;padding:12px;border-radius:8px;margin:1rem 0}
+.box{border:1px solid #444;border-radius:10px;padding:14px;margin:1rem 0}
+.big{font-size:1.6rem;text-align:center;margin:1rem 0}
+.keys{display:flex;gap:8px;margin-top:10px}
+.keys button{flex:1;margin-top:0}
+/* The trackpad. Tall enough to drag across a four-inch screen's worth of
+   page without lifting a finger, and touch-action:none so the browser does
+   not steal the gesture to scroll its own page. */
+.pad{height:11rem;margin-top:12px;border:1px dashed #555;border-radius:10px;
+     background:#181818;touch-action:none;display:flex;align-items:center;
+     justify-content:center;color:#666;font-size:.85rem;user-select:none}
+.pad.live{border-color:#4af;color:#4af}
+"""
+
+# The paste field sits ABOVE the sign-in button on purpose. Somebody arriving
+# here for the first time reads the numbered steps and goes down to the button;
+# somebody arriving the *second* time -- back from the provider, holding an
+# address that expires in about two minutes -- needs the box to be the first
+# thing on the screen, not something below a large green button that looks like
+# the action. Getting that wrong cost a real sign-in: the tester approved
+# access, could not see where the address went, and by the time they found it
+# the code had expired (fork #51).
+PAGE = """<!doctype html><meta name=viewport content="width=device-width,initial-scale=1">
+<title>Connect %(name)s</title>
+<style>%(style)s</style>
+<div class=card>
+<h1>Connect %(name)s</h1>
+<p class=note>Keep this page open. You will come back to it.</p>
+%(message)s
+
+%(here)s
+<h2>1. Sign in and approve access</h2>
+<a class=go href="%(provider)s" target="_blank" rel="noopener">Sign in to %(name)s</a>
+<p class=note>Opens in a new tab, so <strong>this page stays where it
+is</strong>. Approve access, then come straight back here — what you bring
+back is only good for a couple of minutes.</p>
+
+<h2>2. Paste the address it lands on</h2>
+<p class=note>Approving sends the browser to an address it cannot open, so it
+shows an error — <em>"Safari cannot open the page"</em>, <em>"This site can't
+be reached"</em>, or similar. <strong>That error page is the point: its
+address is what we need.</strong> Tap its address bar, copy the whole thing,
+come back to this tab and paste it below.</p>
+<form method=post id=f>
+<input name=code placeholder="Paste here" autofocus
+       autocapitalize=off autocorrect=off spellcheck=false inputmode=url>
+<input type=hidden name=pin value="%(pin)s">
+<button type=submit>Confirm</button>
+</form>
+<script>
+// Paste and it goes -- what was pasted expires in about two minutes, and the
+// tester who lost one spent them looking for the button.
+document.querySelector("input[name=code]").addEventListener("paste", function () {
+  var f = document.getElementById("f");
+  setTimeout(function () { if (this.value.indexOf("code=") >= 0) f.submit(); }.bind(this), 50);
+});
+</script>
+
+<form method=post>
+<input type=hidden name=pin value="%(pin)s">
+<input type=hidden name=restart value="1">
+<button class=minor type=submit>Lost the address? Start over</button>
+</form>
+</div>
+"""
+
+# Typing an address into a phone is the fallback for a phone that cannot scan,
+# and it has to stay short enough to type -- so the PIN is asked for here
+# rather than carried in the address. Scanning the QR skips this page, because
+# the QR encodes the PIN.
+PIN_PAGE = """<!doctype html><meta name=viewport content="width=device-width,initial-scale=1">
+<title>ROCKNIX cloud sign-in</title>
+<style>%(style)s</style>
+<div class=card>
+<h1>Almost there</h1>
+%(message)s
+<p>The address on the handheld ends in four digits. Type them here.</p>
+<form method=get action="/" class=narrow>
+<input class=pin name=pin inputmode=numeric pattern="[0-9]*" maxlength=4 autofocus
+       autocomplete=off placeholder="0000" value="%(pin)s">
+<button type=submit>Continue</button>
+</form>
+<p class=note>They are a PIN. This page is open to everyone on your network
+while setup is running, and the PIN is what stops somebody else finishing the
+sign-in with their own account. Scanning the code on the handheld fills it in
+for you.</p>
+</div>
+"""
+
+DONE_PAGE = """<!doctype html><meta name=viewport content="width=device-width,initial-scale=1">
+<title>Connected</title>
+<style>%(style)s</style>
+<div class=card>
+<h1>Connected</h1>
+<div class=ok>%(name)s is set up on your handheld as <strong>%(remote)s</strong>.</div>
+<div class=big>Go back to the handheld<br>and choose CONTINUE</div>
+<p class=note>You can close this page.</p>
+</div>
+"""
+
+
+SIGNIN_WINDOW = "/usr/bin/cloud-signin-window"
+UINPUT = "/dev/uinput"
+
+
+def sway_env():
+    """Enough environment to talk to the running sway over its IPC socket."""
+    session = running_session()
+    if not session:
+        return {}
+    runtime, display = session
+    env = {"XDG_RUNTIME_DIR": runtime, "WAYLAND_DISPLAY": display}
+    for name in sorted(os.listdir(runtime)):
+        if name.startswith("sway-ipc.") and name.endswith(".sock"):
+            env["SWAYSOCK"] = os.path.join(runtime, name)
+            break
+    return env
+
+
+def running_session():
+    """The Wayland session EmulationStation is already using.
+
+    The sign-in window runs as a client of *that* compositor rather than in
+    one of its own. A nested compositor cannot have the GPU -- the session
+    that owns the display holds it -- so it falls back to software
+    rasterisation, and the provider's page took about 150 seconds to paint
+    instead of two. Joining the existing session is both faster and simpler:
+    no second compositor, no mirroring, and the page appears on the screen
+    the player is already holding.
+    """
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            with open("/proc/%s/cmdline" % entry, "rb") as handle:
+                argv = handle.read().split(b"\0")
+            if not argv or not argv[0].endswith(b"/sway"):
+                continue
+            with open("/proc/%s/environ" % entry, "rb") as handle:
+                env = dict(
+                    kv.split(b"=", 1) for kv in handle.read().split(b"\0")
+                    if b"=" in kv)
+        except OSError:
+            continue
+        runtime = env.get(b"XDG_RUNTIME_DIR", b"").decode()
+        if not runtime or not os.path.isdir(runtime):
+            continue
+        for name in sorted(os.listdir(runtime)):
+            if name.startswith("wayland-") and not name.endswith(".lock"):
+                return runtime, name
+    return None, None
+
+
+def stop_other_serves():
+    """End any other `cloud_oauth serve`, so this one can have the port.
+
+    cancel only ever killed rclone; a serve left running kept port 8080 and
+    the next attempt died on EADDRINUSE before writing any state -- so the
+    handheld showed a blank address and nothing said why.
+
+    Walks /proc rather than calling pkill: `pkill -f "cloud_oauth serve"`
+    matches its own command line, and has killed the calling shell repeatedly
+    in this project's history.
+    """
+    me = os.getpid()
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit() or int(entry) == me:
+            continue
+        try:
+            with open("/proc/%s/cmdline" % entry, "rb") as handle:
+                argv = handle.read().split(b"\0")
+        except OSError:
+            continue
+        if any(b"cloud_oauth" in a for a in argv) and b"serve" in argv:
+            try:
+                os.kill(int(entry), signal.SIGTERM)
+            except OSError:
+                pass
+    time.sleep(1)
+
+
+def browser_stack_available():
+    """Whether this image can show a provider's page on the device itself."""
+    runtime, display = running_session()
+    return os.path.exists(SIGNIN_WINDOW) and runtime is not None
+
+
+class BrowserSession:
+    """The provider's sign-in page, on this device's screen."""
+
+    def __init__(self, url, host):
+        self.url = url
+        self.host = host
+        self.proc = None
+        self.log_file = None
+        self.log_path = None
+        self.error = None
+        # Whether start() turned sway's pointer hiding off, so stop() knows
+        # to turn it back on whatever became of the window.
+        self.cursor_overridden = False
+
+    def is_running(self):
+        return self.proc is not None and self.proc.poll() is None
+
+    def start(self):
+        runtime, display = running_session()
+        if not runtime:
+            self.error = "no display session to show the sign-in page on"
+            return False
+
+        os.makedirs(STATE_DIR, exist_ok=True)
+        self.log_path = state_path("window.log")
+        # Kept rather than discarded: a window that fails to start otherwise
+        # looks exactly like one that started and was never asked for.
+        self.log_file = open(self.log_path, "w")
+
+        env = dict(os.environ)
+        # Where the window records the address it is showing, so the phone can
+        # tell when the provider has moved on.
+        env["CLOUD_SIGNIN_PAGE_FILE"] = state_path("page")
+        env["CLOUD_SIGNIN_DONE_FILE"] = state_path("signed-in")
+        # And where it records that a field on that page has had the caret,
+        # which is when the phone's text can go across (the probe below). A
+        # record a previous window left says nothing about this one.
+        env["CLOUD_SIGNIN_FIELD_FILE"] = state_path("field")
+        try:
+            os.unlink(state_path("field"))
+        except OSError:
+            pass
+        env.update({
+            "XDG_RUNTIME_DIR": runtime,
+            "WAYLAND_DISPLAY": display,
+            "GDK_BACKEND": "wayland",
+        })
+        self.proc = subprocess.Popen(
+            [SIGNIN_WINDOW, self.url, registrable_domain(self.host),
+             "--exit-hint", exit_hint()]
+            + (["--no-auto-keyboard"]
+               if os.path.exists(state_path("phone-keyboard")) else []),
+            env=env, stdout=self.log_file, stderr=subprocess.STDOUT)
+        # Somebody may be about to drag a pointer at this page from their
+        # phone, and cannot aim what they cannot see.
+        BrowserSession._cursor_timeout(0)
+        self.cursor_overridden = True
+        log("sign-in window opened on %s for %s" % (display, self.host))
+        return True
+
+    @staticmethod
+    def _cursor_timeout(ms):
+        """How long sway waits before hiding the pointer.
+
+        ROCKNIX ships `seat * hide_cursor 1000`, which is right for a handheld
+        with no mouse and wrong while somebody is dragging one from their
+        phone: the pointer disappears a second after they stop moving, so the
+        tap that follows is aimed at something they cannot see. Zero means
+        never hide. Restored when the window closes, because the rest of the
+        time the original setting is the correct one.
+        """
+        try:
+            subprocess.run(["swaymsg", "seat", "*", "hide_cursor", str(ms)],
+                           capture_output=True, timeout=5,
+                           env=dict(os.environ, **sway_env()))
+        except (OSError, subprocess.SubprocessError) as exc:
+            log("could not set the cursor timeout: %s" % exc)
+
+    def stop(self):
+        # Restored whenever start() set it -- also when the window has
+        # already gone by itself (Escape, a crash). It used to sit inside
+        # the still-running test, so a window that ended on its own left
+        # sway never hiding the pointer (#308 claude F-RS-19, gpt F-RS-25).
+        if self.cursor_overridden:
+            BrowserSession._cursor_timeout(1000)
+            self.cursor_overridden = False
+        if self.proc and self.proc.poll() is None:
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+        self.proc = None
+        if self.log_file:
+            try:
+                self.log_file.close()
+            except OSError:
+                pass
+            self.log_file = None
+
+
+def registrable_domain(host):
+    """dropbox.com from www.dropbox.com.
+
+    Providers bounce a sign-in through their own subdomains -- Dropbox goes
+    via marketing.dropbox.com -- so pinning navigation to the exact host the
+    authorize URL used refuses legitimate steps of the flow. Two labels is a
+    blunt rule that is wrong for co.uk and right for every provider rclone
+    talks to; the window treats it as a suffix, not an exact match.
+    """
+    parts = [p for p in (host or "").split(".") if p]
+    return ".".join(parts[-2:]) if len(parts) > 2 else (host or "")
+
+
+# Shown when the sign-in page is open on the handheld itself. That is the good
+# path: the redirect completes on its own and nothing has to be copied.
+#
+# The keyboard below is an option, not a requirement. On a 6" handheld with a
+# touchscreen, typing on the device is perfectly reasonable and this page is
+# unnecessary; on a 3.5" screen driven by a d-pad it is the difference between
+# a minute of misery and a few seconds. Both work, because the page is on the
+# device's screen either way -- so the choice is the player's, not ours.
+REMOTE_PAGE = """<!doctype html><meta name=viewport content="width=device-width,initial-scale=1">
+<title>Keyboard for %(name)s</title>
+<style>%(style)s</style>
+<div class=card>
+<h1>Keyboard for %(name)s</h1>
+
+<div id=state class=note>Checking&hellip;</div>
+
+<input id=kb type=password placeholder="Type here" autocapitalize=off
+       autocorrect=off spellcheck=false autofocus>
+<div id=warn class=err hidden></div>
+<div class=keys>
+<button type=button class=minor data-key=backspace>Back</button>
+<button type=button class=minor data-key=tab>Tab</button>
+<button type=button class=minor data-key=enter>Enter</button>
+<button type=button class=minor id=clear>Clear</button>
+<button type=button class=minor id=show>Show</button>
+</div>
+
+
+<div class=keys>
+<button type=button class=minor data-key=left>&larr;</button>
+<button type=button class=minor data-key=up>&uarr;</button>
+<button type=button class=minor data-key=down>&darr;</button>
+<button type=button class=minor data-key=right>&rarr;</button>
+</div>
+<div class=keys>
+<button type=button class=minor data-key=f2>Page up</button>
+<button type=button class=minor data-key=f3>Page down</button>
+</div>
+<!-- A way off the handheld's page that does not depend on its gamepad: a
+     pad the bridge cannot read (#308 gpt F-RS-16) leaves this, and the
+     window quits on Escape. -->
+<div class=keys>
+<button type=button class=minor data-key=escape>Close page</button>
+</div>
+
+<h2>Pointer</h2>
+<div class=pad id=pad>drag to move &middot; tap to click</div>
+
+<p class=note>The sign-in page is on your handheld&rsquo;s screen, not here.
+This types for it, so you can more easily retrieve and type your login
+info. What you type crosses your network unencrypted, so use this on a
+network you trust.</p>
+</div>
+
+<script>
+(function () {
+  var pin = "%(pin)s";
+  var box = document.getElementById("kb");
+  var warn = document.getElementById("warn");
+  var state = document.getElementById("state");
+  var pad = document.getElementById("pad");
+
+  // One request at a time, in order. Backspaces and characters that overtake
+  // each other arrive as scrambled text in the field on the handheld.
+  //
+  // Two states from the probe: up, the window is on the handheld's screen
+  // (the named keys drive it -- Tab is how a field the page did not focus
+  // is reached); ready, a field on its page has had the caret, so text
+  // has somewhere to go.
+  var up = false;
+  var ready = false;
+  var page = null;
+  var queue = Promise.resolve();
+  function send(body) {
+    queue = queue.then(function () {
+      return fetch("/" + pin, {
+        method: "POST",
+        headers: {"Content-Type": "application/x-www-form-urlencoded"},
+        body: body + "&pin=" + encodeURIComponent(pin)
+      }).catch(function () {});
+    });
+    return queue;
+  }
+
+  // Two different strings, which is the distinction the first cut missed.
+  // `shown` is what is in the box; `sent` is what has actually reached the
+  // handheld. They differ whenever somebody types before the page is open --
+  // the order this flow asks for, since the QR is on the screen the sign-in
+  // page replaces.
+  var sent = "";
+
+  function deliver(v) {
+    if (v === sent) return;
+    if (v.length > sent.length && v.indexOf(sent) === 0) {
+      send("type=" + encodeURIComponent(v.slice(sent.length)));
+    } else if (v.length < sent.length && sent.indexOf(v) === 0) {
+      for (var i = 0; i < sent.length - v.length; i++) send("key=backspace");
+    } else {
+      for (var j = 0; j < sent.length; j++) send("key=backspace");
+      if (v) send("type=" + encodeURIComponent(v));
+    }
+    sent = v;
+  }
+
+  // Every named key -- from the buttons below and from the phone's own
+  // keyboard alike -- goes through here, so the box and the handheld's field
+  // never part. The buttons used to post their key and nothing else: Back
+  // deleted on the handheld and left the box as it was, and every later
+  // keystroke was reckoned against a box one character off, so a password
+  // typed with one correction went across altered (audit #307 PL-017).
+  //
+  // The box holds what has been typed into the handheld's field since the
+  // focus last moved there. Back trims it, and with it empty still deletes
+  // on the handheld -- text that was there already. Enter submits the field,
+  // and Tab, the arrows and Close move away from it: what the box holds was
+  // for the field left behind, so it starts again. Page up and down only
+  // scroll.
+  function act(named) {
+    if (named === "backspace") {
+      if (box.value) {
+        box.value = box.value.slice(0, -1);
+        if (ready) deliver(box.value);
+      } else if (up) {
+        send("key=backspace");
+      }
+      return;
+    }
+    if (!up) return;
+    send("key=" + named);
+    if (named !== "f2" && named !== "f3") { box.value = ""; sent = ""; dropped = []; warnSay(); }
+  }
+
+  // Only what the handheld can type goes in the box: printable ASCII,
+  // [ -~], the US layout cloud_oauth types with. Anything else used to be
+  // sent, dropped at the other end without a word, and left showing here
+  // -- a credential altered in silence (#308 claude F-RS-16, gpt F-RS-13).
+  // It is taken out of the box instead, and the page says which.
+  //
+  // The line names the characters only while Show is on. With the box
+  // masked it counts them: a password's characters written out under a
+  // box that hides them is the box's masking undone (G-C-05, the audit of
+  // stream C).
+  var dropped = [];
+  function warnSay() {
+    if (!dropped.length) { warn.hidden = true; return; }
+    var many = dropped.length > 1;
+    warn.textContent = box.type === "password"
+      ? "The handheld can't type " + (many ? dropped.length + " of the characters you entered"
+          : "one of the characters you entered") + ", so " + (many ? "they were" : "it was") + " left out."
+      : "The handheld can't type " + dropped.join(" ") + ", so "
+          + (many ? "they were" : "it was") + " left out.";
+    warn.hidden = false;
+  }
+  function typable() {
+    var v = box.value, kept = v.replace(/[^ -~]/g, "");
+    if (kept === v) return;
+    dropped = v.replace(/[ -~]/g, "").split("");
+    box.value = kept;
+    warnSay();
+  }
+
+  // What you typed stays visible. Clearing the box after every keystroke made
+  // a keyboard that looked broken -- you type and nothing appears anywhere
+  // you can see.
+  box.addEventListener("input", function () {
+    typable();
+    if (ready) deliver(box.value);
+  });
+  box.addEventListener("keydown", function (e) {
+    var named = {Enter: "enter", Backspace: "backspace", Tab: "tab"}[e.key];
+    if (!named) return;
+    e.preventDefault();
+    act(named);
+  });
+
+  // Masked, because what goes through this box is mostly a password, and
+  // it stayed readable on the phone's screen after it was sent (#308 gpt
+  // F-RS-14). Show reveals it for checking; it hides again on a second
+  // press.
+  var show = document.getElementById("show");
+  show.addEventListener("click", function () {
+    var hidden = box.type === "password";
+    box.type = hidden ? "text" : "password";
+    show.textContent = hidden ? "Hide" : "Show";
+    warnSay();
+  });
+
+  // Local only: the handheld has moved to another field and this box still
+  // holds what went into the last one.
+  document.getElementById("clear").addEventListener("click", function () {
+    box.value = ""; sent = ""; dropped = []; warnSay(); box.focus();
+  });
+
+  Array.prototype.forEach.call(document.querySelectorAll("[data-key]"), function (b) {
+    b.addEventListener("click", function () { act(b.dataset.key); });
+  });
+
+  // Drag to move, tap to click. Deltas rather than absolute positions,
+  // because the pointer belongs to the handheld's screen and this pad has no
+  // idea how big that is.
+  var px = 0, py = 0, moved = 0, tracking = false;
+  // 1:1 with the finger. Anything else has to be learned, and the pointer is
+  // already moving on a screen the hand holding it is not touching.
+  var SPEED = 1.0;
+  // Whatever is left after rounding is carried, not dropped. Discarding it
+  // every event loses a fraction of a pixel per move, which over a drag is a
+  // pointer that slides away from where the finger went.
+  var restX = 0, restY = 0;
+  function at(e) { var t = e.touches ? e.touches[0] : e; return {x: t.clientX, y: t.clientY}; }
+
+  // Movement is coalesced, not queued. A finger produces about sixty events a
+  // second and each request takes longer than that to complete, so putting
+  // them in the same strict queue as keystrokes built a backlog that kept
+  // draining after the finger stopped -- the pointer carried on travelling on
+  // its own. At most one move is ever in flight; whatever arrives meanwhile
+  // is added up and sent as a single delta when it returns. Keystrokes still
+  // go through the ordered queue, because for them order is the point.
+  var pendX = 0, pendY = 0, inFlight = false;
+  function flushMove() {
+    if (inFlight || (!pendX && !pendY)) return;
+    var dx = pendX, dy = pendY;
+    pendX = 0; pendY = 0;
+    inFlight = true;
+    fetch("/" + pin, {
+      method: "POST",
+      headers: {"Content-Type": "application/x-www-form-urlencoded"},
+      body: "move=" + dx + "," + dy + "&pin=" + encodeURIComponent(pin)
+    }).catch(function () {}).then(function () {
+      inFlight = false;
+      flushMove();
+    });
+  }
+  function pushMove(dx, dy) { pendX += dx; pendY += dy; flushMove(); }
+  function down(e) {
+    var p = at(e); px = p.x; py = p.y; moved = 0; tracking = true;
+    restX = 0; restY = 0;
+    pad.classList.add("live"); e.preventDefault();
+  }
+  function move(e) {
+    if (!tracking) return;
+    var p = at(e);
+    var dx = (p.x - px) * SPEED + restX, dy = (p.y - py) * SPEED + restY;
+    px = p.x; py = p.y;
+    var ix = Math.trunc(dx), iy = Math.trunc(dy);
+    restX = dx - ix; restY = dy - iy;
+    moved += Math.abs(ix) + Math.abs(iy);
+    if (ix || iy) pushMove(ix, iy);
+    e.preventDefault();
+  }
+  function up(e) {
+    if (!tracking) return;
+    tracking = false;
+    pad.classList.remove("live");
+    // Let any outstanding movement land first, so the click happens where
+    // the finger finished rather than where it was a moment earlier.
+    if (moved < 8) setTimeout(function () { send("click=1"); }, 60);
+    e.preventDefault();
+  }
+  pad.addEventListener("touchstart", down, {passive: false});
+  pad.addEventListener("touchmove", move, {passive: false});
+  pad.addEventListener("touchend", up, {passive: false});
+  pad.addEventListener("mousedown", down);
+  window.addEventListener("mousemove", move);
+  window.addEventListener("mouseup", up);
+
+  // This page is scanned before the window exists -- the QR is on the screen
+  // the sign-in page then replaces -- so it has to come alive by itself.
+  function poll() {
+    fetch("/" + pin + "?probe=1").then(function (r) { return r.text(); })
+      .then(function (t) {
+        // "open <page>" -- the page token changes when the handheld
+        // navigates, which is when what is in this box stopped being
+        // relevant to what is on that screen.
+        var parts = t.trim().split(" ");
+        var open = parts[0] === "open";
+        var isUp = open || parts[0] === "loading";
+        // A new page: what is in the box was for the one before. Noticed
+        // while the new one loads too, so what is typed meanwhile is kept
+        // for it.
+        if (isUp && parts[1] && parts[1] !== page) {
+          if (page !== null) { box.value = ""; sent = ""; }
+          page = parts[1];
+        }
+        up = isUp;
+        state.className = open ? "ok" : "note";
+        state.textContent = open
+          ? "Connected."
+          : isUp
+          ? "Opening on your handheld. You can keep typing here; it goes "
+            + "across once a box on that page is ready."
+          : "Not open yet -- choose CONTINUE on your handheld. You can type "
+            + "or paste here meanwhile; it goes across when the page opens.";
+        // The box is never disabled. It was, until this said the handheld was
+        // ready -- so somebody who scanned the QR first, which is the order
+        // this flow asks for, could not type at all and saw nothing appear.
+        // Re-asserting disabled every two seconds also dismisses a phone
+        // keyboard in the middle of typing.
+        //
+        // And what was typed meanwhile goes across the moment it opens. The
+        // box only ever sent on an input event, so text typed while the page
+        // said "not open yet" -- the order this flow asks for -- was never
+        // delivered at all, and the next keystroke added only itself (audit
+        // #307 PL-016). The window opens on an empty field, so nothing has
+        // been sent to it yet: `sent` starts again from nothing. And not
+        // before a field has the caret -- open is that, not the window's
+        // process starting (claude G2-C-01) -- and again on each new page.
+        var opened = open && !ready;
+        ready = open;
+        if (opened) { sent = ""; deliver(box.value); }
+      })
+      .catch(function () {})
+      .then(function () { setTimeout(poll, 2000); });
+  }
+  poll();
+})();
+</script>
+"""
+
+
+# Linux input constants, from include/uapi/linux/input-event-codes.h.
+EV_SYN, EV_KEY = 0x00, 0x01
+SYN_REPORT = 0
+UI_SET_EVBIT, UI_SET_KEYBIT = 0x40045564, 0x40045565
+UI_SET_RELBIT = 0x40045566
+EV_REL = 0x02
+REL_X, REL_Y, REL_WHEEL = 0x00, 0x01, 0x08
+BTN_LEFT = 0x110
+# vendor:product:name, as sway forms it -- 0x1209/0x0002 and the device name
+# with spaces turned into underscores.
+POINTER_ID = "4617:2:ROCKNIX_cloud_pointer"
+UI_DEV_CREATE, UI_DEV_DESTROY = 0x5501, 0x5502
+
+# US layout, which is what the on-screen keyboard and the browser both assume.
+# Only what a sign-in needs: an address, a password, and the keys to correct
+# and submit them.
+KEYMAP = {}
+for _i, _c in enumerate("abcdefghijklmnopqrstuvwxyz"):
+    KEYMAP[_c] = ((30, 48, 46, 32, 18, 33, 34, 35, 23, 36, 37, 38, 50,
+                   49, 24, 25, 16, 19, 31, 20, 22, 47, 17, 45, 21, 44)[_i], False)
+for _i, _c in enumerate("1234567890"):
+    KEYMAP[_c] = (2 + _i, False)
+KEYMAP.update({
+    " ": (57, False), "-": (12, False), "=": (13, False), "[": (26, False),
+    "]": (27, False), "\\": (43, False), ";": (39, False), "'": (40, False),
+    "`": (41, False), ",": (51, False), ".": (52, False), "/": (53, False),
+})
+for _plain, _shifted in zip("1234567890-=[]\\;',./`", '!@#$%^&*()_+{}|:"<>?~'):
+    KEYMAP[_shifted] = (KEYMAP[_plain][0], True)
+for _c in "abcdefghijklmnopqrstuvwxyz":
+    KEYMAP[_c.upper()] = (KEYMAP[_c][0], True)
+
+NAMED_KEYS = {"enter": 28, "backspace": 14, "tab": 15, "escape": 1,
+              "left": 105, "right": 106, "up": 103, "down": 108,
+              "home": 102, "end": 107, "delete": 111,
+              "pageup": 104, "pagedown": 109,
+              "f1": 59, "f2": 60, "f3": 61, "f4": 62}
+KEY_LEFTSHIFT = 42
+
+# How long a key is held, and the gap before the next one. Roughly 130 words
+# per minute -- faster than anyone types, slow enough that a page's own input
+# handling sees each keystroke as a separate event.
+KEY_HOLD = 0.012
+KEY_GAP = 0.022
+
+
+class RemoteMouse:
+    """A pointer the phone can drag, for the page on the handheld.
+
+    A real uinput pointer rather than a cursor we draw: sway renders it and
+    WebKit receives genuine pointer events, so hovering, clicking and
+    dismissing work on anything a page can put on screen -- including a
+    cross-origin iframe, whose contents no amount of focus traversal can
+    reach. That is what a consent banner and a "sign in with Google" prompt
+    turned out to be, between them covering most of a four-inch screen with
+    no way to dismiss either.
+
+    The phone is the natural surface to drag it from: it has the touchscreen
+    the handheld does not.
+    """
+
+    def __init__(self):
+        self.fd = None
+
+    def open(self):
+        if self.fd is not None:
+            return True
+        try:
+            fd = os.open(UINPUT, os.O_WRONLY | os.O_NONBLOCK)
+        except OSError as exc:
+            log("no virtual pointer: %s" % exc)
+            return False
+        try:
+            fcntl.ioctl(fd, UI_SET_EVBIT, EV_REL)
+            fcntl.ioctl(fd, UI_SET_EVBIT, EV_KEY)
+            fcntl.ioctl(fd, UI_SET_EVBIT, EV_SYN)
+            for axis in (REL_X, REL_Y, REL_WHEEL):
+                fcntl.ioctl(fd, UI_SET_RELBIT, axis)
+            fcntl.ioctl(fd, UI_SET_KEYBIT, BTN_LEFT)
+            name = b"ROCKNIX cloud pointer".ljust(80, b"\0")
+            os.write(fd, name + struct.pack("HHHHi", 0x03, 0x1209, 0x0002, 1, 0)
+                     + b"\0" * (4 * 64 * 4))
+            fcntl.ioctl(fd, UI_DEV_CREATE)
+        except OSError as exc:
+            log("could not create the virtual pointer: %s" % exc)
+            os.close(fd)
+            return False
+        time.sleep(0.5)
+        self.fd = fd
+
+        # Flat profile, no acceleration. libinput's default adapts to speed,
+        # which is right for a hand on a desk and wrong for a finger on a
+        # phone driving somebody else's screen: the same drag covers a
+        # different distance depending how fast it was, so the pointer feels
+        # to pull towards things and to drift. Flat makes a delta a delta.
+        for setting in (["accel_profile", "flat"], ["pointer_accel", "0"]):
+            try:
+                subprocess.run(["swaymsg", "input", POINTER_ID] + setting,
+                               capture_output=True, timeout=5,
+                               env=dict(os.environ, **sway_env()))
+            except (OSError, subprocess.SubprocessError) as exc:
+                log("could not flatten the pointer: %s" % exc)
+        log("virtual pointer ready")
+        return True
+
+    def _emit(self, etype, code, value):
+        now = time.time()
+        os.write(self.fd, struct.pack("llHHi", int(now),
+                                      int((now % 1) * 1000000),
+                                      etype, code, value))
+
+    def move(self, dx, dy):
+        if self.fd is None and not self.open():
+            return False
+        if dx:
+            self._emit(EV_REL, REL_X, int(dx))
+        if dy:
+            self._emit(EV_REL, REL_Y, int(dy))
+        self._emit(EV_SYN, SYN_REPORT, 0)
+        return True
+
+    def click(self):
+        if self.fd is None and not self.open():
+            return False
+        # Press and release as separate reports, for the same reason the
+        # keyboard does: a page's own handlers read one fused report as a
+        # single indivisible event and often ignore it.
+        self._emit(EV_KEY, BTN_LEFT, 1)
+        self._emit(EV_SYN, SYN_REPORT, 0)
+        time.sleep(0.03)
+        self._emit(EV_KEY, BTN_LEFT, 0)
+        self._emit(EV_SYN, SYN_REPORT, 0)
+        return True
+
+    def scroll(self, clicks):
+        if self.fd is None and not self.open():
+            return False
+        self._emit(EV_REL, REL_WHEEL, int(clicks))
+        self._emit(EV_SYN, SYN_REPORT, 0)
+        return True
+
+    def close(self):
+        if self.fd is None:
+            return
+        try:
+            fcntl.ioctl(self.fd, UI_DEV_DESTROY)
+        except OSError:
+            pass
+        os.close(self.fd)
+        self.fd = None
+
+
+class RemoteKeyboard:
+    """A keyboard the phone can type on, for the window on the handheld.
+
+    The player reads the provider's page on the device's own screen and types
+    on the keyboard they already know how to use. Nothing is mirrored, so the
+    only thing crossing the network is a keystroke -- which is why this
+    replaced streaming the display.
+
+    uinput rather than the Wayland virtual-keyboard protocol: it needs no
+    Wayland client of our own, and sway picks the device up through libinput
+    exactly as it would a keyboard someone plugged in.
+    """
+
+    def __init__(self):
+        self.fd = None
+
+    def open(self):
+        if self.fd is not None:
+            return True
+        try:
+            fd = os.open(UINPUT, os.O_WRONLY | os.O_NONBLOCK)
+        except OSError as exc:
+            log("no virtual keyboard: %s" % exc)
+            return False
+        try:
+            fcntl.ioctl(fd, UI_SET_EVBIT, EV_KEY)
+            fcntl.ioctl(fd, UI_SET_EVBIT, EV_SYN)
+            for code in set(list(NAMED_KEYS.values())
+                            + [c for c, _ in KEYMAP.values()] + [KEY_LEFTSHIFT]):
+                fcntl.ioctl(fd, UI_SET_KEYBIT, code)
+            # struct uinput_user_dev: name[80], id{bustype,vendor,product,
+            # version}, ff_effects_max, then the absmin/max/fuzz/flat arrays.
+            name = b"ROCKNIX cloud sign-in".ljust(80, b"\0")
+            os.write(fd, name + struct.pack("HHHHi", 0x03, 0x1209, 0x0001, 1, 0)
+                     + b"\0" * (4 * 64 * 4))
+            fcntl.ioctl(fd, UI_DEV_CREATE)
+        except OSError as exc:
+            log("could not create the virtual keyboard: %s" % exc)
+            os.close(fd)
+            return False
+        # udev and libinput need a moment to notice a new device.
+        time.sleep(0.5)
+        self.fd = fd
+        log("virtual keyboard ready")
+        return True
+
+    def _emit(self, etype, code, value):
+        now = time.time()
+        os.write(self.fd, struct.pack("llHHi", int(now),
+                                      int((now % 1) * 1000000), etype, code, value))
+
+    def _tap(self, code, shift=False):
+        """One keypress, reported the way a real keyboard reports it.
+
+        Each state change is its own SYN_REPORT, and press and release are
+        separated in time. Sending press and release in a single report, with
+        zero timestamps, is not what any hardware does: libinput and the
+        page's own input handling both read it as one indivisible blur, and a
+        typed address arrived truncated -- six characters of sixteen. The
+        delays below are what a fast typist produces, and cost nothing that
+        matters when the whole point is to save somebody a minute on a d-pad.
+        """
+        if shift:
+            self._emit(EV_KEY, KEY_LEFTSHIFT, 1)
+            self._emit(EV_SYN, SYN_REPORT, 0)
+            time.sleep(KEY_GAP)
+        self._emit(EV_KEY, code, 1)
+        self._emit(EV_SYN, SYN_REPORT, 0)
+        time.sleep(KEY_HOLD)
+        self._emit(EV_KEY, code, 0)
+        self._emit(EV_SYN, SYN_REPORT, 0)
+        if shift:
+            time.sleep(KEY_GAP)
+            self._emit(EV_KEY, KEY_LEFTSHIFT, 0)
+            self._emit(EV_SYN, SYN_REPORT, 0)
+
+    def type_text(self, text):
+        """Send printable characters. Returns how many were sent."""
+        if not self.open():
+            return 0
+        sent = 0
+        for char in text:
+            entry = KEYMAP.get(char)
+            if entry is None:
+                continue        # not on a US layout; silently skipped
+            self._tap(*entry)
+            time.sleep(KEY_GAP)
+            sent += 1
+        return sent
+
+    def press(self, name):
+        code = NAMED_KEYS.get(name)
+        if code is None or not self.open():
+            return False
+        self._tap(code)
+        return True
+
+    def close(self):
+        if self.fd is None:
+            return
+        try:
+            fcntl.ioctl(self.fd, UI_DEV_DESTROY)
+        except OSError:
+            pass
+        os.close(self.fd)
+        self.fd = None
+
+
+# The handheld's controls, as the kernel reports them. A gamepad is not a
+# keyboard: sway classifies this one as a tablet_pad, so GTK and WebKit
+# receive nothing at all from it. Without this bridge the sign-in page is
+# visible on the device and cannot be touched from the device -- and, worse,
+# cannot be left.
+BTN_SOUTH, BTN_EAST, BTN_NORTH, BTN_WEST = 304, 305, 307, 308
+BTN_TL, BTN_TR, BTN_SELECT, BTN_START, BTN_MODE = 310, 311, 314, 315, 316
+BTN_DPAD_UP, BTN_DPAD_DOWN, BTN_DPAD_LEFT, BTN_DPAD_RIGHT = 544, 545, 546, 547
+# A d-pad is not always four buttons. HID and xpad-class pads report it as a
+# hat -- two axes that read -1, 0 or 1 -- and the bridge used to find only
+# pads with BTN_DPAD_UP and to drop every EV_ABS event, so on such a pad the
+# page could not be driven and Select+Start never reached it (#308 gpt
+# F-RS-16, claude F-RS-06).
+EV_ABS = 0x03
+ABS_HAT0X, ABS_HAT0Y = 0x10, 0x11
+HAT_KEYS = {(ABS_HAT0X, -1): "left", (ABS_HAT0X, 1): "right",
+            (ABS_HAT0Y, -1): "up", (ABS_HAT0Y, 1): "down"}
+SYS_INPUT = "/sys/class/input"
+
+# Arrows rather than Tab: WebKit's spatial navigation moves focus in the
+# direction pressed, which is what a d-pad means. Tab order on a login page
+# wanders through cookie banners and footer links.
+# BTN_EAST is the button labelled A on this hardware, not BTN_SOUTH. These
+# handhelds use the Nintendo layout, where A sits in the east position --
+# EmulationStation's own es_input.cfg maps a=button 1 (BTN_EAST) and
+# b=button 0 (BTN_SOUTH). Taking the Xbox reading meant the player pressed A
+# and got a backspace.
+GAMEPAD_KEYS = {
+    BTN_DPAD_UP: "up", BTN_DPAD_DOWN: "down",
+    BTN_DPAD_LEFT: "left", BTN_DPAD_RIGHT: "right",
+    BTN_EAST: "enter",             # A activates what is focused
+    BTN_SOUTH: "backspace",        # B goes back, as it does everywhere else
+    # Y reaches a consent banner first, then behaves as Tab. The d-pad
+    # cannot get to one at all -- spatial navigation will not descend into a
+    # fixed-position element -- and Tab alone costs about ten presses.
+    BTN_NORTH: "f4",
+    BTN_WEST: "f1",                # X shows and hides the on-screen keyboard
+    # L1/R1 scroll the page. The window turns these into a scroll in the
+    # page rather than page-up/page-down, which do nothing while a text
+    # field has the caret -- which is most of a sign-in form, and exactly
+    # when the button below the fold is what cannot be reached.
+    BTN_TL: "f2", BTN_TR: "f3",
+}
+
+# Select held, then Start: the same combination RetroArch uses to leave a
+# game on this hardware, so it is already in players' fingers.
+# A combination rather than any single button. Select alone is far too easy
+# to catch while reaching across a small handheld, and losing a half-typed
+# password to a stray thumb is worse than needing two buttons to leave.
+#
+# Either Select or Mode holds it, because which one is "the hotkey" is not
+# the same on every handheld. On the RG35XX SP, ES's own es_input.cfg maps
+# hotkeyenable to button 8, which is BTN_MODE on that pad -- not Select. A
+# player whose muscle memory is Mode+Start would find Select+Start does
+# nothing, and a player who knows Select+Start would find the same. Both
+# are two-button combinations and neither is reachable by a stray thumb,
+# so accepting both costs nothing and guesses at nothing.
+GAMEPAD_HOLD = (BTN_SELECT, BTN_MODE)
+GAMEPAD_QUIT = BTN_START
+
+
+def find_gamepad():
+    """The device node for the handheld's controls, and the buttons it has.
+
+    Named lookups would need a table per device -- "H700 Gamepad" on one
+    handheld is something else on the next. A device carrying BTN_SOUTH and a
+    d-pad is a gamepad whatever it calls itself.
+
+    Returns (node, codes) so callers can ask what the pad actually has
+    rather than assume. Nothing here is uniform across handhelds: the
+    RG35XX SP has a Mode button and ES maps its hotkey to it, while smaller
+    pads have no such button at all.
+    """
+    try:
+        entries = sorted(os.listdir(SYS_INPUT))
+    except OSError:
+        return None, set()
+    for entry in entries:
+        if not entry.startswith("event"):
+            continue
+        codes = _capabilities(entry, "key")
+        if codes is None:
+            continue
+        axes = _capabilities(entry, "abs") or set()
+        if BTN_SOUTH in codes and (BTN_DPAD_UP in codes or ABS_HAT0Y in axes):
+            return "/dev/input/" + entry, codes
+    return None, set()
+
+
+def _capabilities(entry, kind):
+    """The codes an input device reports for one event type, from sysfs's
+    bitmap (hex words, most significant first), or None when unreadable."""
+    try:
+        with open("%s/%s/device/capabilities/%s" % (SYS_INPUT, entry, kind)) as handle:
+            words = handle.read().split()
+    except (OSError, ValueError):
+        return None
+    codes = set()
+    for index, word in enumerate(reversed(words)):
+        value = int(word, 16)
+        codes |= {index * 64 + bit for bit in range(value.bit_length())
+                  if value >> bit & 1}
+    return codes
+
+
+def exit_hint():
+    """What the page and the window call the exit combination: one string,
+    the same on every handheld. It reads nothing from the pad.
+
+    Either Select or Mode holds it (GAMEPAD_HOLD), because which one a player
+    reaches for differs by device -- the RG351M and RG353M have no Mode
+    button, the RG35XX SP does and ES maps its own hotkey to it. The words
+    name only the pair every handheld has (#308 claude F-RS-14: this said it
+    read the pad).
+    """
+    # One combination on screen, always. "MODE OR SELECT + START" read as
+    # though Mode alone were a way out, and a help line that has to be parsed
+    # is worse than one that covers fewer of the buttons that happen to work.
+    # Mode is still accepted -- see GAMEPAD_HOLD -- it is simply not what we
+    # tell people, because Select and Start are labelled on every handheld we
+    # ship for and Mode is not.
+    return "SELECT + START"
+
+
+# _IOW('E', 0x90, int) -- take a device exclusively, so nobody else sees it.
+EVIOCGRAB = 0x40044590
+
+
+def signin_window_running():
+    """Is the sign-in window up?
+
+    Matched on argv[0], not on comm: comm truncates at 15 characters, so
+    "cloud-signin-window" appears there as "cloud-signin-wi". A pattern that
+    looks right and matches nothing has already cost this project a cleanup
+    loop that silently did nothing.
+    """
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            with open("/proc/%s/cmdline" % entry, "rb") as handle:
+                argv = handle.read().split(b"\0")
+        except OSError:
+            continue
+        if argv and argv[0].decode("utf-8", "replace") == SIGNIN_WINDOW:
+            return True
+    return False
+
+
+def pad_is_free():
+    """Can somebody else open the gamepad exclusively?
+
+    This is the condition EmulationStation needs before it re-initialises:
+    SDL re-opens the joystick on init, and if our bridge still held the grab
+    ES would come back with no gamepad at all until it was restarted. Testing
+    the grab directly beats sleeping and hoping.
+    """
+    node, _codes = find_gamepad()
+    if not node:
+        return True
+    try:
+        fd = os.open(node, os.O_RDONLY)
+    except OSError:
+        return True
+    try:
+        fcntl.ioctl(fd, EVIOCGRAB, 1)
+        fcntl.ioctl(fd, EVIOCGRAB, 0)
+        return True
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+
+
+class GamepadBridge:
+    """Turn the handheld's buttons into keystrokes for the sign-in page.
+
+    Reads the gamepad's event node and replays each press through the same
+    virtual keyboard the phone types on.
+
+    It takes the pad **exclusively** (EVIOCGRAB) for as long as the window is
+    up. EmulationStation is still running behind this page and holds the same
+    node open; SDL joystick events are not gated on window focus the way
+    keyboard events are, and `InputManager::parseEvent` runs for every event
+    with no foreground check. So without the grab every d-pad press and every
+    A meant for the provider's page is also driving the menu behind it --
+    scrolling it, and activating whatever row happens to be selected.
+
+    Typing was never affected: keys reach the compositor, which delivers them
+    to the focused surface only.
+
+    A grab that outlived the window would leave the player holding a handheld
+    whose buttons do nothing, so the loop watches the browser process and
+    releases the moment it is gone -- see the select() timeout below, which
+    exists to make that check happen even when nobody is pressing anything.
+    """
+
+    def __init__(self, keyboard, on_quit, alive=None):
+        self.keyboard = keyboard
+        self.on_quit = on_quit
+        self.alive = alive
+        self.thread = None
+        self.stop_flag = threading.Event()
+
+    def start(self):
+        node, _codes = find_gamepad()
+        if not node:
+            log("no gamepad found; the sign-in page can only be driven from a phone")
+            return False
+        self.thread = threading.Thread(target=self._run, args=(node,), daemon=True)
+        self.thread.start()
+        log("gamepad bridge reading %s" % node)
+        return True
+
+    def _run(self, node):
+        try:
+            fd = os.open(node, os.O_RDONLY)
+        except OSError as exc:
+            log("could not read the gamepad: %s" % exc)
+            return
+
+        grabbed = False
+        try:
+            fcntl.ioctl(fd, EVIOCGRAB, 1)
+            grabbed = True
+        except OSError as exc:
+            # Not fatal: the page is still drivable, EmulationStation just
+            # sees the same presses. Worth saying so in the log, because the
+            # symptom is a menu that moved on its own.
+            log("could not take the gamepad exclusively: %s" % exc)
+
+        size = struct.calcsize("llHHi")
+        held = set()
+        hat = {}
+        try:
+            while not self.stop_flag.is_set():
+                # The timeout is the watchdog's heartbeat, not a poll for
+                # input: without it this blocks in read() and a window that
+                # died would leave the pad grabbed until someone pressed a
+                # button.
+                ready, _, _ = select.select([fd], [], [], 0.5)
+                if self.alive is not None and not self.alive():
+                    log("sign-in window is gone; releasing the gamepad")
+                    self.on_quit()
+                    return
+                if not ready:
+                    continue
+                data = os.read(fd, size)
+                if len(data) < size:
+                    continue
+                _, _, etype, code, value = struct.unpack("llHHi", data)
+                if etype == EV_ABS:
+                    # A hat moving off centre is the arrow's press; back to
+                    # centre, or on to the same side again, is nothing.
+                    name = HAT_KEYS.get((code, value))
+                    if name and hat.get(code) != value:
+                        self.keyboard.press(name)
+                    if code in (ABS_HAT0X, ABS_HAT0Y):
+                        hat[code] = value
+                    continue
+                if etype != EV_KEY:
+                    continue
+
+                if value == 0:
+                    held.discard(code)
+                    continue
+                if value != 1:            # 2 is autorepeat; ignore
+                    continue
+                held.add(code)
+
+                # Either order, so it does not matter which thumb gets there
+                # first.
+                held_any = any(h in held for h in GAMEPAD_HOLD)
+                if ((code == GAMEPAD_QUIT and held_any)
+                        or (code in GAMEPAD_HOLD and GAMEPAD_QUIT in held)):
+                    log("player ended the sign-in from the handheld")
+                    self.on_quit()
+                    return
+
+                # A hold button does not type on its own.
+                if code in GAMEPAD_HOLD:
+                    continue
+                name = GAMEPAD_KEYS.get(code)
+                if name:
+                    self.keyboard.press(name)
+        except OSError:
+            pass
+        finally:
+            if grabbed:
+                try:
+                    fcntl.ioctl(fd, EVIOCGRAB, 0)
+                except OSError:
+                    pass
+            os.close(fd)
+
+    def stop(self):
+        self.stop_flag.set()
+        # Wait for the reader to actually leave, because it releases the
+        # gamepad on its way out and the caller's next move may be to hand
+        # the pad back to EmulationStation.
+        thread, self.thread = self.thread, None
+        if thread and thread is not threading.current_thread():
+            thread.join(timeout=2)
+
+
+class SessionHolder:
+    """The server outlives any one sign-in attempt.
+
+    rclone's authorize server answers exactly one redirect and then exits, so
+    a code that arrives expired -- which is the normal way this fails, the
+    window being a couple of minutes -- ends the attempt. Without somewhere to
+    start another, the player is sent back to the handheld to redo a flow they
+    had almost finished. So the attempt is replaceable and the *server* is what
+    persists, along with the PIN: the handheld is showing that PIN and a QR
+    built from it, and neither can be re-issued from here.
+    """
+
+    def __init__(self, backend, remote_name, label, timeout):
+        self.backend = backend
+        self.remote_name = remote_name
+        self.name = display_name(backend, label)
+        self.timeout = timeout
+        self.pin = "%04d" % secrets.randbelow(10000)
+        # Which serve the shared state belongs to (write_owned).
+        self.attempt = secrets.token_hex(6)
+        self.pin_attempts = 0
+        self.lock = threading.Lock()
+        self.session = None
+        self.browser = None
+        self.keyboard = RemoteKeyboard()
+        self.mouse = RemoteMouse()
+        self.gamepad = None
+
+    def start(self):
+        session = Session(self.backend, self.remote_name, self.timeout)
+        # When the sign-in finishes on the device, take the page away rather
+        # than leaving rclone's own "All done, go back to rclone" sitting
+        # there -- a sentence about a program the player has never heard of,
+        # on a screen with no way out but a button combination.
+        session.on_signed_in = self.signed_in
+        session.attempt = self.attempt
+        # The state names this session from here, and moves to starting:
+        # the old session's collector can write nothing more, whatever
+        # wakes it, and this one's own failure -- its rclone dying before
+        # anybody says waiting -- is recorded where the caller's waiting
+        # write will find it (PL-032). Not over a sign-in that has landed,
+        # a cancel's idle, or another serve's state.
+        session.gen = secrets.token_hex(4)
+        if not write_owned(self.attempt, from_status=(None, "starting", "waiting", "failed"),
+                           status="starting", session=session.gen, error=""):
+            if read_state().get("status") == "signed-in":
+                return False, "You're signed in already."
+            return False, "Another sign-in has taken over from this one."
+        # Before the new attempt kills the old one's rclone (Session.start),
+        # so the old collector knows its end is not a failure to report.
+        if self.session:
+            self.session.superseded = True
+        if not session.start():
+            # Said in the state as well as to the caller: a restart whose
+            # rclone offered no link left the handheld reading waiting, with
+            # the old rclone killed and nothing able to finish it (claude
+            # G2-C-04).
+            write_owned(self.attempt, owner=session.gen, status="failed",
+                        error=session.error)
+            return False, session.error
+        with self.lock:
+            self.stop_browser()
+            self.session = session
+        return True, None
+
+    def signed_in(self):
+        """The sign-in landed.
+
+        The window is deliberately left open. EmulationStation is suspended
+        while the page owns the screen and takes several seconds to rebuild
+        everything it released; closing here put a black screen in front of
+        the player at the moment their sign-in had just succeeded, which
+        reads as a crash rather than as progress. The window switches itself
+        to "Finishing up" when it sees this marker, and is closed once ES is
+        drawing again and asks for it.
+
+        The pad is handed back first, though, before the marker exists.
+        "Finishing up" takes no input, and `wait` returns on this marker --
+        after which EmulationStation re-opens the joystick, which it cannot
+        do while the bridge holds EVIOCGRAB (pad_is_free). The bridge used to
+        let go only when the window died, which is after that re-open (audit
+        #307 PL-018).
+        """
+        gamepad, self.gamepad = self.gamepad, None
+        if gamepad:
+            gamepad.stop()
+        os.makedirs(STATE_DIR, exist_ok=True)
+        try:
+            open(state_path("signed-in"), "w").close()
+        except OSError:
+            self.stop_browser()
+
+    def start_browser(self):
+        """Open the provider's page here, for the handheld or a phone to drive."""
+        if not browser_stack_available() or not self.session:
+            return False
+        self.stop_browser()
+        host = urllib.parse.urlparse(self.session.provider).hostname or ""
+        browser = BrowserSession(self.session.provider, host)
+        if not browser.start():
+            return False
+        with self.lock:
+            self.browser = browser
+
+        # The handheld's own controls, and with them a way back out. Without
+        # this the page is on the screen, cannot be driven from the device,
+        # and cannot be closed -- which strands the handheld in a browser.
+        self.keyboard.open()
+        self.mouse.open()
+        self.gamepad = GamepadBridge(self.keyboard, self.stop_browser,
+                                     alive=browser.is_running)
+        self.gamepad.start()
+        return True
+
+    def end(self):
+        """Take everything this serve started down: the window, and rclone.
+
+        The session is marked first: killing its rclone wakes its collector,
+        and a serve ending -- cancelled, timed out, finished -- is not a
+        sign-in that failed (G-C-02 claude). What the serve had to say about
+        how it ended it has already written.
+        """
+        if self.session:
+            self.session.superseded = True
+        self.stop_browser()
+        if self.session and self.session.proc \
+                and self.session.proc.poll() is None:
+            self.session.proc.send_signal(signal.SIGTERM)
+        # A collector that had its token and is saving the remote is let
+        # finish -- bounded by rclone's own create and the check's 20 s --
+        # so what it made is published or taken away again (PL-032), not
+        # left half made by a process that exits under it. One without a
+        # token ends as soon as its rclone does.
+        collector = self.session.collector if self.session else None
+        if collector and collector is not threading.current_thread():
+            collector.join(timeout=45)
+
+    def stop_browser(self):
+        gamepad, self.gamepad = self.gamepad, None
+        if gamepad:
+            gamepad.stop()
+        browser, self.browser = self.browser, None
+        if browser:
+            browser.stop()
+        self.keyboard.close()
+        self.mouse.close()
+
+    def pin_exhausted(self):
+        with self.lock:
+            return self.pin_attempts >= 10
+
+    def pin_failed(self):
+        with self.lock:
+            self.pin_attempts += 1
+            return self.pin_attempts >= 10
+
+    def authorised(self, pin):
+        return secrets.compare_digest(str(pin), self.pin)
+
+
+# What an unauthenticated client on the LAN can make this spend before the
+# PIN is checked. The body was read whole, whatever Content-Length said, on
+# a thread per connection with no read deadline and no limit on threads --
+# memory and threads that WebKit, on a 1 GB handheld, needs more (#308 gpt
+# F-RS-18). The keyboard's largest request is a paste of a few hundred
+# bytes.
+MAX_BODY = 64 * 1024
+REQUEST_TIMEOUT = 15
+MAX_CONNECTIONS = 16
+
+
+class BoundedHTTPServer(http.server.ThreadingHTTPServer):
+    """ThreadingHTTPServer with a cap on connections handled at once: one
+    past the cap is closed on arrival rather than given a thread."""
+
+    daemon_threads = True
+
+    def __init__(self, *args, **kwargs):
+        self.slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, client_address):
+        if not self.slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self.slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.slots.release()
+
+
+def make_server(address, port, holder, shutdown):
+    """The listener, bound -- OSError when the address or port cannot be."""
+    server = BoundedHTTPServer((address, port), None)
+    server.RequestHandlerClass = make_handler(holder, shutdown)
+    return server
+
+
+def make_handler(holder, shutdown):
+    class Handler(http.server.BaseHTTPRequestHandler):
+        # Applied to the socket by StreamRequestHandler.setup: a request
+        # that stalls -- mid-headers or mid-body -- is dropped at this.
+        timeout = REQUEST_TIMEOUT
+
+        def log_message(self, *args):
+            pass  # its default writes request lines to stderr
+
+        def _send(self, body, status=200):
+            encoded = body.encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+        def _render(self, message=""):
+            # A phone is a keyboard for the page on the handheld, and nothing
+            # else. It used to be offered the whole sign-in -- a link to the
+            # provider and a box to paste the redirect back into -- which is
+            # what a tester did on scanning the QR, because it was there. That
+            # flow only ever existed because the handheld could not show the
+            # page itself; where it can, offering both is offering a wrong
+            # turn.
+            if browser_stack_available():
+                self._send(REMOTE_PAGE % {
+                    "style": STYLE,
+                    "name": holder.name,
+                    "pin": holder.pin,
+                })
+                return
+
+            self._send(PAGE % {
+                "style": STYLE,
+                "name": holder.name,
+                "provider": holder.session.provider if holder.session else "",
+                "pin": holder.pin,
+                "message": message,
+                "here": "",
+            })
+
+        def _render_pin(self, message="", supplied=""):
+            self._send(PIN_PAGE % {
+                "style": STYLE,
+                "message": message,
+                # Pre-fills the box. Every caller passes nothing: a wrong PIN
+                # is not echoed back, so a guess learns nothing from the page
+                # (#308 claude F-RS-14: this said a mistyped digit was
+                # carried back).
+                "pin": supplied,
+            })
+
+        def _render_done(self, remote):
+            self._send(DONE_PAGE % {
+                "style": STYLE, "name": holder.name, "remote": remote,
+            })
+
+        def _gate(self, pin):
+            """True when the request may proceed; renders the refusal if not."""
+            if holder.pin_exhausted():
+                self.send_error(403, "Too many wrong PINs. Start again on "
+                                     "the handheld.")
+                return False
+            if holder.authorised(pin):
+                return True
+            # No PIN at all is somebody typing the bare address, which is the
+            # documented fallback -- ask, do not refuse. A wrong one is either
+            # a typo or a guess, and both are answered the same way so neither
+            # learns anything the other does not.
+            if not pin:
+                self._render_pin()
+            elif holder.pin_failed():
+                self.send_error(403, "Too many wrong PINs. Start again on "
+                                     "the handheld.")
+            else:
+                self._render_pin('<div class=err>That PIN did not match.</div>',
+                                 supplied="")
+            return False
+
+        def _supplied(self):
+            """The PIN, from wherever this request carries it.
+
+            The address shown on the handheld is http://<device>:8080/7677 --
+            the PIN is the tail of the one thing on screen, rather than a
+            second number displayed beside it that only the minority who type
+            the address rather than scanning it will ever need. ?pin= is still
+            accepted: it is what the prompt below submits, and what an older
+            QR still in somebody's camera roll would carry.
+            """
+            parsed = urllib.parse.urlparse(self.path)
+            from_query = urllib.parse.parse_qs(parsed.query).get("pin", [""])[0]
+            if from_query:
+                return from_query
+            return parsed.path.strip("/").split("/")[0]
+
+        def do_GET(self):
+            if not self._gate(self._supplied()):
+                return
+
+            # Is the page actually up on the handheld yet? The keyboard page
+            # asks every couple of seconds, because it is scanned before the
+            # window exists and has to start working by itself when it does.
+            query = urllib.parse.parse_qs(
+                urllib.parse.urlparse(self.path).query)
+            if query.get("probe"):
+                # The page token is a short hash of the address the window is
+                # showing: enough for the phone to notice a change, without
+                # putting a provider URL with its state parameter into a
+                # response anybody on the LAN could ask for.
+                token = ""
+                try:
+                    with open(state_path("page")) as handle:
+                        token = hashlib.sha256(
+                            handle.read().encode()).hexdigest()[:8]
+                except OSError:
+                    pass
+                # open once a field on the window's page has had the caret
+                # (the window's field record); loading while it is up and
+                # nothing has. The window's process starting was open, and
+                # the phone sent what it held at once, while the provider's
+                # page was still loading and focus_first had placed no
+                # caret: the text went nowhere and, being counted as sent,
+                # was never resent (the audit of the fix round, claude
+                # G2-C-01).
+                # A sign-in that has landed stays open: the window shows its
+                # own "Finishing up" page, which has no field.
+                if not holder.browser:
+                    body = b"waiting"
+                elif os.path.exists(state_path("field")) \
+                        or os.path.exists(state_path("signed-in")):
+                    body = ("open " + token).strip().encode()
+                else:
+                    body = ("loading " + token).strip().encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            self._render()
+
+        def do_POST(self):
+            # Checked before a byte of the body is read.
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+            except ValueError:
+                length = -1
+            if length < 0 or length > MAX_BODY:
+                self.send_response(413 if length > MAX_BODY else 400)
+                self.send_header("Content-Length", "0")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.close_connection = True
+                return
+            fields = urllib.parse.parse_qs(
+                self.rfile.read(length).decode("utf-8", "replace"))
+            if not self._gate(fields.get("pin", [""])[0] or self._supplied()):
+                return
+
+            if fields.get("move") or fields.get("click") or fields.get("wheel"):
+                if not holder.browser:
+                    self.send_response(409)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                moved = fields.get("move", [""])[0]
+                if moved:
+                    try:
+                        dx, dy = (int(float(v)) for v in moved.split(",", 1))
+                    except ValueError:
+                        dx = dy = 0
+                    holder.mouse.move(dx, dy)
+                wheel = fields.get("wheel", [""])[0]
+                if wheel:
+                    try:
+                        holder.mouse.scroll(int(float(wheel)))
+                    except ValueError:
+                        pass
+                if fields.get("click"):
+                    holder.mouse.click()
+                self.send_response(204)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+
+            if fields.get("type") or fields.get("key"):
+                if not holder.browser:
+                    # 409 rather than a rendered page: the keyboard posts by
+                    # fetch and throwing HTML at it would replace nothing and
+                    # tell nobody. Its own poll is what reports this state.
+                    self.send_response(409)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                text = fields.get("type", [""])[0]
+                named = fields.get("key", [""])[0]
+                sent = holder.keyboard.type_text(text) if text else 0
+                if named:
+                    holder.keyboard.press(named)
+                self.send_response(204)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                # Counts only: what was typed may be a password.
+                log("typed %d characters%s%s" % (
+                    sent, " + " + named if named else "",
+                    ", %d not on the keyboard" % (len(text) - sent) if len(text) > sent else ""))
+                return
+
+            if fields.get("restart"):
+                ok, error = holder.start()
+                # Waiting only from the starting the new attempt began with:
+                # its rclone may already have died, and its collector said
+                # so, before this line ran (PL-032, gpt G2-C-02).
+                if ok and write_owned(holder.attempt, owner=holder.session.gen,
+                                      from_status=("starting",),
+                                      status="waiting",
+                                      provider=holder.session.provider):
+                    self._render('<div class=ok>Ready for another go. '
+                                 'Sign in below.</div>')
+                    return
+                if ok:
+                    error = read_state().get("error") or \
+                        "That sign-in ended before it could start."
+                again = ""
+                if read_state().get("status") != "signed-in":
+                    again = ('<form method=post>'
+                             '<input type=hidden name=pin value="%s">'
+                             '<input type=hidden name=restart value="1">'
+                             '<button class=minor type=submit>'
+                             'Start a new sign-in</button></form>' % holder.pin)
+                self._render('<div class=err>%s</div>%s' % (error, again))
+                return
+
+            session = holder.session
+            if session is None:
+                self._render('<div class=err>No sign-in is running.</div>')
+                return
+
+            ok, detail = session.submit(fields.get("code", [""])[0])
+            if ok:
+                self._render_done(detail)
+                threading.Timer(2.0, shutdown).start()
+                return
+
+            # A dead attempt gets a way forward on this page rather than an
+            # instruction to walk back to the handheld and redo the flow.
+            restart = ""
+            if session.finished():
+                restart = ('<form method=post>'
+                           '<input type=hidden name=pin value="%s">'
+                           '<input type=hidden name=restart value="1">'
+                           '<button class=minor type=submit>'
+                           'Start a new sign-in</button></form>' % holder.pin)
+            self._render('<div class=err>%s</div>%s' % (detail, restart))
+
+    return Handler
+
+
+def cmd_serve(backend, remote_name, label, port, timeout):
+    if not shutil.which("rclone") and not os.path.exists(RCLONE):
+        sys.stderr.write("rclone is not installed\n")
+        return 2
+
+    # Nothing from the last attempt survives into this one -- including a
+    # serve still holding the port.
+    stop_other_serves()
+    holder = SessionHolder(backend, remote_name, label, timeout)
+    # The state is this serve's from here, stamped with its attempt id; every
+    # write this serve makes afterwards is conditional on still owning it
+    # (write_owned, G-C-02).
+    reset_state(status="starting", backend=backend, attempt=holder.attempt)
+
+    # SIGTERM is how `cancel` and the next serve end this one
+    # (stop_other_serves). With no handler Python died on it at once: the
+    # teardown below never ran, and the fullscreen window -- a plain child
+    # with no death signal -- stayed on the screen with the gamepad bridge
+    # gone, nothing left on the device to drive it or close it (audit #307
+    # PL-049). Raising here unwinds through the finally instead; a second
+    # SIGTERM while the teardown runs is ignored so that it finishes.
+    def on_term(signum, frame):
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        raise SystemExit(128 + signum)
+    signal.signal(signal.SIGTERM, on_term)
+
+    try:
+        return serve_with(holder, backend, port, timeout)
+    finally:
+        holder.end()
+
+
+def serve_with(holder, backend, port, timeout):
+    ok, error = holder.start()
+    if not ok:
+        sys.stderr.write("%s\n" % error)
+        write_owned(holder.attempt, status="failed", error=error)
+        return 2
+
+    address = lan_address()
+    # Listen on the address the page is served at, not on every interface
+    # (#308 claude F-RS-18). A VPN or tethering interface no longer takes
+    # the keyboard; and the port is shared with the offline achievements
+    # proxy, which listens on 127.0.0.1:8080 -- a wildcard bind cannot share
+    # a port with a socket on a specific address, so with offline
+    # achievements on, every sign-in ended in EADDRINUSE. 127.0.0.1 is
+    # lan_address's answer when there is no route, and it is bound as it is:
+    # the wildcard it used to keep for that case listened on every
+    # interface while advertising loopback, which no phone can reach anyway
+    # (the audit of stream C, G-C-06). With no route there is no provider to
+    # sign in to either.
+    listen = address
+    # A port something else holds used to end the serve with a traceback and
+    # the status left at "starting", rclone's authorize still running, and
+    # the interface waiting on a sign-in that could never be reached (audit
+    # #307 PL-050, claude F-RS-22).
+    server = None
+
+    def shutdown():
+        if server is not None:
+            threading.Thread(target=server.shutdown, daemon=True).start()
+
+    try:
+        server = make_server(listen, port, holder, shutdown)
+    except OSError as exc:
+        why = "port %d is already in use on this device" % port \
+            if exc.errno == errno.EADDRINUSE else "could not listen on port %d" % port
+        log("sign-in could not start: %s (%s)" % (why, exc.strerror or exc))
+        sys.stderr.write("%s\n" % why)
+        # The port and the errno stay in the log; the state carries words
+        # (G-C-03, the audit of stream C).
+        write_owned(holder.attempt, status="failed",
+                    error="Something else on this handheld is using the "
+                          "sign-in's connection. Restart it and try again.")
+        return 2
+
+    bare = "http://%s:%d" % (address, port)
+    url = "%s/%s" % (bare, holder.pin)
+    # Waiting only from starting, and only while this session is the one
+    # the state names. Authorize can print its link and die at once; its
+    # collector records failed while this was still binding, and this write
+    # used to put waiting over it -- a dead attempt republished, the
+    # handheld reading STILL WAITING until the serve's timeout (PL-032, gpt
+    # G2-C-02). What the state says then stands, and the serve ends.
+    if not write_owned(holder.attempt, owner=holder.session.gen,
+                       from_status=("starting",), status="waiting",
+                       backend=backend, url=url, address=bare,
+                       provider=holder.session.provider, pin=holder.pin,
+                       name=holder.name):
+        log("the sign-in ended before it could be offered")
+        server.server_close()
+        return 2
+
+    # The window is not opened here. It covers the screen the moment it
+    # appears, and the address and QR the handheld is showing are how
+    # somebody gets a phone keyboard onto it -- opening it immediately means
+    # that screen flashes past before it can be read or scanned. The handheld
+    # asks for it when the player is ready.
+    #
+    # Best effort throughout: an image without the browser stack falls
+    # through to the paste flow rather than failing the sign-in, and the page
+    # says which one you are looking at.
+    def open_when_asked():
+        # Loops rather than opening once: pressing Start closes the window
+        # and gives the handheld back, and the player may well want it again
+        # -- to correct an address, or because they closed it by accident.
+        flag = state_path("open-browser")
+        shut = state_path("close-browser")
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if os.path.exists(shut):
+                try:
+                    os.unlink(shut)
+                except OSError:
+                    pass
+                holder.stop_browser()
+            if os.path.exists(flag):
+                try:
+                    os.unlink(flag)
+                except OSError:
+                    pass
+                if holder.start_browser():
+                    log("sign-in window opened for %s" % backend)
+            time.sleep(0.4)
+
+    if browser_stack_available():
+        threading.Thread(target=open_when_asked, daemon=True).start()
+
+    # stdout is the contract for the caller (the ES page reads these).
+    print("URL=%s" % url)
+    print("ADDRESS=%s" % bare)
+    print("PIN=%s" % holder.pin)
+    print("NAME=%s" % holder.name)
+    print("PROVIDER=%s" % holder.session.provider)
+    print("EXIT_HINT=%s" % exit_hint())
+    sys.stdout.flush()
+
+    # The listener is only open while someone is actually signing in.
+    timer = threading.Timer(timeout, shutdown)
+    timer.daemon = True
+    timer.start()
+    try:
+        server.serve_forever()
+    finally:
+        timer.cancel()
+        server.server_close()
+
+    # One write, checked under the lock: failed only from starting or
+    # waiting, so a sign-in that lands between a read and the write is not
+    # turned back (PL-032).
+    if write_owned(holder.attempt, from_status=("starting", "waiting"),
+                   status="failed", error="sign-in did not complete"):
+        return 1
+    return 0 if read_state().get("status") == "signed-in" else 1
+
+
+def main(argv):
+    if len(argv) < 2:
+        sys.stderr.write(
+            "usage: cloud_oauth serve <backend> [--name NAME] "
+            "[--label 'Dropbox'] [--port N] [--timeout SECONDS]\n"
+            "       cloud_oauth url | info | status | open [--phone] "
+            "| wait | close | cancel\n")
+        return 1
+
+    command = argv[1]
+
+    if command == "serve":
+        if len(argv) < 3:
+            return main([argv[0]])
+        backend = argv[2]
+        name, label, port, timeout = None, None, 8080, 600
+        rest = argv[3:]
+        for i, arg in enumerate(rest):
+            if arg == "--name" and i + 1 < len(rest):
+                name = rest[i + 1]
+            elif arg == "--label" and i + 1 < len(rest):
+                label = rest[i + 1]
+            elif arg == "--port" and i + 1 < len(rest):
+                port = int(rest[i + 1])
+            elif arg == "--timeout" and i + 1 < len(rest):
+                timeout = int(rest[i + 1])
+        return cmd_serve(backend, name, label, port, timeout)
+
+    if command == "url":
+        print(read_state().get("url", ""))
+        return 0
+
+    if command == "open":
+        # Asked for by the handheld once the player has had a chance to read
+        # the address and scan the code.
+        os.makedirs(STATE_DIR, exist_ok=True)
+
+        # Which keyboard the player chose. Raising the on-screen one for
+        # somebody who asked to type on their phone covers the form they are
+        # reading with a keyboard they did not ask for.
+        marker = state_path("phone-keyboard")
+        if "--phone" in argv:
+            open(marker, "w").close()
+        elif os.path.exists(marker):
+            try:
+                os.unlink(marker)
+            except OSError:
+                pass
+
+        open(state_path("open-browser"), "w").close()
+
+        # Return once the window is actually up, not once the request is
+        # filed. The caller's next act is to tear down its own renderer, and
+        # doing that before there is anything to look at leaves the player
+        # staring at the wallpaper for the seconds WebKit takes to start.
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            if signin_window_running():
+                return 0
+            time.sleep(0.2)
+        log("sign-in window did not appear")
+        return 1
+
+    if command == "wait":
+        # Block until the page is finished with, so a caller can bracket this
+        # with its own suspend/resume. Bounded well past the session timeout
+        # so a serve that died without tidying up cannot strand the caller.
+        deadline = time.time() + 1800
+        while time.time() < deadline and signin_window_running():
+            # A finished sign-in releases the caller without waiting for the
+            # window: it stays up saying so while the caller rebuilds itself,
+            # and asks for it to be closed afterwards. Waiting for the window
+            # to go first is what produced a black screen. Not without the
+            # pad, though -- the settle below runs on this path too (PL-018).
+            if os.path.exists(state_path("signed-in")):
+                break
+            time.sleep(0.3)
+
+        # And not a moment before the pad is handed back -- see pad_is_free.
+        settle = time.time() + 5
+        while time.time() < settle and not pad_is_free():
+            time.sleep(0.1)
+        return 0
+
+    if command == "close":
+        # Asked for once the caller is drawing again, so there is something
+        # behind the window when it goes.
+        os.makedirs(STATE_DIR, exist_ok=True)
+        open(state_path("close-browser"), "w").close()
+        deadline = time.time() + 10
+        while time.time() < deadline and signin_window_running():
+            time.sleep(0.2)
+
+        # The serve process is what normally takes the window away, and it may
+        # not be there to do it -- it times out on its own, and a sign-in that
+        # finished near that deadline leaves the window with nobody to close
+        # it. That is a fullscreen page reading "Finishing up" sitting on top
+        # of an EmulationStation that has already come back, escapable only by
+        # a button combination. Close it here rather than depending on
+        # somebody else being alive.
+        if signin_window_running():
+            log("sign-in window outlived its server; closing it directly")
+            for signum in (signal.SIGTERM, signal.SIGKILL):
+                for entry in os.listdir("/proc"):
+                    if not entry.isdigit():
+                        continue
+                    try:
+                        with open("/proc/%s/cmdline" % entry, "rb") as handle:
+                            argv = handle.read().split(b"\0")
+                    except OSError:
+                        continue
+                    if argv and argv[0].decode("utf-8", "replace") == SIGNIN_WINDOW:
+                        try:
+                            os.kill(int(entry), signum)
+                        except OSError:
+                            pass
+                for _ in range(15):
+                    if not signin_window_running():
+                        break
+                    time.sleep(0.2)
+                if not signin_window_running():
+                    break
+            # The serve that set the pointer's hide timeout to never is not
+            # there to set it back (#308 claude F-RS-19).
+            BrowserSession._cursor_timeout(1000)
+
+        settle = time.time() + 5
+        while time.time() < settle and not pad_is_free():
+            time.sleep(0.1)
+        # Honest about the outcome: a window still standing means the screen
+        # is not handed back, whatever the caller does next.
+        return 0 if not signin_window_running() else 1
+
+    if command == "info":
+        # One KEY=VALUE per line. `url` stays exactly as it was: the ES page
+        # reads whichever of the two the running image provides, so an older
+        # script and a newer page still agree on something.
+        state = read_state()
+        state["on_device"] = "yes" if browser_stack_available() else "no"
+        # The window's own words for the way back (exit_hint): Select and
+        # Start, which every handheld we ship for has and labels.
+        state["exit_hint"] = exit_hint()
+        for key in ("url", "address", "pin", "name", "provider", "status",
+                    "on_device", "exit_hint"):
+            print("%s=%s" % (key.upper(), state.get(key, "")))
+        return 0
+
+    if command == "status":
+        print(read_state().get("status", "idle"))
+        return 0
+
+    if command == "cancel":
+        stop_other_serves()
+        subprocess.run(["pkill", "-f", "rclone authorize"], capture_output=True)
+        # Clears the address, PIN and provider link as well as the status --
+        # a dead session's details are not something to leave lying in
+        # /var/run for the next page to pick up and display.
+        reset_state(status="idle")
+        return 0
+
+    return main([argv[0]])
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

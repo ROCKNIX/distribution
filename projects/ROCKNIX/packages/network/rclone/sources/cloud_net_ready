@@ -1,0 +1,217 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+# cloud_net_ready - wait for a settled network before a cloud sync starts.
+#
+# Usage: cloud_net_ready [--wait N]
+#
+#   exit 0    NetworkManager reports the connection up (STATE connected,
+#             in any connected state -- its connectivity word is only logged) and it
+#             has stayed up for GRACE seconds with a default route the
+#             whole time
+#   exit 69   no network: there is no default route and nothing is coming
+#             up -- at once, without waiting (D-CLOUD-072: a device booted
+#             with its radio off never holds the card); or a link that was
+#             coming up (NetworkManager `connecting`, or a carrier with no
+#             NetworkManager to ask) had no route by the deadline
+#             (D-CLOUD-136, #192); or N seconds (default 60) passed without
+#             a settled connection. 69 is EXIT_NO_NETWORK, the code the
+#             cloud scripts and EmulationStation share for "skipped, no
+#             network".
+#
+# Prints ">>> doing network" once, the moment it starts waiting -- which
+# includes the grace, and the wait for a route while a link comes up -- so
+# the sync card names its step: CHECKING THE CONNECTION... when the
+# interface sees a link, WAITING FOR A NETWORK, UP TO N SECONDS... when it
+# does not (#192), and a game launched meanwhile cancels the sync rather
+# than being refused (ThreadedCloudSync::cancelIfWaitingForNetwork), which
+# is what keeps this wait off the time to play (D-CLOUD-136; maintainer,
+# 2026-09-24: "If we can add the reachable wait without adding a delay to
+# the time to play, we should do it."). Nothing else on stdout on success;
+# one line saying why on a 69.
+#
+# Why. The startup sync used to begin on the first ping that came back:
+# seconds after Wi-Fi associates, which on an SDIO module is the moment it
+# is most likely to drop again (#102, #103). NetworkManager's `connected`
+# is the whole stack agreeing the link is up; holding it for a few seconds
+# is what "settled" means here. And no ping: a probe to a public host fails
+# on a LAN-only remote and on networks that block it, and passes while the
+# player's provider is down (rclone-cloud-sync.md, reachability). The
+# scripts probe the remote itself once they run.
+#
+# Busybox-compatible: sh, timeout, sleep, cat, grep, ip and nmcli, all on
+# the image (nmcli from the networkmanager package). Where nmcli is
+# missing or NetworkManager is not answering, the route test plus a carrier
+# on some interface stands in, and the log says so.
+#
+# The bound is N seconds plus at most GRACE: a connection that settles in
+# the last seconds of the wait is given its grace rather than dropped.
+
+WAIT=60
+GRACE=3
+POLL=1
+EXIT_NO_NETWORK=69
+LOG_FILE=/var/log/cloud_sync.log
+
+usage() {
+    echo "Usage: cloud_net_ready [--wait N]"
+    echo "  exit 0 when the network has been up for ${GRACE} s; 69 when there is"
+    echo "  no default route, or after N s (default ${WAIT}) without a settled one."
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --wait)   shift; WAIT="$1" ;;
+        --wait=*) WAIT="${1#--wait=}" ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "cloud_net_ready: unknown option $1" >&2; usage >&2; exit 64 ;;
+    esac
+    shift
+done
+case "${WAIT}" in
+    ''|*[!0-9]*) echo "cloud_net_ready: --wait takes a number of seconds" >&2; exit 64 ;;
+esac
+
+# Braced, so that a log that cannot be written is silent: redirections apply
+# left to right, and `>> file 2>/dev/null` reports the failed `>>` on the
+# original stderr -- which reaches the card, where any line that is not a
+# marker ends the WAITING state and with it a launch's power to cancel.
+log() {
+    { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [${2:-INFO}] [cloud_net_ready] $1" >> "${LOG_FILE}"; } 2>/dev/null
+}
+
+# Hundredths of a second since boot, from the kernel: the wall clock jumps
+# when NTP or the RTC corrects it, which at boot -- the one time this runs
+# -- it does. Hundredths rather than whole seconds so "held for 3 s" is
+# three seconds and not a rounding of two point one.
+uptime_cs() {
+    local up
+    read -r up _ < /proc/uptime
+    echo "${up%.*}${up#*.}"
+}
+
+# The same test cloud_backup's check_network_link makes: reads the kernel's
+# table, sends nothing.
+has_default_route() {
+    ip -4 route show default 2>/dev/null | grep -q . \
+        || ip -6 route show default 2>/dev/null | grep -q .
+}
+
+# NetworkManager's word for the whole stack: connected, connecting,
+# disconnected, asleep, or "connected (site)" / "connected (local)" for a
+# device that is up without a default route. Empty when nmcli is absent or
+# NetworkManager does not answer within 5 s -- nmcli talks over D-Bus, and
+# an unanswered D-Bus call would otherwise wait forever, which in a tool
+# whose job is to bound a wait is the one failure it may not have.
+nm_state()        { timeout 5 nmcli -g STATE general 2>/dev/null; }
+nm_connectivity() { timeout 5 nmcli -g CONNECTIVITY general 2>/dev/null; }
+
+# The stand-in when NetworkManager cannot be asked: some interface other
+# than loopback has a carrier.
+carrier_up() {
+    local f
+    for f in /sys/class/net/*/carrier; do
+        case "${f}" in */lo/carrier) continue ;; esac
+        [ "$(cat "${f}" 2>/dev/null)" = "1" ] && return 0
+    done
+    return 1
+}
+
+START=$(uptime_cs)
+DEADLINE=$((START + WAIT * 100))
+GRACE_CS=$((GRACE * 100))
+SETTLED_SINCE=""
+ANNOUNCED=0
+FALLBACK_SAID=0
+STATE=""
+CONN=""
+
+while :; do
+    NOW=$(uptime_cs)
+
+    if ! has_default_route; then
+        # No route yet. A link that is coming up -- NetworkManager says
+        # `connecting`, or with no NetworkManager to ask some interface has
+        # a carrier -- is waited for up to the deadline, so the card's
+        # WAITING FOR A NETWORK line can be reached (#192, D-CLOUD-136; it
+        # was written in RC-11 and this exit stood in front of it). A
+        # device that is disconnected, asleep, or has its radio off exits at
+        # once as before: on the plane the card ends in a successful sync's
+        # time (D-CLOUD-072, D-CLOUD-112).
+        STATE=$(nm_state)
+        case "${STATE}" in
+            connecting*) COMING_UP=1 ;;
+            '') if carrier_up; then COMING_UP=1; else COMING_UP=0; fi ;;
+            *) COMING_UP=0 ;;
+        esac
+        if [ "${COMING_UP}" = 0 ]; then
+            echo "Skipped: there's no network connection. Try again when you're online."
+            log "no default route after $(((NOW - START) / 100))s (NetworkManager: ${STATE:-not asked}); exit ${EXIT_NO_NETWORK}"
+            exit "${EXIT_NO_NETWORK}"
+        fi
+        if [ "${NOW}" -ge "${DEADLINE}" ]; then
+            echo "Skipped: your network didn't come up in time. Try again when you're online."
+            log "no default route after ${WAIT}s while ${STATE:-a carrier} was coming up; exit ${EXIT_NO_NETWORK}"
+            exit "${EXIT_NO_NETWORK}"
+        fi
+        SETTLED_SINCE=""
+        if [ "${ANNOUNCED}" = 0 ]; then
+            echo ">>> doing network"
+            ANNOUNCED=1
+        fi
+        sleep "${POLL}"
+        continue
+    fi
+
+    STATE=$(nm_state)
+    if [ -n "${STATE}" ]; then
+        CONN=$(nm_connectivity)
+        # Any "connected" state settles -- "connected", "connected (site
+        # only)", "connected (local only)" -- once the default route above
+        # has held for GRACE seconds. NetworkManager's connectivity word is
+        # logged and not judged. It used to be: only "full" (or "unknown",
+        # or blank) settled, and "limited" or "portal" kept waiting until
+        # the deadline. The maintainer's RG SP (2026-09-12, 7eb713bbd9) sat
+        # at "connected (site only), connectivity limited" for its whole
+        # uptime while dropbox.com and two public connectivity checks
+        # answered it in under a second: NetworkManager's probe had failed
+        # once at boot and it re-checks every five minutes, so a 60 s wait
+        # could never see it change, and the startup sync ended "no
+        # network" on a device that had one. The judge of the cloud is the
+        # bounded run that follows (D-CLOUD-118): a portal or a dead link
+        # ends it within seconds with its own words, which is D-CLOUD-112's
+        # shape. "connecting" and "disconnected" still wait.
+        case "${STATE}" in
+            connected*) SETTLED=1 ;;
+            *) SETTLED=0 ;;
+        esac
+    else
+        if [ "${FALLBACK_SAID}" = 0 ]; then
+            log "nmcli unavailable or NetworkManager not answering; judging by the route and a carrier alone" WARN
+            FALLBACK_SAID=1
+        fi
+        if carrier_up; then SETTLED=1; else SETTLED=0; fi
+    fi
+
+    if [ "${SETTLED}" = 1 ]; then
+        [ -n "${SETTLED_SINCE}" ] || SETTLED_SINCE=${NOW}
+        if [ $((NOW - SETTLED_SINCE)) -ge "${GRACE_CS}" ]; then
+            log "network settled (${STATE:-carrier}${CONN:+, connectivity ${CONN}}), held ${GRACE}s, ready after $(((NOW - START) / 100))s"
+            exit 0
+        fi
+    else
+        SETTLED_SINCE=""
+        if [ "${NOW}" -ge "${DEADLINE}" ]; then
+            echo "Skipped: your network didn't come up in time. Try again when you're online."
+            log "not settled after ${WAIT}s (NetworkManager: ${STATE:-not asked}${CONN:+, connectivity ${CONN}}); exit ${EXIT_NO_NETWORK}"
+            exit "${EXIT_NO_NETWORK}"
+        fi
+    fi
+
+    if [ "${ANNOUNCED}" = 0 ]; then
+        echo ">>> doing network"
+        ANNOUNCED=1
+    fi
+    sleep "${POLL}"
+done

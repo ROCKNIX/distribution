@@ -1,0 +1,885 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+# cloud_setup - configure the rclone cloud remote.
+#
+# Walks the player through rclone's own interactive configuration over SSH:
+# it is the only flow that handles every provider completely (OAuth sign-in,
+# folder choices, provider-specific questions). This screen supplies the
+# connection details in big text, waits, then verifies the remote actually
+# works before declaring success.
+#
+# The native UI wizard drives the same flow through three flags:
+#   --info       key=value connection facts (IP, SSH command, override
+#                state, password, sshd state, OAuth-port state,
+#                configured remotes)
+#   --free-auth-port  clear a stale sign-in webserver holding rclone's
+#                OAuth port 53682
+#   --set-saves-remote <path>  change the cloud folder (SAVES_REMOTE) the sync
+#                (--set-syncpath is accepted as the older spelling)
+#                tools use, keeping SETTINGS_REMOTE alongside it; refuses a
+#                path the remote cannot use
+#   --accept-saves-root  the saves folder is on a different card than the last
+#                sync and that is intended (cloud_saves_root)
+#   --check-syncpath [path]  validate a cloud folder against the remote's
+#                shape without changing anything (default: the current one)
+#   --content-location  report where this device's ROMs/BIOS actually are in
+#                the cloud (key=value; STATE=ok|stranded-at-root|empty;
+#                unreadable, exit 1, when its value is not in a form the
+#                sync reads)
+#   --use-content-root  point content back at the remote root, moving nothing
+#   --connected  exit 0 when an inbound SSH session is established, so the
+#                connect step can be verified rather than taken on faith
+#   --check [remote]  verify a remote (default: first); exit 0 working,
+#                1 missing, 2 configured but unreachable
+
+. /etc/profile
+
+SCRIPT_NAME=$(basename "$0")
+LOG_FILE="/var/log/cloud_sync.log"
+SYNC_CONF="/storage/.config/cloud_sync.conf"
+
+log_message() {
+    local message="$1"
+    local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+    echo "[${timestamp}] [INFO] [${SCRIPT_NAME}] ${message}" >> ${LOG_FILE}
+}
+
+# The config is shell: every cloud script sources it. So a value is written
+# as text between double quotes, never through a sed replacement -- where &
+# is the matched line and | ends the expression, so "/R&D/Saves" became
+# garbage and "/a|b" failed the write while OK was printed (audit #307
+# PL-051) -- and a value that would mean something to a shell between double
+# quotes (" $ ` \) is refused where it is typed (syncpath_problem).
+#
+# conf_set KEY VALUE [KEY VALUE ...] writes every pair in one pass, each
+# KEY= line replaced (every one, as the sed was) or appended, to a file
+# beside the config that is renamed over it: all the keys or none, and the
+# previous config intact when the write fails. The values reach awk through
+# the environment, so nothing in them is interpreted. Returns non-zero when
+# the config could not be written.
+conf_set() {
+    local tmp="${SYNC_CONF}.tmp.$$" src="${SYNC_CONF}" n=0 i
+    local -a pairs=() want=()
+    # Something at the config's path that is not a file is not a config this
+    # can write: read as "absent", `mv -f` then put the new file INSIDE a
+    # directory there and succeeded (audit of stream C, G-C-04).
+    if [ -e "${SYNC_CONF}" ] && [ ! -f "${SYNC_CONF}" ]; then
+        return 1
+    fi
+    [ -f "${src}" ] || src=/dev/null
+    while [ $# -ge 2 ]; do
+        n=$((n + 1)); pairs+=("CONF_K${n}=$1" "CONF_V${n}=$2")
+        want+=("$1=\"$2\""); shift 2
+    done
+    # Braced, and silenced as a whole: a redirection that fails opening the
+    # temp file happens before a `2>/dev/null` written after it, and the
+    # shell printed its own diagnostic -- a line number and the temp file's
+    # path -- ahead of the caller's sentence (G-C-07).
+    if { env "${pairs[@]}" CONF_N="${n}" awk '
+        BEGIN {
+            n = ENVIRON["CONF_N"] + 0
+            for (i = 1; i <= n; i++) {
+                k[i] = ENVIRON["CONF_K" i]
+                line[i] = k[i] "=\"" ENVIRON["CONF_V" i] "\""
+            }
+        }
+        {
+            for (i = 1; i <= n; i++)
+                if (index($0, k[i] "=") == 1) { print line[i]; seen[i] = 1; next }
+            print
+        }
+        END { for (i = 1; i <= n; i++) if (!seen[i]) print line[i] }
+    ' "${src}" > "${tmp}" && mv -f "${tmp}" "${SYNC_CONF}"; } 2>/dev/null; then
+        # Written is what the file says, not what mv returned: a regular
+        # file at the path, holding every line asked for.
+        [ -f "${SYNC_CONF}" ] || return 1
+        for i in "${want[@]}"; do
+            grep -qFx -- "${i}" "${SYNC_CONF}" 2>/dev/null || return 1
+        done
+        return 0
+    fi
+    rm -f "${tmp}" 2>/dev/null
+    return 1
+}
+
+# One value from the config, read as text -- never by sourcing or eval, since
+# a value an earlier build wrote with $( ) in it would run (PL-051) -- and as
+# the scripts that run with it read it, so this and they never disagree
+# about a player's folder:
+#   - Of two assignments of a key, the FIRST: every saves run the interface
+#     starts is --yes, which runs cloud_sync_cleanup_duplicates.sh, which
+#     keeps the first and is what the file becomes; the content scripts'
+#     conf_get reads the first too. This read the last, as `source` alone
+#     would, so with a key written twice the hub's line and
+#     --content-location named a folder the scripts stopped using at their
+#     next run (the audit of the fix round, PL-021; the first cut's G-C-03
+#     gpt and G-C-06 claude had moved it from first to last).
+#   - The value double quoted, single quoted or a bare word, then nothing,
+#     or blanks and a # comment: the forms conf_valid lets a file through
+#     with. Anything else is exit 2 and nothing printed -- /Mine/'My Saves',
+#     text after a closing quote, a double-quoted value with $, ` or \ in it
+#     (what a shell would expand there) -- as the content scripts' conf_get
+#     answers it and as conf_valid refuses the whole file. The first cut
+#     read /Mine/'My as the folder, one no script would ever use (the audit
+#     of the fix round, gpt G2-C-01).
+# Nothing when the key is absent. The same awk as cloud_content_backup's and
+# cloud_content_restore's conf_get, on the file SYNC_CONF names.
+conf_get() { # <KEY> (the content scripts' reader, mirrored so every reader agrees, D-CLOUD-149): its value, quotes off; nothing when absent; exit 2 when unreadable, and why on stdout
+    [ -f ${SYNC_CONF} ] || return 0
+    awk -v k="$1" '
+        { t = $0; gsub(/\t/, "", t); if (t ~ /[[:cntrl:]]/ && !cntrl) cntrl = NR }
+        index($0, k "=") != 1 && !other \
+            && $0 ~ ("^[ \t]*((export|declare|typeset|readonly|local)([ \t]+-[A-Za-z]+)*[ \t]+)?" k "[ \t]*[+]?=") { other = NR }
+        index($0, k "=") == 1 {
+            s = substr($0, length(k) + 2); v = ""; r = ""; ok = 1; why = ""
+            c = substr(s, 1, 1)
+            if (c == "\"") {
+                # Inside double quotes bash reads \" \\ \$ and \` as the one
+                # character each (PL-015), and so does this; an unescaped $
+                # or backtick is an expansion this reader does not make, and
+                # any other backslash is refused as conf_valid refuses it.
+                n = length(s); i = 2; closed = 0
+                while (i <= n) {
+                    d = substr(s, i, 1)
+                    if (d == "\"") { closed = 1; break }
+                    if (d == "\\") {
+                        e = substr(s, i + 1, 1)
+                        if (e == "\"" || e == "\\" || e == "$" || e == "`") { v = v e; i += 2; continue }
+                        ok = 0
+                        why = (e == "") ? "a value continued onto the next line, which this reader does not follow" \
+                                        : "a backslash inside double quotes that is not one of the escapes bash reads there"
+                        break
+                    }
+                    if (d == "$" || d == "`") { ok = 0; why = "a $ or a backtick inside double quotes"; break }
+                    v = v d; i++
+                }
+                if (ok && !closed) { ok = 0; why = "a double-quoted value that does not close on its line" }
+                if (ok) r = substr(s, i + 1)
+            } else if (c == "'"'"'") {
+                j = index(substr(s, 2), c)
+                if (j) { v = substr(s, 2, j - 1); r = substr(s, j + 2) } else { ok = 0; why = "a single-quoted value that does not close on its line" }
+            } else {
+                match(s, /^[A-Za-z0-9_.\/:@%+,=-]*/); v = substr(s, 1, RLENGTH); r = substr(s, RLENGTH + 1)
+            }
+            if (ok && r !~ /^([ \t]+(#.*)?)?$/) { ok = 0; why = "something after the value that is not a # comment" }
+            if (!found) { found = 1; first = v; firstok = ok; firstwhy = "line " NR ": " why }
+        }
+        END {
+            if (cntrl) { print "line " cntrl ": a control character other than a tab"; exit 2 }
+            if (other) { print "line " other ": " k " set in a form this reader does not read"; exit 2 }
+            if (found && !firstok) { print firstwhy; exit 2 }
+            if (found) print first
+        }
+    ' ${SYNC_CONF}
+}
+
+# Wait for any confirm/cancel input: controller (evtest) or keyboard.
+wait_for_button() {
+    local input_device=""
+    for dev in /dev/input/event*; do
+        if [ -c "$dev" ]; then
+            local supports=$(udevadm info "$dev" 2>/dev/null | awk '/ID_INPUT_JOYSTICK=1/ {print "joystick"}')
+            if [ "$supports" = "joystick" ]; then
+                input_device="$dev"
+                break
+            fi
+        fi
+    done
+    if [ -n "$input_device" ]; then
+        evtest "$input_device" 2>/dev/null | grep -m 1 -E "BTN_(SOUTH|EAST|A|B|START).*value 1" >/dev/null
+    else
+        read -sn1 2>/dev/null
+    fi
+}
+
+# Connection facts, shared by the console flow and the native UI.
+# resolve_connection sets SSH_CMD, SHOW_QR, OVERRIDE_ACTIVE and IP_ADDR
+# (empty when offline).
+resolve_connection() {
+    OVERRIDE_ACTIVE=0
+    IP_ADDR=$(ip route get 1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')
+    # The -L tunnel lets the provider sign-in page (which rclone serves on
+    # the handheld at localhost:53682) open in the computer's own browser,
+    # so the full 'auto config' flow works over SSH - see
+    # rclone.org/remote_setup.
+    SSH_CMD="ssh -L 53682:localhost:53682 root@${IP_ADDR}"
+    SHOW_QR=1
+    # Optional connection override: when the device is reached through a
+    # gateway that remaps its address (development setups, tunnels,
+    # proxies), the command in this file is shown instead of the direct one.
+    OVERRIDE_FILE="/storage/.config/cloud_setup_ssh"
+    if [ -s "${OVERRIDE_FILE}" ]; then
+        SSH_CMD=$(head -n1 "${OVERRIDE_FILE}")
+        SHOW_QR=0
+        OVERRIDE_ACTIVE=1
+        log_message "Using connection override: ${SSH_CMD}"
+    fi
+}
+
+# True when at least one inbound SSH session is established (a peer is
+# connected to local port 22). Reads /proc/net/tcp* directly so it works
+# without ss/netstat; port 22 is 0016 hex, state 01 is ESTABLISHED.
+ssh_session_established() {
+    local f
+    for f in /proc/net/tcp /proc/net/tcp6; do
+        [ -r "$f" ] || continue
+        if awk 'NR>1 { n=split($2,a,":"); if (a[n]=="0016" && $4=="01") found=1 } END { exit found?0:1 }' "$f"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# True when something on the device already listens on rclone's OAuth
+# port 53682 (hex D1B2, state 0A is LISTEN) - a stale sign-in webserver
+# from an interrupted `rclone config` would make the next auto-config
+# attempt fail with "bind: address already in use".
+auth_port_busy() {
+    local f
+    for f in /proc/net/tcp /proc/net/tcp6; do
+        [ -r "$f" ] || continue
+        if awk 'NR>1 { n=split($2,a,":"); if (a[n]=="D1B2" && $4=="0A") found=1 } END { exit found?0:1 }' "$f"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Does this cloud folder work on this remote?
+#
+# Dropbox, Google Drive and OneDrive are path-based: "/GAMES" is a folder and
+# any name will do. S3, B2 and friends are bucket-based - the first path
+# component IS the bucket, and bucket names have rules the shipped default
+# breaks (uppercase is illegal), so a sync fails with InvalidBucketName and
+# nothing in that message points back at this setting.
+#
+# rclone reports the distinction itself, so no provider list is hardcoded.
+# Returns 0 when the path will work; prints a reason and returns 1 when not.
+# Listings that decide something get a bound (as the sync scripts' do) -- the
+# folder probe below and the parent walk alike; `backend features` asks
+# rclone about itself and makes no round trip: a cloud that never answers is
+# a refusal in 30 s, not a wizard that hangs. Until #151 PL-15 the probe was
+# the one unbounded listing here, and this comment covered only the walk.
+readonly -a RCLONE_LIST_OPTS=(--contimeout 15s --timeout 30s --low-level-retries 3 --retries 1)
+# Is this remote path missing, rather than unreadable? rclone answers "not
+# found" (exit 3) when the server's reply is the one it maps to that, and a
+# plain error (exit 1) when the words differ: an FTP server that answers a
+# missing folder with 501 "No such directory." where the standard reply is
+# 550 makes every "is it there yet?" branch read as "the cloud is broken"
+# (#142, from the #133 matrix). The parent settles it, whatever the words:
+# walk up until a level lists. A level that lists and lacks the next name is
+# a path not created yet (0); one that lists and holds it means the failure
+# was something else (1); a remote whose root will not list is broken (1).
+# On a bucket an absent prefix lists as empty, which is the same answer
+# (D-CLOUD-120). Called only after a listing has already failed with a code
+# other than 3, so the everyday path costs nothing extra.
+absent_not_broken() {
+    local path="${1%/}" remote rel name parent listing
+    remote="${path%%:*}:"; rel="${path#*:}"; rel="${rel#/}"
+    while [ -n "${rel}" ]; do
+        name="${rel##*/}"; parent="${rel%/*}"
+        [ "${parent}" = "${rel}" ] && parent=""
+        if listing=$(rclone lsf --dirs-only "${remote}/${parent:+${parent}/}" "${RCLONE_LIST_OPTS[@]}" 2>/dev/null); then
+            printf '%s\n' "${listing}" | grep -qFx -- "${name}/" && return 1
+            return 0
+        fi
+        [ -n "${parent}" ] || return 1
+        rel="${parent}"
+    done
+    return 1
+}
+
+# Callers pass the first remote; an empty one stops after the string checks,
+# which hold with no remote configured at all.
+syncpath_problem() {
+    local path="$1" remote="$2" bucket probe
+    path="/$(echo "${path}" | sed 's:^/*::; s:/*$::')"
+
+    if [ "${path}" = "/" ]; then
+        echo "Your cloud folder can't be empty."
+        return 1
+    fi
+    # The config is shell, sourced by every cloud script: the characters a
+    # shell reads inside double quotes, and control characters, are refused
+    # where the folder is typed (audit #307 PL-051, conf_set).
+    case "${path}" in
+        *[\"\$\`\\]*|*[[:cntrl:]]*)
+            echo "Your cloud folder's name can't contain \", \$, \`, or \\."
+            return 1
+            ;;
+    esac
+    # Every part of the path is a folder's name, and the checks below read
+    # the text. A part that is empty (//), . or .. names no folder of its
+    # own: /Mine/Backups/. is /Mine/Backups on a cloud that resolves it,
+    # while its siblings -- <parent>/Backups and <parent>/Content, made from
+    # the text by dirname -- came out as /Mine/Backups/Backups and
+    # /Mine/Backups/Content, inside it: the nesting the sibling check below
+    # exists to stop, walked past (the audit of the fix round, PL-009; gpt
+    # G2-C-04). Refused where it is typed, before any other check reads the
+    # text, with the folder the path would have meant.
+    case "${path}/" in
+        *//*|*/./*|*/../*)
+            local part canon="" try
+            local -a parts=()
+            IFS=/ read -r -a parts <<< "${path#/}"
+            for part in "${parts[@]}"; do
+                case "${part}" in
+                    ""|.) ;;
+                    ..) canon="${canon%/*}" ;;
+                    *) canon="${canon}/${part}" ;;
+                esac
+            done
+            if [ -z "${canon}" ]; then
+                echo "Your cloud folder can't be empty."
+                return 1
+            fi
+            # Offered only as a folder the checks below take: two levels
+            # at least, and not named like its own siblings.
+            try="${canon}"
+            case "${canon#/}" in */*) ;; *) try="${canon}/Saves" ;; esac
+            case "$(printf '%s' "${try##*/}" | tr 'A-Z' 'a-z')" in
+                backups|content) try="${try%/*}/Saves" ;;
+            esac
+            echo "Your cloud folder can't have an empty part, or a part called . or .., in its path."
+            echo "Try ${try}."
+            return 1
+            ;;
+    esac
+    # Player-facing, these call it the cloud folder, which is what the
+    # interface's row and its refusal dialog call it (G-C-03 claude).
+    #
+    # The saves folder has to sit inside another folder. Its settings
+    # backups and games are kept beside it -- <parent>/Backups and
+    # <parent>/Content -- and a saves folder at the top of the cloud has no
+    # parent to keep them in. The setter used to put them INSIDE it instead
+    # (/GAMES/Backups, /GAMES/Content): the nesting a mirror of the saves
+    # folder deletes, because to the saves allowlist every file in them is
+    # excluded (audit #307 PL-015, rclone-cloud-sync.md). So it is refused
+    # where it is typed, with the folder to use instead -- on a bucket remote
+    # that is the bucket and a folder in it, the shape the bucket message
+    # below asks for anyway.
+    case "${path#/}" in
+        */*) ;;
+        *)
+            echo "Your cloud folder needs to sit inside another folder, so your settings backups and games can go beside it."
+            echo "Try ${path}/Saves."
+            return 1
+            ;;
+    esac
+    # And the three have to be three folders. The settings and content
+    # folders are <parent>/Backups and <parent>/Content, so a saves folder
+    # called Backups or Content is its own sibling: two tiers in one folder,
+    # and the saves sync walking the other tier's files (audit #307, G-C-01).
+    # Compared case-folded, because Dropbox and OneDrive fold case.
+    local parent="${path%/*}" folded
+    folded="$(printf '%s' "${path}" | tr 'A-Z' 'a-z')"
+    local sibling=""
+    [ "${folded}" = "$(printf '%s' "${parent}/Backups" | tr 'A-Z' 'a-z')" ] && sibling="your settings backups"
+    [ "${folded}" = "$(printf '%s' "${parent}/Content" | tr 'A-Z' 'a-z')" ] && sibling="your ROMs and BIOS"
+    if [ -n "${sibling}" ]; then
+        echo "Your cloud folder can't be called ${path##*/}: ${sibling} go in a folder of that name beside it."
+        echo "Try ${parent}/Saves."
+        return 1
+    fi
+    [ -n "${remote}" ] || return 0
+
+    # No provider rules are encoded here on purpose. rclone does not validate
+    # bucket names itself - it hands them to the provider and relays the
+    # rejection - so the rules live with the provider, differ between them,
+    # and would go stale in this script. The problem was never missing
+    # validation; it was validation arriving at sync time, in a log, as
+    # "InvalidBucketName" with nothing tying it to the folder that caused it.
+    #
+    # So: ask the provider now, and attach the answer to the setting.
+    #
+    # Only what rclone says went wrong, never its listing. This used to read
+    # stdout as well, so a folder that already existed and held anything --
+    # a saves folder with savestates/ in it, which is every folder somebody
+    # would type on a second device -- was refused as "your provider would
+    # not accept this folder", with the folder's own contents quoted as the
+    # reason (found by the A3 fixture on the VM pair, 2026-09-06).
+    probe=$(rclone lsd "${remote}${path#/}" "${RCLONE_LIST_OPTS[@]}" --log-level ERROR 2>&1 >/dev/null | head -2)
+    case "${probe}" in
+        # A folder that does not exist yet is fine - it gets created on use.
+        *"not found"*|*NoSuchBucket*|"") return 0 ;;
+    esac
+    # The same folder, on a server whose "missing" rclone relays as a plain
+    # error rather than "not found" (#142). On a path-based cloud a folder
+    # its parent lacks is a folder not created yet, whatever the words. On
+    # a bucket the first component is a bucket name the provider judges,
+    # and the provider's own answer stands -- the parent rule would read
+    # InvalidBucketName as "not there yet" and store the name it rejected.
+    #
+    # Which kind this remote is, rclone says in JSON, and the answer has to
+    # be one of the two before anything rests on it. A `backend features`
+    # that fails or prints neither is "unknown", and unknown takes the
+    # provider's refusal at face value: the parent walk runs only on a
+    # remote known to be path-based. Until #151 PL-14 a failed call read as
+    # "not bucket-based" -- a grep over empty output -- and the walk ran,
+    # so the one guard against storing a rejected bucket name fell open
+    # exactly when rclone could not be asked.
+    local features bucket_based=unknown
+    if features=$(rclone backend features "${remote}" 2>/dev/null); then
+        case "${features}" in
+            *'"BucketBased": true'*)  bucket_based=yes ;;
+            *'"BucketBased": false'*) bucket_based=no ;;
+        esac
+    fi
+    if [ "${bucket_based}" = no ] && absent_not_broken "${remote}${path#/}"; then
+        return 0
+    fi
+
+    # Something is wrong. If the remote is bucket-based, name the reason the
+    # message will not: the first path component is a bucket, not a folder.
+    if [ "${bucket_based}" = yes ]; then
+        bucket="${path#/}"; bucket="${bucket%%/*}"
+        echo "Your provider wouldn't accept \"${bucket}\"."
+        echo
+        echo "This provider keeps things in buckets, so the first part of the"
+        echo "folder is a bucket name, not a folder - and bucket names have"
+        echo "rules that folders do not. They are also shared with everyone"
+        echo "else using the provider, not private to your account."
+        echo
+        echo "  ${probe}"
+        echo
+        echo "Try something like /rocknix-saves-yourname/Saves instead."
+    else
+        echo "Your provider wouldn't accept this folder:"
+        echo
+        echo "  ${probe}"
+    fi
+    return 1
+}
+
+case "$1" in
+    --info)
+        # Machine-readable connection facts for the native UI.
+        resolve_connection
+        echo "IP=${IP_ADDR}"
+        echo "SSH_CMD=${SSH_CMD}"
+        echo "OVERRIDE=${OVERRIDE_ACTIVE}"
+        # Whether a root password is set, never the password: this output is
+        # parsed by EmulationStation through a pipeline, and a credential that
+        # crosses a script boundary is one careless echo from a log (#116,
+        # D-INFRA-008). The page that must show or pre-fill it reads
+        # root.password in-process from its own settings.
+        echo "PASSWORD_SET=$([ -n "$(get_setting root.password)" ] && echo 1 || echo 0)"
+        echo "SSH_UP=$(systemctl is-active sshd 2>/dev/null)"
+        echo "AUTH_PORT=$(auth_port_busy && echo busy || echo free)"
+        # Both names for one value: EmulationStation reads SYNCPATH= until its
+        # side of the vocabulary sweep (#73) lands; SAVES_REMOTE= is the name.
+        # A folder in a form the scripts cannot read is named as none: the
+        # sync refuses that config too, and the folder editor the interface
+        # opens from this line is the way to set one it can (gpt G2-C-01).
+        if ! saves_remote="$(conf_get SAVES_REMOTE)"; then
+            log_message "SAVES_REMOTE in ${SYNC_CONF} is not in a form the sync reads (${saves_remote}); no folder named"
+            saves_remote=""
+        fi
+        echo "SAVES_REMOTE=${saves_remote}"
+        echo "SYNCPATH=${saves_remote}"
+        echo "REMOTES=$(rclone listremotes 2>/dev/null | tr '\n' ' ')"
+        # Which provider this device is actually connected to. The name is the
+        # player's own label for the remote; the type is rclone's word for the
+        # service (dropbox, drive, webdav...), which EmulationStation turns
+        # into the name the player picked it by. Until this, nothing on any
+        # screen said who the cloud was -- the setup page offered to connect
+        # one and never mentioned the one already there (fork #110).
+        remote_name="$(rclone listremotes 2>/dev/null | head -1)"
+        remote_name="${remote_name%:}"
+        echo "REMOTE_NAME=${remote_name}"
+        echo "REMOTE_TYPE=$(rclone config show "${remote_name}" 2>/dev/null | sed -n 's/^[[:space:]]*type[[:space:]]*=[[:space:]]*//p' | head -1)"
+        exit 0
+    ;;
+    --content-location)
+        # Where is this device's content actually stored in the cloud?
+        #
+        # CONTENT_REMOTE is new, so an upgrading device gains one it never had.
+        # Anyone who had put ROMs at the remote root by hand - the only way
+        # content reached the cloud before f60ea2b8f8 - would find the content
+        # list empty and nothing explaining why. Report the situation as
+        # key=value so a UI can offer the choice rather than leaving the owner
+        # to guess.
+        #
+        # Reported, never acted on: moving somebody's cloud files is not a
+        # thing to do behind their back.
+        REMOTE=$(rclone listremotes 2>/dev/null | head -1)
+        [ -z "${REMOTE}" ] && { echo "STATE=no-remote"; exit 2; }
+        if ! CP="$(conf_get CONTENT_REMOTE)"; then
+            echo "STATE=unreadable"
+            exit 1
+        fi
+
+        # Only directories this device could actually have put there count as
+        # ours. Anything else at the root is the owner's own business.
+        LOCAL=$(cloud_content_backup --list 2>/dev/null | tr '\n' ' ')
+        AT_PATH=0; AT_ROOT=0; ROOT_DIRS=""
+        # Both listings carry the bound every listing here does (#308 claude
+        # F-RS-13): rclone's own defaults are three runs of ten retries,
+        # under a page waiting on the answer.
+        if [ -n "${CP}" ]; then
+            AT_PATH=$(rclone lsf --dirs-only "${REMOTE}${CP#/}" "${RCLONE_LIST_OPTS[@]}" 2>/dev/null | wc -l)
+        fi
+        for d in $(rclone lsf --dirs-only "${REMOTE}" "${RCLONE_LIST_OPTS[@]}" 2>/dev/null | sed 's:/$::'); do
+            case " ${LOCAL} " in
+                *" ${d} "*) AT_ROOT=$((AT_ROOT + 1)); ROOT_DIRS="${ROOT_DIRS}${d} " ;;
+            esac
+        done
+
+        echo "CONTENT_REMOTE=${CP}"
+        echo "AT_PATH=${AT_PATH}"
+        echo "AT_ROOT=${AT_ROOT}"
+        echo "ROOT_DIRS=${ROOT_DIRS% }"
+        # An empty CONTENT_REMOTE means the root IS the content path, so content
+        # sitting there is correct rather than stranded - otherwise a UI would
+        # keep offering to fix something already resolved.
+        if [ -z "${CP}" ] && [ "${AT_ROOT}" -gt 0 ]; then
+            echo "STATE=ok"
+        elif [ "${AT_PATH}" -gt 0 ]; then
+            echo "STATE=ok"
+        elif [ "${AT_ROOT}" -gt 0 ]; then
+            echo "STATE=stranded-at-root"
+        else
+            echo "STATE=empty"
+        fi
+        exit 0
+    ;;
+
+    --use-content-root)
+        # The safe resolution: point this device back at the root where its
+        # content already is. Moves nothing, reversible, instant.
+        if ! conf_set CONTENT_REMOTE ""; then
+            echo "ERROR the cloud sync settings could not be saved"
+            log_message "Content path NOT changed: ${SYNC_CONF} could not be written"
+            exit 1
+        fi
+        log_message "Content path set to the remote root by request"
+        echo "OK content stays at the remote root"
+        exit 0
+    ;;
+
+    --accept-saves-root)
+        # The owner says the card the saves folder is on now is the right
+        # one (#83): remember it, so saves transfers stop refusing.
+        tool="$(dirname "$(readlink -f "$0")")/cloud_saves_root"
+        [ -x "${tool}" ] || tool=/usr/bin/cloud_saves_root
+        exec "${tool}" accept
+    ;;
+    --check-syncpath)
+        # Validate a candidate cloud folder without changing anything, so the
+        # UI can refuse a bad one where it is typed rather than letting it
+        # fail later inside a sync.
+        if [ -n "${2:-}" ]; then
+            CAND="$2"
+        elif ! CAND="$(conf_get SAVES_REMOTE)"; then
+            echo "Your cloud sync settings couldn't be read."
+            exit 1
+        else
+            # The conf's own value is judged as the migration judges it
+            # (the audit of the fixes, claude G3-D-07): one trailing slash
+            # is a spelling, not an empty part.
+            CAND="${CAND%/}"
+        fi
+        REMOTE=$(rclone listremotes 2>/dev/null | head -1)
+        if [ -z "${REMOTE}" ]; then
+            echo "No cloud remote configured."
+            exit 2
+        fi
+        if syncpath_problem "${CAND}" "${REMOTE}"; then
+            echo "OK ${CAND}"
+            exit 0
+        fi
+        exit 1
+    ;;
+
+    --set-saves-remote|--set-syncpath)
+        # Change the cloud folder the saves live in, and move the settings
+        # backups and the ROMs with it -- as SIBLINGS, never inside it.
+        # This used to write SETTINGS_REMOTE="<saves>/backup", which is the
+        # first-layout nesting cloud_migrate_layout exists to undo and the
+        # trap cloud_backup warns about: a mirror of the saves folder can
+        # delete the archives kept beneath it. The siblings are the saves
+        # folder's parent's: <parent>/Backups and <parent>/Content. A saves
+        # folder at the top of the cloud has no parent and is refused
+        # (syncpath_problem) -- it used to adopt the folder itself as the
+        # parent, which nested both inside it (audit #307 PL-015).
+        NEWPATH="$2"
+        if [ -z "${NEWPATH}" ]; then
+            echo "ERROR empty path"
+            exit 1
+        fi
+        # Normalize: exactly one leading slash, no trailing slash.
+        NEWPATH="/$(echo "${NEWPATH}" | sed 's:^/*::; s:/*$::')"
+        if [ "${NEWPATH}" = "/" ]; then
+            echo "ERROR root path not allowed"
+            exit 1
+        fi
+        # Refuse a path this remote cannot use, rather than storing it and
+        # letting the next sync fail with a provider error naming nothing the
+        # player recognises. The string checks -- a parent for the siblings
+        # (PL-015), no shell characters (PL-051) -- hold with no remote.
+        SP_REMOTE=$(rclone listremotes 2>/dev/null | head -1)
+        if ! syncpath_problem "${NEWPATH}" "${SP_REMOTE}"; then
+            exit 1
+        fi
+        SP_PARENT="$(dirname "${NEWPATH}")"
+        # All three or none (conf_set): a folder half-changed is a saves
+        # folder whose settings still go to the old place.
+        if ! conf_set SAVES_REMOTE "${NEWPATH}" \
+                      SETTINGS_REMOTE "${SP_PARENT}/Backups" \
+                      CONTENT_REMOTE "${SP_PARENT}/Content"; then
+            # Under the interface's "THE CLOUD FOLDER WAS NOT CHANGED": this line
+            # says why, and nothing the title already said (G-C-03 claude).
+            echo "Your cloud sync settings couldn't be saved."
+            log_message "Sync path NOT changed to ${NEWPATH}: ${SYNC_CONF} could not be written"
+            exit 1
+        fi
+        log_message "Sync path changed to ${NEWPATH}"
+        echo "OK ${NEWPATH}"
+        exit 0
+    ;;
+    --free-auth-port)
+        # Clear a stale sign-in webserver left by an interrupted
+        # `rclone config`, so the next auto-config attempt can bind.
+        pkill -f "rclone config" 2>/dev/null
+        pkill -f "rclone authorize" 2>/dev/null
+        log_message "Cleared stale processes holding the OAuth port"
+        echo "OK"
+        exit 0
+    ;;
+    --connected)
+        # The native UI gates its connect step on this, so the player
+        # cannot advance without an SSH session actually being open.
+        if ssh_session_established; then
+            echo "CONNECTED"
+            exit 0
+        fi
+        echo "NONE"
+        exit 1
+    ;;
+    --seed-folders)
+        # Give a new remote a shape, so somebody with a fresh handheld can see
+        # where their files go.
+        #
+        # Until the first upload these folders do not exist, so a player who
+        # wants to seed their library from a computer first has to guess three
+        # names and a per-system convention. The folders answer that; the
+        # README in each answers what belongs there.
+        #
+        # The READMEs are also what makes this work at all on bucket-based
+        # remotes (S3, B2): there the first path component is a bucket and the
+        # rest is a key prefix, so an empty directory does not persist and
+        # `rclone mkdir` on a subpath succeeds while creating nothing. A file
+        # in the folder is what materialises it.
+        #
+        # Nothing is ever overwritten and nothing is deleted. Paths come from
+        # the config, so a player who moved their cloud folder gets their own
+        # layout seeded rather than ours.
+        REMOTE=$(rclone listremotes 2>/dev/null | head -1)
+        [ -z "${REMOTE}" ] && { echo "ERROR no remote"; exit 2; }
+        # Read as text, never eval'd: the config is shell, and a value an
+        # earlier build wrote could carry a command (PL-051). A folder in a
+        # form the scripts cannot read makes nothing: read as empty, it
+        # became the default folder here and was seeded in the player's
+        # cloud (gpt G2-C-01).
+        if ! SAVES_REMOTE="$(conf_get SAVES_REMOTE)" \
+           || ! SETTINGS_REMOTE="$(conf_get SETTINGS_REMOTE)" \
+           || ! CONTENT_REMOTE="$(conf_get CONTENT_REMOTE)"; then
+            echo "Your cloud sync settings couldn't be read, so no folders were made."
+            log_message "Seeding: a folder in ${SYNC_CONF} is not in a form the sync reads; nothing was made"
+            exit 1
+        fi
+        SAVES="${SAVES_REMOTE:-/ROCKNIX/Saves}"
+        BACKUPS="${SETTINGS_REMOTE:-/ROCKNIX/Backups}"
+        # An empty CONTENT_REMOTE is not a missing one: it is
+        # --use-content-root's "the cloud's root", which is where the
+        # content scripts put ROMs/ and BIOS/ (ROOT="<remote>:"). Only a
+        # config with no such line gets the default (#308 gpt F-RS-20).
+        if grep -q '^CONTENT_REMOTE=' "${SYNC_CONF}" 2>/dev/null; then
+            CONTENT="${CONTENT_REMOTE%/}"
+        else
+            CONTENT="/ROCKNIX/Content"
+        fi
+
+        for d in "${SAVES}" "${SAVES}/savefiles" "${SAVES}/savestates" \
+                 "${SAVES}/screenshots" "${BACKUPS}" \
+                 ${CONTENT:+"${CONTENT}"} "${CONTENT}/ROMs" "${CONTENT}/BIOS"; do
+            # --s3-directory-markers writes a zero-byte object ending in "/",
+            # which is how S3 itself represents a folder -- without it a
+            # bucket remote silently keeps nothing, and mkdir still exits 0.
+            # Ignored by path-based backends, so it costs nothing there.
+            # Bounded like the listings (#308 claude F-RS-13, gpt F-RS-19):
+            # up to two dozen calls under one 90 s box in the interface.
+            rclone mkdir --s3-directory-markers "${REMOTE}${d}" "${RCLONE_LIST_OPTS[@]}" 2>/dev/null
+        done
+
+        seed_note() {
+            local dir="$1" listing tmp; shift
+            # Never clobber a note the owner may have written themselves, and
+            # never write on a guess. The folder's own listing says whether a
+            # README.txt is in it. Asking for the file by name could not: a
+            # listing that failed for any reason read as "absent" and the
+            # owner's note was replaced (audit #307 PL-047), and on a bucket
+            # a key that is not there lists as nothing with exit 0, which read
+            # as "present" -- so no README was ever written there (#308
+            # claude F-RS-09). A listing that fails writes nothing.
+            if ! listing=$(rclone lsf --files-only "${REMOTE}${dir}/" "${RCLONE_LIST_OPTS[@]}" 2>/dev/null); then
+                log_message "Seeding: ${dir} could not be listed, so its README was not written"
+                return 1
+            fi
+            printf '%s\n' "${listing}" | grep -qFx -- 'README.txt' && return 0
+            tmp=$(mktemp) || return 1
+            printf '%s\n' "$@" > "${tmp}"
+            # --ignore-existing: another device may have written one since
+            # the listing.
+            rclone copyto --ignore-existing "${tmp}" "${REMOTE}${dir}/README.txt" "${RCLONE_LIST_OPTS[@]}" 2>/dev/null
+            rm -f "${tmp}"
+        }
+
+        seed_note "${SAVES}" \
+            "Game saves, save states, and screenshots." \
+            "" \
+            "  savefiles/    battery saves" \
+            "  savestates/   save state snapshots" \
+            "  screenshots/" \
+            "" \
+            "The handheld writes these itself. Nothing to put here by hand."
+
+        seed_note "${BACKUPS}" \
+            "Settings backups, one folder per handheld." \
+            "" \
+            "Written by the device. Nothing to put here by hand."
+
+        # Not at the top of somebody's cloud: with content at the root, the
+        # ROMs and BIOS folders carry their own notes and the root keeps
+        # whatever the owner has there.
+        [ -n "${CONTENT}" ] && seed_note "${CONTENT}" \
+            "Put your games and BIOS files here." \
+            "" \
+            "  ROMs/       one folder per system - snes, psx, n64, gba, ..." \
+            "  BIOS/       BIOS and firmware files" \
+            "" \
+            "The handheld reads these when you choose" \
+            "\"Restore from the cloud\" on it."
+
+        seed_note "${CONTENT}/ROMs" \
+            "Your games, one folder per system." \
+            "" \
+            "Use the same folder names the handheld uses - snes, psx, n64," \
+            "gba, megadrive, and so on. The game list on the device shows them."
+
+        seed_note "${CONTENT}/BIOS" \
+            "BIOS and firmware files." \
+            "" \
+            "These land in /storage/roms/bios on the handheld, keeping" \
+            "whatever subfolder structure you use here."
+
+        # Report what is actually there, not what we asked for: on a bucket
+        # remote a mkdir can succeed and leave nothing behind.
+        for d in "${SAVES}" "${BACKUPS}" "${CONTENT}/ROMs" "${CONTENT}/BIOS"; do
+            # A listing, never lsjson --stat: on a bucket remote stat reports
+            # success for any path at all, so the MISSING branch could never
+            # be reached -- the report would have been unconditionally OK,
+            # which is the shape of an assertion that cannot fail.
+            if [ -n "$(rclone lsf "${REMOTE}${d}" "${RCLONE_LIST_OPTS[@]}" 2>/dev/null | head -1)" ] \
+               || rclone lsf --dirs-only "${REMOTE}${d%/*}/" "${RCLONE_LIST_OPTS[@]}" 2>/dev/null | grep -qFx -- "${d##*/}/"; then
+                echo "OK ${d}"
+            else
+                echo "MISSING ${d}"
+            fi
+        done
+        exit 0
+    ;;
+
+    --check)
+        # Verify a remote ($2 if given, else the first configured one);
+        # plain-text verdict on stdout, exit 0 = working, 1 = missing,
+        # 2 = configured but unreachable.
+        REMOTE="$2"
+        [ -z "${REMOTE}" ] && REMOTE=$(rclone listremotes 2>/dev/null | head -1)
+        if [ -z "${REMOTE}" ]; then
+            echo "NONE"
+            log_message "Cloud setup check: no remotes configured"
+            exit 1
+        fi
+        # The probe is bounded like every other listing here (RCLONE_LIST_OPTS:
+        # one run, three low-level retries). It carried only the two timeouts,
+        # so rclone's own defaults applied -- three runs of ten retries each --
+        # under a blocking spinner on three interface pages; the shape #113
+        # bounded for the syncs (traced 2026-09-25, #273).
+        if rclone lsd "${REMOTE}" "${RCLONE_LIST_OPTS[@]}" >/dev/null 2>&1; then
+            echo "OK ${REMOTE}"
+            log_message "Cloud setup verified working remote: ${REMOTE}"
+            exit 0
+        fi
+        echo "FAIL ${REMOTE}"
+        log_message "Cloud setup: remote ${REMOTE} failed verification"
+        exit 2
+    ;;
+esac
+
+clear
+
+# Need a network address to be reachable over SSH
+resolve_connection
+if [ -z "${IP_ADDR}" ]; then
+    echo -e "\e[31mNo network connection detected.\e[0m"
+    echo "Connect to a network first, then try again."
+    echo
+    echo "Press any button to exit."
+    wait_for_button
+    exit 1
+fi
+
+ROOTPASS=$(get_setting root.password)
+
+log_message "Cloud setup instructions shown (${SSH_CMD})"
+
+echo -e "\e[32m=> ${OS_NAME:-ROCKNIX} CLOUD SETUP\e[0m"
+echo
+echo "Connect from a computer on your network and follow rclone's"
+echo "step-by-step setup. It signs in to your cloud provider and picks"
+echo "the account/folder to use."
+echo
+echo -e "  1. On your computer, connect:  \e[1;36m${SSH_CMD}\e[0m"
+echo -e "     Password:                   \e[1;36m${ROOTPASS:-<not set>}\e[0m"
+echo -e "  2. Run:                        \e[1;36mrclone config\e[0m"
+echo "     Choose 'n' for a new remote, pick your provider, and follow"
+echo "     the prompts. Defaults are fine if you are unsure."
+echo "     When asked 'Use auto config?', answer Y, then open the"
+echo "     sign-in link it prints in your computer's browser."
+echo "  3. Quit with 'q' when the remote is listed, then come back here."
+echo
+if [ "${SHOW_QR}" = "1" ]; then
+    echo "Phone with an SSH app instead? Scan to connect:"
+    qrencode -t ANSIUTF8 -m 2 "ssh://root@${IP_ADDR}"
+    echo
+fi
+echo "Press any button here when you are done (or to cancel)."
+
+wait_for_button
+
+echo
+REMOTE=$(rclone listremotes 2>/dev/null | head -1)
+if [ -z "${REMOTE}" ]; then
+    echo -e "\e[33mNo cloud remote configured yet.\e[0m"
+    echo "Run this again once you have completed 'rclone config'."
+    log_message "Cloud setup finished with no remotes configured"
+    sleep 5
+    exit 0
+fi
+
+echo "Checking ${REMOTE} ..."
+if rclone lsd "${REMOTE}" "${RCLONE_LIST_OPTS[@]}" >/dev/null 2>&1; then
+    echo -e "\e[32mCloud remote configured and working: ${REMOTE}\e[0m"
+    echo "You can now use the cloud backup and restore tools."
+    log_message "Cloud setup verified working remote: ${REMOTE}"
+else
+    echo -e "\e[31mThe remote ${REMOTE} exists but is not responding.\e[0m"
+    echo "Its sign-in may be incomplete or expired. Connect again and"
+    echo "run 'rclone config reconnect ${REMOTE}' to repair it."
+    log_message "Cloud setup: remote ${REMOTE} failed verification"
+fi
+sleep 5
+exit 0
