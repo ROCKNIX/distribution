@@ -73,6 +73,7 @@ systems = {
 class BiosStatus:
     MISSING = "MISSING"
     UNTESTED = "UNTESTED"
+    PRESENT = "PRESENT"
 
 def md5sum(filename, blocksize=65536):
     hash = md5()
@@ -134,7 +135,10 @@ def coreExists(checkMe, emuDict):
         hasCore = hasEmu
     return hasCore
 
-def checkBios(systems, prefix, filterROMs):
+def checkBios(systems, prefix, filterROMs, reportAll=False):
+    # reportAll: also list files that are present with a known hash, so the
+    # BIOS CHECK page can show every system's state. The default output --
+    # problems only -- is what EmulationStation's launch-time check reads.
     systemDict = {}
     emuDict = {}
     systemName = ""
@@ -175,29 +179,28 @@ def checkBios(systems, prefix, filterROMs):
                         if isfile(filepath):
                             if not "zippedFile" in file:
                                 md5 = md5sum(filepath)
-                                if md5 != file["md5"] and file["md5"] != "":
-                                    if system not in missingBios:
-                                        missingBios[system] = {}
-                                    missingBios[system][file["file"]] = { "status": BiosStatus.UNTESTED, "md5": file["md5"], "file": file["file"] }
+                                ok = (md5 == file["md5"] or file["md5"] == "")
+                            elif 'altmd5' in file:
+                                ok = checkInsideZip(filepath, file["zippedFile"], file["md5"], file["altmd5"])
                             else:
-                                if 'altmd5' in file:
-                                    if not checkInsideZip(filepath, file["zippedFile"], file["md5"], file["altmd5"]):
-                                        if system not in missingBios:
-                                            missingBios[system] = {}
-                                        missingBios[system][file["file"]] = { "status": BiosStatus.UNTESTED, "md5": file["md5"], "file": file["file"] }
-                                else:
-                                    if not checkInsideZip(filepath, file["zippedFile"], file["md5"]):
-                                        if system not in missingBios:
-                                            missingBios[system] = {}
-                                        missingBios[system][file["file"]] = { "status": BiosStatus.UNTESTED, "md5": file["md5"], "file": file["file"] }
+                                ok = checkInsideZip(filepath, file["zippedFile"], file["md5"])
+                            if not ok:
+                                status = BiosStatus.UNTESTED
+                            elif reportAll:
+                                status = BiosStatus.PRESENT
+                            else:
+                                continue
                         else:
-                            if system not in missingBios:
-                                missingBios[system] = {}
-                            missingBios[system][file["file"]] = { "status": BiosStatus.MISSING, "md5": file["md5"], "file": file["file"] }
+                            status = BiosStatus.MISSING
+                        if system not in missingBios:
+                            missingBios[system] = {}
+                        missingBios[system][file["file"]] = { "status": status, "md5": file["md5"], "file": file["file"] }
     return missingBios
 
-def displayMissingBios(systems, missingBios):
+def displayMissingBios(systems, missingBios, quietWhenEmpty=False):
     sortedMissingBios = OrderedDict(sorted(missingBios.items()))
+    if quietWhenEmpty and not sortedMissingBios:
+        return
     if sortedMissingBios:
         for system in sortedMissingBios:
             print("> {}".format(system))
@@ -220,6 +223,12 @@ if __name__ == '__main__':
     if len(sys.argv) == 1:
         prefix = "/storage/roms"
         displayMissingBios(systems, checkBios(systems, prefix, True))
+    elif sys.argv[1] == "--all":
+        # Every known file of every system with a core in this build, present
+        # ones included. For the BIOS CHECK page; the launch check uses the
+        # default.
+        prefix = "/storage/roms"
+        displayMissingBios(systems, checkBios(systems, prefix, True, True), True)
     elif sys.argv[1] == "--noFilter":
         prefix = "/storage/roms"
         displayMissingBios(systems, checkBios(systems, prefix, False))

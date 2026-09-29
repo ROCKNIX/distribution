@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2020-present Shanti Gilbert (https://github.com/shantigilbert)
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 . /etc/profile
 
@@ -12,57 +13,1879 @@
 # LOCATIONS=(
 #   /storage/.config/retroarch/*
 #   /storage/roms/savestates/*
-#   /some/other/folder/file.name*
+#   "/storage/some other folder/file.name"*
 # )
+#
+# One location per line; quote one whose name has a space. Everything named
+# must be under /storage: the archive is written from there and put back
+# there, and a list naming anything else is refused rather than trimmed.
 
-BACKUPFOLDER="/storage/roms/backup"
-BACKUPFILE="${BACKUPFOLDER}/${OS_NAME}_BACKUP.zip"
-mkdir -p ${BACKUPFOLDER}
+# The folder the settings tier reads: cloud_backup uploads from
+# SETTINGS_BACKUPS in cloud_sync.conf, and this must write where that reads,
+# or the settings tier (backuptool backup && cloud_backup --system-only)
+# archives into one folder and uploads from another. Found by the round-trip
+# harness on 2026-09-06 (Gate 0, #35): the value was a constant here.
+# BACKUPFOLDER is the name an un-migrated conf still carries (D-UI-022).
+#
+# Read as text, never run (D-CLOUD-142). This used to source the file in a
+# subshell, so a line of the conf that was a command ran here as root on
+# every backup and restore, before anything was checked (#307, the audit of
+# the fix round, PL-003). The first assignment is the one read, as
+# cloud_sync_cleanup_duplicates.sh keeps it -- and cloud_backup runs that
+# cleanup before it reads the file, so both read the same line. The value is
+# taken the way the shell would take it -- double-quoted, single-quoted or
+# bare, a trailing comment allowed -- and only when it is plain text: a "$",
+# a backtick, a backslash or a control character is what cloud_backup's
+# conf_valid refuses in a folder value, so a value written with a reference
+# ("${CONTENTPATH}/backup", #308 claude F-BR-18) or a command is not taken,
+# literally or otherwise. The result must be a folder under /storage;
+# anything else is logged and the standard folder used.
+conf_text_value() { # <file> <key>: the first assignment's value, as text; 1 when it is not plain
+    awk -v k="$2" '
+        index($0, k "=") != 1 { next }
+        {
+            v = substr($0, length(k) + 2); done = 1
+            # A comment starts only after a blank, as the shell reads one.
+            if (v ~ /^"[^"]*"([ \t]+(#.*)?)?$/) { sub(/^"/, "", v); sub(/"([ \t]+(#.*)?)?$/, "", v) }
+            else if (v ~ /^'"'"'[^'"'"']*'"'"'([ \t]+(#.*)?)?$/) { sub(/^'"'"'/, "", v); sub(/'"'"'([ \t]+(#.*)?)?$/, "", v) }
+            else if (v ~ /^[^ \t"'"'"';&|<>()]*([ \t]+(#.*)?)?$/) { sub(/[ \t].*$/, "", v) }
+            else bad = 1
+            if (v ~ /[$`\\]/ || v ~ /[[:cntrl:]]/) bad = 1
+            exit
+        }
+        END { if (bad) exit 1; if (done) printf "%s", v }' "$1"
+}
+SETTINGS_BACKUPS="/storage/roms/backup"
+if [ -f /storage/.config/cloud_sync.conf ]; then
+    # The new name first, then the legacy one (#307, the audit of the fixes,
+    # claude G-B-02, gpt G-B-09).
+    if _configured=$(conf_text_value /storage/.config/cloud_sync.conf SETTINGS_BACKUPS) \
+       && { [ -n "${_configured}" ] || _configured=$(conf_text_value /storage/.config/cloud_sync.conf BACKUPFOLDER); }
+    then
+        case "${_configured}" in
+            "") ;;
+            /storage/*) SETTINGS_BACKUPS="${_configured%/}" ;;
+            *) logger -t backuptool "SETTINGS_BACKUPS in cloud_sync.conf reads '${_configured}', not a folder under /storage; ${SETTINGS_BACKUPS} used" ;;
+        esac
+    else
+        logger -t backuptool "SETTINGS_BACKUPS in cloud_sync.conf is not a plain folder name (a reference, a command, or a quote left open); ${SETTINGS_BACKUPS} used"
+    fi
+    unset _configured
+fi
+ARCHIVEFOLDER="${SETTINGS_BACKUPS}/archive"
+# The name a backup is written under, and the one used to find it again.
+#
+# Dated, and matching what the cloud folder holds exactly -- a device that
+# backs up locally and one that backs up to the cloud should produce the same
+# thing under the same name, so that moving between them needs no
+# translation. LEGACY_BACKUPFILE is the fixed name used before that, still
+# read so an existing device restores from the archive it already has.
+#
+# _SETTINGS is the fourth name this file has carried (D-UI-022, 2026-09-06):
+# the archive holds emulator and interface settings and nothing else, and
+# calling it a system backup had people expecting their saves to be in it.
+# Every reader below still accepts the three earlier names.
+#
+# The stamp is kept as a count of seconds too, so a name already taken -- a
+# second run in the same second -- moves on to the next second's name rather
+# than overwriting the first run's archive (#307 PL-077). stamp_at falls back
+# to the clock as it reads now if the date applet cannot convert.
+stamp_at() {
+    date -d "@${1}" +%Y_%m_%d-%H%M%S 2>/dev/null || date +%Y_%m_%d-%H%M%S
+}
+STAMP_EPOCH="$(date +%s)"
+BACKUP_STAMP="$(stamp_at "${STAMP_EPOCH}")"
+# The device's name sits between the stamp and -${OS_NAME}_SETTINGS.
+#
+# Every device used to write <stamp>-ROCKNIX_SETTINGS.tar.gz, so two
+# handhelds' archives were told apart by nothing. Maintainer, 2026-09-08: a
+# backup from the RG SP and one from the RG35XX SP, and no way to say from the
+# names which came from which. The hostname would not do -- one device's owner
+# had set it, the other still said ROCKNIX -- so the name is the one
+# cloud_device_id derives from the device tree ("Anbernic-RG-SP", D-CLOUD-009):
+# stable, readable, and already path-safe.
+#
+# It goes in the MIDDLE, not in place of ROCKNIX, on purpose:
+#
+#     2026_09_08-161022-Anbernic-RG-SP-ROCKNIX_SETTINGS.tar.gz
+#
+# The stamp stays first, so a listing still sorts by age; and the name still
+# ends in -ROCKNIX_SETTINGS.tar.gz, so the glob every reader already has --
+# newest_backup below, and the same function in every image already on a
+# device -- matches it unchanged. A first cut put the label where ROCKNIX was,
+# and an older image's finder then found nothing when it pulled a new archive
+# down from the cloud (review, 2026-09-08).
+#
+# The helper is resolved beside this script or at /usr/bin, never via PATH,
+# which /etc/profile rewrote above. With no helper there is no label, and the
+# name is the one every older archive carries.
+device_label() {
+    local tool
+    tool="$(dirname "$(readlink -f "$0")")/cloud_device_id"
+    [ -x "${tool}" ] || tool="/usr/bin/cloud_device_id"
+    [ -x "${tool}" ] && "${tool}" --label 2>/dev/null | tr -cd 'A-Za-z0-9_-'
+}
+DEVICE_LABEL="$(device_label)"
+# tar, not zip.
+#
+# zip does not carry a symlink as a symlink, and this OS is full of them: the
+# config tree links into /usr for OS-shipped content. Backups written before
+# 358eb53d3f stored those targets' bytes as regular files, and busybox unzip
+# then aborts the *whole* restore rather than overwrite a live symlink
+# ("exists but is not a regular file"). That cost a restore, needed a second
+# fix on the read side (02297b9c07), and left a skip-list in this script to
+# work around archives already in the wild.
+#
+# tar stores a symlink as a symlink, preserves permissions and ownership, and
+# extracts cleanly over an existing one. Verified on-device, because Info-ZIP
+# on a desktop and busybox on a handheld disagree, which is how the original
+# bug stayed invisible.
+BACKUPFILE="${SETTINGS_BACKUPS}/${BACKUP_STAMP}-${DEVICE_LABEL:+${DEVICE_LABEL}-}${OS_NAME}_SETTINGS.tar.gz"
+LEGACY_BACKUPFILE="${SETTINGS_BACKUPS}/${OS_NAME}_BACKUP.zip"
 
+# The newest archive present, whatever it is called and whichever device wrote
+# it. Names lead with the date, so sorting them orders them by age.
+#
+# Any device's, on purpose. A device that has just pulled another handheld's
+# archive from the cloud (the fresh-device journey, #26) has it beside its own
+# or in place of it, and "restore the newest backup" -- which is what the menu
+# promises -- must apply it. These globs are the ones this function has always
+# had: a labelled name ends in -ROCKNIX_SETTINGS.tar.gz like every archive
+# before it, so the first glob takes the new shape and the old alike, and the
+# other two take the two dated names before that. Unchanged, so that an image
+# from before the label finds a new archive with the very same code.
+newest_backup() {
+    local found
+    found=$(ls -1 "${SETTINGS_BACKUPS}"/*-"${OS_NAME}"_SETTINGS.tar.gz \
+                  "${SETTINGS_BACKUPS}"/*-"${OS_NAME}"_BACKUP.tar.gz \
+                  "${SETTINGS_BACKUPS}"/*-"${OS_NAME}"_BACKUP.zip 2>/dev/null | sort | tail -1)
+    if [ -n "${found}" ]; then
+        echo "${found}"
+    elif [ -f "${LEGACY_BACKUPFILE}" ]; then
+        echo "${LEGACY_BACKUPFILE}"
+    fi
+}
+ARCHIVE_KEEP=3
+ESPATH="/storage/.config/emulationstation"
+mkdir -p "${SETTINGS_BACKUPS}"
+
+# What the player sees, and what the log keeps. The first argument is the
+# screen line: a sentence in the player's words that says what did not
+# happen, what is in place, and what to do -- never a path, a code, a log or a
+# tool's name (D-CLOUD-077, D-UI-028). The second, when given, is detail for
+# the system log only. Until 2026-09-10 these printed "Restore reported
+# errors. Check 'logger' output" and paths under /storage to a 3.5-inch
+# screen.
+#
+# The pauses are for a person reading a console (the fullscreen console flows
+# run on a terminal); the interface reads this through a pipe and has its own
+# outcome to show, so nothing waits there (#308 claude F-BR-19: the transfer
+# page and the maintenance dialog were held three to five seconds with
+# nothing to read).
+fail() {
+    echo -e "\e[31m${1}\e[0m"
+    logger -t backuptool "${1}${2:+ -- ${2}}"
+    if [ -t 1 ]; then sleep 5; fi
+    exit 1
+}
+
+note() {
+    echo -e "\e[32m${1}\e[0m"
+    logger -t backuptool "${1}${2:+ -- ${2}}"
+}
+
+# One backup or restore at a time (#307 PL-077, #308 claude F-BR-15). The
+# console flow and the interface's chains can each start one, and two runs
+# shared the stamp, the .partial name and the startup sweep of .partials: one
+# run removed the other's file in flight, or two renames clobbered each
+# other. A lock on the settings backups folder itself -- an flock on a
+# descriptor opened on the directory, so there is no lock file to leave
+# behind or to upload -- held until this process exits. A second run does not
+# wait: it says so and ends.
+take_lock() {
+    # The braces keep the 2>/dev/null to this one exec: on exec itself it
+    # would redirect the whole script's stderr for the rest of the run.
+    { exec 9<"${SETTINGS_BACKUPS}"; } 2>/dev/null && flock -n 9
+}
+
+# What a run killed part-way left behind, cleared by the next run under the
+# lock -- where it cannot be another run's file in flight: the backup's
+# .partial at the root, a pre-restore copy's .partial in archive/ (which
+# neither the old sweep nor the trim ever matched, so repeated cut restores
+# grew archive/ without bound), and a staging folder. A run that is only
+# interrupted (INT, TERM) removes its own staging folder on the way out
+# (#308, the gpt seat's F-BR-17).
+sweep_leftovers() {
+    rm -f "${SETTINGS_BACKUPS}"/*.tar.gz.partial "${ARCHIVEFOLDER}"/*.tar.gz.partial 2>/dev/null
+    rm -rf "${STAGING_PREFIX}"* 2>/dev/null
+    return 0
+}
+trap '[ -n "${STAGING:-}" ] && rm -rf "${STAGING}"' EXIT
+
+# Every temporary file this script writes a list into comes from here, and
+# every caller checks the answer (#307, the audit of the fix round, PL-006).
+# The copy a restore takes was built from a list in a temporary whose mktemp
+# was never checked: a mktemp that failed gave an empty name, every write to
+# it went nowhere, and the empty list read as "nothing here to protect" -- so
+# the restore extracted over the settings with no copy taken, and a cut one
+# then said they were unchanged. Prints the path of a new, empty, regular
+# file, or nothing and returns 1; mktemp's own words go to the log.
+tmp_file() {
+    local T
+    if T=$(mktemp 2>/dev/null) && [ -n "${T}" ] && [ -f "${T}" ] && [ ! -L "${T}" ] && [ ! -s "${T}" ]
+    then
+        printf '%s\n' "${T}"
+        return 0
+    fi
+    logger -t backuptool "a temporary file could not be made (mktemp failed or gave no file)"
+    return 1
+}
+
+# A tool's own words go to the log, never to the screen: a failing tar printed
+# "tar: can't open 'storage/.config/...'" on the console flow, a tool's name
+# and a path, above the sentence written for the player (#308 claude
+# F-BR-12(e), gpt F-BR-20). Runs the command with its stderr kept aside,
+# logs what it said, and returns its status -- or 125 without running it when
+# there is nowhere to keep those words, a status no caller reads as a tool's
+# own "no match" (grep's 1, which the es_settings.cfg copy accepts).
+to_log() {
+    local ERR RC
+    ERR=$(tmp_file) || return 125
+    "$@" 2> "${ERR}"; RC=$?
+    [ -s "${ERR}" ] && logger -t backuptool "${1}: $(tr '\n' ' ' < "${ERR}" | cut -c1-500)"
+    rm -f "${ERR}"
+    return ${RC}
+}
+
+# The one protocol line the transfer page and the sync card read for why a
+# run did not finish (D-UI-028): upper case, the player's words. This tool's
+# output is discarded in EmulationStation's chains today and shown verbatim
+# on the console flows; the line is here for when those hops move onto the
+# page (#105, tranche B).
+why() {
+    echo ">>> why ${1}"
+}
+
+# es_systems.cfg / es_features.cfg are OS-managed symlinks into /usr/config;
+# backing up their content and restoring it as regular files would freeze the
+# systems list at the backup-time version, so they are deliberately excluded.
+#
+# /storage/.cache/bluetooth/* was in upstream's list and is not in this one,
+# on purpose (747362fe36, #18): Bluetooth link keys are a credential for one
+# adapter and useless on another. A restore on the same device keeps its
+# pairings -- it never touches that folder -- and a new device pairs its
+# controllers again. A legacy zip that still holds them puts them back, as
+# it always did (#308 claude F-BR-16).
 DEFAULT=(
     /storage/.config/fancontrol.conf
     /storage/.config/backuptool.conf
-    /storage/.cache/bluetooth/*
     /storage/.config/system/configs/system.cfg
     /storage/.config/ppsspp/*
     /storage/.config/retroarch/*
     /storage/.config/moonlight/*
     /storage/.config/game/*
-    /storage/.emulationstation/es_*.cfg
-    /storage/.emulationstation/scripts/*
-    /storage/.emulationstation/themesettings/*
-    $(find /storage/.emulationstation/themes/* -type d -maxdepth 0 -not -path "*es-theme-art-book-next" -not -path "*system-theme")
+    ${ESPATH}/es_settings.cfg
+    ${ESPATH}/es_input.cfg
+    ${ESPATH}/scripts/*
+    ${ESPATH}/themesettings/*
+    ${ESPATH}/collections/*
+    # Player-supplied presentation assets. Not ROMs and not BIOS, so content
+    # sync does not carry them; not saves either. They were in no tier at all
+    # until this line, which is the kind of gap that is only discovered when
+    # somebody restores a device and finds their overlays gone.
+    #
+    # They live here rather than in content sync because they are small and
+    # change with the configuration they belong to. A large bezel pack is the
+    # exception, and it will grow this archive -- which is uploaded whole on
+    # every backup, so a player with hundreds of megabytes of overlays should
+    # know that. See #45 on archive size generally.
+    /storage/roms/bezels/*
+    /storage/roms/themes/*
+    # Systems whose content EmulationStation keeps outside /storage/roms.
+    # Neither the saves tier (which spans /storage/roms) nor content sync
+    # (same) can reach these, so before this line they were captured by
+    # nothing at all and a ScummVM or idTech player lost their entries on
+    # restore. /storage/roms/music is NOT the music system -- ES reads
+    # playlists from gmu, and the roms folder of that name is a leftover.
+    /storage/.config/gmu/playlists/*
+    /storage/.config/idtech/*
+    /storage/.config/modules/*
+    /storage/.config/scummvm/games/*
 )
+# The player's own theme folders, not the two the image ships. One line per
+# folder, so a name with a space in it stays one location: this was a command
+# substitution inside the list above, which split "My Theme" into two paths
+# that do not exist (#307 PL-004).
+while IFS= read -r THEME
+do
+    DEFAULT+=("${THEME}")
+done < <(find "${ESPATH}"/themes/* -maxdepth 0 -type d -not -path "*es-theme-art-book-next" -not -path "*system-theme" 2>/dev/null)
 
+# Every copy of a location list is quoted: "${LOCATIONS[@]}", never
+# ${LOCATIONS[@]}. Unquoted, each element was split again on spaces, so a
+# custom collection called "custom-Best Games.cfg" or a folder called
+# "my games" became two paths that do not exist, find's error went to
+# /dev/null, and the backup was announced whole without them (#307 PL-004).
 if [ -e "/storage/.config/backuptool.conf" ]
 then
-    source /storage/.config/backuptool.conf
-    if [ ! $? = 0 ]
+    if source /storage/.config/backuptool.conf
     then
-        WARN="Error loading custom backuptool configs. Using defaults."
-        ${DEBUG} && echo "${WARN}"
-        logger -t backuptool "${WARN}"
-        COMPRESSLOCATIONS=(${DEFAULT[@]})
+        COMPRESSLOCATIONS=("${LOCATIONS[@]}")
+        # A list that is empty once sourced -- LOCATIONS=(), or a file that
+        # never sets it -- is the standard one, said as such. Until #307
+        # PL-035 it reached find as no locations at all, and find walked the
+        # working directory.
+        NAMED=0
+        for LOC in "${COMPRESSLOCATIONS[@]}"; do [ -n "${LOC}" ] && NAMED=1; done
+        if [ "${NAMED}" -eq 0 ]
+        then
+            WARN="YOUR OWN BACKUP LIST IS EMPTY, SO THE STANDARD ONE WAS USED."
+            echo "${WARN}"
+            logger -t backuptool "${WARN} -- /storage/.config/backuptool.conf sets no locations"
+            COMPRESSLOCATIONS=("${DEFAULT[@]}")
+        fi
     else
-        COMPRESSLOCATIONS=(${LOCATIONS[@]})
+        WARN="YOUR OWN BACKUP LIST COULDN'T BE READ, SO THE STANDARD ONE WAS USED."
+        echo "${WARN}"
+        logger -t backuptool "${WARN} -- /storage/.config/backuptool.conf failed to source"
+        COMPRESSLOCATIONS=("${DEFAULT[@]}")
     fi
 else
-    COMPRESSLOCATIONS=(${DEFAULT[@]})
+    COMPRESSLOCATIONS=("${DEFAULT[@]}")
 fi
 
-case "${1}" in
+# A sanitised copy is written new, by a redirection; give it the original's
+# mode and time, so the archive does not carry the staging's 0644 for a file
+# that was 0600 on the device (#308, the gpt seat's F-BR-16).
+# Its status is the three steps': a copy whose mode could not be kept is a
+# sanitiser that did not finish, not a success (#307, the audit of the fixes,
+# gpt G-B-13).
+keep_meta() {
+    local MODE
+    MODE=$(stat -c %a "${1}" 2>/dev/null) && [ -n "${MODE}" ] \
+        && chmod "${MODE}" "${2}" 2>/dev/null \
+        && touch -r "${1}" "${2}" 2>/dev/null
+}
+
+# A member name as a pattern that matches only itself: tar's -X and unzip's
+# -x read their arguments as globs, so a name holding [, ], * or ? would
+# match something else, or nothing.
+glob_literal() {
+    printf '%s' "${1}" | sed 's/[][*?]/[&]/g'
+}
+
+# The last line of defence (#52, #169, #221; #307 PL-005): the archive can be
+# synced to the cloud, so none is kept that carries a populated credential.
+# This reads the tree that is about to be archived -- every staged file, after
+# the strips -- rather than trusting the strips, so a newly-added config file
+# with secrets is caught the first time it is backed up instead of silently
+# leaking. It prints how many lines look like one, and names the files in the
+# log. Until #307 PL-005 it read the archive after it had been renamed into
+# place, printed a warning and let the run end in success, so the settings
+# tier's chain (backuptool backup && cloud_backup --system-only) uploaded the
+# archive anyway; now a hit ends the run before the archive is named.
+#
+# Two shapes, the same two the pre-push guard knows (#307 PL-006):
+#
+#   A key and a value, in a text config file (.cfg, .conf, .ini, and the
+#   network's .nmconnection and .psk) or a copy of one (.backup, .bak, or
+#   any <name>.cfg.<something>: a last-good record is a config too). The key word is matched in any case --
+#   Password=, TOKEN=, PrivateKey = and ClientSecret= were all passed by a
+#   pattern whose prefix class admitted no capital. It stays a whole part of
+#   the key: at the start, or after a "_", "." or "-" -- so "bypass",
+#   "input_enable_hotkey" and "DisableLocalPassword" are not credentials,
+#   which is the lesson of #221 (a clean backup that warns teaches people to
+#   ignore the one that matters). "key" alone counts bare, dotted (wifi.key)
+#   or inside a credential word (stream_key, secret_access_key). A trailing
+#   digit counts (rclone's password2); an empty value never does. A quoted
+#   value may start with blanks inside its quotes (password = " x"), which
+#   the value class could not step over until #307's audit of the fix
+#   round, PL-008; quotes holding blanks alone are still empty.
+#   Translation catalogues ship lines like 'Password = Пароль', so they are
+#   kept out by where they live (lang/, locale/, translations/), not by case,
+#   which is what the case-sensitive pattern had been protecting.
+#
+#   A fixed token format, in any text file: a private-key block, an OAuth
+#   access or refresh token, AWS, GitHub, Slack and OpenAI keys, ScreenScraper's
+#   devpassword=, RetroAchievements' &y= -- the SECRET_PATTERNS of
+#   .githooks/pre-push, whose last shape (an upper-case KEY/TOKEN/SECRET/
+#   PASSWORD= with a long literal) is here too.
+#
+# A bare-token file (.dat, .txt) has no key shape to match; those are held
+# back by name instead.
+CREDENTIAL_KEYS='^[[:space:]]*(([a-z0-9_.-]*[_.-])?(password|passwd|pass|passphrase|token|secret|apikey|api_key|privatekey|private_key|presharedkey|preshared_key|access_key|secret_key|stream_key|wifi_key|clientsecret|client_secret|apitoken|psk)|key|[a-z0-9_.-]*\.key)[0-9]*[[:space:]]*[=:][[:space:]]*("[[:space:]]*)?[^"[:space:]]+'
+CREDENTIAL_TOKENS='devpassword=[A-Za-z0-9._%-]{4,}|[?&]y=[A-Za-z0-9]{16,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY|"(access|refresh)_token" *: *"[A-Za-z0-9._-]{16,}|(^|[^A-Za-z0-9])sk-[A-Za-z0-9_-]{24,}|(API_?KEY|TOKEN|SECRET|PASSWORD|PASSWD)[A-Z_]* *[:=] *["'"'"']?[A-Za-z0-9+/=_-]{16,}'
+#
+# "sk-" counts only at a word's start: unanchored, any kebab-case name with
+# 24 characters after an "sk-" -- a theme's "mask-controller-overlay-..."
+# asset -- refused every backup as a sign-in (#307, the audit of the fixes,
+# claude G-B-03). And a scan that cannot finish is not a clean scan: the
+# walk's status and each grep's are read (grep's 2 is an error, 1 only "no
+# match"), and a failure returns 1 with nothing on stdout, which the caller
+# turns into a refusal (gpt G-B-03, claude G-B-10). It prints the count only
+# when every file was read.
+credential_lines() {
+    local TREE="${1}" F N T RC TOTAL=0 NAMES="" LIST
+    LIST=$(tmp_file) || return 1
+    if ! find "${TREE}" -type f -print0 > "${LIST}" 2>/dev/null
+    then
+        logger -t backuptool "the credential scan could not walk what it was to read"
+        rm -f "${LIST}"
+        return 1
+    fi
+    while IFS= read -r -d '' F
+    do
+        N=0
+        case "${F}" in
+            */lang/*|*/locale/*|*/translations/*) ;;
+            *.cfg|*.conf|*.ini|*.nmconnection|*.psk|*.backup|*.bak|*.cfg.*|*.conf.*|*.ini.*)
+                N=$(grep -ciE "${CREDENTIAL_KEYS}" "${F}" 2>/dev/null); RC=$?
+                [ "${RC}" -le 1 ] && [ -n "${N}" ] || { logger -t backuptool "the credential scan could not read ${F#${TREE}/}"; rm -f "${LIST}"; return 1; } ;;
+        esac
+        T=$(grep -IcE "${CREDENTIAL_TOKENS}" "${F}" 2>/dev/null); RC=$?
+        [ "${RC}" -le 1 ] && [ -n "${T}" ] || { logger -t backuptool "the credential scan could not read ${F#${TREE}/}"; rm -f "${LIST}"; return 1; }
+        N=$((N + T))
+        [ "${N}" -gt 0 ] || continue
+        TOTAL=$((TOTAL + N))
+        NAMES="${NAMES:+${NAMES}, }${F#${TREE}/}"
+    done < "${LIST}"
+    rm -f "${LIST}"
+    [ "${TOTAL}" -gt 0 ] && logger -t backuptool "found ${TOTAL} line(s) that look like a password or key, in: ${NAMES}"
+    echo "${TOTAL}"
+}
+
+# Is this archive whole? tar lists every member or fails. A zip is read
+# through, every member's bytes to nowhere (unzip -p): the listing reads only
+# the central directory, so a zip whose directory was intact and whose
+# payload was not passed, and the restore found out part-way through the
+# live tree (#308, the gpt seat's F-BR-14). Until 2026-09-10 the check was
+# `unzip -t` alone, which the busybox of the time answered with its usage
+# text and exit 1, so every legacy .zip on a device read as damaged.
+#
+# unzip -p checks a member's CRC only where it inflates one. A STORED member
+# -- Info-ZIP stores a file deflate cannot shrink: a PNG, a tiny config --
+# busybox copies byte for byte and never checks: measured on the image's
+# busybox 1.36.1, a stored member with a flipped byte passes unzip -t and
+# unzip -p with 0, and the restore wrote the damaged bytes as settings,
+# while a damaged deflated member fails both (#307, the audit of the fix
+# round, PL-022; blindspots 8 and 43). So each stored member is read on its
+# own and its CRC-32 computed with busybox's crc32 -- zip's own CRC, the same
+# polynomial -- and compared with the one unzip -lv lists. Stored members
+# only: the deflated ones are checked by the read above, and a member at a
+# time costs a few milliseconds each on a handheld's core.
+zip_stored_ok() { # <zip>: 0 when every stored member's bytes match its listed CRC
+    local L CRC NAME GOT RC=0
+    L=$(tmp_file) || return 1
+    # The listing must carry the CRC column at all: a busybox built without
+    # CONFIG_DESKTOP accepts -v and lists in the -l shape, and every member
+    # would then pass unchecked (the audit of the fixes, claude G3-D-01; the
+    # image's busybox prints it, measured 2026-09-29).
+    if ! unzip -lv "${1}" 2>/dev/null | head -n 3 | grep -q 'CRC-32'; then
+        logger -t backuptool "$(basename "${1}"): unzip -lv lists no CRC column; the archive's stored members cannot be checked"
+        rm -f "${L}"
+        return 1
+    fi
+    if ! ( set -o pipefail
+           unzip -lv "${1}" 2>/dev/null | awk '
+               $2 == "Stored" && match($0, /[0-9][0-9]:[0-9][0-9] [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]  /) {
+                   print substr($0, RSTART + 6, 8) "\t" substr($0, RSTART + RLENGTH)
+               }' ) 2>/dev/null > "${L}"
+    then
+        rm -f "${L}"
+        return 1
+    fi
+    while IFS=$'\t' read -r CRC NAME
+    do
+        case "${NAME}" in ''|*/) continue ;; esac
+        if ! GOT=$( set -o pipefail; unzip -p "${1}" "$(glob_literal "${NAME}")" 2>/dev/null | crc32 2>/dev/null ) \
+           || [ "${GOT%% *}" != "${CRC,,}" ]
+        then
+            logger -t backuptool "${NAME} in $(basename "${1}") does not match its CRC (${CRC} listed, ${GOT%% *} read)"
+            RC=1
+            break
+        fi
+    done < "${L}"
+    rm -f "${L}"
+    return ${RC}
+}
+archive_ok() {
+    case "${1}" in
+        *.tar.gz) tar -tzf "${1}" >/dev/null 2>&1 ;;
+        *)        unzip -l "${1}" >/dev/null 2>&1 && unzip -p "${1}" >/dev/null 2>&1 && zip_stored_ok "${1}" ;;
+    esac
+}
+
+# An archive's members, one per line and each whole, for either kind. Its
+# status is the lister's (pipefail for the zip's pipe): a listing that stops
+# part-way is a failure, never a shorter list -- the copy before a restore is
+# built from it, and a short list left files unprotected, an empty one read
+# as "nothing to protect" (#307, the audit of the fixes, gpt G-B-01).
+#
+# Every member, whatever its path: the zip's listing used to keep only
+# names under storage/, so a member elsewhere was extracted to / and nobody
+# saw it (#307, the audit of the fix round, PL-028). A zip listing's name is
+# everything after its time column, between the two dashed rules (#307
+# PL-036 read it from the fourth column on, which only a name under
+# storage/ made safe).
+archive_members() {
+    case "${1}" in
+        *.tar.gz) tar -tzf "${1}" 2>/dev/null ;;
+        *)        ( set -o pipefail
+                    unzip -l "${1}" 2>/dev/null | awk '/^ *-+ +-+/ { n++; next } n == 1 && match($0, /[0-9][0-9]:[0-9][0-9]   /) { print substr($0, RSTART + RLENGTH) }' ) ;;
+    esac
+}
+
+# The first member a settings restore cannot put back, and 0 when there is
+# one; 1 when there is none; anything else when the list cannot be read.
+# Every member of an archive this tool writes is a file under storage/,
+# named with no "." or ".." part. Extraction runs the whole archive into /
+# less a list of exclusions, while the copy taken before it covers only
+# storage/ -- so a member elsewhere (a foreign or hand-made archive's
+# tmp/..., or storage/../x) was written and never put back when a restore
+# failed, and a failed restore still said the settings were unchanged
+# (#307, the audit of the fix round, PL-028, from gpt G2-B-05).
+foreign_member() { # <members file>
+    # busybox awk ends a file it cannot open in END, as "none found".
+    [ -r "${1}" ] || return 2
+    awk '{ m = $0; sub(/^\.\//, "", m) }
+         m == "" || m == "." || m == "storage" || m == "storage/" { next }
+         m !~ /^storage\// || ("/" m "/") ~ /\/\.\.?\// { print; found = 1; exit }
+         END { exit !found }' "${1}" 2>/dev/null
+}
+
+# How many file members an archive lists, or nothing and 1 when it does not
+# list back whole: the count supplements tar's status, never replaces it (a
+# listing can print every name and then fail on a damaged tail; #307, the
+# audit of the fixes, gpt G-B-02).
+listed_files() {
+    local L N
+    L=$(tmp_file) || return 1
+    if ! tar -tzf "${1}" > "${L}" 2>/dev/null
+    then
+        rm -f "${L}"
+        return 1
+    fi
+    N=$(grep -vc '/$' "${L}")
+    rm -f "${L}"
+    echo "${N}"
+}
+
+# The copy a restore takes before it writes anything, of exactly what it is
+# about to write over: every member of the incoming archive that exists on
+# this device now, whatever the device's own backup list says, kept whole
+# (passwords too -- it never leaves the device, and "as they were" has to mean
+# exactly that). Until #307 PL-007 the copy walked the device's LOCATIONS and
+# dropped the files identical to the image's, so an archive made under a
+# broader list, or holding a file this device still had at its shipped
+# default, overwrote files the copy did not hold -- and a failed restore said
+# the settings were unchanged.
+#
+# The members that do NOT exist here are the files the restore would create;
+# they go to NEWLIST, one absolute path per line, so a revert can remove them
+# as well as put the rest back. Returns 0 with the copy at TARGET; 4 when no
+# member exists on this device (nothing to copy; NEWLIST may still name
+# files); anything else when the copy could not be taken, which ends the
+# restore before it writes (#307 PL-009).
+#
+# 4 is said only when both lists were written whole and the copy's is empty
+# because nothing is there -- never because its file could not be made or
+# written (3). Each line is counted as it is written and the files are
+# counted after, so a list cut short by a full /tmp is a failure however its
+# writes reported themselves (#307, the audit of the fix round, PL-006).
+snapshot_members() { # <members file> <target> <newlist file>
+    local MEMBERS="${1}" TARGET="${2}" NEWLIST="${3}" KEEP M LIVE LISTED NKEEP=0 NNEW=0 WHOLE=1
+    KEEP=$(tmp_file) || return 3
+    if ! [ -r "${MEMBERS}" ] || ! : 2>/dev/null > "${NEWLIST}"
+    then
+        rm -f "${KEEP}"
+        return 3
+    fi
+    while IFS= read -r M
+    do
+        M="${M#./}"
+        case "${M}" in
+            storage/*/) continue ;;              # a folder: its files are members of their own
+            storage/*) ;;
+            *) continue ;;                       # nothing outside /storage is put back
+        esac
+        case "/${M}/" in */../*|*/./*) continue ;; esac
+        LIVE="/${M}"
+        # Never extracted, so neither kept nor listed as created: a restore's
+        # own control files and the backups folder (RESTORE_CONTROL). Listed
+        # as created, the revert removed the copy it had just put back.
+        case "${LIVE}" in "${SETTINGS_BACKUPS}"/*) continue ;; esac
+        for C in "${RESTORE_CONTROL[@]}"; do [ "${LIVE}" = "${C}" ] && continue 2; done
+        if [ -L "${LIVE}" ] || [ -f "${LIVE}" ]
+        then
+            printf '%s\n' "${M}" 2>/dev/null >> "${KEEP}" || { WHOLE=0; break; }
+            NKEEP=$((NKEEP + 1))
+        elif [ ! -e "${LIVE}" ]
+        then
+            printf '%s\n' "${LIVE}" 2>/dev/null >> "${NEWLIST}" || { WHOLE=0; break; }
+            NNEW=$((NNEW + 1))
+        fi
+    done < "${MEMBERS}"
+    # One chain that only success gets through: a count that could not be
+    # read, or a test that errors on it, is a list not known to be whole.
+    local NKEEP_FILE NNEW_FILE
+    if ! { [ "${WHOLE}" -eq 1 ] \
+           && NKEEP_FILE=$(wc -l 2>/dev/null < "${KEEP}") && [ "${NKEEP_FILE}" -eq "${NKEEP}" ] 2>/dev/null \
+           && NNEW_FILE=$(wc -l 2>/dev/null < "${NEWLIST}") && [ "${NNEW_FILE}" -eq "${NNEW}" ] 2>/dev/null \
+           && awk '!seen[$0]++' "${KEEP}" 2>/dev/null > "${KEEP}.unique" && mv -f "${KEEP}.unique" "${KEEP}" 2>/dev/null; }
+    then
+        logger -t backuptool "the list of what the restore would replace or create could not be written whole; nothing written"
+        rm -f "${KEEP}" "${KEEP}.unique"
+        return 3
+    fi
+    if [ ! -s "${KEEP}" ]
+    then
+        rm -f "${KEEP}"
+        return 4
+    fi
+    if ! tar -czf "${TARGET}.partial" -C / -T "${KEEP}" 2>/dev/null
+    then
+        rm -f "${KEEP}" "${TARGET}.partial"
+        return 2
+    fi
+    if ! { LISTED=$(listed_files "${TARGET}.partial") && NKEEP_FILE=$(wc -l 2>/dev/null < "${KEEP}") \
+           && [ "${LISTED}" -eq "${NKEEP_FILE}" ] 2>/dev/null && mv -f "${TARGET}.partial" "${TARGET}"; }
+    then
+        rm -f "${KEEP}" "${TARGET}.partial"
+        return 3
+    fi
+    rm -f "${KEEP}"
+    return 0
+}
+
+# Undo a restore that did not finish: the copy back over the tree, and every
+# file the restore created removed. Returns 0 only when both happened.
+revert_restore() {
+    local RC=0 P
+    if [ -n "${SNAPSHOT}" ]
+    then
+        tar -xzf "${SNAPSHOT}" -C / >/dev/null 2>&1 || RC=1
+    fi
+    while IFS= read -r P
+    do
+        [ -n "${P}" ] || continue
+        if [ -L "${P}" ] || [ -e "${P}" ]
+        then
+            rm -f "${P}" 2>/dev/null
+            [ -L "${P}" ] || [ -e "${P}" ] && RC=1
+        fi
+    done < "${NEWLIST}"
+    return ${RC}
+}
+
+# The standalone emulators' cheevos_*.sh scripts copy the RetroAchievements
+# token out of system.cfg into the emulator's own files at every launch, so
+# the token that write_archive deletes from the archived system.cfg would
+# come back into the archive under another name (#169; D-INFRA-010: no keys
+# travel). Two shapes. RATOKENFILES hold the token and nothing of the
+# player's -- PPSSPP's .dat is the bare token, Dolphin's RetroAchievements.ini
+# and SkyEmu's ra_token.txt are rewritten whole from system.cfg, ARMSX2's
+# secrets.ini is the shipped seed plus the token -- so they are held back
+# like rclone.conf and skipped on restore, and the emulator writes them
+# again from system.cfg the first time it starts after a restore, once the
+# player has signed in again. RATOKENSETTINGS are the emulator's whole
+# settings file with a token line in it; those travel with the value
+# blanked, as retroarch.cfg does. Only PPSSPP's is in the default LOCATIONS;
+# the rest are reached by a custom list such as /storage/.config.
+RATOKENFILES=(
+    /storage/.config/ppsspp/PSP/SYSTEM/ppsspp_retroachievements.dat  # cheevos_ppsspp.sh
+    /storage/.config/dolphin-emu/RetroAchievements.ini               # cheevos_dolphin.sh
+    /storage/.config/SkyEmu/ra_token.txt                             # cheevos_skyemu.sh
+    /storage/.config/gopher64/retroachievements.json                 # written by gopher64 itself after --ra-password (#169's trace, #273)
+    /storage/.config/ARMSX2/inis/secrets.ini                         # cheevos_armsx2.sh
+)
+RATOKENSETTINGS=(
+    /storage/.config/duckstation/settings.ini   # Token =   (DuckStation's own sign-in; cheevos_duckstation.sh is disabled upstream)
+    /storage/.config/melonDS/melonDS.ini        # RA_Token= RA_Password=   (cheevos_melonds.sh)
+    /storage/.config/flycast/emu.cfg            # Token =   (cheevos_flycast.sh)
+    /storage/.config/aethersx2/inis/PCSX2.ini   # Token =   (cheevos_aethersx2.sh)
+)
+# The offline RetroAchievements proxy's own folder (#165; D-RA-002,
+# D-INFRA-010). Its cache holds the RetroAchievements token three ways -- the
+# cached login2 row, auth::invalid_token, the t= in every queued award -- and
+# the HMAC key that signs the award queue. There is no sanitised copy worth
+# keeping: a queue is bound to the device that earned it, a copy on a second
+# device would replay the same awards, and the cache re-fills from the next
+# online launch. So the whole folder is held back, by prefix, and never put
+# back on a restore. Not in the default LOCATIONS; a custom list such as
+# /storage/.config sweeps it in. The toggle itself
+# (global.retroachievements.offlineproxy) is a line in system.cfg and travels.
+RATOKENDIRS=(
+    /storage/.config/raofflineproxy/
+)
+# The same folders as restore patterns, each with its own wildcard. Written
+# inline as "${RATOKENDIRS[@]#/}"'*' the '*' joined the LAST element only, so
+# a second folder in the list would have left the first as a bare name --
+# which busybox unzip -x matches against nothing (busybox tar -X happens to
+# take a folder's subtree from its bare name; unzip does not, probed on the
+# image's binary), and that folder's token cache would come back from a zip
+# (#308 claude F-BR-13).
+RATOKENDIR_PATTERNS=()
+for D in "${RATOKENDIRS[@]}"; do RATOKENDIR_PATTERNS+=("${D#/}*"); done
+# This device's cloud sign-in and its name in the cloud: never in an archive,
+# never put back from one, whichever archive it is (#307 PL-010). rclone.conf
+# is live OAuth tokens (#52); cloud_device_id's record is the name this
+# device's backups live under, and a restore that put another device's over
+# it made two devices one identity in the cloud (cloud_device_id's own
+# header: "a restore cannot clone one device's identity onto another. Keep
+# it that way."). Held back at backup time -- rclone.conf already was, the
+# id files now are too -- and skipped on restore, which neither branch did:
+# an archive from before the hold-back, or from another device, put its
+# rclone.conf over this one's and the restore reported success.
+DEVICEONLY=(
+    /storage/.config/rclone/rclone.conf
+    /storage/.config/cloud_sync-device-id
+    /storage/.config/cloud_sync-device-id.previous
+)
+# The files a backup left out as identical to the image's own (#45), by
+# their path under /storage/.config, one per line, as a member of the
+# archive. A restore puts each one back to this image's copy: the backup
+# said "this file was at its default", and a restore that left an edit made
+# since then in place was not the settings the backup held (#307 PL-037).
+# Never extracted onto the device itself; an image from before the change
+# extracts it as an inert file, and a backup never collects one.
+SEEDLIST="/storage/.config/.backuptool-seeds"
+# Where a backup is staged (see write_archive); a run killed part-way leaves
+# one behind, swept by the next run under the lock.
+STAGING_PREFIX="/storage/.cache/backuptool-staging."
+# The files a restore and the boot use to talk about a restore: the mark the
+# boot's revert reads (and its temporary), the revert's answer for the
+# interface, and the one-shot markers a finished restore leaves for the next
+# start. They are this device's state about its own run, never settings: a
+# backup never carries one, and a restore never takes one from an archive.
+# An archive that carried a stale .restore-in-progress -- an earlier broad
+# backup caught one -- wrote it over the fresh mark mid-extraction, and a
+# cut restore's boot then read the archived one (#307, the audit of the fix
+# round, PL-007). With them, the settings backups folder is never extracted
+# into: it holds the copy this restore just took.
+RESTORE_MARK="/storage/.config/.restore-in-progress"
+RESTORE_CONTROL=(
+    "${RESTORE_MARK}"
+    "${RESTORE_MARK}.tmp"
+    /storage/.config/.restore-reverted
+    /storage/.config/.restore-finish-pending
+    /storage/.config/.cloud-journey-pending
+)
+
+# Write one settings archive to TARGET, whole or not at all.
+#
+# Staged, then archived once, to TARGET.partial; listed back (tar -tzf) as
+# the positive check that it is complete; only then renamed to TARGET. A
+# kill or a power cut at any point leaves TARGET as it was -- absent, or the
+# previous archive -- and at most a .partial beside it that nothing reads
+# (every glob here ends in .tar.gz or .zip, and so does cloud_backup's
+# --include=/*.{zip,tar.gz}). Until 2026-09-10
+# the archive was written straight under its final dated name, so a cut
+# mid-tar left a truncated file that newest_backup picked as the newest and
+# cloud_backup sent to the cloud (D-CLOUD-078, #105).
+#
+# With STRIP=1 the credential-carrying files are held back and a sanitized
+# copy archived instead (the archive can be synced to the cloud). The
+# pre-restore snapshot passes 0: it never leaves the device, and putting it
+# back must give the player exactly the settings they had, passwords too.
+#
+# Returns 0 when TARGET holds a verified archive; 2 when the collection
+# failed (an unreadable input, a copy that did not finish); 3 when the
+# archive could not be written or did not list back; 4 when there was
+# nothing to collect; 5 when a backup (STRIP=1) holds what looks like a
+# password or key; 6 when the list names something outside /storage.
+# TARGET is untouched on every code but 0.
+write_archive() {
+    local TARGET="${1}" STRIP="${2:-1}"
+    local SYSCFG="/storage/.config/system/configs/system.cfg"
+    local ESCFG="${ESPATH}/es_settings.cfg"
+    local RACFG="/storage/.config/retroarch/retroarch.cfg"
+    local RCLONECFG="/storage/.config/rclone/rclone.conf"
+    local FILELIST SECRETLIST SENDLIST STAGING CANDIDATE HELD BLANKED
+
+    # Regular files only: a symlink under the config tree is the OS's
+    # (es_systems.cfg and es_features.cfg point into /usr/config; the
+    # ppsspp link runs the other way -- /usr/bin/assets points INTO
+    # /storage/.config/ppsspp/assets -- so that one is not an example of
+    # this, though the rule holds; #45). The zip-era backups followed
+    # them and stored their target's bytes, and on restore busybox unzip
+    # refused to overwrite the still-present symlink ("exists but is not
+    # a regular file") and aborted the whole restore partway. Symlinks
+    # are the OS's to provide, not the backup's to carry.
+    #
+    # Every list below is a checked temporary, and every write to one is
+    # checked: a list that could not be made or written is a collection that
+    # failed (2), never a smaller one (#307, the audit of the fix round,
+    # PL-006).
+    FILELIST=""; SECRETLIST=""; SENDLIST=""
+    if ! { FILELIST=$(tmp_file) && SECRETLIST=$(tmp_file) && SENDLIST=$(tmp_file); }
+    then
+        for T in "${FILELIST}" "${SECRETLIST}" "${SENDLIST}"; do [ -n "${T}" ] && rm -f "${T}"; done
+        return 2
+    fi
+    # One location at a time, each passed whole. A location that is not on
+    # this device is nothing to collect -- the standard list names folders
+    # only some devices have, and a glob that matched nothing stays literal.
+    # A location that is there and cannot be walked (a folder find cannot
+    # read) is a failed collection, not a smaller one: find's status was
+    # never read, its error went to /dev/null, and the archive was written
+    # short and announced as a success (#307 PL-004).
+    #
+    # Each location is walked by its canonical path (readlink -f), so the
+    # file list names every file the one way the checks below compare
+    # against: "/storage/./.config/system/configs/system.cfg" is
+    # system.cfg, and its Wi-Fi key is stripped like the plain spelling's
+    # (#307 PL-035; until then the exact-path membership tests missed it).
+    # A location that is itself a symlink holds no file of its own -- find
+    # never followed one -- so it is passed over as before.
+    #
+    # A location outside /storage refuses the whole list (return 6). The
+    # archive is written from the staging tree's storage/ and put back
+    # under /storage, so anything else was staged and then silently left
+    # out while the backup read as whole (#307 PL-038).
+    #
+    # The settings backups folder is never collected, whatever the list
+    # says: it holds the previous archives and the pre-restore copies,
+    # which keep every password (STRIP=0), and a custom list such as
+    # /storage/roms or /storage swept them into an archive bound for the
+    # cloud, where the scan below reads no .tar.gz (#307 PL-008). A
+    # location inside it is passed over, and files under it are taken out
+    # of a location that contains it.
+    local LOC CANON FIND_RC=0 OUTSIDE="" OWN
+    OWN=$(readlink -f "${SETTINGS_BACKUPS}" 2>/dev/null)
+    [ -n "${OWN}" ] || OWN="${SETTINGS_BACKUPS}"
+    for LOC in "${COMPRESSLOCATIONS[@]}"
+    do
+        [ -n "${LOC}" ] || continue
+        [ -e "${LOC}" ] || [ -L "${LOC}" ] || continue
+        [ -L "${LOC}" ] && continue
+        CANON=$(readlink -f "${LOC}") && [ -n "${CANON}" ] || { FIND_RC=1; continue; }
+        case "${CANON}" in
+            /storage|/storage/*) ;;
+            *) OUTSIDE="${LOC}"; continue ;;
+        esac
+        case "${CANON}" in
+            "${OWN}"|"${OWN}"/*) continue ;;
+        esac
+        find "${CANON}" -type f >> "${FILELIST}" 2>/dev/null || FIND_RC=$?
+    done
+    if [ -n "${OUTSIDE}" ]
+    then
+        logger -t backuptool "the backup list names ${OUTSIDE}, which is outside /storage; nothing written"
+        rm -f "${FILELIST}" "${SECRETLIST}" "${SENDLIST}"
+        return 6
+    fi
+    if [ "${FIND_RC}" -ne 0 ]
+    then
+        logger -t backuptool "a location in the backup list could not be read (find exit ${FIND_RC}); nothing written"
+        rm -f "${FILELIST}" "${SECRETLIST}" "${SENDLIST}"
+        return 2
+    fi
+    # Overlapping locations (a folder and a file inside it) list a file
+    # twice; the archive holds it once, and the counts below compare like
+    # with like.
+    awk '!seen[$0]++' "${FILELIST}" > "${FILELIST}.unique" && mv -f "${FILELIST}.unique" "${FILELIST}"
+    # Nor, whatever the list says: a staging folder (a run killed part-way
+    # leaves one; a selection of /storage would find it), and the core dumps
+    # and evidence bundles under /storage/.cache/log -- a core is process
+    # memory, credentials and all, and rocknix-corekeep promises it is never
+    # collected (#307, the audit of the fixes, claude G-B-12).
+    #
+    # One filter, checked: the kept list is written whole and moved into
+    # place, or the collection fails (return 2). An exclusion that could not
+    # be applied left the unfiltered list in place, and a selection of
+    # /storage/roms archived the password-keeping pre-restore copies it
+    # exists to keep out (gpt G-B-04). And a restore's own control files, by
+    # exact path (RESTORE_CONTROL; the audit of the fix round, PL-007).
+    local KEPTN DROPPED CTRL
+    CTRL=$(printf '%s\n' "${RESTORE_CONTROL[@]}")
+    if ! OWN="${OWN}/" STAGE="${STAGING_PREFIX}" CORES=/storage/.cache/log/cores/ EVID=/storage/.cache/log/evidence/ CTRL="${CTRL}" \
+           awk 'BEGIN { n = split(ENVIRON["CTRL"], c, "\n"); for (i = 1; i <= n; i++) if (c[i] != "") ctrl[c[i]] = 1 }
+                ($0 in ctrl) || index($0, ENVIRON["OWN"]) == 1 || index($0, ENVIRON["STAGE"]) == 1 || index($0, ENVIRON["CORES"]) == 1 || index($0, ENVIRON["EVID"]) == 1 { next } { print }' \
+           "${FILELIST}" > "${FILELIST}.kept" \
+       || ! KEPTN=$(wc -l < "${FILELIST}.kept") \
+       || ! DROPPED=$(( $(wc -l < "${FILELIST}") - KEPTN )) \
+       || ! mv -f "${FILELIST}.kept" "${FILELIST}"
+    then
+        logger -t backuptool "the list could not be filtered of the backups folder, staging, cores and evidence; nothing written"
+        rm -f "${FILELIST}" "${FILELIST}.kept" "${SECRETLIST}" "${SENDLIST}"
+        return 2
+    fi
+    [ "${DROPPED}" -gt 0 ] && logger -t backuptool "left out ${DROPPED} file(s) a backup never holds: another backup, a staging folder, a core dump, an evidence bundle or a restore's own marker"
+
+    # Inside a configured location, what the image ships is not the player's
+    # configuration and does not travel (#45). A stock device's archive was
+    # 16.4 MB, and so was a fresh VM's: almost all of it OS-shipped content
+    # under /storage/.config -- PPSSPP's assets (46 language .ini files, every
+    # shader, fonts, the debugger web app), its 8.7 MB cheat.db, a libretro
+    # core's jar -- copied there from /usr/config at first boot and put back
+    # by factoryreset, plus the GL shader cache, which is stale after any
+    # driver change. Two rules, applied to the file list:
+    #   1. a file under /storage/.config that is byte-identical to its
+    #      /usr/config counterpart is the shipped seed, unchanged; the image
+    #      has it, so the backup need not. A file the player edited differs
+    #      and travels (ppsspp.ini, controls.ini, their own cheat .ini files).
+    #   2. ppsspp/assets/ and PSP/SYSTEM/CACHE/ never travel, edited or not:
+    #      one is the emulator's program data, the other a cache.
+    # Substring matches on the file list (grep -F, unanchored: the two paths
+    # match wherever they occur in a line), so a custom LOCATIONS that names
+    # one of these on purpose is still pruned -- they are the OS's to provide.
+    local REGENERABLE PRUNED KEPT F REL
+    if ! { REGENERABLE=$(tmp_file) \
+           && printf '%s\n' /storage/.config/ppsspp/assets/ /storage/.config/ppsspp/PSP/SYSTEM/CACHE/ 2>/dev/null > "${REGENERABLE}"; }
+    then
+        [ -n "${REGENERABLE}" ] && rm -f "${REGENERABLE}"
+        rm -f "${FILELIST}" "${SECRETLIST}" "${SENDLIST}"
+        return 2
+    fi
+    GREP_RC=0
+    grep -v -F -f "${REGENERABLE}" "${FILELIST}" > "${FILELIST}.pruned" || GREP_RC=$?
+    rm -f "${REGENERABLE}"
+    # grep's 1 is "every line matched" -- nothing outside the two prefixes,
+    # which is fine; 2 is grep itself failing (a list it could not read), and
+    # a pruned list from a grep that did not finish is a partial backup that
+    # would be announced as a success. Refuse it: 2 to the caller, "nothing
+    # could be collected", with the reason in the log (#151 PL-14; until
+    # then `|| true` took whatever had been written).
+    if [ "${GREP_RC}" -gt 1 ]
+    then
+        logger -t backuptool "the backup list could not be filtered (grep exit ${GREP_RC}); nothing written"
+        rm -f "${FILELIST}" "${FILELIST}.pruned" "${SECRETLIST}" "${SENDLIST}"
+        return 2
+    fi
+    local LISTS_RC=0
+    KEPT=""; SEEDED=""; PRUNED=0
+    if ! { KEPT=$(tmp_file) && SEEDED=$(tmp_file); }
+    then
+        for T in "${KEPT}" "${SEEDED}"; do [ -n "${T}" ] && rm -f "${T}"; done
+        rm -f "${FILELIST}" "${FILELIST}.pruned" "${SECRETLIST}" "${SENDLIST}"
+        return 2
+    fi
+    while IFS= read -r F
+    do
+        [ "${F}" = "${SEEDLIST}" ] && continue
+        case "${F}" in
+            /storage/.config/*)
+                REL="${F#/storage/.config/}"
+                if [ -f "/usr/config/${REL}" ] && cmp -s "/usr/config/${REL}" "${F}"
+                then
+                    PRUNED=$((PRUNED + 1))
+                    printf '%s\n' "${REL}" 2>/dev/null >> "${SEEDED}" || { LISTS_RC=1; break; }
+                    continue
+                fi
+                ;;
+        esac
+        printf '%s\n' "${F}" 2>/dev/null >> "${KEPT}" || { LISTS_RC=1; break; }
+    done < "${FILELIST}.pruned"
+    if [ "${LISTS_RC}" -ne 0 ] || ! mv -f "${KEPT}" "${FILELIST}" 2>/dev/null
+    then
+        logger -t backuptool "the list of what to back up could not be written whole; nothing written"
+        rm -f "${KEPT}" "${SEEDED}" "${FILELIST}" "${FILELIST}.pruned" "${SECRETLIST}" "${SENDLIST}"
+        return 2
+    fi
+    rm -f "${FILELIST}.pruned"
+    [ "${PRUNED}" -gt 0 ] && logger -t backuptool "left out ${PRUNED} file(s) identical to the image's own copies under /usr/config"
+
+    if [ ! -s "${FILELIST}" ]
+    then
+        # Nothing to collect -- every location absent, empty, or the
+        # image's own -- is its own answer (4), never the 2 a failed
+        # collection gives: a restore reads 4 as "nothing on this device to
+        # keep" and goes on, and it read a FAILED copy the same way until
+        # #307 PL-009, extracting over a tree it had no copy of.
+        rm -f "${FILELIST}" "${SECRETLIST}" "${SENDLIST}" "${SEEDED}"
+        return 4
+    fi
+
+    # Only hold back what this backup was actually going to contain. A user
+    # with custom LOCATIONS may have left these out on purpose, and adding a
+    # sanitized copy regardless would put a file in their backup that they
+    # had deliberately excluded.
+    #
+    # Each line held back is written by hold_back_line and counted: a list
+    # that lost a line would send that file whole -- its credentials with it
+    # -- where a sanitised copy or nothing was meant (#307, the audit of the
+    # fix round, PL-006).
+    local HOLD_RC=0 NHOLD=0 NHOLD_FILE
+    hold_back_line() {
+        if printf '%s\n' "${1}" 2>/dev/null >> "${SECRETLIST}"; then NHOLD=$((NHOLD + 1)); else HOLD_RC=1; fi
+    }
+    if [ "${STRIP}" = "1" ]
+    then
+        for CANDIDATE in "${SYSCFG}" "${ESCFG}" "${RACFG}" "${RCLONECFG}"
+        do
+            if grep -qxF "${CANDIDATE}" "${FILELIST}"
+            then
+                hold_back_line "${CANDIDATE}"
+            fi
+        done
+        # rclone.conf is live OAuth access and refresh tokens for the
+        # player's cloud account. There is no sanitized copy worth keeping
+        # -- a remote without its token is a name -- so it is held back
+        # outright, and a restored device connects its cloud storage again
+        # (thirty seconds on a phone with the wizard). Not in the default
+        # LOCATIONS, but a custom LOCATIONS such as /storage/.config sweeps
+        # it in, and the archive is synced to the cloud by design (#52).
+        if grep -qxF "${RCLONECFG}" "${FILELIST}"
+        then
+            logger -t backuptool "rclone.conf held back from the archive: cloud tokens never travel in a backup (#52)"
+        fi
+        for CANDIDATE in "${DEVICEONLY[@]}"
+        do
+            [ "${CANDIDATE}" = "${RCLONECFG}" ] && continue
+            if grep -qxF "${CANDIDATE}" "${FILELIST}"
+            then
+                hold_back_line "${CANDIDATE}"
+                logger -t backuptool "${CANDIDATE##*/} held back from the archive: a device's cloud name never travels (#307 PL-010)"
+            fi
+        done
+        # The emulators' copies of the RetroAchievements token (#169; the
+        # lists above write_archive). The token-only files are held back
+        # outright, and the count goes to the log the way the pruned seeds'
+        # does; the settings files go on the list so a blanked copy is
+        # staged below in place of the real one.
+        HELD=0
+        for CANDIDATE in "${RATOKENFILES[@]}"
+        do
+            if grep -qxF "${CANDIDATE}" "${FILELIST}"
+            then
+                hold_back_line "${CANDIDATE}"
+                HELD=$((HELD + 1))
+            fi
+        done
+        [ "${HELD}" -gt 0 ] && logger -t backuptool "held back ${HELD} file(s) that hold only a RetroAchievements token; the emulator writes them again at its next start (#169)"
+        for CANDIDATE in "${RATOKENSETTINGS[@]}"
+        do
+            if grep -qxF "${CANDIDATE}" "${FILELIST}"
+            then
+                hold_back_line "${CANDIDATE}"
+            fi
+        done
+        # The proxy's folder, every file under it (#165). grep -F on the
+        # prefix: the list holds absolute paths, so the prefix matches a file
+        # under that folder and nothing else.
+        HELD=0
+        for CANDIDATE in "${RATOKENDIRS[@]}"
+        do
+            while IFS= read -r F
+            do
+                hold_back_line "${F}"
+                HELD=$((HELD + 1))
+            done < <(grep -F "${CANDIDATE}" "${FILELIST}" || true)
+        done
+        [ "${HELD}" -gt 0 ] && logger -t backuptool "held back ${HELD} file(s) under the offline RetroAchievements proxy's folder: its token cache and award queue never travel (#165)"
+        # The copies a writer keeps beside a file that is stripped or held
+        # back carry the same keys: chksysconfig's and the interface's
+        # last-good record (system.cfg.backup, es_settings.cfg.backup), a
+        # writer's temporary (.tmp), and a .bak or .old. The strips go by
+        # exact path, so a selection covering the folder carried the record
+        # whole -- the Wi-Fi key and the root password -- and the key scan
+        # read no .backup (#307, the audit of the fixes, claude G-B-01). They
+        # are held back: the record is rebuilt from the live file at the next
+        # boot and on the next write, so holding it back loses nothing.
+        HELD=0
+        for CANDIDATE in "${SYSCFG}" "${ESCFG}" "${RACFG}" "${RATOKENFILES[@]}" "${RATOKENSETTINGS[@]}" "${DEVICEONLY[@]}"
+        do
+            for SUFFIX in .backup .bak .tmp .old
+            do
+                if grep -qxF "${CANDIDATE}${SUFFIX}" "${FILELIST}"
+                then
+                    hold_back_line "${CANDIDATE}${SUFFIX}"
+                    HELD=$((HELD + 1))
+                fi
+            done
+        done
+        [ "${HELD}" -gt 0 ] && logger -t backuptool "held back ${HELD} last-good record(s) or temporaries beside files that are stripped or held back"
+    fi
+    if ! { [ "${HOLD_RC}" -eq 0 ] && NHOLD_FILE=$(wc -l 2>/dev/null < "${SECRETLIST}") && [ "${NHOLD_FILE}" -eq "${NHOLD}" ] 2>/dev/null; }
+    then
+        logger -t backuptool "the list of files held back could not be written whole; nothing written"
+        rm -f "${FILELIST}" "${SECRETLIST}" "${SENDLIST}" "${SEEDED}"
+        return 2
+    fi
+
+    # grep -f with an EMPTY pattern file matches nothing under busybox and
+    # everything under GNU grep, and an empty send list would then fail the
+    # backup outright -- and only for someone whose custom LOCATIONS
+    # excluded every credential file, which is exactly the case the
+    # membership check above exists to support. Skip the filter when there
+    # is nothing to hold back rather than relying on grep to agree across
+    # implementations.
+    #
+    # And the send list is counted: every file listed but those held back
+    # (each of which is on the list by construction, the list having no
+    # repeats). grep's 1 means "every file held back", but it is also what
+    # a redirect that could not be opened returns, so the status alone could
+    # not tell an empty send list from a failed one (#307, the audit of the
+    # fix round, PL-006).
+    local SEND_RC=0 NSEND NFILES NHELD_UNIQUE
+    if [ -s "${SECRETLIST}" ]
+    then
+        grep -vxF -f "${SECRETLIST}" "${FILELIST}" 2>/dev/null > "${SENDLIST}"
+        [ $? -le 1 ] || SEND_RC=1
+    else
+        cp "${FILELIST}" "${SENDLIST}" 2>/dev/null || SEND_RC=1
+    fi
+    if ! { [ "${SEND_RC}" -eq 0 ] && NSEND=$(wc -l 2>/dev/null < "${SENDLIST}") && NFILES=$(wc -l 2>/dev/null < "${FILELIST}") \
+           && NHELD_UNIQUE=$(sort -u "${SECRETLIST}" 2>/dev/null | wc -l) && [ "${NSEND}" -eq $((NFILES - NHELD_UNIQUE)) ] 2>/dev/null; }
+    then
+        logger -t backuptool "the list of files to send could not be written whole (${NSEND:-?} of $((${NFILES:-0} - ${NHELD_UNIQUE:-0}))); nothing written"
+        rm -f "${FILELIST}" "${SECRETLIST}" "${SENDLIST}" "${SEEDED}"
+        return 2
+    fi
+
+    # Staged, then archived once.
+    #
+    # zip could append, so the old flow wrote the archive and then added
+    # sanitized copies over the top. tar cannot append to a compressed
+    # archive, and the staging that replaces it is the better shape
+    # anyway: the sanitized file is the only version that ever exists in
+    # the tree being archived, so there is no ordering in which a real
+    # credential is written and later overwritten.
+    #
+    # On the storage card, not in /tmp: /tmp is RAM on the device, and the
+    # standard list now carries whole bezel and theme folders, so a large
+    # selection staged there could exhaust the memory of a 1 GB handheld
+    # mid-backup (#308 claude F-BR-09). /storage is the internal card's own
+    # filesystem, which keeps file modes -- the backups folder can be on a
+    # FAT games card, which does not. There is one copy: the scan reads
+    # the staged tree itself (PL-005) rather than a second extraction.
+    mkdir -p "${STAGING_PREFIX%/*}"
+    STAGING=$(mktemp -d "${STAGING_PREFIX}XXXXXX") || { rm -f "${FILELIST}" "${SECRETLIST}" "${SENDLIST}" "${SEEDED}"; return 2; }
+    # pipefail, in a subshell so it does not leak into the rest of the
+    # script: a pipeline's status is its LAST command's, so without this
+    # the guard tested the extracting tar and ignored the collecting one.
+    # The collector exits 1 on an unreadable input or an unwritable target
+    # and the pipeline still reported 0, so a short archive was written and
+    # announced as a success.
+    #
+    # An empty send list is skipped, not piped: a selection of nothing but
+    # files that travel as sanitised copies (LOCATIONS=(system.cfg)) leaves
+    # it empty, and busybox tar writes no archive at all for an empty list,
+    # so the reader failed on "invalid tar magic" and a valid backup was
+    # refused as a failed collection (#308, the gpt seat's F-BR-19).
+    local COLLECT_RC=0
+    if [ -s "${SENDLIST}" ]
+    then
+        ( set -o pipefail
+          tar -cf - -T "${SENDLIST}" 2>/dev/null | tar -xf - -C "${STAGING}" 2>/dev/null )
+        COLLECT_RC=$?
+    fi
+    if [ "${COLLECT_RC}" -ne 0 ]
+    then
+        rm -rf "${STAGING}"
+        rm -f "${FILELIST}" "${SECRETLIST}" "${SENDLIST}"
+        return 2
+    fi
+
+    # How many sanitised copies were staged in place of a file held back,
+    # for the member count below; and whether every one of them was written
+    # whole. A sanitiser that dies part-way (a read error, a full card)
+    # leaves a copy that exists and is short, which the count cannot see, so
+    # each one's status is read (#307 PL-036, the gpt seat's F-BR-06).
+    local SANITISED=0 SANITISE_RC=0
+    if [ "${STRIP}" = "1" ]
+    then
+        # Wifi keys, the root password, and account passwords/tokens must
+        # never leave the device (the archive can be synced to the cloud).
+        if grep -qxF "${SYSCFG}" "${SECRETLIST}"
+        then
+            mkdir -p "${STAGING}/storage/.config/system/configs"
+            to_log sed -E '/^[^#]*\.(key|password|token)=/d' "${SYSCFG}" \
+                > "${STAGING}/storage/.config/system/configs/system.cfg" || SANITISE_RC=1
+            keep_meta "${SYSCFG}" "${STAGING}/storage/.config/system/configs/system.cfg" || SANITISE_RC=1
+            SANITISED=$((SANITISED + 1))
+        fi
+
+        # es_settings.cfg holds the ScreenScraper account password and, on
+        # fork builds, the developer password entered on the device (#64),
+        # and the IGDB scraper's client secret (the CLIENT SECRET row of the
+        # scraper's ACCOUNTS tab; it travelled in every settings backup until
+        # 2026-09-25, #273's trace of #221); strip all three from the archived
+        # copy the same way. The file is XML, which the line-anchored leak
+        # scan below cannot read, so the strip is the only guard it has.
+        if grep -qxF "${ESCFG}" "${SECRETLIST}"
+        then
+            mkdir -p "${STAGING}/storage/.config/emulationstation"
+            # grep's 1 is "no line survived" (an empty copy), not a failure.
+            to_log grep -v -e 'name="ScreenScraperPass"' -e 'name="ScreenScraperDevPass"' -e 'name="IGDBSecret"' "${ESCFG}" \
+                > "${STAGING}/storage/.config/emulationstation/es_settings.cfg"
+            [ $? -le 1 ] || SANITISE_RC=1
+            keep_meta "${ESCFG}" "${STAGING}/storage/.config/emulationstation/es_settings.cfg" || SANITISE_RC=1
+            SANITISED=$((SANITISED + 1))
+        fi
+
+        # retroarch.cfg carries its own credentials when RetroArch's own UI
+        # is used to sign in: cheevos password/token, netplay and kiosk
+        # passwords, and streaming keys. Blank the values (rather than drop
+        # the lines) so RetroArch still finds the keys it expects. The
+        # cheevos *username* is deliberately kept - it is not a secret, and
+        # the post-restore re-entry page uses it to know an account exists.
+        if grep -qxF "${RACFG}" "${SECRETLIST}"
+        then
+            mkdir -p "${STAGING}/storage/.config/retroarch"
+            to_log sed -E 's/^([a-z_]*(password|token|stream_key)) = ".*"$/\1 = ""/' "${RACFG}" \
+                > "${STAGING}/storage/.config/retroarch/retroarch.cfg" || SANITISE_RC=1
+            keep_meta "${RACFG}" "${STAGING}/storage/.config/retroarch/retroarch.cfg" || SANITISE_RC=1
+            SANITISED=$((SANITISED + 1))
+        fi
+
+        # The standalone emulators' settings files carry the token as a
+        # line of their own -- `Token = ` in DuckStation's, flycast's and
+        # AetherSX2's, `RA_Token=` and `RA_Password=` in melonDS's. Blank
+        # the value and keep the key, as for retroarch.cfg: the cheevos_*.sh
+        # script finds the line and writes the token back at the next
+        # launch. No other key in those files ends in Token or Password
+        # (checked against the shipped seeds, 2026-09-13; #169).
+        BLANKED=0
+        for CANDIDATE in "${RATOKENSETTINGS[@]}"
+        do
+            if grep -qxF "${CANDIDATE}" "${SECRETLIST}"
+            then
+                mkdir -p "${STAGING}${CANDIDATE%/*}"
+                to_log sed -E 's/^([A-Za-z_]*(Token|Password)[[:space:]]*=[[:space:]]*).*$/\1/' "${CANDIDATE}" \
+                    > "${STAGING}${CANDIDATE}" || SANITISE_RC=1
+                keep_meta "${CANDIDATE}" "${STAGING}${CANDIDATE}" || SANITISE_RC=1
+                BLANKED=$((BLANKED + 1))
+            fi
+        done
+        [ "${BLANKED}" -gt 0 ] && logger -t backuptool "blanked the RetroAchievements token in ${BLANKED} emulator settings file(s) (#169)"
+        SANITISED=$((SANITISED + BLANKED))
+    fi
+    # The list of what was left out as the image's own, for a backup that
+    # can be restored somewhere else (STRIP=1): see SEEDLIST.
+    if [ "${STRIP}" = "1" ] && [ -s "${SEEDED}" ]
+    then
+        mkdir -p "${STAGING}${SEEDLIST%/*}"
+        cp "${SEEDED}" "${STAGING}${SEEDLIST}" || SANITISE_RC=1
+        SANITISED=$((SANITISED + 1))
+    fi
+    rm -f "${SEEDED}"
+    if [ "${SANITISE_RC}" -ne 0 ]
+    then
+        logger -t backuptool "a sanitised copy could not be written whole; nothing written"
+        rm -rf "${STAGING}"
+        rm -f "${FILELIST}" "${SECRETLIST}" "${SENDLIST}"
+        return 2
+    fi
+
+    # The staged tree is counted against what it was handed: every file
+    # the collector was given, plus each sanitised copy. A collector that
+    # leaves a file out and exits 0 is caught here rather than trusted
+    # (#307 PL-004); the archive is then counted against the tree.
+    local SENT STAGED LISTED
+    SENT=$(wc -l < "${SENDLIST}")
+    STAGED=$(find "${STAGING}" -type f | wc -l)
+    rm -f "${FILELIST}" "${SECRETLIST}" "${SENDLIST}"
+    if [ "${STAGED}" -ne $((SENT + SANITISED)) ]
+    then
+        logger -t backuptool "the staged copy holds ${STAGED} file(s) where $((SENT + SANITISED)) were collected; nothing written"
+        rm -rf "${STAGING}"
+        return 2
+    fi
+
+    # A backup that may leave the device carries no sign-in (return 5), and
+    # the check reads the staged tree -- exactly what the archive is made
+    # from -- before the archive exists, so nothing credential-bearing is
+    # ever written under a name an uploader matches (#307 PL-005).
+    if [ "${STRIP}" = "1" ]
+    then
+        local LEAKS
+        if ! LEAKS=$(credential_lines "${STAGING}")
+        then
+            rm -rf "${STAGING}"
+            return 3
+        fi
+        if [ "${LEAKS}" -gt 0 ]
+        then
+            rm -rf "${STAGING}"
+            return 5
+        fi
+    fi
+
+    # Member names come out as storage/... exactly as the zip's did, so
+    # anything reading the archive sees the same shape. To .partial first;
+    # the name every reader looks for is given only to an archive that has
+    # listed back whole -- every staged file, counted, not only a listing
+    # that ends without an error.
+    #
+    # Files only, named from a list: the folders in the staging tree were
+    # made by the collecting tar and by mkdir, not copied, and archiving
+    # them put their modes into the archive for a restore to impose on the
+    # device's own folders (#308, the gpt seat's F-BR-16).
+    local MEMBERLIST=""
+    if ! { MEMBERLIST=$(tmp_file) && ( cd "${STAGING}" && find storage -type f ) 2>/dev/null > "${MEMBERLIST}" \
+           && to_log tar -czf "${TARGET}.partial" -C "${STAGING}" -T "${MEMBERLIST}"; }
+    then
+        rm -rf "${STAGING}"
+        rm -f "${TARGET}.partial"
+        [ -n "${MEMBERLIST}" ] && rm -f "${MEMBERLIST}"
+        return 3
+    fi
+    rm -f "${MEMBERLIST}"
+    # One chain only success gets through (a count that errors is not one).
+    if ! { LISTED=$(listed_files "${TARGET}.partial") && [ "${LISTED}" -eq "${STAGED}" ] 2>/dev/null; }
+    then
+        logger -t backuptool "the archive does not list back whole (${LISTED:-no listing} of the ${STAGED} staged); nothing written"
+        rm -rf "${STAGING}"
+        rm -f "${TARGET}.partial"
+        return 3
+    fi
+    rm -rf "${STAGING}"
+    if ! mv -f "${TARGET}.partial" "${TARGET}"
+    then
+        rm -f "${TARGET}.partial"
+        return 3
+    fi
+    return 0
+}
+
+# Keep only the newest ARCHIVE_KEEP archives under archive/. Both shapes: an
+# upgraded device still has archives written under the old name, and
+# rotation must not skip them and keep them for ever while trimming only the
+# new ones. The pre-restore snapshots restore writes (<stamp>-PRE_RESTORE-...)
+# are candidates too, so a run of restores cannot grow the folder past the
+# same bound; they end in _SETTINGS.tar.gz and the first glob takes them, and
+# they are named as well so a reader knows that is intended.
+#
+# Newest by the date in the name, not by mtime. The name is the date the
+# archive was taken and is kept on rotation; an mtime is when the file was
+# last written, which for an archive that came down from the cloud is the
+# download, so `ls -t` kept a downloaded old archive and trimmed a newer one
+# (KILL3 on the VM, 2026-09-10: the previous archive, planted first, was the
+# one removed). A name with no date is from before names carried them and is
+# the oldest there is; it sorts last.
+#
+# The one path given, if any, is never a candidate: the pre-restore copy a
+# restore has just taken and is about to rely on. Named by the clock, it
+# sorted oldest whenever the clock read earlier than the archives already
+# there -- an RTC-less handheld after a reset, with archives pulled from the
+# cloud -- and was deleted before the extraction it existed to protect, while
+# the restore mark still named it (#308 claude F-BR-08, gpt F-BR-15).
+trim_archive() {
+    local KEEP="${1:-}"
+    ls -1 "${ARCHIVEFOLDER}"/*_SETTINGS*.tar.gz "${ARCHIVEFOLDER}"/*PRE_RESTORE*.tar.gz \
+          "${ARCHIVEFOLDER}"/*_BACKUP*.tar.gz "${ARCHIVEFOLDER}"/*_BACKUP*.zip \
+          "${ARCHIVEFOLDER}"/ARCHIVED_*.zip 2>/dev/null \
+        | awk '!seen[$0]++' \
+        | KEEP="${KEEP}" awk '$0 != ENVIRON["KEEP"]' \
+        | awk -F/ '{ n = $NF; k = (n ~ /^[0-9][0-9][0-9][0-9]_/) ? n : "0000_" n; print k "\t" $0 }' \
+        | sort -r | cut -f2- | tail -n +$((ARCHIVE_KEEP + 1)) | while read -r OLD
+    do
+        rm -f "${OLD}"
+    done
+}
+
+# Options after the verb. --then-cloud: once the settings are verifiably in
+# place, leave the marker EmulationStation reads at the next start to offer
+# the cloud journey's continuation. It used to be touched by the menu in the
+# confirmation callback -- before the restore had run, let alone succeeded --
+# so a restore that failed still produced the offer (#105).
+#
+# --no-restart: leave the restart to the caller. EmulationStation's transfer
+# page runs this restore and has an outcome to put on screen when it ends;
+# the five-second sleep and reboot below take the screen away at exactly
+# that moment, so the page asks for the restore alone and restarts the
+# device itself once the player has read the result (#114). The console
+# flows pass nothing and restart here as they always have -- and an older
+# backuptool, handed the option by a newer EmulationStation, ignores it and
+# does the same, which is the whole reason it is an opt-in.
+THEN_CLOUD=0
+NO_RESTART=0
+VERB="${1}"
+shift
+for OPT in "$@"
+do
+    case "${OPT}" in
+        --then-cloud) THEN_CLOUD=1 ;;
+        --no-restart) NO_RESTART=1 ;;
+    esac
+done
+
+case "${VERB}" in
     "restore")
-        unzip -o ${BACKUPFILE} -d /
+        command -v flock >/dev/null 2>&1 || {
+            why "THIS DEVICE CAN'T RESTORE SETTINGS"
+            fail "THIS DEVICE CAN'T RESTORE SETTINGS. SOMETHING IT NEEDS IS MISSING FROM THIS BUILD." "'flock' is not on PATH"
+        }
+        if ! take_lock
+        then
+            why "A SETTINGS BACKUP OR RESTORE IS ALREADY RUNNING"
+            fail "A SETTINGS BACKUP OR RESTORE IS ALREADY RUNNING. WAIT FOR IT TO FINISH, THEN TRY AGAIN." "another run holds the lock on ${SETTINGS_BACKUPS}"
+        fi
+        sweep_leftovers
+        BACKUPFILE="$(newest_backup)"
+        if [ -z "${BACKUPFILE}" ] || [ ! -f "${BACKUPFILE}" ]
+        then
+            why "THERE'S NO SETTINGS BACKUP ON THIS DEVICE YET"
+            fail "THERE'S NO SETTINGS BACKUP ON THIS DEVICE YET. NOTHING WAS CHANGED. BACK UP SETTINGS FIRST, OR RESTORE THEM FROM THE CLOUD." "nothing under ${SETTINGS_BACKUPS} matched"
+        fi
+
+        # An archive is whatever it is named. Both are read: every device in
+        # the field has .zip archives locally, and a format change is no
+        # reason to strand them.
+        case "${BACKUPFILE}" in
+            *.tar.gz) ARCHIVE_KIND="tar" ;;
+            *)        ARCHIVE_KIND="zip" ;;
+        esac
+        # A zip's stored members are checked with busybox's crc32 (see
+        # zip_stored_ok); a build without it cannot tell a damaged one from
+        # a whole one, and says so rather than guessing.
+        if [ "${ARCHIVE_KIND}" = "zip" ] && ! command -v crc32 >/dev/null 2>&1
+        then
+            why "THIS DEVICE CAN'T RESTORE SETTINGS"
+            fail "THIS DEVICE CAN'T RESTORE SETTINGS. SOMETHING IT NEEDS IS MISSING FROM THIS BUILD." "'crc32' is not on PATH, so a zip's stored members cannot be checked"
+        fi
+
+        note "CHECKING YOUR SETTINGS BACKUP..." "${BACKUPFILE}"
+        if ! archive_ok "${BACKUPFILE}"
+        then
+            why "THIS DEVICE'S SETTINGS BACKUP IS DAMAGED"
+            # The newest archive may have come down from the cloud (the
+            # fresh-device journey), where backing up again neither mends it
+            # nor helps; either way a good copy has to replace it (#308
+            # claude F-BR-12(f)).
+            fail "THIS DEVICE'S SETTINGS BACKUP IS DAMAGED. NOTHING WAS CHANGED. RESTORE SETTINGS FROM THE CLOUD AGAIN, OR BACK UP SETTINGS TO REPLACE IT." "${BACKUPFILE} does not list"
+        fi
+
+        # Before anything is written over the live tree, what the archive
+        # is about to replace goes into archive/ (snapshot_members), so a
+        # restore that does not finish has something to go back to
+        # (D-CLOUD-078: a failure reverts to the last known good state).
+        # archive/ is never sent to the cloud and never scanned by
+        # newest_backup, so the copy cannot be mistaken for a backup the
+        # player made; it is trimmed with the rest of archive/ so the folder
+        # stays bounded.
+        mkdir -p "${ARCHIVEFOLDER}"
+        SNAPSHOT="${ARCHIVEFOLDER}/${BACKUP_STAMP}-PRE_RESTORE-${DEVICE_LABEL:+${DEVICE_LABEL}-}${OS_NAME}_SETTINGS.tar.gz"
+        while [ -e "${SNAPSHOT}" ]
+        do
+            STAMP_EPOCH=$((STAMP_EPOCH + 1)); BACKUP_STAMP="$(stamp_at "${STAMP_EPOCH}")"
+            SNAPSHOT="${ARCHIVEFOLDER}/${BACKUP_STAMP}-PRE_RESTORE-${DEVICE_LABEL:+${DEVICE_LABEL}-}${OS_NAME}_SETTINGS.tar.gz"
+        done
+        # The restore's own lists, each checked (#307, the audit of the fix
+        # round, PL-006): with none, the copy cannot be built, so nothing is
+        # written.
+        MEMBERS=""; NEWLIST=""; SEEDS=""
+        if ! { MEMBERS=$(tmp_file) && NEWLIST=$(tmp_file) && SEEDS=$(tmp_file); }
+        then
+            for T in "${MEMBERS}" "${NEWLIST}" "${SEEDS}"; do [ -n "${T}" ] && rm -f "${T}"; done
+            why "COULDN'T KEEP A COPY OF YOUR CURRENT SETTINGS"
+            fail "COULDN'T KEEP A COPY OF YOUR CURRENT SETTINGS, SO NOTHING WAS CHANGED. TRY AGAIN." "the restore's lists could not be made (a temporary file)"
+        fi
+        if ! archive_members "${BACKUPFILE}" > "${MEMBERS}"
+        then
+            rm -f "${MEMBERS}" "${NEWLIST}" "${SEEDS}"
+            why "THIS DEVICE'S SETTINGS BACKUP IS DAMAGED"
+            fail "THIS DEVICE'S SETTINGS BACKUP IS DAMAGED. NOTHING WAS CHANGED. RESTORE SETTINGS FROM THE CLOUD AGAIN, OR BACK UP SETTINGS TO REPLACE IT." "${BACKUPFILE} did not list its members whole"
+        fi
+        # Nothing is written from an archive that holds a member a settings
+        # restore cannot put back (foreign_member; #307, the audit of the fix
+        # round, PL-028). The words are proposed (D-UI-112's register).
+        FOREIGN=$(foreign_member "${MEMBERS}")
+        case $? in
+            0) rm -f "${MEMBERS}" "${NEWLIST}" "${SEEDS}"
+               why "THIS BACKUP HOLDS FILES A RESTORE CAN'T PUT BACK"
+               fail "THIS BACKUP HOLDS FILES A RESTORE CAN'T PUT BACK, SO NOTHING WAS CHANGED. RESTORE SETTINGS FROM THE CLOUD AGAIN, OR BACK UP SETTINGS TO REPLACE IT." "${BACKUPFILE} holds '${FOREIGN}', which a settings restore does not write (not a file under storage/)" ;;
+            1) ;;
+            *) rm -f "${MEMBERS}" "${NEWLIST}" "${SEEDS}"
+               why "COULDN'T KEEP A COPY OF YOUR CURRENT SETTINGS"
+               fail "COULDN'T KEEP A COPY OF YOUR CURRENT SETTINGS, SO NOTHING WAS CHANGED. TRY AGAIN." "the member list of ${BACKUPFILE} could not be read back" ;;
+        esac
+        # The files the backup left out as the image's own (SEEDLIST), to
+        # be put back to this image's copy after the extraction: a path under
+        # /storage/.config that walks nowhere else, that this image ships,
+        # that is not a symlink here, and that no skip rule below keeps on
+        # the device. Their targets join the members the copy covers.
+        #
+        # The list is read whole first, with its reader's status: piped
+        # straight into the filter, a read that failed part-way gave a short
+        # list and a restore that said it finished with the defaults not put
+        # back (#307, the audit of the fix round, gpt G2-B-09, claude
+        # G2-B-07). A read that fails ends the restore before it writes; so
+        # does a list that cannot be written out.
+        if grep -qxF "${SEEDLIST#/}" "${MEMBERS}"
+        then
+            SEEDRAW=""
+            if ! { SEEDRAW=$(tmp_file) \
+                   && case "${ARCHIVE_KIND}" in
+                          tar) tar -xzOf "${BACKUPFILE}" "${SEEDLIST#/}" ;;
+                          *)   unzip -p "${BACKUPFILE}" "${SEEDLIST#/}" ;;
+                      esac 2>/dev/null > "${SEEDRAW}"; }
+            then
+                [ -n "${SEEDRAW}" ] && rm -f "${SEEDRAW}"
+                rm -f "${MEMBERS}" "${NEWLIST}" "${SEEDS}"
+                why "THE RESTORE COULDN'T FINISH"
+                fail "THE RESTORE COULDN'T FINISH. DON'T WORRY - YOUR SETTINGS ARE UNCHANGED. TRY AGAIN." "the list of defaults in ${BACKUPFILE} could not be read"
+            fi
+            SEED_RC=0
+            while IFS= read -r REL
+            do
+                case "${REL}" in ''|/*|*..*) continue ;; esac
+                # A file the archive holds itself is restored from the
+                # archive: a new backup never lists one it carries, so a list
+                # that names one is stale -- an older image extracted a list
+                # and later archived it (#307, the audit of the fixes, claude
+                # G-B-09).
+                grep -qxF "storage/.config/${REL}" "${MEMBERS}" && continue
+                case "/storage/.config/${REL}" in
+                    /storage/.config/ppsspp/assets/*|/storage/.config/ppsspp/PSP/SYSTEM/CACHE/*) continue ;;
+                esac
+                for CANDIDATE in "${DEVICEONLY[@]}" "${RATOKENFILES[@]}"; do [ "/storage/.config/${REL}" = "${CANDIDATE}" ] && continue 2; done
+                for CANDIDATE in "${RATOKENDIRS[@]}"; do case "/storage/.config/${REL}" in "${CANDIDATE}"*) continue 2 ;; esac; done
+                if [ -f "/usr/config/${REL}" ] && [ ! -L "/storage/.config/${REL}" ]
+                then
+                    printf '%s\n' "${REL}" 2>/dev/null >> "${SEEDS}" || { SEED_RC=1; break; }
+                fi
+            done < "${SEEDRAW}"
+            rm -f "${SEEDRAW}"
+            if [ "${SEED_RC}" -ne 0 ] || ! sed 's|^|storage/.config/|' "${SEEDS}" 2>/dev/null >> "${MEMBERS}"
+            then
+                rm -f "${MEMBERS}" "${NEWLIST}" "${SEEDS}"
+                why "COULDN'T KEEP A COPY OF YOUR CURRENT SETTINGS"
+                fail "COULDN'T KEEP A COPY OF YOUR CURRENT SETTINGS, SO NOTHING WAS CHANGED. TRY AGAIN." "the list of defaults to put back could not be written"
+            fi
+        fi
+        note "KEEPING A COPY OF YOUR CURRENT SETTINGS..." "${SNAPSHOT}"
+        snapshot_members "${MEMBERS}" "${SNAPSHOT}" "${NEWLIST}"
+        case $? in
+            0) trim_archive "${SNAPSHOT}" ;;
+            4) # Nothing the archive holds is on the device yet: a fresh
+               # install. There is nothing to copy; the files the restore
+               # would create are still listed, so a revert can remove
+               # them. A copy that FAILED (2, 3) is not this: the tree is
+               # there and could not be kept, so the restore stops before
+               # writing anything (#307 PL-009).
+               SNAPSHOT=""
+               logger -t backuptool "nothing on this device for the restore to replace; no copy needed" ;;
+            *) why "COULDN'T KEEP A COPY OF YOUR CURRENT SETTINGS"
+               fail "COULDN'T KEEP A COPY OF YOUR CURRENT SETTINGS, SO NOTHING WAS CHANGED. TRY AGAIN." "the copy of what ${BACKUPFILE} would replace could not be written" ;;
+        esac
+
+        # From here until the tree is whole again, a power cut leaves it half
+        # from the archive and half from before, with nothing running to
+        # notice. The marker names the copy taken above on its first line and
+        # each file the restore would create on a line of its own after it,
+        # "+<path>"; chksysconfig verify reads it at the next boot, puts the
+        # copy back, removes those files and tells EmulationStation to say so
+        # (D-CLOUD-078, KILL18). An image from before #307 PL-007 reads the
+        # first line alone, as it always did. Removed below once the extract
+        # has finished, or once this script's own revert has put the tree
+        # back; left in place if that revert failed, so the boot tries again.
+        #
+        # The mark is a precondition of the extraction, read back before the
+        # first file is written: a mark that could not be written means a
+        # power cut would leave the tree half restored with nothing to put
+        # it back, so the restore stops here instead (#307 PL-039; until
+        # then the write was unchecked and the extraction went on without
+        # it). -T, so a folder in the mark's place is a failure, not a
+        # destination the mark moves into.
+        #
+        # Its last line says whether /storage/roms was a mount when this
+        # restore ran: roms-mounted=yes, no, or unknown (a table this run
+        # could not read). The boot waits for that mount before acting on a
+        # copy or a created file under it -- right when the copy went onto a
+        # card that is mounted later, and for ever when the folder was never
+        # a mount, which is where this restore wrote them: a device whose
+        # automount did not mount it (#307, the audit of the fix round,
+        # claude G2-B-02). A boot from before this change ignores the line.
+        ROMS_MOUNTED=unknown
+        if [ -r /proc/mounts ]
+        then
+            awk '$2 == "/storage/roms" { f = 1 } END { exit !f }' /proc/mounts 2>/dev/null
+            case $? in
+                0) ROMS_MOUNTED=yes ;;
+                1) ROMS_MOUNTED=no ;;
+            esac
+        fi
+        if [ -n "${SNAPSHOT}" ] || [ -s "${NEWLIST}" ]
+        then
+            if ! { { printf '%s\n' "${SNAPSHOT}"; sed 's/^/+/' "${NEWLIST}"; printf 'roms-mounted=%s\n' "${ROMS_MOUNTED}"; } > "${RESTORE_MARK}.tmp" 2>/dev/null \
+                   && mv -fT "${RESTORE_MARK}.tmp" "${RESTORE_MARK}" 2>/dev/null \
+                   && [ "$(head -n 1 "${RESTORE_MARK}" 2>/dev/null)" = "${SNAPSHOT}" ] \
+                   && [ "$(tail -n 1 "${RESTORE_MARK}" 2>/dev/null)" = "roms-mounted=${ROMS_MOUNTED}" ] \
+                   && [ "$(wc -l < "${RESTORE_MARK}")" -eq $(( 2 + $(wc -l < "${NEWLIST}") )) ] 2>/dev/null; }
+            then
+                rm -f "${RESTORE_MARK}.tmp" "${MEMBERS}" "${NEWLIST}" 2>/dev/null
+                why "COULDN'T KEEP A COPY OF YOUR CURRENT SETTINGS"
+                fail "COULDN'T KEEP A COPY OF YOUR CURRENT SETTINGS, SO NOTHING WAS CHANGED. TRY AGAIN." "the restore mark ${RESTORE_MARK} could not be written"
+            fi
+        fi
+
+        note "RESTORING SETTINGS..." "from ${BACKUPFILE}"
+        # A member whose path is a symlink here is the OS's to provide
+        # (es_systems.cfg and es_features.cfg point into /usr/config), in
+        # either kind of archive. Backups hold regular files only, so an
+        # archive member at such a path is a flattened copy -- from a zip
+        # written before backups skipped symlinks, or a tar from a device
+        # where the link had been flattened -- and extracting it would freeze
+        # that file at the archive's version. busybox unzip refuses and
+        # aborts the whole restore; tar replaced the link without a word,
+        # which is why the tar branch had no such list until #308 (the gpt
+        # seat's F-BR-13). Skipped by exact name (glob_literal) in both.
+        LINKS=()
+        while IFS= read -r ENTRY
+        do
+            ENTRY="${ENTRY#./}"
+            [ -L "/${ENTRY}" ] && LINKS+=("$(glob_literal "${ENTRY}")")
+        done < "${MEMBERS}"
+        if [ "${#LINKS[@]}" -gt 0 ]
+        then
+            note "KEEPING ${#LINKS[@]} FILE(S) THE SYSTEM PROVIDES THAT THIS BACKUP WOULD HAVE REPLACED."
+        fi
+        # What neither kind of archive ever writes, one list for both (the
+        # branches below say why each is here). The last three are the
+        # restore's own: its control files, the settings backups folder that
+        # holds the copy just taken, and that copy by name (RESTORE_CONTROL;
+        # #307, the audit of the fix round, PL-007).
+        SKIPS=('storage/.config/ppsspp/assets/*' 'storage/.config/ppsspp/PSP/SYSTEM/CACHE/*' "${RATOKENFILES[@]#/}" "${RATOKENDIR_PATTERNS[@]}" "${DEVICEONLY[@]#/}" "${SEEDLIST#/}" "${LINKS[@]}")
+        for C in "${RESTORE_CONTROL[@]}"; do SKIPS+=("$(glob_literal "${C#/}")"); done
+        SKIPS+=("$(glob_literal "${SETTINGS_BACKUPS#/}")/*")
+        [ -n "${SNAPSHOT}" ] && SKIPS+=("$(glob_literal "${SNAPSHOT#/}")")
+        if [ "${ARCHIVE_KIND}" = "tar" ]
+        then
+            # What is skipped is the OS's: an archive written before #45 carries
+            # PPSSPP's assets and shader cache, and extracting them over a
+            # newer image's would put an older emulator's program data under a
+            # newer emulator (upgrade-and-install: fixing what is written does
+            # nothing for what was already written). And the files that hold
+            # only a RetroAchievements token, which every archive written
+            # before #169 carries: a token from before is not put on this
+            # device, and the emulator writes a current one from system.cfg
+            # at its next start. Beside those, this device's cloud sign-in
+            # and name (DEVICEONLY), the seed list (SEEDLIST) and the live
+            # symlinks above are never extracted. The settings
+            # files' token lines an older archive still carries are left to
+            # the emulator, which rewrites them at launch; tar cannot edit a
+            # member on the way past, and the archive is where the token
+            # must not be.
+            #
+            # tar reads the exclusions from a file, and that file is written
+            # whole and counted, or nothing is extracted: an exclusion file
+            # made empty or short by a full /tmp excluded nothing, and
+            # rclone.conf, the token files and the rest came off the archive
+            # (#307, the audit of the fix round, PL-006).
+            SKIP=""
+            if SKIP=$(tmp_file) && printf '%s\n' "${SKIPS[@]}" 2>/dev/null > "${SKIP}" \
+               && [ "$(wc -l 2>/dev/null < "${SKIP}")" -eq "${#SKIPS[@]}" ] 2>/dev/null
+            then
+                to_log tar -xzf "${BACKUPFILE}" -C / -X "${SKIP}" >/dev/null
+                EXTRACT_RC=$?
+            else
+                logger -t backuptool "the list of what the restore leaves alone could not be written whole; nothing extracted"
+                EXTRACT_RC=1
+            fi
+            [ -n "${SKIP}" ] && rm -f "${SKIP}"
+        else
+            # Archives written before backups switched to regular files only
+            # hold the *contents* of symlinked paths. Extracting one of those
+            # over the live symlink makes busybox unzip abort the whole
+            # restore, so every backup taken before that change would be
+            # unrestorable here. Skip exactly those entries instead: the OS
+            # owns those symlinks and provides them, and replacing one with a
+            # stale copy is the bug that got them excluded from backups in the
+            # first place. And skip the same two prefixes the tar branch does:
+            # a zip is the oldest archive there is, written when assets/ and
+            # the shader cache travelled whole, so it is the archive most
+            # likely to carry them -- and until #151 PL-03 this branch skipped
+            # neither, while D-CLOUD-008 said "from any archive". The token-only
+            # files are skipped here too (#169), as in the tar branch.
+            # The member names are read whole (archive_members): until #307
+            # PL-036 this branch split them on spaces, so "my link.cfg" was
+            # tested as "my" and a live symlink with a space in its name was
+            # not skipped -- the abort this list exists to prevent.
+            # -x is a mode switch: every argument after it is an exclusion,
+            # so it goes last. busybox and Info-ZIP both take the patterns.
+            to_log unzip -o "${BACKUPFILE}" -d / -x "${SKIPS[@]}" >/dev/null
+            EXTRACT_RC=$?
+        fi
+        # Then each file the backup held at its default goes back to this
+        # image's copy (SEEDLIST). A copy that fails is a restore that did
+        # not finish, and is undone with the rest.
+        if [ "${EXTRACT_RC}" -eq 0 ]
+        then
+            while IFS= read -r REL
+            do
+                to_log mkdir -p "$(dirname "/storage/.config/${REL}")" && to_log cp -f "/usr/config/${REL}" "/storage/.config/${REL}" || { EXTRACT_RC=1; break; }
+            done < "${SEEDS}"
+            [ -s "${SEEDS}" ] && [ "${EXTRACT_RC}" -eq 0 ] && logger -t backuptool "put $(wc -l < "${SEEDS}") file(s) the backup held at their defaults back to this image's copies"
+        fi
+        rm -f "${SEEDS}"
+        if [ "${EXTRACT_RC}" -ne 0 ]
+        then
+            # Half the archive may be in place. Put the copy taken above
+            # back over it, remove what the restore created, and say which
+            # state the device is in. "Unchanged" is said only when both
+            # happened: the copy covers every member the archive would have
+            # replaced, and the list every one it would have added.
+            if revert_restore
+            then
+                N_NEW=$(wc -l < "${NEWLIST}")
+                rm -f "${RESTORE_MARK}" "${MEMBERS}" "${NEWLIST}"
+                why "THE RESTORE COULDN'T FINISH"
+                fail "THE RESTORE COULDN'T FINISH. DON'T WORRY - YOUR SETTINGS ARE UNCHANGED. TRY AGAIN." "extraction of ${BACKUPFILE} failed; ${SNAPSHOT:-no copy needed} put back and ${N_NEW} created file(s) removed"
+            else
+                why "THE RESTORE COULDN'T FINISH"
+                fail "THE RESTORE COULDN'T FINISH, AND SOME OF YOUR SETTINGS COULDN'T BE PUT BACK. TRY THE RESTORE AGAIN." "extraction of ${BACKUPFILE} failed and so did putting back ${SNAPSHOT:-the files it created}"
+            fi
+        fi
+        rm -f "${MEMBERS}" "${NEWLIST}"
+
+        # The tree is whole: the boot has nothing to put back.
+        rm -f "${RESTORE_MARK}"
+
+        # Passwords and keys are stripped at backup time (see write_archive);
+        # wifi and similar credentials must be re-entered after a restore.
+        # EmulationStation shows a native reminder on next boot to re-enter
+        # the credentials that backups deliberately exclude.
+        touch /storage/.config/.restore-finish-pending
+        if [ "${THEN_CLOUD}" -eq 1 ]
+        then
+            touch /storage/.config/.cloud-journey-pending
+        fi
+
+        note "SETTINGS RESTORED. WI-FI AND ACCOUNT PASSWORDS ARE NOT PART OF A BACKUP AND MUST BE ENTERED AGAIN."
+        sync
+        if [ "${NO_RESTART}" -eq 1 ]
+        then
+            # The caller restarts. Nothing is announced here: the message
+            # would be a promise this run is not going to keep.
+            exit 0
+        fi
+        note "RESTARTING IN 5 SECONDS SO THE RESTORED SETTINGS TAKE EFFECT..."
+        sleep 5
+        systemctl reboot
     ;;
     "backup")
-        if [ -f ${BACKUPFILE} ]
+        # Guard the tools this whole path depends on, before anything is
+        # touched: a build that lost one (the zip-era tool died with a bare
+        # "zip: not found" after the player had chosen to back up) says so
+        # in the player's words instead.
+        for TOOL in tar gzip flock
+        do
+            command -v "${TOOL}" >/dev/null 2>&1 || {
+                why "THIS DEVICE CAN'T MAKE A SETTINGS BACKUP"
+                fail "THIS DEVICE CAN'T MAKE A SETTINGS BACKUP. SOMETHING IT NEEDS IS MISSING FROM THIS BUILD." "'${TOOL}' is not on PATH"
+            }
+        done
+        if ! take_lock
         then
-            TODAY=`date +%y-%m-%d_%H_%M_%S`
-            ARCHIVEFILENAME="ARCHIVED_${OS_NAME}_BACKUP-${TODAY}.zip"
-            mv ${BACKUPFILE} "${BACKUPFOLDER}/${ARCHIVEFILENAME}"
+            why "A SETTINGS BACKUP OR RESTORE IS ALREADY RUNNING"
+            fail "A SETTINGS BACKUP OR RESTORE IS ALREADY RUNNING. WAIT FOR IT TO FINISH, THEN TRY AGAIN." "another run holds the lock on ${SETTINGS_BACKUPS}"
         fi
-        [ -f "${BACKUPFILE}" ] && rm "${BACKUPFILE}"
-        zip -9 -r ${BACKUPFILE} \
-        ${COMPRESSLOCATIONS[@]}
+
+        # A .partial left by a run that was killed mid-write is not a backup
+        # and nothing reads it; clear it so it does not sit there for ever.
+        sweep_leftovers
+
+        # The archives upstream's backuptool rotated -- before this fork's
+        # first rewrite of it (747362fe36, 2026-07-25) -- went to the ROOT of
+        # the backups folder as ARCHIVED_<OS>_BACKUP-<yy-mm-dd_H_M_S>.zip,
+        # where no reader here looks and cloud_backup's --include=/*.zip
+        # uploads every one on every settings backup: the whole config tree
+        # of that era, keys and all (#308 claude F-BR-07). They move under
+        # archive/upstream-era/, where nothing uploads them and the trim does
+        # not reach -- the first cut moved them into archive/ itself, where
+        # the trim deleted all but the newest few on the first backup after
+        # the update (#307, the audit of the fixes, claude G-B-11). Moved
+        # first, before anything is written: one that cannot be moved ends
+        # the backup, which would otherwise succeed and let the chain upload
+        # it (gpt G-B-06). Idempotent; a move cut part-way leaves the file in
+        # one place or the other.
+        #
+        # Never over a file already there: a name upstream-era/ holds (the
+        # names carry the second they were rotated, and a clock reset on an
+        # RTC-less handheld repeats them) keeps its file, and the one from
+        # the root goes beside it under the name with this run's stamp added
+        # -- mv -n, then a check that the root's file is gone and the new one
+        # is there, since mv -n succeeds without moving (#307, the audit of
+        # the fix round, PL-017; mv -f replaced the older archive).
+        for OLD in "${SETTINGS_BACKUPS}"/ARCHIVED_*.zip
+        do
+            [ -f "${OLD}" ] || continue
+            ERA="${ARCHIVEFOLDER}/upstream-era"
+            DEST="${ERA}/$(basename "${OLD}")"
+            N=1
+            while [ -e "${DEST}" ] || [ -L "${DEST}" ]
+            do
+                DEST="${ERA}/$(basename "${OLD}" .zip)-kept-${BACKUP_STAMP}$([ "${N}" -gt 1 ] && echo "-${N}").zip"
+                N=$((N + 1))
+            done
+            if ! { mkdir -p "${ERA}" 2>/dev/null \
+                   && mv -n "${OLD}" "${DEST}" 2>/dev/null \
+                   && [ ! -e "${OLD}" ] && [ -f "${DEST}" ]; }
+            then
+                why "THE BACKUP COULDN'T FINISH"
+                fail "THE BACKUP COULDN'T FINISH. NOTHING WAS WRITTEN, AND YOUR LAST BACKUP IS UNCHANGED. TRY AGAIN." "$(basename "${OLD}") could not be moved off the backups folder's root, where the settings upload would send it"
+            fi
+            logger -t backuptool "moved $(basename "${OLD}") from the backups folder's root to archive/upstream-era/$(basename "${DEST}"): nothing uploads it there"
+        done
+
+        # A name already taken moves on a second (see STAMP_EPOCH).
+        while [ -e "${BACKUPFILE}" ]
+        do
+            STAMP_EPOCH=$((STAMP_EPOCH + 1)); BACKUP_STAMP="$(stamp_at "${STAMP_EPOCH}")"
+            BACKUPFILE="${SETTINGS_BACKUPS}/${BACKUP_STAMP}-${DEVICE_LABEL:+${DEVICE_LABEL}-}${OS_NAME}_SETTINGS.tar.gz"
+        done
+
+        # The archive at the root right now, named before the new one exists
+        # so that newest_backup cannot return the new one. It stays exactly
+        # where it is until the new archive has been written and verified:
+        # until 2026-09-10 it was moved into archive/ FIRST, so a kill in
+        # between left no archive at the root at all -- restore said there
+        # was nothing to restore while archive/ held three, and cloud_backup
+        # sent nothing (D-CLOUD-078, #105).
+        PREVIOUS="$(newest_backup)"
+
+        note "BACKING UP SETTINGS..." "to ${BACKUPFILE}"
+        write_archive "${BACKUPFILE}" 1
+        case $? in
+            0) ;;
+            4) # Nothing to back up is not a failure to try again: every
+               # location was absent, empty, or the image's own, and a retry
+               # finds the same (#308 F-BR-17).
+               why "THERE'S NOTHING TO BACK UP YET"
+               fail "THERE'S NOTHING TO BACK UP YET. YOUR LAST BACKUP IS UNCHANGED." "every location was absent, empty, or identical to the image's own copy" ;;
+            2) why "THE BACKUP COULDN'T FINISH WHILE GATHERING YOUR SETTINGS"
+               fail "THE BACKUP COULDN'T FINISH WHILE GATHERING YOUR SETTINGS. NOTHING WAS WRITTEN, AND YOUR LAST BACKUP IS UNCHANGED. TRY AGAIN." "collecting into staging failed" ;;
+            5) why "A SIGN-IN WAS FOUND IN THE BACKUP"
+               fail "A SIGN-IN WAS FOUND IN THE BACKUP, SO IT WASN'T KEPT. YOUR LAST BACKUP IS UNCHANGED." "a staged file holds a line shaped like a credential (the log names it); nothing written" ;;
+            6) why "YOUR OWN BACKUP LIST NAMES A FOLDER A BACKUP CAN'T CARRY"
+               fail "YOUR OWN BACKUP LIST NAMES A FOLDER A BACKUP CAN'T CARRY, SO NOTHING WAS WRITTEN. YOUR LAST BACKUP IS UNCHANGED." "a location in /storage/.config/backuptool.conf is outside /storage" ;;
+            *) why "THE BACKUP COULDN'T FINISH"
+               fail "THE BACKUP COULDN'T FINISH. NOTHING WAS WRITTEN, AND YOUR LAST BACKUP IS UNCHANGED. TRY AGAIN." "writing or verifying ${BACKUPFILE} failed" ;;
+        esac
+
+        # Now, and only now, rotate the previous archive into archive/,
+        # which the settings upload does not reach -- cloud_backup sends
+        # --include=/*.{zip,tar.gz} at the ROOT of the backups folder only --
+        # and keep only the newest few. Each backup writes a new dated name,
+        # so this is only ever the previous one.
+        if [ -n "${PREVIOUS}" ] && [ -f "${PREVIOUS}" ] && [ "${PREVIOUS}" != "${BACKUPFILE}" ]
+        then
+            mkdir -p "${ARCHIVEFOLDER}"
+            # Moved under the name it already has, keeping the date it was
+            # taken. Re-stamping on rotation would date every archive to the
+            # moment it was superseded, which is not when it was made and is
+            # not what somebody hunting for "the one from before Tuesday"
+            # needs. An archive written before names carried dates has none to
+            # keep, so it gets one now.
+            PREVIOUS_NAME="$(basename "${PREVIOUS}")"
+            case "${PREVIOUS_NAME}" in
+                [0-9][0-9][0-9][0-9]_*) ;;
+                *) PREVIOUS_NAME="$(date -r "${PREVIOUS}" +%Y_%m_%d-%H%M%S 2>/dev/null || date +%Y_%m_%d-%H%M%S)-${PREVIOUS_NAME}" ;;
+            esac
+            mv "${PREVIOUS}" "${ARCHIVEFOLDER}/${PREVIOUS_NAME}"
+            trim_archive
+        fi
+
+
+        sync
+        note "SETTINGS BACKED UP TO THIS DEVICE." "${BACKUPFILE}"
+        note "COPY IT SOMEWHERE SAFE, OR BACK UP SETTINGS TO THE CLOUD UNDER GAME SETTINGS > MANAGE CLOUD STORAGE."
+        if [ -t 1 ]; then sleep 3; fi
+    ;;
+    *)
+        echo "Usage: backuptool {backup|restore [--then-cloud] [--no-restart]}" >&2
+        exit 1
     ;;
 esac

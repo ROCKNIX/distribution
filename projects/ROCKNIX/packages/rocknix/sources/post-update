@@ -27,7 +27,9 @@ then
 fi
 
 ### Remove and link es configs so they are managed with OS updates.
-for es_cfg in es_features.cfg es_systems.cfg
+### es_savestates.cfg joins them (#196): an upgraded device gets the link here,
+### a fresh one in userconfig-setup, and the interface reads this path first.
+for es_cfg in es_features.cfg es_systems.cfg es_savestates.cfg
 do
   mv /storage/.config/emulationstation/${es_cfg} /storage/.config/emulationstation/last_${es_cfg} >/dev/null 2>&1
   ln -s /usr/config/emulationstation/${es_cfg} /storage/.config/emulationstation/${es_cfg}  >/dev/null 2>&1
@@ -62,6 +64,44 @@ then
   tocon "Update developer wifi config..."
   cp /usr/config/iwd/* /storage/.cache/iwd/
 fi
+
+### Retire the console-era TOOLS entries
+#
+# cloud_backup.sh and cloud_restore.sh were symlinked into the tools list back
+# when cloud sync had no native surface. EmulationStation owns the whole flow
+# now, so they are a second route to the same operation -- and dropping a
+# player into a fullscreen console is the worse one.
+#
+# Removing them from the package does nothing for a device that already has
+# them: /storage/.config/modules is seeded once and then belongs to the owner.
+# So they are removed here, and only when they are still the symlinks we
+# installed -- if somebody has put their own script at that name, it is theirs.
+# (This block lived in rclone/sources/post-update, a file no package installed,
+# so it never ran on a device; 2026-09-10.)
+for tool in cloud_backup cloud_restore; do
+  link="/storage/.config/modules/${tool}.sh"
+  if [ -L "${link}" ] && [ "$(readlink "${link}")" = "/usr/bin/${tool}" ]; then
+    rm -f "${link}"
+    echo "Removed superseded tools entry ${link}" >>${LOG}
+  fi
+done
+
+### Drop the deprecated vm.laptop_mode line from the owner's sysctl.d
+#
+# /usr/config/sysctl.d is copied to /storage/.config/sysctl.d once, on first
+# boot, and never again -- so removing vm.laptop_mode=5 from the package
+# (#122) reaches only a fresh install. On every device that upgraded, the
+# copy still carries it and systemd-sysctl logs "vm.laptop_mode is
+# deprecated. Ignoring setting." on every boot: a warning, in the one place
+# somebody reads after a freeze, about a line the kernel no longer acts on.
+# Remove just that line; the rest of the file is the owner's.
+for f in /storage/.config/sysctl.d/*.conf; do
+  [ -f "${f}" ] || continue
+  if grep -q '^vm\.laptop_mode=' "${f}"; then
+    sed -i '/^vm\.laptop_mode=/d' "${f}"
+    echo "Removed deprecated vm.laptop_mode from ${f}" >>${LOG}
+  fi
+done
 
 ### Add cloud sync-related files if missing
 echo "Update cloud sync files..." >>${LOG}

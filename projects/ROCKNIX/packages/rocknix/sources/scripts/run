@@ -9,6 +9,12 @@ ui_state() {
   systemctl ${1} ${UI_SERVICE}
 }
 
+# Every branch exits with the status of what it ran. It used to exit 0 on
+# both halves of the console branch whatever happened, so a caller could not
+# tell a factory reset that reset nothing from one that worked -- and the two
+# terminal branches exited with whatever the last thing in the `if` returned
+# (#119). ES's runSystemCommand still throws the status away, but
+# executeScriptLegacy reads it, and so does every shell caller.
 if [ "${UI_SERVICE}" = "weston.service" ]
 then
   if [ -f "${*}" ]
@@ -18,6 +24,9 @@ then
   else
     weston-terminal --command="${*}"
   fi
+  # The terminal's status, which is the closest thing to the command's that
+  # these two branches can offer.
+  exit $?
 elif echo "${UI_SERVICE}" | grep "sway"; then
   if [ -f "${*}" ]
   then
@@ -25,18 +34,28 @@ elif echo "${UI_SERVICE}" | grep "sway"; then
   else
     foot -F ${*}
   fi
+  exit $?
 else
   ui_state stop
   clear >/dev/console
   $* >/dev/console
-  if [ "$?" == 0 ]
+  rc=$?
+  if [ "${rc}" != 0 ]
   then
-    ui_state start
-    exit 0
-  else
-    "$*" >/dev/console
-    ui_state start
-    exit 0
+    # The fallback for a command that is a single path with spaces in it --
+    # the same case the weston and sway branches above test for with -f, and
+    # the only input "$*" (one word, the whole argument list) can name. It
+    # ran unguarded on EVERY failure, so a composed command line came back
+    # as `cloud_content_restore --all && cloud_restore --yes: not found`
+    # flashed over the console before the UI returned, on top of whatever
+    # the real failure had said (#114).
+    if [ -f "${*}" ]
+    then
+      "$*" >/dev/console
+      rc=$?
+    fi
   fi
+  ui_state start
+  exit "${rc}"
 fi
 

@@ -1,34 +1,330 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+# chksysconfig - keep the last known good system.cfg, and put it back.
+#
+# system.cfg.backup is the record of the last system.cfg that was known to be
+# good (D-CLOUD-078, D-CLOUD-079). It is written from a file that has just
+# been checked -- at boot once verify has run, and at shutdown -- and never
+# from one that has not: an empty or truncated file is exactly what the
+# record exists to survive, and copying it over the record is how the RG SP
+# lost its settings (#102: a truncated system.cfg was backed up at the next
+# clean shutdown, and the boot after that found no good copy and seeded the
+# image defaults). Written to a temporary name beside it and renamed, so a
+# power cut mid-copy leaves the previous record and never half of one.
+#
+# verify, at boot, tries the live file, then the record, then the defaults,
+# in that order, and says in the system log which one it took. The image
+# defaults are the last resort, not the first fix.
+#
+# The file name is deliberately the one this script has always used, so an
+# upgraded device has one record at rest and nothing to migrate.
 
 . /etc/profile
 
-CFG_PATH="/storage/.config/system/configs"
+CONFIG_ROOT="/storage/.config"
+DEFAULT_ROOT="/usr/config"
+CFG_PATH="${CONFIG_ROOT}/system/configs"
+CFG="${CFG_PATH}/system.cfg"
+BACKUP="${CFG}.backup"
 
-backup() {
-  TYPE=$(grep a ${CFG_PATH}/system.cfg 2>&1)
-  if [[ ! "${TYPE}" =~ binary ]]
-  then
-    cp ${CFG_PATH}/system.cfg ${CFG_PATH}/system.cfg.backup
+say() {
+  logger -t chksysconfig "$*"
+}
+
+# A usable system.cfg: not empty, text, carrying the hostname line every
+# image writes, and every non-blank line a key=value pair -- a truncated
+# tail fails that last test, which is the shape a cut write leaves.
+#
+# "Text" is asked of the bytes: no control characters besides whitespace
+# (so no NULs and none of the 0x00 fill a torn flash write leaves). The
+# original test read grep's "Binary file" notice and let an empty file
+# through as text, which it is, and as a config, which it is not.
+#
+# The bytes a text file may hold are spelled as ranges -- tab, newline,
+# carriage return, printable ASCII, and everything above 0x7F for UTF-8 --
+# and never as classes. This read `[:print:][:space:]` for a day, which GNU
+# tr on the build host understands and the device's busybox tr does not:
+# it deleted the eight characters inside the brackets and left the rest, so
+# every real system.cfg was "not text", the shutdown and boot-time backups
+# were refused, and a damaged live file found its last good copy "damaged
+# too" and was reseeded from the image defaults -- the RG SP's morning
+# (#102) reproduced by the fix meant to end it (guest d, 2026-09-10).
+# tools/last-good-scripts-test now runs these checks through the image's
+# busybox, which is where it should have failed first.
+valid() {
+  local f="$1"
+  [ -s "${f}" ] || return 1
+  [ "$(LC_ALL=C tr -d '\11\12\15\40-\176\200-\377' < "${f}" | head -c 1 | wc -c)" -eq 0 ] || return 1
+  grep -q '^system\.hostname=' "${f}" || return 1
+  ! LC_ALL=C grep -qvE '^[[:space:]]*$|^[^=[:space:]][^=]*=' "${f}"
+}
+
+# One file replaces another whole or not at all: copy to a temporary name in
+# the same directory, then rename over the target.
+put() {
+  local src="$1" dst="$2"
+  if cp "${src}" "${dst}.tmp" && mv -f "${dst}.tmp" "${dst}"; then
+    return 0
   fi
+  rm -f "${dst}.tmp"
+  return 1
+}
+
+# The record is written only from a whole file: valid, and ending in a
+# newline. Every writer ends system.cfg with one -- the interface's
+# SystemConf, the shell's awk and sort, the image's seed -- so a file that
+# does not was cut mid-line by a torn write, and its half line is not the
+# owner's; the shell's writers no longer complete such a line either
+# (settings_base in 001-functions). The last good copy stays as it is, and
+# the log says why (#307, the audit of the fix round; stream E1's lead
+# G2-E-core-03). A cut that fell exactly at a line's end cannot be told from
+# a file whose last keys were removed on purpose -- forget clears wifi.ssid
+# and wifi.key, which sort last -- and is taken as whole.
+backup() {
+  if ! valid "${CFG}"; then
+    say "not backing up system.cfg: it is empty, not text, or damaged; the last good copy stays as it is"
+    return 1
+  fi
+  if [ -n "$(tail -c 1 "${CFG}" 2>/dev/null)" ]; then
+    say "not backing up system.cfg: its last line was cut short; the last good copy stays as it is"
+    return 1
+  fi
+  put "${CFG}" "${BACKUP}" || { say "could not write system.cfg.backup"; return 1; }
 }
 
 restore() {
-  cp ${CFG_PATH}/system.cfg.backup ${CFG_PATH}/system.cfg
+  if ! valid "${BACKUP}"; then
+    say "cannot restore system.cfg: the last good copy is missing or damaged too"
+    return 1
+  fi
+  put "${BACKUP}" "${CFG}" || { say "could not write system.cfg from its last good copy"; return 1; }
+  say "restored system.cfg from its last good copy (system.cfg.backup)"
+}
+
+# A settings restore that was cut off -- the power gone between tar starting
+# to write the archive over the live tree and the reboot that follows --
+# leaves the tree half from the archive and half from before, and nothing
+# running to notice. backuptool writes the path of the copy it took aside
+# into .restore-in-progress before it extracts and removes it after; a marker
+# still here at boot means the restore never finished, so the copy goes back
+# over the tree and EmulationStation is left .restore-reverted to say so once
+# (D-CLOUD-078: a failure reverts to the last known good state; KILL18, #105).
+# EXTRACT_ROOT is / on a device and a scratch directory under test.
+finish_restore() {
+  local mark="${CONFIG_ROOT}/.restore-in-progress" said="${CONFIG_ROOT}/.restore-reverted" snap=""
+  [ -f "${mark}" ] || return 0
+  snap="$(head -n 1 "${mark}" 2>/dev/null)"
+  # The copy lives under the settings backups folder, which is on
+  # /storage/roms -- a bind mount rocknix-automount makes at about 2.5 s,
+  # after the sysinit verify has run at 1.7 s (D-CLOUD-080). A copy whose
+  # folder is not mounted yet is not missing: leave the marker for the
+  # verify the autostart chain runs once the mounts are up (001-setup), and
+  # say nothing. "Mounted" is asked of the mount, not of the directory:
+  # automount always mounts /storage/roms (a bind of games-internal or
+  # games-external, or the overlay), and before it does the path is the
+  # internal card's own directory, which on a device that once used it
+  # already holds roms/backup/archive -- so the directory test passed, the
+  # copy read as missing and the marker was consumed while the copy sat on
+  # the card not mounted yet (#307 PL-045, #308 claude F-PB-11). A copy
+  # elsewhere keeps the directory test. Only a mounted folder without the
+  # copy in it, or a copy that does not list, is a failure to report.
+  #
+  # The files the restore created ("+" lines, below) wait for the same mount
+  # when they are under it: a mark with no copy (every member was new) used
+  # to be acted on at sysinit, removing nothing from the card about to be
+  # mounted and saying reverted (#307, the audit of the fixes, gpt G-B-08).
+  # The mount is read from the mount table, not from mountpoint: busybox's
+  # mountpoint compares the folder's device with its parent's, and on a
+  # one-card device /storage/roms is a bind of /storage/games-internal/roms
+  # -- the same filesystem -- so it never reads as mounted there, and the
+  # first cut of PL-045 would have deferred every revert for ever (found
+  # answering the audit of the fixes, claude G-B-04).
+  #
+  # A table that cannot be read waits, and says so: it used to fall back to
+  # the directory test, the very test PL-045 removed -- an existing folder
+  # on the internal card read as the mounted one, the copy on the card not
+  # mounted yet read as missing, and the mark was consumed (#307, the audit
+  # of the fix round, PL-016). Waiting keeps the mark for a check that can
+  # read the table; guessing loses it.
+  #
+  # Unless the restore said the roms folder was not a mount when it ran
+  # (backuptool's last line, roms-mounted=no): then its copy and the files
+  # it made are in the folder itself, not on a card a mount will bring, and
+  # waiting for a mount was waiting for ever on a device whose automount
+  # never made one (#307, the audit of the fix round, claude G2-B-02). Such
+  # a mark is judged by its folders, as a copy anywhere else is. A mark
+  # without the line (an older backuptool) or with "unknown" waits as above.
+  local roms="${ROMS_ROOT:-/storage/roms}" pending=0 mounted="" p told="" was
+  was=$(sed -n 's/^roms-mounted=//p' "${mark}" 2>/dev/null | head -n 1)
+  if [ -r "${PROC_MOUNTS:-/proc/mounts}" ]; then
+    awk -v m="${roms}" '$2 == m { f = 1 } END { exit !f }' "${PROC_MOUNTS:-/proc/mounts}" 2>/dev/null
+    case $? in
+      0) mounted=1 ;;
+      1) mounted=0 ;;
+    esac
+  fi
+  under_roms() { # <path>: 0 when it waits for the roms mount
+    # "was not a mount when the restore ran" proceeds only while that is still
+    # so: a card mounted there since hides the folder the restore wrote into,
+    # and an unreadable table cannot say (the audit of the fixes, gpt G3-D-07).
+    if [ "${was}" = "no" ]; then
+      [ "${mounted}" = "0" ] && return 1
+      [ -n "${told}" ] || say "the restore ran with the roms folder not mounted, but it is mounted now (or the mount table cannot be read): its files are under the mount, so the finish waits"
+      told=1
+      return 0
+    fi
+    case "${1}" in
+      "${roms}"/*)
+        if [ -z "${mounted}" ]; then
+          [ -n "${told}" ] || say "the mount table cannot be read, so whether the roms folder is mounted is not known; a restore's files there wait for a later check"
+          told=1
+          return 0
+        fi
+        [ "${mounted}" -eq 0 ] ;;
+      *) return 1 ;;
+    esac
+  }
+  if [ -n "${snap}" ]; then
+    case "${was}:${snap}" in
+      no:*) [ -d "$(dirname "${snap}")" ] || pending=1 ;;
+      *:"${roms}"/*) under_roms "${snap}" && pending=1 ;;
+      *) [ -d "$(dirname "${snap}")" ] || pending=1 ;;
+    esac
+  fi
+  while IFS= read -r p; do
+    case "${p}" in +/storage/*) ;; *) continue ;; esac
+    under_roms "${EXTRACT_ROOT%/}${p#+}" && pending=1
+  done < <(tail -n +2 "${mark}" 2>/dev/null)
+  if [ "${pending}" -eq 1 ]; then
+    say "a settings restore was cut off; the copy taken before it (${snap:-none needed}) or the files it made are on a folder not mounted yet, so it goes back at the next check this boot"
+    return 0
+  fi
+  # The lines after the first name, as "+<path>", the files the restore
+  # would create (backuptool, #307 PL-007): they did not exist before it, so
+  # putting the tree back means removing them too. Only paths under
+  # /storage, and none that walks out of it. A marker from an image before
+  # that change has one line and none of these.
+  local created=0 bad=0 p
+  while IFS= read -r p; do
+    case "${p}" in +/storage/*) ;; *) continue ;; esac
+    p="${p#+}"
+    case "${p}/" in */../*) continue ;; esac
+    created=$((created + 1))
+  done < <(tail -n +2 "${mark}" 2>/dev/null)
+  if { [ -z "${snap}" ] && [ "${created}" -gt 0 ]; } || \
+     { [ -n "${snap}" ] && [ -f "${snap}" ] && tar -tzf "${snap}" >/dev/null 2>&1 \
+       && tar -xzf "${snap}" -C "${EXTRACT_ROOT:-/}" >/dev/null 2>&1; }; then
+    while IFS= read -r p; do
+      case "${p}" in +/storage/*) ;; *) continue ;; esac
+      p="${p#+}"
+      case "${p}/" in */../*) continue ;; esac
+      rm -f "${EXTRACT_ROOT%/}${p}" 2>/dev/null
+      { [ -e "${EXTRACT_ROOT%/}${p}" ] || [ -L "${EXTRACT_ROOT%/}${p}" ]; } && bad=$((bad + 1))
+    done < <(tail -n +2 "${mark}" 2>/dev/null)
+    # "reverted" only when every created file is gone too -- a dangling
+    # link counts as there -- as backuptool's own revert says "unchanged"
+    # only when both halves happened (#307, the audit of the fixes, claude
+    # G-B-06, gpt G-B-05).
+    if [ "${bad}" -eq 0 ]; then
+      say "a settings restore was cut off; the copy taken before it was put back (${snap:-none needed}) and the ${created} file(s) it created removed"
+      echo reverted > "${said}"
+    else
+      say "a settings restore was cut off; the copy taken before it was put back (${snap:-none needed}) but ${bad} of the ${created} file(s) it created could not be removed"
+      echo failed > "${said}"
+    fi
+  else
+    say "a settings restore was cut off and the copy taken before it is missing or damaged (${snap:-none}); the tree is as the restore left it"
+    echo failed > "${said}"
+  fi
+  rm -f "${mark}"
 }
 
 verify() {
-  TYPE=$(grep a ${CFG_PATH}/system.cfg 2>&1)
-  if [[ "${TYPE}" =~ binary ]]; then
-    restore
+  local state="" recovered=0 kept_tmp=""
+
+  finish_restore
+
+  # A writer's temporary a kill left beside the file (set_setting writes
+  # system.cfg.tmp and renames it). The next write replaces it; the boot
+  # sweeps it so it never sits there as a second file that looks like one.
+  #
+  # Except when it is the only good copy there is: the live file cut and no
+  # usable record beside it -- a device updated from before the record
+  # existed (#102), whose writer's last save never reached its rename. The
+  # interface's SystemConf reads such a whole .tmp when the live file is cut
+  # (#307 PL-064, stream E1), but this runs first at sysinit and deleted it,
+  # so the defaults were reseeded over a whole copy of the player's settings.
+  # A .tmp that is itself usable is put in place instead, and said.
+  #
+  # A .tmp that could not be moved into place is kept, not swept: it was the
+  # only good copy (#307, the audit of the fixes, gpt G-B-10).
+  if [ -e "${CFG}.tmp" ]; then
+    if ! valid "${CFG}" && ! valid "${BACKUP}" && valid "${CFG}.tmp"; then
+      if mv -f "${CFG}.tmp" "${CFG}"; then
+        say "system.cfg was cut and had no good copy; the whole one a write left beside it (system.cfg.tmp) was put in place"
+      else
+        say "system.cfg was cut and had no good copy; the whole one beside it (system.cfg.tmp) could not be put in place and is kept"
+        kept_tmp=1
+      fi
+    else
+      rm -f "${CFG}.tmp"
+    fi
   fi
 
-  # Check if any configs are missing and restore everything if they are
-  if [ ! -s /storage/.config/retroarch/retroarch-core-options.cfg ] || \
-     [ ! -s /storage/.config/retroarch/retroarch.cfg ] || \
-     ! grep -q system.hostname /storage/.config/system/configs/system.cfg; then
-    rsync -a /usr/config/ /storage/.config
+  if ! valid "${CFG}"; then
+    if [ ! -e "${CFG}" ]; then
+      state="missing"
+    elif [ ! -s "${CFG}" ]; then
+      state="empty"
+    else
+      state="damaged"
+    fi
+    say "system.cfg is ${state}; recovering"
+    if restore; then
+      recovered=1
+    elif [ -n "${kept_tmp}" ]; then
+      # Not reseeded: the defaults would be written through system.cfg.tmp,
+      # the very file that is the good copy. The interface reads a whole
+      # .tmp when the live file is cut (#307 PL-064).
+      say "system.cfg is left as it is; system.cfg.tmp beside it is the good copy"
+    else
+      # Neither the live file nor the record is usable: the image's copy is
+      # all that is left. The one file, not the whole config tree.
+      if put "${DEFAULT_ROOT}/system/configs/system.cfg" "${CFG}"; then
+        say "system.cfg was reseeded from the image defaults: there was no good copy to restore"
+      else
+        say "could not reseed system.cfg from the image defaults"
+      fi
+      recovered=1
+    fi
+  fi
+
+  # Reseed what is missing from the config tree -- and only what is missing.
+  #
+  # This used to be `rsync -a /usr/config/ /storage/.config`, which also
+  # replaced every file that merely differed from the image's copy:
+  # es_settings.cfg, retroarch.cfg, the lot, whenever one retroarch file was
+  # absent or system.cfg had lost its hostname line (#102's "defaults won").
+  # --ignore-existing leaves every file that is present alone. An empty
+  # retroarch file is not a config, so it is removed first and reseeded like
+  # a missing one.
+  local f missing=0
+  for f in "${CONFIG_ROOT}/retroarch/retroarch-core-options.cfg" \
+           "${CONFIG_ROOT}/retroarch/retroarch.cfg"; do
+    if [ -e "${f}" ] && [ ! -s "${f}" ]; then
+      rm -f "${f}"
+    fi
+    [ -s "${f}" ] || missing=1
+  done
+  if [ "${missing}" -eq 1 ] || [ "${recovered}" -eq 1 ]; then
+    if rsync -a --ignore-existing "${DEFAULT_ROOT}/" "${CONFIG_ROOT}"; then
+      say "reseeded missing files under ${CONFIG_ROOT} from the image; files already present were left alone"
+    else
+      say "could not reseed missing files under ${CONFIG_ROOT} from the image"
+    fi
   fi
 }
 

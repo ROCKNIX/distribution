@@ -6,6 +6,26 @@
 
 ROOTPASS="$1"
 
+# An absent setting means "not provided" -- never "the password is the empty
+# string". backuptool strips credentials from the archived system.cfg on
+# purpose, so on the first boot after a restore `get_setting root.password`
+# is empty and 007-rootpw called this with "". Applying that set an empty
+# password across /storage/.cache/shadow, Samba and Syncthing, and wrote
+# root.password="" back to system.cfg -- on a device that rejoins wifi
+# moments later, with SSH, Samba, Syncthing and simple-http-server (which
+# serves all of /storage) all authenticating against it.
+#
+# The shadow file lives on /storage and is never captured by a backup, so
+# refusing here leaves the password the device already had: a restore becomes
+# invisible with respect to the device password, which is the outcome we
+# want. The post-restore page still offers to set one.
+if [ -z "${ROOTPASS}" ]
+then
+  logger -t setrootpass "refused an empty password; leaving the existing one in place"
+  echo "setrootpass: refusing to set an empty password; the existing one is unchanged" >&2
+  exit 1
+fi
+
 LPC=$(awk -F: '/^root/{print $3}' /storage/.cache/shadow)
 CURRENT=$(awk -F: '/^root/{print $2}' /storage/.cache/shadow)
 
@@ -16,7 +36,8 @@ NEW=$(cryptpw -m sha512 "${ROOTPASS}" 2>/dev/null)
 sed -i "s#root:${CURRENT}:${LPC}::::::#root:${NEW}:${LPC}::::::#g" /storage/.cache/shadow 2>/dev/null
 
 # Create a root user and set the password.
-echo -ne "${ROOTPASS}\n${ROOTPASS}\n" | smbpasswd -sa root 2>/dev/null
+# printf, not echo -ne: a backslash in the password must reach smbpasswd as typed (fork #198).
+printf '%s\n%s\n' "${ROOTPASS}" "${ROOTPASS}" | smbpasswd -sa root 2>/dev/null
 
 # Set the root user and password for SyncThing
 syncthing generate --gui-user "root" --gui-password "${ROOTPASS}" >/dev/null 2>&1

@@ -3,75 +3,219 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2020-present Shanti Gilbert (https://github.com/shantigilbert)
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
-case "${1}" in
+# Every verb answers with a status, and a failure prints one sentence in the
+# player's words as its last line. Until #119 this script exited 0 whatever a
+# copy or a delete did -- a default that is not in the build, a card with no
+# room, a directory that would not go -- and /usr/bin/run discarded the status
+# on top of that, so a reset that reset nothing returned to the carousel
+# looking exactly like one that worked.
+#
+# The sentence is the last thing printed on purpose: EmulationStation runs
+# these behind a spinner and puts the last line on the outcome dialog. Detail
+# for the system log goes to logger, never to the screen -- no paths, no
+# codes, no tool names (D-CLOUD-077, D-UI-028).
+#
+# --no-restart: the three verbs that end in a reboot leave it to the caller.
+# EmulationStation has an outcome to show when the run ends, and rebooting
+# from in here takes the screen away at the moment it has the answer on it --
+# the same reason `backuptool restore` takes the option (#114). A shell caller
+# passes nothing and restarts here, as it always has.
+
+VERB="${1}"
+[ "$#" -gt 0 ] && shift
+
+RESTART=1
+for OPT in "$@"
+do
+    case "${OPT}" in
+        --no-restart) RESTART=0 ;;
+    esac
+done
+
+fail() {
+    echo -e "\e[31m${1}\e[0m"
+    logger -t factoryreset "${1}${2:+ -- ${2}}"
+}
+
+# Remove a path and check it is gone, rather than trusting rm's status: with
+# -f a missing operand is not an error, and "it did not fail" is not the same
+# answer as "it is not there" (engineering-practices, guards fail closed).
+remove_checked() {
+    rm -rf "${1}"
+    [ ! -e "${1}" ]
+}
+
+# Put this build's copy of a config back where the player's copy was. The
+# source is checked before anything is removed, so the ordinary failure -- a
+# build that does not ship that emulator -- leaves the device untouched and
+# can say so. The player's copy must be GONE before the copy: rm -rf's status
+# went unread, and a folder that would not go (an unremovable file in it)
+# stayed, so cp -rf put the defaults INSIDE it -- retroarch/retroarch -- and
+# the reset reported success over the old configuration (#307 PL-044).
+restore_default() {
+    local src="${1}" dst="${2}"
+
+    if [ ! -e "${src}" ]
+    then
+        fail "THIS BUILD DOESN'T HAVE THE DEFAULT SETTINGS TO PUT BACK, SO NOTHING WAS CHANGED." "no ${src} in the image"
+        return 1
+    fi
+
+    if ! remove_checked "${dst}"
+    then
+        fail "THE DEFAULT SETTINGS COULDN'T BE PUT BACK." "${dst} could not be removed"
+        return 1
+    fi
+    if ! cp -rf "${src}" "${dst}"
+    then
+        fail "THE DEFAULT SETTINGS COULDN'T BE PUT BACK." "cp ${src} -> ${dst} failed"
+        return 1
+    fi
+
+    return 0
+}
+
+case "${VERB}" in
   "retroarch")
-    rm -f /storage/.config/retroarch/retroarch.cfg
-    cp -rf /usr/config/retroarch/retroarch.cfg /storage/.config/retroarch/retroarch.cfg
+    restore_default /usr/config/retroarch/retroarch.cfg /storage/.config/retroarch/retroarch.cfg || exit 1
+    sync
+    exit 0
   ;;
   "retroarch-full")
-    rm -rf /storage/.config/retroarch
-    cp -rf /usr/config/retroarch /storage/.config/
+    restore_default /usr/config/retroarch /storage/.config/retroarch || exit 1
+    sync
+    exit 0
   ;;
   "mednafen")
-    rm -f /storage/.config/mednafen/mednafen.cfg
+    MEDNAFEN_CFG="/storage/.config/mednafen/mednafen.cfg"
+    if ! remove_checked "${MEDNAFEN_CFG}"
+    then
+        fail "THE MEDNAFEN SETTINGS COULDN'T BE RESET. NOTHING ELSE WAS CHANGED." "${MEDNAFEN_CFG} is still there"
+        exit 1
+    fi
+    sync
+    exit 0
   ;;
   "standalone")
-    rm -rf /storage/.config/aethersx2
-    cp -rf /usr/config/aethersx2 /storage/.config/
-
-    rm -rf /storage/.config/amiberry
-    cp -rf /usr/config/amiberry /storage/.config/
-
-    rm -rf /storage/.config/dolphin-emu
-    cp -rf /usr/config/dolphin-emu /storage/.config/
-
-    rm -rf /storage/.config/drastic
-    cp -rf /usr/config/drastic /storage/.config/
-
-    rm -rf /storage/.config/duckstation
-    cp -rf /usr/config/duckstation /storage/.config/
-
-    rm -rf /storage/.config/flycast
-    cp -rf /usr/config/flycast /storage/.config/
-
-    rm -rf /storage/.config/gzdoom
-    cp -rf /usr/config/gzdoom /storage/.config/
-
-    rm -rf /storage/.config/hatari
-    cp -rf /usr/config/hatari /storage/.config/
-
-    rm -rf /storage/.config/melonDS
-    cp -rf /usr/config/melonDS /storage/.config/
-
-    rm -rf /storage/.config/openbor
-    cp -rf /usr/config/openbor /storage/.config/
-
-    rm -rf /storage/.config/ppsspp
-    cp -rf /usr/config/ppsspp /storage/.config/
-
-    rm -rf /storage/.config/azahar
-    cp -rf /usr/config/azahar /storage/.config/
-
-    rm -rf /storage/.config/rpcs3
-    cp -rf /usr/config/rpcs3 /storage/.config/
+    # A build that does not ship one of these does not have that emulator to
+    # reset, which is not a failure. A build that ships none of them means the
+    # reset did nothing at all, which is -- counted rather than inferred from
+    # the absence of an error.
+    RESTORED=0
+    RC=0
+    for CONFIG in aethersx2 amiberry dolphin-emu drastic duckstation flycast \
+                  gzdoom hatari melonDS openbor ppsspp azahar rpcs3
+    do
+        if [ ! -e "/usr/config/${CONFIG}" ]
+        then
+            logger -t factoryreset "no defaults for ${CONFIG} in this build; skipped"
+            continue
+        fi
+        if restore_default "/usr/config/${CONFIG}" "/storage/.config/${CONFIG}"
+        then
+            RESTORED=$((RESTORED + 1))
+        else
+            RC=1
+        fi
+    done
+    if [ "${RESTORED}" -eq 0 ] && [ "${RC}" -eq 0 ]
+    then
+        fail "THIS BUILD DOESN'T HAVE ANY STANDALONE EMULATOR SETTINGS TO PUT BACK, SO NOTHING WAS CHANGED." "nothing under /usr/config matched the list"
+        RC=1
+    fi
+    sync
+    exit "${RC}"
   ;;
   "portmaster")
-    rm -rf /storage/.config/PortMaster
-    cp -rf /usr/config/PortMaster /storage/.config/
-    rm -rf /storage/roms/ports/PortMaster
-    unzip /usr/config/PortMaster/release/PortMaster.zip -d /storage/roms/ports/
-    chmod +x /storage/roms/ports/PortMaster/PortMaster.sh
+    # Both halves are checked before either runs. This used to replace the
+    # config and then discover there was nothing to unpack, which left the
+    # device worse off than it started and said nothing about it.
+    PORTMASTER_ZIP="/usr/config/PortMaster/release/PortMaster.zip"
+    if [ ! -f "${PORTMASTER_ZIP}" ]
+    then
+        fail "THIS BUILD DOESN'T HAVE A COPY OF PORTMASTER TO PUT BACK, SO NOTHING WAS CHANGED." "no ${PORTMASTER_ZIP}"
+        exit 1
+    fi
+
+    restore_default /usr/config/PortMaster /storage/.config/PortMaster || exit 1
+
+    # The same rule for the unpacked copy: a folder that would not go gets
+    # the new files mixed into the old.
+    if ! remove_checked /storage/roms/ports/PortMaster
+    then
+        fail "THE DEFAULT SETTINGS COULDN'T BE PUT BACK." "/storage/roms/ports/PortMaster could not be removed"
+        exit 1
+    fi
+    # unzip creates the last directory of -d and no more, so a device whose
+    # ports folder is not there fails at the extract -- silently, before #119.
+    mkdir -p /storage/roms/ports
+    if ! unzip -o "${PORTMASTER_ZIP}" -d /storage/roms/ports/
+    then
+        fail "PORTMASTER COULDN'T BE PUT BACK, AND IT'S NO LONGER IN YOUR PORTS. TRY AGAIN." "unpacking ${PORTMASTER_ZIP} failed"
+        exit 1
+    fi
+    if ! chmod +x /storage/roms/ports/PortMaster/PortMaster.sh
+    then
+        fail "PORTMASTER WAS PUT BACK BUT CAN'T BE STARTED YET. TRY AGAIN." "chmod +x on PortMaster.sh failed"
+        exit 1
+    fi
+    sync
+    exit 0
   ;;
   "overlays")
-    rm -rf $(cat /usr/lib/systemd/system/tmp-*.mount | grep -Eo 'upperdir=.*,' | sed -e 's~upperdir=~~g; s~,~~g')
+    # The upper directories of the overlay mounts: what the player has changed,
+    # layered over the image's read-only copies. Collected first and required
+    # to be non-empty -- `rm -rf` with an empty list removes nothing and says
+    # nothing, which is exactly how this reported a reset it had not done.
+    UPPERDIRS="$(cat /usr/lib/systemd/system/tmp-*.mount 2>/dev/null | grep -Eo 'upperdir=.*,' | sed -e 's~upperdir=~~g; s~,~~g')"
+    if [ -z "${UPPERDIRS}" ]
+    then
+        fail "THERE ARE NO CUSTOM FILES ON THIS DEVICE TO RESET, SO NOTHING WAS CHANGED." "no upperdir= found in /usr/lib/systemd/system/tmp-*.mount"
+        exit 1
+    fi
+
+    RC=0
+    while read -r DIR
+    do
+        [ -n "${DIR}" ] || continue
+        if ! remove_checked "${DIR}"
+        then
+            fail "SOME OF YOUR CUSTOM FILES COULDN'T BE REMOVED." "${DIR} is still there"
+            RC=1
+        fi
+    done <<< "${UPPERDIRS}"
+
     sync
-    systemctl reboot
+    [ "${RC}" -eq 0 ] || exit "${RC}"
+    if [ "${RESTART}" -eq 1 ]
+    then
+        systemctl reboot
+    fi
+    exit 0
   ;;
   "audio")
     systemctl stop pipewire-pulse pipewire-pulse.socket pipewire pipewire.socket wireplumber
-    rm -rf /storage/.local/state /storage/.config/pulse /storage/asound*
-    systemctl reboot
+
+    RC=0
+    for AUDIO_STATE in /storage/.local/state /storage/.config/pulse /storage/asound*
+    do
+        [ -e "${AUDIO_STATE}" ] || continue
+        if ! remove_checked "${AUDIO_STATE}"
+        then
+            fail "THE AUDIO SETTINGS COULDN'T BE CLEARED." "${AUDIO_STATE} is still there"
+            RC=1
+        fi
+    done
+
+    sync
+    [ "${RC}" -eq 0 ] || exit "${RC}"
+    if [ "${RESTART}" -eq 1 ]
+    then
+        systemctl reboot
+    fi
+    exit 0
   ;;
   "rk817-fuelgauge")
     # Set GG_STS bit 4 (BAT_CON, "battery uninitialized") and wipe the
@@ -98,8 +242,27 @@ case "${1}" in
     umount /storage/games-external 2>/dev/null ||:
     cd /
     find /storage -mindepth 1 \( ! -regex '^/storage/.update.*' -a ! -regex '^/storage/roms.*' -a ! -regex '^/storage/games-.*' \) -delete 2>/dev/null
-    mkdir /storage/.config/
+    RC=$?
+    # -p because a reset that got most of the way and was run again would
+    # otherwise fail here on the directory it had already made.
+    mkdir -p /storage/.config/
     sync 2>/dev/null
-    systemctl reboot
+    if [ "${RC}" -ne 0 ]
+    then
+        # Deliberately no "nothing was changed": by this point most of
+        # /storage is gone and saying otherwise would be a lie at the worst
+        # possible moment.
+        fail "THE RESET COULDN'T FINISH, AND SOME OF YOUR FILES ARE STILL ON THIS DEVICE." "find -delete under /storage exited ${RC}"
+        exit 1
+    fi
+    if [ "${RESTART}" -eq 1 ]
+    then
+        systemctl reboot
+    fi
+    exit 0
+  ;;
+  *)
+    echo "Usage: factoryreset {retroarch|retroarch-full|mednafen|standalone|portmaster|overlays|audio|ALL} [--no-restart]" >&2
+    exit 1
   ;;
 esac

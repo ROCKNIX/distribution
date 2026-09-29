@@ -97,35 +97,52 @@ main_update() {
     update_file="/storage/.update/${filename}"
     checksum_file="/storage/.update/${filename}.sha256"
 
+    # Downloaded under a .part name and renamed only after the checksum
+    # matches. The updater at the next boot looks for *.tar, so a download
+    # this script never finished -- a dropped link, a power cut -- used to
+    # be picked up as an update, fail to unpack, and cost a boot; a .part
+    # is never looked at (D-CLOUD-078, fork #105). A .part left by an
+    # earlier run is not an update either, and is cleared first.
+    part_file="${update_file}.part"
+    part_checksum="${checksum_file}.part"
+    rm -f /storage/.update/*.part 2>/dev/null
+
     # Download the update file.
     echo "Downloading update file..."
-    download_file "$update_url" "$update_file"
+    download_file "$update_url" "$part_file"
     if [ $? -ne 0 ]; then
         echo "Failed to download update file."
+        rm -f "$part_file"
         exit 1
     fi
 
     # Download the checksum file (append .sha256 to the update URL).
     checksum_url="${update_url}.sha256"
     echo "Downloading checksum file..."
-    download_file "$checksum_url" "$checksum_file"
+    download_file "$checksum_url" "$part_checksum"
     if [ $? -ne 0 ]; then
         echo "Failed to download checksum file."
-        rm -f "$update_file"
+        rm -f "$part_file" "$part_checksum"
         exit 1
     fi
 
-    # Verify checksum.
+    # Verify checksum, then give the files the names the updater looks for.
     echo "Verifying the downloaded update..."
-    expected_checksum=$(awk '{print $1}' "$checksum_file")
-    actual_checksum=$(sha256sum "$update_file" | awk '{print $1}')
-    if [ "$expected_checksum" = "$actual_checksum" ]; then
-        echo "Checksum verified successfully. Reboot to apply the update."
-        set_setting updates.force 0
-        sync
+    expected_checksum=$(awk '{print $1}' "$part_checksum")
+    actual_checksum=$(sha256sum "$part_file" | awk '{print $1}')
+    if [ -n "$expected_checksum" ] && [ "$expected_checksum" = "$actual_checksum" ]; then
+        if mv -f "$part_file" "$update_file" && mv -f "$part_checksum" "$checksum_file"; then
+            echo "Checksum verified successfully. Reboot to apply the update."
+            set_setting updates.force 0
+            sync
+        else
+            echo "The verified update could not be put in place. Removing downloaded files."
+            rm -f "$part_file" "$part_checksum" "$update_file" "$checksum_file"
+            exit 1
+        fi
     else
         echo "Checksum verification failed. Removing downloaded files."
-        rm -f "$update_file" "$checksum_file"
+        rm -f "$part_file" "$part_checksum"
         exit 1
     fi
 }
