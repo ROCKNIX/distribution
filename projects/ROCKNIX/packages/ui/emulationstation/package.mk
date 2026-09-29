@@ -2,15 +2,19 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="emulationstation"
-PKG_VERSION="cada856d86e3115fbbf0bce09dd761b0ee8fa9fd"
-PKG_SHA256="c92eb0fd6e1e2b5fa603391f6c0b540d4fad858664c23321237df32efecf68ad"
+PKG_VERSION="f1ae6bc25c90972d304a3fd23585a77d844ed894"
+PKG_GIT_CLONE_BRANCH="test/qa-integration"
 PKG_LICENSE="GPL"
-PKG_SITE="https://github.com/ROCKNIX/emulationstation-next"
-PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
+PKG_SITE="https://github.com/maxengel/emulationstation-next"
+PKG_URL="${PKG_SITE}.git"
+# noto-sans-cjk came from upstream 2026-09, and poppler with the PDF support
+# upstream's EmulationStation gained (e0e8b7ac33); the fork builds its own ES
+# from its own branch, so the clone form stays.
 PKG_DEPENDS_TARGET="boost toolchain SDL2 freetype curl freeimage bash rapidjson SDL2_mixer fping p7zip alsa vlc drm_tool poppler pugixml noto-sans-cjk ${OPENGLES}"
 PKG_NEED_UNPACK="busybox"
 PKG_LONGDESC="Emulationstation emulator frontend"
 PKG_BUILD_FLAGS="-gold"
+GET_HANDLER_SUPPORT="git"
 
 PKG_CMAKE_OPTS_TARGET+=" -DROCKNIX=1 \
                          -DDISABLE_KODI=1 \
@@ -20,6 +24,12 @@ PKG_CMAKE_OPTS_TARGET+=" -DROCKNIX=1 \
                          -DUSE_SYSTEM_PUGIXML=1 \
                          -DGLES3=1"
 
+# The ScreenScraper developer pair is entered on the device, not compiled in,
+# so no fork image carries a key (#64). A SCREENSCRAPER_DEV_LOGIN in the build
+# environment still wins and hides the rows.
+PKG_CMAKE_OPTS_TARGET+=" -DSCREENSCRAPER_RUNTIME_DEV_LOGIN=1"
+
+# Upstream replaced the S922X test with a build option (2026-09).
 [ "${BATTERYPLUS_SUPPORT}" = "yes" ] && PKG_CMAKE_OPTS_TARGET+=" -DBATTERYPLUS=1"
 
 pre_configure_target() {
@@ -29,7 +39,9 @@ pre_configure_target() {
     if [ -z "${!key}" ]; then
       echo "WARNING: ${key} not declared, will not build support."
     else
-      echo "USING: ${key} = ${!key}"
+      # The name, never the value: a developer password or an API key does
+      # not belong in a build log that gets pasted into an issue.
+      echo "USING: ${key} (set)"
     fi
   done
 
@@ -99,12 +111,6 @@ EOF
   if [ ! "${VULKAN_SUPPORT}" = "yes" ]; then
     xmlstarlet ed --inplace -d '//choice[contains(@name, "vulkan")]' ${INSTALL}/usr/config/emulationstation/es_features.cfg
   fi
-
-  #ARMSX2's own Turnip ships only on these devices (see armsx2-sa)
-  case ${DEVICE} in
-    SM4450|SM6115|SM8250|SM8550|SM8650) ;;
-    *) xmlstarlet ed --inplace -d '//core[@name="armsx2-sa"]//feature[@name="vulkan driver"]' ${INSTALL}/usr/config/emulationstation/es_features.cfg ;;
-  esac
 }
 
 
