@@ -1,9 +1,112 @@
 #!/bin/sh
 . /etc/profile
-HOSTNAME=$(get_setting system.hostname)
-echo ${HOSTNAME} >/proc/sys/kernel/hostname
-hostnamectl --transient hostname ${HOSTNAME}
-avahi-set-host-name ${HOSTNAME}
+# The device name is the player's; the network's rules are ours to satisfy
+# quietly. system.hostname keeps whatever was typed -- spaces, punctuation,
+# anything -- and this applies the form the network accepts (clean_hostname:
+# letters, digits, hyphens). It is NOT written back: the name the player gave
+# the device stays theirs, and EmulationStation shows the applied form under
+# the IP address so somebody who sees RG-SP on their router can find out why
+# (maintainer, fork #106).
+#
+# NetworkManager is told not to touch the hostname (hostname-mode=none), so
+# this is the only writer. Quoted throughout: "RG SP" unquoted once reached
+# the setter as two arguments and failed, leaving a kernel name that
+# hostnamed later re-sanitised to RGSP.
+RAW_HOSTNAME=$(get_setting system.hostname)
+# A per-unit default (fork #50). The image ships system.hostname as the
+# build family -- H700, RK3566 -- so two units of one family on one network
+# claimed the same name and the router's lease flipped between them, and
+# the failure looked like a network fault (EHOSTUNREACH by name and by the
+# address the router showed). A name equal to the family is the shipped
+# default and never something a player typed, so it becomes
+# <FAMILY>-<four hex digits of this unit's id>, once, and is written back:
+# stable across boots, what NETWORK SETTINGS shows, and the same after a
+# reflash, because cloud_device_id seeds the id from the permanent hardware
+# address. Any other name is the player's and is never touched (D-NET-001).
+# An empty name gets the same default rather than the bare ROCKNIX below.
+FAMILY=$(sed -n 's/^HW_DEVICE="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' /etc/os-release 2>/dev/null | head -1)
+SHIPPED=""
+if [ -z "${RAW_HOSTNAME}" ] || { [ -n "${FAMILY}" ] && [ "${RAW_HOSTNAME}" = "${FAMILY}" ]; }; then
+  SHIPPED="the shipped default (${FAMILY:-empty})"
+else
+  # The generated shape with another unit's digits is another unit's shipped
+  # default, carried here by a settings restore (#151 PL-02, D-NET-004):
+  # unit A boots as H700-9a3f, the player restores A's settings on unit B --
+  # the fresh-handheld journey -- and B's system.cfg says H700-9a3f, neither
+  # the family nor empty, so it read as the player's and both units kept one
+  # name, permanently where before it was per boot. The shape is the family
+  # as the network spells it (GENERIC_X64 is GENERIC-X64), a hyphen and four
+  # hex digits; whose digits they are is decided below, once this unit's own
+  # are known. A name of another family's shape is left alone, as the bare
+  # family is. A player who typed exactly this shape with digits not their
+  # unit's loses it, as one who typed the bare family does (D-NET-002).
+  case "${RAW_HOSTNAME}" in
+    "$(clean_hostname "${FAMILY:-ROCKNIX}")"-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]) SHIPPED="another unit's shipped default (${RAW_HOSTNAME}), carried here by a settings restore" ;;
+  esac
+fi
+if [ -n "${SHIPPED}" ]; then
+  # The stored id, or the adapter's, or nothing. This runs at ~2 s of the
+  # first boot, before a handheld's SDIO wifi is an interface, and a plain
+  # cloud_device_id there would seed the identity from machine-id and keep
+  # it ("the stored value wins") -- a different id from the one a reflash
+  # that finds the adapter derives, so the name and the cloud folder would
+  # depend on boot timing (#151 PL-04, D-NET-005). --if-present never seeds:
+  # with nothing to say, the shipped name stays for this boot, the log says
+  # so, and the next boot asks again. An id with no hex in it is logged too
+  # rather than passed over in silence.
+  UNIT_ID=$(cloud_device_id --if-present 2>/dev/null)
+  UNIT=$(printf '%s' "${UNIT_ID##*-}" | tr -cd 'a-f0-9' | cut -c1-4)
+  if [ -n "${UNIT}" ]; then
+    OWN=$(clean_hostname "${FAMILY:-ROCKNIX}-${UNIT}")
+    if [ "${RAW_HOSTNAME}" != "${OWN}" ]; then
+      RAW_HOSTNAME="${OWN}"
+      set_setting system.hostname "${RAW_HOSTNAME}"
+      logger -t network-base-setup "device name was ${SHIPPED}; it is now ${RAW_HOSTNAME}, this unit's own"
+    fi
+  elif [ -z "${UNIT_ID}" ]; then
+    logger -t network-base-setup "adapter not present yet, keeping the shipped name (${RAW_HOSTNAME:-${FAMILY:-ROCKNIX}}) for a later boot"
+  else
+    logger -t network-base-setup "device id ${UNIT_ID} carries no hex digits; keeping the shipped name (${RAW_HOSTNAME:-${FAMILY:-ROCKNIX}})"
+  fi
+fi
+HOSTNAME=$(clean_hostname "${RAW_HOSTNAME}")
+if [ -z "${HOSTNAME}" ]; then
+  HOSTNAME="ROCKNIX"
+fi
+if [ "${HOSTNAME}" != "${RAW_HOSTNAME}" ]; then
+  logger -t network-base-setup "device name '${RAW_HOSTNAME}' is '${HOSTNAME}' on the network (letters, digits and hyphens only)"
+fi
+echo "${HOSTNAME}" >/proc/sys/kernel/hostname
+# No hostnamectl here. /etc/hostname is a symlink to /proc/sys/kernel/hostname,
+# so systemd-hostnamed reads the kernel's name at ITS start as the static
+# name and refuses a transient one ("static hostname is already set") --
+# and answering that call is when it puts its cached name back over the
+# kernel's. When hostnamed had started first (NetworkManager activates it
+# over D-Bus) the call above undid the write above, and the device spent
+# the boot as ROCKNIX. The write is the whole job; the unit now orders
+# this before hostnamed and NetworkManager so they read the written name.
+#
+# The mDNS responder publishes the kernel's name as it finds it when it
+# starts, and its unit orders after this one, so on a boot in order it reads
+# the name just written and needs no telling. The boot that is not in order
+# -- the daemon already up when this runs, as on the image that shipped
+# avahi's stock unit with no ordering and published ROCKNIX.local for a
+# device named GENERIC-X64-0964 (#151 PL-01) -- is told the name. Only a
+# daemon that answers -c is told: calling avahi-set-host-name against one
+# that is not running failed on every boot ("Daemon not running"), which is
+# why the unguarded call was removed; a daemon that is not up yet is a log
+# line, and it publishes the written name itself when it starts.
+if ! command -v avahi-daemon >/dev/null 2>&1; then
+  : # no responder in this image
+elif avahi-daemon -c 2>/dev/null; then
+  if avahi-set-host-name "${HOSTNAME}" >/dev/null 2>&1; then
+    logger -t network-base-setup "mDNS responder was already up; it now publishes ${HOSTNAME}.local"
+  else
+    logger -t network-base-setup "mDNS responder is up but could not be told ${HOSTNAME}; it publishes the name it read at its start"
+  fi
+else
+  logger -t network-base-setup "mDNS responder not up yet; it publishes ${HOSTNAME}.local when it starts"
+fi
 
 rm -f /run/rocknix/hosts
 if [ -f /storage/.config/hosts.conf ]; then

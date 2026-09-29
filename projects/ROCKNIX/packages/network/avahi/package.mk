@@ -80,6 +80,14 @@ post_makeinstall_target() {
     rm -rf ${INSTALL}/etc/avahi/services/ssh.service
     rm -rf ${INSTALL}/etc/avahi/services/sftp-ssh.service
   fi
+  # avahi's own units go, as in the generic recipe: scripts/install copies
+  # this package's system.d/ into the image first and extracts the package's
+  # make-install tree over it, so with these left in place the stock
+  # avahi-daemon.service (socket-activated, no ordering, no off-switch)
+  # replaced the fork's and the daemon published whatever the kernel was
+  # called when the socket woke it -- ROCKNIX.local on a device named
+  # GENERIC-X64-0964 (#151 PL-01). This line was the one the override lacked.
+  rm -rf ${INSTALL}/usr/lib/systemd
   rm -f ${INSTALL}/usr/share/dbus-1/system-services/org.freedesktop.Avahi.service
   rm -f ${INSTALL}/usr/sbin/avahi-dnsconfd
   rm -f ${INSTALL}/usr/bin/avahi-bookmarks
@@ -96,5 +104,16 @@ post_install() {
   add_group avahi 70
 
   enable_service avahi-defaults.service
- # enable_service avahi-daemon.service
+  # The responder is on (fork #50, D-NET-003, the maintainer's call of
+  # 2026-09-13): with it off since the first ROCKNIX commit a device could
+  # resolve other .local names (nss-mdns) but never answer for its own, and
+  # two same-family units on one network were addressable by neither name
+  # nor lease. It publishes the kernel hostname, which network-base-setup
+  # has made this unit's own by the time the daemon starts (the unit orders
+  # after it, and network-base-setup tells a daemon that is somehow already
+  # up). Off is two files: remove /storage/.cache/services/avahi.conf and
+  # create avahi.disabled beside it -- the unit conditions on the conf, and
+  # avahi-defaults.service (pulled in by Requires=, no [Install] of its own)
+  # re-creates the conf at the next start unless .disabled is there.
+  enable_service avahi-daemon.service
 }
