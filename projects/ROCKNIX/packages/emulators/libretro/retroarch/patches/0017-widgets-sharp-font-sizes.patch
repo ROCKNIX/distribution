@@ -1,0 +1,230 @@
+widgets: a font size is moved up to the nearest one whose stems land on the grid
+
+The widget fonts are sized from the panel's pixel diagonal, so a face
+lands wherever the arithmetic falls: 17.4 px for the achievement banner
+on a 640x480 panel, 12.6 on a 480x320 one. Measured with FreeType 2.14
+the way the font driver draws (whole pixels, FT_LOAD_DEFAULT hinting, an
+integer pen), Inter UI Regular's stems have a fully lit column in 87 % of
+strokes at 14 px, 85 % at 17 and 100 % at 15, 18 and every size from 19;
+the Bold face is 86 % or better everywhere and 100 % at 17, 18, 21, 22,
+25, 26 and 28 up (tools/font-stems, checked against the image's own
+libfreetype 2.14.3).
+
+So a face that has been measured carries the table of its sharp sizes,
+and a computed size is moved up to the nearest one within 1.3 of itself
+-- never down, never further, so nothing grows past the panel (24 px ran
+off a 640 px panel). The table is chosen by the file the face is loaded
+from, in both of gfx_widgets_layout's branches: the ozone faces when
+video_font_path is empty, or either of them named there. With them a
+640x480 panel's banner goes 17 -> 18 and a 480x320 one's 13 -> 15; at
+1280x800 and 1080p nothing moves, those sizes already land. The message
+queue takes no step: its floor (0016, 13 px) is its size on a small
+panel, one Inter's stems already land on.
+
+ROCKNIX's shipped profiles name xmb/monochrome/font.ttf in
+video_font_path, which is M+ 1p. It has no table: measured the same way
+it has a fully lit column in 29 % of strokes at 13 px, 63 % at 17 and
+100 % only from 23, so within 1.3 of a handheld's sizes there is no sharp
+size to move to, and the faces those profiles draw keep their computed
+size. The CJK message-queue faces are not measured and are left alone.
+Each face logs its computed, floored and drawn size and the table it
+took ("[Widgets] font regular: <file>, computed 17.40 px, floor 9, ...").
+
+diff --git a/gfx/gfx_widgets.c b/gfx/gfx_widgets.c
+--- a/gfx/gfx_widgets.c
++++ b/gfx/gfx_widgets.c
+@@ -29,6 +29,7 @@
+ 
+ #include "gfx_display.h"
+ #include "gfx_widgets.h"
++#include "../verbosity.h" /* ROCKNIX: the widget fonts' log line */
+ #include "font_driver.h"
+ 
+ #ifdef HAVE_MENU
+@@ -54,6 +55,102 @@
+  * computed size is already larger (ROCKNIX fork, #251; 14 until #296). */
+ #define MSG_QUEUE_MIN_SIZE  13.0f
+ 
++/* ROCKNIX: sharp-size step begin */
++/* The pixel sizes at which a widget face's vertical stems land on the
++ * grid, measured with FreeType 2.14 the way this file's font driver
++ * rasterises them -- FT_LOAD_DEFAULT hinting, whole pixels, integer pen --
++ * as the share of strokes on the x-height row with a fully lit column
++ * (tools/font-stems in the ROCKNIX tree):
++ *
++ *   Inter UI Regular  9:0%  10:11%  11:80%  12:76%  13:88%  14:87%
++ *                     15:100%  16:82%  17:85%  18:100%  19+:100%
++ *   Inter UI Bold     9..16: 86-98%  17,18: 100%  19,20: 98%  21+: 98-100%
++ *
++ * A size a few percent under a whole-pixel stem reads grey; one at it reads
++ * crisp. The scale from the panel's pixel diagonal lands wherever its
++ * arithmetic falls (17.4 px for the banner on a 640x480 panel, 12.6 on
++ * 480x320), so a computed size is moved up to the nearest size in its
++ * face's table when that is within SHARP_BAND of it -- never down, never
++ * past the band, so nothing grows past the panel (24 px ran off a 640 px
++ * panel; 1.3 caps the banner at 22 there).
++ *
++ * A face is known by the file it is loaded from, whichever branch of
++ * gfx_widgets_layout loads it. Only the two ozone faces are measured;
++ * every other face is drawn at its computed size. That includes
++ * xmb/monochrome/font.ttf (M+ 1p), the face ROCKNIX's profiles name in
++ * video_font_path: measured the same way it has a fully lit column in 29 %
++ * of strokes at 13 px, 63 % at 17 and 100 % only from 23, so within
++ * SHARP_BAND of a handheld's sizes there is no sharp size to move to. The
++ * CJK message-queue faces are not measured either. */
++#define SHARP_BAND 1.3f
++static const uint8_t REGULAR_SHARP_SIZES[] = { 15, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32 };
++static const uint8_t BOLD_SHARP_SIZES[]    = { 17, 18, 21, 22, 25, 26, 28, 29, 30, 31, 32 };
++
++typedef struct
++{
++   const char    *file;  /* the tail of the face's path */
++   const char    *name;
++   const uint8_t *sizes;
++   size_t         n;
++} gfx_widgets_sharp_face_t;
++
++static const gfx_widgets_sharp_face_t gfx_widgets_sharp_faces[] = {
++   { "ozone/regular.ttf", "Inter UI Regular", REGULAR_SHARP_SIZES, ARRAY_SIZE(REGULAR_SHARP_SIZES) },
++   { "ozone/bold.ttf",    "Inter UI Bold",    BOLD_SHARP_SIZES,    ARRAY_SIZE(BOLD_SHARP_SIZES)    },
++};
++
++/* Whether the tail of a path is a table's file, reading '/' and '\\' as
++ * the same separator: the paths are built with the platform's own. */
++static bool gfx_widgets_sharp_tail_is(const char *tail, const char *file)
++{
++   for (; *tail && *file; tail++, file++)
++   {
++      bool sep_t = (*tail == '/' || *tail == '\\');
++      bool sep_f = (*file == '/' || *file == '\\');
++      if (sep_t != sep_f || (!sep_t && *tail != *file))
++         return false;
++   }
++   return !*tail && !*file;
++}
++
++/* The measured face a font file is, or NULL */
++static const gfx_widgets_sharp_face_t *gfx_widgets_sharp_face(const char *font_path)
++{
++   size_t i, len;
++   if (!font_path || !*font_path)
++      return NULL;
++   len = strlen(font_path);
++   for (i = 0; i < ARRAY_SIZE(gfx_widgets_sharp_faces); i++)
++   {
++      const char *file = gfx_widgets_sharp_faces[i].file;
++      size_t      flen = strlen(file);
++      if (     len > flen
++            && (font_path[len - flen - 1] == '/' || font_path[len - flen - 1] == '\\')
++            && gfx_widgets_sharp_tail_is(font_path + len - flen, file))
++         return &gfx_widgets_sharp_faces[i];
++   }
++   return NULL;
++}
++
++static float gfx_widgets_sharp_size(float scaled_size,
++      const uint8_t *sharp, size_t n)
++{
++   size_t i;
++   if (!sharp)
++      return scaled_size;
++   for (i = 0; i < n; i++)
++   {
++      if ((float)sharp[i] >= scaled_size)
++      {
++         if ((float)sharp[i] <= scaled_size * SHARP_BAND)
++            return (float)sharp[i];
++         break;
++      }
++   }
++   return scaled_size;
++}
++/* ROCKNIX: sharp-size step end */
++
+ static dispgfx_widget_t dispwidget_st = {0}; /* uint64_t alignment */
+ static uint64_t widget_icon_load_gen  = 0;
+ 
+@@ -895,15 +992,33 @@ static void gfx_widgets_font_init(
+       dispgfx_widget_t *p_dispwidget,
+       gfx_widget_font_data_t *font_data,
+       bool is_threaded, char *font_path, float font_size,
+-      float min_size)
++      float min_size, bool sharp)
+ {
+    int glyph_width               = 0;
+-   float scaled_size             = font_size * p_dispwidget->last_scale_factor;
++   float computed_size           = font_size * p_dispwidget->last_scale_factor;
++   float scaled_size             = computed_size;
++   const gfx_widgets_sharp_face_t *face = sharp
++         ? gfx_widgets_sharp_face(font_path) : NULL;
+ 
+    /* Limit minimum font size to keep it readable */
+    if (scaled_size < min_size)
+       scaled_size = min_size;
+ 
++   /* ROCKNIX: then up to the nearest size whose stems land on the grid,
++    * for a face that has been measured (the table above). The font driver
++    * truncates to whole pixels, so the table's integers are what it draws. */
++   if (face)
++      scaled_size = gfx_widgets_sharp_size(scaled_size, face->sizes, face->n);
++
++   RARCH_LOG("[Widgets] font %s: %s, computed %.2f px, floor %.0f, %s%s, drawn %u px\n",
++         (font_data == &p_dispwidget->gfx_widget_fonts.msg_queue) ? "msg_queue"
++         : (font_data == &p_dispwidget->gfx_widget_fonts.bold)    ? "bold" : "regular",
++         font_path ? font_path : "",
++         computed_size, min_size,
++         face  ? "sharp-size table " : (sharp ? "no sharp-size table for this face" : "no sharp-size step"),
++         face  ? face->name : "",
++         (unsigned)scaled_size);
++
+    /* Free existing font */
+    if (font_data->font)
+    {
+@@ -986,11 +1101,11 @@ static void gfx_widgets_layout(
+       /* Create regular font */
+       gfx_widgets_font_init(p_disp, p_dispwidget,
+             &p_dispwidget->gfx_widget_fonts.regular,
+-            is_threaded, p_dispwidget->ozone_regular_font_path, BASE_FONT_SIZE, 9.0f);
++            is_threaded, p_dispwidget->ozone_regular_font_path, BASE_FONT_SIZE, 9.0f, true);
+       /* Create bold font */
+       gfx_widgets_font_init(p_disp, p_dispwidget,
+             &p_dispwidget->gfx_widget_fonts.bold,
+-            is_threaded, p_dispwidget->ozone_bold_font_path, BASE_FONT_SIZE, 9.0f);
++            is_threaded, p_dispwidget->ozone_bold_font_path, BASE_FONT_SIZE, 9.0f, true);
+ 
+       /* Create msg_queue font */
+       switch (*msg_hash_get_uint(MSG_HASH_USER_LANGUAGE))
+@@ -1010,22 +1125,28 @@ static void gfx_widgets_layout(
+             strlcpy(font_file, p_dispwidget->ozone_regular_font_path, sizeof(font_file));
+             break;
+       }
++      /* ROCKNIX: the message queue takes no sharp step, in either branch:
++       * its floor (MSG_QUEUE_MIN_SIZE) is its size on a small panel and is
++       * already one Inter's stems land on, and the queue's boxes and
++       * margins are laid out from the face it is drawn at. */
+       gfx_widgets_font_init(p_disp, p_dispwidget,
+             &p_dispwidget->gfx_widget_fonts.msg_queue,
+-            is_threaded, font_file, MSG_QUEUE_FONT_SIZE, MSG_QUEUE_MIN_SIZE);
++            is_threaded, font_file, MSG_QUEUE_FONT_SIZE, MSG_QUEUE_MIN_SIZE, false);
+    }
+    else
+    {
+-      /* Load fonts from user-supplied path */
++      /* Load fonts from user-supplied path. The sharp step asks the face
++       * which file it is (ROCKNIX): a measured face named here gets its
++       * table, any other is drawn at its computed size. */
+       gfx_widgets_font_init(p_disp, p_dispwidget,
+             &p_dispwidget->gfx_widget_fonts.regular,
+-            is_threaded, font_path, BASE_FONT_SIZE, 9.0f);
++            is_threaded, font_path, BASE_FONT_SIZE, 9.0f, true);
+       gfx_widgets_font_init(p_disp, p_dispwidget,
+             &p_dispwidget->gfx_widget_fonts.bold,
+-            is_threaded, font_path, BASE_FONT_SIZE, 9.0f);
++            is_threaded, font_path, BASE_FONT_SIZE, 9.0f, true);
+       gfx_widgets_font_init(p_disp, p_dispwidget,
+             &p_dispwidget->gfx_widget_fonts.msg_queue,
+-            is_threaded, font_path, MSG_QUEUE_FONT_SIZE, MSG_QUEUE_MIN_SIZE);
++            is_threaded, font_path, MSG_QUEUE_FONT_SIZE, MSG_QUEUE_MIN_SIZE, false);
+    }
+ 
+    /* Calculate dimensions */

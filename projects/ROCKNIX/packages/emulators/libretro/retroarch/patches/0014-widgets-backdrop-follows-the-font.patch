@@ -1,0 +1,248 @@
+From: Max Engel <max@awecelot.com>
+Date: Tue, 15 Sep 2026 05:43:27 +0000
+Subject: [PATCH] gfx_widgets: size a notification's backdrop for the font it is drawn with
+
+The maintainer, on the RG SP (640x480, ozone; fork #194): the translucent
+backdrop behind the RetroAchievements login toast did not cover the whole
+text.
+
+A notification's backdrop is sized from msg->width, which
+gfx_widgets_msg_queue_push measures with the msg_queue font of that moment
+and nothing measures again. The fork's 0001-Increase-ozone-widget_size.patch
+multiplies the widget scale by 1.5 under ozone in gfx_widgets_iterate alone;
+gfx_widgets_context_reset kept the unmultiplied value. So every context
+reset -- start-up, and each video reinit (a core's SET_SYSTEM_AV_INFO, a
+fullscreen toggle) -- lays the widgets out at the small scale, and the next
+frame lays them out again at the large one: two font rebuilds, and between
+them a window in which a message pushed is measured with the small font and
+drawn with the large one.
+
+At 640x480 on the KMS context (no DPI, so the pixel scale: 0.363, times 1.5
+0.545) the msg_queue font is 9 px in the first layout (the 9 px floor) and
+10 px in the second. `RetroAchievements: Logged in as "MaxEngel".` in the
+shipped widget font (xmb/monochrome/font.ttf, video_font_path) measures
+199 px with the one and 226 px with the other, against the 17 px a single
+line's backdrop extends past its text: the text runs about 10 px past the
+backdrop. A message pushed from a task callback -- the login toast comes
+from rcheevos_client_http_task_callback, run by task_queue_check after
+runloop_iterate -- is measured with the layout that iteration left behind;
+a context reset inside the iteration (a core's SET_SYSTEM_AV_INFO in its
+first frames is common) leaves the small one, and the next iteration's
+gfx_widgets_iterate rebuilds the fonts at the large one before the toast is
+drawn. The offline proxy answers the login at loopback speed, so its
+callback is among the first task_queue_check runs; an online answer takes
+hundreds of milliseconds and lands after such a window, which is why the
+defect showed offline. Which reset stands in front of the toast on the RG
+SP is for the VM frame to confirm (#194); the fix does not depend on the
+answer.
+
+Two changes, both in gfx_widgets.c:
+
+- gfx_widgets_get_scale_factor derives the widget scale in one place, and
+  gfx_widgets_context_reset and gfx_widgets_iterate both use it, so a reset
+  lays out once, at the scale the frame loop keeps. At a reset the menu
+  driver is not initialised yet (drivers_init brings the widgets up before
+  the menu, and a reinit tears the menu down first), so menu_driver_id
+  reads UNKNOWN there; the configured driver name
+  (settings->arrays.menu_driver) says what it is about to be -- for
+  XMB's pixel scale as for ozone's 1.5 multiplier.
+
+- gfx_widgets_msg_queue_measure measures a plain notification's width with
+  the current msg_queue font -- the longest line, plus the same half padding
+  the push adds -- as the message leaves the queue in gfx_widgets_iterate,
+  and for every message on screen in gfx_widgets_layout once the fonts are
+  rebuilt (under current_msgs_lock, which gfx_widgets_frame holds while it
+  draws). Task notifications are left alone: their width follows the task's
+  title through the push's update branch.
+
+The first removes the trigger the fork introduced; the second makes the
+outcome independent of any re-layout at all -- a change of resolution while
+a toast is up, say. Stock RetroArch carries the same latent assumption but
+never re-lays out at a moment a message could be in flight, which is why
+this is a fork patch and not (yet) an upstream one.
+
+diff --git a/gfx/gfx_widgets.c b/gfx/gfx_widgets.c
+--- a/gfx/gfx_widgets.c
++++ b/gfx/gfx_widgets.c
+@@ -189,6 +189,50 @@ static void msg_widget_msg_transition_animation_done(void *userdata)
+    msg->msg_transition_animation = 0.0f;
+ }
+ 
++/* ROCKNIX: the widget scale factor, derived in one place.
++ *
++ * 0001-Increase-ozone-widget_size.patch multiplies the scale by 1.5 under
++ * ozone, and did so in gfx_widgets_iterate alone. gfx_widgets_context_reset
++ * kept the unmultiplied value, so every context reset -- start-up, and each
++ * video reinit: a core's SET_SYSTEM_AV_INFO, a fullscreen toggle -- laid the
++ * widgets out at the small scale and the next frame laid them out again at
++ * the large one. Two font rebuilds, and between them a window in which a
++ * notification pushed was measured with the small msg_queue font and drawn
++ * with the large one (see gfx_widgets_msg_queue_measure). At a context
++ * reset the menu driver is not initialised yet (drivers_init brings the
++ * widgets up first and the menu after, and a reinit tears the menu down
++ * before that), so p_disp->menu_driver_id reads UNKNOWN there; the
++ * configured driver name says what it is about to be -- for XMB's pixel
++ * scale as for ozone's multiplier, or a reset with XMB configured would lay
++ * out at the DPI scale and the first frame again at the pixel scale. */
++static float gfx_widgets_get_scale_factor(
++      gfx_display_t *p_disp,
++      settings_t *settings,
++      unsigned width, unsigned height, bool fullscreen)
++{
++   float scale_factor;
++   bool  ozone;
++#ifdef HAVE_XMB
++   bool  xmb   =    (p_disp->menu_driver_id == MENU_DRIVER_ID_XMB)
++                 || (   (p_disp->menu_driver_id == MENU_DRIVER_ID_UNKNOWN)
++                     && string_is_equal(settings->arrays.menu_driver, "xmb"));
++   if (xmb)
++      scale_factor = gfx_display_get_widget_pixel_scale(
++            p_disp, settings, width, height, fullscreen);
++   else
++#endif
++      scale_factor = gfx_display_get_dpi_scale(
++            p_disp, settings, width, height, fullscreen, true);
++
++   ozone =    (p_disp->menu_driver_id == MENU_DRIVER_ID_OZONE)
++           || (   (p_disp->menu_driver_id == MENU_DRIVER_ID_UNKNOWN)
++               && string_is_equal(settings->arrays.menu_driver, "ozone"));
++   if (ozone)
++      scale_factor = scale_factor * 1.500f;
++
++   return scale_factor;
++}
++
+ /* Forward declaration: msg_queue_free is defined further below
+  * (around line 550) but is needed by msg_queue_push for the
+  * race-loss rollback path added in the producer-locking fix. */
+@@ -876,6 +920,48 @@ static void gfx_widgets_font_init(
+    font_data->usage_count        = 0;
+ }
+ 
++/* ROCKNIX: a notification's backdrop is sized from msg->width, which
++ * gfx_widgets_msg_queue_push measured with the msg_queue font of that
++ * moment and nothing measured again. A font rebuilt in between --
++ * gfx_widgets_layout, after a change of scale or of size -- draws the text
++ * at a size the width was never measured for, and the backdrop ends before
++ * the text does (ROCKNIX fork #194: the RetroAchievements login toast on a
++ * 640x480 panel -- 199 px measured with the 9 px font a context reset lays
++ * out, 226 px drawn with the 10 px font of the frame after, past a 17 px
++ * margin). So the width follows the font: measured again as the message
++ * leaves the queue, and again for every message on screen when the layout
++ * runs. Plain notifications only -- a task's width follows its title
++ * through gfx_widgets_msg_queue_push's update branch. */
++static void gfx_widgets_msg_queue_measure(
++      dispgfx_widget_t *p_dispwidget,
++      disp_widget_msg_t *msg)
++{
++   const char *line = msg->msg;
++   unsigned width   = 0;
++
++   if (msg->task_ptr || !line || !*line)
++      return;
++
++   /* The longest line: a wrapped message carries one '\n' */
++   while (*line)
++   {
++      const char *end = strchr(line, '\n');
++      size_t len      = end ? (size_t)(end - line) : strlen(line);
++      int w           = font_driver_get_message_width(
++            p_dispwidget->gfx_widget_fonts.msg_queue.font,
++            line, len, 1.0f);
++      if (w > (int)width)
++         width = (unsigned)w;
++      if (!end)
++         break;
++      line = end + 1;
++   }
++
++   msg->width       = width + (p_dispwidget->simple_widget_padding / 2);
++   msg->text_height = p_dispwidget->gfx_widget_fonts.msg_queue.line_height
++         * (strchr(msg->msg, '\n') ? 2 : 1);
++}
++
+ static void gfx_widgets_layout(
+       gfx_display_t *p_disp,
+       dispgfx_widget_t *p_dispwidget,
+@@ -943,6 +1029,22 @@ static void gfx_widgets_layout(
+ 
+    gfx_widgets_update_icon_layout(p_dispwidget);
+ 
++   /* ROCKNIX: the fonts have just been rebuilt; the messages on screen
++    * were measured with the old ones (gfx_widgets_msg_queue_measure) */
++   if (p_dispwidget->current_msgs_size)
++   {
++#ifdef HAVE_THREADS
++      slock_lock(p_dispwidget->current_msgs_lock);
++#endif
++      for (i = 0; i < p_dispwidget->current_msgs_size; i++)
++         if (p_dispwidget->current_msgs[i])
++            gfx_widgets_msg_queue_measure(p_dispwidget,
++                  p_dispwidget->current_msgs[i]);
++#ifdef HAVE_THREADS
++      slock_unlock(p_dispwidget->current_msgs_lock);
++#endif
++   }
++
+    p_dispwidget->divider_width_1px                = 1;
+    if (p_dispwidget->last_scale_factor > 1.0f)
+       p_dispwidget->divider_width_1px             = (unsigned)(p_dispwidget->last_scale_factor + 0.5f);
+@@ -977,18 +1079,10 @@ void gfx_widgets_iterate(
+    volatile float scale_factor      = 0.0f;
+    gfx_display_t *p_disp            = (gfx_display_t*)data_disp;
+    settings_t *settings             = (settings_t*)settings_data;
+-#ifdef HAVE_XMB
+-   enum menu_driver_id_type type    = p_disp->menu_driver_id;
+-   if (type == MENU_DRIVER_ID_XMB)
+-      scale_factor                  = gfx_display_get_widget_pixel_scale(p_disp, settings, width, height, fullscreen);
+-   else
+-#endif
+-      scale_factor                  = gfx_display_get_dpi_scale(
+-            p_disp,
+-            settings, width, height, fullscreen, true);
+ 
+-      if (p_disp->menu_driver_id == MENU_DRIVER_ID_OZONE)
+-         scale_factor = scale_factor * 1.500f;
++   /* ROCKNIX: the same derivation as gfx_widgets_context_reset's */
++   scale_factor                     = gfx_widgets_get_scale_factor(
++         p_disp, settings, width, height, fullscreen);
+ 
+    /* Check whether screen dimensions or menu scale
+     * factor have changed */
+@@ -1057,6 +1151,10 @@ void gfx_widgets_iterate(
+ 
+          if (msg_widget)
+          {
++            /* ROCKNIX: measured now, with the font it is drawn with
++             * (gfx_widgets_msg_queue_measure) */
++            gfx_widgets_msg_queue_measure(p_dispwidget, msg_widget);
++
+             /* Task messages always appear from the bottom of the screen, append it */
+             if (p_dispwidget->msg_queue_tasks_count == 0 || msg_widget->task_ptr)
+                p_dispwidget->current_msgs[p_dispwidget->current_msgs_size] = msg_widget;
+@@ -2179,19 +2277,12 @@ static void gfx_widgets_context_reset(
+    /* Update scaling/dimensions */
+    p_dispwidget->last_video_width     = width;
+    p_dispwidget->last_video_height    = height;
+-#ifdef HAVE_XMB
+-   if (p_disp->menu_driver_id == MENU_DRIVER_ID_XMB)
+-      p_dispwidget->last_scale_factor = gfx_display_get_widget_pixel_scale(
+-            p_disp, settings,
+-            p_dispwidget->last_video_width,
+-            p_dispwidget->last_video_height, fullscreen);
+-   else
+-#endif
+-      p_dispwidget->last_scale_factor = gfx_display_get_dpi_scale(
+-                     p_disp, settings,
+-                     p_dispwidget->last_video_width,
+-                     p_dispwidget->last_video_height,
+-                     fullscreen, true);
++   /* ROCKNIX: the same derivation as gfx_widgets_iterate's, so the layout
++    * below is the one the frame loop keeps (gfx_widgets_get_scale_factor) */
++   p_dispwidget->last_scale_factor    = gfx_widgets_get_scale_factor(
++         p_disp, settings,
++         p_dispwidget->last_video_width,
++         p_dispwidget->last_video_height, fullscreen);
+ 
+    gfx_widgets_layout(p_disp, p_dispwidget,
+          is_threaded, dir_assets, font_path);

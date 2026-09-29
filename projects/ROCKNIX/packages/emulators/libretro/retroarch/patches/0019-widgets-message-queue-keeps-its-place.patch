@@ -1,0 +1,123 @@
+The message queue keeps its place at the readable size, and its foot is the
+same margin as its side (ROCKNIX fork #295, #296; the eighth cut).
+
+The box follows the font, as upstream draws it: the sixth cut scaled the box
+down with the placement and put 14 px of text in 31 px of box. The room under
+the bottom box is the box's distance from the panel's left edge
+(msg_queue_rect_start_x: 12 px on a 640x480 panel with the 13 px face), so the
+two read as one margin -- upstream's padding*4 put the foot 42 px up before
+the floor and 57 under it, and the maintainer chose the left margin's number
+from mock-ups. Every box above the bottom one sits one divider up: the pitch
+upstream's quarter-height spacing gives when the height divides by four,
+without the rounding that ceilf'd the sixth cut's seam away (a 62 px height
+made a 31.5 pitch under a 31 px box) and without the first cut's placement
+spacing under the floor's box (a 36 pitch under 40: the boxes overlapped by
+four rows). With the margin tied to the drawn face, the placement reference
+of the earlier cuts is gone: RetroArch's two layout passes at a launch now
+differ here by one pixel (the first pass's regular face is smaller), where
+the sixth cut's 9 px reference made them differ by 14 and a message pulled
+between the passes jumped when the next arrived; and each layout now places
+the messages already on screen again, so none keeps the first pass's place.
+Measured per build at the H700's widget scale in docs/qa-frames/2026-09-27
+on the fork. The placement's log line gives the numbers the stack is placed
+by -- both box heights and their pitch, the divider included -- once the
+divider is known; the face's size is 0017's line.
+
+diff --git a/gfx/gfx_widgets.c b/gfx/gfx_widgets.c
+--- a/gfx/gfx_widgets.c
++++ b/gfx/gfx_widgets.c
+@@ -29,7 +29,7 @@
+ 
+ #include "gfx_display.h"
+ #include "gfx_widgets.h"
+-#include "../verbosity.h" /* ROCKNIX: the widget fonts' log line */
++#include "../verbosity.h" /* ROCKNIX: the widget fonts' and the placement's log lines */
+ #include "font_driver.h"
+ 
+ #ifdef HAVE_MENU
+@@ -685,12 +685,26 @@ static void gfx_widgets_msg_queue_move(dispgfx_widget_t *p_dispwidget)
+ 
+       size_small             = (msg->task_ptr || (msg->flags & DISPWIDG_FLAG_SMALL));
+ 
+-      if (y == 0)
+-         y += (p_dispwidget->msg_queue_padding * 4.0f);
+-
+-      y +=    (p_dispwidget->msg_queue_height / 2.0f / (size_small ? 2.0f : 1.0f))
+-            + (p_dispwidget->msg_queue_spacing * (size_small ? 1.0f : 2.0f))
+-            + floor(p_dispwidget->divider_width_1px);
++      /* ROCKNIX fork #296: the bottom box sits msg_queue_bottom_margin above
++       * the panel's edge -- the same number as its distance from the left
++       * edge -- and every box above it one divider up. That is the pitch
++       * upstream's quarter-height spacing gives when the height divides by
++       * four, without its rounding: a 62 px height made 31.5, which ceilf'd
++       * the seam away (the sixth cut's boxes touched), and a placement
++       * spacing under the floor's box overlapped them (the first cut, four
++       * rows). Upstream's padding*4 put the stack's foot 42 px up on a
++       * 640x480 panel before the floor and 57 under it; the maintainer chose
++       * the left margin's 12 (docs/qa-frames/2026-09-27, #296). */
++      {
++         float box = size_small
++               ? (float)(p_dispwidget->msg_queue_height / 2) /* the drawn rect's integer height */
++               : (float)p_dispwidget->msg_queue_height;
++         if (y == 0)
++            y  = (float)p_dispwidget->msg_queue_bottom_margin;
++         else
++            y += floor(p_dispwidget->divider_width_1px);
++         y += box;
++      }
+ 
+       if (msg->offset_y != y)
+       {
+@@ -1157,6 +1171,13 @@ static void gfx_widgets_layout(
+    p_dispwidget->msg_queue_padding                = (unsigned)(((float)p_dispwidget->gfx_widget_fonts.msg_queue.line_height * (2.0f / 3.0f)) + 0.5f);
+    p_dispwidget->msg_queue_spacing                = p_dispwidget->msg_queue_height / 4.0f;
+    p_dispwidget->msg_queue_rect_start_x           = ceil(p_dispwidget->msg_queue_padding - (p_dispwidget->simple_widget_padding * 0.10f));
++   /* ROCKNIX fork #296: the room under the bottom box is the box's distance
++    * from the left edge, so the stack's foot and its side read as one margin
++    * (12 px on a 640x480 panel with the 13 px face). The first of RetroArch's
++    * two layout passes at a launch reads one pixel more here (its regular
++    * face is smaller); the messages on screen are placed again below, once
++    * this pass's divider is known. */
++   p_dispwidget->msg_queue_bottom_margin          = p_dispwidget->msg_queue_rect_start_x;
+ 
+    gfx_widgets_update_icon_layout(p_dispwidget);
+ 
+@@ -1180,6 +1201,24 @@ static void gfx_widgets_layout(
+    if (p_dispwidget->last_scale_factor > 1.0f)
+       p_dispwidget->divider_width_1px             = (unsigned)(p_dispwidget->last_scale_factor + 0.5f);
+ 
++   /* ROCKNIX: the numbers gfx_widgets_msg_queue_move places the stack by --
++    * a small box is half the queue height, a full one all of it, and each
++    * box above the bottom one sits one divider up. */
++   RARCH_LOG("[Widgets] msg_queue place: line height %.2f, small box %u px (pitch %u), full box %u px (pitch %u), left %u, under the bottom box %u\n",
++         p_dispwidget->gfx_widget_fonts.msg_queue.line_height,
++         p_dispwidget->msg_queue_height / 2,
++         p_dispwidget->msg_queue_height / 2 + p_dispwidget->divider_width_1px,
++         p_dispwidget->msg_queue_height,
++         p_dispwidget->msg_queue_height + p_dispwidget->divider_width_1px,
++         p_dispwidget->msg_queue_rect_start_x, p_dispwidget->msg_queue_bottom_margin);
++
++   /* ROCKNIX: the messages on screen were placed with the previous layout's
++    * margin and boxes; place them again with this one's, so a message pushed
++    * between RetroArch's two layout passes at a launch does not keep the
++    * first pass's place until the next message moves the stack. */
++   if (p_dispwidget->current_msgs_size)
++      gfx_widgets_msg_queue_move(p_dispwidget);
++
+    for (i = 0; i < ARRAY_SIZE(widgets); i++)
+    {
+       const gfx_widget_t* widget = widgets[i];
+diff --git a/gfx/gfx_widgets.h b/gfx/gfx_widgets.h
+--- a/gfx/gfx_widgets.h
++++ b/gfx/gfx_widgets.h
+@@ -241,6 +241,10 @@ typedef struct dispgfx_widget
+    unsigned msg_queue_height;
+    unsigned msg_queue_padding;
+    unsigned msg_queue_spacing;
++   /* ROCKNIX fork #296: the room under the bottom box -- the same number as
++    * the box's distance from the panel's left edge (msg_queue_rect_start_x),
++    * so the two read as one margin. */
++   unsigned msg_queue_bottom_margin;
+    unsigned msg_queue_rect_start_x;
+    unsigned msg_queue_internal_icon_size;
+    unsigned msg_queue_icon_size_x;

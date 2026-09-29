@@ -1,0 +1,100 @@
+widgets: the message queue is never drawn under 13 px
+
+The widget fonts are sized from the panel's pixel diagonal against 1080p
+(the KMS context reports no DPI), times the widget factor, times 1.5 for
+ozone. On a 640x480 handheld that puts the message-queue font at 10.9 px,
+and FreeType rasterises it at 10: every vertical stem of Inter falls
+under a pixel and is drawn as two grey half-columns, while the
+achievement banner beside it, at 17 px, has stems of 1.4 px and reads
+sharp. The general 9 px floor is too low to help; on a 480x320 panel the
+queue sits at that floor already.
+
+So gfx_widgets_font_init takes the floor as a parameter: the regular and
+bold faces keep 9, the message queue gets 13, the lowest size at which
+Inter's stems cross a whole pixel as they do at 14 (13 px: 88 % of
+strokes with a fully lit column, 14 px: 87 %, tools/font-stems). Nothing
+changes on a panel whose computed size is already 13 or more (720p and
+up).
+
+Measured on a 640x480 guest, 2026-09-24 (fork #251): at 10 px, 41 strokes
+on the x-height row, none with a fully-lit pixel, mean stem 0.76 px; at
+15 px, 46 strokes, 10 solid, 1.40 px; the banner's 17 px, 1.37 px.
+Switching FreeType's hinting interpreter changed no pixel.
+
+diff --git a/gfx/gfx_widgets.c b/gfx/gfx_widgets.c
+--- a/gfx/gfx_widgets.c
++++ b/gfx/gfx_widgets.c
+@@ -44,6 +44,15 @@
+ 
+ #define BASE_FONT_SIZE      32.0f
+ #define MSG_QUEUE_FONT_SIZE 20.0f
++/* The smallest face the message queue is drawn at, in pixels. On a small
++ * panel the scale from the pixel diagonal puts this font under a pixel of
++ * stem width (10.9 px on a 640x480 handheld: no stroke owns a whole
++ * pixel), and the general 9 px floor below is too low to help. Inter's
++ * stems cross one pixel near 13 px (13: 88% of strokes on a whole pixel,
++ * 14: 87%, tools/font-stems), so 13 keeps every queue notification
++ * readable on 480x320 and 640x480 panels and changes nothing where the
++ * computed size is already larger (ROCKNIX fork, #251; 14 until #296). */
++#define MSG_QUEUE_MIN_SIZE  13.0f
+ 
+ static dispgfx_widget_t dispwidget_st = {0}; /* uint64_t alignment */
+ static uint64_t widget_icon_load_gen  = 0;
+@@ -885,14 +894,15 @@ static void gfx_widgets_font_init(
+       gfx_display_t *p_disp,
+       dispgfx_widget_t *p_dispwidget,
+       gfx_widget_font_data_t *font_data,
+-      bool is_threaded, char *font_path, float font_size)
++      bool is_threaded, char *font_path, float font_size,
++      float min_size)
+ {
+    int glyph_width               = 0;
+    float scaled_size             = font_size * p_dispwidget->last_scale_factor;
+ 
+    /* Limit minimum font size to keep it readable */
+-   if (scaled_size < 9)
+-      scaled_size = 9;
++   if (scaled_size < min_size)
++      scaled_size = min_size;
+ 
+    /* Free existing font */
+    if (font_data->font)
+@@ -976,11 +986,11 @@ static void gfx_widgets_layout(
+       /* Create regular font */
+       gfx_widgets_font_init(p_disp, p_dispwidget,
+             &p_dispwidget->gfx_widget_fonts.regular,
+-            is_threaded, p_dispwidget->ozone_regular_font_path, BASE_FONT_SIZE);
++            is_threaded, p_dispwidget->ozone_regular_font_path, BASE_FONT_SIZE, 9.0f);
+       /* Create bold font */
+       gfx_widgets_font_init(p_disp, p_dispwidget,
+             &p_dispwidget->gfx_widget_fonts.bold,
+-            is_threaded, p_dispwidget->ozone_bold_font_path, BASE_FONT_SIZE);
++            is_threaded, p_dispwidget->ozone_bold_font_path, BASE_FONT_SIZE, 9.0f);
+ 
+       /* Create msg_queue font */
+       switch (*msg_hash_get_uint(MSG_HASH_USER_LANGUAGE))
+@@ -1002,20 +1012,20 @@ static void gfx_widgets_layout(
+       }
+       gfx_widgets_font_init(p_disp, p_dispwidget,
+             &p_dispwidget->gfx_widget_fonts.msg_queue,
+-            is_threaded, font_file, MSG_QUEUE_FONT_SIZE);
++            is_threaded, font_file, MSG_QUEUE_FONT_SIZE, MSG_QUEUE_MIN_SIZE);
+    }
+    else
+    {
+       /* Load fonts from user-supplied path */
+       gfx_widgets_font_init(p_disp, p_dispwidget,
+             &p_dispwidget->gfx_widget_fonts.regular,
+-            is_threaded, font_path, BASE_FONT_SIZE);
++            is_threaded, font_path, BASE_FONT_SIZE, 9.0f);
+       gfx_widgets_font_init(p_disp, p_dispwidget,
+             &p_dispwidget->gfx_widget_fonts.bold,
+-            is_threaded, font_path, BASE_FONT_SIZE);
++            is_threaded, font_path, BASE_FONT_SIZE, 9.0f);
+       gfx_widgets_font_init(p_disp, p_dispwidget,
+             &p_dispwidget->gfx_widget_fonts.msg_queue,
+-            is_threaded, font_path, MSG_QUEUE_FONT_SIZE);
++            is_threaded, font_path, MSG_QUEUE_FONT_SIZE, MSG_QUEUE_MIN_SIZE);
+    }
+ 
+    /* Calculate dimensions */
