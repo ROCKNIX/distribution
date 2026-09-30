@@ -128,12 +128,20 @@ install_steam_runtime_arm64() {
   local RUNTIME_TAR_URL="${RUNTIME_TAR_BASE}/${runtime_version}/steam-runtime-steamrt-arm64.tar.xz"
   log_info "Steam runtime URL: ${RUNTIME_TAR_URL}"
 
+  if [ -d "${RUNTIME_DIR}" ]; then
+    log_info "Removing previous Steam runtime at ${RUNTIME_DIR}..."
+    rm -rf "${RUNTIME_DIR}" || die "Failed to remove previous Steam runtime."
+  fi
+
   wget -c -t 5 -O "${tar_path}" "${RUNTIME_TAR_URL}" || die "Failed to download Steam runtime."
   tar xvf "${tar_path}" -C "${STEAM}" || die "Failed to extract Steam runtime."
   rm -f "${tar_path}"
 
-  local target
-  target=$(echo "${STEAM}"/steam-runtime-steamrt-arm64/steamrt3c_platform_*/files/lib/aarch64-linux-gnu/libibus-1.0.so.5.* | head -n 1)
+  local target="" f
+  for f in "${STEAM}"/steam-runtime-steamrt-arm64/steamrt3c_platform_*/files/lib/aarch64-linux-gnu/libibus-1.0.so.5.*; do
+    [ -f "$f" ] || continue
+    target="$f"
+  done
   if [ ! -f "$target" ]; then
       die "Could not locate libibus target inside runtime."
   fi
@@ -141,10 +149,14 @@ install_steam_runtime_arm64() {
   mkdir -p "${STEAM}/lib/aarch64-linux-gnu"
   ln -sf "${target}" "${STEAM}/lib/aarch64-linux-gnu/libibus-1.0.so.5" || die "Failed to symlink libibus."
 
-  target=$(echo "${STEAM}"/steam-runtime-steamrt-arm64/steamrt3c_platform_*/files/lib/aarch64-linux-gnu/libva.so.2.* | head -n 1)
+  target=""
+  for f in "${STEAM}"/steam-runtime-steamrt-arm64/steamrt3c_platform_*/files/lib/aarch64-linux-gnu/libva.so.2.*; do
+    [ -f "$f" ] || continue
+    target="$f"
+  done
   if [ ! -f "$target" ]; then
       die "Could not locate libva target inside runtime."
-    fi
+  fi
   ln -sf "${target}" "${STEAM}/lib/aarch64-linux-gnu/libva.so.2" || die "Failed to symlink libva."
 }
 
