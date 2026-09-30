@@ -26,6 +26,7 @@ makeinstall_target() {
 
   mkdir -p ${INSTALL}/usr/bin
     cp -a ${PKG_BUILD}/${PKG_NAME}-${PKG_VERSION}.AppImage ${INSTALL}/usr/bin/duckstation-sa
+    chmod 0755 ${INSTALL}/usr/bin/duckstation-sa
     cp -a ${PKG_DIR}/scripts/* ${INSTALL}/usr/bin
 
   mkdir -p ${INSTALL}/usr/config/duckstation
