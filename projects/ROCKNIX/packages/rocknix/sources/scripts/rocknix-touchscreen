@@ -1,0 +1,117 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+. /etc/profile.d/001-functions
+
+TMP_FILE="/var/run/rocknix-touchscreen.tmp"
+
+### Enable logging
+case $(get_setting system.loglevel) in
+  verbose)
+    DEBUG=true
+  ;;
+  *)
+    DEBUG=false
+  ;;
+esac
+
+find_input_device() {
+    if [[ -z "${SYSFS_PATH}" ]]; then
+        for input_device in /dev/input/event*; do
+            if udevadm info --query=property "${input_device}" | grep -q "ID_INPUT_TOUCHSCREEN=1"; then
+                # Get the sysfs path relative to /sys
+                DEVICE_PATH=$(udevadm info --query=property --property=DEVPATH "${input_device}" | cut -d= -f2)
+                SYSFS_PATH="/sys${DEVICE_PATH}"
+                ${DEBUG} && log $0 "Device: ${input_device}"
+                ${DEBUG} && log $0 "Device path: ${DEVICE_PATH}"
+                ${DEBUG} && log $0 "Sysfs path: ${SYSFS_PATH}"
+                break
+            fi
+        done
+    fi
+}
+
+find_driver_path() {
+    find_input_device
+
+    if [[ -e "${SYSFS_PATH}" ]]; then
+        # Traverse up the device sysfs path to find the device ID and driver path
+        WRK_SYSFS_DIR="${SYSFS_PATH}"
+
+        while [ "$WRK_SYSFS_DIR" != "/" ]; do
+            if [ -d "$WRK_SYSFS_DIR/driver" ]; then
+                DRIVER_PATH=$(readlink -f "$WRK_SYSFS_DIR/driver")
+                DEVICE_ID=$(basename "$WRK_SYSFS_DIR")
+                ${DEBUG} && log $0 "Driver path: $DRIVER_PATH"
+                ${DEBUG} && log $0 "Device ID: $DEVICE_ID"
+                break
+            fi
+            WRK_SYSFS_DIR=$(dirname "$WRK_SYSFS_DIR")
+        done
+
+        # Store the driver path and device ID for later use when enabling
+        if [[ -n "${DRIVER_PATH}" && -n "${DEVICE_ID}" ]]; then
+            echo "DRIVER_PATH=${DRIVER_PATH}" > "${TMP_FILE}"
+            echo "DEVICE_ID=${DEVICE_ID}" >> "${TMP_FILE}"
+        fi
+    else
+        # Attempt to retrieve stored values
+        source ${TMP_FILE}
+        ${DEBUG} && log $0 "Driver path: $DRIVER_PATH"
+        ${DEBUG} && log $0 "Device ID: $DEVICE_ID"
+    fi
+
+    if [[ -z "${DRIVER_PATH}" ]]; then
+        ${DEBUG} && log $0 "Touchscreen device driver name not found, exiting"
+        exit 1
+    fi
+
+    if [[ -z "${DEVICE_ID}" ]]; then
+        ${DEBUG} && log $0 "Touchscreen device ID not found, exiting"
+        exit 1
+    fi
+}
+
+disable() {
+    ${DEBUG} && log $0 "Disabling touchscreen"
+    find_driver_path
+    echo "$DEVICE_ID" | tee "$DRIVER_PATH/unbind" > /dev/null
+}
+
+enable() {
+    ${DEBUG} && log $0 "Enabling touchscreen"
+    find_driver_path
+    echo "$DEVICE_ID" | tee "$DRIVER_PATH/bind" > /dev/null
+
+    # Cleanup temp file
+    rm "${TMP_FILE}"
+}
+
+toggle() {
+    ${DEBUG} && log $0 "Toggling touchscreen"
+    find_input_device
+
+    if [[ -e "${SYSFS_PATH}" ]]; then
+        disable
+    else
+        enable
+    fi
+}
+
+case "$1" in
+    "--options")
+        echo "enable disable toggle"
+    ;;
+    disable|enable|toggle)
+        $1
+    ;;
+    *)
+        echo "Unexpected parameter $1" >&2
+        echo "Usage:" >&2
+        echo "  List available commands:      $0 --options" >&2
+        echo "  Enable / disable touchscreen: $0 <enable|disable>" >&2
+        echo "  Toggle touchscreen:           $0 toggle" >&2
+        exit 1
+    ;;
+esac
