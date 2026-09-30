@@ -2,8 +2,8 @@
 # Copyright (C) 2025 ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="rocknix-abl"
-PKG_VERSION="1.1.9"
-PKG_SHA256="2fc42c9cc60fe9eb33196785a8e92608f0ffbaa0b739b7051d948ba27a3bd747"
+PKG_VERSION="1.2"
+PKG_SHA256="4fcf983aff6af152fb5d7d0ef1a31727d64ecb93b2d75e202efeea5c5d4b565d"
 PKG_SITE="https://github.com/ROCKNIX/abl"
 PKG_URL="https://github.com/ROCKNIX/abl/releases/download/v${PKG_VERSION}/rocknix-abl-v${PKG_VERSION}.tar.gz"
 PKG_LONGDESC="ROCKNIX ABL."
