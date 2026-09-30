@@ -46,8 +46,8 @@ case ${DEVICE} in
     PKG_PATCH_DIRS+=" 7.0"
     ;;
   S922X|RK3399)
-    PKG_VERSION="6.18.49"
-    PKG_SHA256="ae826f33111fea6f1d279dde7299d7463c8dfd204aeb75a8fb5432bc60a28191"
+    PKG_VERSION="6.18.54"
+    PKG_SHA256="9df30b02dd8102bbd0be52556288ef6889ddbe7f1ddb96fbf847d0becf3eacac"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     ;;
 esac
