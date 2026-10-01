@@ -1,0 +1,224 @@
+From 3800b7109e44a3c3e5789bd5920c41eddb312dc9 Mon Sep 17 00:00:00 2001
+From: Dhruv Mark Collins <mark@igalia.com>
+Date: Tue, 7 Jul 2026 12:28:44 +0000
+Subject: [PATCH 1/2] tu/autotune: Track binning pass for RP duration
+
+For GMEM render passes with HW binning, the RP's ts_start/ts_end
+timestamps only cover the fragment rendering, not the preceding
+binning pass. This under-counts the true GPU cost of GMEM relative to
+SYSMEM, which never has a separate binning pass, biasing the profiled
+autotuner towards GMEM.
+
+Split renderpass BO allocation out of begin_renderpass into a new
+init_renderpass, since it now needs to happen before the binning pass
+IB is emitted. Add begin_binning/end_binning to capture binning pass
+timestamps, and fold them into get_rp_duration() so GMEM's reported
+duration includes binning.
+
+For concurrent binning this slightly over-counts, since BV and BR
+overlap, but that's acceptable for the autotuner's purposes.
+
+Signed-off-by: Dhruv Mark Collins <mark@igalia.com>
+Assisted-by: Claude Code (Sonnet 4.6)
+Part-of: <https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/42953>
+(cherry picked from commit 79e16e72329bc871cee6ea23489cfa3b25779ac7)
+---
+ src/freedreno/vulkan/tu_autotune.cc   | 56 +++++++++++++++++++++++++--
+ src/freedreno/vulkan/tu_autotune.h    | 10 ++++-
+ src/freedreno/vulkan/tu_cmd_buffer.cc | 18 ++++++---
+ 3 files changed, 74 insertions(+), 10 deletions(-)
+
+diff --git a/src/freedreno/vulkan/tu_autotune.cc b/src/freedreno/vulkan/tu_autotune.cc
+index e60329d2401..c843435844a 100644
+--- a/src/freedreno/vulkan/tu_autotune.cc
++++ b/src/freedreno/vulkan/tu_autotune.cc
+@@ -425,6 +425,13 @@ struct PACKED tu_autotune::rp_gpu_data {
+    alignas(16) uint64_t samples_end;
+    uint64_t ts_start;
+    uint64_t ts_end;
++   /* Binning pass timestamps, only written for GMEM with HW binning. Zero for
++    * SYSMEM or GMEM without binning. Added to (ts_end - ts_start) to get the
++    * true total GMEM cost, including the binning pass that precedes fragment
++    * rendering.  For concurrent binning (CB) this slightly over-counts since
++    * BV and BR overlap, but that is acceptable for the autotuner's purposes. */
++   uint64_t ts_binning_start;
++   uint64_t ts_binning_end;
+ };
+ 
+ /* Per-tile values for GMEM rendering, this structure is appended to the end of rp_gpu_data for each tile. */
+@@ -639,7 +646,7 @@ struct tu_autotune::rp_entry {
+    {
+       assert(config.test(metric_flag::TS));
+       rp_gpu_data &gpu = get_gpu_data();
+-      return gpu.ts_end - gpu.ts_start;
++      return (gpu.ts_end - gpu.ts_start) + (gpu.ts_binning_end - gpu.ts_binning_start);
+    }
+ 
+    /* The amount of cycles spent in the longest tile. This is used to calculate the average draw duration for
+@@ -666,6 +673,20 @@ struct tu_autotune::rp_entry {
+ 
+    /** CS Emission **/
+ 
++   void emit_binning_start(struct tu_cs *cs)
++   {
++      assert(map && bo.iova);
++      if (config.test(metric_flag::TS))
++         emit_metric_timestamp(cs, bo.iova + offsetof(rp_gpu_data, ts_binning_start));
++   }
++
++   void emit_binning_end(struct tu_cs *cs)
++   {
++      assert(map && bo.iova);
++      if (config.test(metric_flag::TS))
++         emit_metric_timestamp(cs, bo.iova + offsetof(rp_gpu_data, ts_binning_end));
++   }
++
+    void emit_rp_start(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
+    {
+       assert(map && bo.iova);
+@@ -1968,8 +1989,7 @@ tu_autotune::write_preempt_counters_to_iova(struct tu_cs *cs,
+ /** RP-level CS emissions **/
+ 
+ void
+-tu_autotune::begin_renderpass(
+-   struct tu_cmd_buffer *cmd, struct tu_cs *cs, rp_ctx_t rp_ctx, bool sysmem, uint32_t tile_count)
++tu_autotune::init_renderpass(rp_ctx_t rp_ctx, bool sysmem, uint32_t tile_count)
+ {
+    if (!rp_ctx)
+       return;
+@@ -1978,9 +1998,39 @@ tu_autotune::begin_renderpass(
+    assert(!sysmem || tile_count == 0);
+ 
+    rp_ctx->allocate(sysmem, tile_count);
++}
++
++void
++tu_autotune::begin_renderpass(struct tu_cmd_buffer *cmd, struct tu_cs *cs, rp_ctx_t rp_ctx)
++{
++   if (!rp_ctx)
++      return;
++
+    rp_ctx->emit_rp_start(cmd, cs);
+ }
+ 
++void
++tu_autotune::begin_binning(struct tu_cs *cs, rp_ctx_t rp_ctx)
++{
++   if (!rp_ctx)
++      return;
++
++   assert(!rp_ctx->sysmem);
++
++   rp_ctx->emit_binning_start(cs);
++}
++
++void
++tu_autotune::end_binning(struct tu_cs *cs, rp_ctx_t rp_ctx)
++{
++   if (!rp_ctx)
++      return;
++
++   assert(!rp_ctx->sysmem);
++
++   rp_ctx->emit_binning_end(cs);
++}
++
+ void
+ tu_autotune::end_renderpass(struct tu_cmd_buffer *cmd, struct tu_cs *cs, rp_ctx_t rp_ctx)
+ {
+diff --git a/src/freedreno/vulkan/tu_autotune.h b/src/freedreno/vulkan/tu_autotune.h
+index 8bf231edd04..a935c505fcf 100644
+--- a/src/freedreno/vulkan/tu_autotune.h
++++ b/src/freedreno/vulkan/tu_autotune.h
+@@ -324,11 +324,17 @@ struct tu_autotune {
+     */
+    void disable_preempt_optimize();
+ 
+-   void
+-   begin_renderpass(struct tu_cmd_buffer *cmd, struct tu_cs *cs, rp_ctx_t rp_ctx, bool sysmem, uint32_t tile_count);
++   /* Allocates the BO for this render pass. Must be called before any GPU
++    * emission (begin_renderpass, begin_binning).
++    */
++   void init_renderpass(rp_ctx_t rp_ctx, bool sysmem, uint32_t tile_count);
+ 
++   void begin_renderpass(struct tu_cmd_buffer *cmd, struct tu_cs *cs, rp_ctx_t rp_ctx);
+    void end_renderpass(struct tu_cmd_buffer *cmd, struct tu_cs *cs, rp_ctx_t rp_ctx);
+ 
++   void begin_binning(struct tu_cs *cs, rp_ctx_t rp_ctx);
++   void end_binning(struct tu_cs *cs, rp_ctx_t rp_ctx);
++
+    void begin_tile(struct tu_cmd_buffer *cmd, struct tu_cs *cs, rp_ctx_t rp_ctx, uint32_t tile_idx);
+ 
+    void end_tile(struct tu_cmd_buffer *cmd, struct tu_cs *cs, rp_ctx_t rp_ctx, uint32_t tile_idx);
+diff --git a/src/freedreno/vulkan/tu_cmd_buffer.cc b/src/freedreno/vulkan/tu_cmd_buffer.cc
+index 6cf3050a995..596c573dbe8 100644
+--- a/src/freedreno/vulkan/tu_cmd_buffer.cc
++++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
+@@ -2625,12 +2625,15 @@ emit_vsc_overflow_test(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
+ template <chip CHIP>
+ static void
+ tu6_emit_binning_pass(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
+-                      const VkOffset2D *fdm_offsets, bool use_cb)
++                      const VkOffset2D *fdm_offsets, bool use_cb,
++                      tu_autotune::rp_ctx_t rp_ctx)
+ {
+    struct tu_physical_device *phys_dev = cmd->device->physical_device;
+    const struct tu_framebuffer *fb = cmd->state.framebuffer;
+    const struct tu_tiling_config *tiling = cmd->state.tiling;
+ 
++   cmd->device->autotune->begin_binning(cs, rp_ctx);
++
+    /* If this command buffer may be executed multiple times, then
+     * viewports/scissor states may have been changed by previous executions
+     * and we need to reset them before executing the binning IB. With FDM
+@@ -2766,6 +2769,8 @@ tu6_emit_binning_pass(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
+ 
+    tu_cs_emit_pkt7(cs, CP_SET_MODE, 1);
+    tu_cs_emit(cs, 0x0);
++
++   cmd->device->autotune->end_binning(cs, rp_ctx);
+ }
+ 
+ template <chip CHIP>
+@@ -3282,7 +3287,8 @@ tu6_sysmem_render_begin(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
+       tu_cs_emit_regs(cs, RB_BIN_FOVEAT(CHIP));
+    }
+ 
+-   cmd->device->autotune->begin_renderpass(cmd, cs, rp_ctx, true, 0);
++   cmd->device->autotune->init_renderpass(rp_ctx, true, 0);
++   cmd->device->autotune->begin_renderpass(cmd, cs, rp_ctx);
+ 
+    tu_cs_sanity_check(cs);
+ }
+@@ -3488,6 +3494,9 @@ tu6_tile_render_begin(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
+    const struct tu_vsc_config *vsc = tu_vsc_config(cmd, tiling);
+    const struct tu_render_pass *pass = cmd->state.pass;
+    bool use_binning = use_hw_binning(cmd);
++   uint32_t tile_count = vsc->tile_count.width * vsc->tile_count.height;
++
++   cmd->device->autotune->init_renderpass(rp_ctx, false, tile_count);
+ 
+    /* User flushes should always be executed on BR. */
+    tu_emit_cache_flush_ccu<CHIP>(cmd, cs, TU_CMD_CCU_GMEM);
+@@ -3556,7 +3565,7 @@ tu6_tile_render_begin(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
+ 
+       tu6_emit_render_cntl<CHIP>(cmd, cmd->state.subpass, cs, true);
+ 
+-      tu6_emit_binning_pass<CHIP>(cmd, cs, fdm_offsets, use_cb);
++      tu6_emit_binning_pass<CHIP>(cmd, cs, fdm_offsets, use_cb, rp_ctx);
+ 
+       /* Enable early return from CP_INDIRECT_BUFFER once the visibility stream
+        * is done.  We don't enable this if there are stores in a non-final
+@@ -3659,8 +3668,7 @@ tu6_tile_render_begin(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
+    if (use_cb)
+       tu_trace_start_render_pass(cmd);
+ 
+-   uint32_t tile_count = vsc->tile_count.width * vsc->tile_count.height;
+-   cmd->device->autotune->begin_renderpass(cmd, cs, rp_ctx, false, tile_count);
++   cmd->device->autotune->begin_renderpass(cmd, cs, rp_ctx);
+ 
+    tu_cs_sanity_check(cs);
+ }
+-- 
+2.55.0
+

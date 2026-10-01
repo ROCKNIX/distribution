@@ -3,8 +3,8 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="mesa"
-PKG_VERSION="26.2.2"
-PKG_SHA256="9b6850189d4b4a595b1718d57d462412090fab820d3e235e2c1d122c1cf9e9bc"
+PKG_VERSION="26.2.3"
+PKG_SHA256="84d617362942ae1c6b63893923acd94c12a6288dc2cc8ec8a6117519b4e5629c"
 PKG_LICENSE="OSS"
 PKG_SITE="http://www.mesa3d.org/"
 PKG_URL="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${PKG_VERSION}/mesa-mesa-${PKG_VERSION}.tar.gz"
@@ -107,5 +107,10 @@ post_makeinstall_target() {
   # While this likely breaks panfrost vulkan, it does fix vulkaninfo on libmali-vulkan
   if [ "${DEVICE}" = "S922X" ]; then
     rm -f ${INSTALL}/usr/lib/libvulkan_panfrost.so ${INSTALL}/usr/share/vulkan/icd.d/panfrost_icd.*.json
+  fi
+
+  if [ "${VULKAN_SUPPORT}" = "yes" ] && listcontains "${VULKAN_DRIVERS_MESA}" "freedreno"; then
+    mkdir -p ${INSTALL}/usr/config/modules
+    cp "${PKG_DIR}/scripts/Autotune Report.sh" ${INSTALL}/usr/config/modules
   fi
 }

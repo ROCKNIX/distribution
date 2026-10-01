@@ -1,0 +1,239 @@
+From bbd55b9729843610804fdb8a3622ef9feb222ac0 Mon Sep 17 00:00:00 2001
+From: Dhruv Mark Collins <mark@igalia.com>
+Date: Tue, 7 Jul 2026 12:25:10 +0000
+Subject: [PATCH 2/2] tu/autotune: Stabilize RP hash for replays
+
+The autotuner identifies a render pass by hashing its attachments,
+using each attachment image's IOVA as part of the key. IOVAs are
+not stable across separate process runs of the same API call
+sequence (e.g. apitrace replay), so the same logical render pass
+would hash differently from run to run, preventing the autotuner
+from accumulating history for it.
+
+Replace the IOVA with a monotonic ID assigned to each tu_image at
+creation time, which is deterministic across replays of the same
+call sequence. Internal scratch attachments (MSRTSS) get a shared
+constant identity instead, since they are reinitialized per
+framebuffer or vkCmdBeginRendering and would churn the hash.
+
+Signed-off-by: Dhruv Mark Collins <mark@igalia.com>
+Assisted-by: Claude Code (Sonnet 4.6)
+Part-of: <https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/42953>
+(cherry picked from commit af16b1ceb1e60f8b1718bbb7522c105a2b5698b1)
+---
+ src/freedreno/vulkan/tu_autotune.cc | 18 +++++++++++++++---
+ src/freedreno/vulkan/tu_device.cc   |  5 +++--
+ src/freedreno/vulkan/tu_device.h    |  3 +++
+ src/freedreno/vulkan/tu_image.cc    | 26 ++++++++++++++++++++------
+ src/freedreno/vulkan/tu_image.h     | 27 ++++++++++++++++++++++++++-
+ 5 files changed, 67 insertions(+), 12 deletions(-)
+
+diff --git a/src/freedreno/vulkan/tu_autotune.cc b/src/freedreno/vulkan/tu_autotune.cc
+index c843435844a..8274e010737 100644
+--- a/src/freedreno/vulkan/tu_autotune.cc
++++ b/src/freedreno/vulkan/tu_autotune.cc
+@@ -834,7 +834,12 @@ tu_autotune::rp_key::rp_key(const struct tu_render_pass *pass,
+     */
+ 
+    struct PACKED packed_att_properties {
+-      uint64_t iova;
++      /* Use img_id (stable monotonic creation counter) + view offset rather than
++       * IOVA, so that the hash is consistent across separate process runs of the
++       * same API call sequence (e.g. apitrace replay).
++       */
++      uint64_t img_id;
++      uint32_t view_offset;
+       bool load;
+       bool store;
+       bool load_stencil;
+@@ -848,8 +853,14 @@ tu_autotune::rp_key::rp_key(const struct tu_render_pass *pass,
+       *ptr++ = framebuffer->layers;
+ 
+       for (unsigned i = 0; i < pass->attachment_count; i++) {
++         /* Every image reaching a render pass must have an identity (see
++          * tu_image_id_mode); 0 means a new image path missed assigning one.
++          */
++         assert(cmd->state.attachments[i]->image->id != 0);
++
+          packed_att_properties props = {
+-            .iova = cmd->state.attachments[i]->image->iova + cmd->state.attachments[i]->view.offset,
++            .img_id = cmd->state.attachments[i]->image->id,
++            .view_offset = cmd->state.attachments[i]->view.offset,
+             .load = pass->attachments[i].load,
+             .store = pass->attachments[i].store,
+             .load_stencil = pass->attachments[i].load_stencil,
+@@ -868,7 +879,8 @@ tu_autotune::rp_key::rp_key(const struct tu_render_pass *pass,
+     * cases, while only extreme cases need to allocate on the heap.
+     */
+    size_t data_count = 3 + (pass->attachment_count * sizeof(packed_att_properties) / sizeof(uint32_t));
+-   constexpr size_t STACK_MAX_DATA_COUNT = 3 + (5 * 3); /* in u32 units. */
++   constexpr size_t STACK_MAX_DATA_COUNT =
++      3 + (5 * (sizeof(packed_att_properties) / sizeof(uint32_t))); /* in u32 units, up to 5 attachments. */
+ 
+    if (data_count <= STACK_MAX_DATA_COUNT) {
+       /* If the data is small enough, we can use the stack. */
+diff --git a/src/freedreno/vulkan/tu_device.cc b/src/freedreno/vulkan/tu_device.cc
+index e8ef94037dc..ae383f0988d 100644
+--- a/src/freedreno/vulkan/tu_device.cc
++++ b/src/freedreno/vulkan/tu_device.cc
+@@ -3804,7 +3804,7 @@ tu_AllocateMemory(VkDevice _device,
+ 
+       result = TU_CALLX(device, tu_image_init)(
+          device, mem->image, mem->image->vk.android_deferred_create_info,
+-         eci.drmFormatModifier, a_plane_layouts);
++         eci.drmFormatModifier, a_plane_layouts, TU_IMAGE_ID_ASSIGN);
+       if (result != VK_SUCCESS) {
+          vk_device_memory_destroy(&device->vk, pAllocator, &mem->vk);
+          return result;
+@@ -4070,7 +4070,8 @@ tu_init_msrtss_attachments(struct tu_device *device,
+        */
+       vk_image_init(&device->vk, &images[i].vk, &image_info);
+ 
+-      TU_CALLX(device, tu_image_init)(device, &images[i], &image_info, DRM_FORMAT_MOD_INVALID, NULL);
++      TU_CALLX(device, tu_image_init)(device, &images[i], &image_info, DRM_FORMAT_MOD_INVALID, NULL,
++                                      TU_IMAGE_ID_INTERNAL);
+ 
+       if (is_ds) {
+          depth_size = align64(depth_size, images[i].layout[0].base_align);
+diff --git a/src/freedreno/vulkan/tu_device.h b/src/freedreno/vulkan/tu_device.h
+index d32a7d80f6d..41b8e2d2069 100644
+--- a/src/freedreno/vulkan/tu_device.h
++++ b/src/freedreno/vulkan/tu_device.h
+@@ -489,6 +489,9 @@ struct tu_device
+ 
+    uint32_t vis_stream_count;
+    uint32_t vis_stream_size;
++
++   /* Monotonically increasing counter assigned to each tu_image at creation. */
++   uint64_t next_image_id;
+ };
+ VK_DEFINE_HANDLE_CASTS(tu_device, vk.base, VkDevice, VK_OBJECT_TYPE_DEVICE)
+ 
+diff --git a/src/freedreno/vulkan/tu_image.cc b/src/freedreno/vulkan/tu_image.cc
+index c43e211289f..9ec6f83a3a1 100644
+--- a/src/freedreno/vulkan/tu_image.cc
++++ b/src/freedreno/vulkan/tu_image.cc
+@@ -12,6 +12,7 @@
+ #include "drm-uapi/drm_fourcc.h"
+ 
+ #include "util/format/u_format.h"
++#include "util/u_atomic.h"
+ #include "util/u_debug.h"
+ #include "vk_android.h"
+ #include "vk_debug_utils.h"
+@@ -521,8 +522,20 @@ template <chip CHIP>
+ VkResult
+ tu_image_init(struct tu_device *device, struct tu_image *image,
+               const VkImageCreateInfo *pCreateInfo, uint64_t modifier,
+-              const VkSubresourceLayout *plane_layouts)
++              const VkSubresourceLayout *plane_layouts,
++              enum tu_image_id_mode id_mode)
+ {
++   switch (id_mode) {
++   case TU_IMAGE_ID_ASSIGN:
++      image->id = p_atomic_inc_return(&device->next_image_id);
++      break;
++   case TU_IMAGE_ID_INTERNAL:
++      image->id = TU_IMAGE_ID_INTERNAL_ID;
++      break;
++   case TU_IMAGE_ID_NONE:
++      break;
++   }
++
+    bool ubwc_enabled = true;
+    bool force_linear_tile = false;
+    bool is_mutable = false;
+@@ -877,7 +890,7 @@ tu_android_get_wsi_memory(struct tu_device *dev,
+ 
+    result = TU_CALLX(dev, tu_image_init)(
+       dev, img, img->vk.android_deferred_create_info,
+-      eci.drmFormatModifier, a_plane_layouts);
++      eci.drmFormatModifier, a_plane_layouts, TU_IMAGE_ID_ASSIGN);
+    if (result != VK_SUCCESS)
+       return result;
+ 
+@@ -971,7 +984,8 @@ tu_CreateImage(VkDevice _device,
+    }
+ 
+    result = TU_CALLX(device, tu_image_init)(device, image, pCreateInfo,
+-                                             modifier, plane_layouts);
++                                             modifier, plane_layouts,
++                                             TU_IMAGE_ID_ASSIGN);
+    if (result != VK_SUCCESS)
+       goto fail;
+ 
+@@ -1372,7 +1386,7 @@ tu_GetDeviceImageMemoryRequirements(
+    struct tu_image image = {0};
+ 
+    vk_image_init(&device->vk, &image.vk, pInfo->pCreateInfo);
+-   TU_CALLX(device, tu_image_init)(device, &image, pInfo->pCreateInfo, DRM_FORMAT_MOD_INVALID, NULL);
++   TU_CALLX(device, tu_image_init)(device, &image, pInfo->pCreateInfo, DRM_FORMAT_MOD_INVALID, NULL, TU_IMAGE_ID_NONE);
+ 
+    tu_get_image_memory_requirements(device, &image, pMemoryRequirements);
+ }
+@@ -1389,7 +1403,7 @@ tu_GetDeviceImageSparseMemoryRequirements(
+    struct tu_image image = {0};
+ 
+    vk_image_init(&device->vk, &image.vk, pInfo->pCreateInfo);
+-   TU_CALLX(device, tu_image_init)(device, &image, pInfo->pCreateInfo, DRM_FORMAT_MOD_INVALID, NULL);
++   TU_CALLX(device, tu_image_init)(device, &image, pInfo->pCreateInfo, DRM_FORMAT_MOD_INVALID, NULL, TU_IMAGE_ID_NONE);
+ 
+    tu_get_image_sparse_memory_requirements(device, &image,
+                                            pSparseMemoryRequirementCount,
+@@ -1452,7 +1466,7 @@ tu_GetDeviceImageSubresourceLayoutKHR(VkDevice _device,
+    struct tu_image image = {0};
+ 
+    vk_image_init(&device->vk, &image.vk, pInfo->pCreateInfo);
+-   TU_CALLX(device, tu_image_init)(device, &image, pInfo->pCreateInfo, DRM_FORMAT_MOD_INVALID, NULL);
++   TU_CALLX(device, tu_image_init)(device, &image, pInfo->pCreateInfo, DRM_FORMAT_MOD_INVALID, NULL, TU_IMAGE_ID_NONE);
+ 
+    tu_get_image_subresource_layout(&image, pInfo->pSubresource, pLayout);
+ }
+diff --git a/src/freedreno/vulkan/tu_image.h b/src/freedreno/vulkan/tu_image.h
+index df88995b658..28de9828cf4 100644
+--- a/src/freedreno/vulkan/tu_image.h
++++ b/src/freedreno/vulkan/tu_image.h
+@@ -43,14 +43,39 @@ struct tu_image
+    /* Maximum width/height of tiles for use with this image, or ~0 if no constraints. */
+    uint32_t max_tile_w_constraint_fdm;
+    uint32_t max_tile_h_constraint_fdm;
++
++   /* Identity of the image for RP hashing and analysis, per
++    * tu_image_id_mode. 0 means no identity was assigned and must never
++    * appear on an image that reaches a render pass.
++    */
++   uint64_t id;
+ };
+ VK_DEFINE_NONDISP_HANDLE_CASTS(tu_image, vk.base, VkImage, VK_OBJECT_TYPE_IMAGE)
+ 
++enum tu_image_id_mode {
++   /* Temporaries for memory-requirement queries: no identity, must never
++    * reach a render pass.
++    */
++   TU_IMAGE_ID_NONE,
++   /* Real images: unique monotonic identity, stable across replays of the
++    * same API call sequence.
++    */
++   TU_IMAGE_ID_ASSIGN,
++   /* Driver-internal scratch attachments (MSRTSS): a shared constant
++    * identity, so that RP hashes don't churn when the scratch images are
++    * reinitialized per framebuffer or per vkCmdBeginRendering.
++    */
++   TU_IMAGE_ID_INTERNAL,
++};
++
++#define TU_IMAGE_ID_INTERNAL_ID UINT64_MAX
++
+ template <chip CHIP>
+ VkResult
+ tu_image_init(struct tu_device *device, struct tu_image *image,
+               const VkImageCreateInfo *pCreateInfo, uint64_t modifier,
+-              const VkSubresourceLayout *plane_layouts);
++              const VkSubresourceLayout *plane_layouts,
++              enum tu_image_id_mode id_mode);
+ 
+ struct tu_image_view
+ {
+-- 
+2.55.0
+
