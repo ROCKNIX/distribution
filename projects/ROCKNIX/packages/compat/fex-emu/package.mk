@@ -74,6 +74,9 @@ make_target() {
   curl -L https://nixos.org/nix/install | sh -s -- --no-daemon
   . "${HOME}/.nix-profile/etc/profile.d/nix.sh"
 
+  #Pin for monthly revert after bumping gcc
+  export NIX_PATH="nixpkgs=https://github.com/NixOS/nixpkgs/archive/b6018f87da91d19d0ab4cf979885689b469cdd41.tar.gz"
+
   mkdir -p "${PKG_BUILD}/.${TARGET_NAME}"
   cd "${PKG_BUILD}/.${TARGET_NAME}"
 
