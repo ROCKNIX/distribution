@@ -5,6 +5,10 @@
 # Monitors external display outputs (DP, HDMI) via sway IPC and powers
 # internal panels (DSI, eDP) off/on accordingly.
 #
+# The external_display.mode setting picks the mode for the external
+# output: "auto" (1080p60, else 720p60, else the sink's preferred mode) or
+# a fixed WIDTHxHEIGHT@RATE. auto never picks a refresh other than 60.
+#
 # The sway IPC subscription is used rather than udev because the actions
 # (wlr-randr, swaymsg) require sway to be running and to have already
 # processed the new output. Subscribing to sway output events is
@@ -16,27 +20,66 @@
 # Exit if this device has no external display connectors at all
 ls /sys/class/drm/card*-DP-* /sys/class/drm/card*-HDMI-A-* 2>/dev/null | grep -q . || exit 0
 
-_LAST_STATE="init"
+# Last applied "state|mode". Including the mode means a settings
+# change gets applied on the next wakeup (~10s), no replug needed.
+_LAST_SIG="init"
 
-_get_active_externals() {
-    wlr-randr 2>/dev/null | awk '
-        /^(DP|HDMI|DisplayPort)-/ { name=$1; in_ext=1; next }
-        /^[A-Za-z]/ { in_ext=0 }
-        in_ext && /Enabled: yes/ { print name }
-    '
+_get_external_settings() {
+    EXT_MODE=$(get_setting external_display.mode)
+    [ -n "${EXT_MODE}" ] || EXT_MODE="auto"
+}
+
+_get_present_externals() {
+    # Go by DRM connector status, not by what sway has enabled: the
+    # kernel can know a display is connected while sway missed the
+    # hotplug event (seen with the DP alt mode dock on the AYN Odin 2,
+    # which otherwise stays undetected forever), and sway can also
+    # leave a connected output disabled after an EDID reprobe. In both
+    # cases the explicit enable below brings the display up.
+    external-display list
 }
 
 _get_all_internals() {
-    wlr-randr 2>/dev/null | awk '/^(DSI|eDP|LVDS)-/ { print $1 }'
+    external-display internals
+}
+
+_panel_orientation_transform() {
+    # Rotated panels report a "panel orientation" DRM property, but
+    # sway only picks it up for the boot display. On a device that
+    # booted with an external display connected, the internal panel
+    # would come back unrotated, so re-apply the transform here.
+    local m v
+    for m in "" "msm" "rockchip" "amdgpu" "i915"; do
+        v=$(modetest ${m:+-M "$m"} -c 2>/dev/null | awk '
+            /panel orientation/ { f = 1 }
+            f && /value:/ { print $2; exit }')
+        [ -n "$v" ] && break
+    done
+    # Same mapping as the kernel's fbcon rotation.
+    case "$v" in
+        1) echo 180 ;;
+        2) echo 90 ;;
+        3) echo 270 ;;
+    esac
+}
+
+_enable_internal() {
+    local t
+    t=$(_panel_orientation_transform)
+    if [ -n "$t" ]; then
+        wlr-randr --output "$1" --preferred --on --transform "$t" 2>/dev/null
+    else
+        wlr-randr --output "$1" --preferred --on 2>/dev/null
+    fi
 }
 
 _wp_audio_card() {
-    wpctl status 2>/dev/null | awk -F'[.[:space:]]+' '
+    timeout 3 wpctl status 2>/dev/null | awk -F'[.[:space:]]+' '
         /\[alsa\]/ { for (i = 1; i <= NF; i++) if ($i ~ /^[0-9]+$/) { print $i; exit } }'
 }
 
 _wp_profile_index() {
-    pw-cli enum-params "$1" EnumProfile 2>/dev/null | awk -v want="$2" '
+    timeout 3 pw-cli enum-params "$1" EnumProfile 2>/dev/null | awk -v want="$2" '
         /Param:Profile:index/ { getline; idx = $2 }
         /Param:Profile:name/  { getline; gsub(/"/, "", $2); if ($2 == want) { print idx; exit } }'
 }
@@ -45,6 +88,10 @@ _switch_audio() {
     local card target i
     card=$(_wp_audio_card); [ -n "$card" ] || return 0
     if [ "$1" = "external" ]; then
+        # Gated only in this direction: where the external output carries no
+        # audio (micro HDMI on the AYN Odin 2) there is nothing to switch to,
+        # and the profile probing below can reset sink volumes to 100%.
+        [ "${DEVICE_EXTERNAL_DISPLAY_AUDIO}" = "false" ] && return 0
         target=$(_wp_profile_index "$card" "HDMI")
         if [ -z "$target" ]; then
             systemctl restart wireplumber 2>/dev/null || true
@@ -56,43 +103,216 @@ _switch_audio() {
             done
         fi
     else
+        # Never gated. Restoring the internal route is right whatever the
+        # external output was, and it is the only thing that recovers a stuck
+        # DP jack: on 7.1.2 "DP0 Jack" can stay on after unplug, leaving the
+        # DSP routed to DISPLAY_PORT_RX_0 with the speaker path disconnected,
+        # so playback goes to a dead backend until something re-selects the
+        # profile. Verified on an AYN Odin 2: silent until a reboot without it.
+        #
+        # The card exposes two profiles both named "HiFi"; the first is the one
+        # without the DisplayPort sink, which is why it has to be picked by
+        # index rather than trusted by name.
         target=$(_wp_profile_index "$card" "HiFi")
     fi
-    [ -n "$card" ] && [ -n "$target" ] && wpctl set-profile "$card" "$target" 2>/dev/null || true
+    [ -n "$card" ] && [ -n "$target" ] && timeout 3 wpctl set-profile "$card" "$target" 2>/dev/null || true
+}
+
+_all_sink_ids() {
+    timeout 3 wpctl status 2>/dev/null | awk '
+        /Sinks:/ { f = 1; next }
+        /Sources:|Filters:|Streams:/ { f = 0 }
+        f && match($0, /[0-9]+\./) { print substr($0, RSTART, RLENGTH - 1) }'
+}
+
+_quiet_sinks() {
+    # Run synchronously the moment a connect/disconnect is seen: drop
+    # every sink to zero so the profile flip and amp handoff happen in
+    # silence. _restore_volume then fades the sound back in.
+    local s
+    for s in $(_all_sink_ids); do
+        timeout 2 wpctl set-volume "$s" 0 2>/dev/null
+    done
+}
+
+_set_amp_volume() {
+    # Speaker amp hardware volume: 0 is full output, 1023 is silent
+    # (attenuation register). Parking the amps while an external
+    # display is active makes the sink-migration burst at unplug
+    # inaudible: sink volumes race the stream hand-off, this register
+    # does not. Devices without these controls are unaffected.
+    local ctl
+    for ctl in "SPK_L PCM Playback Volume" "SPK_R PCM Playback Volume"; do
+        timeout 2 amixer -c 0 cset name="${ctl}" "$1" >/dev/null 2>&1
+    done
+}
+
+_default_sink_id() {
+    timeout 3 wpctl status 2>/dev/null | awk '
+        /Sinks:/ { f = 1; next }
+        /Sources:|Filters:|Streams:/ { f = 0 }
+        f && /\*/ && match($0, /[0-9]+\./) { print substr($0, RSTART, RLENGTH - 1); exit }'
+}
+
+_pick_sink() {
+    # First sink id whose listing line matches the regex in $1
+    timeout 3 wpctl status 2>/dev/null | awk -v re="$1" '
+        /Sinks:/ { f = 1; next }
+        /Sources:|Filters:|Streams:/ { f = 0 }
+        f && $0 ~ re && match($0, /[0-9]+\./) { print substr($0, RSTART, RLENGTH - 1); exit }'
+}
+
+_ensure_default_sink() {
+    # wireplumber loses its default sink on some profile flips (seen
+    # repeatedly on the AYN Odin 2: no sink marked default, volume
+    # keys dead, silence). Pick the right one and set it explicitly.
+    local def
+    def=$(_default_sink_id)
+    if [ -z "${def}" ]; then
+        if [ "$1" = "external" ]; then
+            def=$(_pick_sink "DisplayPort|HDMI")
+        else
+            def=$(_pick_sink "Speaker")
+        fi
+        [ -n "${def}" ] && timeout 2 wpctl set-default "${def}" 2>/dev/null
+        sleep 0.5
+        def=$(_default_sink_id)
+        [ -n "${def}" ] || def=$(_pick_sink ".")
+    fi
+    echo "${def}"
+}
+
+_restore_volume() {
+    # Connect/disconnect flips the audio profile and recreates the
+    # sinks; wireplumber restores whatever the new sink last had
+    # stored (100% blasts observed), and streams can migrate before
+    # the stored volume applies. Going external, fade the new sink in
+    # from the _quiet_sinks silence. Going internal, do it without any
+    # sink writes (each one draws the volume OSD): the speaker sink
+    # keeps the user volume at all times, the migration burst lands on
+    # the parked amps, and the audible fade is the amp attenuation
+    # ramping back to full.
+    (
+        local a f s v def cur target
+        target=$(get_setting audio.volume)
+        [ -n "${target}" ] || target=50
+        if [ "$1" = "external" ]; then
+            sleep 1
+        else
+            sleep 0.5
+        fi
+        if [ "$1" = "external" ]; then
+            def=$(_ensure_default_sink external)
+            # Video-only external output (micro HDMI on the AYN Odin 2):
+            # audio never left the speakers, so unpark their amps.
+            if [ -n "${def}" ] && [ "${def}" != "$(_pick_sink "DisplayPort|HDMI")" ]; then
+                _set_amp_volume 0
+            fi
+            for f in 0.15 0.3 0.5 0.7 0.85 1.0; do
+                v=$(awk "BEGIN { printf \"%.2f\", ${target} / 100 * ${f} }")
+                [ -n "${def}" ] || def=$(_ensure_default_sink external)
+                [ -n "${def}" ] || continue
+                timeout 2 wpctl set-mute "${def}" 0 2>/dev/null
+                timeout 2 wpctl set-volume "${def}" "${v}" 2>/dev/null
+                sleep 0.15
+            done
+            # Pre-store the speaker volume while it is not the default:
+            # no OSD is drawn, and the sink born on the next unplug
+            # starts at the user volume instead of a stale store value.
+            s=$(_pick_sink "Speaker")
+            [ -n "${s}" ] && [ "${s}" != "${def}" ] && \
+                timeout 2 wpctl set-volume "${s}" \
+                    "$(awk "BEGIN { printf \"%.2f\", ${target} / 100 }")" 2>/dev/null
+        else
+            def=$(_ensure_default_sink internal)
+            # Repair the speaker sink only if it drifted; a matching
+            # value means zero writes and no OSD.
+            if [ -n "${def}" ]; then
+                cur=$(timeout 2 wpctl get-volume "${def}" 2>/dev/null)
+                case "${cur}" in *MUTED*) timeout 2 wpctl set-mute "${def}" 0 2>/dev/null ;; esac
+                cur=$(echo "${cur}" | awk '{ printf "%d", $2 * 100 }')
+                [ "${cur}" = "${target}" ] || \
+                    timeout 2 wpctl set-volume "${def}" \
+                        "$(awk "BEGIN { printf \"%.2f\", ${target} / 100 }")" 2>/dev/null
+            fi
+            # The amp applies its own internal fade (Fade Step register), so
+            # this is one write and not a shell-side ramp, which produced
+            # audible sound/stop/sound gaps.
+            #
+            # Asserted until it sticks: _switch_audio above re-selects the card
+            # profile, which re-initialises the codec and puts these registers
+            # back to their silent 1023 default. That can land after this point,
+            # and a single write then loses the race and leaves the speakers
+            # mute with everything else looking healthy.
+            for a in 1 2 3 4 5; do
+                _set_amp_volume 0
+                sleep 0.4
+                cur=$(timeout 2 amixer -c 0 cget name="SPK_L PCM Playback Volume" 2>/dev/null \
+                      | awk -F= '/: values/ { print $2 }')
+                [ "${cur}" = "0" ] && break
+            done
+        fi
+    ) </dev/null >/dev/null 2>&1 &
 }
 
 _apply() {
     local state="internal"
-    [ -n "$(_get_active_externals)" ] && state="external"
-    [ "$_LAST_STATE" = "$state" ] && return
-    local prev="$_LAST_STATE"
-    _LAST_STATE="$state"
+    local ext_out
+    ext_out=$(_get_present_externals | head -1)
+    [ -n "$ext_out" ] && state="external"
+
+    _get_external_settings
+    local sig="${state}|${EXT_MODE}"
+    [ "$_LAST_SIG" = "$sig" ] && return
+    local prev="${_LAST_SIG%%|*}"
+    _LAST_SIG="$sig"
+
+    # Going external: silence the sinks so the flip is quiet and the
+    # TV fades in from zero. Going internal the sinks stay untouched
+    # (writes would draw the volume OSD); the parked amps keep the
+    # speakers silent instead.
+    [ "$prev" != "init" ] && [ "$prev" != "$state" ] \
+        && [ "$state" = "external" ] && _quiet_sinks
 
     if [ "$state" = "external" ]; then
-        local ext_out
-        ext_out=$(_get_active_externals | head -1)
+        # sway may have left the output disabled; turn it on first.
+        wlr-randr --output "$ext_out" --on 2>/dev/null
         while IFS= read -r out; do
             wlr-randr --output "$out" --off 2>/dev/null
         done < <(_get_all_internals)
-        if [ -n "$ext_out" ]; then
-            wlr-randr --output "$ext_out" --mode 1920x1080@60 2>/dev/null \
-                || wlr-randr --output "$ext_out" --mode 1920x1080 2>/dev/null || true
-            swaymsg "[app_id=\"emulationstation\"] move output ${ext_out}" 2>/dev/null || true
+        local mode="${EXT_MODE}"
+        if [ "$mode" != "auto" ]; then
+            wlr-randr --output "$ext_out" --mode "$mode" 2>/dev/null || mode="auto"
         fi
+        if [ "$mode" = "auto" ]; then
+            # 60 Hz only. Falling back to 1920x1080 at any refresh let a dock's
+            # own EDID put the output at 100 or 144 Hz, which is not what auto
+            # should mean here. If the sink offers no 60 Hz mode at all, leave it
+            # on its preferred one rather than guessing.
+            wlr-randr --output "$ext_out" --mode 1920x1080@60 2>/dev/null \
+                || wlr-randr --output "$ext_out" --mode 1280x720@60 2>/dev/null || true
+        fi
+        swaymsg "[app_id=\"emulationstation\"] move output ${ext_out}" 2>/dev/null || true
         # Stop USB gadget: its data lanes conflict with DP Alt Mode on RK3576
         systemctl is-active --quiet usbgadget && systemctl stop usbgadget
-        _switch_audio external
+        if [ "$prev" != "external" ]; then
+            # Park the speaker amps right away: they are not in use
+            # while docked, and the migration burst of the next unplug
+            # must land on silent hardware.
+            _set_amp_volume 1023
+            _switch_audio external
+            _restore_volume external
+        fi
     else
         # Only re-enable internal panels on actual disconnect, not first-boot
-        if [ "$prev" != "init" ]; then
+        if [ "$prev" = "external" ]; then
             while IFS= read -r out; do
-                wlr-randr --output "$out" --preferred --on 2>/dev/null
+                _enable_internal "$out"
             done < <(_get_all_internals)
             _switch_audio internal
+            _restore_volume internal
         fi
     fi
-
-
 }
 
 # Allow sway to finish initialising outputs before first check
