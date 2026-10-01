@@ -1,0 +1,32 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026 ROCKNIX (https://github.com/ROCKNIX)
+
+# Restore the USB role saved by the pre hook's suspend-time toggle, but only
+# when the same Type-C partners are attached as at suspend. A cable plugged or
+# pulled while asleep is resolved by ucsi at resume, and writing the old role
+# back would override that: a data role left set with nothing attached after
+# an unplug, or "none" written over a dock plugged in while asleep.
+
+partners() {
+  for p in /sys/class/typec/*-partner; do
+    [ -e "$p" ] && echo "${p##*/}"
+  done
+}
+
+RESTORE=1
+if [ -f /run/.usb-partners ] && [ "$(partners)" != "$(cat /run/.usb-partners)" ]; then
+  RESTORE=0
+  echo "sleep: usb partner changed while asleep; leaving the role to ucsi" > /dev/kmsg
+fi
+rm -f /run/.usb-partners
+
+for r in /sys/class/usb_role/*-role-switch/role; do
+  [ -f "$r" ] || continue
+  s="/run/.usb-role.$(basename "$(dirname "$r")")"
+  if [ -f "$s" ]; then
+    [ "${RESTORE}" = "1" ] && echo "$(cat "$s")" > "$r" 2>/dev/null
+    rm -f "$s"
+  fi
+done
+exit 0

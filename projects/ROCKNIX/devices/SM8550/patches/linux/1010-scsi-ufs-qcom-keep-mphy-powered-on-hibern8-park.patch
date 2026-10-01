@@ -1,0 +1,80 @@
+From: jaewun <jaewun@users.noreply.github.com>
+Subject: [PATCH] scsi: ufs: qcom: keep M-PHY powered across hibern8 parking on no_phy_retention
+
+The SM8550 qcom host is flagged no_phy_retention: phy_power_off() can drop
+calibrated M-PHY state, and recalibration is done by full link startup through
+ufs_qcom_power_up_sequence().
+
+ufs_qcom_setup_clocks(on=false) is also used for SW clk-gating and runtime PM
+cases where the UFS link is only parked in HIBERN8. The matching resume path
+issues DME_HIBERNATE_EXIT, which assumes retained PHY state rather than running
+a full link startup.
+
+On no_phy_retention hosts, keep the PHY powered when the link is merely parked
+in HIBERN8: skip phy_power_off() on the way down and the matching phy_power_on()
+on the way up. True LINK_OFF system suspend is unchanged and still powers the
+PHY off before recalibrating on resume.
+
+Signed-off-by: jaewun <jaewun@users.noreply.github.com>
+
+--- a/drivers/ufs/host/ufs-qcom.c
++++ b/drivers/ufs/host/ufs-qcom.c
+@@ -1253,7 +1253,9 @@
+ 				 enum ufs_notify_change_status status)
+ {
+ 	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
++	const struct ufs_qcom_drvdata *drvdata;
+ 	struct phy *phy;
++	bool keep_phy;
+ 	int err;
+ 
+ 	/*
+@@ -1264,7 +1266,16 @@
+ 	if (!host)
+ 		return 0;
+ 
++	drvdata = of_device_get_match_data(hba->dev);
+ 	phy = host->generic_phy;
++
++	/*
++	 * no_phy_retention hosts can lose calibrated M-PHY state on phy_power_off().
++	 * Keep the PHY powered when the link is only parked in HIBERN8; true
++	 * LINK_OFF still powers the PHY off and recalibrates on resume.
++	 */
++	keep_phy = drvdata && drvdata->no_phy_retention &&
++		   ufs_qcom_is_link_hibern8(hba);
+ 
+ 	switch (status) {
+ 	case PRE_CHANGE:
+@@ -1283,19 +1294,23 @@
+ 				ufs_qcom_dev_ref_clk_ctrl(host, false);
+ 			}
+ 
+-			err = phy_power_off(phy);
+-			if (err) {
+-				dev_err(hba->dev, "phy power off failed, ret=%d\n", err);
+-				return err;
++			if (!keep_phy) {
++				err = phy_power_off(phy);
++				if (err) {
++					dev_err(hba->dev, "phy power off failed, ret=%d\n", err);
++					return err;
++				}
+ 			}
+ 		}
+ 		break;
+ 	case POST_CHANGE:
+ 		if (on) {
+-			err = phy_power_on(phy);
+-			if (err) {
+-				dev_err(hba->dev, "phy power on failed, ret = %d\n", err);
+-				return err;
++			if (!keep_phy) {
++				err = phy_power_on(phy);
++				if (err) {
++					dev_err(hba->dev, "phy power on failed, ret = %d\n", err);
++					return err;
++				}
+ 			}
+ 
+ 			/* enable the device ref clock for HS mode*/

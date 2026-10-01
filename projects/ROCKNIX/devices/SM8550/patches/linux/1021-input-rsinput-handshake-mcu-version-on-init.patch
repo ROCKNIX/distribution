@@ -1,0 +1,236 @@
+From: jaewun <jaewun@users.noreply.github.com>
+Subject: [PATCH] input: rsinput: handshake the MCU version before params on init
+
+After a system resume the gamepad MCU is re-powered and rsinput_init_commands()
+sent the version request and the framed-report-mode params command after fixed
+msleep() delays. The MCU's post-power boot time varies, so on an unlucky resume
+the params command was sent before the MCU was ready, was lost, and the MCU stayed
+in its default free-running stream -> rsinput RX buffer overflows and the gamepad
+is dead until another suspend/resume happens to land the init in a ready window.
+
+Replace the blind delay with a handshake: send the version request, wait for the
+MCU's version reply (delivered async via the serdev rx callback) before sending
+the params command, and retry the power/reset/version sequence up to 3 times.
+If the MCU never acks, return -ETIMEDOUT rather than sending params blindly.
+
+The MCU does not echo the request's sequence byte in its version reply, so the
+rx handler must not match on it -- doing so rejects every valid reply and the
+handshake always times out. Instead a single version_ack_pending window flag,
+armed (smp_wmb) before each request and observed (smp_rmb) by the rx callback,
+gates the completion: any version reply that arrives while the window is open
+satisfies the wait, while a version frame outside a handshake is ignored. The
+MCU answers a version request once and quickly, and an attempt only retries when
+the MCU is unresponsive (so there is no reply to be stale), making the window
+guard sufficient. Shared by probe() and resume(); probe's happy path is unchanged.
+
+Signed-off-by: jaewun <jaewun@users.noreply.github.com>
+---
+--- a/drivers/input/joystick/rsinput.c
++++ b/drivers/input/joystick/rsinput.c
+@@ -6,9 +6,11 @@
+  *
+  */
+ 
++#include <linux/completion.h>
+ #include <linux/errno.h>
+ #include <linux/gpio/consumer.h>
+ #include <linux/init.h>
++#include <linux/jiffies.h>
+ #include <linux/input.h>
+ #include <linux/kernel.h>
+ #include <linux/module.h>
+@@ -124,6 +126,18 @@
+ 
+ #define MCU_VERSION_MAX_LEN       64
+ 
++/*
++ * MCU power-on handshake tuning. After the enable rail is raised the MCU
++ * firmware needs a variable amount of time to boot before it can parse
++ * commands. Rather than blindly sleeping, we send a version request and wait
++ * for the asynchronous version reply before sending the parameter command that
++ * selects framed-report mode. Each attempt waits up to MCU_VERSION_ACK_TIMEOUT
++ * for the reply; if the MCU is slow to boot or missed the request we redo the
++ * reset/power/version sequence up to MCU_INIT_MAX_ATTEMPTS times.
++ */
++#define MCU_VERSION_ACK_TIMEOUT_MS  500
++#define MCU_INIT_MAX_ATTEMPTS       3
++
+ struct rsinput_driver {
+     struct serdev_device *serdev;
+     struct input_dev *input;
+@@ -138,6 +152,15 @@
+     bool invert_ry;
+     uint8_t rx_buf[1024];
+     uint8_t sequence_number;
++    struct completion version_ack;
++    /*
++     * Flag marking the window during which a version reply should satisfy
++     * version_ack. It is written only from the single-threaded init path
++     * (probe/resume), published before the request is sent, and read from the
++     * serdev rx callback so that an unsolicited version frame arriving outside a
++     * handshake cannot falsely complete the wait.
++     */
++    bool version_ack_pending;
+ };
+ 
+ static bool rumble_enable = true;
+@@ -170,6 +193,7 @@
+     frame[frame_len++] = FRAME_HEAD_3;
+     frame[frame_len++] = FRAME_HEAD_4;
+ 
++    /* Stamp the current sequence number into the frame, then advance it. */
+     frame[frame_len++] = drv->sequence_number;
+     drv->sequence_number++;
+ 
+@@ -189,9 +213,13 @@
+     return serdev_device_write_buf(drv->serdev, frame, frame_len);
+ }
+ 
+-static int rsinput_init_commands(struct rsinput_driver *drv) {
+-    int error;
+-
++/*
++ * Drive the reset/enable GPIOs to power-cycle the MCU and bring it out of
++ * reset. The fixed delays here only bound the GPIO/rail settling, not the MCU
++ * firmware boot time -- readiness is established afterwards by the version
++ * handshake, not by a blind sleep.
++ */
++static void rsinput_power_on_mcu(struct rsinput_driver *drv) {
+     if (drv->boot_gpio)
+         gpiod_set_value_cansleep(drv->boot_gpio, 0);
+ 
+@@ -205,22 +233,87 @@
+ 
+     if (drv->reset_gpio)
+         gpiod_set_value_cansleep(drv->reset_gpio, 1);
++}
+ 
+-    msleep(100);
+-    uint8_t version_request[] = {DATA_COMMOD_VERSION};
+-    error = rsinput_send_command(drv, CMD_COMMOD, version_request, sizeof(version_request));
+-    if (error < 0) {
+-        dev_err(&drv->serdev->dev, "Failed to request MCU version: %d\n", error);
+-        return error;
+-    }
+-
+-    msleep(100);
+-    uint8_t mcu_params[] = {
++static int rsinput_init_commands(struct rsinput_driver *drv) {
++    static const uint8_t version_request[] = {DATA_COMMOD_VERSION};
++    static const uint8_t mcu_params[] = {
+         DATA_COMMOD_SET_PAR,
+         0x01,
+         0x00, 0x00, 0x00, 0x28,
+         0x00, 0x00, 0x00, 0x07
+     };
++    unsigned long timeout = msecs_to_jiffies(MCU_VERSION_ACK_TIMEOUT_MS);
++    int attempt;
++    int error;
++
++    /*
++     * The MCU's post-power boot time varies. Power it up, ask for its version,
++     * and only proceed to the parameter command (which selects framed-report
++     * mode) once *this attempt's* version reply has actually arrived. If the
++     * reply does not come in time the MCU may still be booting or may have
++     * missed the request, so power-cycle and try again. Without this handshake
++     * a blind sleep can lose the params command on an unlucky boot, leaving the
++     * MCU in its default free-running stream and overflowing the RX buffer.
++     *
++     * version_ack_pending marks the window in which a version reply counts as
++     * the ack. The MCU answers a version request once and quickly (well within
++     * the wait), and an attempt only retries when the MCU is genuinely
++     * unresponsive -- in which case there is no reply to be stale -- so any
++     * version reply seen while the window is open proves the MCU is up, which is
++     * exactly the readiness we need before sending params. We therefore accept
++     * any in-window reply rather than matching its sequence byte: the MCU does
++     * not echo the request's sequence in its version reply, so a seq match would
++     * reject every valid reply.
++     */
++    for (attempt = 1; attempt <= MCU_INIT_MAX_ATTEMPTS; attempt++) {
++        rsinput_power_on_mcu(drv);
++
++        /*
++         * Arm the ack window before sending the request so a fast reply that
++         * lands between the write and the wait is not missed:
++         *  1. reinit_completion() clears any leftover completion from an
++         *     earlier attempt or a stray complete().
++         *  2. Mark the window open so the rx callback knows a version reply is
++         *     now expected.
++         *  3. Order the store ahead of the write (and thus ahead of any reply
++         *     the rx callback could observe) with smp_wmb(); the rx callback
++         *     pairs this with smp_rmb() before reading the flag.
++         * The MCU cannot emit a reply until it has received the request, which
++         * is strictly after the write below, so the open window is always
++         * visible by the time a reply can exist.
++         */
++        reinit_completion(&drv->version_ack);
++        drv->version_ack_pending = true;
++        smp_wmb();
++
++        error = rsinput_send_command(drv, CMD_COMMOD, version_request,
++                                     sizeof(version_request));
++        if (error < 0) {
++            drv->version_ack_pending = false;
++            dev_err(&drv->serdev->dev,
++                    "Failed to request MCU version: %d\n", error);
++            return error;
++        }
++
++        if (wait_for_completion_timeout(&drv->version_ack, timeout)) {
++            drv->version_ack_pending = false;
++            break;
++        }
++
++        /* Close the window so a now-stale reply is rejected before the retry. */
++        drv->version_ack_pending = false;
++        dev_warn(&drv->serdev->dev,
++                 "MCU version handshake timed out (attempt %d/%d)\n",
++                 attempt, MCU_INIT_MAX_ATTEMPTS);
++    }
++
++    if (attempt > MCU_INIT_MAX_ATTEMPTS) {
++        dev_err(&drv->serdev->dev,
++                "MCU did not acknowledge version request; not sending params\n");
++        return -ETIMEDOUT;
++    }
++
+     error = rsinput_send_command(drv, CMD_COMMOD, mcu_params, sizeof(mcu_params));
+     if (error < 0) {
+         dev_err(&drv->serdev->dev, "Failed to set MCU parameters: %d\n", error);
+@@ -245,6 +338,27 @@
+             } else {
+                 dev_err(&drv->serdev->dev, "Invalid MCU version response length\n");
+             }
++            /*
++             * Complete version_ack only if the init path currently has the ack
++             * window open. The MCU does not echo the request's sequence byte in
++             * its version reply, so we cannot match on it; instead the window
++             * guard alone rejects an unsolicited version frame that arrives
++             * outside a handshake. Any version reply seen while the window is
++             * open proves the MCU is up, which is exactly what the init path
++             * needs before sending params. smp_rmb() pairs with the smp_wmb() in
++             * rsinput_init_commands() so the pending flag is observed
++             * consistently. complete() is irq-safe, and a spurious extra
++             * completion is harmless because reinit_completion() resets the
++             * count before each request.
++             */
++            smp_rmb();
++            if (READ_ONCE(drv->version_ack_pending)) {
++                complete(&drv->version_ack);
++            } else {
++                dev_dbg(&drv->serdev->dev,
++                        "Ignoring unsolicited MCU version reply (seq 0x%02x)\n",
++                        data[FRAME_POS_SEQ]);
++            }
+             break;
+         case DATA_COMMOD_SET_PAR:
+             dev_info(&drv->serdev->dev, "MCU parameters set successfully\n");
+@@ -458,6 +572,8 @@
+     if (!drv)
+     return -ENOMEM;
+ 
++    init_completion(&drv->version_ack);
++
+     drv->invert_x = device_property_present(&serdev->dev, "invert-x");
+     drv->invert_y = device_property_present(&serdev->dev, "invert-y");
+     drv->invert_rx = device_property_present(&serdev->dev, "invert-rx");
