@@ -188,16 +188,21 @@ steam_launch_bigpicture() {
     force_orientation="left"
   fi
 
-  # The DPU inline rotator caps the pre-rotation source at 1088 lines, but the plane advertises
-  # ROTATE_90 as a static capability it cannot qualify per mode. On a rotated panel wider than
-  # that (1440x2560) gamescope keeps scanout rotation, every atomic commit is rejected and the
-  # panel stays black. Render the session at 1080p instead and let the same plane upscale it back
-  # to the mode. The flag only exists in our patched gamescope (patches/0008), and gamescope
-  # exits on an unknown argument, so it must be dropped here if that patch ever goes away.
-  local rotate_clamp=""
-  if [[ "${TRANSFORM}" = "90" || "${TRANSFORM}" = "270" ]] && [ "${W}" -gt 1088 ]; then
-    rotate_clamp="--rotated-output-max-height 1080"
+  # The DPU inline rotator caps the pre-rotation source at DEVICE_PLANE_ROTATION lines,
+  # but the plane advertises ROTATE_90 as a static capability it cannot qualify per mode. On a
+  # rotated panel wider than that, gamescope keeps scanout rotation, every atomic commit is rejected
+  # and the panel stays black.
+  local rotate_flags=""
+  local rotate_max=$(plane_rotation_max_height)
+  if ! plane_rotation; then
+    rotate_flags="--force-composition-rotation"
+  elif ! plane_rotates "${TRANSFORM}" "${W}"; then
+    [ "${rotate_max}" -gt 1080 ] && rotate_max=1080
+    rotate_flags="--rotated-output-max-height ${rotate_max}"
   fi
+
+  # A blit rotates what the plane can't, and everything without plane rotation.
+  [ "${DEVICE_PRE_ROTATION}" = "true" ] && export GAMESCOPE_COMPOSITE_BLIT=1
 
   if [[ "$1" == *.desktop && -f "$1" && "$(basename "$1")" != "Steam.desktop" ]]; then
     local exec_line
@@ -205,21 +210,13 @@ steam_launch_bigpicture() {
     game_uri="${exec_line#steam } -silent"
   fi
 
-  # SM4450 Steam UI requires wayland gamescope backend
-  local gamescope_backend="drm"
-  if [[ "${HW_DEVICE}" == "SM4450" ]]; then
-    gamescope_backend="wayland"
-  fi
-
   mkdir -p "$(dirname "$gamescope_mode_file")"
   touch "$gamescope_mode_file"
   unset MESA_LOADER_DRIVER_OVERRIDE
 
-  # drm gamescope backend needs wayland socket unset and compositer stopped
-  if [ "${gamescope_backend}" = "drm" ]; then
-    unset WAYLAND_DISPLAY
-    systemctl stop sway
-  fi
+  # drm gamescope backend needs wayland socket unset and compositor stopped
+  unset WAYLAND_DISPLAY
+  systemctl stop sway
 
   if [ "${STEAM_FLAVOR}" = "arm64" ]; then
     export STEAM_COMPAT_GRAPHICS_PROVIDER=/storage/.local/share/fex-emu/RootFS/ArchLinux/graphics_provider.json
@@ -230,7 +227,7 @@ steam_launch_bigpicture() {
       rm -f "${steam_exit_code_file}"
       GAMESCOPE_MODE_SAVE_FILE="${gamescope_mode_file}" GAMESCOPE_FAKE_OUTPUT_MM=508x286 \
       LD_LIBRARY_PATH=/storage/.local/share/Steam/lib/aarch64-linux-gnu/ ${EMUPERF} \
-      gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --mangoapp --backend "${gamescope_backend}" --force-orientation "${force_orientation}" ${rotate_clamp} -e -- \
+      gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --mangoapp --backend drm --force-orientation "${force_orientation}" ${rotate_flags} -e -- \
       /bin/bash -c '
         exit_file="$1"
         shift
@@ -256,7 +253,7 @@ steam_launch_bigpicture() {
     steam_touch_calibration_begin "${force_orientation}"
     trap steam_touch_calibration_end EXIT
     GAMESCOPE_MODE_SAVE_FILE="${gamescope_mode_file}" GAMESCOPE_FAKE_OUTPUT_MM=508x286 ${EMUPERF} \
-      gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --backend "${gamescope_backend}" --force-orientation "${force_orientation}" ${rotate_clamp} -- \
+      gamescope $PREFER_OUTPUT -W "$W" -H "$H" -r "$REFRESH_HZ" --xwayland-count 2 --backend drm --force-orientation "${force_orientation}" ${rotate_flags} -- \
       FEX /usr/bin/steam -nobigpicture -noverifyfiles -nobootstrapupdate -skipinitialbootstrap -norepairfiles -noshaders ${game_uri:+"$game_uri"}
     steam_touch_calibration_end
     trap - EXIT

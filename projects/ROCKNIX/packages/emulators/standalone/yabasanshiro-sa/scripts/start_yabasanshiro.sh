@@ -95,6 +95,16 @@ then
   cp -f ${SOURCE_DIR}/.config "${CONFIG_DIR}/${GAME}.config"
 fi
 
+# The game's config overrides, so set the resolution there (3 = original, 2 = 2x, 1 = 4x)
+IRES=$(scanout_internal_scale "$(get_setting internal_resolution "${PLATFORM}" "${GAME}")" 224 1 4)
+case "${IRES}" in
+  4) RES=1 ;;
+  2|3) RES=2; IRES=2 ;;
+  *) RES=3; IRES=1 ;;
+esac
+sed -i "s/\"Resolution\": *[0-9]*/\"Resolution\": ${RES}/" "${CONFIG_DIR}/${GAME}.config"
+scanout_render_size 224 "${IRES}" 4:3
+
 #Set the cores to use
 CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
 if [ "${CORES}" = "little" ]
@@ -108,5 +118,5 @@ else
   unset EMUPERF
 fi
 
-echo "Command: yabasanshiro -r 2 -i "${1}" ${BIOS}" >>/var/log/exec.log 2>&1
-${EMUPERF} yabasanshiro -r 2 -i "${1}" ${BIOS} >>/var/log/exec.log 2>&1 ||:
+echo "Command: yabasanshiro -r ${RES} -i "${1}" ${BIOS}" >>/var/log/exec.log 2>&1
+${EMUPERF} yabasanshiro -r ${RES} -i "${1}" ${BIOS} >>/var/log/exec.log 2>&1 ||:

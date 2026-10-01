@@ -1,0 +1,1293 @@
+From 43303da8bc6945fb3e0af47b4b03f5c862b9e1e9 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Thu, 10 Sep 2026 12:10:02 -0700
+Subject: [PATCH] rendervulkan: add a fragment shader composite path
+
+With --composite-graphics or GAMESCOPE_COMPOSITE_GRAPHICS=1 the output
+is written by a fullscreen fragment pass instead of a compute dispatch.
+The blit, RCAS, blur and conditional blur passes get fragment variants.
+The upscaler passes before them stay on compute.
+
+The output images then drop STORAGE usage and become colour attachments.
+turnip refuses UBWC for storage images before a7xx, so this is what lets
+the scanned-out buffer stay compressed. The shaders map each output
+pixel back to its scene coordinate, and on a tiler that makes rotating
+to the panel free.
+
+If the blit pipeline can't be built for the output formats, compositing
+falls back to compute. Screenshots and the upscale cache stay on
+compute, and the composite debug markers are off on this path because
+they need image stores.
+---
+ src/main.cpp                            |   8 +
+ src/main.hpp                            |   1 +
+ src/meson.build                         |   5 +
+ src/rendervulkan.cpp                    | 514 +++++++++++++++++++++---
+ src/rendervulkan.hpp                    |  66 +++
+ src/shaders/blit_push_data.h            |   1 +
+ src/shaders/composite.h                 |  15 +
+ src/shaders/cs_composite_rcas.comp      |   1 +
+ src/shaders/descriptor_set.h            |   2 +
+ src/shaders/fs_composite_blit.frag      |  39 ++
+ src/shaders/fs_composite_blur.frag      |  42 ++
+ src/shaders/fs_composite_blur_cond.frag |  59 +++
+ src/shaders/fs_composite_rcas.frag      |  95 +++++
+ src/shaders/fullscreen_tri.vert         |   6 +
+ 14 files changed, 793 insertions(+), 61 deletions(-)
+ create mode 100644 src/shaders/fs_composite_blit.frag
+ create mode 100644 src/shaders/fs_composite_blur.frag
+ create mode 100644 src/shaders/fs_composite_blur_cond.frag
+ create mode 100644 src/shaders/fs_composite_rcas.frag
+ create mode 100644 src/shaders/fullscreen_tri.vert
+
+diff --git a/src/main.cpp b/src/main.cpp
+index 51b430c..9202e8d 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -137,6 +137,7 @@ const struct option *gamescope_options = (struct option[]){
+ 	{ "composite-debug", no_argument, nullptr, 0 },
+ 	{ "disable-xres", no_argument, nullptr, 'x' },
+ 	{ "fade-out-duration", required_argument, nullptr, 0 },
++	{ "composite-graphics", no_argument, nullptr, 0 },
+ 	{ "force-composition-rotation", no_argument, nullptr, 0 },
+ 	{ "force-orientation", required_argument, nullptr, 0 },
+ 	{ "rotated-output-max-height", required_argument, nullptr, 0 },
+@@ -205,6 +206,7 @@ const char usage[] =
+ 	"  -e, --steam                    enable Steam integration\n"
+ 	"  --xwayland-count               create N xwayland servers\n"
+ 	"  --prefer-vk-device             prefer Vulkan device for compositing (ex: 1002:7300)\n"
++	"  --composite-graphics           composite with a fragment pass instead of compute (better on tiling GPUs)\n"
+ 	"  --force-composition-rotation   always rotate the output in the compositor instead of at scanout (autodetected otherwise)\n"
+ 	"  --force-orientation            rotate the internal display (left, right, normal, upsidedown)\n"
+ 	"  --rotated-output-max-height    when scanning out a rotated panel, clamp the logical output to N lines\n"
+@@ -377,6 +379,7 @@ static gamescope::GamescopeModeGeneration parse_gamescope_mode_generation( const
+ bool g_bForceCompositionRotation = false;
+ uint32_t g_uOutputRotation = 0;
+ uint32_t g_nRotatedOutputMaxHeight = 0;
++bool g_bCompositeGraphics = false;
+ 
+ GamescopePanelOrientation g_DesiredInternalOrientation = GAMESCOPE_PANEL_ORIENTATION_AUTO;
+ static GamescopePanelOrientation force_orientation(const char *str)
+@@ -827,6 +830,8 @@ int main(int argc, char **argv)
+ 					g_eGamescopeModeGeneration = parse_gamescope_mode_generation( optarg );
+ 				} else if (strcmp(opt_name, "force-composition-rotation") == 0) {
+ 					g_bForceCompositionRotation = true;
++				} else if (strcmp(opt_name, "composite-graphics") == 0) {
++					g_bCompositeGraphics = true;
+ 				} else if (strcmp(opt_name, "force-orientation") == 0) {
+ 					g_DesiredInternalOrientation = force_orientation( optarg );
+ 				} else if (strcmp(opt_name, "rotated-output-max-height") == 0) {
+@@ -892,6 +897,9 @@ int main(int argc, char **argv)
+ 	// Print this after the re-exec, so we only announce ourselves once.
+ 	gamescope::PrintVersion();
+ 
++	if ( const char *pszCompositeGraphics = getenv( "GAMESCOPE_COMPOSITE_GRAPHICS" ) )
++		g_bCompositeGraphics = atoi( pszCompositeGraphics ) != 0;
++
+ 	if ( gamescope::Process::HasCapSysNice() )
+ 	{
+ 		gamescope::Process::SetNice( -20 );
+diff --git a/src/main.hpp b/src/main.hpp
+index 96e8515..f049f22 100644
+--- a/src/main.hpp
++++ b/src/main.hpp
+@@ -25,6 +25,7 @@ extern bool g_bForceInternal;
+ extern bool g_bForceCompositionRotation;
+ extern uint32_t g_uOutputRotation;
+ extern uint32_t g_nRotatedOutputMaxHeight;
++extern bool g_bCompositeGraphics;
+ 
+ extern bool g_bFullscreen;
+ 
+diff --git a/src/meson.build b/src/meson.build
+index 4d59441..c07284c 100644
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -70,6 +70,11 @@ shader_src = [
+   'shaders/cs_gsr.comp',
+   'shaders/cs_nis_fp16.comp',
+   'shaders/cs_rgb_to_nv12.comp',
++  'shaders/fs_composite_blit.frag',
++  'shaders/fs_composite_blur.frag',
++  'shaders/fs_composite_blur_cond.frag',
++  'shaders/fs_composite_rcas.frag',
++  'shaders/fullscreen_tri.vert',
+ ]
+ 
+ spirv_shaders = glsl_generator.process(shader_src)
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+index fcd0973..a498bcc 100644
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -48,6 +48,11 @@
+ #include "cs_gsr.h"
+ #include "cs_nis_fp16.h"
+ #include "cs_rgb_to_nv12.h"
++#include "fs_composite_blit.h"
++#include "fs_composite_blur.h"
++#include "fs_composite_blur_cond.h"
++#include "fs_composite_rcas.h"
++#include "fullscreen_tri.h"
+ 
+ #define A_CPU
+ #include "shaders/ffx_a.h"
+@@ -790,7 +795,7 @@ bool CVulkanDevice::createLayouts()
+ 			.binding = 0,
+ 			.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+ 			.descriptorCount = 1,
+-			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
++			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+ 		},
+ 		VkDescriptorSetLayoutBinding {
+ 			.binding = 1,
+@@ -808,26 +813,26 @@ bool CVulkanDevice::createLayouts()
+ 			.binding = 3,
+ 			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+ 			.descriptorCount = VKR_SAMPLER_SLOTS,
+-			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
++			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+ 		},
+ 		VkDescriptorSetLayoutBinding {
+ 			.binding = 4,
+ 			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+ 			.descriptorCount = VKR_SAMPLER_SLOTS,
+-			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
++			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+ 			.pImmutableSamplers = ycbcrSamplers.data(),
+ 		},
+ 		VkDescriptorSetLayoutBinding {
+ 			.binding = 5,
+ 			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+ 			.descriptorCount = VKR_LUT3D_COUNT,
+-			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
++			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+ 		},
+ 		VkDescriptorSetLayoutBinding {
+ 			.binding = 6,
+ 			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+ 			.descriptorCount = VKR_LUT3D_COUNT,
+-			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
++			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+ 		},
+ 	};
+ 
+@@ -985,6 +990,30 @@ bool CVulkanDevice::createShaders()
+ 		}
+ 	}
+ 
++	const std::array<std::pair<ShaderInfo_t, VkShaderModule *>, 5> gfxShaders = {{
++		{ { fullscreen_tri, sizeof(fullscreen_tri) }, &m_vsFullscreenModule },
++		{ { fs_composite_blit, sizeof(fs_composite_blit) }, &m_gfxShaderModules[GFX_SHADER_TYPE_BLIT] },
++		{ { fs_composite_rcas, sizeof(fs_composite_rcas) }, &m_gfxShaderModules[GFX_SHADER_TYPE_RCAS] },
++		{ { fs_composite_blur, sizeof(fs_composite_blur) }, &m_gfxShaderModules[GFX_SHADER_TYPE_BLUR] },
++		{ { fs_composite_blur_cond, sizeof(fs_composite_blur_cond) }, &m_gfxShaderModules[GFX_SHADER_TYPE_BLUR_COND] },
++	}};
++
++	for (auto& [info, pModule] : gfxShaders)
++	{
++		VkShaderModuleCreateInfo shaderCreateInfo = {
++			.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
++			.codeSize = info.size,
++			.pCode = info.spirv,
++		};
++
++		VkResult res = vk.CreateShaderModule(device(), &shaderCreateInfo, nullptr, pModule);
++		if ( res != VK_SUCCESS )
++		{
++			vk_errorf( res, "vkCreateShaderModule failed" );
++			return false;
++		}
++	}
++
+ 	return true;
+ }
+ 
+@@ -1183,6 +1212,198 @@ VkPipeline CVulkanDevice::compilePipeline(uint32_t layerCount, uint32_t ycbcrMas
+ 	return result;
+ }
+ 
++VkPipeline CVulkanDevice::compileGfxPipeline(GfxShaderType type, VkFormat outputFormat, uint32_t layerCount, uint32_t ycbcrMask, uint32_t blur_layer_count, uint32_t composite_debug, uint32_t colorspace_mask, uint32_t output_eotf)
++{
++	const std::array<VkSpecializationMapEntry, 7> specializationEntries = {{
++		{
++			.constantID = 0,
++			.offset     = sizeof(uint32_t) * 0,
++			.size       = sizeof(uint32_t)
++		},
++		{
++			.constantID = 1,
++			.offset     = sizeof(uint32_t) * 1,
++			.size       = sizeof(uint32_t)
++		},
++		{
++			.constantID = 2,
++			.offset     = sizeof(uint32_t) * 2,
++			.size       = sizeof(uint32_t)
++		},
++		{
++			.constantID = 3,
++			.offset     = sizeof(uint32_t) * 3,
++			.size       = sizeof(uint32_t)
++		},
++		{
++			.constantID = 4,
++			.offset     = sizeof(uint32_t) * 4,
++			.size       = sizeof(uint32_t)
++		},
++
++		{
++			.constantID = 5,
++			.offset     = sizeof(uint32_t) * 5,
++			.size       = sizeof(uint32_t)
++		},
++
++		{
++			.constantID = 6,
++			.offset     = sizeof(uint32_t) * 6,
++			.size       = sizeof(uint32_t)
++		},
++	}};
++
++	struct {
++		uint32_t layerCount;
++		uint32_t ycbcrMask;
++		uint32_t debug;
++		uint32_t blur_layer_count;
++		uint32_t colorspace_mask;
++		uint32_t output_eotf;
++		uint32_t itm_enable;
++	} specializationData = {
++		.layerCount   = layerCount,
++		.ycbcrMask    = ycbcrMask,
++		.debug        = composite_debug,
++		.blur_layer_count = blur_layer_count,
++		.colorspace_mask = colorspace_mask,
++		.output_eotf = output_eotf,
++		.itm_enable = false,
++	};
++
++	VkSpecializationInfo specializationInfo = {
++		.mapEntryCount = uint32_t(specializationEntries.size()),
++		.pMapEntries   = specializationEntries.data(),
++		.dataSize      = sizeof(specializationData),
++		.pData		   = &specializationData,
++	};
++
++	const std::array<VkPipelineShaderStageCreateInfo, 2> stages = {{
++		{
++			.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
++			.stage = VK_SHADER_STAGE_VERTEX_BIT,
++			.module = m_vsFullscreenModule,
++			.pName = "main",
++		},
++		{
++			.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
++			.stage = VK_SHADER_STAGE_FRAGMENT_BIT,
++			.module = m_gfxShaderModules[type],
++			.pName = "main",
++			.pSpecializationInfo = &specializationInfo,
++		},
++	}};
++
++	VkPipelineVertexInputStateCreateInfo vertexInput = {
++		.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
++	};
++
++	VkPipelineInputAssemblyStateCreateInfo inputAssembly = {
++		.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
++		.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
++	};
++
++	VkPipelineViewportStateCreateInfo viewportState = {
++		.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
++		.viewportCount = 1,
++		.scissorCount = 1,
++	};
++
++	VkPipelineRasterizationStateCreateInfo rasterization = {
++		.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
++		.polygonMode = VK_POLYGON_MODE_FILL,
++		.cullMode = VK_CULL_MODE_NONE,
++		.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
++		.lineWidth = 1.0f,
++	};
++
++	VkPipelineMultisampleStateCreateInfo multisample = {
++		.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
++		.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
++	};
++
++	// the shader blends the layers itself
++	VkPipelineColorBlendAttachmentState blendAttachment = {
++		.blendEnable = VK_FALSE,
++		.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
++						  VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
++	};
++
++	VkPipelineColorBlendStateCreateInfo colorBlend = {
++		.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
++		.attachmentCount = 1,
++		.pAttachments = &blendAttachment,
++	};
++
++	const std::array<VkDynamicState, 2> dynamicStates = {
++		VK_DYNAMIC_STATE_VIEWPORT,
++		VK_DYNAMIC_STATE_SCISSOR,
++	};
++
++	VkPipelineDynamicStateCreateInfo dynamicState = {
++		.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
++		.dynamicStateCount = uint32_t(dynamicStates.size()),
++		.pDynamicStates = dynamicStates.data(),
++	};
++
++	VkPipelineRenderingCreateInfo renderingCreateInfo = {
++		.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
++		.colorAttachmentCount = 1,
++		.pColorAttachmentFormats = &outputFormat,
++	};
++
++	VkGraphicsPipelineCreateInfo pipelineCreateInfo = {
++		.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
++		.pNext = &renderingCreateInfo,
++		.stageCount = uint32_t(stages.size()),
++		.pStages = stages.data(),
++		.pVertexInputState = &vertexInput,
++		.pInputAssemblyState = &inputAssembly,
++		.pViewportState = &viewportState,
++		.pRasterizationState = &rasterization,
++		.pMultisampleState = &multisample,
++		.pColorBlendState = &colorBlend,
++		.pDynamicState = &dynamicState,
++		.layout = m_pipelineLayout,
++	};
++
++	VkPipeline result;
++
++	VkResult res = vk.CreateGraphicsPipelines(device(), VK_NULL_HANDLE, 1, &pipelineCreateInfo, nullptr, &result);
++	if (res != VK_SUCCESS) {
++		vk_errorf( res, "vkCreateGraphicsPipelines failed" );
++		return VK_NULL_HANDLE;
++	}
++
++	return result;
++}
++
++extern bool g_bSteamIsActiveWindow;
++
++VkPipeline CVulkanDevice::gfxPipeline(GfxShaderType type, VkFormat outputFormat, uint32_t layerCount, uint32_t ycbcrMask, uint32_t blur_layers, uint32_t colorspace_mask, uint32_t output_eotf)
++{
++	uint32_t effective_debug = g_uCompositeDebug;
++	if ( g_bSteamIsActiveWindow )
++		effective_debug &= ~(CompositeDebugFlag::Heatmap | CompositeDebugFlag::Heatmap_MSWCG | CompositeDebugFlag::Heatmap_Hard);
++	// markers use imageStore, which the fragment path doesn't have
++	effective_debug &= ~(CompositeDebugFlag::Markers | CompositeDebugFlag::Markers_Partial);
++
++	std::lock_guard<std::mutex> lock(m_pipelineMutex);
++	GfxPipelineInfo_t key = {type, uint32_t(outputFormat), layerCount, ycbcrMask, blur_layers, effective_debug, colorspace_mask, output_eotf};
++	auto search = m_gfxPipelineMap.find(key);
++	if (search == m_gfxPipelineMap.end())
++	{
++		VkPipeline result = compileGfxPipeline(type, outputFormat, layerCount, ycbcrMask, blur_layers, effective_debug, colorspace_mask, output_eotf);
++		m_gfxPipelineMap[key] = result;
++		return result;
++	}
++	else
++	{
++		return search->second;
++	}
++}
++
+ void CVulkanDevice::compileAllPipelines(std::stop_token st)
+ {
+ 	pthread_setname_np( pthread_self(), "gamescope-shdr" );
+@@ -1641,6 +1862,11 @@ void CVulkanCmdBuffer::bindPipeline(VkPipeline pipeline)
+ 	m_device->vk.CmdBindPipeline(m_cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+ }
+ 
++void CVulkanCmdBuffer::bindGfxPipeline(VkPipeline pipeline)
++{
++	m_device->vk.CmdBindPipeline(m_cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
++}
++
+ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
+ {
+ 	for (auto src : m_boundTextures)
+@@ -1652,6 +1878,71 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
+ 	prepareDestImage(m_target);
+ 	insertBarrier();
+ 
++	VkDescriptorSet descriptorSet = updateDescriptorSet( true );
++
++	m_device->vk.CmdBindDescriptorSets(m_cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_device->pipelineLayout(), 0, 1, &descriptorSet, 0, nullptr);
++
++	m_device->vk.CmdDispatch(m_cmdBuffer, x, y, z);
++
++	markDirty(m_target);
++}
++
++void CVulkanCmdBuffer::draw()
++{
++	for (auto src : m_boundTextures)
++	{
++		if (src)
++			prepareSrcImage(src);
++	}
++	assert(m_target != nullptr);
++	prepareDestImage(m_target);
++	insertBarrier();
++
++	VkDescriptorSet descriptorSet = updateDescriptorSet( false );
++
++	m_device->vk.CmdBindDescriptorSets(m_cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_device->pipelineLayout(), 0, 1, &descriptorSet, 0, nullptr);
++
++	VkRenderingAttachmentInfo colorAttachment = {
++		.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
++		.imageView = m_target->srgbView(),
++		.imageLayout = VK_IMAGE_LAYOUT_GENERAL,
++		.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
++		.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
++	};
++
++	VkRenderingInfo renderingInfo = {
++		.sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
++		.renderArea = { { 0, 0 }, { m_target->width(), m_target->height() } },
++		.layerCount = 1,
++		.colorAttachmentCount = 1,
++		.pColorAttachments = &colorAttachment,
++	};
++
++	VkViewport viewport = {
++		.x = 0.0f,
++		.y = 0.0f,
++		.width = (float)m_target->width(),
++		.height = (float)m_target->height(),
++		.minDepth = 0.0f,
++		.maxDepth = 1.0f,
++	};
++
++	VkRect2D scissor = {
++		.offset = { 0, 0 },
++		.extent = { m_target->width(), m_target->height() },
++	};
++
++	m_device->vk.CmdBeginRendering(m_cmdBuffer, &renderingInfo);
++	m_device->vk.CmdSetViewport(m_cmdBuffer, 0, 1, &viewport);
++	m_device->vk.CmdSetScissor(m_cmdBuffer, 0, 1, &scissor);
++	m_device->vk.CmdDraw(m_cmdBuffer, 3, 1, 0, 0);
++	m_device->vk.CmdEndRendering(m_cmdBuffer);
++
++	markDirty(m_target);
++}
++
++VkDescriptorSet CVulkanCmdBuffer::updateDescriptorSet( bool bStorageTarget )
++{
+ 	VkDescriptorSet descriptorSet = m_device->descriptorSet();
+ 
+ 	std::array<VkWriteDescriptorSet, 7> writeDescriptorSets;
+@@ -1772,27 +2063,27 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
+ 		lut3DDescriptor[i].imageView = m_lut3D[i] ? m_lut3D[i]->srgbView() : VK_NULL_HANDLE;
+ 	}
+ 
+-	if (!m_target->isYcbcr())
++	// the graphics path renders to an attachment, storage descriptors stay null (nullDescriptor)
++	if (bStorageTarget)
+ 	{
+-		targetDescriptors[0].imageView = m_target->srgbView();
+-		targetDescriptors[0].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+-	}
+-	else
+-	{
+-		targetDescriptors[0].imageView = m_target->lumaView();
+-		targetDescriptors[0].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
++		if (!m_target->isYcbcr())
++		{
++			targetDescriptors[0].imageView = m_target->srgbView();
++			targetDescriptors[0].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
++		}
++		else
++		{
++			targetDescriptors[0].imageView = m_target->lumaView();
++			targetDescriptors[0].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+ 
+-		targetDescriptors[1].imageView = m_target->chromaView();
+-		targetDescriptors[1].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
++			targetDescriptors[1].imageView = m_target->chromaView();
++			targetDescriptors[1].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
++		}
+ 	}
+ 
+ 	m_device->vk.UpdateDescriptorSets(m_device->device(), writeDescriptorSets.size(), writeDescriptorSets.data(), 0, nullptr);
+ 
+-	m_device->vk.CmdBindDescriptorSets(m_cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_device->pipelineLayout(), 0, 1, &descriptorSet, 0, nullptr);
+-
+-	m_device->vk.CmdDispatch(m_cmdBuffer, x, y, z);
+-
+-	markDirty(m_target);
++	return descriptorSet;
+ }
+ 
+ void CVulkanCmdBuffer::copyImage(gamescope::Rc<CVulkanTexture> src, gamescope::Rc<CVulkanTexture> dst)
+@@ -3289,9 +3580,23 @@ bool vulkan_remake_swapchain( void )
+ 
+ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
+ {
++	if ( g_bCompositeGraphics )
++	{
++		// check the fragment path first, compute can't write compressed attachment-only images
++		VkFormat outputFmt = DRMFormatToVulkan( pOutput->uOutputFormat, false );
++		VkFormat overlayFmt = pOutput->uOutputFormatOverlay != VK_FORMAT_UNDEFINED ? DRMFormatToVulkan( pOutput->uOutputFormatOverlay, false ) : outputFmt;
++		if ( g_device.gfxPipeline( GFX_SHADER_TYPE_BLIT, outputFmt, 1, 0, 0, 0, EOTF_Gamma22 ) == VK_NULL_HANDLE ||
++			 g_device.gfxPipeline( GFX_SHADER_TYPE_BLIT, overlayFmt, 1, 0, 0, 0, EOTF_Gamma22 ) == VK_NULL_HANDLE )
++		{
++			vk_log.errorf( "composite-graphics: pipeline validation failed, falling back to compute compositing" );
++			g_bCompositeGraphics = false;
++		}
++	}
++
+ 	CVulkanTexture::createFlags outputImageflags;
+ 	outputImageflags.bFlippable = true;
+-	outputImageflags.bStorage = true;
++	outputImageflags.bStorage = !g_bCompositeGraphics; // storage forces linear, attachment-only can take UBWC
++	outputImageflags.bColorAttachment = g_bCompositeGraphics;
+ 	outputImageflags.bTransferSrc = true; // for screenshots
+ 	outputImageflags.bSampled = true; // for pipewire blits
+ 	outputImageflags.bOutputImage = true;
+@@ -3738,12 +4043,15 @@ struct BlitPushData_t
+     float u_itmTargetNits; // unset
+ 
+ 	uint32_t u_rotation;
++	uint32_t u_physSize[2];
+ 
+-	explicit BlitPushData_t(const struct FrameInfo_t *frameInfo, uint32_t rotation = 0)
++	explicit BlitPushData_t(const struct FrameInfo_t *frameInfo, uint32_t rotation = 0, uint32_t physWidth = 0, uint32_t physHeight = 0)
+ 	{
+ 		u_shaderFilter = 0;
+ 		u_alphaMode = 0;
+ 		u_rotation = rotation;
++		u_physSize[0] = physWidth;
++		u_physSize[1] = physHeight;
+ 
+ 		for (int i = 0; i < frameInfo->layers.count(); i++) {
+ 			const FrameInfo_t::Layer_t *layer = &frameInfo->layers.get( i );
+@@ -3789,6 +4097,8 @@ struct BlitPushData_t
+         u_shaderFilter = (uint32_t)GamescopeUpscaleFilter::LINEAR;
+ 		u_alphaMode = 0;
+ 		u_rotation = 0;
++		u_physSize[0] = 0;
++		u_physSize[1] = 0;
+ 		ctm[0] = glm::mat3x4
+ 		{
+ 			1, 0, 0, 0,
+@@ -3876,12 +4186,15 @@ struct RcasPushData_t
+     float u_itmTargetNits; // unset
+ 
+ 	uint32_t u_rotation;
++	uint32_t u_physSize[2];
+ 
+-	RcasPushData_t(const struct FrameInfo_t *frameInfo, float sharpness, uint32_t rotation = 0)
++	RcasPushData_t(const struct FrameInfo_t *frameInfo, float sharpness, uint32_t rotation = 0, uint32_t physWidth = 0, uint32_t physHeight = 0)
+ 	{
+ 		uvec4_t tmp;
+ 		FsrRcasCon(&tmp.x, sharpness);
+ 		u_rotation = rotation;
++		u_physSize[0] = physWidth;
++		u_physSize[1] = physHeight;
+ 		u_layer0Offset.x = uint32_t(int32_t(frameInfo->layers.get( 0 ).offset.x));
+ 		u_layer0Offset.y = uint32_t(int32_t(frameInfo->layers.get( 0 ).offset.y));
+ 		u_borderMask = frameInfo->borderMask() >> 1u;
+@@ -4090,6 +4403,9 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
+ 	// Overrides (screenshots, upscale cache) are logical-sized, so never rotated.
+ 	const uint32_t uOutputRotation = pOutputOverride ? 0u : g_uOutputRotation;
+ 
++	// on tilers the fragment pass writes tile-linear, so rotation is free
++	const bool bWantGfxBlit = g_bCompositeGraphics && !pOutputOverride;
++
+ 	auto cmdBuffer = pInCommandBuffer ? std::move( pInCommandBuffer ) : g_device.commandBuffer();
+ 
+ 	for (uint32_t i = 0; i < EOTF_Count; i++)
+@@ -4117,16 +4433,33 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
+ 
+ 		cmdBuffer->dispatch(div_roundup(tempX, pixelsPerGroup), div_roundup(tempY, pixelsPerGroup));
+ 
+-		cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_RCAS, frameInfo->layers.count(), frameInfo->ycbcrMask() & ~1, 0u, frameInfo->colorspaceMask(), outputTF ));
+-		bind_all_layers(cmdBuffer.get(), frameInfo);
+-		cmdBuffer->bindTexture(0, g_output.tmpOutput);
+-		cmdBuffer->setTextureSrgb(0, true);
+-		cmdBuffer->setSamplerUnnormalized(0, false);
+-		cmdBuffer->setSamplerNearest(0, false);
+-		cmdBuffer->bindTarget(compositeImage);
+-		cmdBuffer->uploadConstants<RcasPushData_t>(frameInfo, g_upscaleFilterSharpness / 10.0f, uOutputRotation);
++		VkPipeline gfxPipeline = bWantGfxBlit ? g_device.gfxPipeline(GFX_SHADER_TYPE_RCAS, compositeImage->format(), frameInfo->layers.count(), frameInfo->ycbcrMask() & ~1, 0u, frameInfo->colorspaceMask(), outputTF) : VK_NULL_HANDLE;
++		if ( gfxPipeline != VK_NULL_HANDLE )
++		{
++			cmdBuffer->bindGfxPipeline( gfxPipeline );
++			bind_all_layers(cmdBuffer.get(), frameInfo);
++			cmdBuffer->bindTexture(0, g_output.tmpOutput);
++			cmdBuffer->setTextureSrgb(0, true);
++			cmdBuffer->setSamplerUnnormalized(0, false);
++			cmdBuffer->setSamplerNearest(0, false);
++			cmdBuffer->bindTarget(compositeImage);
++			cmdBuffer->uploadConstants<RcasPushData_t>(frameInfo, g_upscaleFilterSharpness / 10.0f, uOutputRotation, compositeImage->width(), compositeImage->height());
+ 
+-		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
++			cmdBuffer->draw();
++		}
++		else
++		{
++			cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_RCAS, frameInfo->layers.count(), frameInfo->ycbcrMask() & ~1, 0u, frameInfo->colorspaceMask(), outputTF ));
++			bind_all_layers(cmdBuffer.get(), frameInfo);
++			cmdBuffer->bindTexture(0, g_output.tmpOutput);
++			cmdBuffer->setTextureSrgb(0, true);
++			cmdBuffer->setSamplerUnnormalized(0, false);
++			cmdBuffer->setSamplerNearest(0, false);
++			cmdBuffer->bindTarget(compositeImage);
++			cmdBuffer->uploadConstants<RcasPushData_t>(frameInfo, g_upscaleFilterSharpness / 10.0f, uOutputRotation);
++
++			cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
++		}
+ 	}
+ 	else if ( frameInfo->useNISLayer0 )
+ 	{
+@@ -4164,14 +4497,27 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
+ 		nisFrameInfo.layers.get( 0 ).scale.x = 1.0f;
+ 		nisFrameInfo.layers.get( 0 ).scale.y = 1.0f;
+ 
+-		cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BLIT, nisFrameInfo.layers.count(), nisFrameInfo.ycbcrMask(), 0u, nisFrameInfo.colorspaceMask(), outputTF ));
+-		bind_all_layers(cmdBuffer.get(), &nisFrameInfo);
+-		cmdBuffer->bindTarget(compositeImage);
+-		cmdBuffer->uploadConstants<BlitPushData_t>(&nisFrameInfo, uOutputRotation);
++		VkPipeline gfxPipeline = bWantGfxBlit ? g_device.gfxPipeline(GFX_SHADER_TYPE_BLIT, compositeImage->format(), nisFrameInfo.layers.count(), nisFrameInfo.ycbcrMask(), 0u, nisFrameInfo.colorspaceMask(), outputTF) : VK_NULL_HANDLE;
++		if ( gfxPipeline != VK_NULL_HANDLE )
++		{
++			cmdBuffer->bindGfxPipeline( gfxPipeline );
++			bind_all_layers(cmdBuffer.get(), &nisFrameInfo);
++			cmdBuffer->bindTarget(compositeImage);
++			cmdBuffer->uploadConstants<BlitPushData_t>(&nisFrameInfo, uOutputRotation, compositeImage->width(), compositeImage->height());
+ 
+-		int pixelsPerGroup = 8;
++			cmdBuffer->draw();
++		}
++		else
++		{
++			cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BLIT, nisFrameInfo.layers.count(), nisFrameInfo.ycbcrMask(), 0u, nisFrameInfo.colorspaceMask(), outputTF ));
++			bind_all_layers(cmdBuffer.get(), &nisFrameInfo);
++			cmdBuffer->bindTarget(compositeImage);
++			cmdBuffer->uploadConstants<BlitPushData_t>(&nisFrameInfo, uOutputRotation);
+ 
+-		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
++			int pixelsPerGroup = 8;
++
++			cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
++		}
+ 	}
+ 	else if ( frameInfo->useGSRLayer0 )
+ 	{
+@@ -4205,14 +4551,27 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
+ 		gsrFrameInfo.layers.get( 0 ).filter = GamescopeUpscaleFilter::LINEAR;
+ 		gsrFrameInfo.layers.get( 0 ).colorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
+ 
+-		cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BLIT, gsrFrameInfo.layers.count(), gsrFrameInfo.ycbcrMask(), 0u, gsrFrameInfo.colorspaceMask(), outputTF ));
+-		bind_all_layers(cmdBuffer.get(), &gsrFrameInfo);
+-		cmdBuffer->bindTarget(compositeImage);
+-		cmdBuffer->uploadConstants<BlitPushData_t>(&gsrFrameInfo, uOutputRotation);
++		VkPipeline gfxPipeline = bWantGfxBlit ? g_device.gfxPipeline(GFX_SHADER_TYPE_BLIT, compositeImage->format(), gsrFrameInfo.layers.count(), gsrFrameInfo.ycbcrMask(), 0u, gsrFrameInfo.colorspaceMask(), outputTF) : VK_NULL_HANDLE;
++		if ( gfxPipeline != VK_NULL_HANDLE )
++		{
++			cmdBuffer->bindGfxPipeline( gfxPipeline );
++			bind_all_layers(cmdBuffer.get(), &gsrFrameInfo);
++			cmdBuffer->bindTarget(compositeImage);
++			cmdBuffer->uploadConstants<BlitPushData_t>(&gsrFrameInfo, uOutputRotation, compositeImage->width(), compositeImage->height());
+ 
+-		int pixelsPerGroup = 8;
++			cmdBuffer->draw();
++		}
++		else
++		{
++			cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BLIT, gsrFrameInfo.layers.count(), gsrFrameInfo.ycbcrMask(), 0u, gsrFrameInfo.colorspaceMask(), outputTF ));
++			bind_all_layers(cmdBuffer.get(), &gsrFrameInfo);
++			cmdBuffer->bindTarget(compositeImage);
++			cmdBuffer->uploadConstants<BlitPushData_t>(&gsrFrameInfo, uOutputRotation);
+ 
+-		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
++			int pixelsPerGroup = 8;
++
++			cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
++		}
+ 	}
+ 	else if ( frameInfo->blurLayer0 )
+ 	{
+@@ -4234,7 +4593,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
+ 			cmdBuffer->setSamplerUnnormalized(i, true);
+ 			cmdBuffer->setSamplerNearest(i, false);
+ 		}
+-		cmdBuffer->uploadConstants<BlitPushData_t>(frameInfo, uOutputRotation);
++		cmdBuffer->uploadConstants<BlitPushData_t>(frameInfo, uOutputRotation, compositeImage->width(), compositeImage->height());
+ 
+ 		int pixelsPerGroup = 8;
+ 
+@@ -4242,27 +4601,57 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
+ 
+ 		bool useSrgbView = frameInfo->layers.get( 0 ).colorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR;
+ 
+-		type = frameInfo->blurLayer0 == BLUR_MODE_COND ? SHADER_TYPE_BLUR_COND : SHADER_TYPE_BLUR;
+-		cmdBuffer->bindPipeline(g_device.pipeline(type, frameInfo->layers.count(), frameInfo->ycbcrMask(), blur_layer_count, frameInfo->colorspaceMask(), outputTF ));
+-		bind_all_layers(cmdBuffer.get(), frameInfo);
+-		cmdBuffer->bindTarget(compositeImage);
+-		cmdBuffer->bindTexture(VKR_BLUR_EXTRA_SLOT, g_output.tmpOutput);
+-		cmdBuffer->setTextureSrgb(VKR_BLUR_EXTRA_SLOT, !useSrgbView); // Inverted because it chooses whether to view as linear (sRGB view) or sRGB (raw view). It's horrible. I need to change it.
+-		cmdBuffer->setSamplerUnnormalized(VKR_BLUR_EXTRA_SLOT, true);
+-		cmdBuffer->setSamplerNearest(VKR_BLUR_EXTRA_SLOT, false);
+-
+-		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
++		const bool bCondBlur = frameInfo->blurLayer0 == BLUR_MODE_COND;
++		VkPipeline gfxPipeline = bWantGfxBlit ? g_device.gfxPipeline(bCondBlur ? GFX_SHADER_TYPE_BLUR_COND : GFX_SHADER_TYPE_BLUR, compositeImage->format(), frameInfo->layers.count(), frameInfo->ycbcrMask(), blur_layer_count, frameInfo->colorspaceMask(), outputTF) : VK_NULL_HANDLE;
++		if ( gfxPipeline != VK_NULL_HANDLE )
++		{
++			cmdBuffer->bindGfxPipeline( gfxPipeline );
++			bind_all_layers(cmdBuffer.get(), frameInfo);
++			cmdBuffer->bindTarget(compositeImage);
++			cmdBuffer->bindTexture(VKR_BLUR_EXTRA_SLOT, g_output.tmpOutput);
++			cmdBuffer->setTextureSrgb(VKR_BLUR_EXTRA_SLOT, !useSrgbView); // Inverted because it chooses whether to view as linear (sRGB view) or sRGB (raw view). It's horrible. I need to change it.
++			cmdBuffer->setSamplerUnnormalized(VKR_BLUR_EXTRA_SLOT, true);
++			cmdBuffer->setSamplerNearest(VKR_BLUR_EXTRA_SLOT, false);
++
++			cmdBuffer->draw();
++		}
++		else
++		{
++			type = bCondBlur ? SHADER_TYPE_BLUR_COND : SHADER_TYPE_BLUR;
++			cmdBuffer->bindPipeline(g_device.pipeline(type, frameInfo->layers.count(), frameInfo->ycbcrMask(), blur_layer_count, frameInfo->colorspaceMask(), outputTF ));
++			bind_all_layers(cmdBuffer.get(), frameInfo);
++			cmdBuffer->bindTarget(compositeImage);
++			cmdBuffer->bindTexture(VKR_BLUR_EXTRA_SLOT, g_output.tmpOutput);
++			cmdBuffer->setTextureSrgb(VKR_BLUR_EXTRA_SLOT, !useSrgbView); // Inverted because it chooses whether to view as linear (sRGB view) or sRGB (raw view). It's horrible. I need to change it.
++			cmdBuffer->setSamplerUnnormalized(VKR_BLUR_EXTRA_SLOT, true);
++			cmdBuffer->setSamplerNearest(VKR_BLUR_EXTRA_SLOT, false);
++
++			cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
++		}
+ 	}
+ 	else
+ 	{
+-		cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BLIT, frameInfo->layers.count(), frameInfo->ycbcrMask(), 0u, frameInfo->colorspaceMask(), outputTF ));
+-		bind_all_layers(cmdBuffer.get(), frameInfo);
+-		cmdBuffer->bindTarget(compositeImage);
+-		cmdBuffer->uploadConstants<BlitPushData_t>(frameInfo, uOutputRotation);
++		VkPipeline gfxPipeline = bWantGfxBlit ? g_device.gfxPipeline(GFX_SHADER_TYPE_BLIT, compositeImage->format(), frameInfo->layers.count(), frameInfo->ycbcrMask(), 0u, frameInfo->colorspaceMask(), outputTF) : VK_NULL_HANDLE;
++		if ( gfxPipeline != VK_NULL_HANDLE )
++		{
++			cmdBuffer->bindGfxPipeline( gfxPipeline );
++			bind_all_layers(cmdBuffer.get(), frameInfo);
++			cmdBuffer->bindTarget(compositeImage);
++			cmdBuffer->uploadConstants<BlitPushData_t>(frameInfo, uOutputRotation, compositeImage->width(), compositeImage->height());
+ 
+-		const int pixelsPerGroup = 8;
++			cmdBuffer->draw();
++		}
++		else
++		{
++			cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BLIT, frameInfo->layers.count(), frameInfo->ycbcrMask(), 0u, frameInfo->colorspaceMask(), outputTF ));
++			bind_all_layers(cmdBuffer.get(), frameInfo);
++			cmdBuffer->bindTarget(compositeImage);
++			cmdBuffer->uploadConstants<BlitPushData_t>(frameInfo, uOutputRotation);
+ 
+-		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
++			const int pixelsPerGroup = 8;
++
++			cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
++		}
+ 	}
+ 
+ 	if ( pPipewireTexture != nullptr )
+diff --git a/src/rendervulkan.hpp b/src/rendervulkan.hpp
+index bb89152..743d3b5 100644
+--- a/src/rendervulkan.hpp
++++ b/src/rendervulkan.hpp
+@@ -614,6 +614,16 @@ enum ShaderType {
+ 	SHADER_TYPE_COUNT
+ };
+ 
++// fragment variants of the passes that write the output
++enum GfxShaderType {
++	GFX_SHADER_TYPE_BLIT = 0,
++	GFX_SHADER_TYPE_RCAS,
++	GFX_SHADER_TYPE_BLUR,
++	GFX_SHADER_TYPE_BLUR_COND,
++
++	GFX_SHADER_TYPE_COUNT
++};
++
+ extern VulkanOutput_t g_output;
+ 
+ struct SamplerState
+@@ -673,6 +683,34 @@ struct PipelineInfo_t
+ 	}
+ };
+ 
++// keyed on the target format, dynamic rendering bakes it into the pipeline
++struct GfxPipelineInfo_t
++{
++	GfxShaderType shaderType;
++	uint32_t outputFormat; // VkFormat
++
++	uint32_t layerCount;
++	uint32_t ycbcrMask;
++	uint32_t blurLayerCount;
++
++	uint32_t compositeDebug;
++
++	uint32_t colorspaceMask;
++	uint32_t outputEOTF;
++
++	bool operator==(const GfxPipelineInfo_t& o) const {
++		return
++		shaderType == o.shaderType &&
++		outputFormat == o.outputFormat &&
++		layerCount == o.layerCount &&
++		ycbcrMask == o.ycbcrMask &&
++		blurLayerCount == o.blurLayerCount &&
++		compositeDebug == o.compositeDebug &&
++		colorspaceMask == o.colorspaceMask &&
++		outputEOTF == o.outputEOTF;
++	}
++};
++
+ 
+ static inline uint32_t hash_combine(uint32_t old_hash, uint32_t new_hash) {
+     return old_hash ^ (new_hash + 0x9e3779b9 + (old_hash << 6) + (old_hash >> 2));
+@@ -696,6 +734,23 @@ namespace std
+ 			return hash;
+ 		}
+ 	};
++
++	template <>
++	struct hash<GfxPipelineInfo_t>
++	{
++		size_t operator()( const GfxPipelineInfo_t& k ) const
++		{
++			uint32_t hash = k.shaderType;
++			hash = hash_combine(hash, k.outputFormat);
++			hash = hash_combine(hash, k.layerCount);
++			hash = hash_combine(hash, k.ycbcrMask);
++			hash = hash_combine(hash, k.blurLayerCount);
++			hash = hash_combine(hash, k.compositeDebug);
++			hash = hash_combine(hash, k.colorspaceMask);
++			hash = hash_combine(hash, k.outputEOTF);
++			return hash;
++		}
++	};
+ }
+ 
+ static inline uint32_t div_roundup(uint32_t x, uint32_t y)
+@@ -740,6 +795,8 @@ static inline uint32_t div_roundup(uint32_t x, uint32_t y)
+ 	VK_FUNC(CmdEndRendering) \
+ 	VK_FUNC(CmdPipelineBarrier) \
+ 	VK_FUNC(CmdPushConstants) \
++	VK_FUNC(CmdSetScissor) \
++	VK_FUNC(CmdSetViewport) \
+ 	VK_FUNC(CreateBuffer) \
+ 	VK_FUNC(CreateCommandPool) \
+ 	VK_FUNC(CreateComputePipelines) \
+@@ -822,6 +879,7 @@ public:
+ 
+ 	VkSampler sampler(SamplerState key);
+ 	VkPipeline pipeline(ShaderType type, uint32_t layerCount = 1, uint32_t ycbcrMask = 0, uint32_t blur_layers = 0, uint32_t colorspace_mask = 0, uint32_t output_eotf = EOTF_Gamma22, bool itm_enable = false);
++	VkPipeline gfxPipeline(GfxShaderType type, VkFormat outputFormat, uint32_t layerCount, uint32_t ycbcrMask, uint32_t blur_layers, uint32_t colorspace_mask, uint32_t output_eotf);
+ 	int32_t findMemoryType( VkMemoryPropertyFlags properties, uint32_t requiredTypeBits );
+ 	std::unique_ptr<CVulkanCmdBuffer> commandBuffer();
+ 	uint64_t submit( std::unique_ptr<CVulkanCmdBuffer> cmdBuf);
+@@ -897,6 +955,7 @@ protected:
+ 	bool createShaders();
+ 	bool createScratchResources();
+ 	VkPipeline compilePipeline(uint32_t layerCount, uint32_t ycbcrMask, ShaderType type, uint32_t blur_layer_count, uint32_t composite_debug, uint32_t colorspace_mask, uint32_t output_eotf, bool itm_enable);
++	VkPipeline compileGfxPipeline(GfxShaderType type, VkFormat outputFormat, uint32_t layerCount, uint32_t ycbcrMask, uint32_t blur_layer_count, uint32_t composite_debug, uint32_t colorspace_mask, uint32_t output_eotf);
+ 	void compileAllPipelines(std::stop_token st);
+ 
+ 	VkDevice m_device = nullptr;
+@@ -928,7 +987,10 @@ protected:
+ 
+ 	std::unordered_map< SamplerState, VkSampler > m_samplerCache;
+ 	std::array<VkShaderModule, SHADER_TYPE_COUNT> m_shaderModules;
++	VkShaderModule m_vsFullscreenModule = VK_NULL_HANDLE;
++	std::array<VkShaderModule, GFX_SHADER_TYPE_COUNT> m_gfxShaderModules = {};
+ 	std::unordered_map<PipelineInfo_t, VkPipeline> m_pipelineMap;
++	std::unordered_map<GfxPipelineInfo_t, VkPipeline> m_gfxPipelineMap;
+ 	std::mutex m_pipelineMutex;
+ 
+ 	static constexpr uint32_t k_uMaxConcurrentSubmits = 8;
+@@ -997,11 +1059,14 @@ public:
+ 	template<class PushData, class... Args>
+ 	void uploadConstants(Args&&... args);
+ 	void bindPipeline(VkPipeline pipeline);
++	void bindGfxPipeline(VkPipeline pipeline);
+ 	void dispatch(uint32_t x, uint32_t y = 1, uint32_t z = 1);
++	void draw();
+ 	void copyImage(gamescope::Rc<CVulkanTexture> src, gamescope::Rc<CVulkanTexture> dst);
+ 	void copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, uint32_t stride, gamescope::Rc<CVulkanTexture> dst);
+ 
+ 
++	VkDescriptorSet updateDescriptorSet( bool bStorageTarget );
+ 	void prepareSrcImage(CVulkanTexture *image);
+ 	void prepareDestImage(CVulkanTexture *image);
+ 	void discardImage(CVulkanTexture *image);
+diff --git a/src/shaders/blit_push_data.h b/src/shaders/blit_push_data.h
+index f81096b..514b8c8 100644
+--- a/src/shaders/blit_push_data.h
++++ b/src/shaders/blit_push_data.h
+@@ -18,5 +18,6 @@ uniform layers_t {
+     float u_itmTargetNits;
+ 
+     uint u_rotation;
++    uvec2 u_physSize;
+ };
+ 
+diff --git a/src/shaders/composite.h b/src/shaders/composite.h
+index 229296e..8953176 100644
+--- a/src/shaders/composite.h
++++ b/src/shaders/composite.h
+@@ -3,6 +3,7 @@
+ #include "shaderfilter.h"
+ #include "alphamode.h"
+ 
++#ifndef GAMESCOPE_FRAGMENT_PATH
+ // Rotate only the final store coordinate (CCW 90-degree steps: 1=90, 2=180,
+ // 3=270); the scene stays logical so sampling and blending are unchanged.
+ uvec2 outputLogicalSize(uint rotation) {
+@@ -19,6 +20,17 @@ ivec2 rotateOutputCoord(uvec2 coord, uint rotation) {
+         default: return ivec2(coord);
+     }
+ }
++#else
++// physical raster coord to logical scene coord, the inverse of rotateOutputCoord
++uvec2 unrotateOutputCoord(uvec2 coord, uint rotation) {
++    switch (rotation) {
++        case 1u: return uvec2(u_physSize.y - 1u - coord.y, coord.x);
++        case 2u: return uvec2(u_physSize.x - 1u - coord.x, u_physSize.y - 1u - coord.y);
++        case 3u: return uvec2(coord.y, u_physSize.x - 1u - coord.x);
++        default: return coord;
++    }
++}
++#endif
+ 
+ vec4 sampleRegular(sampler2D tex, vec2 coord, uint colorspace) {
+     vec4 color = textureLod(tex, coord, 0);
+@@ -67,6 +79,7 @@ uint pseudo_random(uint seed) {
+     return seed * 1664525u + 1013904223u;
+ }
+ 
++#ifndef GAMESCOPE_FRAGMENT_PATH
+ void compositing_debug(uvec2 coord, uint rotation) {
+     uvec2 pos = coord;
+     pos.x -= (u_frameId & 2) != 0 ?  128 : 0;
+@@ -86,6 +99,7 @@ void compositing_debug(uvec2 coord, uint rotation) {
+         imageStore(dst, rotateOutputCoord(coord, rotation), value);
+     }
+ }
++#endif
+ 
+ // Takes in a scRGB/Linear encoded value and applies color management
+ // based on the input colorspace.
+diff --git a/src/shaders/cs_composite_rcas.comp b/src/shaders/cs_composite_rcas.comp
+index 3caefb1..84c3991 100644
+--- a/src/shaders/cs_composite_rcas.comp
++++ b/src/shaders/cs_composite_rcas.comp
+@@ -31,6 +31,7 @@ uniform layers_t {
+     float u_itmTargetNits;
+ 
+     uint u_rotation;
++    uvec2 u_physSize;
+ };
+ 
+ #include "composite.h"
+diff --git a/src/shaders/descriptor_set.h b/src/shaders/descriptor_set.h
+index c562e94..7bc0f89 100644
+--- a/src/shaders/descriptor_set.h
++++ b/src/shaders/descriptor_set.h
+@@ -45,10 +45,12 @@ uint get_layer_colorspace(uint layerIdx) {
+     return bitfieldExtract(c_colorspaceMask, int(layerIdx) * colorspace_max_bits, colorspace_max_bits);
+ }
+ 
++#ifndef GAMESCOPE_FRAGMENT_PATH
+ layout(binding = 1, rgba8) writeonly uniform image2D dst;
+ // alias
+ layout(binding = 1, rgba8) writeonly uniform image2D dst_luma;
+ layout(binding = 2, rgba8) writeonly uniform image2D dst_chroma;
++#endif
+ 
+ layout(binding = 3) uniform sampler2D s_samplers[VKR_SAMPLER_SLOTS];
+ layout(binding = 4) uniform sampler2D s_ycbcr_samplers[VKR_SAMPLER_SLOTS];
+diff --git a/src/shaders/fs_composite_blit.frag b/src/shaders/fs_composite_blit.frag
+new file mode 100644
+index 0000000..a061322
+--- /dev/null
++++ b/src/shaders/fs_composite_blit.frag
+@@ -0,0 +1,39 @@
++#version 450
++
++#extension GL_GOOGLE_include_directive : require
++#extension GL_EXT_scalar_block_layout : require
++
++#define GAMESCOPE_FRAGMENT_PATH 1
++#include "descriptor_set.h"
++#include "blit_push_data.h"
++#include "composite.h"
++
++layout(location = 0) out vec4 o_color;
++
++vec4 sampleLayer(uint layerIdx, vec2 uv) {
++    if ((c_ycbcrMask & (1 << layerIdx)) != 0)
++        return sampleLayer(s_ycbcr_samplers[layerIdx], layerIdx, uv, false);
++    return sampleLayer(s_samplers[layerIdx], layerIdx, uv, true);
++}
++
++void main() {
++    uvec2 coord = unrotateOutputCoord(uvec2(gl_FragCoord.xy), u_rotation);
++
++    vec2 uv = vec2(coord);
++    vec4 outputValue = vec4(0.0f);
++
++    if (checkDebugFlag(compositedebug_PlaneBorders))
++        outputValue = vec4(1.0f, 0.0f, 0.0f, 0.0f);
++
++    if (c_layerCount > 0) {
++        outputValue = sampleLayer(0, uv) * u_opacity[0];
++    }
++
++    for (int i = 1; i < c_layerCount; i++) {
++        vec4 layerColor = sampleLayer(i, uv);
++        outputValue = BlendLayer( i, outputValue, layerColor, u_opacity[i] );
++    }
++
++    outputValue.rgb = encodeOutputColor(outputValue.rgb);
++    o_color = outputValue;
++}
+diff --git a/src/shaders/fs_composite_blur.frag b/src/shaders/fs_composite_blur.frag
+new file mode 100644
+index 0000000..976555d
+--- /dev/null
++++ b/src/shaders/fs_composite_blur.frag
+@@ -0,0 +1,42 @@
++#version 450
++
++#extension GL_GOOGLE_include_directive : require
++#extension GL_EXT_scalar_block_layout : require
++
++#define GAMESCOPE_FRAGMENT_PATH 1
++#include "descriptor_set.h"
++
++#include "blit_push_data.h"
++
++#define BLUR_DONT_SCALE 1
++#include "composite.h"
++#include "blur.h"
++
++vec4 sampleLayer(uint layerIdx, vec2 uv) {
++    if ((c_ycbcrMask & (1 << layerIdx)) != 0)
++        return sampleLayer(s_ycbcr_samplers[layerIdx], layerIdx, uv, false);
++    return sampleLayer(s_samplers[layerIdx], layerIdx, uv, true);
++}
++
++layout(location = 0) out vec4 o_color;
++
++void main() {
++    uvec2 coord = unrotateOutputCoord(uvec2(gl_FragCoord.xy), u_rotation);
++
++    vec2 uv = vec2(coord);
++    vec3 outputValue = vec3(0.0f);
++
++    if (checkDebugFlag(compositedebug_PlaneBorders))
++        outputValue = vec3(1.0f, 0.0f, 0.0f);
++
++    if (c_layerCount > 0)
++        outputValue = gaussian_blur(s_samplers[VKR_BLUR_EXTRA_SLOT], 0, vec2(coord), u_blur_radius, true, true).rgb;
++
++    for (int i = c_blur_layer_count; i < c_layerCount; i++) {
++        vec4 layerColor = sampleLayer(i, uv);
++        outputValue = BlendLayer( i, outputValue, layerColor, u_opacity[i] );
++    }
++
++    outputValue = encodeOutputColor(outputValue);
++    o_color = vec4(outputValue, 0);
++}
+diff --git a/src/shaders/fs_composite_blur_cond.frag b/src/shaders/fs_composite_blur_cond.frag
+new file mode 100644
+index 0000000..7aad0dc
+--- /dev/null
++++ b/src/shaders/fs_composite_blur_cond.frag
+@@ -0,0 +1,59 @@
++#version 450
++
++#extension GL_GOOGLE_include_directive : require
++#extension GL_EXT_scalar_block_layout : require
++
++#define GAMESCOPE_FRAGMENT_PATH 1
++#include "descriptor_set.h"
++
++#include "blit_push_data.h"
++
++#define BLUR_DONT_SCALE 1
++#include "composite.h"
++#include "blur.h"
++
++vec4 sampleLayer(uint layerIdx, vec2 uv) {
++    if ((c_ycbcrMask & (1 << layerIdx)) != 0)
++        return sampleLayer(s_ycbcr_samplers[layerIdx], layerIdx, uv, false);
++    return sampleLayer(s_samplers[layerIdx], layerIdx, uv, true);
++}
++
++layout(location = 0) out vec4 o_color;
++
++void main() {
++    uvec2 coord = unrotateOutputCoord(uvec2(gl_FragCoord.xy), u_rotation);
++
++    vec2 uv = vec2(coord);
++    vec3 outputValue = vec3(0.0f);
++
++    if (checkDebugFlag(compositedebug_PlaneBorders))
++        outputValue = vec3(1.0f, 0.0f, 0.0f);
++
++    float finalRevAlpha = 1.0f;
++
++    for (int i = c_blur_layer_count; i < c_layerCount; i++) {
++        vec4 layerColor = sampleLayer(i, uv);
++        float opacity = u_opacity[i];
++        float layerAlpha = opacity * layerColor.a;
++        float revAlpha = (1.0f - layerAlpha);
++        outputValue = BlendLayer( i, outputValue, layerColor, opacity );
++        finalRevAlpha *= revAlpha;
++    }
++
++    if (c_layerCount > 0) {
++        if (finalRevAlpha < 0.95) {
++            outputValue += gaussian_blur(s_samplers[VKR_BLUR_EXTRA_SLOT], 0, vec2(coord), u_blur_radius, true, true).rgb * finalRevAlpha;
++        } else {
++            outputValue = sampleLayer(0, uv).rgb * u_opacity[0];
++            for (int i = 1; i < c_blur_layer_count; i++) {
++                vec4 layerColor = sampleLayer(i, uv);
++                float opacity = u_opacity[i];
++                float layerAlpha = opacity * layerColor.a;
++                outputValue = BlendLayer( i, outputValue, layerColor, opacity );
++            }
++        }
++    }
++
++    outputValue = encodeOutputColor(outputValue);
++    o_color = vec4(outputValue, 0);
++}
+diff --git a/src/shaders/fs_composite_rcas.frag b/src/shaders/fs_composite_rcas.frag
+new file mode 100644
+index 0000000..da6f729
+--- /dev/null
++++ b/src/shaders/fs_composite_rcas.frag
+@@ -0,0 +1,95 @@
++#version 460
++
++#extension GL_GOOGLE_include_directive : require
++#extension GL_EXT_scalar_block_layout : require
++
++#define GAMESCOPE_FRAGMENT_PATH 1
++#include "descriptor_set.h"
++
++layout(binding = 0, scalar)
++uniform layers_t {
++    uvec2 u_layer0Offset;
++    vec2 u_scale[VKR_MAX_LAYERS - 1];
++    vec2 u_offset[VKR_MAX_LAYERS - 1];
++    float u_opacity[VKR_MAX_LAYERS];
++    mat3x4 u_ctm[VKR_MAX_LAYERS];
++    uint u_borderMask;
++    uint u_frameId;
++    uint u_c1;
++
++	uint u_shaderFilter;
++    uint u_alphaMode;
++
++    // hdr
++    float u_linearToNits;
++    float u_nitsToLinear;
++    float u_itmSdrNits;
++    float u_itmTargetNits;
++
++    uint u_rotation;
++    uvec2 u_physSize;
++};
++
++#include "composite.h"
++
++#define A_GPU 1
++#define A_GLSL 1
++#include "ffx_a.h"
++#define FSR_RCAS_F 1
++vec4 FsrRcasLoadF(ivec2 p) { return texelFetch(s_samplers[0], ivec2(p), 0); }
++// our input is already srgb
++void FsrRcasInputF(inout float r, inout float g, inout float b) {}
++#include "ffx_fsr1.h"
++
++vec4 sampleLayer(uint layerIdx, vec2 uv) {
++    if ((c_ycbcrMask & (1 << layerIdx)) != 0)
++        return sampleLayerEx(s_ycbcr_samplers[layerIdx], layerIdx - 1, layerIdx, uv, false);
++    return sampleLayerEx(s_samplers[layerIdx], layerIdx - 1, layerIdx, uv, true);
++}
++
++layout(location = 0) out vec4 o_color;
++
++void main()
++{
++    uvec2 pos = unrotateOutputCoord(uvec2(gl_FragCoord.xy), u_rotation);
++
++    vec3 outputValue = vec3(0.0f);
++
++    if (checkDebugFlag(compositedebug_PlaneBorders))
++        outputValue = vec3(1.0f, 0.0f, 0.0f);
++
++    if (c_layerCount > 0) {
++        // this is actually signed, underflow will be filtered out by the branch below
++        uvec2 rcasPos = pos + u_layer0Offset;
++        uvec2 layer0Extent = uvec2(textureSize(s_samplers[0], 0));
++
++        if (all(lessThan(rcasPos, layer0Extent))) {
++            FsrRcasF(outputValue.r, outputValue.g, outputValue.b, rcasPos, u_c1.xxxx);
++
++            uint colorspace = get_layer_colorspace(0);
++            if (colorspace == colorspace_linear)
++            {
++                // We don't use an sRGB view for FSR due to the spaces RCAS works in.
++                colorspace = colorspace_sRGB;
++            }
++
++            outputValue.rgb = colorspace_plane_degamma_tf(outputValue.rgb, colorspace);
++            outputValue.rgb = (vec4(outputValue.rgb, 1.0f) * u_ctm[0]).rgb;
++            outputValue.rgb = apply_layer_color_mgmt(outputValue.rgb, 0, colorspace);
++            outputValue *= u_opacity[0];
++        }
++    }
++
++
++    if (c_layerCount > 1) {
++        vec2 uv = vec2(pos);
++
++        for (int i = 1; i < c_layerCount; i++) {
++            vec4 layerColor = sampleLayer(i, uv);
++            outputValue = BlendLayer( i, outputValue, layerColor, u_opacity[i] );
++        }
++    }
++
++    outputValue = encodeOutputColor(outputValue);
++    o_color = vec4(outputValue, 0);
++}
+diff --git a/src/shaders/fullscreen_tri.vert b/src/shaders/fullscreen_tri.vert
+new file mode 100644
+index 0000000..7996c6c
+--- /dev/null
++++ b/src/shaders/fullscreen_tri.vert
+@@ -0,0 +1,6 @@
++#version 450
++
++void main() {
++    vec2 pos = vec2(float((gl_VertexIndex << 1) & 2), float(gl_VertexIndex & 2));
++    gl_Position = vec4(pos * 2.0f - 1.0f, 0.0f, 1.0f);
++}
+-- 
+2.55.0
+

@@ -21,6 +21,11 @@ if [ ! -d "/storage/.config/flycast" ]; then
   cp -r "${SOURCE_DIR}" "${CONF_DIR}"
 fi
 
+#Restore a config emptied by a kill mid-save
+if ! grep -q "^\[config\]" "${CONF_DIR}/${FLYCAST_INI}" 2>/dev/null; then
+  cp "${SOURCE_DIR}/${FLYCAST_INI}" "${CONF_DIR}/${FLYCAST_INI}"
+fi
+
 #Move save file storage/roms
 if [ -d "${CONF_DIR}/data" ]; then
   mv "${CONF_DIR}/data" "/storage/roms/dreamcast/"
@@ -103,6 +108,13 @@ fi
         else
                 sed -i '/rend.Resolution =/c\rend.Resolution = 480' "${CONF_DIR}/${FLYCAST_INI}"
         fi
+
+  #Scan out render size, rend.Resolution is in lines (480 = 1x)
+        SCANOUT_SCALE=$(scanout_internal_scale "$(awk '/^rend.Resolution = / {print $3 / 480; exit}' "${CONF_DIR}/${FLYCAST_INI}")" 480 0.5 9 0.25)
+        sed -i "/rend.Resolution =/c\rend.Resolution = $(awk -v s="${SCANOUT_SCALE}" 'BEGIN { printf "%d", s * 480 }')" "${CONF_DIR}/${FLYCAST_INI}"
+        grep -q "^rend.EmulateFramebuffer = yes" "${CONF_DIR}/${FLYCAST_INI}" && SCANOUT_SCALE=1
+        case "$ASPECT" in w) SCANOUT_ASPECT=16:9 ;; sw) SCANOUT_ASPECT=0 ;; *) SCANOUT_ASPECT=4:3 ;; esac
+        scanout_render_size 480 "${SCANOUT_SCALE}" "${SCANOUT_ASPECT}"
 
   #Graphics Renderer
         if [ "$GRENDERER" = "opengl" ]; then

@@ -1,13 +1,13 @@
 diff --git a/Source/Core/DolphinNoGUI/CMakeLists.txt b/Source/Core/DolphinNoGUI/CMakeLists.txt
-index 9dad1b5f86..1b8e16ce45 100644
+index 9dad1b5f86..24cd35a09d 100644
 --- a/Source/Core/DolphinNoGUI/CMakeLists.txt
 +++ b/Source/Core/DolphinNoGUI/CMakeLists.txt
-@@ -10,6 +10,32 @@ if(X11_FOUND)
+@@ -10,6 +10,37 @@ if(X11_FOUND)
    target_link_libraries(dolphin-nogui PRIVATE PkgConfig::XRANDR PkgConfig::X11)
  endif()
  
 +if(ENABLE_WAYLAND AND WAYLAND_FOUND)
-+  # Generate the xdg-shell and xdg-decoration client protocols at build time.
++  # Generate the client protocols at build time.
 +  set(WAYLAND_PROTOCOL_SRCS "")
 +  function(dolphin_add_wayland_protocol xml basename)
 +    set(header "${CMAKE_CURRENT_BINARY_DIR}/wayland-${basename}-client-protocol.h")
@@ -26,6 +26,11 @@ index 9dad1b5f86..1b8e16ce45 100644
 +  dolphin_add_wayland_protocol(
 +    "${WAYLAND_PROTOCOLS_DIR}/unstable/xdg-decoration/xdg-decoration-unstable-v1.xml"
 +    xdg-decoration)
++  dolphin_add_wayland_protocol(
++    "${WAYLAND_PROTOCOLS_DIR}/staging/fractional-scale/fractional-scale-v1.xml"
++    fractional-scale)
++  dolphin_add_wayland_protocol(
++    "${WAYLAND_PROTOCOLS_DIR}/stable/viewporter/viewporter.xml" viewporter)
 +
 +  target_sources(dolphin-nogui PRIVATE PlatformWayland.cpp ${WAYLAND_PROTOCOL_SRCS})
 +  target_include_directories(dolphin-nogui PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
@@ -79,10 +84,10 @@ index f4dc8a9474..95ac128499 100644
  #endif
 diff --git a/Source/Core/DolphinNoGUI/PlatformWayland.cpp b/Source/Core/DolphinNoGUI/PlatformWayland.cpp
 new file mode 100644
-index 0000000000..4afd73caee
+index 0000000000..21b48d3167
 --- /dev/null
 +++ b/Source/Core/DolphinNoGUI/PlatformWayland.cpp
-@@ -0,0 +1,364 @@
+@@ -0,0 +1,431 @@
 +// Copyright 2018 Dolphin Emulator Project
 +// Licensed under GPLv2+
 +// Refer to the license.txt file included.
@@ -111,6 +116,8 @@ index 0000000000..4afd73caee
 +#include <thread>
 +
 +#include <wayland-client-protocol.h>
++#include "wayland-fractional-scale-client-protocol.h"
++#include "wayland-viewporter-client-protocol.h"
 +#include "wayland-xdg-decoration-client-protocol.h"
 +#include "wayland-xdg-shell-client-protocol.h"
 +
@@ -140,6 +147,9 @@ index 0000000000..4afd73caee
 +  static void TopLevelConfigure(void* data, struct xdg_toplevel* xdg_toplevel, int32_t width,
 +                                int32_t height, struct wl_array* states);
 +  static void TopLevelClose(void* data, struct xdg_toplevel* xdg_toplevel);
++  static void PreferredScale(void* data, wp_fractional_scale_v1* fractional_scale,
++                             uint32_t scale);
++  void UpdateBufferSize();
 +
 +  wl_display* m_display = nullptr;
 +  wl_registry* m_registry = nullptr;
@@ -151,13 +161,25 @@ index 0000000000..4afd73caee
 +  xdg_toplevel* m_xdg_toplevel = nullptr;
 +  zxdg_decoration_manager_v1* m_decoration_manager = nullptr;
 +  zxdg_toplevel_decoration_v1* m_toplevel_decoration = nullptr;
++  wp_viewporter* m_viewporter = nullptr;
++  wp_viewport* m_viewport = nullptr;
++  wp_fractional_scale_manager_v1* m_fractional_scale_manager = nullptr;
++  wp_fractional_scale_v1* m_fractional_scale = nullptr;
 +
++  // buffer size is the window size times the preferred fractional scale, m_scale is in 120ths
 +  int m_surface_width = 0;
 +  int m_surface_height = 0;
++  int m_buffer_width = 0;
++  int m_buffer_height = 0;
++  uint32_t m_scale = 120;
 +};
 +
 +PlatformWayland::~PlatformWayland()
 +{
++  if (m_fractional_scale)
++    wp_fractional_scale_v1_destroy(m_fractional_scale);
++  if (m_viewport)
++    wp_viewport_destroy(m_viewport);
 +  if (m_xdg_toplevel)
 +    xdg_toplevel_destroy(m_xdg_toplevel);
 +  if (m_xdg_surface)
@@ -168,6 +190,10 @@ index 0000000000..4afd73caee
 +    wl_region_destroy(m_region);
 +  if (m_xdg_wm_base)
 +    xdg_wm_base_destroy(m_xdg_wm_base);
++  if (m_fractional_scale_manager)
++    wp_fractional_scale_manager_v1_destroy(m_fractional_scale_manager);
++  if (m_viewporter)
++    wp_viewporter_destroy(m_viewporter);
 +  if (m_compositor)
 +    wl_compositor_destroy(m_compositor);
 +  if (m_registry)
@@ -183,7 +209,7 @@ index 0000000000..4afd73caee
 +  if (std::strcmp(interface, wl_compositor_interface.name) == 0)
 +  {
 +    platform->m_compositor = static_cast<wl_compositor*>(
-+        wl_registry_bind(platform->m_registry, id, &wl_compositor_interface, 1));
++        wl_registry_bind(platform->m_registry, id, &wl_compositor_interface, version < 4 ? version : 4));
 +  }
 +  else if (std::strcmp(interface, xdg_wm_base_interface.name) == 0)
 +  {
@@ -194,6 +220,16 @@ index 0000000000..4afd73caee
 +  {
 +    platform->m_decoration_manager = static_cast<zxdg_decoration_manager_v1*>(
 +        wl_registry_bind(platform->m_registry, id, &zxdg_decoration_manager_v1_interface, 1));
++  }
++  else if (std::strcmp(interface, wp_viewporter_interface.name) == 0)
++  {
++    platform->m_viewporter = static_cast<wp_viewporter*>(
++        wl_registry_bind(platform->m_registry, id, &wp_viewporter_interface, 1));
++  }
++  else if (std::strcmp(interface, wp_fractional_scale_manager_v1_interface.name) == 0)
++  {
++    platform->m_fractional_scale_manager = static_cast<wp_fractional_scale_manager_v1*>(
++        wl_registry_bind(platform->m_registry, id, &wp_fractional_scale_manager_v1_interface, 1));
 +  }
 +}
 +
@@ -222,6 +258,31 @@ index 0000000000..4afd73caee
 +  PlatformWayland* platform = static_cast<PlatformWayland*>(data);
 +  platform->m_surface_width = width;
 +  platform->m_surface_height = height;
++  platform->UpdateBufferSize();
++}
++
++void PlatformWayland::PreferredScale(void* data, wp_fractional_scale_v1* fractional_scale,
++                                     uint32_t scale)
++{
++  PlatformWayland* platform = static_cast<PlatformWayland*>(data);
++  if (scale == 0 || scale == platform->m_scale)
++    return;
++  platform->m_scale = scale;
++  platform->UpdateBufferSize();
++}
++
++void PlatformWayland::UpdateBufferSize()
++{
++  // without a viewport the buffer has to match the window
++  const uint32_t scale = m_viewport ? m_scale : 120;
++  const int width = static_cast<int>((m_surface_width * scale + 60) / 120);
++  const int height = static_cast<int>((m_surface_height * scale + 60) / 120);
++  if (m_viewport)
++    wp_viewport_set_destination(m_viewport, m_surface_width, m_surface_height);
++  if (width == m_buffer_width && height == m_buffer_height)
++    return;
++  m_buffer_width = width;
++  m_buffer_height = height;
 +  if (g_presenter)
 +    g_presenter->ResizeSurface(width, height);
 +}
@@ -275,9 +336,20 @@ index 0000000000..4afd73caee
 +  static const xdg_toplevel_listener toplevel_listener = {TopLevelConfigure, TopLevelClose};
 +  xdg_toplevel_add_listener(m_xdg_toplevel, &toplevel_listener, this);
 +
++  if (m_viewporter && m_fractional_scale_manager)
++  {
++    m_viewport = wp_viewporter_get_viewport(m_viewporter, m_surface);
++    m_fractional_scale =
++        wp_fractional_scale_manager_v1_get_fractional_scale(m_fractional_scale_manager, m_surface);
++    static const wp_fractional_scale_v1_listener fractional_scale_listener = {PreferredScale};
++    wp_fractional_scale_v1_add_listener(m_fractional_scale, &fractional_scale_listener, this);
++  }
++
 +  // Create region in the surface to draw into.
 +  m_surface_width = Config::Get(Config::MAIN_RENDER_WINDOW_WIDTH);
 +  m_surface_height = Config::Get(Config::MAIN_RENDER_WINDOW_HEIGHT);
++  m_buffer_width = m_surface_width;
++  m_buffer_height = m_surface_height;
 +  m_region = wl_compositor_create_region(m_compositor);
 +  wl_region_add(m_region, 0, 0, m_surface_width, m_surface_height);
 +  wl_surface_set_opaque_region(m_surface, m_region);
@@ -432,8 +504,8 @@ index 0000000000..4afd73caee
 +  wsi.type = WindowSystemType::Wayland;
 +  wsi.display_connection = static_cast<void*>(m_display);
 +  wsi.render_surface = reinterpret_cast<void*>(m_surface);
-+  wsi.render_surface_width = m_surface_width;
-+  wsi.render_surface_height = m_surface_height;
++  wsi.render_surface_width = m_buffer_width;
++  wsi.render_surface_height = m_buffer_height;
 +  return wsi;
 +}
 +
