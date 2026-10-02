@@ -17,10 +17,14 @@
 #include <linux/firmware.h>
 #include <linux/of.h>
 #include <linux/regulator/consumer.h>
+#include <linux/version.h>
 
 #include <video/display_timing.h>
 #include <video/mipi_display.h>
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0))
+#include <drm/drm_of.h>
+#endif
 #include <drm/drm_mipi_dsi.h>
 #include <drm/drm_modes.h>
 #include <drm/drm_panel.h>
@@ -573,7 +577,51 @@ static int generic_panel_probe(struct mipi_dsi_device *dsi)
     struct generic_panel *ctx;
     int ret;
 
+    // Some defaults
+    dsi->lanes = 1;
+    dsi->format = MIPI_DSI_FMT_RGB888;
+    dsi->mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_BURST |
+              MIPI_DSI_MODE_LPM | MIPI_DSI_MODE_NO_EOT_PACKET |
+              MIPI_DSI_CLOCK_NON_CONTINUOUS;
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(7, 2, 0))
     ctx = devm_kzalloc(dev, sizeof(*ctx), GFP_KERNEL);
+
+    mipi_dsi_set_drvdata(dsi, ctx);
+
+    ctx->dev = dev;
+
+    ret = load_panel_description(dsi, ctx);
+    if (ret < 0) {
+        dev_err(dev, "Failed to load panel description\n");
+        return ret;
+    }
+
+    mipi_dsi_set_drvdata(dsi, ctx);
+
+    dev_info(dev, "lanes %d, format %d, mode %lx\n", dsi->lanes, dsi->format, dsi->mode_flags);
+
+    drm_panel_init(&ctx->panel, &dsi->dev, &generic_panel_funcs,
+               DRM_MODE_CONNECTOR_DSI);
+#else
+    ctx = devm_drm_panel_alloc(&dsi->dev, __typeof(*ctx), panel,
+		    &generic_panel_funcs, DRM_MODE_CONNECTOR_DSI);
+
+    if (IS_ERR(ctx))
+        return PTR_ERR(ctx);
+
+    ret = load_panel_description(dsi, ctx);
+    if (ret < 0) {
+        dev_err(dev, "Failed to load panel description\n");
+        return ret;
+    }
+
+    mipi_dsi_set_drvdata(dsi, ctx);
+
+    ctx->dev = dev;
+    dev_info(dev, "lanes %d, format %d, mode %lx\n", dsi->lanes, dsi->format, dsi->mode_flags);
+#endif
+
     if (!ctx)
         return -ENOMEM;
 
@@ -605,35 +653,15 @@ static int generic_panel_probe(struct mipi_dsi_device *dsi)
         return ret;
     }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0))
+    ret = drm_of_get_panel_orientation(dev->of_node, &ctx->orientation);
+#else
     ret = of_drm_get_panel_orientation(dev->of_node, &ctx->orientation);
+#endif
     if (ret < 0) {
         dev_err(dev, "%pOF: failed to get orientation %d\n", dev->of_node, ret);
         return ret;
     }
-
-    mipi_dsi_set_drvdata(dsi, ctx);
-
-    ctx->dev = dev;
-
-    // Some defaults
-    dsi->lanes = 1;
-    dsi->format = MIPI_DSI_FMT_RGB888;
-    dsi->mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_BURST |
-              MIPI_DSI_MODE_LPM | MIPI_DSI_MODE_NO_EOT_PACKET |
-              MIPI_DSI_CLOCK_NON_CONTINUOUS;
-
-    ret = load_panel_description(dsi, ctx);
-    if (ret < 0) {
-        dev_err(dev, "Failed to load panel description\n");
-        return ret;
-    }
-
-    mipi_dsi_set_drvdata(dsi, ctx);
-
-    dev_info(dev, "lanes %d, format %d, mode %lx\n", dsi->lanes, dsi->format, dsi->mode_flags);
-
-    drm_panel_init(&ctx->panel, &dsi->dev, &generic_panel_funcs,
-               DRM_MODE_CONNECTOR_DSI);
 
     ret = drm_panel_of_backlight(&ctx->panel);
     if (ret)
