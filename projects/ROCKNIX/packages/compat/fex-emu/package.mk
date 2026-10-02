@@ -89,6 +89,12 @@ make_target() {
       ;;
   esac
 
+  # thunkgen host parse headers, which the guest parse's later --sysroot overrides
+  local cxxdir
+  cxxdir=$(ls -d "${TOOLCHAIN}/${TARGET_NAME}/include/c++/"* | sort -V | tail -n1)
+  # --target keeps x86_64 build hosts from parsing the aarch64 sysroot as x86_64
+  export THUNKGEN_EXTRA_FLAGS="--target=${TARGET_NAME} --sysroot ${SYSROOT_PREFIX} -isystem ${cxxdir} -isystem ${cxxdir}/${TARGET_NAME}"
+
   local -a tgt_opts=(
     -G Ninja
     -S "${PKG_BUILD}"
