@@ -1,0 +1,65 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+# Power button LED: red to green with the charge level, blinks red when low.
+
+. /etc/profile.d/001-functions
+
+LED="/sys/class/leds/rgb:status"
+BAT_PATH="/sys/class/power_supply/battery"
+MAX=$(cat ${LED}/max_brightness)
+CRITICAL_CAP=10
+POLL=15
+
+function bat_led_off() {
+  echo 0 >${LED}/brightness
+}
+
+function bat_led_on() {
+  echo ${1} ${2} ${3} >${LED}/multi_intensity
+  echo ${MAX} >${LED}/brightness
+}
+
+function bat_led_ramp() {
+  local cap=${1} r g
+  (( cap > 100 )) && cap=100
+  if (( cap <= 50 )); then
+    r=255
+    g=$(( 255 * cap / 50 ))
+  else
+    r=$(( 255 * (100 - cap) / 50 ))
+    g=255
+  fi
+  bat_led_on ${r} ${g} 0
+}
+
+PREV_CAP="null"
+while true; do
+  if [ ! "$(get_setting led.color)" == "battery" ]; then
+    break
+  fi
+  CAP=$(cat ${BAT_PATH}/capacity)
+  STAT=$(cat ${BAT_PATH}/status)
+  case ${CAP} in
+    ''|*[!0-9]*)
+      sleep ${POLL}
+      continue
+    ;;
+  esac
+  if [ "${STAT}" == "Discharging" ] && (( ${CAP} <= ${CRITICAL_CAP} )); then
+    PREV_CAP="critical"
+    for ctr in $(seq 1 1 5); do
+      bat_led_on 255 0 0
+      sleep .5
+      bat_led_off
+      sleep .5
+    done
+    continue
+  fi
+  if [ ! "${CAP}" == "${PREV_CAP}" ]; then
+    bat_led_ramp ${CAP}
+  fi
+  PREV_CAP=${CAP}
+  sleep ${POLL}
+done
