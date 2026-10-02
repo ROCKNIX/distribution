@@ -1,0 +1,719 @@
+From: acmeplus <acmeplus@users.noreply.github.com>
+Subject: [PATCH] input: joystick: add the TrimUI serial gamepad MCU driver
+
+The TrimUI Brick Hammer Pro U reads its buttons and sticks from an MCU
+that streams 19-byte frames over a UART (stock /dev/ttyMCU1 +
+trimui_inputd).  serdev driver: powers the MCU through its two GPIOs,
+reports the buttons, a hat for the d-pad and the four stick axes.
+The same MCU drives the RGB LEDs: frames are taken on
+/sys/class/led_anim/frame like the vendor kernels of the other models.
+
+Sunshineinabox changes 10/2:
+
+- Face buttons follow the vendor daemon's table, verified on hardware:
+  bit 0 south, 8 east, 9 north, 1 west.  Bits 24/25 are F1/F2, reported
+  as BTN_TRIGGER_HAPPY1/2.
+- Besides led_anim the LEDs are multicolor LEDs per group plus one LED.
+- The MCU drops frames that overlap its own 62 Hz loop, so the current
+  frame is resent every 50 ms while anything is lit.
+- Suspend blanks the strips and drops the optional LED rail, resume
+  restores both.
+- The last raw MCU packet is readable as mcu_frame for protocol work.
+- Kconfig depends on LEDS_CLASS_MULTICOLOR.
+
+Co-developed-by: sunshineinabox <aqemail@gmail.com>
+
+---
+--- a/drivers/input/joystick/Kconfig
++++ b/drivers/input/joystick/Kconfig
+@@ -422,4 +422,13 @@
+ 	  To compile this driver as a module, choose M here: the module will be
+ 	  called adafruit-seesaw.
+ 
++config JOYSTICK_TRIMUI_MCU
++	tristate "TrimUI serial gamepad MCU"
++	depends on SERIAL_DEV_BUS
++	depends on LEDS_CLASS_MULTICOLOR
++	help
++	  Say Y here to support the gamepad MCU of TrimUI handhelds that
++	  streams its state over a UART and drives the RGB LEDs (Brick
++	  Hammer Pro U).
++
+ endif
+--- a/drivers/input/joystick/Makefile
++++ b/drivers/input/joystick/Makefile
+@@ -41,3 +41,4 @@
+ obj-$(CONFIG_JOYSTICK_WALKERA0701)	+= walkera0701.o
+ obj-$(CONFIG_JOYSTICK_XPAD)		+= xpad.o
+ obj-$(CONFIG_JOYSTICK_ZHENHUA)		+= zhenhua.o
++obj-$(CONFIG_JOYSTICK_TRIMUI_MCU)	+= trimui-mcu-gamepad.o
+--- /dev/null
++++ b/drivers/input/joystick/trimui-mcu-gamepad.c
+@@ -0,0 +1,667 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * TrimUI gamepad MCU (serial), as found in the Brick Hammer Pro U.
++ *
++ * The MCU streams 19-byte frames at 115200 8N1 once its power and level
++ * shifter GPIOs are on:
++ *
++ *   ff 01 | b0 b1 b2 b3 | lx lx | ly ly | rx rx | ry ry | lt lt | rt rt | fe
++ *
++ * b0..b3 is a little-endian button bit mask, lt/rt the trigger ADCs that
++ * stock never reports (its L2/R2 are the digital bits).  The sticks are 12-bit
++ * little-endian values, but only travel about +/-1024 around a centre
++ * near 0x800 (measured 1050..3150), so the centre is sampled at start
++ * and the travel is scaled to the full axis range.
++ *
++ * The same MCU drives the RGB LEDs from a 106-byte frame (stock
++ * trimui_ledd, 24 pixels):
++ *
++ *   fe ef ef fe | 60 00 | 24 x (ff rr gg bb) | 5a a5 a5 5a
++ *
++ * Pixels 0-7 are the rear title bar (player's right half first), 8-11 the
++ * left stick ring, 12 SELECT, 13 START, 14-17 the right stick ring, 18-20
++ * the left and 21-23 the right trigger lights; the trigger LEDs are wired
++ * GRB.  Every multi-pixel group also gets one LED per pixel (rgb:left-0
++ * ...); both rings start top-left, the left one runs counter-clockwise
++ * and the right one clockwise.  /sys/class/led_anim/frame (96 bytes of
++ * little-endian XRGB) and max_scale mirror the vendor kernels of the other
++ * TrimUI models.  The MCU loses frames that overlap its 62 Hz loop (stock
++ * streams them at 60 fps), so the frame is resent every 50 ms while lit.
++ */
++#include <linux/bitops.h>
++#include <linux/delay.h>
++#include <linux/device.h>
++#include <linux/gpio/consumer.h>
++#include <linux/hex.h>
++#include <linux/input.h>
++#include <linux/led-class-multicolor.h>
++#include <linux/leds.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/pm.h>
++#include <linux/serdev.h>
++#include <linux/sysfs.h>
++#include <linux/workqueue.h>
++#include <linux/unaligned.h>
++
++#define TRIMUI_FRAME_LEN	19
++#define TRIMUI_FRAME_HEAD	0xff
++#define TRIMUI_FRAME_TAIL	0xfe
++#define TRIMUI_BAUD		115200
++#define TRIMUI_AXES		4
++#define TRIMUI_CENTRE_FRAMES	8
++#define TRIMUI_STICK_TRAVEL	1024
++#define TRIMUI_STICK_DEADZONE	48	/* raw counts; idle jitter is a few */
++
++#define TRIMUI_LED_FRAME_LEN	106
++#define TRIMUI_LED_PIXELS	24
++#define TRIMUI_LED_REAR_FIRST	18
++#define TRIMUI_LED_PIXEL(i)	(6 + 4 * (i))
++/* stock trimui_ledd caps the frame at 110/255 (its tg5040 limit), default 40 */
++#define TRIMUI_LED_SCALE	110
++#define TRIMUI_LED_ANIM_LEN	(TRIMUI_LED_PIXELS * 4)
++#define TRIMUI_LED_PERIOD_MS	50
++#define TRIMUI_LED_OFF_REPEATS	20
++
++struct trimui_button {
++	u32 mask;
++	unsigned short code;
++};
++
++/*
++ * Bit order follows stock trimui_inputd (RetroArch ids); the shell prints
++ * B on the south button, A east, X west and Y north.
++ */
++static const struct trimui_button trimui_buttons[] = {
++	{ BIT(0),  BTN_SOUTH },	/* B */
++	{ BIT(1),  BTN_WEST },	/* X */
++	{ BIT(2),  BTN_SELECT },
++	{ BIT(3),  BTN_START },
++	{ BIT(8),  BTN_EAST },	/* A */
++	{ BIT(9),  BTN_NORTH },	/* Y */
++	{ BIT(10), BTN_TL },
++	{ BIT(11), BTN_TR },
++	{ BIT(12), BTN_TL2 },
++	{ BIT(13), BTN_TR2 },
++	{ BIT(14), BTN_THUMBL },
++	{ BIT(15), BTN_THUMBR },
++	{ BIT(16), BTN_MODE },	/* MENU */
++	{ BIT(24), BTN_TRIGGER_HAPPY1 },	/* F1 (stock: KEY_F1) */
++	{ BIT(25), BTN_TRIGGER_HAPPY2 },	/* F2 (stock: KEY_F2) */
++};
++
++#define TRIMUI_DPAD_UP		BIT(4)
++#define TRIMUI_DPAD_DOWN	BIT(5)
++#define TRIMUI_DPAD_LEFT	BIT(6)
++#define TRIMUI_DPAD_RIGHT	BIT(7)
++
++struct trimui_led_group {
++	const char *label;
++	u8 first;
++	u8 count;
++};
++
++static const struct trimui_led_group trimui_led_groups[] = {
++	{ "rgb:bar-left", 4, 4 },
++	{ "rgb:bar-right", 0, 4 },
++	{ "rgb:left", 8, 4 },
++	{ "rgb:select", 12, 1 },
++	{ "rgb:start", 13, 1 },
++	{ "rgb:right", 14, 4 },
++	{ "rgb:trigger-left", 18, 3 },
++	{ "rgb:trigger-right", 21, 3 },
++};
++
++struct trimui_mcu;
++
++struct trimui_led {
++	struct led_classdev_mc mc;
++	struct mc_subled subled[3];
++	struct trimui_mcu *mcu;
++	const struct trimui_led_group *group;
++};
++
++struct trimui_mcu {
++	struct serdev_device *serdev;
++	struct input_dev *input;
++	struct gpio_desc *power_gpio;
++	struct gpio_desc *enable_gpio;
++	struct gpio_desc *led_power_gpio;
++	u8 buf[TRIMUI_FRAME_LEN];
++	u8 last[TRIMUI_FRAME_LEN];
++	unsigned int len;
++	u32 buttons;
++	int centre[TRIMUI_AXES];
++	unsigned int centre_frames;
++	struct mutex led_lock;
++	struct delayed_work led_work;
++	unsigned int led_off_sent;
++	unsigned int led_scale;
++	u8 pixels[TRIMUI_LED_PIXELS][3];
++	u8 led_frame[TRIMUI_LED_FRAME_LEN];
++	struct trimui_led leds[ARRAY_SIZE(trimui_led_groups)];
++	struct trimui_led pixel_leds[TRIMUI_LED_PIXELS];
++	struct trimui_led_group pixel_groups[TRIMUI_LED_PIXELS];
++};
++
++static const unsigned int trimui_axis_code[TRIMUI_AXES] = {
++	ABS_X, ABS_Y, ABS_RX, ABS_RY
++};
++
++static void trimui_axes(struct trimui_mcu *mcu, const u8 *f)
++{
++	unsigned int i;
++
++	for (i = 0; i < TRIMUI_AXES; i++) {
++		int raw = get_unaligned_le16(f + 6 + 2 * i) & 0xfff;
++		int v;
++
++		if (mcu->centre_frames < TRIMUI_CENTRE_FRAMES) {
++			/* sticks are idle at boot: average the first frames */
++			mcu->centre[i] += raw;
++			if (mcu->centre_frames == TRIMUI_CENTRE_FRAMES - 1)
++				mcu->centre[i] /= TRIMUI_CENTRE_FRAMES;
++			continue;
++		}
++
++		/* stock trimui_inputd negates Y only */
++		v = (i & 1) ? mcu->centre[i] - raw : raw - mcu->centre[i];
++		if (abs(v) <= TRIMUI_STICK_DEADZONE)
++			v = 0;
++		else
++			v -= v > 0 ? TRIMUI_STICK_DEADZONE : -TRIMUI_STICK_DEADZONE;
++		v = clamp(v, -TRIMUI_STICK_TRAVEL, TRIMUI_STICK_TRAVEL - 1) *
++		    (32768 / TRIMUI_STICK_TRAVEL);
++		input_report_abs(mcu->input, trimui_axis_code[i], v);
++	}
++	if (mcu->centre_frames < TRIMUI_CENTRE_FRAMES)
++		mcu->centre_frames++;
++}
++
++static void trimui_frame(struct trimui_mcu *mcu, const u8 *f)
++{
++	struct input_dev *input = mcu->input;
++	u32 btn = get_unaligned_le32(f + 2);
++	u32 diff = btn ^ mcu->buttons;
++	unsigned int i;
++
++	for (i = 0; i < ARRAY_SIZE(trimui_buttons); i++)
++		if (diff & trimui_buttons[i].mask)
++			input_report_key(input, trimui_buttons[i].code,
++					 !!(btn & trimui_buttons[i].mask));
++
++	input_report_abs(input, ABS_HAT0X,
++			 !!(btn & TRIMUI_DPAD_RIGHT) - !!(btn & TRIMUI_DPAD_LEFT));
++	input_report_abs(input, ABS_HAT0Y,
++			 !!(btn & TRIMUI_DPAD_DOWN) - !!(btn & TRIMUI_DPAD_UP));
++	trimui_axes(mcu, f);
++	input_sync(input);
++
++	mcu->buttons = btn;
++	memcpy(mcu->last, f, TRIMUI_FRAME_LEN);
++}
++
++static size_t trimui_receive(struct serdev_device *serdev, const u8 *data,
++			     size_t count)
++{
++	struct trimui_mcu *mcu = serdev_device_get_drvdata(serdev);
++	size_t i;
++
++	for (i = 0; i < count; i++) {
++		u8 c = data[i];
++
++		if (mcu->len == 0 && c != TRIMUI_FRAME_HEAD)
++			continue;
++		mcu->buf[mcu->len++] = c;
++		if (mcu->len < TRIMUI_FRAME_LEN)
++			continue;
++		mcu->len = 0;
++		if (c == TRIMUI_FRAME_TAIL)
++			trimui_frame(mcu, mcu->buf);
++	}
++
++	return count;
++}
++
++static const struct serdev_device_ops trimui_serdev_ops = {
++	.receive_buf = trimui_receive,
++	.write_wakeup = serdev_device_write_wakeup,
++};
++
++static int trimui_led_send(struct trimui_mcu *mcu, bool off)
++{
++	unsigned int i;
++	ssize_t ret;
++
++	lockdep_assert_held(&mcu->led_lock);
++
++	for (i = 0; i < TRIMUI_LED_PIXELS; i++) {
++		u8 *p = mcu->led_frame + TRIMUI_LED_PIXEL(i);
++		const u8 *c = mcu->pixels[i];
++		bool grb = i >= TRIMUI_LED_REAR_FIRST;
++
++		p[1] = off ? 0 : c[grb] * mcu->led_scale / LED_FULL;
++		p[2] = off ? 0 : c[!grb] * mcu->led_scale / LED_FULL;
++		p[3] = off ? 0 : c[2] * mcu->led_scale / LED_FULL;
++	}
++
++	ret = serdev_device_write(mcu->serdev, mcu->led_frame,
++				  TRIMUI_LED_FRAME_LEN, msecs_to_jiffies(100));
++	if (ret < 0)
++		return ret;
++	return ret == TRIMUI_LED_FRAME_LEN ? 0 : -ETIMEDOUT;
++}
++
++static void trimui_led_work(struct work_struct *work)
++{
++	struct trimui_mcu *mcu = container_of(work, struct trimui_mcu,
++					      led_work.work);
++	bool lit;
++
++	mutex_lock(&mcu->led_lock);
++	trimui_led_send(mcu, false);
++	lit = memchr_inv(mcu->pixels, 0, sizeof(mcu->pixels));
++	mcu->led_off_sent = lit ? 0 : mcu->led_off_sent + 1;
++	if (lit || mcu->led_off_sent < TRIMUI_LED_OFF_REPEATS)
++		schedule_delayed_work(&mcu->led_work,
++				      msecs_to_jiffies(TRIMUI_LED_PERIOD_MS));
++	mutex_unlock(&mcu->led_lock);
++}
++
++/* call with led_lock held, after changing pixels */
++static void trimui_led_kick(struct trimui_mcu *mcu)
++{
++	mcu->led_off_sent = 0;
++	mod_delayed_work(system_wq, &mcu->led_work, 0);
++}
++
++static int trimui_led_set(struct led_classdev *cdev,
++			  enum led_brightness brightness)
++{
++	struct led_classdev_mc *mc = lcdev_to_mccdev(cdev);
++	struct trimui_led *led = container_of(mc, struct trimui_led, mc);
++	struct trimui_mcu *mcu = led->mcu;
++	unsigned int i, j;
++
++	led_mc_calc_color_components(mc, brightness);
++
++	mutex_lock(&mcu->led_lock);
++	for (i = 0; i < led->group->count; i++)
++		for (j = 0; j < 3; j++)
++			mcu->pixels[led->group->first + i][j] =
++				led->subled[j].brightness;
++	trimui_led_kick(mcu);
++	mutex_unlock(&mcu->led_lock);
++
++	return 0;
++}
++
++/* all 24 pixels as RRGGBB, for userspace animations */
++static ssize_t pixels_show(struct device *dev, struct device_attribute *attr,
++			   char *buf)
++{
++	struct trimui_mcu *mcu = dev_get_drvdata(dev);
++	ssize_t n = 0;
++	unsigned int i;
++
++	mutex_lock(&mcu->led_lock);
++	for (i = 0; i < TRIMUI_LED_PIXELS; i++)
++		n += sysfs_emit_at(buf, n, "%02x%02x%02x%c", mcu->pixels[i][0],
++				   mcu->pixels[i][1], mcu->pixels[i][2],
++				   i == TRIMUI_LED_PIXELS - 1 ? '\n' : ' ');
++	mutex_unlock(&mcu->led_lock);
++
++	return n;
++}
++
++static ssize_t pixels_store(struct device *dev, struct device_attribute *attr,
++			    const char *buf, size_t count)
++{
++	struct trimui_mcu *mcu = dev_get_drvdata(dev);
++	u8 pixels[TRIMUI_LED_PIXELS][3];
++	const char *p = buf, *end = buf + count;
++	unsigned int i;
++
++	for (i = 0; i < TRIMUI_LED_PIXELS; i++) {
++		while (p < end && (*p == ' ' || *p == ',' || *p == '\n'))
++			p++;
++		if (end - p < 6 || hex2bin(pixels[i], p, 3))
++			return -EINVAL;
++		p += 6;
++	}
++
++	mutex_lock(&mcu->led_lock);
++	memcpy(mcu->pixels, pixels, sizeof(pixels));
++	trimui_led_kick(mcu);
++	mutex_unlock(&mcu->led_lock);
++
++	return count;
++}
++static DEVICE_ATTR_RW(pixels);
++
++/* last MCU frame, for protocol work */
++static ssize_t mcu_frame_show(struct device *dev,
++			      struct device_attribute *attr, char *buf)
++{
++	struct trimui_mcu *mcu = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf, "%*phN\n", TRIMUI_FRAME_LEN, mcu->last);
++}
++static DEVICE_ATTR_RO(mcu_frame);
++
++static struct attribute *trimui_attrs[] = {
++	&dev_attr_pixels.attr,
++	&dev_attr_mcu_frame.attr,
++	NULL
++};
++ATTRIBUTE_GROUPS(trimui);
++
++/*
++ * Stock interface: one MCU per machine, the attributes sit on the class
++ * directory itself, /sys/class/led_anim/{frame,max_scale}.
++ */
++static struct trimui_mcu *trimui_led_anim;
++
++static ssize_t frame_show(const struct class *class,
++			  const struct class_attribute *attr, char *buf)
++{
++	struct trimui_mcu *mcu = trimui_led_anim;
++	unsigned int i;
++
++	mutex_lock(&mcu->led_lock);
++	for (i = 0; i < TRIMUI_LED_PIXELS; i++) {
++		buf[4 * i] = mcu->pixels[i][2];
++		buf[4 * i + 1] = mcu->pixels[i][1];
++		buf[4 * i + 2] = mcu->pixels[i][0];
++		buf[4 * i + 3] = 0;
++	}
++	mutex_unlock(&mcu->led_lock);
++
++	return TRIMUI_LED_ANIM_LEN;
++}
++
++/* a short frame leaves the remaining pixels off */
++static ssize_t frame_store(const struct class *class,
++			   const struct class_attribute *attr,
++			   const char *buf, size_t count)
++{
++	struct trimui_mcu *mcu = trimui_led_anim;
++	unsigned int i;
++
++	mutex_lock(&mcu->led_lock);
++	memset(mcu->pixels, 0, sizeof(mcu->pixels));
++	for (i = 0; i < TRIMUI_LED_PIXELS && 4 * i + 2 < count; i++) {
++		mcu->pixels[i][0] = buf[4 * i + 2];
++		mcu->pixels[i][1] = buf[4 * i + 1];
++		mcu->pixels[i][2] = buf[4 * i];
++	}
++	trimui_led_kick(mcu);
++	mutex_unlock(&mcu->led_lock);
++
++	return count;
++}
++static CLASS_ATTR_RW(frame);
++
++static ssize_t max_scale_show(const struct class *class,
++			      const struct class_attribute *attr, char *buf)
++{
++	return sysfs_emit(buf, "%u\n", trimui_led_anim->led_scale);
++}
++
++static ssize_t max_scale_store(const struct class *class,
++			       const struct class_attribute *attr,
++			       const char *buf, size_t count)
++{
++	struct trimui_mcu *mcu = trimui_led_anim;
++	unsigned int v;
++	int ret;
++
++	ret = kstrtouint(buf, 0, &v);
++	if (ret)
++		return ret;
++
++	mutex_lock(&mcu->led_lock);
++	mcu->led_scale = min(v, (unsigned int)LED_FULL);
++	trimui_led_kick(mcu);
++	mutex_unlock(&mcu->led_lock);
++
++	return count;
++}
++static CLASS_ATTR_RW(max_scale);
++
++static struct attribute *trimui_led_anim_attrs[] = {
++	&class_attr_frame.attr,
++	&class_attr_max_scale.attr,
++	NULL
++};
++ATTRIBUTE_GROUPS(trimui_led_anim);
++
++static struct class trimui_led_anim_class = {
++	.name = "led_anim",
++	.class_groups = trimui_led_anim_groups,
++};
++
++static void trimui_led_anim_remove(void *data)
++{
++	class_unregister(&trimui_led_anim_class);
++	trimui_led_anim = NULL;
++}
++
++static void trimui_led_stop(void *data)
++{
++	struct trimui_mcu *mcu = data;
++
++	cancel_delayed_work_sync(&mcu->led_work);
++}
++
++static int trimui_led_register(struct trimui_mcu *mcu, struct trimui_led *led,
++			       const struct trimui_led_group *group)
++{
++	static const int colors[3] = {
++		LED_COLOR_ID_RED, LED_COLOR_ID_GREEN, LED_COLOR_ID_BLUE
++	};
++	struct led_init_data init = {
++		.devicename = "trimui",
++		.default_label = group->label,
++	};
++	unsigned int j;
++
++	led->mcu = mcu;
++	led->group = group;
++	for (j = 0; j < 3; j++) {
++		led->subled[j].color_index = colors[j];
++		led->subled[j].intensity = LED_FULL;
++	}
++	led->mc.subled_info = led->subled;
++	led->mc.num_colors = 3;
++	led->mc.led_cdev.max_brightness = LED_FULL;
++	led->mc.led_cdev.brightness_set_blocking = trimui_led_set;
++
++	return devm_led_classdev_multicolor_register_ext(&mcu->serdev->dev,
++							 &led->mc, &init);
++}
++
++static int trimui_leds_init(struct trimui_mcu *mcu)
++{
++	static const u8 head[] = { 0xfe, 0xef, 0xef, 0xfe, 0x60, 0x00 };
++	static const u8 tail[] = { 0x5a, 0xa5, 0xa5, 0x5a };
++	struct device *dev = &mcu->serdev->dev;
++	unsigned int i, k;
++	int ret;
++
++	mcu->led_power_gpio = devm_gpiod_get_optional(dev, "led-power",
++						      GPIOD_OUT_HIGH);
++	if (IS_ERR(mcu->led_power_gpio))
++		return dev_err_probe(dev, PTR_ERR(mcu->led_power_gpio),
++				     "led power gpio\n");
++
++	mutex_init(&mcu->led_lock);
++	mcu->led_scale = TRIMUI_LED_SCALE;
++	INIT_DELAYED_WORK(&mcu->led_work, trimui_led_work);
++	ret = devm_add_action_or_reset(dev, trimui_led_stop, mcu);
++	if (ret)
++		return ret;
++
++	memcpy(mcu->led_frame, head, sizeof(head));
++	for (i = 0; i < TRIMUI_LED_PIXELS; i++)
++		mcu->led_frame[TRIMUI_LED_PIXEL(i)] = 0xff;
++	memcpy(mcu->led_frame + TRIMUI_LED_FRAME_LEN - sizeof(tail), tail,
++	       sizeof(tail));
++
++	for (i = 0; i < ARRAY_SIZE(trimui_led_groups); i++) {
++		const struct trimui_led_group *group = &trimui_led_groups[i];
++
++		ret = trimui_led_register(mcu, &mcu->leds[i], group);
++		if (ret)
++			return dev_err_probe(dev, ret, "%s\n", group->label);
++
++		if (group->count == 1)
++			continue;
++
++		for (k = 0; k < group->count; k++) {
++			unsigned int px = group->first + k;
++			struct trimui_led_group *pg = &mcu->pixel_groups[px];
++
++			pg->label = devm_kasprintf(dev, GFP_KERNEL, "%s-%u",
++						   group->label, k);
++			if (!pg->label)
++				return -ENOMEM;
++			pg->first = px;
++			pg->count = 1;
++			ret = trimui_led_register(mcu, &mcu->pixel_leds[px], pg);
++			if (ret)
++				return dev_err_probe(dev, ret, "%s\n", pg->label);
++		}
++	}
++
++	if (!trimui_led_anim) {
++		trimui_led_anim = mcu;
++		ret = class_register(&trimui_led_anim_class);
++		if (ret)
++			trimui_led_anim = NULL;
++		else
++			ret = devm_add_action_or_reset(dev, trimui_led_anim_remove,
++						       mcu);
++		if (ret)
++			dev_warn(dev, "no led_anim class: %d\n", ret);
++	}
++
++	mutex_lock(&mcu->led_lock);
++	trimui_led_kick(mcu);
++	mutex_unlock(&mcu->led_lock);
++
++	return 0;
++}
++
++static int trimui_suspend(struct device *dev)
++{
++	struct trimui_mcu *mcu = dev_get_drvdata(dev);
++	unsigned int i;
++
++	cancel_delayed_work_sync(&mcu->led_work);
++	mutex_lock(&mcu->led_lock);
++	for (i = 0; i < 5; i++) {
++		trimui_led_send(mcu, true);
++		serdev_device_wait_until_sent(mcu->serdev, msecs_to_jiffies(50));
++		msleep(10);
++	}
++	gpiod_set_value_cansleep(mcu->led_power_gpio, 0);
++	mutex_unlock(&mcu->led_lock);
++
++	return 0;
++}
++
++static int trimui_resume(struct device *dev)
++{
++	struct trimui_mcu *mcu = dev_get_drvdata(dev);
++
++	mutex_lock(&mcu->led_lock);
++	gpiod_set_value_cansleep(mcu->led_power_gpio, 1);
++	trimui_led_kick(mcu);
++	mutex_unlock(&mcu->led_lock);
++
++	return 0;
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(trimui_pm_ops, trimui_suspend, trimui_resume);
++
++static int trimui_probe(struct serdev_device *serdev)
++{
++	struct device *dev = &serdev->dev;
++	struct trimui_mcu *mcu;
++	struct input_dev *input;
++	unsigned int i;
++	int ret;
++
++	mcu = devm_kzalloc(dev, sizeof(*mcu), GFP_KERNEL);
++	if (!mcu)
++		return -ENOMEM;
++	mcu->serdev = serdev;
++	serdev_device_set_drvdata(serdev, mcu);
++
++	mcu->power_gpio = devm_gpiod_get_optional(dev, "power", GPIOD_OUT_HIGH);
++	if (IS_ERR(mcu->power_gpio))
++		return dev_err_probe(dev, PTR_ERR(mcu->power_gpio), "power gpio\n");
++	mcu->enable_gpio = devm_gpiod_get_optional(dev, "enable", GPIOD_OUT_HIGH);
++	if (IS_ERR(mcu->enable_gpio))
++		return dev_err_probe(dev, PTR_ERR(mcu->enable_gpio), "enable gpio\n");
++
++	input = devm_input_allocate_device(dev);
++	if (!input)
++		return -ENOMEM;
++	mcu->input = input;
++
++	input->name = "TRIMUI Brick Hammer Pro U Controller";
++	input->phys = "trimui-mcu/input0";
++	input->id.bustype = BUS_USB;
++	input->id.vendor = 0x045e;
++	input->id.product = 0x028e;
++	input->id.version = 0x0114;
++
++	for (i = 0; i < ARRAY_SIZE(trimui_buttons); i++)
++		input_set_capability(input, EV_KEY, trimui_buttons[i].code);
++	for (i = 0; i < TRIMUI_AXES; i++)
++		input_set_abs_params(input, trimui_axis_code[i], -32768, 32767,
++				     128, 1024);
++	input_set_abs_params(input, ABS_HAT0X, -1, 1, 0, 0);
++	input_set_abs_params(input, ABS_HAT0Y, -1, 1, 0, 0);
++
++	ret = input_register_device(input);
++	if (ret)
++		return ret;
++
++	serdev_device_set_client_ops(serdev, &trimui_serdev_ops);
++	ret = devm_serdev_device_open(dev, serdev);
++	if (ret)
++		return dev_err_probe(dev, ret, "serdev open\n");
++	serdev_device_set_baudrate(serdev, TRIMUI_BAUD);
++	serdev_device_set_flow_control(serdev, false);
++	serdev_device_set_parity(serdev, SERDEV_PARITY_NONE);
++
++	ret = trimui_leds_init(mcu);
++	if (ret)
++		dev_warn(dev, "no LED control: %d\n", ret);
++
++	return 0;
++}
++
++static const struct of_device_id trimui_of_match[] = {
++	{ .compatible = "trimui,mcu-gamepad" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, trimui_of_match);
++
++static struct serdev_device_driver trimui_driver = {
++	.probe = trimui_probe,
++	.driver = {
++		.name = "trimui-mcu-gamepad",
++		.of_match_table = trimui_of_match,
++		.pm = pm_sleep_ptr(&trimui_pm_ops),
++		.dev_groups = trimui_groups,
++	},
++};
++module_serdev_device_driver(trimui_driver);
++
++MODULE_DESCRIPTION("TrimUI serial gamepad and LED MCU driver");
++MODULE_LICENSE("GPL");
