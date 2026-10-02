@@ -1,0 +1,316 @@
+From: acmeplus <acmeplus@users.noreply.github.com>
+Subject: [PATCH] drm/panel: add the Truly GH7003 1024x768 DSI panel
+
+Video-mode IPS panel of the TrimUI Brick Hammer Pro U.  Timings, reset
+sequence and init table from the vendor device tree
+(qcom,mdss_gh7003_video).
+
+Blank the backlight in prepare: ABL hands the kernel a lit backlight.
+
+Co-developed-by: sunshineinabox <aqemail@gmail.com>
+
+---
+--- a/drivers/gpu/drm/panel/Kconfig
++++ b/drivers/gpu/drm/panel/Kconfig
+@@ -1270,6 +1270,16 @@
+ 	  400CH LTPS TFT LCD Single Chip Digital Driver for up to
+ 	  800x400 LCD panels.
+ 
++config DRM_PANEL_TRULY_GH7003
++	tristate "Truly GH7003 1024x768 DSI panel"
++	depends on OF
++	depends on DRM_MIPI_DSI
++	depends on BACKLIGHT_CLASS_DEVICE
++	help
++	  Say Y here if you want to enable support for the Truly GH7003
++	  1024x768 video-mode DSI LCD panel, as found in the TrimUI Brick
++	  Hammer Pro U.
++
+ config DRM_PANEL_TRULY_NT35597_WQXGA
+ 	tristate "Truly WQXGA"
+ 	depends on OF
+--- a/drivers/gpu/drm/panel/Makefile
++++ b/drivers/gpu/drm/panel/Makefile
+@@ -123,6 +123,7 @@
+ obj-$(CONFIG_DRM_PANEL_TPO_TD028TTEC1) += panel-tpo-td028ttec1.o
+ obj-$(CONFIG_DRM_PANEL_TPO_TD043MTEA1) += panel-tpo-td043mtea1.o
+ obj-$(CONFIG_DRM_PANEL_TPO_TPG110) += panel-tpo-tpg110.o
++obj-$(CONFIG_DRM_PANEL_TRULY_GH7003) += panel-truly-gh7003.o
+ obj-$(CONFIG_DRM_PANEL_TRULY_NT35597_WQXGA) += panel-truly-nt35597.o
+ obj-$(CONFIG_DRM_PANEL_VISIONOX_G2647FB105) += panel-visionox-g2647fb105.o
+ obj-$(CONFIG_DRM_PANEL_VISIONOX_RM69299) += panel-visionox-rm69299.o
+--- /dev/null
++++ b/drivers/gpu/drm/panel/panel-truly-gh7003.c
+@@ -0,0 +1,272 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Truly GH7003 1024x768 video-mode DSI LCD, as fitted to the TrimUI Brick
++ * Hammer Pro U.
++ *
++ * Timings, reset sequence and the init table are taken from the vendor device
++ * tree ("gh7003 video mode dsi truly panel"): 163 two-byte generic long writes,
++ * then sleep-out (255 ms) and display-on (100 ms).
++ */
++
++#include <linux/backlight.h>
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/regulator/consumer.h>
++
++#include <video/mipi_display.h>
++
++#include <drm/drm_mipi_dsi.h>
++#include <drm/drm_modes.h>
++#include <drm/drm_panel.h>
++#include <drm/drm_probe_helper.h>
++
++struct gh7003 {
++	struct drm_panel panel;
++	struct mipi_dsi_device *dsi;
++	struct regulator_bulk_data supplies[3];
++	struct gpio_desc *reset_gpio;
++};
++
++static const struct { u8 reg, val; } gh7003_init[] = {
++	{ 0xee, 0x01 }, { 0xea, 0x07 }, { 0xeb, 0x12 }, { 0x0a, 0x5f }, { 0x17, 0x35 }, { 0x1d, 0x44 },
++	{ 0x21, 0x01 }, { 0x28, 0x28 }, { 0x29, 0x19 }, { 0x2a, 0x63 }, { 0x2b, 0x2f }, { 0x2c, 0xcf },
++	{ 0x2d, 0x33 }, { 0xee, 0x02 }, { 0x39, 0x9f }, { 0x00, 0x00 }, { 0x01, 0x0c }, { 0x02, 0x12 },
++	{ 0x03, 0x05 }, { 0x04, 0x0f }, { 0x05, 0x37 }, { 0x06, 0x0e }, { 0x07, 0x12 }, { 0x08, 0x14 },
++	{ 0x09, 0x0e }, { 0x0a, 0x11 }, { 0x0b, 0x58 }, { 0x0c, 0x13 }, { 0x0d, 0x18 }, { 0x0e, 0x3a },
++	{ 0x0f, 0x3d }, { 0x10, 0x3f }, { 0x20, 0x0d }, { 0x21, 0x0e }, { 0x22, 0x12 }, { 0x23, 0x05 },
++	{ 0x24, 0x09 }, { 0x25, 0x31 }, { 0x26, 0x0a }, { 0x27, 0x0c }, { 0x28, 0x0c }, { 0x29, 0x0e },
++	{ 0x2a, 0x11 }, { 0x2b, 0x58 }, { 0x2c, 0x13 }, { 0x2d, 0x18 }, { 0x2e, 0x3a }, { 0x2f, 0x3d },
++	{ 0x30, 0x3f }, { 0xee, 0x04 }, { 0x00, 0x04 }, { 0x01, 0x01 }, { 0x02, 0x80 }, { 0x03, 0x04 },
++	{ 0x04, 0x00 }, { 0x06, 0x07 }, { 0x07, 0x05 }, { 0x08, 0x12 }, { 0x09, 0x0a }, { 0x0a, 0x1e },
++	{ 0x0b, 0x00 }, { 0x20, 0x40 }, { 0x22, 0x80 }, { 0x24, 0x08 }, { 0x2a, 0x00 }, { 0x30, 0x1f },
++	{ 0x40, 0x80 }, { 0x41, 0x55 }, { 0xee, 0x05 }, { 0x00, 0x00 }, { 0x01, 0x08 }, { 0x02, 0x05 },
++	{ 0x03, 0x05 }, { 0x07, 0x04 }, { 0x08, 0x0c }, { 0x09, 0x00 }, { 0x0a, 0x1f }, { 0x0b, 0x35 },
++	{ 0x0c, 0x66 }, { 0x10, 0x09 }, { 0x11, 0x0f }, { 0x12, 0x05 }, { 0x13, 0x05 }, { 0x19, 0x19 },
++	{ 0x1a, 0xf6 }, { 0x40, 0x55 }, { 0x41, 0x00 }, { 0x43, 0x03 }, { 0x44, 0x01 }, { 0x45, 0x81 },
++	{ 0x46, 0x05 }, { 0xee, 0x06 }, { 0x00, 0x45 }, { 0x02, 0x01 }, { 0x04, 0x88 }, { 0x06, 0xcd },
++	{ 0x08, 0xef }, { 0x09, 0xcd }, { 0x0a, 0xab }, { 0x0b, 0x89 }, { 0x0c, 0x67 }, { 0x0d, 0x45 },
++	{ 0x0e, 0x23 }, { 0x0f, 0x01 }, { 0xee, 0x07 }, { 0x00, 0x3c }, { 0x01, 0x3c }, { 0x02, 0x3c },
++	{ 0x03, 0x3c }, { 0x04, 0x3c }, { 0x05, 0x3c }, { 0x06, 0x0c }, { 0x07, 0x3c }, { 0x08, 0x05 },
++	{ 0x09, 0x01 }, { 0x0a, 0x1f }, { 0x0b, 0x1d }, { 0x0c, 0x1b }, { 0x0d, 0x19 }, { 0x0e, 0x17 },
++	{ 0x0f, 0x15 }, { 0x10, 0x13 }, { 0x11, 0x11 }, { 0x12, 0x08 }, { 0x13, 0x3c }, { 0x14, 0x3c },
++	{ 0x15, 0x0d }, { 0x20, 0x3c }, { 0x21, 0x3c }, { 0x22, 0x3c }, { 0x23, 0x3c }, { 0x24, 0x3c },
++	{ 0x25, 0x3c }, { 0x26, 0x0c }, { 0x27, 0x3c }, { 0x28, 0x04 }, { 0x29, 0x00 }, { 0x2a, 0x1e },
++	{ 0x2b, 0x1c }, { 0x2c, 0x1a }, { 0x2d, 0x18 }, { 0x2e, 0x16 }, { 0x2f, 0x14 }, { 0x30, 0x12 },
++	{ 0x31, 0x10 }, { 0x32, 0x08 }, { 0x33, 0x3c }, { 0x34, 0x3c }, { 0x35, 0x0d }, { 0xee, 0x08 },
++	{ 0x10, 0x00 }, { 0x12, 0xda }, { 0x13, 0xdb }, { 0x14, 0x10 }, { 0x22, 0x69 }, { 0xee, 0x0f },
++	{ 0x00, 0x01 }, { 0x01, 0x10 }, { 0xee, 0x00 }, { 0xea, 0x00 }, { 0xeb, 0x00 }, { 0x36, 0x42 },
++	{ 0x35, 0x00 },
++};
++
++static inline struct gh7003 *to_gh7003(struct drm_panel *panel)
++{
++	return container_of(panel, struct gh7003, panel);
++}
++
++/* The vendor sends every register as a generic LONG write, even 2 bytes. */
++static int gh7003_write(struct gh7003 *ctx, u8 reg, u8 val)
++{
++	struct mipi_dsi_device *dsi = ctx->dsi;
++	const u8 buf[2] = { reg, val };
++	struct mipi_dsi_msg msg = {
++		.channel = dsi->channel,
++		.type = MIPI_DSI_GENERIC_LONG_WRITE,
++		.tx_buf = buf,
++		.tx_len = sizeof(buf),
++		.flags = MIPI_DSI_MSG_USE_LPM,
++	};
++	ssize_t ret;
++
++	ret = dsi->host->ops->transfer(dsi->host, &msg);
++
++	return ret < 0 ? ret : 0;
++}
++
++static void gh7003_reset(struct gh7003 *ctx)
++{
++	/* vendor reset sequence: high 10 ms, low 20 ms, high 100 ms */
++	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
++	msleep(10);
++	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++	msleep(20);
++	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
++	msleep(100);
++}
++
++static int gh7003_prepare(struct drm_panel *panel)
++{
++	struct gh7003 *ctx = to_gh7003(panel);
++	struct device *dev = &ctx->dsi->dev;
++	unsigned int i;
++	int ret;
++
++	/* avoid clock gate artifacts */
++	backlight_disable(panel->backlight);
++
++	ret = regulator_bulk_enable(ARRAY_SIZE(ctx->supplies), ctx->supplies);
++	if (ret) {
++		dev_err(dev, "failed to enable supplies: %d\n", ret);
++		return ret;
++	}
++	msleep(10);
++
++	gh7003_reset(ctx);
++
++	for (i = 0; i < ARRAY_SIZE(gh7003_init); i++) {
++		ret = gh7003_write(ctx, gh7003_init[i].reg, gh7003_init[i].val);
++		if (ret) {
++			dev_err(dev, "init write %u (0x%02x) failed: %d\n",
++				i, gh7003_init[i].reg, ret);
++			goto err;
++		}
++	}
++
++	ret = mipi_dsi_dcs_exit_sleep_mode(ctx->dsi);
++	if (ret) {
++		dev_err(dev, "exit sleep failed: %d\n", ret);
++		goto err;
++	}
++	msleep(255);
++
++	ret = mipi_dsi_dcs_set_display_on(ctx->dsi);
++	if (ret) {
++		dev_err(dev, "display on failed: %d\n", ret);
++		goto err;
++	}
++	msleep(100);
++
++	return 0;
++
++err:
++	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++	regulator_bulk_disable(ARRAY_SIZE(ctx->supplies), ctx->supplies);
++	return ret;
++}
++
++static int gh7003_unprepare(struct drm_panel *panel)
++{
++	struct gh7003 *ctx = to_gh7003(panel);
++
++	/* vendor off sequence: display off (20 ms), sleep in (120 ms) */
++	mipi_dsi_dcs_set_display_off(ctx->dsi);
++	msleep(20);
++	mipi_dsi_dcs_enter_sleep_mode(ctx->dsi);
++	msleep(120);
++
++	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++	regulator_bulk_disable(ARRAY_SIZE(ctx->supplies), ctx->supplies);
++
++	return 0;
++}
++
++/* hfp 40, hsync 80, hbp 40; vfp 20, vsync 2, vbp 8; 60 Hz */
++static const struct drm_display_mode gh7003_mode = {
++	.clock = (1024 + 40 + 80 + 40) * (768 + 20 + 2 + 8) * 60 / 1000,
++	.hdisplay = 1024,
++	.hsync_start = 1024 + 40,
++	.hsync_end = 1024 + 40 + 80,
++	.htotal = 1024 + 40 + 80 + 40,
++	.vdisplay = 768,
++	.vsync_start = 768 + 20,
++	.vsync_end = 768 + 20 + 2,
++	.vtotal = 768 + 20 + 2 + 8,
++	.width_mm = 82,
++	.height_mm = 61,
++	.type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED,
++};
++
++static int gh7003_get_modes(struct drm_panel *panel,
++			    struct drm_connector *connector)
++{
++	return drm_connector_helper_get_modes_fixed(connector, &gh7003_mode);
++}
++
++static const struct drm_panel_funcs gh7003_funcs = {
++	.prepare = gh7003_prepare,
++	.unprepare = gh7003_unprepare,
++	.get_modes = gh7003_get_modes,
++};
++
++static int gh7003_probe(struct mipi_dsi_device *dsi)
++{
++	struct device *dev = &dsi->dev;
++	struct gh7003 *ctx;
++	int ret;
++
++	ctx = devm_drm_panel_alloc(dev, struct gh7003, panel, &gh7003_funcs,
++				   DRM_MODE_CONNECTOR_DSI);
++	if (IS_ERR(ctx))
++		return PTR_ERR(ctx);
++
++	ctx->supplies[0].supply = "vddio";
++	ctx->supplies[1].supply = "avdd";
++	ctx->supplies[2].supply = "avee";
++	ret = devm_regulator_bulk_get(dev, ARRAY_SIZE(ctx->supplies),
++				      ctx->supplies);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to get supplies\n");
++
++	/* keep the panel out of reset until prepare() cycles it */
++	ctx->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_LOW);
++	if (IS_ERR(ctx->reset_gpio))
++		return dev_err_probe(dev, PTR_ERR(ctx->reset_gpio),
++				     "failed to get reset gpio\n");
++
++	ctx->dsi = dsi;
++	mipi_dsi_set_drvdata(dsi, ctx);
++
++	dsi->lanes = 4;
++	dsi->format = MIPI_DSI_FMT_RGB888;
++	/*
++	 * vendor: non-burst with sync events, init commands in LP mode, clock
++	 * lane not forced to HS
++	 */
++	dsi->mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_LPM |
++			  MIPI_DSI_CLOCK_NON_CONTINUOUS;
++
++	/* the vendor driver resets the panel with the lanes already in LP-11 */
++	ctx->panel.prepare_prev_first = true;
++
++	ret = drm_panel_of_backlight(&ctx->panel);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to get backlight\n");
++
++	drm_panel_add(&ctx->panel);
++
++	ret = mipi_dsi_attach(dsi);
++	if (ret) {
++		drm_panel_remove(&ctx->panel);
++		return dev_err_probe(dev, ret, "failed to attach to DSI host\n");
++	}
++
++	return 0;
++}
++
++static void gh7003_remove(struct mipi_dsi_device *dsi)
++{
++	struct gh7003 *ctx = mipi_dsi_get_drvdata(dsi);
++
++	mipi_dsi_detach(dsi);
++	drm_panel_remove(&ctx->panel);
++}
++
++static const struct of_device_id gh7003_of_match[] = {
++	{ .compatible = "truly,gh7003" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, gh7003_of_match);
++
++static struct mipi_dsi_driver gh7003_driver = {
++	.probe = gh7003_probe,
++	.remove = gh7003_remove,
++	.driver = {
++		.name = "panel-truly-gh7003",
++		.of_match_table = gh7003_of_match,
++	},
++};
++module_mipi_dsi_driver(gh7003_driver);
++
++MODULE_DESCRIPTION("Truly GH7003 1024x768 DSI panel (TrimUI Brick Hammer Pro U)");
++MODULE_LICENSE("GPL");
