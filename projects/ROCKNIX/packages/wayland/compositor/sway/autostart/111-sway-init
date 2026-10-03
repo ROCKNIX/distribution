@@ -54,6 +54,11 @@ do
     fi
 done
 
+# The bottom screen on the Duo Lite is a built-in panel on DP-1, not actually external.
+if [[ "${QUIRK_DEVICE}" == "Retroid Pocket Duo Lite" && -n "${internal}" ]]; then
+    con="${internal}"
+fi
+
 # If dsi / eDP check rotation
 if [[ $con == DSI* || $con == eDP* ]]; then
     rot=$(cat /sys/class/graphics/fbcon/rotate)
@@ -118,6 +123,12 @@ if hexdump -C /sys/class/drm/card0-DP-1/edid | grep -q "Lontium"; then
   echo "input \"8746:1:RetroidPocket_RDS_Touchscreen\" calibration_matrix 0 1 0 -1 0 1" >> $SWAY_HOME/config
   echo 'for_window [app_id="emulationstation"] focus output DP-1' >> $SWAY_HOME/config
   con="DP-1"
+elif [ "${QUIRK_DEVICE}" = "Retroid Pocket Duo Lite" ]; then
+  # The Duo Lite's DP-1 is its built-in bottom screen and cannot use USB DP anyway.
+  # We have to do this ugliness otherwise fbcon sees the bottom screen and goes wonky...
+  second_con="DP-1"
+  echo "exec echo detect > /sys/class/drm/card0-DP-1/status" >> $SWAY_HOME/config
+  echo "output ${second_con} disable" >> $SWAY_HOME/config
 else
   # Any other DP-1 display (AR glasses, external monitor):
   # Assign workspace 1 to prefer DP-1 with DSI-1 as fallback.
@@ -129,7 +140,8 @@ fi
 
 # Start the external display monitor on any device that has DP or HDMI
 # hardware where the driver does not emit DRM hotplug uevents.
-if ls /sys/class/drm/card*-DP-* /sys/class/drm/card*-HDMI-A-* 2>/dev/null | grep -q .; then
+if [ "${QUIRK_DEVICE}" != "Retroid Pocket Duo Lite" ] && # See Duo Lite note above.
+   ls /sys/class/drm/card*-DP-* /sys/class/drm/card*-HDMI-A-* 2>/dev/null | grep -q .; then
   echo "exec /usr/bin/output_monitor" >> $SWAY_HOME/config
 fi
 
@@ -219,5 +231,20 @@ if [[ "${QUIRK_DEVICE}" == "Anbernic RG DS" || "${QUIRK_DEVICE}" == "Anbernic RG
   echo 'for_window [app_id="emulationstation"] reload' >> $SWAY_HOME/config
   echo "exec_always swaymsg '[app_id=\"emulationstation\"]' focus output ${con}, output ${second_con} power off" >> $SWAY_HOME/config
   echo "exec_always swaymsg '[app_id=\"emulationstation\"]' seat seat1 attach \"1046:911:Goodix_Capacitive_TouchScreen\"" >> $SWAY_HOME/config
+  echo "exec_always swaymsg '[app_id=\"emulationstation\"]' seat seat1 fallback yes" >> $SWAY_HOME/config
+fi
+
+# Retroid Pocket Duo Lite: bottom panel on DP-1, only enabled for dual-screen apps.
+if [ "${QUIRK_DEVICE}" = "Retroid Pocket Duo Lite" ]; then
+  echo 'for_window [title=".*(Secondary|\[w2\]|Sub|Bottom|Screen 2|GamePad).*"] output '"${second_con}"' enable, move window to output '"${second_con}" >> $SWAY_HOME/config
+  echo 'for_window [title=".*(Secondary|\[w2\]|Sub|Bottom|Screen 2|GamePad).*"] exec swaymsg input "0:0:generic_ft5x06_(a0)" events enabled' >> $SWAY_HOME/config
+  echo 'for_window [app_id="emulationstation"] reload' >> $SWAY_HOME/config
+  echo 'exec_always swaymsg input "0:0:Himax_Touchscreen" map_to_output '"${con}" >> $SWAY_HOME/config
+  echo 'exec_always swaymsg input "0:0:generic_ft5x06_(a0)" map_to_output '"${second_con}" >> $SWAY_HOME/config
+  echo 'exec_always swaymsg input "0:0:generic_ft5x06_(a0)" events disabled' >> $SWAY_HOME/config
+  echo "exec_always swaymsg '[app_id=\"emulationstation\"]' focus output ${con}, output ${second_con} disable" >> $SWAY_HOME/config
+  echo "exec_always swaymsg '[app_id=\"emulationstation\"]' seat seat1 attach \"0:0:Himax_Touchscreen\"" >> $SWAY_HOME/config
+  echo "exec_always swaymsg '[app_id=\"emulationstation\"]' seat seat1 attach \"0:0:generic_ft5x06_(a0)\"" >> $SWAY_HOME/config
+  echo "exec_always swaymsg '[app_id=\"emulationstation\"]' seat seat1 attach \"4660:22136:InputPlumber_Keyboard\"" >> $SWAY_HOME/config
   echo "exec_always swaymsg '[app_id=\"emulationstation\"]' seat seat1 fallback yes" >> $SWAY_HOME/config
 fi

@@ -1,0 +1,2878 @@
+From: Noxwell <beebono@gmail.com>
+Date: Sat, 3 Oct 2026 12:00:00 -0500
+Subject: [PATCH] power: supply: qcom_smbx: add PMI632 (SMB5) support
+
+Import the PMI632 work on qcom_smbx from the Fairphone 3 mainline tree
+(https://github.com/llg179org/linux, branch wip/7.1.3/charger, commit
+56ed6005646f): SMB5 variant data, charge termination and recharge,
+hardware JEITA thresholds, battery ID check, fast-charge current as a
+cooling device, and a QG-backed battery power supply.
+
+Changes on top of the import:
+- adapt to the 7.2 devm_thermal_of_cooling_device_register() signature
+- name the battery supply "battery" as ROCKNIX userspace expects
+- widen the coulomb-count divisor to s64: 360 * charge_full_uah exceeds
+  S32_MAX for packs over ~5965 mAh, which div_s64() silently truncates
+- take the input current limit from a 1.5 A or 3 A Type-C Rp
+  advertisement using the SMB5 high-current override, otherwise use
+  hardware auto mode so an SDP keeps its USB51 500 mA limit, following
+  downstream smblib_icl_override(); reset to the SDP default on unplug
+- opt-in autonomous HVDCP through qcom,hvdcp-input-current-microamp: QC2
+  is capped at 9 V, a BC1.2 DCP is held to that input current until the HVDCP
+  check is over, and usbin-src-change re-evaluates the limit when it is
+---
+diff --git a/drivers/power/supply/qcom_smbx.c b/drivers/power/supply/qcom_smbx.c
+index bf2e2cc..a17fa09 100644
+--- a/drivers/power/supply/qcom_smbx.c
++++ b/drivers/power/supply/qcom_smbx.c
+@@ -9,18 +9,25 @@
+  */
+ 
+ #include <linux/bits.h>
++#include <linux/cleanup.h>
+ #include <linux/devm-helpers.h>
+ #include <linux/iio/consumer.h>
+ #include <linux/interrupt.h>
+ #include <linux/kernel.h>
++#include <linux/math64.h>
+ #include <linux/minmax.h>
+ #include <linux/module.h>
++#include <linux/mutex.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm_wakeirq.h>
+ #include <linux/of.h>
+ #include <linux/power_supply.h>
++#include <linux/property.h>
+ #include <linux/regmap.h>
++#include <linux/thermal.h>
++#include <linux/timekeeping.h>
+ #include <linux/types.h>
++#include <linux/unaligned.h>
+ #include <linux/workqueue.h>
+ 
+ /* clang-format off */
+@@ -35,6 +42,7 @@
+ #define INPUT_CURRENT_LIMITED_BIT			BIT(7)
+ #define CHARGER_ERROR_STATUS_SFT_EXPIRE_BIT		BIT(6)
+ #define CHARGER_ERROR_STATUS_BAT_OV_BIT			BIT(5)
++#define SMB5_CHARGER_ERROR_STATUS_BAT_OV_BIT		BIT(1)
+ #define CHARGER_ERROR_STATUS_BAT_TERM_MISSING_BIT	BIT(4)
+ #define BAT_TEMP_STATUS_MASK				GENMASK(3, 0)
+ #define BAT_TEMP_STATUS_SOFT_LIMIT_MASK			GENMASK(3, 2)
+@@ -64,9 +72,28 @@
+ #define CHG_EN_POLARITY_BIT				BIT(6)
+ #define PRETOFAST_TRANSITION_CFG_BIT			BIT(5)
+ #define BAT_OV_ECC_BIT					BIT(4)
++/*
++ * On SMB5 this does not mean what the SMB2 comment below says. Clearing it
++ * there is described as enabling current termination; on a pmi632 it is what
++ * stops the charger ever leaving taper. Measured on a Fairphone 3 against the
++ * vendor stack running on the same phone, same pack, same supply: downstream
++ * leaves the bit SET and terminated within a minute of the current crossing the
++ * threshold, while this driver cleared it and sat below the same threshold for
++ * one hour forty-nine without terminating once. Every other input to the
++ * decision was identical between the two - threshold 99.9 mA, ADC comparator
++ * selected, same sample count.
++ */
+ #define I_TERM_BIT					BIT(3)
+ #define AUTO_RECHG_BIT					BIT(2)
+ #define EN_ANALOG_DROP_IN_VBATT_BIT			BIT(1)
++/*
++ * Where SMB2 has the two bits above, SMB5 has a single two-bit field naming
++ * what restarts a finished charge: 0 nothing, BIT(2) the battery voltage,
++ * both bits the state of charge (smb5-reg.h RECHG_MASK / VBAT_BASED_RECHG_BIT
++ * / SOC_BASED_RECHG_BIT).
++ */
++#define SMB5_RECHG_MASK					GENMASK(2, 1)
++#define SMB5_VBAT_BASED_RECHG_BIT			BIT(2)
+ #define CHARGER_INHIBIT_BIT				BIT(0)
+ 
+ #define PRE_CHARGE_CURRENT_CFG				0x60
+@@ -75,9 +102,39 @@
+ #define FAST_CHARGE_CURRENT_CFG				0x61
+ #define FAST_CHARGE_CURRENT_SETTING_MASK		GENMASK(7, 0)
+ 
++/*
++ * SMB5 only: how many comparator samples a recharge decision takes, and the
++ * battery-voltage threshold it compares against, in the same 194637 nV units
++ * the gauge reports (smb5-reg.h CHGR_NO_SAMPLE_TERM_RCHG_CFG_REG and
++ * CHGR_ADC_RECHARGE_THRESHOLD_MSB/LSB_REG).
++ */
++#define NO_SAMPLE_TERM_RCHG_CFG				0x6B
++#define NO_OF_SAMPLE_FOR_RCHG				GENMASK(3, 2)
++#define NO_OF_SAMPLE_FOR_RCHG_SHIFT			2
++
++/*
++ * SMB5 only: the current the charger calls a charge finished at, compared by
++ * the same ADC the gauge reports from and in the same 152588 nA units - so the
++ * threshold is written in the gauge's sign convention, negative into the
++ * battery (smb5-reg.h CHGR_ADC_ITERM_UP_THD_MSB/LSB_REG).
++ */
++#define ADC_ITERM_UP_THD_MSB				0x67
++#define ADC_ITERM_UP_THD_LSB				0x68
++
+ #define FLOAT_VOLTAGE_CFG				0x70
+ #define FLOAT_VOLTAGE_SETTING_MASK			GENMASK(7, 0)
+ 
++/*
++ * Which of the two termination comparators the charger acts on. Clear selects
++ * the ADC threshold above; set selects an analog comparator this driver does
++ * not program (smb5-reg.h CHGR_ENG_CHARGING_CFG_REG).
++ */
++#define ENG_CHARGING_CFG				0xC0
++#define ITERM_USE_ANALOG_BIT				BIT(3)
++
++#define ADC_RECHARGE_THRESHOLD_MSB			0x7E
++#define ADC_RECHARGE_THRESHOLD_LSB			0x7F
++
+ #define FG_UPDATE_CFG_2_SEL				0x7D
+ #define SOC_LT_OTG_THRESH_SEL_BIT			BIT(3)
+ #define SOC_LT_CHG_RECHARGE_THRESH_SEL_BIT		BIT(2)
+@@ -91,6 +148,25 @@
+ #define JEITA_EN_HOT_SL_CCC_BIT				BIT(1)
+ #define JEITA_EN_COLD_SL_CCC_BIT			BIT(0)
+ 
++#define JEITA_CCCOMP_CFG_HOT				0x92
++#define JEITA_CCCOMP_CFG_COLD				0x93
++#define JEITA_CCCOMP_MASK				GENMASK(5, 0)
++#define JEITA_CCCOMP_STEP_UA				25000
++
++/*
++ * Two four-byte blocks of comparator thresholds, each holding the hot
++ * threshold followed by the cold one, big-endian, as raw BAT_THERM ADC codes.
++ * A higher code is a colder battery, so the hot threshold is the smaller
++ * number of the pair.
++ */
++#define JEITA_SOFT_THRESHOLDS				0x94
++#define JEITA_HARD_THRESHOLDS				0x98
++#define JEITA_THRESHOLDS_LEN				4
++
++/* The BAT_ID divider is biased from the ADC's own 1.875 V reference. */
++#define BATT_ID_VREF_UV					1875000
++#define BATT_ID_DEFAULT_TOLERANCE_PCT			15
++
+ #define INT_RT_STS					0x310
+ #define TYPE_C_CHANGE_RT_STS_BIT			BIT(7)
+ #define USBIN_ICL_CHANGE_RT_STS_BIT			BIT(6)
+@@ -192,6 +268,9 @@
+ #define ICL_OVERRIDE_BIT				BIT(1)
+ #define APSD_RERUN_BIT					BIT(0)
+ 
++#define SMB5_CMD_ICL_OVERRIDE				0x342
++#define SMB5_ICL_OVERRIDE_BIT				BIT(0)
++
+ #define TYPE_C_CFG					0x358
+ #define APSD_START_ON_CC_BIT				BIT(7)
+ #define WAIT_FOR_APSD_BIT				BIT(6)
+@@ -221,6 +300,10 @@
+ #define EN_LEGACY_CABLE_DETECTION_BIT			BIT(1)
+ #define ALLOW_PD_DRING_UFP_TCCDB_BIT			BIT(0)
+ 
++#define HVDCP_PULSE_COUNT_MAX				0x35b
++#define HVDCP_PULSE_COUNT_MAX_QC2_MASK			GENMASK(7, 6)
++#define HVDCP_PULSE_COUNT_MAX_QC2_9V			0x40
++
+ #define USBIN_OPTIONS_1_CFG				0x362
+ #define CABLE_R_SEL_BIT					BIT(7)
+ #define HVDCP_AUTH_ALG_EN_CFG_BIT			BIT(6)
+@@ -270,6 +353,10 @@
+ #define USBIN_CURRENT_LIMIT_CFG				0x370
+ #define USBIN_CURRENT_LIMIT_MASK			GENMASK(7, 0)
+ 
++#define TYPEC_SNK_STATUS				0x506
++#define SNK_RP_1P5_BIT					BIT(2)
++#define SNK_RP_3P0_BIT					BIT(1)
++
+ #define USBIN_AICL_OPTIONS_CFG				0x380
+ #define SUSPEND_ON_COLLAPSE_USBIN_BIT			BIT(7)
+ #define USBIN_AICL_HDC_EN_BIT				BIT(6)
+@@ -303,10 +390,16 @@
+ #define AICL_SWITCH_ENABLE_BIT				BIT(1)
+ #define ZIN_ICL_ENABLE_BIT				BIT(0)
+ 
+-#define ICL_STATUS					0x607
++/*
++ * ICL_STATUS and POWER_PATH_STATUS live in the MISC peripheral (base offset
++ * 0x600) on SMB2 (pmi8998/pm660) but in the DCDC peripheral (0x100) on SMB5
++ * (pmi632). The generation-dependent prefix is held in smb_variant::status_base
++ * and added to chip->base at the call sites, so these are in-peripheral offsets.
++ */
++#define ICL_STATUS					0x07
+ #define INPUT_CURRENT_LIMIT_MASK			GENMASK(7, 0)
+ 
+-#define POWER_PATH_STATUS				0x60B
++#define POWER_PATH_STATUS				0x0B
+ #define P_PATH_INPUT_SS_DONE_BIT			BIT(7)
+ #define P_PATH_USBIN_SUSPEND_STS_BIT			BIT(6)
+ #define P_PATH_DCIN_SUSPEND_STS_BIT			BIT(5)
+@@ -345,24 +438,206 @@
+ #define STAT_FUNCTION_CFG_BIT				BIT(1)
+ #define STAT_IRQ_PULSING_EN_BIT				BIT(0)
+ 
++/*
++ * SMB5 only: the connector thermistor, and what the charger does about it.
++ * The PMIC biases the thermistor from an internal pull-up, measures it on one
++ * of the BATIF ADC channels, and - once that channel is named as a
++ * thermal-regulation source - pulls the input current back on its own when the
++ * connector gets hot. All three have to be set for any of it to happen
++ * (smb5-reg.h BATIF_ADC_INTERNAL_PULL_UP_REG, BATIF_ADC_CHANNEL_EN_REG and
++ * MISC_THERMREG_SRC_CFG_REG).
++ *
++ * The pull-up register holds two bits per thermistor, in the order the
++ * downstream driver enumerates them - battery, misc, connector, smb - so the
++ * connector's are bits 5:4.
++ */
++#define BATIF_ADC_INTERNAL_PULL_UP			0x286
++#define CONN_THM_PULL_UP_MASK				GENMASK(5, 4)
++#define CONN_THM_PULL_UP_SHIFT				4
++#define PULL_UP_NONE					0
++#define PULL_UP_30K					1
++#define PULL_UP_100K					2
++#define PULL_UP_400K					3
++
++#define BATIF_ADC_CHANNEL_EN				0x282
++#define CONN_THM_CHANNEL_EN_BIT				BIT(4)
++
++#define MISC_THERMREG_SRC_CFG				0x670
++#define THERMREG_CONNECTOR_ADC_SRC_EN_BIT		BIT(4)
++
++/*
++ * Fuel-gauge (QG) peripheral, present on SMB5 PMICs. Its base is absolute
++ * inside the PMIC rather than relative to the charger's own base, and is
++ * carried in smb_variant::qg_base. The offsets and the LSB sizes below are
++ * the downstream qpnp-qg driver's (qg-reg.h, qg-defs.h).
++ *
++ * This driver only ever reads the peripheral: the PMIC's own boot sequence
++ * starts the gauge, so the sample registers are live without anything here
++ * configuring them. Verified on a Fairphone 3 running this driver, where the
++ * ADC registers track a load step within one sample period.
++ */
++#define QG_S7_PON_OCV_V_DATA0				0x70
++#define QG_S7_PON_OCV_I_DATA0				0x72
++#define QG_S3_GOOD_OCV_V_DATA0				0x74
++#define QG_S3_GOOD_OCV_I_DATA0				0x76
++#define QG_LAST_ADC_V_DATA0				0xc0
++#define QG_LAST_ADC_I_DATA0				0xc2
++
++/* Both sample registers read back as 0x8000 while they hold no measurement */
++#define QG_ADC_INVALID					0x8000
++/* nV per LSB of the voltage ADC, nA per LSB of the current ADC */
++#define QG_V_LSB_NV					194637
++#define QG_I_LSB_NA					152588
++
++/*
++ * A scratch SRAM in the gauge that a warm reboot keeps. The downstream driver
++ * persists the state of charge here and restores it at boot rather than
++ * re-deriving it from a rest OCV that has gone stale between the rare captures
++ * this pack allows; mirror that. Offsets are the downstream qg-reg.h ones; the
++ * magic is our own, so only a value this driver wrote is ever restored.
++ */
++#define QG_SDAM_BASE					0xb100
++#define QG_SDAM_SOC					(QG_SDAM_BASE + 0x47)	/* 1 byte, percent */
++#define QG_SDAM_MAGIC					(QG_SDAM_BASE + 0x80)	/* 4 bytes */
++#define QG_SDAM_MAGIC_VALUE				0x736d6278		/* "smbx" */
++#define QG_SDAM_FULL					(QG_SDAM_BASE + 0x84)	/* 2 bytes, mAh */
++
++/*
++ * How often the gauge integrates, and the current below which a wake sample is
++ * rested enough for its voltage to be read as an open-circuit one. Above it the
++ * reading is loaded and steers nothing - correction then comes only from the
++ * hardware's own rested capture (see smb_fg_update()).
++ */
++#define SMB_FG_POLL_MS					10000
++#define SMB_FG_OCV_QUIET_UA				50000
++/*
++ * A poll this late means the CPU was suspended rather than merely busy, so
++ * the last current sample says nothing about the interval. Re-anchor on the
++ * open-circuit voltage instead, which a rested battery reports accurately.
++ */
++#define SMB_FG_STALE_MS					60000
++
++/*
++ * How far the persisted state of charge may sit from the gauge's own rested
++ * capture before the measurement is preferred to it at boot, in hundredths of
++ * a percent. The two disagree by a few points in ordinary use: the OCV table
++ * is characterised at one temperature and read at whatever the pack happens to
++ * be, and the count it is compared against has been integrating since the last
++ * rest. Ten points is past what either explains, and what is left is a stored
++ * value that no longer describes the pack - a battery changed while the phone
++ * was off, or a count that drifted through a session which never terminated a
++ * charge.
++ */
++#define SMB_FG_SEED_DISAGREE				(10 * 100)
++
++/*
++ * Learning the pack's real capacity. A span has to be long enough that the
++ * error in its two endpoints is small beside it - half the pack keeps a
++ * percent of endpoint error under two percent of the answer - and the result
++ * is blended rather than taken, so one bad span moves the number a quarter of
++ * the way and the next good one pulls it back. The clamp is not a refinement
++ * but a guard: a pack that measures outside it is a measurement fault, not an
++ * aged battery.
++ */
++#define SMB_FG_LEARN_MIN_SPAN				(50 * 100)
++#define SMB_FG_LEARN_BLEND_NUM				1
++#define SMB_FG_LEARN_BLEND_DEN				4
++#define SMB_FG_LEARN_MIN_PCT				50
++#define SMB_FG_LEARN_MAX_PCT				110
++
+ #define SDP_CURRENT_UA					500000
+ #define CDP_CURRENT_UA					1500000
+ #define DCP_CURRENT_UA					1500000
++#define TYPEC_RP_1P5_UA					1500000
++#define TYPEC_RP_3P0_UA					3000000
+ #define CURRENT_MAX_UA					DCP_CURRENT_UA
+ 
+ /* pmi8998 registers represent current in increments of 1/40th of an amp */
+ #define CURRENT_SCALE_FACTOR				25000
+ /* clang-format on */
+ 
+-enum charger_status {
+-	TRICKLE_CHARGE = 0,
+-	PRE_CHARGE,
+-	FAST_CHARGE,
+-	FULLON_CHARGE,
+-	TAPER_CHARGE,
+-	TERMINATE_CHARGE,
+-	INHIBIT_CHARGE,
+-	DISABLE_CHARGE,
++/*
++ * What the eight BATTERY_CHARGER_STATUS_1 codes mean, per generation. SMB5
++ * renumbered them: INHIBIT moved from 6 down to 0, the three codes below it
++ * shifted up by one, and PAUSE - which SMB2 does not have - took the 6 that
++ * INHIBIT left behind. Codes 3, 4, 5 and 7 mean the same thing on both, which
++ * is why reading an SMB5 PMIC through the SMB2 table looks right in the middle
++ * of a charge and is wrong at either end of it.
++ *
++ * Inhibit is reported as full because that is what inhibits: the cell is above
++ * the recharge threshold. Pause is not - it is a charge that stopped for a
++ * reason of its own.
++ */
++/*
++ * Charge completion, the one code both generations put at the same value and
++ * the only one that says the charger stopped because the battery is full.
++ */
++#define CHARGE_STATUS_TERMINATE				5
++
++/*
++ * Which kind of charging each of the eight codes is, for CHARGE_TYPE. Status
++ * says whether the pack is being charged; this says how hard, and it is the
++ * difference between a charge that is progressing and one that has reached the
++ * float voltage and is tapering off. Taken from the downstream
++ * smblib_get_prop_batt_charge_type(), which draws the same distinctions.
++ *
++ * Mainline has no value meaning taper, and the drivers that meet a CV phase do
++ * not report one - rk817 puts constant-current and constant-voltage together
++ * under STANDARD. So the taper code is reported as STANDARD against FULLON's
++ * FAST: the names fit loosely, but the transition userspace cares about, the
++ * one where the current starts falling away, still shows up as a change.
++ */
++static const u8 smb2_charge_type[8] = {
++	POWER_SUPPLY_CHARGE_TYPE_TRICKLE,	/* 0 trickle */
++	POWER_SUPPLY_CHARGE_TYPE_TRICKLE,	/* 1 pre */
++	POWER_SUPPLY_CHARGE_TYPE_FAST,		/* 2 fast */
++	POWER_SUPPLY_CHARGE_TYPE_FAST,		/* 3 full-on */
++	POWER_SUPPLY_CHARGE_TYPE_STANDARD,	/* 4 taper */
++	POWER_SUPPLY_CHARGE_TYPE_NONE,		/* 5 terminate */
++	POWER_SUPPLY_CHARGE_TYPE_NONE,		/* 6 inhibit */
++	POWER_SUPPLY_CHARGE_TYPE_NONE,		/* 7 disable */
++};
++
++static const u8 smb5_charge_type[8] = {
++	POWER_SUPPLY_CHARGE_TYPE_NONE,		/* 0 inhibit */
++	POWER_SUPPLY_CHARGE_TYPE_TRICKLE,	/* 1 trickle */
++	POWER_SUPPLY_CHARGE_TYPE_TRICKLE,	/* 2 pre */
++	POWER_SUPPLY_CHARGE_TYPE_FAST,		/* 3 full-on */
++	POWER_SUPPLY_CHARGE_TYPE_STANDARD,	/* 4 taper */
++	POWER_SUPPLY_CHARGE_TYPE_NONE,		/* 5 terminate */
++	POWER_SUPPLY_CHARGE_TYPE_NONE,		/* 6 pause */
++	POWER_SUPPLY_CHARGE_TYPE_NONE,		/* 7 disable */
++};
++
++static const u8 smb2_charge_status[8] = {
++	POWER_SUPPLY_STATUS_CHARGING,		/* 0 trickle */
++	POWER_SUPPLY_STATUS_CHARGING,		/* 1 pre */
++	POWER_SUPPLY_STATUS_CHARGING,		/* 2 fast */
++	POWER_SUPPLY_STATUS_CHARGING,		/* 3 full-on */
++	POWER_SUPPLY_STATUS_CHARGING,		/* 4 taper */
++	POWER_SUPPLY_STATUS_FULL,		/* 5 terminate */
++	POWER_SUPPLY_STATUS_FULL,		/* 6 inhibit */
++	POWER_SUPPLY_STATUS_NOT_CHARGING,	/* 7 disable */
++};
++
++static const u8 smb5_charge_status[8] = {
++	/*
++	 * Inhibit is where SMB2 reports full, but on SMB5 it is also where a
++	 * charger sits whenever it is being held off - including with a cell
++	 * that was already above the recharge threshold when the cable went
++	 * in and so was never charged at all. Not charging is the most the
++	 * code alone supports saying; smb_get_prop_status() upgrades it to
++	 * full where the gauge watched the charge that led into it, and
++	 * charge completion has its own code below.
++	 */
++	POWER_SUPPLY_STATUS_NOT_CHARGING,	/* 0 inhibit */
++	POWER_SUPPLY_STATUS_CHARGING,		/* 1 trickle */
++	POWER_SUPPLY_STATUS_CHARGING,		/* 2 pre */
++	POWER_SUPPLY_STATUS_CHARGING,		/* 3 full-on */
++	POWER_SUPPLY_STATUS_CHARGING,		/* 4 taper */
++	POWER_SUPPLY_STATUS_FULL,		/* 5 terminate */
++	POWER_SUPPLY_STATUS_NOT_CHARGING,	/* 6 pause */
++	POWER_SUPPLY_STATUS_NOT_CHARGING,	/* 7 disable */
+ };
+ 
+ struct smb_init_register {
+@@ -371,6 +646,75 @@ struct smb_init_register {
+ 	u8 val;
+ };
+ 
++/**
++ * struct smb_variant - per-PMIC-generation parameters
++ * @name:		Model name, used for the power_supply name
++ * @status_base:	Peripheral prefix for ICL_STATUS / POWER_PATH_STATUS
++ *			(0x600 = MISC on SMB2, 0x100 = DCDC on SMB5)
++ * @current_scale_ua:	uA per LSB of the FCC / ICL registers
++ *			(25000 on SMB2/pmi8998, 50000 on SMB5/pmi632)
++ * @fcc_max_ua:		Highest fast-charge current this PMIC generation can
++ *			deliver, from the datasheet values Qualcomm's own
++ *			drivers carry (qpnp-smb2 / qpnp-smb5 smb_params.fcc.max_u).
++ *			A hardware bound, not a policy one - how much of it a
++ *			board may use is the board's business, not this file's
++ * @float_base_uv:	Float-voltage register value 0 corresponds to this voltage
++ * @float_step_uv:	uV per LSB of FLOAT_VOLTAGE_CFG
++ * @ov_bit:		BAT_OV (overvoltage) bit within BATTERY_CHARGER_STATUS_2
++ *			(BIT(5) on SMB2, BIT(1) on SMB5)
++ * @charge_status:	What each of the eight BATTERY_CHARGER_STATUS_1 codes
++ *			means on this generation, see smb2_charge_status
++ * @charge_type:	What kind of charging each of the eight codes is,
++ *			see smb2_charge_type
++ * @rechg_thresh_reg:	Register holding the battery-voltage recharge threshold,
++ *			relative to @base, or 0 where this generation does not
++ *			express one this way (SMB2)
++ * @iterm_thresh_reg:	Register pair holding the ADC termination-current
++ *			threshold, relative to @base, or 0 where this generation
++ *			does not express one this way (SMB2)
++ * @thermreg_src_reg:	Register naming which measurements the charger regulates
++ *			its input current against, relative to @base, or 0 where
++ *			this generation has no connector thermistor to add (SMB2)
++ * @inhibit_code:	Which of those codes is charge inhibit - the state a
++ *			finished charge settles into once the cell is above the
++ *			recharge threshold (6 on SMB2, 0 on SMB5)
++ * @temp_status_reg:	Register holding the JEITA temperature-status bits,
++ *			relative to @base (BATTERY_CHARGER_STATUS_2 = 0x07 on
++ *			SMB2, BATTERY_CHARGER_STATUS_7 = 0x0D on SMB5)
++ * @temp_status_shift:	Left-shift of the HOT_SOFT/COLD_SOFT/TOO_HOT/TOO_COLD
++ *			bits versus the SMB2 baseline (0 on SMB2, 2 on SMB5)
++ * @init_seq:		HW init register write sequence for this generation
++ * @init_seq_len:	Number of entries in @init_seq
++ * @qg_base:		Absolute base of the QG fuel-gauge peripheral, or 0 on
++ *			a PMIC where this driver has no gauge to read
++ * @typec_snk_status:	Type-C sink status register relative to @base, or 0
++ *			where the Rp advertisement is not read (SMB2)
++ *
++ * All values are taken from the Qualcomm downstream qpnp-smb2 / qpnp-smb5
++ * drivers (smb_chg_param tables) so the current/voltage scaling is exact.
++ */
++struct smb_variant {
++	const char *name;
++	u16 status_base;
++	u32 current_scale_ua;
++	u32 fcc_max_ua;
++	u32 float_base_uv;
++	u32 float_step_uv;
++	u8 ov_bit;
++	const u8 *charge_status;
++	const u8 *charge_type;
++	u16 rechg_thresh_reg;
++	u16 iterm_thresh_reg;
++	u16 thermreg_src_reg;
++	u8 inhibit_code;
++	u16 temp_status_reg;
++	u8 temp_status_shift;
++	const struct smb_init_register *init_seq;
++	int init_seq_len;
++	u16 qg_base;
++	u16 typec_snk_status;
++};
++
+ /**
+  * struct smb_chip - smb chip structure
+  * @dev:		Device reference for power_supply
+@@ -383,23 +727,86 @@ struct smb_init_register {
+  * @wakeup_enabled:	If the cable IRQ will cause a wakeup
+  * @usb_in_i_chan:	USB_IN current measurement channel
+  * @usb_in_v_chan:	USB_IN voltage measurement channel
++ * @vbat_chan:		Battery voltage (VBAT_SNS) measurement channel
++ * @bat_therm_chan:	Battery thermistor (BAT_THERM) measurement channel
++ * @bat_id_chan:	Battery-ID resistor measurement channel, if the board
++ *			routes one
+  * @chg_psy:		Charger power supply instance
++ * @batt_psy:		Battery (fuel-gauge) power supply instance
++ * @thermal_mitigation_ua: Fast-charge current for each thermal cooling state,
++ *			from qcom,thermal-mitigation, most permissive first
++ * @thermal_levels:	Number of entries in @thermal_mitigation_ua
++ * @thermal_level:	Cooling state currently in effect
++ * @fg_work:		Worker that integrates the fuel gauge, see smb_fg_work()
++ * @fg_lock:		Serialises @soc_permyriad and @fg_last against readers
++ * @soc_permyriad:	State of charge in hundredths of a percent
++ * @fg_residue:		Charge counted but too small to have moved
++ *			@soc_permyriad yet, in microamp-milliseconds
++ * @fg_last:		When the gauge last integrated
++ * @fg_ready:		Set once @soc_permyriad holds a real estimate
++ * @fg_full:		The charger has finished a charge on the input that is
++ *			still attached, so the pack is full whatever the curve
++ *			says, see smb_fg_track_completion()
++ * @fg_charge_seen:	A charge has actually been in progress on this cable,
++ *			which is what makes a later inhibit mean completion
++ *			rather than a top-up that was never needed. Survives a
++ *			momentary loss of the input, which is a fact about the
++ *			cable and not about the pack
++ * @fg_charging:	The charger is driving the pack right now, so its terminal
++ *			voltage is imposed rather than chosen and says nothing
++ *			the OCV table can answer
++ * @charge_full_uah:	What the pack actually holds, learned from spans between
++ *			trusted anchors. Seeded from the device tree's design
++ *			value, which is a nameplate for a new cell and not a
++ *			statement about the one that is fitted
++ * @fg_learn_ua_ms:	Charge counted since the last anchor, in microamp-
++ *			milliseconds and signed, so that its sign says which way
++ *			the span ran
++ * @fg_learn_soc:	State of charge at the last anchor, or -1 when there is
++ *			no span in progress - which is also how a span that
++ *			cannot be trusted is thrown away
+  */
+ struct smb_chip {
+ 	struct device *dev;
+ 	const char *name;
+ 	unsigned int base;
++	const struct smb_variant *var;
+ 	struct regmap *regmap;
+ 	struct power_supply_battery_info *batt_info;
+ 
+ 	struct delayed_work status_change_work;
++	u32 hvdcp_icl_ua;
+ 	int cable_irq;
+ 	bool wakeup_enabled;
+ 
+ 	struct iio_channel *usb_in_i_chan;
+ 	struct iio_channel *usb_in_v_chan;
++	struct iio_channel *vbat_chan;
++	struct iio_channel *bat_therm_chan;
++	struct iio_channel *bat_id_chan;
+ 
+ 	struct power_supply *chg_psy;
++	struct power_supply *batt_psy;
++
++	u32 *thermal_mitigation_ua;
++	unsigned int thermal_levels;
++	unsigned long thermal_level;
++
++	struct delayed_work fg_work;
++	/* Serialises the gauge state below against readers of it */
++	struct mutex fg_lock;
++	int soc_permyriad;
++	s64 fg_residue;
++	ktime_t fg_last;
++	bool fg_ready;
++	bool fg_full;
++	bool fg_charge_seen;
++	bool fg_charging;
++	/* Last hardware rest-OCV harvested, to tell a fresh capture from a stale one */
++	int fg_good_ocv_uv;
++	int charge_full_uah;
++	s64 fg_learn_ua_ms;
++	int fg_learn_soc;
+ };
+ 
+ static enum power_supply_property smb_properties[] = {
+@@ -419,7 +826,9 @@ static int smb_get_prop_usb_online(struct smb_chip *chip, int *val)
+ 	unsigned int stat;
+ 	int rc;
+ 
+-	rc = regmap_read(chip->regmap, chip->base + POWER_PATH_STATUS, &stat);
++	rc = regmap_read(chip->regmap,
++			 chip->base + chip->var->status_base + POWER_PATH_STATUS,
++			 &stat);
+ 	if (rc < 0) {
+ 		dev_err(chip->dev, "Couldn't read power path status: %d\n", rc);
+ 		return rc;
+@@ -494,41 +903,74 @@ static int smb_get_prop_status(struct smb_chip *chip, int *val)
+ 		return rc;
+ 	}
+ 
+-	if (stat[1] & CHARGER_ERROR_STATUS_BAT_OV_BIT) {
++	/*
++	 * Which bit of STATUS_2 carries BAT_OV also moved between the
++	 * generations, so it has to come from the variant here as it does
++	 * everywhere else this register is read.
++	 */
++	if (stat[1] & chip->var->ov_bit) {
+ 		*val = POWER_SUPPLY_STATUS_NOT_CHARGING;
+ 		return 0;
+ 	}
+ 
+-	stat[0] = stat[0] & BATTERY_CHARGER_STATUS_MASK;
++	*val = chip->var->charge_status[stat[0] & BATTERY_CHARGER_STATUS_MASK];
+ 
+-	switch (stat[0]) {
+-	case TRICKLE_CHARGE:
+-	case PRE_CHARGE:
+-	case FAST_CHARGE:
+-	case FULLON_CHARGE:
+-	case TAPER_CHARGE:
+-		*val = POWER_SUPPLY_STATUS_CHARGING;
+-		return rc;
+-	case DISABLE_CHARGE:
+-		*val = POWER_SUPPLY_STATUS_NOT_CHARGING;
+-		return rc;
+-	case TERMINATE_CHARGE:
+-	case INHIBIT_CHARGE:
+-		*val = POWER_SUPPLY_STATUS_FULL;
+-		return rc;
+-	default:
+-		*val = POWER_SUPPLY_STATUS_UNKNOWN;
++	/*
++	 * Inhibit is where a finished charge comes to rest, and by itself it
++	 * cannot be told apart from a charge that never needed to start - so
++	 * the table has to call it not-charging. Where the gauge has watched
++	 * the charge that led into it, say so.
++	 */
++	if ((stat[0] & BATTERY_CHARGER_STATUS_MASK) == chip->var->inhibit_code) {
++		guard(mutex)(&chip->fg_lock);
++
++		if (chip->fg_full)
++			*val = POWER_SUPPLY_STATUS_FULL;
++	}
++
++	return 0;
++}
++
++/*
++ * How hard the pack is being charged, which is the distinction the status
++ * above cannot draw: a charge climbing at the full current and one that has
++ * reached the float voltage and is tapering off are both "charging", and only
++ * the second is nearly over. Without this the difference lives solely in the
++ * charger's own registers, which is a poor place to have to go looking - it
++ * needs root, a debugfs regmap, and knowing which of eight codes this
++ * generation numbers taper as.
++ */
++static int smb_get_prop_charge_type(struct smb_chip *chip, int *val)
++{
++	unsigned int stat;
++	int usb_online = 0;
++	int rc;
++
++	rc = smb_get_prop_usb_online(chip, &usb_online);
++	if (!usb_online) {
++		*val = POWER_SUPPLY_CHARGE_TYPE_NONE;
+ 		return rc;
+ 	}
++
++	rc = regmap_read(chip->regmap, chip->base + BATTERY_CHARGER_STATUS_1,
++			 &stat);
++	if (rc < 0)
++		return rc;
++
++	*val = chip->var->charge_type[stat & BATTERY_CHARGER_STATUS_MASK];
++
++	return 0;
+ }
+ 
+ static inline int smb_get_current_limit(struct smb_chip *chip,
+ 					 unsigned int *val)
+ {
+-	int rc = regmap_read(chip->regmap, chip->base + ICL_STATUS, val);
++	int rc = regmap_read(chip->regmap,
++			     chip->base + chip->var->status_base + ICL_STATUS,
++			     val);
+ 
+ 	if (rc >= 0)
+-		*val *= CURRENT_SCALE_FACTOR;
++		*val *= chip->var->current_scale_ua;
+ 	return rc;
+ }
+ 
+@@ -541,15 +983,91 @@ static int smb_set_current_limit(struct smb_chip *chip, unsigned int val)
+ 			"Can't set current limit higher than 4800000uA");
+ 		return -EINVAL;
+ 	}
+-	val_raw = val / CURRENT_SCALE_FACTOR;
++	val_raw = val / chip->var->current_scale_ua;
+ 
+ 	return regmap_write(chip->regmap, chip->base + USBIN_CURRENT_LIMIT_CFG,
+ 			    val_raw);
+ }
+ 
++static int smb_get_fast_charge_current(struct smb_chip *chip, unsigned int *val)
++{
++	unsigned int val_raw;
++	int rc;
++
++	rc = regmap_read(chip->regmap, chip->base + FAST_CHARGE_CURRENT_CFG,
++			 &val_raw);
++	if (rc < 0)
++		return rc;
++
++	*val = (val_raw & FAST_CHARGE_CURRENT_SETTING_MASK) *
++	       chip->var->current_scale_ua;
++
++	return 0;
++}
++
++static int smb_set_fast_charge_current(struct smb_chip *chip, unsigned int val)
++{
++	unsigned int val_raw = val / chip->var->current_scale_ua;
++
++	if (val_raw > FAST_CHARGE_CURRENT_SETTING_MASK)
++		return -EINVAL;
++
++	return regmap_update_bits(chip->regmap,
++				  chip->base + FAST_CHARGE_CURRENT_CFG,
++				  FAST_CHARGE_CURRENT_SETTING_MASK, val_raw);
++}
++
++/*
++ * A Type-C source advertising 1.5 A or 3 A through Rp may be loaded to that
++ * current whatever BC1.2 found, as the downstream driver does. A default Rp
++ * returns 0 and leaves the limit to APSD.
++ */
++static unsigned int smb_typec_rp_current(struct smb_chip *chip)
++{
++	unsigned int stat;
++
++	if (!chip->var->typec_snk_status ||
++	    regmap_read(chip->regmap, chip->base + chip->var->typec_snk_status,
++			&stat))
++		return 0;
++
++	if (stat & SNK_RP_3P0_BIT)
++		return TYPEC_RP_3P0_UA;
++	if (stat & SNK_RP_1P5_BIT)
++		return TYPEC_RP_1P5_UA;
++	return 0;
++}
++
++/*
++ * SMB5 input current mode, after downstream smblib_icl_override(). In hardware
++ * auto mode an SDP follows USB51 (500 mA) and other APSD results use
++ * USBIN_CURRENT_LIMIT_CFG; the high-current override applies
++ * USBIN_CURRENT_LIMIT_CFG whatever APSD found.
++ */
++static int smb5_set_icl_mode(struct smb_chip *chip, bool hc_override)
++{
++	int rc;
++
++	rc = regmap_update_bits(chip->regmap, chip->base + USBIN_ICL_OPTIONS,
++				USB51_MODE_BIT | USBIN_MODE_CHG_BIT,
++				USB51_MODE_BIT | USBIN_MODE_CHG_BIT);
++	if (rc < 0)
++		return rc;
++
++	rc = regmap_update_bits(chip->regmap,
++				chip->base + SMB5_CMD_ICL_OVERRIDE,
++				SMB5_ICL_OVERRIDE_BIT, 0);
++	if (rc < 0)
++		return rc;
++
++	return regmap_update_bits(chip->regmap, chip->base + USBIN_LOAD_CFG,
++				  ICL_OVERRIDE_AFTER_APSD_BIT,
++				  hc_override ? ICL_OVERRIDE_AFTER_APSD_BIT : 0);
++}
++
+ static void smb_status_change_work(struct work_struct *work)
+ {
+-	unsigned int charger_type, current_ua;
++	unsigned int charger_type, current_ua, rp_ua;
+ 	int usb_online = 0;
+ 	int count, rc;
+ 	struct smb_chip *chip;
+@@ -557,8 +1075,14 @@ static void smb_status_change_work(struct work_struct *work)
+ 	chip = container_of(work, struct smb_chip, status_change_work.work);
+ 
+ 	smb_get_prop_usb_online(chip, &usb_online);
+-	if (!usb_online)
++	if (!usb_online) {
++		/* Don't carry an Rp override over to the next source */
++		if (chip->var->typec_snk_status) {
++			smb_set_current_limit(chip, SDP_CURRENT_UA);
++			smb5_set_icl_mode(chip, false);
++		}
+ 		return;
++	}
+ 
+ 	for (count = 0; count < 3; count++) {
+ 		dev_dbg(chip->dev, "get charger type retry %d\n", count);
+@@ -595,8 +1119,36 @@ static void smb_status_change_work(struct work_struct *work)
+ 		break;
+ 	}
+ 
++	rp_ua = smb_typec_rp_current(chip);
++	if (rp_ua)
++		current_ua = rp_ua;
++
++	/*
++	 * Autonomous HVDCP raises VBUS to 9 V by itself once its check finds a
++	 * QC adapter. The check only runs on a DCP, so hold a DCP to the HVDCP
++	 * limit until it is over.
++	 */
++	if (chip->hvdcp_icl_ua) {
++		unsigned int apsd_stat = 0, apsd_result = 0;
++
++		regmap_read(chip->regmap, chip->base + APSD_STATUS, &apsd_stat);
++		regmap_read(chip->regmap, chip->base + APSD_RESULT_STATUS,
++			    &apsd_result);
++
++		if (apsd_result & (QC_2P0_BIT | QC_3P0_BIT))
++			current_ua = chip->hvdcp_icl_ua;
++		else if ((apsd_result & DCP_CHARGER_BIT) &&
++			 !(apsd_stat & HVDCP_CHECK_TIMEOUT_BIT))
++			current_ua = min(current_ua, chip->hvdcp_icl_ua);
++	}
++
++	/* Program the limit before the mode that applies it */
+ 	smb_set_current_limit(chip, current_ua);
++	if (chip->var->typec_snk_status)
++		smb5_set_icl_mode(chip, rp_ua);
+ 	power_supply_changed(chip->chg_psy);
++	if (chip->batt_psy)
++		power_supply_changed(chip->batt_psy);
+ }
+ 
+ static int smb_get_iio_chan(struct smb_chip *chip, struct iio_channel *chan,
+@@ -625,6 +1177,10 @@ static int smb_get_prop_health(struct smb_chip *chip, int *val)
+ 	int rc;
+ 	unsigned int stat;
+ 
++	/*
++	 * Battery overvoltage is reported in BATTERY_CHARGER_STATUS_2 on both
++	 * generations, but at a different bit (smb_variant::ov_bit).
++	 */
+ 	rc = regmap_read(chip->regmap, chip->base + BATTERY_CHARGER_STATUS_2,
+ 			 &stat);
+ 	if (rc < 0) {
+@@ -632,26 +1188,37 @@ static int smb_get_prop_health(struct smb_chip *chip, int *val)
+ 		return rc;
+ 	}
+ 
+-	switch (stat) {
+-	case CHARGER_ERROR_STATUS_BAT_OV_BIT:
++	if (stat & chip->var->ov_bit) {
+ 		*val = POWER_SUPPLY_HEALTH_OVERVOLTAGE;
+ 		return 0;
+-	case BAT_TEMP_STATUS_TOO_COLD_BIT:
+-		*val = POWER_SUPPLY_HEALTH_COLD;
+-		return 0;
+-	case BAT_TEMP_STATUS_TOO_HOT_BIT:
++	}
++
++	/*
++	 * JEITA temperature status. On SMB2 it shares BATTERY_CHARGER_STATUS_2;
++	 * on SMB5 it lives in BATTERY_CHARGER_STATUS_7 with the bits shifted up
++	 * by two. The per-variant register and shift select the right layout.
++	 * Test bits individually (a register may have several set) and let the
++	 * hard limits take precedence over the soft ones.
++	 */
++	rc = regmap_read(chip->regmap, chip->base + chip->var->temp_status_reg,
++			 &stat);
++	if (rc < 0) {
++		dev_err(chip->dev, "Couldn't read temp status rc=%d\n", rc);
++		return rc;
++	}
++
++	if (stat & (BAT_TEMP_STATUS_TOO_HOT_BIT << chip->var->temp_status_shift))
+ 		*val = POWER_SUPPLY_HEALTH_OVERHEAT;
+-		return 0;
+-	case BAT_TEMP_STATUS_COLD_SOFT_LIMIT_BIT:
+-		*val = POWER_SUPPLY_HEALTH_COOL;
+-		return 0;
+-	case BAT_TEMP_STATUS_HOT_SOFT_LIMIT_BIT:
++	else if (stat & (BAT_TEMP_STATUS_TOO_COLD_BIT << chip->var->temp_status_shift))
++		*val = POWER_SUPPLY_HEALTH_COLD;
++	else if (stat & (BAT_TEMP_STATUS_HOT_SOFT_LIMIT_BIT << chip->var->temp_status_shift))
+ 		*val = POWER_SUPPLY_HEALTH_WARM;
+-		return 0;
+-	default:
++	else if (stat & (BAT_TEMP_STATUS_COLD_SOFT_LIMIT_BIT << chip->var->temp_status_shift))
++		*val = POWER_SUPPLY_HEALTH_COOL;
++	else
+ 		*val = POWER_SUPPLY_HEALTH_GOOD;
+-		return 0;
+-	}
++
++	return 0;
+ }
+ 
+ static int smb_get_property(struct power_supply *psy,
+@@ -727,7 +1294,7 @@ static irqreturn_t smb_handle_batt_overvoltage(int irq, void *data)
+ 	regmap_read(chip->regmap, chip->base + BATTERY_CHARGER_STATUS_2,
+ 		    &status);
+ 
+-	if (status & CHARGER_ERROR_STATUS_BAT_OV_BIT) {
++	if (status & chip->var->ov_bit) {
+ 		/* The hardware stops charging automatically */
+ 		dev_err(chip->dev, "battery overvoltage detected\n");
+ 		power_supply_changed(chip->chg_psy);
+@@ -741,6 +1308,8 @@ static irqreturn_t smb_handle_usb_plugin(int irq, void *data)
+ 	struct smb_chip *chip = data;
+ 
+ 	power_supply_changed(chip->chg_psy);
++	if (chip->batt_psy)
++		power_supply_changed(chip->batt_psy);
+ 
+ 	schedule_delayed_work(&chip->status_change_work,
+ 			      msecs_to_jiffies(1500));
+@@ -748,6 +1317,15 @@ static irqreturn_t smb_handle_usb_plugin(int irq, void *data)
+ 	return IRQ_HANDLED;
+ }
+ 
++static irqreturn_t smb_handle_usb_src_change(int irq, void *data)
++{
++	struct smb_chip *chip = data;
++
++	schedule_delayed_work(&chip->status_change_work, 0);
++
++	return IRQ_HANDLED;
++}
++
+ static irqreturn_t smb_handle_usb_icl_change(int irq, void *data)
+ {
+ 	struct smb_chip *chip = data;
+@@ -772,66 +1350,938 @@ static irqreturn_t smb_handle_wdog_bark(int irq, void *data)
+ 	return IRQ_HANDLED;
+ }
+ 
+-static const struct power_supply_desc smb_psy_desc = {
+-	.name = "pmi8998_charger",
+-	.type = POWER_SUPPLY_TYPE_USB,
+-	.usb_types = BIT(POWER_SUPPLY_USB_TYPE_SDP) |
+-		     BIT(POWER_SUPPLY_USB_TYPE_CDP) |
+-		     BIT(POWER_SUPPLY_USB_TYPE_DCP) |
+-		     BIT(POWER_SUPPLY_USB_TYPE_UNKNOWN),
+-	.properties = smb_properties,
+-	.num_properties = ARRAY_SIZE(smb_properties),
+-	.get_property = smb_get_property,
+-	.set_property = smb_set_property,
+-	.property_is_writeable = smb_property_is_writable,
++/*
++ * Battery (fuel-gauge) power supply.
++ *
++ * The state of charge is carried in the OCV->capacity table of the
++ * monitored-battery node, which is the downstream QG battery profile. That
++ * table maps an *open-circuit* voltage, so what is fed into it decides how
++ * good the answer is: the battery's terminal voltage moves by hundreds of
++ * millivolts with load, while the same table spans eighteen points of charge
++ * over the forty millivolts between 3.80 V and 3.84 V. Reading the terminal
++ * voltage into it therefore does not give a poor estimate, it gives a meter
++ * that tracks the CPU rather than the battery.
++ *
++ * So the terminal voltage is not what this gauge reports. On a PMIC with a QG
++ * peripheral we have both the battery voltage and the battery current from
++ * the same converter, and the two together support the usual arrangement:
++ * integrate the current continuously, and correct that integral against the
++ * OCV table only while the current is small enough for the IR term to be
++ * worth trusting. The result no longer moves under load, because a load does
++ * not change how much charge is in the cell.
++ *
++ * Reading is non-invasive: ADC channels and QG sample registers only.
++ */
++static enum power_supply_property smb_batt_properties[] = {
++	POWER_SUPPLY_PROP_STATUS,
++	POWER_SUPPLY_PROP_CHARGE_TYPE,
++	POWER_SUPPLY_PROP_HEALTH,
++	POWER_SUPPLY_PROP_PRESENT,
++	POWER_SUPPLY_PROP_TECHNOLOGY,
++	POWER_SUPPLY_PROP_CAPACITY,
++	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
++	POWER_SUPPLY_PROP_CHARGE_FULL,
++	POWER_SUPPLY_PROP_CHARGE_NOW,
++	POWER_SUPPLY_PROP_VOLTAGE_NOW,
++	POWER_SUPPLY_PROP_VOLTAGE_OCV,
++	POWER_SUPPLY_PROP_CURRENT_NOW,
++	POWER_SUPPLY_PROP_TEMP,
+ };
+ 
+-/* Init sequence derived from vendor downstream driver */
+-static const struct smb_init_register smb_init_seq[] = {
+-	{ .addr = AICL_RERUN_TIME_CFG, .mask = AICL_RERUN_TIME_MASK, .val = 0 },
+-	/*
+-	 * By default configure us as an upstream facing port
+-	 * FIXME: This will be handled by the type-c driver
+-	 */
+-	{ .addr = TYPE_C_INTRPT_ENB_SOFTWARE_CTRL,
+-	  .mask = TYPEC_POWER_ROLE_CMD_MASK | VCONN_EN_SRC_BIT |
+-		  VCONN_EN_VALUE_BIT,
+-	  .val = VCONN_EN_SRC_BIT },
+-	/*
+-	 * Disable Type-C factory mode and stay in Attached.SRC state when VCONN
+-	 * over-current happens
+-	 */
+-	{ .addr = TYPE_C_CFG,
+-	  .mask = FACTORY_MODE_DETECTION_EN_BIT | VCONN_OC_CFG_BIT,
+-	  .val = 0 },
+-	/* Configure VBUS for software control */
+-	{ .addr = OTG_CFG, .mask = OTG_EN_SRC_CFG_BIT, .val = 0 },
++/**
++ * smb_qg_read_sample() - read one QG voltage/current sample register pair
++ * @chip: charger
++ * @v_off: in-peripheral offset of the voltage half of the pair
++ * @v_uv: where to put the voltage, in microvolts
++ * @i_ua: where to put the current, in microamps, positive while charging
++ *
++ * The pairs are always voltage then current two registers apart. The gauge
++ * reports current negative into the battery; this returns it the way the
++ * power-supply class states it, positive while charging.
++ *
++ * Return: 0, or -ENODATA when the pair holds no measurement.
++ */
++static int smb_qg_read_sample(struct smb_chip *chip, unsigned int v_off,
++			      int *v_uv, int *i_ua)
++{
++	u8 buf[4];
++	u16 v_raw;
++	s16 i_raw;
++	int rc;
++
++	rc = regmap_bulk_read(chip->regmap, chip->var->qg_base + v_off, buf,
++			      sizeof(buf));
++	if (rc < 0)
++		return rc;
++
++	v_raw = get_unaligned_le16(&buf[0]);
++	i_raw = get_unaligned_le16(&buf[2]);
++
++	if (v_raw == QG_ADC_INVALID)
++		return -ENODATA;
++
+ 	/*
+-	 * Use VBAT to determine the recharge threshold when battery is full
+-	 * rather than the state of charge.
++	 * Both products run past two billion at ordinary readings - a 3.9 V
++	 * battery is already 4.0e9 nV - so neither may be evaluated in an int.
+ 	 */
+-	{ .addr = FG_UPDATE_CFG_2_SEL,
+-	  .mask = SOC_LT_CHG_RECHARGE_THRESH_SEL_BIT |
+-		  VBT_LT_CHG_RECHARGE_THRESH_SEL_BIT,
+-	  .val = VBT_LT_CHG_RECHARGE_THRESH_SEL_BIT },
+-	/* Enable charging */
+-	{ .addr = USBIN_OPTIONS_1_CFG, .mask = HVDCP_EN_BIT, .val = 0 },
+-	{ .addr = CHARGING_ENABLE_CMD,
+-	  .mask = CHARGING_ENABLE_CMD_BIT,
+-	  .val = CHARGING_ENABLE_CMD_BIT },
+-	/*
+-	 * Match downstream defaults
+-	 * CHG_EN_SRC_BIT - charger enable is controlled by software
+-	 * CHG_EN_POLARITY_BIT - polarity of charge enable pin when in HW control
+-	 *                       pulled low on OnePlus 6 and SHIFT6mq
+-	 * PRETOFAST_TRANSITION_CFG_BIT -
+-	 * BAT_OV_ECC_BIT -
+-	 * I_TERM_BIT - Current termination ?? 0 = enabled
+-	 * AUTO_RECHG_BIT - Enable automatic recharge when battery is full
+-	 *                  0 = enabled
+-	 * EN_ANALOG_DROP_IN_VBATT_BIT
+-	 * CHARGER_INHIBIT_BIT - Inhibit charging based on battery voltage
+-	 *                       instead of ??
++	*v_uv = (int)div_u64((u64)v_raw * QG_V_LSB_NV + 500, 1000);
++	*i_ua = -(int)div_s64((s64)i_raw * QG_I_LSB_NA, 1000);
++
++	return 0;
++}
++
++/*
++ * The battery's internal resistance, so an open-circuit voltage can be
++ * recovered from a loaded one. Both DT properties are optional; without them
++ * the gauge simply confines itself to samples taken at a current low enough
++ * for the correction not to matter.
++ */
++static int smb_batt_resistance_uohm(struct smb_chip *chip, int i_ua)
++{
++	int r = chip->batt_info->factory_internal_resistance_uohm;
++
++	if (i_ua > 0 && chip->batt_info->factory_internal_resistance_charging_uohm > 0)
++		r = chip->batt_info->factory_internal_resistance_charging_uohm;
++
++	return r > 0 ? r : 0;
++}
++
++/* Open-circuit voltage behind a terminal voltage loaded with @i_ua */
++static int smb_batt_ocv(struct smb_chip *chip, int v_uv, int i_ua)
++{
++	s64 ir_uv = (s64)i_ua * smb_batt_resistance_uohm(chip, i_ua);
++
++	return v_uv - (int)div_s64(ir_uv, 1000000);
++}
++
++static int smb_get_vbat(struct smb_chip *chip, int *val)
++{
++	if (IS_ERR_OR_NULL(chip->vbat_chan))
++		return -ENODATA;
++
++	/* ADC5 processed voltage channels return microvolts */
++	return iio_read_channel_processed(chip->vbat_chan, val);
++}
++
++static int smb_get_batt_temp(struct smb_chip *chip, int *val)
++{
++	int temp, rc;
++
++	if (IS_ERR_OR_NULL(chip->bat_therm_chan))
++		return -ENODATA;
++
++	/* The ADC returns millidegrees C, the power supply class decidegrees */
++	rc = iio_read_channel_processed(chip->bat_therm_chan, &temp);
++	if (rc < 0)
++		return rc;
++
++	*val = temp / 100;
++	return 0;
++}
++
++/*
++ * Whether this board can be gauged by integration: a PMIC with the peripheral
++ * to sample the current, and a pack size to integrate the current against. The
++ * second is what the charge-to-percent division divides by, so it has to be a
++ * real one.
++ */
++static bool smb_fg_available(struct smb_chip *chip)
++{
++	return chip->var->qg_base && chip->batt_info &&
++	       chip->batt_info->charge_full_design_uah > 0;
++}
++
++/* Capacity, in hundredths of a percent, of an open-circuit voltage */
++static int smb_ocv_to_permyriad(struct smb_chip *chip, int ocv_uv)
++{
++	/* The single table we carry characterises the cell at 25 degC */
++	int cap = power_supply_batinfo_ocv2cap(chip->batt_info, ocv_uv, 25);
++
++	if (cap < 0)
++		return cap;
++
++	return clamp(cap, 0, 100) * 100;
++}
++
++/**
++ * smb_fg_track_completion() - follow the charger through the end of a charge
++ * @chip: the charger
++ *
++ * Termination is the one point on the curve the charger knows better than any
++ * gauge: it stopped because the cell reached the float voltage at below the
++ * termination current, which is what full means. But it is also a state the
++ * charger passes through rather than sits in - having terminated, the cell is
++ * by definition above the recharge threshold, so the hardware moves on to
++ * inhibit and stays there. A gauge that only recognises the instant of
++ * termination therefore has to sample it inside that window, and then watches
++ * the OCV correction walk its answer back down over the next few polls.
++ *
++ * So remember it instead. Inhibit is not evidence of a full pack on its own -
++ * it is equally what a charger does when it is handed a cell that was already
++ * above the threshold when the cable went in - but inhibit *after* a charge was
++ * running is the tail of that charge. That pairing is what this tracks, and it
++ * needs no knowledge of where the inhibit threshold happens to be set.
++ *
++ * Returns: true while the attached input has finished charging the pack.
++ */
++static bool smb_fg_track_completion(struct smb_chip *chip)
++{
++	unsigned int status, code;
++	int online = 0;
++
++	guard(mutex)(&chip->fg_lock);
++
++	smb_get_prop_usb_online(chip, &online);
++	if (!online) {
++		/*
++		 * The pack stops being full once charge starts leaving it, so
++		 * that flag goes. Whether a charge was seen does not: it is a
++		 * fact about what happened, and it does not unhappen because
++		 * the input went away for a moment.
++		 *
++		 * That distinction matters because the input does go away for
++		 * a moment. Re-running APSD on a source change drops online
++		 * briefly, and so does anything at the other end of the cable.
++		 * Clearing the history there costs a full pack its full
++		 * reading: the charger settles back into inhibit, inhibit
++		 * without a charge behind it is not full, and the rested OCV
++		 * then pulls a genuinely full battery some six percent down
++		 * the table - exactly the drop the comment above this function
++		 * exists to prevent. Seen three times on a Fairphone 3 before
++		 * it was understood, twice from a cable being handled and once
++		 * from APSD alone.
++		 */
++		chip->fg_full = false;
++		chip->fg_charging = false;
++		return false;
++	}
++
++	if (regmap_read(chip->regmap, chip->base + BATTERY_CHARGER_STATUS_1,
++			&status))
++		return chip->fg_full;
++
++	code = status & BATTERY_CHARGER_STATUS_MASK;
++	chip->fg_charging = chip->var->charge_status[code] ==
++			    POWER_SUPPLY_STATUS_CHARGING;
++
++	if (code == CHARGE_STATUS_TERMINATE) {
++		chip->fg_full = true;
++	} else if (chip->fg_charging) {
++		chip->fg_charge_seen = true;
++		chip->fg_full = false;
++	} else if (code == chip->var->inhibit_code && chip->fg_charge_seen) {
++		chip->fg_full = true;
++	}
++
++	/*
++	 * The remaining codes - pause, disable - say nothing either way about
++	 * how much charge is in the pack, so they leave the answer alone.
++	 */
++	return chip->fg_full;
++}
++
++/**
++ * smb_fg_anchor() - close the span that ended here, and learn from it
++ * @chip: the charger
++ * @soc: the state of charge this anchor establishes, in hundredths of a percent
++ *
++ * The gauge counts charge between points it trusts and is corrected at them.
++ * Those same points bound a measurement nothing else in this driver can make:
++ * the charge that flowed between two known states of charge is the size of the
++ * pack, and the pack is not the size the device tree states. That value is a
++ * nameplate for a new cell; measured here, an aged one delivered barely seventy
++ * percent of it, and every percentage the gauge reported was wrong by the
++ * difference.
++ *
++ * Only spans that are actually accountable are used. A span is thrown away -
++ * @fg_learn_soc set to -1 - wherever charge moved without being counted, which
++ * is what a suspend gap is, so a short measurement is preferred to a long one
++ * with a hole in it.
++ *
++ * Caller holds @fg_lock.
++ */
++static void smb_fg_anchor(struct smb_chip *chip, int soc)
++{
++	int span, learned, full, lo, hi;
++	s64 uah;
++
++	if (chip->fg_learn_soc >= 0) {
++		span = soc - chip->fg_learn_soc;
++		uah = div_s64(chip->fg_learn_ua_ms, 3600 * 1000);
++
++		/*
++		 * The span and the charge have to agree about which way the
++		 * pack went. When they do not, something moved that was not
++		 * counted, and the arithmetic below would divide a partial
++		 * charge by a full span and learn a pack that is too small.
++		 */
++		if (abs(span) >= SMB_FG_LEARN_MIN_SPAN &&
++		    ((span > 0) == (uah > 0))) {
++			learned = div_s64(abs(uah) * 100 * 100, abs(span));
++
++			/*
++			 * Blend rather than jump. A learned capacity that
++			 * follows the last span is as noisy as that span; one
++			 * that moves a quarter of the way each time settles on
++			 * the pack and rides out a bad measurement.
++			 */
++			full = chip->charge_full_uah +
++			       (learned - chip->charge_full_uah) *
++					       SMB_FG_LEARN_BLEND_NUM /
++					       SMB_FG_LEARN_BLEND_DEN;
++
++			lo = chip->batt_info->charge_full_design_uah /
++			     100 * SMB_FG_LEARN_MIN_PCT;
++			hi = chip->batt_info->charge_full_design_uah /
++			     100 * SMB_FG_LEARN_MAX_PCT;
++			full = clamp(full, lo, hi);
++
++			if (full != chip->charge_full_uah) {
++				dev_info(chip->dev,
++					 "fg: span %d.%02d%% carried %lld uAh -> pack %d uAh, learned %d uAh\n",
++					 abs(span) / 100, abs(span) % 100,
++					 abs(uah), learned, full);
++				chip->charge_full_uah = full;
++			}
++		}
++	}
++
++	chip->fg_learn_soc = soc;
++	chip->fg_learn_ua_ms = 0;
++}
++
++/**
++ * smb_fg_take_good_ocv() - anchor to the gauge's own rested OCV when it is fresh
++ * @chip: the charger
++ * @changed: set to whether the reported percent moved, if a reading is taken
++ *
++ * The gauge captures an open-circuit voltage on its own each time the current
++ * has stayed near zero long enough for a rest reading, and keeps it in
++ * S3_GOOD_OCV. Measured at rest, it carries none of the overpotential a loaded
++ * live sample does and none of the drift the integral accumulates - the same
++ * thing the boot seed is taken from, refreshed while running. A capture whose
++ * raw value has not changed is the rest already used, not a new one, so it is
++ * left alone; re-taking it after the pack has moved would walk the answer back.
++ *
++ * Runs from the poll and, where the device tree wires it, from the good-OCV
++ * interrupt, so it takes the lock and de-dups on the raw value. Returns whether
++ * a fresh reading was taken.
++ */
++static bool smb_fg_take_good_ocv(struct smb_chip *chip, bool *changed)
++{
++	int gv_uv, gi_ua, gsoc, was;
++
++	if (smb_qg_read_sample(chip, QG_S3_GOOD_OCV_V_DATA0, &gv_uv, &gi_ua) < 0)
++		return false;
++
++	guard(mutex)(&chip->fg_lock);
++
++	if (gv_uv == chip->fg_good_ocv_uv)
++		return false;
++	chip->fg_good_ocv_uv = gv_uv;
++
++	gsoc = smb_ocv_to_permyriad(chip, smb_batt_ocv(chip, gv_uv, gi_ua));
++	if (gsoc < 0)
++		return false;
++
++	was = chip->fg_ready ? chip->soc_permyriad : -1;
++	smb_fg_anchor(chip, gsoc);
++	chip->soc_permyriad = gsoc;
++	chip->fg_residue = 0;
++	chip->fg_ready = true;
++	chip->fg_last = ktime_get_boottime();
++	dev_dbg(chip->dev, "fg: re-anchor good_ocv=%duV -> %d.%02d%%\n",
++		gv_uv, gsoc / 100, gsoc % 100);
++
++	if (changed)
++		*changed = was != chip->soc_permyriad;
++	return true;
++}
++
++static irqreturn_t smb_handle_good_ocv(int irq, void *data)
++{
++	struct smb_chip *chip = data;
++	bool changed = false;
++
++	if (smb_fg_take_good_ocv(chip, &changed) && changed)
++		power_supply_changed(chip->batt_psy);
++
++	return IRQ_HANDLED;
++}
++
++/**
++ * smb_fg_update() - carry the fuel gauge across one poll interval
++ * @chip: the charger
++ *
++ * The reported capacity is counted from charge, which keeps it still while the
++ * load moves. Counting only accumulates error, so it is corrected - but never
++ * from a loaded live sample, which the flat middle of the curve turns into a
++ * large one-directional error. Correction comes only from readings the hardware
++ * took at rest: the gauge's own S3_GOOD_OCV, the charger's completion, and the
++ * re-anchor a suspend allows.
++ */
++static bool smb_fg_update(struct smb_chip *chip)
++{
++	int v_uv, i_ua, ocv_uv, soc_ocv, was;
++	bool changed = false;
++	ktime_t now = ktime_get_boottime();
++	s64 elapsed_ms;
++
++	if (smb_qg_read_sample(chip, QG_LAST_ADC_V_DATA0, &v_uv, &i_ua) < 0)
++		return false;
++
++	/*
++	 * Hold the pack at full for as long as the charger says it finished
++	 * charging it. This is not a shortcut past the curve, it is the one
++	 * place the curve cannot answer: the table's top entry is an OCV of
++	 * over 4.37 V, which a cell charged to a 4.39 V float only shows while
++	 * it is still being held there. Left to relax it settles some seventy
++	 * millivolts lower, six percent down the table, and a full battery
++	 * reads as not quite full for the rest of the time it stays on the
++	 * cable.
++	 */
++	if (smb_fg_track_completion(chip)) {
++		guard(mutex)(&chip->fg_lock);
++
++		was = chip->fg_ready ? chip->soc_permyriad : -1;
++		smb_fg_anchor(chip, 100 * 100);
++		chip->soc_permyriad = 100 * 100;
++		chip->fg_residue = 0;
++		chip->fg_ready = true;
++		chip->fg_last = now;
++
++		return was != chip->soc_permyriad;
++	}
++
++	/* Prefer the gauge's own rested reading whenever it has a fresh one. */
++	if (smb_fg_take_good_ocv(chip, &changed))
++		return changed;
++
++	ocv_uv = smb_batt_ocv(chip, v_uv, i_ua);
++	soc_ocv = smb_ocv_to_permyriad(chip, ocv_uv);
++	if (soc_ocv < 0)
++		return false;
++
++	/*
++	 * Between the fixed points the state of charge is counted, not read off
++	 * the live voltage. A voltage taken under load is not an open-circuit
++	 * voltage: the constant series resistance recovers the ohmic step but not
++	 * the slower overpotential, and on the flat middle of the discharge curve
++	 * - eighteen points inside forty millivolts here - the tens of millivolts
++	 * left over become a large, one-directional error in the answer. So the
++	 * live sample steers nothing. Correction comes only from readings the
++	 * hardware took at rest: the S3_GOOD_OCV re-anchor above, the charger's
++	 * own completion, and the re-anchor a suspend allows below.
++	 */
++	guard(mutex)(&chip->fg_lock);
++
++	elapsed_ms = ktime_ms_delta(now, chip->fg_last);
++	was = chip->fg_ready ? chip->soc_permyriad : -1;
++
++	if (!chip->fg_ready) {
++		/*
++		 * Nothing has seeded the gauge yet - the boot OCV registers were
++		 * unreadable. Bootstrap from the live sample whatever its current,
++		 * since there is no better number to start from; the first rest
++		 * correction puts it right.
++		 */
++		smb_fg_anchor(chip, soc_ocv);
++		chip->soc_permyriad = soc_ocv;
++		chip->fg_residue = 0;
++		chip->fg_ready = true;
++	} else if (elapsed_ms > SMB_FG_STALE_MS && !chip->fg_charging) {
++		/*
++		 * A gap this long is a suspend: nothing was counted across it, and
++		 * the live sample describes only the instant of waking. A phone
++		 * busy the moment it resumes gives a loaded reading, which on the
++		 * flat curve is a large, one-directional error - so do not anchor
++		 * to it. A suspend draws too little to have moved the charge, so
++		 * keep the count as it was and let the hardware rest-OCV re-anchor
++		 * correct any residual. Only a wake sample that is itself at rest
++		 * is a real open-circuit voltage worth taking outright.
++		 */
++		if (abs(i_ua) <= SMB_FG_OCV_QUIET_UA)
++			chip->soc_permyriad = soc_ocv;
++		chip->fg_residue = 0;
++		/*
++		 * Nothing was counted across the gap, so whatever span was in
++		 * progress has a hole in it. A quiet wake sample is a rest OCV
++		 * and starts a new span; anything else leaves none.
++		 */
++		if (abs(i_ua) <= SMB_FG_OCV_QUIET_UA)
++			smb_fg_anchor(chip, chip->soc_permyriad);
++		else
++			chip->fg_learn_soc = -1;
++	} else {
++		/*
++		 * charge (uAh) = i_ua * elapsed / 3600, and one percent of the
++		 * pack is charge_full_uah / 100, so a hundredth of a
++		 * percent per millisecond is i_ua * elapsed_ms / (360 * full).
++		 *
++		 * At a tenth of an amp that quotient is under one per poll, so
++		 * carry the undivided remainder rather than rounding it away:
++		 * discarded it would be a standing error in the rate itself,
++		 * always in the direction of counting too little.
++		 */
++		s64 per_permyriad = 360LL * chip->charge_full_uah;
++		s64 step;
++
++		chip->fg_residue += (s64)i_ua * elapsed_ms;
++		chip->fg_learn_ua_ms += (s64)i_ua * elapsed_ms;
++		step = div64_s64(chip->fg_residue, per_permyriad);
++		chip->fg_residue -= step * per_permyriad;
++
++		chip->soc_permyriad += step;
++		chip->soc_permyriad = clamp(chip->soc_permyriad, 0, 100 * 100);
++	}
++
++	chip->fg_last = now;
++
++	dev_dbg(chip->dev,
++		"fg: %d.%02d%% vbat=%duV ibat=%duA ocv=%duV(soc %d)\n",
++		chip->soc_permyriad / 100, chip->soc_permyriad % 100, v_uv,
++		i_ua, ocv_uv, soc_ocv);
++
++	return DIV_ROUND_CLOSEST(chip->soc_permyriad, 100) !=
++	       DIV_ROUND_CLOSEST(was, 100);
++}
++
++/*
++ * Persist the state of charge to the gauge's scratch SRAM so a warm reboot can
++ * restore it. One byte of percent is enough; the magic that guards it is
++ * written once, when the gauge starts.
++ */
++static void smb_fg_sdam_store(struct smb_chip *chip)
++{
++	unsigned int soc;
++	__le16 full;
++
++	scoped_guard(mutex, &chip->fg_lock) {
++		soc = clamp(DIV_ROUND_CLOSEST(chip->soc_permyriad, 100), 0, 100);
++		full = cpu_to_le16(chip->charge_full_uah / 1000);
++	}
++
++	regmap_write(chip->regmap, QG_SDAM_SOC, soc);
++	/*
++	 * The learned capacity goes with it, in mAh, which is finer than the
++	 * learning ever resolves and fits two bytes. Without this a pack has to
++	 * be relearned from scratch after every reboot, and the spans this
++	 * gauge can trust are hours long.
++	 */
++	regmap_bulk_write(chip->regmap, QG_SDAM_FULL, &full, sizeof(full));
++}
++
++/*
++ * Restore the state of charge the last boot persisted, if this driver is what
++ * wrote it. A warm reboot keeps the SRAM; a battery swap clears it and the magic
++ * no longer matches, so the caller falls back to seeding from an OCV instead.
++ */
++static bool smb_fg_sdam_restore(struct smb_chip *chip, int *soc_permyriad)
++{
++	__le32 magic;
++	unsigned int soc;
++
++	if (regmap_bulk_read(chip->regmap, QG_SDAM_MAGIC, &magic, sizeof(magic)))
++		return false;
++	if (le32_to_cpu(magic) != QG_SDAM_MAGIC_VALUE)
++		return false;
++	if (regmap_read(chip->regmap, QG_SDAM_SOC, &soc) || soc > 100)
++		return false;
++
++	*soc_permyriad = soc * 100;
++	return true;
++}
++
++/*
++ * Restore the learned capacity, guarded by the same magic - so a battery swap,
++ * which clears it, correctly falls back to the design value for a pack this
++ * driver has never measured. The clamp is applied again on the way in: a stored
++ * value outside it was not written by any span this driver would have accepted.
++ */
++static void smb_fg_sdam_restore_full(struct smb_chip *chip)
++{
++	__le32 magic;
++	__le16 stored;
++	int full, lo, hi;
++
++	if (regmap_bulk_read(chip->regmap, QG_SDAM_MAGIC, &magic, sizeof(magic)))
++		return;
++	if (le32_to_cpu(magic) != QG_SDAM_MAGIC_VALUE)
++		return;
++	if (regmap_bulk_read(chip->regmap, QG_SDAM_FULL, &stored, sizeof(stored)))
++		return;
++
++	full = le16_to_cpu(stored) * 1000;
++	lo = chip->batt_info->charge_full_design_uah / 100 * SMB_FG_LEARN_MIN_PCT;
++	hi = chip->batt_info->charge_full_design_uah / 100 * SMB_FG_LEARN_MAX_PCT;
++	if (full < lo || full > hi)
++		return;
++
++	chip->charge_full_uah = full;
++	dev_dbg(chip->dev, "fg: restored learned capacity %d uAh from sdam\n",
++		full);
++}
++
++static void smb_fg_work(struct work_struct *work)
++{
++	struct smb_chip *chip = container_of(work, struct smb_chip,
++					     fg_work.work);
++
++	if (smb_fg_update(chip))
++		power_supply_changed(chip->batt_psy);
++
++	smb_fg_sdam_store(chip);
++
++	schedule_delayed_work(&chip->fg_work, msecs_to_jiffies(SMB_FG_POLL_MS));
++}
++
++/**
++ * smb_fg_start() - seed the fuel gauge and start integrating it
++ * @chip: charger
++ *
++ * An integrating gauge is only ever as good as what it started from, and the
++ * live sample is a poor start: at probe the machine is booting, which is the
++ * least rested the battery gets. The gauge itself has a better answer already
++ * measured. It samples an open-circuit voltage twice under conditions we
++ * cannot recreate here - once at power-on before anything draws, and again
++ * whenever the PMIC has seen the current stay near zero for long enough - and
++ * keeps both. Take the second in preference to the first, since the first can
++ * be arbitrarily old, and fall back to the live sample if the PMIC holds
++ * neither.
++ */
++static int smb_fg_start(struct smb_chip *chip)
++{
++	static const unsigned int rest_ocv[] = {
++		QG_S3_GOOD_OCV_V_DATA0,
++		QG_S7_PON_OCV_V_DATA0,
++	};
++	int v_uv, i_ua, soc, rest_soc = -1, rest_uv = 0, rc, i;
++
++	rc = devm_mutex_init(chip->dev, &chip->fg_lock);
++	if (rc)
++		return rc;
++
++	/*
++	 * Start from the nameplate and let the pack correct it. A driver that
++	 * has measured nothing yet has nothing better to say than what the
++	 * device tree states.
++	 */
++	chip->charge_full_uah = chip->batt_info->charge_full_design_uah;
++	chip->fg_learn_soc = -1;
++
++	/* The gauge's freshest rested capture, where it holds one. */
++	if (smb_qg_read_sample(chip, QG_S3_GOOD_OCV_V_DATA0, &v_uv, &i_ua) == 0) {
++		rest_soc = smb_ocv_to_permyriad(chip, smb_batt_ocv(chip, v_uv, i_ua));
++		rest_uv = v_uv;
++	}
++
++	/*
++	 * Restore the state of charge the last boot persisted to the scratch
++	 * SRAM. A warm reboot keeps it, and unlike a rest OCV it does not go
++	 * stale between the rare captures this pack allows - so prefer it, and
++	 * seed from an OCV only when the SRAM holds nothing this driver wrote.
++	 *
++	 * Prefer it, but do not believe it against the evidence. What is stored
++	 * is what a count had reached, and a count is only ever as good as the
++	 * corrections it received; what the gauge captured at rest is a
++	 * measurement of the pack itself. Where the two are far enough apart
++	 * that neither the table's temperature nor a session's drift explains
++	 * it, the measurement is the one describing the battery that is fitted
++	 * now - so take it, and say so, because a seed being overruled is worth
++	 * knowing about.
++	 */
++	smb_fg_sdam_restore_full(chip);
++
++	if (smb_fg_sdam_restore(chip, &soc)) {
++		if (rest_soc >= 0 && abs(rest_soc - soc) > SMB_FG_SEED_DISAGREE) {
++			dev_info(chip->dev,
++				 "fg: stored %d.%02d%% disagrees with the rested %d.%02d%%, taking the measurement\n",
++				 soc / 100, soc % 100,
++				 rest_soc / 100, rest_soc % 100);
++			soc = rest_soc;
++			chip->fg_good_ocv_uv = rest_uv;
++		}
++
++		chip->soc_permyriad = soc;
++		chip->fg_ready = true;
++		chip->fg_last = ktime_get_boottime();
++		dev_dbg(chip->dev, "fg: restored %d.%02d%% from sdam\n",
++			soc / 100, soc % 100);
++	} else {
++		for (i = 0; i < ARRAY_SIZE(rest_ocv); i++) {
++			if (smb_qg_read_sample(chip, rest_ocv[i], &v_uv, &i_ua) < 0)
++				continue;
++
++			soc = smb_ocv_to_permyriad(chip, smb_batt_ocv(chip, v_uv, i_ua));
++			if (soc < 0)
++				continue;
++
++			chip->soc_permyriad = soc;
++			chip->fg_ready = true;
++			/* so the first poll integrates rather than re-anchoring */
++			chip->fg_last = ktime_get_boottime();
++			/*
++			 * If this seed is the hardware rest-OCV the poll also
++			 * watches, record it so the first poll does not re-take
++			 * the same capture.
++			 */
++			if (rest_ocv[i] == QG_S3_GOOD_OCV_V_DATA0)
++				chip->fg_good_ocv_uv = v_uv;
++			dev_dbg(chip->dev, "fg: seeded at %d.%02d%% from %duV\n",
++				soc / 100, soc % 100, v_uv);
++			break;
++		}
++	}
++
++	/*
++	 * Claim the SRAM store so the next boot restores our own value rather
++	 * than whatever wrote it last.
++	 */
++	if (chip->fg_ready) {
++		__le32 magic = cpu_to_le32(QG_SDAM_MAGIC_VALUE);
++
++		regmap_bulk_write(chip->regmap, QG_SDAM_MAGIC, &magic,
++				  sizeof(magic));
++	}
++
++	rc = devm_delayed_work_autocancel(chip->dev, &chip->fg_work,
++					  smb_fg_work);
++	if (rc)
++		return dev_err_probe(chip->dev, rc,
++				     "Failed to init fuel-gauge work\n");
++
++	schedule_delayed_work(&chip->fg_work, 0);
++	return 0;
++}
++
++/*
++ * How much charge the pack holds, and how much is in it. The percentage above
++ * says nothing about size, and a percentage is all this driver used to report -
++ * which leaves anything wanting to say how long a charge has left with no way
++ * to work it out. UPower derives its estimate from the charge remaining and the
++ * power going in, so without these it can only show a number and no time.
++ *
++ * Full and full-design are not the same number. The design value is what the
++ * device tree states, which is a nameplate for a new cell; full is what the
++ * spans between trusted anchors say the pack fitted here actually holds. On the
++ * pack this was developed against those differ by nearly thirty percent, and
++ * reporting the nameplate as the capacity made every percentage the gauge
++ * derived from it wrong by that much.
++ */
++static int smb_get_batt_charge_full_design(struct smb_chip *chip, int *val)
++{
++	if (!chip->batt_info || chip->batt_info->charge_full_design_uah <= 0)
++		return -ENODATA;
++
++	*val = chip->batt_info->charge_full_design_uah;
++
++	return 0;
++}
++
++static int smb_get_batt_charge_full(struct smb_chip *chip, int *val)
++{
++	if (!chip->batt_info || chip->batt_info->charge_full_design_uah <= 0)
++		return -ENODATA;
++
++	*val = chip->charge_full_uah ?: chip->batt_info->charge_full_design_uah;
++
++	return 0;
++}
++
++static int smb_get_batt_charge_now(struct smb_chip *chip, int *val)
++{
++	if (!smb_fg_available(chip))
++		return -ENODATA;
++
++	guard(mutex)(&chip->fg_lock);
++
++	if (!chip->fg_ready)
++		return -EAGAIN;
++
++	/* soc is in hundredths of a percent, so the divisor is 100 * 100 */
++	*val = div_u64((u64)chip->soc_permyriad * chip->charge_full_uah,
++		       100 * 100);
++
++	return 0;
++}
++
++static int smb_get_batt_capacity(struct smb_chip *chip, int *val)
++{
++	int v_uv, cap, rc;
++
++	if (!chip->batt_info)
++		return -ENODATA;
++
++	if (smb_fg_available(chip)) {
++		guard(mutex)(&chip->fg_lock);
++
++		if (!chip->fg_ready)
++			return -EAGAIN;
++
++		*val = DIV_ROUND_CLOSEST(chip->soc_permyriad, 100);
++		return 0;
++	}
++
++	/*
++	 * Without a gauge to integrate there is nothing to feed the OCV table
++	 * but the terminal voltage, load and all - see the caveat above
++	 * smb_batt_properties for what that costs.
++	 */
++	rc = smb_get_vbat(chip, &v_uv);
++	if (rc < 0)
++		return rc;
++
++	cap = power_supply_batinfo_ocv2cap(chip->batt_info, v_uv, 25);
++	if (cap < 0)
++		return cap;
++
++	*val = clamp(cap, 0, 100);
++	return 0;
++}
++
++static int smb_get_batt_current(struct smb_chip *chip, int *val)
++{
++	int v_uv;
++
++	if (!chip->var->qg_base)
++		return -ENODATA;
++
++	return smb_qg_read_sample(chip, QG_LAST_ADC_V_DATA0, &v_uv, val);
++}
++
++static int smb_get_batt_voltage(struct smb_chip *chip, bool open_circuit,
++				int *val)
++{
++	int v_uv, i_ua, rc;
++
++	/*
++	 * Prefer the gauge's own converter over the ADC channel: it measures
++	 * the voltage and the current at the same instant, which is what makes
++	 * the pair of them usable together.
++	 */
++	if (chip->var->qg_base) {
++		rc = smb_qg_read_sample(chip, QG_LAST_ADC_V_DATA0, &v_uv, &i_ua);
++		if (!rc) {
++			*val = open_circuit ? smb_batt_ocv(chip, v_uv, i_ua) : v_uv;
++			return 0;
++		}
++	}
++
++	if (open_circuit)
++		return -ENODATA;
++
++	return smb_get_vbat(chip, val);
++}
++
++static int smb_batt_get_property(struct power_supply *psy,
++				 enum power_supply_property psp,
++				 union power_supply_propval *val)
++{
++	struct smb_chip *chip = power_supply_get_drvdata(psy);
++
++	switch (psp) {
++	case POWER_SUPPLY_PROP_STATUS:
++		return smb_get_prop_status(chip, &val->intval);
++	case POWER_SUPPLY_PROP_CHARGE_TYPE:
++		return smb_get_prop_charge_type(chip, &val->intval);
++	case POWER_SUPPLY_PROP_HEALTH:
++		return smb_get_prop_health(chip, &val->intval);
++	case POWER_SUPPLY_PROP_PRESENT:
++		val->intval = 1;
++		return 0;
++	case POWER_SUPPLY_PROP_TECHNOLOGY:
++		val->intval = POWER_SUPPLY_TECHNOLOGY_LION;
++		return 0;
++	case POWER_SUPPLY_PROP_CAPACITY:
++		return smb_get_batt_capacity(chip, &val->intval);
++	case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
++		return smb_get_batt_charge_full_design(chip, &val->intval);
++	case POWER_SUPPLY_PROP_CHARGE_FULL:
++		return smb_get_batt_charge_full(chip, &val->intval);
++	case POWER_SUPPLY_PROP_CHARGE_NOW:
++		return smb_get_batt_charge_now(chip, &val->intval);
++	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
++		return smb_get_batt_voltage(chip, false, &val->intval);
++	case POWER_SUPPLY_PROP_VOLTAGE_OCV:
++		return smb_get_batt_voltage(chip, true, &val->intval);
++	case POWER_SUPPLY_PROP_CURRENT_NOW:
++		return smb_get_batt_current(chip, &val->intval);
++	case POWER_SUPPLY_PROP_TEMP:
++		return smb_get_batt_temp(chip, &val->intval);
++	default:
++		dev_err(chip->dev, "invalid battery property: %d\n", psp);
++		return -EINVAL;
++	}
++}
++
++static const struct power_supply_desc smb_batt_psy_desc = {
++	.name = "battery",
++	.type = POWER_SUPPLY_TYPE_BATTERY,
++	.properties = smb_batt_properties,
++	.num_properties = ARRAY_SIZE(smb_batt_properties),
++	.get_property = smb_batt_get_property,
++};
++
++static const struct power_supply_desc smb_psy_desc = {
++	.name = "pmi8998_charger",
++	.type = POWER_SUPPLY_TYPE_USB,
++	.usb_types = BIT(POWER_SUPPLY_USB_TYPE_SDP) |
++		     BIT(POWER_SUPPLY_USB_TYPE_CDP) |
++		     BIT(POWER_SUPPLY_USB_TYPE_DCP) |
++		     BIT(POWER_SUPPLY_USB_TYPE_UNKNOWN),
++	.properties = smb_properties,
++	.num_properties = ARRAY_SIZE(smb_properties),
++	.get_property = smb_get_property,
++	.set_property = smb_set_property,
++	.property_is_writeable = smb_property_is_writable,
++};
++
++/* Init sequence derived from vendor downstream driver (SMB2: pmi8998/pm660) */
++static const struct smb_init_register smb2_init_seq[] = {
++	{ .addr = AICL_RERUN_TIME_CFG, .mask = AICL_RERUN_TIME_MASK, .val = 0 },
++	/*
++	 * By default configure us as an upstream facing port
++	 * FIXME: This will be handled by the type-c driver
++	 */
++	{ .addr = TYPE_C_INTRPT_ENB_SOFTWARE_CTRL,
++	  .mask = TYPEC_POWER_ROLE_CMD_MASK | VCONN_EN_SRC_BIT |
++		  VCONN_EN_VALUE_BIT,
++	  .val = VCONN_EN_SRC_BIT },
++	/*
++	 * Disable Type-C factory mode and stay in Attached.SRC state when VCONN
++	 * over-current happens
++	 */
++	{ .addr = TYPE_C_CFG,
++	  .mask = FACTORY_MODE_DETECTION_EN_BIT | VCONN_OC_CFG_BIT,
++	  .val = 0 },
++	/* Configure VBUS for software control */
++	{ .addr = OTG_CFG, .mask = OTG_EN_SRC_CFG_BIT, .val = 0 },
++	/*
++	 * Use VBAT to determine the recharge threshold when battery is full
++	 * rather than the state of charge.
++	 */
++	{ .addr = FG_UPDATE_CFG_2_SEL,
++	  .mask = SOC_LT_CHG_RECHARGE_THRESH_SEL_BIT |
++		  VBT_LT_CHG_RECHARGE_THRESH_SEL_BIT,
++	  .val = VBT_LT_CHG_RECHARGE_THRESH_SEL_BIT },
++	/* Enable charging */
++	{ .addr = USBIN_OPTIONS_1_CFG, .mask = HVDCP_EN_BIT, .val = 0 },
++	{ .addr = CHARGING_ENABLE_CMD,
++	  .mask = CHARGING_ENABLE_CMD_BIT,
++	  .val = CHARGING_ENABLE_CMD_BIT },
++	/*
++	 * Match downstream defaults
++	 * CHG_EN_SRC_BIT - charger enable is controlled by software
++	 * CHG_EN_POLARITY_BIT - polarity of charge enable pin when in HW control
++	 *                       pulled low on OnePlus 6 and SHIFT6mq
++	 * PRETOFAST_TRANSITION_CFG_BIT -
++	 * BAT_OV_ECC_BIT -
++	 * I_TERM_BIT - Current termination ?? 0 = enabled
++	 * AUTO_RECHG_BIT - Enable automatic recharge when battery is full
++	 *                  0 = enabled
++	 * EN_ANALOG_DROP_IN_VBATT_BIT
++	 * CHARGER_INHIBIT_BIT - Inhibit charging based on battery voltage
++	 *                       instead of ??
+ 	 */
+ 	{ .addr = CHGR_CFG2,
+ 	  .mask = CHG_EN_SRC_BIT | CHG_EN_POLARITY_BIT |
+@@ -882,24 +2332,201 @@ static const struct smb_init_register smb_init_seq[] = {
+ 	/*
+ 	 * This overrides all of the current limit options exposed to userspace
+ 	 * and prevents the device from pulling more than ~1A. This is done
+-	 * to minimise potential fire hazard risks.
++	 * to minimise potential fire hazard risks. A board that describes a
++	 * monitored-battery gets that battery's current instead.
+ 	 */
+ 	{ .addr = FAST_CHARGE_CURRENT_CFG,
+ 	  .mask = FAST_CHARGE_CURRENT_SETTING_MASK,
+ 	  .val = 1000000 / CURRENT_SCALE_FACTOR },
+ };
+ 
++/*
++ * SMB5 (pmi632) current registers step in 50mA (not 25mA), so the FCC/pre-charge
++ * raw values below use 50000 uA/LSB. Type-C, OTG and STAT/recharge-select writes
++ * from the SMB2 sequence are intentionally omitted: on SMB5 the Type-C block lives
++ * at its own base (0x1500, owned here by the qcom,pmi632-typec / tcpm driver) and
++ * those SMB2 offsets would hit the wrong registers. Only CHGR, USBIN (AICL/ICL/
++ * HVDCP) and MISC (watchdog) writes are kept — these share offsets with SMB2.
++ */
++#define SMB5_CURRENT_SCALE_FACTOR			50000
++static const struct smb_init_register pmi632_init_seq[] = {
++	/* Enable charging */
++	{ .addr = USBIN_OPTIONS_1_CFG, .mask = HVDCP_EN_BIT, .val = 0 },
++	{ .addr = CHARGING_ENABLE_CMD,
++	  .mask = CHARGING_ENABLE_CMD_BIT,
++	  .val = CHARGING_ENABLE_CMD_BIT },
++	/*
++	 * Charger enable controlled by software, inhibit based on battery
++	 * voltage, and recharge on the battery voltage too.
++	 *
++	 * ☠️ Bits 2 and 1 of this register are not what SMB2 puts there. On
++	 * SMB5 they are a two-bit field naming what a finished charge is
++	 * restarted by - clear for nothing at all, BIT(2) for the battery
++	 * voltage, both bits for the state of charge - where SMB2 has
++	 * AUTO_RECHG and EN_ANALOG_DROP_IN_VBATT. Carrying the SMB2 value
++	 * across therefore left the field clear, which is the one setting that
++	 * means a charge that has terminated is never restarted for as long as
++	 * the cable stays in. The state of charge is not an option here in any
++	 * case: the gauge that would report one to the PMIC is Qualcomm's own,
++	 * and it is not part of this driver.
++	 */
++	{ .addr = CHGR_CFG2,
++	  .mask = CHG_EN_SRC_BIT | CHG_EN_POLARITY_BIT |
++		  PRETOFAST_TRANSITION_CFG_BIT | BAT_OV_ECC_BIT | I_TERM_BIT |
++		  SMB5_RECHG_MASK | CHARGER_INHIBIT_BIT,
++	  .val = SMB5_VBAT_BASED_RECHG_BIT | CHARGER_INHIBIT_BIT |
++		 I_TERM_BIT },
++	/*
++	 * Take three samples before acting on the voltage comparator, which is
++	 * what the vendor driver asks for whenever it selects VBAT recharge.
++	 * The field counts from zero - downstream writes 2 here and calls it
++	 * three samples - so this is 2, not 3.
++	 */
++	{ .addr = NO_SAMPLE_TERM_RCHG_CFG,
++	  .mask = NO_OF_SAMPLE_FOR_RCHG,
++	  .val = 2 << NO_OF_SAMPLE_FOR_RCHG_SHIFT },
++	/* Default SDP charger to a 500mA USB 2.0 port */
++	{ .addr = USBIN_ICL_OPTIONS,
++	  .mask = USB51_MODE_BIT | USBIN_MODE_CHG_BIT,
++	  .val = USB51_MODE_BIT },
++	/* Disable the charger watchdog */
++	{ .addr = SNARL_BARK_BITE_WD_CFG, .mask = 0xff, .val = 0 },
++	{ .addr = WD_CFG,
++	  .mask = WATCHDOG_TRIGGER_AFP_EN_BIT | WDOG_TIMER_EN_ON_PLUGIN_BIT |
++		  BARK_WDOG_INT_EN_BIT,
++	  .val = 0 },
++	{ .addr = USBIN_5V_AICL_THRESHOLD_CFG,
++	  .mask = USBIN_5V_AICL_THRESHOLD_CFG_MASK,
++	  .val = 0x3 },
++	{ .addr = USBIN_CONT_AICL_THRESHOLD_CFG,
++	  .mask = USBIN_CONT_AICL_THRESHOLD_CFG_MASK,
++	  .val = 0x3 },
++	/* Enable Automatic Input Current Limit */
++	{ .addr = USBIN_AICL_OPTIONS_CFG,
++	  .mask = USBIN_AICL_START_AT_MAX_BIT | USBIN_AICL_ADC_EN_BIT |
++		  USBIN_AICL_EN_BIT | SUSPEND_ON_COLLAPSE_USBIN_BIT |
++		  USBIN_HV_COLLAPSE_RESPONSE_BIT |
++		  USBIN_LV_COLLAPSE_RESPONSE_BIT,
++	  .val = USBIN_HV_COLLAPSE_RESPONSE_BIT |
++		 USBIN_LV_COLLAPSE_RESPONSE_BIT | USBIN_AICL_EN_BIT },
++	{ .addr = PRE_CHARGE_CURRENT_CFG,
++	  .mask = PRE_CHARGE_CURRENT_SETTING_MASK,
++	  .val = 500000 / SMB5_CURRENT_SCALE_FACTOR },
++	/*
++	 * Fast-charge at ~1A until the battery is known. A board that describes
++	 * a monitored-battery gets its constant-charge-current-max-microamp
++	 * instead.
++	 */
++	{ .addr = FAST_CHARGE_CURRENT_CFG,
++	  .mask = FAST_CHARGE_CURRENT_SETTING_MASK,
++	  .val = 1000000 / SMB5_CURRENT_SCALE_FACTOR },
++};
++
++static const struct smb_variant smb_variant_pmi8998 = {
++	.name = "pmi8998",
++	.status_base = 0x600,
++	.current_scale_ua = CURRENT_SCALE_FACTOR,
++	.fcc_max_ua = 4500000,
++	.float_base_uv = 3480000,	/* (v - 3487500) / 7500 + 1 == (v - 3480000) / 7500 */
++	.float_step_uv = 7500,
++	.ov_bit = CHARGER_ERROR_STATUS_BAT_OV_BIT,
++	.charge_status = smb2_charge_status,
++	.charge_type = smb2_charge_type,
++	.inhibit_code = 6,
++	.temp_status_reg = BATTERY_CHARGER_STATUS_2,
++	.temp_status_shift = 0,
++	.init_seq = smb2_init_seq,
++	.init_seq_len = ARRAY_SIZE(smb2_init_seq),
++};
++
++static const struct smb_variant smb_variant_pm660 = {
++	.name = "pm660",
++	.status_base = 0x600,
++	.current_scale_ua = CURRENT_SCALE_FACTOR,
++	.fcc_max_ua = 4500000,
++	.float_base_uv = 3480000,
++	.float_step_uv = 7500,
++	.ov_bit = CHARGER_ERROR_STATUS_BAT_OV_BIT,
++	.charge_status = smb2_charge_status,
++	.charge_type = smb2_charge_type,
++	.inhibit_code = 6,
++	.temp_status_reg = BATTERY_CHARGER_STATUS_2,
++	.temp_status_shift = 0,
++	.init_seq = smb2_init_seq,
++	.init_seq_len = ARRAY_SIZE(smb2_init_seq),
++};
++
++static const struct smb_variant smb_variant_pmi632 = {
++	.name = "pmi632",
++	.status_base = 0x100,		/* ICL/POWER_PATH_STATUS in DCDC, not MISC */
++	.current_scale_ua = SMB5_CURRENT_SCALE_FACTOR,
++	.fcc_max_ua = 3000000,
++	.float_base_uv = 3600000,	/* qpnp-smb5 fv: min 3600000, step 10000 */
++	.float_step_uv = 10000,
++	.ov_bit = SMB5_CHARGER_ERROR_STATUS_BAT_OV_BIT,
++	.charge_status = smb5_charge_status,
++	.charge_type = smb5_charge_type,
++	.rechg_thresh_reg = ADC_RECHARGE_THRESHOLD_MSB,
++	.iterm_thresh_reg = ADC_ITERM_UP_THD_MSB,
++	.thermreg_src_reg = MISC_THERMREG_SRC_CFG,
++	.inhibit_code = 0,
++	/*
++	 * On SMB5 the JEITA temperature-status bits moved out of
++	 * BATTERY_CHARGER_STATUS_2 into BATTERY_CHARGER_STATUS_7, and the
++	 * HOT_SOFT/COLD_SOFT/TOO_HOT/TOO_COLD bits shifted up by two
++	 * (verified against the downstream qpnp-smb5 smb5-reg.h and read back
++	 * on a Fairphone 3: STATUS_2=0x28 is reserved data, STATUS_7=0x00).
++	 */
++	.temp_status_reg = BATTERY_CHARGER_STATUS_7,
++	.temp_status_shift = 2,
++	.init_seq = pmi632_init_seq,
++	.init_seq_len = ARRAY_SIZE(pmi632_init_seq),
++	.qg_base = 0x4800,
++	.typec_snk_status = TYPEC_SNK_STATUS,
++};
++
++/*
++ * Opt-in autonomous HVDCP (QC2/QC3) on SMB5: the board names the input current
++ * it allows at 9 V, and QC2 is never asked for more than 9 V.
++ */
++static int smb5_init_hvdcp(struct smb_chip *chip)
++{
++	const unsigned int en = HVDCP_AUTH_ALG_EN_CFG_BIT |
++				HVDCP_AUTONOMOUS_MODE_EN_CFG_BIT | HVDCP_EN_BIT;
++	int rc;
++
++	if (!chip->var->typec_snk_status ||
++	    device_property_read_u32(chip->dev,
++				     "qcom,hvdcp-input-current-microamp",
++				     &chip->hvdcp_icl_ua))
++		return 0;
++
++	rc = regmap_update_bits(chip->regmap, chip->base + HVDCP_PULSE_COUNT_MAX,
++				HVDCP_PULSE_COUNT_MAX_QC2_MASK,
++				HVDCP_PULSE_COUNT_MAX_QC2_9V);
++	if (rc < 0)
++		return dev_err_probe(chip->dev, rc,
++				     "Couldn't cap HVDCP at 9 V\n");
++
++	rc = regmap_update_bits(chip->regmap, chip->base + USBIN_OPTIONS_1_CFG,
++				en, en);
++	if (rc < 0)
++		return dev_err_probe(chip->dev, rc, "Couldn't enable HVDCP\n");
++
++	return 0;
++}
++
+ static int smb_init_hw(struct smb_chip *chip)
+ {
+ 	int rc, i;
+ 
+-	for (i = 0; i < ARRAY_SIZE(smb_init_seq); i++) {
++	for (i = 0; i < chip->var->init_seq_len; i++) {
+ 		dev_dbg(chip->dev, "%d: Writing 0x%02x to 0x%02x\n", i,
+-			smb_init_seq[i].val, smb_init_seq[i].addr);
++			chip->var->init_seq[i].val, chip->var->init_seq[i].addr);
+ 		rc = regmap_update_bits(chip->regmap,
+-					chip->base + smb_init_seq[i].addr,
+-					smb_init_seq[i].mask,
+-					smb_init_seq[i].val);
++					chip->base + chip->var->init_seq[i].addr,
++					chip->var->init_seq[i].mask,
++					chip->var->init_seq[i].val);
+ 		if (rc < 0)
+ 			return dev_err_probe(chip->dev, rc,
+ 					     "%s: init command %d failed\n",
+@@ -909,6 +2536,514 @@ static int smb_init_hw(struct smb_chip *chip)
+ 	return 0;
+ }
+ 
++/*
++ * Write one four-byte JEITA comparator block from a property on this device
++ * holding the pair of raw BAT_THERM ADC codes { cold, hot }. Absent property
++ * leaves the PMIC's power-on defaults in place.
++ */
++static int smb_set_jeita_thresholds(struct smb_chip *chip, const char *prop,
++				    unsigned int reg)
++{
++	u32 thresh[2];
++	u8 buf[JEITA_THRESHOLDS_LEN];
++	int rc;
++
++	rc = device_property_read_u32_array(chip->dev, prop, thresh,
++					    ARRAY_SIZE(thresh));
++	if (rc == -EINVAL)
++		return 0;
++	if (rc < 0)
++		return dev_err_probe(chip->dev, rc, "Couldn't read %s\n", prop);
++
++	if (thresh[0] > U16_MAX || thresh[1] > U16_MAX || thresh[1] >= thresh[0])
++		return dev_err_probe(chip->dev, -EINVAL,
++				     "%s: expected { cold, hot } ADC codes with cold > hot, got { %u, %u }\n",
++				     prop, thresh[0], thresh[1]);
++
++	put_unaligned_be16(thresh[1], &buf[0]);
++	put_unaligned_be16(thresh[0], &buf[2]);
++
++	rc = regmap_bulk_write(chip->regmap, chip->base + reg, buf, sizeof(buf));
++	if (rc < 0)
++		return dev_err_probe(chip->dev, rc, "Couldn't write %s\n", prop);
++
++	return 0;
++}
++
++/**
++ * smb_set_recharge_threshold() - tell the charger when to top the pack up again
++ * @chip: the charger
++ *
++ * The recharge comparator has been pointed at the battery voltage by the init
++ * sequence; this is the voltage it compares against. Where the board does not
++ * name one the hardware default is left alone - a comparator watching the right
++ * quantity at whatever threshold it powers up with is still a working
++ * comparator, and inventing a threshold for an unknown cell is not an
++ * improvement on that.
++ *
++ * The value is in the same 194637 nV units the gauge reports, which is not a
++ * coincidence: it is the same ADC.
++ *
++ * Returns: 0, or negative on error.
++ */
++static int smb_set_recharge_threshold(struct smb_chip *chip)
++{
++	u32 uv, raw;
++	int rc;
++
++	if (!chip->var->rechg_thresh_reg)
++		return 0;
++
++	if (device_property_read_u32(chip->dev, "qcom,auto-recharge-microvolt",
++				     &uv))
++		return 0;
++
++	if (uv >= chip->batt_info->voltage_max_design_uv) {
++		dev_warn(chip->dev,
++			 "recharge threshold %u uV is not below the float voltage, ignoring\n",
++			 uv);
++		return 0;
++	}
++
++	raw = div_u64((u64)uv * 1000, QG_V_LSB_NV);
++
++	rc = regmap_write(chip->regmap, chip->base + chip->var->rechg_thresh_reg,
++			  raw >> 8);
++	if (!rc)
++		rc = regmap_write(chip->regmap,
++				  chip->base + chip->var->rechg_thresh_reg + 1,
++				  raw & 0xff);
++	if (rc < 0)
++		return dev_err_probe(chip->dev, rc,
++				     "Couldn't set the recharge threshold\n");
++
++	return 0;
++}
++
++/**
++ * smb_set_term_current() - tell the charger when a charge is finished
++ * @chip: the charger
++ *
++ * The charger stops at the float voltage once the current it is still pushing
++ * falls below this, and reports that it did so - a state nothing else on the
++ * PMIC produces, and the only moment either the hardware or this driver can
++ * call the pack full.
++ *
++ * The boot leaves a value here, so this is not a comparator that was missing:
++ * read back on a Fairphone 3 the threshold held -101.8 mA and the ADC source
++ * was already selected. What is wrong is whose number it is. A termination
++ * current is a property of the cell; the device tree is where this driver is
++ * told about the cell; and a threshold inherited from a bootloader is one that
++ * nothing in this kernel chose, states, or would notice changing under it.
++ *
++ * The threshold is compared by the gauge's own ADC, so it is written in the
++ * gauge's units and its sign convention - negative into the battery - while the
++ * battery node states a magnitude. A cell whose node does not name one is left
++ * alone rather than given an invented value, for the reason spelled out in
++ * smb_set_recharge_threshold().
++ *
++ * Returns: 0, or negative on error.
++ */
++static int smb_set_term_current(struct smb_chip *chip)
++{
++	int term_ua = chip->batt_info->charge_term_current_ua;
++	int raw, rc;
++
++	if (!chip->var->iterm_thresh_reg || term_ua <= 0)
++		return 0;
++
++	/*
++	 * The register is a signed 16-bit count of ADC LSBs, so the largest
++	 * current it can express is what fills it - the same +-5 A the
++	 * downstream driver bounds this property by.
++	 */
++	raw = -div_s64((s64)term_ua * 1000, QG_I_LSB_NA);
++	if (raw < S16_MIN) {
++		dev_warn(chip->dev,
++			 "termination current %u uA is beyond what the comparator can express, ignoring\n",
++			 term_ua);
++		return 0;
++	}
++
++	/* Act on the ADC comparator this programs, not the analog one */
++	rc = regmap_update_bits(chip->regmap, chip->base + ENG_CHARGING_CFG,
++				ITERM_USE_ANALOG_BIT, 0);
++	if (!rc)
++		rc = regmap_write(chip->regmap,
++				  chip->base + chip->var->iterm_thresh_reg,
++				  (raw >> 8) & 0xff);
++	if (!rc)
++		rc = regmap_write(chip->regmap,
++				  chip->base + chip->var->iterm_thresh_reg + 1,
++				  raw & 0xff);
++	if (rc < 0)
++		return dev_err_probe(chip->dev, rc,
++				     "Couldn't set the termination current\n");
++
++	return 0;
++}
++
++/**
++ * smb_init_connector_therm() - let the charger protect its own connector
++ * @chip: the charger
++ *
++ * A USB connector heats up under a fast charge, and it is the one part of the
++ * path no thermal zone on the SoC can see: it is off-die, at the far end of
++ * the board, and what warms it is the current going through it. This PMIC can
++ * measure it directly, where the board wires a thermistor to the pin for it,
++ * and will then pull the input current back by itself when it gets hot - no
++ * software in the loop, and none of the latency that implies.
++ *
++ * Three writes turn that on and none of them does anything alone: bias the
++ * thermistor, enable the ADC channel that reads it, and name that channel as
++ * something the charger regulates against. What the board has to say is which
++ * pull-up its thermistor was chosen for; a board that says nothing gets none
++ * of this, because biasing a pin with no thermistor on it measures the pull-up
++ * and a charger regulating against that would throttle a connector that is
++ * perfectly cool.
++ *
++ * The die-temperature half of the same register is deliberately left alone: it
++ * describes the PMIC rather than the board, and changing it here would change
++ * what every other board using this driver does.
++ *
++ * Returns: 0, or negative on error.
++ */
++static int smb_init_connector_therm(struct smb_chip *chip)
++{
++	u32 pull_kohm, pull;
++	int rc;
++
++	if (!chip->var->thermreg_src_reg)
++		return 0;
++
++	if (device_property_read_u32(chip->dev,
++				     "qcom,connector-internal-pull-kohm",
++				     &pull_kohm))
++		return 0;
++
++	switch (pull_kohm) {
++	case 0:
++		pull = PULL_UP_NONE;
++		break;
++	case 30:
++		pull = PULL_UP_30K;
++		break;
++	case 100:
++		pull = PULL_UP_100K;
++		break;
++	case 400:
++		pull = PULL_UP_400K;
++		break;
++	default:
++		dev_warn(chip->dev,
++			 "connector pull-up %u kohm is not one the PMIC can switch in, ignoring\n",
++			 pull_kohm);
++		return 0;
++	}
++
++	rc = regmap_update_bits(chip->regmap,
++				chip->base + BATIF_ADC_INTERNAL_PULL_UP,
++				CONN_THM_PULL_UP_MASK,
++				pull << CONN_THM_PULL_UP_SHIFT);
++	if (!rc)
++		rc = regmap_update_bits(chip->regmap,
++					chip->base + BATIF_ADC_CHANNEL_EN,
++					CONN_THM_CHANNEL_EN_BIT,
++					CONN_THM_CHANNEL_EN_BIT);
++	if (!rc)
++		rc = regmap_update_bits(chip->regmap,
++					chip->base + chip->var->thermreg_src_reg,
++					THERMREG_CONNECTOR_ADC_SRC_EN_BIT,
++					THERMREG_CONNECTOR_ADC_SRC_EN_BIT);
++	if (rc < 0)
++		return dev_err_probe(chip->dev, rc,
++				     "Couldn't enable connector thermal regulation\n");
++
++	dev_dbg(chip->dev,
++		"connector thermistor on a %u kohm pull-up, input current regulated against it\n",
++		pull_kohm);
++
++	return 0;
++}
++
++/*
++ * A board that can be fitted with more than one battery tells them apart by a
++ * resistor in the pack, read through a divider against the ADC's reference.
++ *
++ * This driver cannot *choose* between two batteries - a power supply has one
++ * monitored-battery and there is no binding for more - but it can refuse to
++ * apply one battery's limits to a different battery, which is the failure that
++ * actually hurts: a cell charged to another cell's currents and temperature
++ * limits, silently, because the device tree names only one.
++ *
++ * Returns 1 when the described battery is the one fitted, or when nothing here
++ * says otherwise; 0 when it demonstrably is not; negative on error.
++ */
++static int smb_verify_battery_id(struct smb_chip *chip)
++{
++	struct fwnode_handle *batt __free(fwnode_handle) =
++		fwnode_find_reference(dev_fwnode(chip->dev),
++				      "monitored-battery", 0);
++	u32 expect_ohm, pullup_ohm;
++	u32 tol_pct = BATT_ID_DEFAULT_TOLERANCE_PCT;
++	int rc, uv, ohm;
++
++	if (IS_ERR(batt))
++		return 1;
++
++	/* All three have to be described before there is anything to check. */
++	if (fwnode_property_read_u32(batt, "id-resistor-ohms", &expect_ohm) ||
++	    device_property_read_u32(chip->dev, "qcom,batt-id-pullup-ohms",
++				     &pullup_ohm) ||
++	    !chip->bat_id_chan)
++		return 1;
++
++	device_property_read_u32(chip->dev, "qcom,batt-id-tolerance-percent",
++				 &tol_pct);
++
++	rc = iio_read_channel_processed(chip->bat_id_chan, &uv);
++	if (rc < 0)
++		return dev_err_probe(chip->dev, rc,
++				     "Couldn't read the battery ID\n");
++
++	if (uv <= 0 || uv >= BATT_ID_VREF_UV) {
++		dev_err(chip->dev,
++			"Battery ID line reads %d uV: open or shorted\n", uv);
++		return 0;
++	}
++
++	ohm = div_u64((u64)pullup_ohm * uv, BATT_ID_VREF_UV - uv);
++
++	if (abs(ohm - (int)expect_ohm) * 100 > (int)expect_ohm * (int)tol_pct) {
++		dev_err(chip->dev,
++			"Battery ID is %d ohm, but the described battery is %u ohm +/-%u%%: not applying its charging limits\n",
++			ohm, expect_ohm, tol_pct);
++		return 0;
++	}
++
++	dev_dbg(chip->dev, "Battery ID %d ohm matches the described %u ohm\n",
++		ohm, expect_ohm);
++
++	return 1;
++}
++
++/*
++ * Hardware JEITA. The hard thresholds stop charging outright and need no
++ * enabling; the soft ones only do something once the corresponding
++ * compensation bit is set, and then they subtract a fixed offset from the
++ * fast-charge current. Express that offset as the current we want to be left
++ * with in each soft zone, so the board carries a charge current rather than a
++ * register delta.
++ *
++ * All of it is read from this device rather than from the monitored battery,
++ * because a threshold here is a raw BAT_THERM ADC code: what code a given
++ * temperature produces depends on this PMIC's ADC full scale and on the
++ * board's pull-up as much as on the cell, so it is not a property of the pack
++ * and cannot travel with one. The soft-zone currents follow the thresholds
++ * they belong to.
++ */
++static int smb_init_jeita(struct smb_chip *chip)
++{
++	unsigned int fcc_ua, comp_hot, comp_cold;
++	u32 soft_fcc_ua[2];
++	int rc;
++
++	rc = smb_set_jeita_thresholds(chip, "qcom,jeita-hard-thresholds",
++				      JEITA_HARD_THRESHOLDS);
++	if (rc < 0)
++		return rc;
++
++	rc = smb_set_jeita_thresholds(chip, "qcom,jeita-soft-thresholds",
++				      JEITA_SOFT_THRESHOLDS);
++	if (rc < 0)
++		return rc;
++
++	rc = device_property_read_u32_array(chip->dev,
++					    "qcom,jeita-soft-fcc-microamp",
++					    soft_fcc_ua,
++					    ARRAY_SIZE(soft_fcc_ua));
++	if (rc == -EINVAL)
++		return 0;
++	if (rc < 0)
++		return dev_err_probe(chip->dev, rc,
++				     "Couldn't read qcom,jeita-soft-fcc-microamp\n");
++
++	/*
++	 * Read the fast-charge current back out of the hardware rather than
++	 * taking it from the device tree: the compensation is a subtraction
++	 * from whatever is actually programmed.
++	 */
++	rc = smb_get_fast_charge_current(chip, &fcc_ua);
++	if (rc < 0)
++		return dev_err_probe(chip->dev, rc,
++				     "Couldn't read the fast-charge current\n");
++
++	if (soft_fcc_ua[0] > fcc_ua || soft_fcc_ua[1] > fcc_ua)
++		return dev_err_probe(chip->dev, -EINVAL,
++				     "JEITA soft-zone current { %u, %u } exceeds the fast-charge current %u\n",
++				     soft_fcc_ua[0], soft_fcc_ua[1], fcc_ua);
++
++	/* Round the reduction up, so the result is never above what was asked. */
++	comp_cold = DIV_ROUND_UP(fcc_ua - soft_fcc_ua[0], JEITA_CCCOMP_STEP_UA);
++	comp_hot = DIV_ROUND_UP(fcc_ua - soft_fcc_ua[1], JEITA_CCCOMP_STEP_UA);
++
++	if (comp_cold > JEITA_CCCOMP_MASK || comp_hot > JEITA_CCCOMP_MASK)
++		return dev_err_probe(chip->dev, -ERANGE,
++				     "JEITA soft-zone current { %u, %u } is more than %u uA below the fast-charge current %u\n",
++				     soft_fcc_ua[0], soft_fcc_ua[1],
++				     (unsigned int)JEITA_CCCOMP_MASK *
++					     JEITA_CCCOMP_STEP_UA,
++				     fcc_ua);
++
++	rc = regmap_update_bits(chip->regmap,
++				chip->base + JEITA_CCCOMP_CFG_COLD,
++				JEITA_CCCOMP_MASK, comp_cold);
++	if (rc < 0)
++		return dev_err_probe(chip->dev, rc,
++				     "Couldn't set the cold JEITA compensation\n");
++
++	rc = regmap_update_bits(chip->regmap, chip->base + JEITA_CCCOMP_CFG_HOT,
++				JEITA_CCCOMP_MASK, comp_hot);
++	if (rc < 0)
++		return dev_err_probe(chip->dev, rc,
++				     "Couldn't set the hot JEITA compensation\n");
++
++	/*
++	 * Only the charge-current halves are enabled here. The float-voltage
++	 * ones are left as the PMIC defaults them: this driver has no way to
++	 * describe the voltage reduction they apply.
++	 */
++	rc = regmap_update_bits(chip->regmap, chip->base + JEITA_EN_CFG,
++				JEITA_EN_HOT_SL_CCC_BIT | JEITA_EN_COLD_SL_CCC_BIT,
++				JEITA_EN_HOT_SL_CCC_BIT | JEITA_EN_COLD_SL_CCC_BIT);
++	if (rc < 0)
++		return dev_err_probe(chip->dev, rc,
++				     "Couldn't enable JEITA compensation\n");
++
++	dev_dbg(chip->dev,
++		"JEITA: fcc %u uA, soft-zone cold %u uA (-%u), hot %u uA (-%u)\n",
++		fcc_ua, soft_fcc_ua[0], comp_cold * JEITA_CCCOMP_STEP_UA,
++		soft_fcc_ua[1], comp_hot * JEITA_CCCOMP_STEP_UA);
++
++	return 0;
++}
++
++static int smb_tcd_get_max_state(struct thermal_cooling_device *tcd,
++				 unsigned long *state)
++{
++	struct smb_chip *chip = tcd->devdata;
++
++	*state = chip->thermal_levels - 1;
++
++	return 0;
++}
++
++static int smb_tcd_get_cur_state(struct thermal_cooling_device *tcd,
++				 unsigned long *state)
++{
++	struct smb_chip *chip = tcd->devdata;
++
++	*state = chip->thermal_level;
++
++	return 0;
++}
++
++static int smb_tcd_set_cur_state(struct thermal_cooling_device *tcd,
++				 unsigned long state)
++{
++	struct smb_chip *chip = tcd->devdata;
++	int rc;
++
++	if (state >= chip->thermal_levels)
++		return -EINVAL;
++
++	rc = smb_set_fast_charge_current(chip,
++					 chip->thermal_mitigation_ua[state]);
++	if (rc < 0)
++		return rc;
++
++	chip->thermal_level = state;
++
++	return 0;
++}
++
++static const struct thermal_cooling_device_ops smb_tcd_ops = {
++	.get_max_state = smb_tcd_get_max_state,
++	.get_cur_state = smb_tcd_get_cur_state,
++	.set_cur_state = smb_tcd_set_cur_state,
++};
++
++/*
++ * Expose the fast-charge current as a cooling device, so a thermal zone can
++ * throttle charging the way it throttles a CPU. State 0 is the unmitigated
++ * current the board asked for and each further state is lower.
++ *
++ * The JEITA soft-zone compensation is a fixed subtraction from whatever is
++ * programmed here, so a mitigated current stays mitigated in the soft zones
++ * too.
++ */
++static int smb_init_cooling(struct smb_chip *chip)
++{
++	struct thermal_cooling_device *tcd;
++	unsigned int fcc_ua;
++	int count, i, rc;
++
++	count = device_property_count_u32(chip->dev, "qcom,thermal-mitigation");
++	if (count == -EINVAL)
++		return 0;
++	if (count < 0)
++		return dev_err_probe(chip->dev, count,
++				     "Couldn't read qcom,thermal-mitigation\n");
++	if (count < 2)
++		return dev_err_probe(chip->dev, -EINVAL,
++				     "qcom,thermal-mitigation needs at least two states\n");
++
++	chip->thermal_mitigation_ua = devm_kcalloc(chip->dev, count,
++						   sizeof(*chip->thermal_mitigation_ua),
++						   GFP_KERNEL);
++	if (!chip->thermal_mitigation_ua)
++		return -ENOMEM;
++
++	rc = device_property_read_u32_array(chip->dev, "qcom,thermal-mitigation",
++					    chip->thermal_mitigation_ua, count);
++	if (rc < 0)
++		return dev_err_probe(chip->dev, rc,
++				     "Couldn't read qcom,thermal-mitigation\n");
++
++	rc = smb_get_fast_charge_current(chip, &fcc_ua);
++	if (rc < 0)
++		return dev_err_probe(chip->dev, rc,
++				     "Couldn't read the fast-charge current\n");
++
++	for (i = 1; i < count; i++)
++		if (chip->thermal_mitigation_ua[i] >
++		    chip->thermal_mitigation_ua[i - 1])
++			return dev_err_probe(chip->dev, -EINVAL,
++					     "qcom,thermal-mitigation must not increase (state %d)\n",
++					     i);
++
++	/*
++	 * Mitigation may only ever reduce. The table is written for the current
++	 * the board expects to charge at, and the charger may be running below
++	 * that - on the init-sequence default, because the fitted battery could
++	 * not be identified - in which case a state must not raise it back up.
++	 */
++	for (i = 0; i < count; i++)
++		chip->thermal_mitigation_ua[i] =
++			min(chip->thermal_mitigation_ua[i], fcc_ua);
++
++	chip->thermal_levels = count;
++
++	tcd = devm_thermal_of_cooling_device_register(chip->dev, 0,
++						      "qcom-smbx-charger", chip,
++						      &smb_tcd_ops);
++	if (IS_ERR(tcd))
++		return dev_err_probe(chip->dev, PTR_ERR(tcd),
++				     "Couldn't register the cooling device\n");
++
++	return 0;
++}
++
+ static int smb_init_irq(struct smb_chip *chip, int *irq, const char *name,
+ 			 irqreturn_t (*handler)(int irq, void *data))
+ {
+@@ -945,6 +3080,11 @@ static int smb_probe(struct platform_device *pdev)
+ 	chip->dev = &pdev->dev;
+ 	chip->name = pdev->name;
+ 
++	chip->var = device_get_match_data(&pdev->dev);
++	if (!chip->var)
++		return dev_err_probe(chip->dev, -ENODEV,
++				     "no match data for device\n");
++
+ 	chip->regmap = dev_get_regmap(pdev->dev.parent, NULL);
+ 	if (!chip->regmap)
+ 		return dev_err_probe(chip->dev, -ENODEV,
+@@ -966,10 +3106,51 @@ static int smb_probe(struct platform_device *pdev)
+ 				     "Couldn't get usbin_i IIO channel\n");
+ 	}
+ 
++	/*
++	 * VBAT_SNS is optional: it drives the voltage-based fuel gauge and is
++	 * only present on variants that wire it up (PMI632). Defer if the ADC
++	 * isn't ready yet, otherwise carry on without a battery gauge.
++	 */
++	chip->vbat_chan = devm_iio_channel_get(chip->dev, "vbat");
++	if (IS_ERR(chip->vbat_chan)) {
++		rc = PTR_ERR(chip->vbat_chan);
++		if (rc == -EPROBE_DEFER)
++			return rc;
++		chip->vbat_chan = NULL;
++	}
++
++	/*
++	 * BAT_THERM is optional in the same way: only boards that route the
++	 * pack thermistor to the PMIC can report a battery temperature.
++	 */
++	chip->bat_therm_chan = devm_iio_channel_get(chip->dev, "bat_therm");
++	if (IS_ERR(chip->bat_therm_chan)) {
++		rc = PTR_ERR(chip->bat_therm_chan);
++		if (rc == -EPROBE_DEFER)
++			return rc;
++		chip->bat_therm_chan = NULL;
++	}
++
++	/*
++	 * BAT_ID likewise: only boards that can be fitted with more than one
++	 * battery have a reason to route it.
++	 */
++	chip->bat_id_chan = devm_iio_channel_get(chip->dev, "bat_id");
++	if (IS_ERR(chip->bat_id_chan)) {
++		rc = PTR_ERR(chip->bat_id_chan);
++		if (rc == -EPROBE_DEFER)
++			return rc;
++		chip->bat_id_chan = NULL;
++	}
++
+ 	rc = smb_init_hw(chip);
+ 	if (rc < 0)
+ 		return rc;
+ 
++	rc = smb5_init_hvdcp(chip);
++	if (rc < 0)
++		return rc;
++
+ 	supply_config.drv_data = chip;
+ 	supply_config.fwnode = dev_fwnode(&pdev->dev);
+ 
+@@ -979,7 +3160,7 @@ static int smb_probe(struct platform_device *pdev)
+ 	memcpy(desc, &smb_psy_desc, sizeof(smb_psy_desc));
+ 	desc->name =
+ 		devm_kasprintf(chip->dev, GFP_KERNEL, "%s-charger",
+-			       (const char *)device_get_match_data(chip->dev));
++			       chip->var->name);
+ 	if (!desc->name)
+ 		return -ENOMEM;
+ 
+@@ -994,18 +3175,89 @@ static int smb_probe(struct platform_device *pdev)
+ 		return dev_err_probe(chip->dev, rc,
+ 				     "Failed to get battery info\n");
+ 
++	/*
++	 * Register a battery (fuel-gauge) power supply only when we can
++	 * actually estimate state of charge: a VBAT channel plus an
++	 * OCV->capacity table from the monitored-battery node.
++	 */
++	if (chip->vbat_chan && chip->batt_info->ocv_table[0]) {
++		chip->batt_psy = devm_power_supply_register(chip->dev,
++							    &smb_batt_psy_desc,
++							    &supply_config);
++		if (IS_ERR(chip->batt_psy))
++			return dev_err_probe(chip->dev, PTR_ERR(chip->batt_psy),
++					     "failed to register battery power supply\n");
++
++		if (smb_fg_available(chip)) {
++			rc = smb_fg_start(chip);
++			if (rc < 0)
++				return rc;
++		}
++	}
++
+ 	rc = devm_delayed_work_autocancel(chip->dev, &chip->status_change_work,
+ 					  smb_status_change_work);
+ 	if (rc)
+ 		return dev_err_probe(chip->dev, rc,
+ 				     "Failed to init status change work\n");
+ 
+-	rc = (chip->batt_info->voltage_max_design_uv - 3487500) / 7500 + 1;
++	rc = (chip->batt_info->voltage_max_design_uv - chip->var->float_base_uv) /
++	     chip->var->float_step_uv;
+ 	rc = regmap_update_bits(chip->regmap, chip->base + FLOAT_VOLTAGE_CFG,
+ 				FLOAT_VOLTAGE_SETTING_MASK, rc);
+ 	if (rc < 0)
+ 		return dev_err_probe(chip->dev, rc, "Couldn't set vbat max\n");
+ 
++	rc = smb_set_recharge_threshold(chip);
++	if (rc < 0)
++		return rc;
++
++	/*
++	 * Everything below describes the *battery*, so none of it may be
++	 * applied to a battery that is not the one described. Where the board
++	 * gives us a way to tell, check first; a mismatch leaves the charger on
++	 * the init sequence's conservative defaults rather than on another
++	 * cell's limits.
++	 */
++	rc = smb_verify_battery_id(chip);
++	if (rc < 0)
++		return rc;
++
++	if (rc > 0) {
++		/*
++		 * Let the battery say what it will take, bounded only by what
++		 * the PMIC can physically deliver. Whether that current is
++		 * appropriate is a property of the pack and of the board's
++		 * thermal design, both of which the device tree describes and
++		 * this file does not know.
++		 */
++		if (chip->batt_info->constant_charge_current_max_ua > 0) {
++			u32 batt_ua = chip->batt_info->constant_charge_current_max_ua;
++			unsigned int fcc_ua = min(chip->var->fcc_max_ua, batt_ua);
++
++			rc = smb_set_fast_charge_current(chip, fcc_ua);
++			if (rc < 0)
++				return dev_err_probe(chip->dev, rc,
++						     "Couldn't set the fast-charge current\n");
++		}
++
++		rc = smb_set_term_current(chip);
++		if (rc < 0)
++			return rc;
++
++		rc = smb_init_jeita(chip);
++		if (rc < 0)
++			return rc;
++	}
++
++	rc = smb_init_cooling(chip);
++	if (rc < 0)
++		return rc;
++
++	rc = smb_init_connector_therm(chip);
++	if (rc < 0)
++		return rc;
++
+ 	rc = smb_init_irq(chip, &irq, "bat-ov", smb_handle_batt_overvoltage);
+ 	if (rc < 0)
+ 		return rc;
+@@ -1023,6 +3275,45 @@ static int smb_probe(struct platform_device *pdev)
+ 	if (rc < 0)
+ 		return rc;
+ 
++	/*
++	 * The gauge raises this the moment it captures a fresh rested
++	 * open-circuit voltage, which is exactly when the state of charge should
++	 * re-anchor on it - sooner and more reliably than the poll, which can
++	 * only catch a reading that is still valid when it happens to run. It is
++	 * optional: a device tree without it falls back to that poll, and there
++	 * is nothing to wire when the fuel gauge itself is not registered.
++	 */
++	if (chip->batt_psy) {
++		irq = platform_get_irq_byname_optional(to_platform_device(chip->dev),
++						       "good-ocv");
++		if (irq == -EPROBE_DEFER)
++			return irq;
++		if (irq > 0) {
++			rc = devm_request_threaded_irq(chip->dev, irq, NULL,
++						       smb_handle_good_ocv,
++						       IRQF_ONESHOT, "good-ocv", chip);
++			if (rc < 0)
++				return dev_err_probe(chip->dev, rc,
++						     "Couldn't request good-ocv irq\n");
++		}
++	}
++
++	if (chip->hvdcp_icl_ua) {
++		irq = platform_get_irq_byname_optional(to_platform_device(chip->dev),
++						       "usbin-src-change");
++		if (irq == -EPROBE_DEFER)
++			return irq;
++		if (irq > 0) {
++			rc = devm_request_threaded_irq(chip->dev, irq, NULL,
++						       smb_handle_usb_src_change,
++						       IRQF_ONESHOT,
++						       "usbin-src-change", chip);
++			if (rc < 0)
++				return dev_err_probe(chip->dev, rc,
++						     "Couldn't request usbin-src-change irq\n");
++		}
++	}
++
+ 	devm_device_init_wakeup(chip->dev);
+ 
+ 	rc = devm_pm_set_wake_irq(chip->dev, chip->cable_irq);
+@@ -1038,8 +3329,9 @@ static int smb_probe(struct platform_device *pdev)
+ }
+ 
+ static const struct of_device_id smb_match_id_table[] = {
+-	{ .compatible = "qcom,pmi8998-charger", .data = "pmi8998" },
+-	{ .compatible = "qcom,pm660-charger", .data = "pm660" },
++	{ .compatible = "qcom,pmi8998-charger", .data = &smb_variant_pmi8998 },
++	{ .compatible = "qcom,pm660-charger", .data = &smb_variant_pm660 },
++	{ .compatible = "qcom,pmi632-charger", .data = &smb_variant_pmi632 },
+ 	{ /* sentinal */ }
+ };
+ MODULE_DEVICE_TABLE(of, smb_match_id_table);
