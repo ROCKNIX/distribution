@@ -1,0 +1,49 @@
+From: Shigeaki Asai <y-asai.0816@docomonet.jp>
+Subject: [PATCH] drm/meson: encoder_dsi: load ENCL gamma table while ENCL is disabled
+
+meson_encoder_dsi_atomic_enable() programmed the ENCL gamma LUT right
+after meson_venc_mipi_dsi_mode_set(), i.e. while the ENCL timing
+generator was already running (ENCL_VIDEO_EN=1). Writing the LUT
+during active video stalls the hardware: L_GAMMA_CNTL_PORT
+WR_RDY/ADR_RDY deassert and the ENCL line counter (ENCL_INFO_READ)
+freezes, so every remaining write times out (~8s total at boot) and
+the panel ends up with a corrupted gamma table (wrong colors).
+
+Instrumented boots on the ODROID-GO Ultra (S922X) show:
+
+  failing:  start: VIDEO_EN=1 INFO 0000001a->002d0000 GAMMA_CNTL=00000030
+            stall: INFO 002d0000->002d0000 GAMMA_CNTL=00000000
+            (VID_CLK_CNTL2 / VIID_CLK_CNTL / VIID_CLK_DIV unchanged,
+             i.e. the ENCL clock is still running)
+  fixed:    start: VIDEO_EN=0 INFO 00000000->00000000 GAMMA_CNTL=00000030
+            no stall, no timeout
+
+Whether it failed depended only on timing, which is why enabling
+lock debugging (LOCKDEP etc.) appeared to "fix" it most of the time.
+
+The function already writes ENCL_VIDEO_EN=0 right afterwards before
+re-enabling the encoder, so simply move meson_encl_load_gamma() after
+that write. This matches the vendor u-boot, which never times out.
+
+Tested: 5 cold boots + 3 warm reboots, no timeouts, correct colors,
+LOCKDEP disabled.
+
+Signed-off-by: Shigeaki Asai <y-asai.0816@docomonet.jp>
+---
+ drivers/gpu/drm/meson/meson_encoder_dsi.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/meson/meson_encoder_dsi.c b/drivers/gpu/drm/meson/meson_encoder_dsi.c
+--- a/drivers/gpu/drm/meson/meson_encoder_dsi.c
++++ b/drivers/gpu/drm/meson/meson_encoder_dsi.c
+@@ -66,9 +66,9 @@
+ 	/* ENCL clock setup is handled by CCF */
+ 
+ 	meson_venc_mipi_dsi_mode_set(priv, &crtc_state->adjusted_mode);
+-	meson_encl_load_gamma(priv);
+ 
+ 	writel_relaxed(0, priv->io_base + _REG(ENCL_VIDEO_EN));
++	meson_encl_load_gamma(priv);
+ 
+ 	writel_bits_relaxed(ENCL_VIDEO_MODE_ADV_VFIFO_EN, ENCL_VIDEO_MODE_ADV_VFIFO_EN,
+ 			    priv->io_base + _REG(ENCL_VIDEO_MODE_ADV));
