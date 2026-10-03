@@ -296,6 +296,11 @@ post_makeinstall_target() {
   ln -sf /storage/.config/timesyncd.conf.d ${INSTALL}/etc/systemd/timesyncd.conf.d
   mkdir -p ${INSTALL}/usr/lib/systemd/timesyncd.conf.d
   printf "[Time]\nSaveIntervalSec=15min\n" > ${INSTALL}/usr/lib/systemd/timesyncd.conf.d/10-rocknix.conf
+  cat >${INSTALL}/usr/lib/tmpfiles.d/rocknix-thp.conf <<EOF
+w- /sys/kernel/mm/transparent_hugepage/enabled - - - - ${THP_MODE:-madvise}
+w- /sys/kernel/mm/transparent_hugepage/defrag - - - - ${THP_DEFRAG:-defer+madvise}
+w- /sys/kernel/mm/transparent_hugepage/shmem_enabled - - - - advise
+EOF
   safe_remove ${INSTALL}/etc/sysctl.d
   ln -sf /storage/.config/sysctl.d ${INSTALL}/etc/sysctl.d
   safe_remove ${INSTALL}/etc/tmpfiles.d
