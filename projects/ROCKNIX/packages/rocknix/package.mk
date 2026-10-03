@@ -78,6 +78,9 @@ EOF
   ### Take a backup of the system configuration on shutdown
   enable_service save-sysconfig.service
 
+  ### Bluetooth pairing agent, brought up with bluetoothd
+  enable_service bluetooth-agent.service
+
   sed -i "s#@DEVICENAME@#${DEVICE}#g" ${INSTALL}/usr/config/system/configs/system.cfg
 
   ### Defaults for community builds.
