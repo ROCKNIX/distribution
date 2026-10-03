@@ -8,7 +8,7 @@ PKG_SHA256="ed1059ff964f5df35b6056434cc17cc83f86dc913f10489948a0b19b6081c5ec"
 PKG_LICENSE="LGPL-2.1-or-later"
 PKG_SITE="http://www.freedesktop.org/wiki/Software/systemd"
 PKG_URL="https://github.com/systemd/systemd/archive/v${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain libcap kmod util-linux libidn2 Python3:host Jinja2:host pcre2 zstd libgcrypt openssl"
+PKG_DEPENDS_TARGET="toolchain libcap kmod util-linux libidn2 Python3:host Jinja2:host pcre2 zstd openssl"
 PKG_LONGDESC="A system and session manager for Linux, compatible with SysV and LSB init scripts."
 PKG_BUILD_FLAGS="+lto"
 
@@ -33,7 +33,7 @@ PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Dlibcurl=false \
                        -Dlibidn2=true \
                        -Dqrencode=false \
-                       -Dgcrypt=true \
+                       -Dgcrypt=false \
                        -Dgnutls=false \
                        -Dopenssl=true \
                        -Dp11kit=false \
@@ -49,7 +49,7 @@ PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Ddefault-dnssec=no \
                        -Dimportd=false \
                        -Dremote=false \
-                       -Dutmp=true \
+                       -Dutmp=false \
                        -Dhibernate=false \
                        -Denvironment-d=false \
                        -Dbinfmt=true \
@@ -111,9 +111,7 @@ PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Dkmod-path=/usr/bin/kmod \
                        -Dmount-path=/usr/bin/mount \
                        -Dumount-path=/usr/bin/umount \
-                       -Dversion-tag=${PKG_VERSION} \
-                       -Dc_args=-D__counted_by\(x\)\= \
-                       -Dcpp_args=-D__counted_by\(x\)\="
+                       -Dversion-tag=${PKG_VERSION}"
 if [ -n "${BUILD_WITH_DEBUG}" ]
 then
   PKG_MESON_OPTS_TARGET+=" -Ddebug-tty=${DEBUG_TTY}"
@@ -327,7 +325,6 @@ post_install() {
   add_group cdrom 11
   add_group dialout 18
   add_group floppy 19
-  add_group utmp 22
   add_group tape 33
   add_group kvm 36
   add_group video 39 pipewire
