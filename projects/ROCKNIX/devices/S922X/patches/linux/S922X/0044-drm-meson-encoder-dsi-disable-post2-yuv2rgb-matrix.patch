@@ -1,0 +1,75 @@
+From: Shigeaki Asai <y-asai.0816@docomonet.jp>
+Subject: [PATCH] drm/meson: encoder_dsi: disable the VPP POST2 YUV->RGB matrix
+
+meson_encoder_dsi_atomic_enable() keeps the OSD output in RGB for the
+MIPI-DSI panel by disabling VPP_WRAP_OSD1_MATRIX (RGB->YUV), but it
+never touches the post-blend VPP_POST2_MATRIX, so it relies on the
+bootloader having left that matrix disabled.
+
+The vendor u-boot on the ODROID-GO Ultra (S922X) programs POST2 as
+BT.709 limited YUV->RGB ("post2(bit12) matrix: YUV limit -> RGB") and,
+on some boot paths, hands over to Linux with it still enabled. This
+happens reliably after its off-mode charging screen (USB plugged in
+while powered off, then START+SELECT to continue booting). The RGB
+pixels are then converted a second time as if they were YUV, and the
+panel shows rotated colors (red->green, green->blue, blue->red).
+
+Register dump on the bad boot vs. a normal boot:
+
+  VPP_POST2_MATRIX_COEF00_01 (0x39a0)  bad=0x04ad0000  good=0
+  VPP_POST2_MATRIX_COEF02_10 (0x39a1)  bad=0x073304ad  good=0
+  VPP_POST2_MATRIX_COEF11_12 (0x39a2)  bad=0x1f251ddc  good=0
+  VPP_POST2_MATRIX_COEF20_21 (0x39a3)  bad=0x04ad087b  good=0
+  VPP_POST2_MATRIX_PRE_OFFSET0_1/2     bad=0x0fc00e00/0x00000e00
+  VPP_POST2_MATRIX_EN_CTRL   (0x39ad)  bad=0x00000001  good=0
+
+Clearing VPP_POST2_MATRIX_EN_CTRL at runtime immediately restores the
+correct colors. Add the POST2 matrix register definitions and disable
+it together with the OSD1 matrix.
+
+Signed-off-by: Shigeaki Asai <y-asai.0816@docomonet.jp>
+---
+diff --git a/drivers/gpu/drm/meson/meson_encoder_dsi.c b/drivers/gpu/drm/meson/meson_encoder_dsi.c
+index 17b0158..fa13ec4 100644
+--- a/drivers/gpu/drm/meson/meson_encoder_dsi.c
++++ b/drivers/gpu/drm/meson/meson_encoder_dsi.c
+@@ -75,6 +75,13 @@ static void meson_encoder_dsi_atomic_enable(struct drm_bridge *bridge,
+ 	writel_relaxed(0, priv->io_base + _REG(ENCL_TST_EN));
+ 
+ 	writel_bits_relaxed(BIT(0), 0, priv->io_base + _REG(VPP_WRAP_OSD1_MATRIX_EN_CTRL));
++	/*
++	 * The OSD output is kept in RGB for the panel, so make sure the
++	 * post-blend YUV->RGB matrix is off too. The vendor u-boot leaves
++	 * it enabled on some boot paths (e.g. after its off-mode charging
++	 * screen), which turns the RGB output into wrong colors.
++	 */
++	writel_bits_relaxed(BIT(0), 0, priv->io_base + _REG(VPP_POST2_MATRIX_EN_CTRL));
+ 
+ 	writel_relaxed(1, priv->io_base + _REG(ENCL_VIDEO_EN));
+ }
+diff --git a/drivers/gpu/drm/meson/meson_registers.h b/drivers/gpu/drm/meson/meson_registers.h
+index 3d73d00..eefc78e 100644
+--- a/drivers/gpu/drm/meson/meson_registers.h
++++ b/drivers/gpu/drm/meson/meson_registers.h
+@@ -589,6 +589,21 @@
+ #define VPP_OSD_SCALE_COEF 0x1dcd
+ #define VPP_INT_LINE_NUM 0x1dce
+ 
++#define VPP_POST2_MATRIX_COEF00_01 0x39a0
++#define VPP_POST2_MATRIX_COEF02_10 0x39a1
++#define VPP_POST2_MATRIX_COEF11_12 0x39a2
++#define VPP_POST2_MATRIX_COEF20_21 0x39a3
++#define VPP_POST2_MATRIX_COEF22 0x39a4
++#define VPP_POST2_MATRIX_COEF13_14 0x39a5
++#define VPP_POST2_MATRIX_COEF23_24 0x39a6
++#define VPP_POST2_MATRIX_COEF15_25 0x39a7
++#define VPP_POST2_MATRIX_CLIP 0x39a8
++#define VPP_POST2_MATRIX_OFFSET0_1 0x39a9
++#define VPP_POST2_MATRIX_OFFSET2 0x39aa
++#define VPP_POST2_MATRIX_PRE_OFFSET0_1 0x39ab
++#define VPP_POST2_MATRIX_PRE_OFFSET2 0x39ac
++#define VPP_POST2_MATRIX_EN_CTRL 0x39ad
++
+ #define VPP_WRAP_OSD1_MATRIX_COEF00_01 0x3d60
+ #define VPP_WRAP_OSD1_MATRIX_COEF02_10 0x3d61
+ #define VPP_WRAP_OSD1_MATRIX_COEF11_12 0x3d62
