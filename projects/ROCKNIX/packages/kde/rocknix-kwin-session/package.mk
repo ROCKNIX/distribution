@@ -6,7 +6,7 @@ PKG_VERSION=""
 PKG_LICENSE="GPL"
 PKG_SITE="https://rocknix.org"
 PKG_URL=""
-PKG_DEPENDS_TARGET="toolchain kwin libkscreen dbus wayland plasma-wayland-protocols"
+PKG_DEPENDS_TARGET="toolchain kwin libkscreen dbus plasma-keyboard wayland plasma-wayland-protocols"
 PKG_LONGDESC="KWin compositor session for the ROCKNIX gaming frontend"
 PKG_TOOLCHAIN="manual"
 

@@ -21,6 +21,7 @@ resolve_heroic_bin() {
 }
 
 cleanup_keyboard() {
+  [ "$(compositor)" = "kwin" ] && kwin_keyboard off
   if [ -n "${WVKBD_PID}" ]; then
     kill "${WVKBD_PID}" 2>/dev/null || true
   fi
@@ -40,7 +41,9 @@ fi
 trap 'cleanup_keyboard' EXIT
 
 cd "$(dirname "${HEROIC_BIN}")" || exit 1
-if [ "$(compositor)" = "sway" ]; then
+if [ "$(compositor)" = "kwin" ]; then
+  kwin_keyboard on
+else
   if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
     swaymsg 'seat seat1 fallback true'
   fi

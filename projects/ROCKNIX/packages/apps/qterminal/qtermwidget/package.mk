@@ -19,4 +19,7 @@ post_makeinstall_target() {
 
   mkdir -p ${INSTALL}/usr/config/qterminal.org/color-schemes
   cp -rf ${PKG_BUILD}/lib/color-schemes/*.colorscheme ${INSTALL}/usr/config/qterminal.org/color-schemes/
+
+  mkdir -p ${INSTALL}/usr/share/qtermwidget6/kb-layouts
+  cp -f ${PKG_BUILD}/lib/kb-layouts/*.keytab ${INSTALL}/usr/share/qtermwidget6/kb-layouts/
 }

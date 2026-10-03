@@ -10,6 +10,18 @@ if [ ! -d "/storage/.config/qterminal.org" ]; then
      cp -r "/usr/config/qterminal.org" "/storage/.config/"
 fi
 
+if [ "$(compositor)" = "kwin" ]; then
+  kwin_keyboard on
+  cd ~/
+  /usr/bin/qterminal &
+  QTERMINAL_PID=$!
+  sleep 2
+  kwin_keyboard toggle
+  wait ${QTERMINAL_PID}
+  kwin_keyboard off
+  exit 0
+fi
+
 # wvkbd default layout (`simple`) lacks Ctrl/Alt and arrows, useless in a
 # terminal. We want `full,nav,special`. Also, sway fullscreen ignores layer-
 # shell exclusive_zone, and plain tiled puts qterminal next to ES/foot in the

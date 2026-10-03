@@ -380,6 +380,49 @@ function kwin_osd() {
   fi
 }
 
+function kwin_keyboard() {
+  local bus="unix:path=${XDG_RUNTIME_DIR:-/var/run/0-runtime-dir}/bus" im="" i=0
+  local vkb="--bus=${bus} --print-reply --dest=org.kde.KWin /VirtualKeyboard"
+  local prop="org.freedesktop.DBus.Properties"
+  case "${1}" in
+    on|off)
+      [ "${1}" = "on" ] && im=/usr/share/applications/org.kde.plasma.keyboard.desktop
+      DBUS_SESSION_BUS_ADDRESS=${bus} XDG_CONFIG_HOME=/storage/.config \
+        kwriteconfig6 --file kwinrc --group Wayland --key InputMethod "${im}" --notify >/dev/null 2>&1
+      ;;
+    toggle)
+      if dbus-send ${vkb} ${prop}.Get string:org.kde.kwin.VirtualKeyboard string:visible 2>/dev/null | grep -q "boolean true"; then
+        dbus-send ${vkb} ${prop}.Set string:org.kde.kwin.VirtualKeyboard string:active variant:boolean:false >/dev/null 2>&1
+        return
+      fi
+      if ! dbus-send ${vkb} ${prop}.Get string:org.kde.kwin.VirtualKeyboard string:available 2>/dev/null | grep -q "boolean true"; then
+        kwin_keyboard on
+        while [ ${i} -lt 30 ] && ! dbus-send ${vkb} ${prop}.Get string:org.kde.kwin.VirtualKeyboard string:available 2>/dev/null | grep -q "boolean true"; do
+          sleep 0.1
+          i=$((i + 1))
+        done
+      fi
+      kwin_keyboard 2
+      i=0
+      while [ ${i} -lt 30 ]; do
+        dbus-send ${vkb} org.kde.kwin.VirtualKeyboard.forceActivate >/dev/null 2>&1
+        sleep 0.2
+        dbus-send ${vkb} ${prop}.Get string:org.kde.kwin.VirtualKeyboard string:visible 2>/dev/null | grep -q "boolean true" && break
+        i=$((i + 1))
+      done
+      (
+        while dbus-send ${vkb} ${prop}.Get string:org.kde.kwin.VirtualKeyboard string:visible 2>/dev/null | grep -q "boolean true"; do
+          sleep 1
+        done
+        systemctl is-active --quiet touchkeyboard && kwin_keyboard 1
+      ) >/dev/null 2>&1 &
+      ;;
+    *)
+      dbus-send ${vkb} ${prop}.Set string:org.kde.kwin.VirtualKeyboard string:mode variant:int32:${1} >/dev/null 2>&1
+      ;;
+  esac
+}
+
 SCANOUT_HINT_FILE=/run/rocknix/fullscreen-scale-hint
 SCANOUT_SCALED_FILE=/run/rocknix/scanout-scaled-outputs
 SCANOUT_OWNER_FILE=/run/rocknix/scanout-owner

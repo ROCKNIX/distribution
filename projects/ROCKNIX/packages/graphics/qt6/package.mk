@@ -86,7 +86,7 @@ pre_configure_target(){
                       "qtdoc" "qtgraphs" "qtgrpc" "qthttpserver" "qtimageformats"
                       "qtlottie" "qtmqtt" "qtnetworkauth" "qtopcua"
                       "qtquick3d" "qtquick3dphysics" "qtquickeffectmaker" "qtquicktimeline" "qtremoteobjects"
-                      "qtscxml" "qttranslations" "qtvirtualkeyboard"
+                      "qtscxml" "qttranslations"
                       "qtwebchannel" "qtwebengine" "qtwebview")
   for module in "${MODULES_TO_DISABLE[@]}"; do
     PKG_CMAKE_OPTS_TARGET+=" -DBUILD_${module}=OFF"
@@ -96,7 +96,7 @@ pre_configure_target(){
   # Conditionals: qtwayland
   MODULES_TO_ENABLE=("qtbase" "qtmultimedia" "qtshadertools" "qtdeclarative" "qtserialbus"
                      "qtserialport" "qtsvg" "qttools" "qtwebsockets" "qtlanguageserver"
-                     "qt5compat" "qtlocation" "qtpositioning" "qtsensors" "qtspeech")
+                     "qt5compat" "qtlocation" "qtpositioning" "qtsensors" "qtspeech" "qtvirtualkeyboard")
   for module in "${MODULES_TO_ENABLE[@]}"; do
     PKG_CMAKE_OPTS_TARGET+=" -DBUILD_${module}=ON"
   done
