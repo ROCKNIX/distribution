@@ -1,0 +1,80 @@
+From: Jacob Cook <jacobmcook1984@gmail.com>
+Date: Fri, 28 Aug 2026 17:10:00 -0400
+Subject: [PATCH] usb: dwc2: Skip PM register save/restore if the core reset
+ timed out
+
+---
+--- a/drivers/usb/dwc2/core.c
++++ b/drivers/usb/dwc2/core.c
+@@ -434,6 +434,7 @@
+ 					      GRSTCTL_CSFTRST, 10000)) {
+ 			dev_warn(hsotg->dev, "%s: HANG! Soft Reset timeout GRSTCTL_CSFTRST\n",
+ 				 __func__);
++			hsotg->core_reset_failed = 1;
+ 			return -EBUSY;
+ 		}
+ 	} else {
+@@ -441,6 +442,7 @@
+ 					    GRSTCTL_CSFTRST_DONE, 10000)) {
+ 			dev_warn(hsotg->dev, "%s: HANG! Soft Reset timeout GRSTCTL_CSFTRST_DONE\n",
+ 				 __func__);
++			hsotg->core_reset_failed = 1;
+ 			return -EBUSY;
+ 		}
+ 		greset = dwc2_readl(hsotg, GRSTCTL);
+@@ -469,12 +471,15 @@
+ 	if (dwc2_hsotg_wait_bit_set(hsotg, GRSTCTL, GRSTCTL_AHBIDLE, 10000)) {
+ 		dev_warn(hsotg->dev, "%s: HANG! AHB Idle timeout GRSTCTL GRSTCTL_AHBIDLE\n",
+ 			 __func__);
++		hsotg->core_reset_failed = 1;
+ 		return -EBUSY;
+ 	}
+ 
+ 	if (wait_for_host_mode && !skip_wait)
+ 		dwc2_wait_for_mode(hsotg, true);
+ 
++	hsotg->core_reset_failed = 0;
++
+ 	return 0;
+ }
+ 
+--- a/drivers/usb/dwc2/core.h
++++ b/drivers/usb/dwc2/core.h
+@@ -875,6 +875,7 @@
+  * @reset_phy_on_wake:	Quirk saying that we should assert PHY reset on a
+  *			remote wakeup.
+  * @phy_off_for_suspend: Status of whether we turned the PHY off at suspend.
++ * @core_reset_failed:	Set when the last core soft reset timed out.
+  * @need_phy_for_wake:	Quirk saying that we should keep the PHY on at
+  *			suspend if we need USB to wake us up.
+  * @frame_number:       Frame number read from the core. For both device
+@@ -1073,6 +1074,7 @@
+ 	unsigned int reset_phy_on_wake:1;
+ 	unsigned int need_phy_for_wake:1;
+ 	unsigned int phy_off_for_suspend:1;
++	unsigned int core_reset_failed:1;
+ 	u16 frame_number;
+ 
+ 	struct phy *phy;
+--- a/drivers/usb/dwc2/platform.c
++++ b/drivers/usb/dwc2/platform.c
+@@ -655,6 +655,9 @@
+ 	if (!dwc2->ll_hw_enabled)
+ 		return 0;
+ 
++	if (dwc2->core_reset_failed)
++		return 0;
++
+ 	is_device_mode = dwc2_is_device_mode(dwc2);
+ 	if (is_device_mode)
+ 		dwc2_hsotg_suspend(dwc2);
+@@ -735,6 +738,9 @@
+ 	if (!dwc2->ll_hw_enabled)
+ 		return 0;
+ 
++	if (dwc2->core_reset_failed)
++		return 0;
++
+ 	if (dwc2->phy_off_for_suspend && dwc2->ll_hw_enabled) {
+ 		ret = __dwc2_lowlevel_hw_enable(dwc2);
+ 		if (ret)
