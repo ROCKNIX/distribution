@@ -92,6 +92,20 @@ PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Dlink-systemctl-shared=true \
                        -Dlink-networkd-shared=false \
                        -Djournal-storage-default=auto \
+                       -Dtty-mode=0620 \
+                       -Dshellprofiledir=no \
+                       -Dsshconfdir=no \
+                       -Dsshdconfdir=no \
+                       -Dsshdprivsepdir=no \
+                       -Dmountfsd=false \
+                       -Dnsresourced=false \
+                       -Dnspawn=disabled \
+                       -Dvmspawn=disabled \
+                       -Dsysinstall=false \
+                       -Dukify=disabled \
+                       -Dkernel-install=false \
+                       -Dlibarchive=disabled \
+                       -Dbpf-framework=disabled \
                        -Dbashcompletiondir=no \
                        -Dzshcompletiondir=no \
                        -Dkmod-path=/usr/bin/kmod \
@@ -119,12 +133,11 @@ post_makeinstall_target() {
   safe_remove ${INSTALL}/etc/systemd/system
   safe_remove ${INSTALL}/etc/xdg
   safe_remove ${INSTALL}/etc/X11
-  safe_remove ${INSTALL}/usr/bin/kernel-install
-  safe_remove ${INSTALL}/usr/lib/kernel/install.d
   safe_remove ${INSTALL}/usr/lib/rpm
   safe_remove ${INSTALL}/usr/lib/systemd/user
   safe_remove ${INSTALL}/usr/lib/tmpfiles.d/etc.conf
   safe_remove ${INSTALL}/usr/lib/tmpfiles.d/home.conf
+  safe_remove ${INSTALL}/usr/lib/tmpfiles.d/root.conf
   safe_remove ${INSTALL}/usr/share/factory
 
   # remove Network adaper renaming rule, this is confusing
@@ -157,10 +170,30 @@ post_makeinstall_target() {
   safe_remove ${INSTALL}/usr/bin/systemd-creds
   safe_remove ${INSTALL}/usr/lib/tmpfiles.d/credstore.conf
   safe_remove ${INSTALL}/usr/lib/tmpfiles.d/provision.conf
+  safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-creds.socket
+  safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-creds@.service
+  safe_remove ${INSTALL}/usr/lib/systemd/system/*.target.wants/systemd-creds.socket
 
-  # remove nspawn
-  safe_remove ${INSTALL}/usr/bin/systemd-nspawn
-  safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-nspawn@.service
+  safe_remove ${INSTALL}/usr/lib/systemd/systemd-factory-reset
+  safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-factory-reset*
+  safe_remove ${INSTALL}/usr/lib/systemd/system/*.target.wants/systemd-factory-reset*
+
+  safe_remove ${INSTALL}/usr/bin/storagectl
+  safe_remove ${INSTALL}/usr/bin/systemd-mstack
+  safe_remove ${INSTALL}/usr/bin/systemd-mute-console
+  safe_remove ${INSTALL}/usr/sbin/mount.mstack
+  safe_remove ${INSTALL}/usr/sbin/mount.storage
+  safe_remove ${INSTALL}/usr/lib/systemd/systemd-keyutil
+  safe_remove ${INSTALL}/usr/lib/systemd/systemd-sbsign
+  safe_remove ${INSTALL}/usr/lib/systemd/systemd-storage-*
+  safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-storage-*
+  safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-mute-console*
+  safe_remove ${INSTALL}/usr/lib/systemd/system/system-systemd\\x2dmute\\x2dconsole.slice
+  safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-ask-password.socket
+  safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-ask-password@.service
+  safe_remove ${INSTALL}/usr/lib/systemd/system/*.target.wants/systemd-storage-*
+  safe_remove ${INSTALL}/usr/lib/systemd/system/*.target.wants/systemd-mute-console.socket
+  safe_remove ${INSTALL}/usr/lib/systemd/system/*.target.wants/systemd-ask-password.socket
 
   # remove unneeded generators
   for gen in ${INSTALL}/usr/lib/systemd/system-generators/*; do
@@ -238,9 +271,7 @@ post_makeinstall_target() {
   ln -sf /usr/bin/systemctl ${INSTALL}/usr/sbin/halt
   ln -sf /usr/bin/systemctl ${INSTALL}/usr/sbin/poweroff
   ln -sf /usr/bin/systemctl ${INSTALL}/usr/sbin/reboot
-  ln -sf /usr/bin/systemctl ${INSTALL}/usr/sbin/runlevel
   ln -sf /usr/bin/systemctl ${INSTALL}/usr/sbin/shutdown
-  ln -sf /usr/bin/systemctl ${INSTALL}/usr/sbin/telinit
 
   # strip
   debug_strip ${INSTALL}/usr
@@ -304,6 +335,7 @@ post_install() {
   add_group input 104
   add_group render 105
   add_group sgx 106
+  add_group clock 107
   add_group users 100
   add_group nogroup 65534
   add_user nobody x 65534 65534 "nobody" "/" "/bin/false"

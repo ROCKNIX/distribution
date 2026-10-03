@@ -145,6 +145,7 @@ steam_scope_reexec_if_needed() {
       --slice=system.slice \
       --unit=steam-bigpicture \
       --collect \
+      --expand-environment=no \
       -E _STEAM_SCOPE=1 \
       -E HOME="$HOME" \
       -E USER="$USER" \
