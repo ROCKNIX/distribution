@@ -8,7 +8,7 @@ PKG_SHA256="ed1059ff964f5df35b6056434cc17cc83f86dc913f10489948a0b19b6081c5ec"
 PKG_LICENSE="LGPL-2.1-or-later"
 PKG_SITE="http://www.freedesktop.org/wiki/Software/systemd"
 PKG_URL="https://github.com/systemd/systemd/archive/v${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain libcap kmod util-linux libidn2 Python3:host Jinja2:host pcre2 zstd openssl"
+PKG_DEPENDS_TARGET="toolchain kmod util-linux libidn2 Python3:host Jinja2:host pcre2 zstd openssl"
 PKG_LONGDESC="A system and session manager for Linux, compatible with SysV and LSB init scripts."
 PKG_BUILD_FLAGS="+lto"
 
@@ -102,6 +102,9 @@ PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Dnspawn=disabled \
                        -Dvmspawn=disabled \
                        -Dsysinstall=false \
+                       -Dsysext=false \
+                       -Dstoragetm=false \
+                       -Dimds=disabled \
                        -Dukify=disabled \
                        -Dkernel-install=false \
                        -Dlibarchive=disabled \
@@ -190,6 +193,9 @@ post_makeinstall_target() {
   safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-ask-password.socket
   safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-ask-password@.service
   safe_remove ${INSTALL}/usr/lib/systemd/system/*.target.wants/systemd-storage-*
+  safe_remove ${INSTALL}/usr/lib/systemd/systemd-report*
+  safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-report-*
+  safe_remove ${INSTALL}/usr/lib/udev/rules.d/90-image-dissect.rules
   safe_remove ${INSTALL}/usr/lib/systemd/system/*.target.wants/systemd-mute-console.socket
   safe_remove ${INSTALL}/usr/lib/systemd/system/*.target.wants/systemd-ask-password.socket
 
