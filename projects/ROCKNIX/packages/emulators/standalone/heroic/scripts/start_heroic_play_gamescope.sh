@@ -30,10 +30,7 @@ trap '[ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ] && swaymsg "seat seat1 fallback f
 swaymsg for_window [app_id="heroic"] fullscreen enable
 swaymsg for_window [class="heroic"] fullscreen enable
 
-eval "$(swaymsg -t get_outputs | jq -r '
-  .[] | select(.focused == true) |
-  "W=\(.current_mode.width) H=\(.current_mode.height) TRANSFORM=\(.transform)"
-')"
+read -r _ W H TRANSFORM _ <<< "$(output_list | awk '$5 == "true" { print; exit }')"
 if [[ "${TRANSFORM:-}" == "90" || "${TRANSFORM:-}" == "270" || "${TRANSFORM:-}" == "flipped-90" || "${TRANSFORM:-}" == "flipped-270" ]]; then
   WIDTH="${H}"
   HEIGHT="${W}"

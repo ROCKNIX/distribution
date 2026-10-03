@@ -1,0 +1,115 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Tue, 29 Sep 2026 14:00:00 -0700
+Subject: [PATCH] renderloop: optionally composite immediately
+
+KWIN_COMPOSITE_IMMEDIATELY=1 composites as soon as a repaint is
+requested and no frame is pending, and sends frame callbacks on
+presentation.
+---
+--- a/src/core/renderloop.cpp
++++ b/src/core/renderloop.cpp
+@@ -26,6 +26,7 @@
+ }
+ 
+ static const bool s_printDebugInfo = qEnvironmentVariableIntValue("KWIN_LOG_PERFORMANCE_DATA") != 0;
++static const bool s_compositeImmediately = qEnvironmentVariableIntValue("KWIN_COMPOSITE_IMMEDIATELY") != 0;
+ 
+ RenderLoopPrivate::RenderLoopPrivate(RenderLoop *q, BackendOutput *output)
+     : q(q)
+@@ -109,6 +110,10 @@
+     }
+ 
+     const std::chrono::nanoseconds nextRenderTimestamp = nextPresentationTimestamp - expectedCompositingTime;
++    if (s_compositeImmediately && presentationMode == PresentationMode::VSync && pendingFrameCount == 0) {
++        compositeTimer.start(0ms, Qt::PreciseTimer, q);
++        return;
++    }
+     compositeTimer.start(std::max(0ms, std::chrono::duration_cast<std::chrono::milliseconds>(nextRenderTimestamp - currentTime)), Qt::PreciseTimer, q);
+ }
+ 
+--- a/src/scene/surfaceitem_wayland.cpp
++++ b/src/scene/surfaceitem_wayland.cpp
+@@ -21,6 +21,8 @@
+ namespace KWin
+ {
+ 
++static const bool s_frameCallbacksOnPresentation = qEnvironmentVariableIntValue("KWIN_COMPOSITE_IMMEDIATELY") != 0;
++
+ SurfaceItemWayland::SurfaceItemWayland(SurfaceInterface *surface, Item *parent)
+     : SurfaceItem(parent)
+     , m_surface(surface)
+@@ -239,7 +241,13 @@
+     if (!m_surface) {
+         return;
+     }
+-    m_surface->frameRendered(timestamp.count());
++    if (s_frameCallbacksOnPresentation && frame) {
++        if (auto callbacks = m_surface->takeFrameCallbacks()) {
++            frame->addFeedback(std::move(callbacks));
++        }
++    } else {
++        m_surface->frameRendered(timestamp.count());
++    }
+     if (frame) {
+         // FIXME make frame always valid
+         if (auto feedback = m_surface->presentationFeedback(output)) {
+--- a/src/wayland/surface.cpp
++++ b/src/wayland/surface.cpp
+@@ -562,6 +562,47 @@
+     }
+ }
+ 
++class FrameCallbackFeedback : public PresentationFeedback
++{
++public:
++    explicit FrameCallbackFeedback(wl_list *callbacks)
++    {
++        wl_list_init(&m_callbacks);
++        wl_list_insert_list(&m_callbacks, callbacks);
++        wl_list_init(callbacks);
++    }
++    ~FrameCallbackFeedback() override
++    {
++        send(std::chrono::steady_clock::now().time_since_epoch());
++    }
++
++    void presented(std::chrono::nanoseconds refreshCycleDuration, std::chrono::nanoseconds timestamp, PresentationMode mode) override
++    {
++        send(timestamp);
++    }
++
++private:
++    void send(std::chrono::nanoseconds timestamp)
++    {
++        wl_resource *resource;
++        wl_resource *tmp;
++        wl_resource_for_each_safe (resource, tmp, &m_callbacks) {
++            wl_callback_send_done(resource, std::chrono::duration_cast<std::chrono::milliseconds>(timestamp).count());
++            wl_resource_destroy(resource);
++        }
++    }
++
++    wl_list m_callbacks;
++};
++
++std::shared_ptr<PresentationFeedback> SurfaceInterface::takeFrameCallbacks()
++{
++    if (wl_list_empty(&d->current->frameCallbacks)) {
++        return nullptr;
++    }
++    return std::make_shared<FrameCallbackFeedback>(&d->current->frameCallbacks);
++}
++
+ std::shared_ptr<PresentationFeedback> SurfaceInterface::presentationFeedback(LogicalOutput *output)
+ {
+     if (output && (!d->primaryOutput || d->primaryOutput->handle() != output)) {
+--- a/src/wayland/surface.h
++++ b/src/wayland/surface.h
+@@ -129,6 +129,7 @@
+ 
+     void frameRendered(quint32 msec);
+     bool hasFrameCallbacks() const;
++    std::shared_ptr<PresentationFeedback> takeFrameCallbacks();
+ 
+     std::shared_ptr<PresentationFeedback> presentationFeedback(LogicalOutput *output);
+     bool hasPresentationFeedback() const;

@@ -1,0 +1,28 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Mon, 28 Sep 2026 06:40:00 -0700
+Subject: [PATCH] drm: don't block the main thread on a lost pageflip
+
+After a pageflip timeout, don't wait for a DRM event that never comes.
+---
+--- a/src/backends/drm/drm_commit_thread.cpp
++++ b/src/backends/drm/drm_commit_thread.cpp
+@@ -13,6 +13,7 @@
+ #include "utils/envvar.h"
+ #include "utils/realtime.h"
+ 
++#include <poll.h>
+ #include <ranges>
+ #include <span>
+ #include <thread>
+@@ -409,7 +410,10 @@
+ void DrmCommitThread::handlePing()
+ {
+     // this will process the pageflip and call pageFlipped if there is one
+-    m_gpu->dispatchEvents();
++    pollfd pfd{.fd = m_gpu->fd(), .events = POLLIN, .revents = 0};
++    if (poll(&pfd, 1, 0) > 0) {
++        m_gpu->dispatchEvents();
++    }
+     std::unique_lock lock(m_mutex);
+     m_ping = true;
+     m_pong.notify_one();

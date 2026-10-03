@@ -1,0 +1,45 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Wed, 30 Sep 2026 12:00:00 -0700
+Subject: [PATCH] linux-dmabuf: steer version 3 clients to formats the display scans out
+
+Version 3 clients take the first format that suits them. Send ABGR,
+XBGR, ARGB and XRGB first, and leave out the AFBC TILED and SC layouts
+Rockchip and Amlogic planes reject.
+---
+--- a/src/wayland/linuxdmabufv1clientbuffer.cpp
++++ b/src/wayland/linuxdmabufv1clientbuffer.cpp
+@@ -19,6 +19,7 @@
+ #include "surface_p.h"
+ #include "utils/common.h"
+ 
++#include <algorithm>
+ #include <cstdint>
+ #include <errno.h>
+ #include <fcntl.h>
+@@ -49,10 +50,23 @@
+     const dev_t mainDevice = it.value();
+     if (resource->version() < ZWP_LINUX_DMABUF_V1_GET_DEFAULT_FEEDBACK_SINCE_VERSION) {
+         const auto &formats = perDeviceFormats[mainDevice];
+-        for (auto it = formats.begin(); it != formats.end(); ++it) {
+-            const uint32_t format = it.key();
+-            const auto &modifiers = it.value();
++        static const QList<uint32_t> preferred = {DRM_FORMAT_ABGR8888, DRM_FORMAT_XBGR8888, DRM_FORMAT_ARGB8888, DRM_FORMAT_XRGB8888};
++        const auto rank = [](uint32_t format) {
++            const qsizetype index = preferred.indexOf(format);
++            return std::make_pair(index < 0 ? preferred.size() : index, format);
++        };
++        QList<uint32_t> order = formats.keys();
++        std::ranges::sort(order, [&rank](uint32_t left, uint32_t right) {
++            return rank(left) < rank(right);
++        });
++        for (const uint32_t format : std::as_const(order)) {
++            const auto &modifiers = *formats.constFind(format);
+             for (const uint64_t modifier : modifiers) {
++                if (modifier >> 56 == DRM_FORMAT_MOD_VENDOR_ARM
++                    && ((modifier >> 52) & 0xf) == DRM_FORMAT_MOD_ARM_TYPE_AFBC
++                    && (modifier & (AFBC_FORMAT_MOD_TILED | AFBC_FORMAT_MOD_SC))) {
++                    continue;
++                }
+                 if (resource->version() >= ZWP_LINUX_DMABUF_V1_MODIFIER_SINCE_VERSION) {
+                     const uint32_t modifier_lo = modifier & 0xffffffff;
+                     const uint32_t modifier_hi = modifier >> 32;

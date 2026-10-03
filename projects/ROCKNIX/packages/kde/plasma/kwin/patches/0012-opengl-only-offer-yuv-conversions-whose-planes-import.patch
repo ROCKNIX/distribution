@@ -1,0 +1,37 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Wed, 30 Sep 2026 00:40:00 -0700
+Subject: [PATCH] opengl: only offer YUV conversions whose planes import
+
+Only offer YUV formats whose plane formats import. The Mali blob has R8
+but no GR88.
+---
+--- a/src/opengl/eglbackend.cpp
++++ b/src/opengl/eglbackend.cpp
+@@ -23,6 +23,7 @@
+ 
+ #include <QElapsedTimer>
+ 
++#include <algorithm>
+ #include <drm_fourcc.h>
+ #include <unistd.h>
+ #include <xf86drm.h>
+@@ -164,9 +165,16 @@
+         return set;
+     };
+ 
+-    auto includeShaderConversions = [](FormatModifierMap &&formats) -> FormatModifierMap {
+-        for (auto format : FormatInfo::s_drmConversions.keys()) {
+-            auto &modifiers = formats[format];
++    auto includeShaderConversions = [this](FormatModifierMap &&formats) -> FormatModifierMap {
++        const auto &allFormats = m_renderDevice->eglDisplay()->allSupportedDrmFormats();
++        for (auto it = FormatInfo::s_drmConversions.constBegin(); it != FormatInfo::s_drmConversions.constEnd(); it++) {
++            const bool planesImport = std::ranges::all_of(it->plane, [&allFormats](const YuvFormat &plane) {
++                return allFormats.value(plane.format).contains(DRM_FORMAT_MOD_LINEAR);
++            });
++            if (!planesImport) {
++                continue;
++            }
++            auto &modifiers = formats[it.key()];
+             if (modifiers.empty()) {
+                 modifiers = {DRM_FORMAT_MOD_LINEAR};
+             }

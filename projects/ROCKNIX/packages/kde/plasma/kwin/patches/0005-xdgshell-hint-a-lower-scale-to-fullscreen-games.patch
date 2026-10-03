@@ -1,0 +1,97 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Mon, 28 Sep 2026 14:30:00 -0700
+Subject: [PATCH] xdgshell: hint a lower scale to fullscreen games
+
+Fullscreen windows take a scale factor from
+KWIN_FULLSCREEN_SCALE_HINT_FILE so the plane can upscale them.
+---
+--- a/src/xdgshellwindow.cpp
++++ b/src/xdgshellwindow.cpp
+@@ -40,9 +40,78 @@
+ #include <KDecoration3/DecoratedWindow>
+ #include <KDecoration3/Decoration>
+ 
++#include <QFile>
++
++#include <cmath>
++
+ namespace KWin
+ {
+ 
++static bool pidDescendsFrom(pid_t pid, pid_t ancestor)
++{
++    for (int depth = 0; depth < 64 && pid > 1; ++depth) {
++        if (pid == ancestor) {
++            return true;
++        }
++        QFile stat(QStringLiteral("/proc/%1/stat").arg(pid));
++        if (!stat.open(QIODevice::ReadOnly)) {
++            return false;
++        }
++        const QByteArray line = stat.readAll();
++        const qsizetype end = line.lastIndexOf(')');
++        if (end < 0) {
++            return false;
++        }
++        const QList<QByteArray> fields = line.mid(end + 1).simplified().split(' ');
++        if (fields.size() < 2) {
++            return false;
++        }
++        pid = fields[1].toInt();
++    }
++    return false;
++}
++
++static qreal fullscreenScaleHint(const Window *window, qreal scale)
++{
++    static const QString path = qEnvironmentVariable("KWIN_FULLSCREEN_SCALE_HINT_FILE");
++    if (path.isEmpty() || !window->isFullScreen() || !window->output()) {
++        return scale;
++    }
++    QFile file(path);
++    if (!file.open(QIODevice::ReadOnly)) {
++        return scale;
++    }
++    double factor = 0.0;
++    bool found = false;
++    while (!file.atEnd()) {
++        const QList<QByteArray> fields = file.readLine().simplified().split(' ');
++        bool ok = false;
++        const double lineFactor = fields.value(0).toDouble(&ok);
++        if (!ok) {
++            continue;
++        }
++        if (fields.size() >= 2) {
++            const pid_t owner = fields[1].toInt();
++            if (owner > 0 && !pidDescendsFrom(window->pid(), owner)) {
++                continue;
++            }
++        }
++        if (fields.size() >= 3) {
++            if (QString::fromUtf8(fields[2]) == window->output()->name()) {
++                factor = lineFactor;
++                break;
++            }
++        } else if (!found) {
++            factor = lineFactor;
++            found = true;
++        }
++    }
++    if (factor <= 0.0 || factor > 4.0) {
++        return scale;
++    }
++    return std::round(scale * factor * 120.0) / 120.0;
++}
++
+ XdgSurfaceWindow::XdgSurfaceWindow(XdgSurfaceInterface *shellSurface)
+     : WaylandWindow(shellSurface->surface())
+     , m_shellSurface(shellSurface)
+@@ -795,7 +864,7 @@
+ 
+ XdgSurfaceConfigure *XdgToplevelWindow::sendRoleConfigure()
+ {
+-    surface()->setPreferredBufferScale(nextTargetScale());
++    surface()->setPreferredBufferScale(fullscreenScaleHint(this, nextTargetScale()));
+     surface()->setPreferredBufferTransform(preferredBufferTransform());
+     surface()->setPreferredColorDescription(preferredColorDescription());
+ 

@@ -40,29 +40,31 @@ fi
 trap 'cleanup_keyboard' EXIT
 
 cd "$(dirname "${HEROIC_BIN}")" || exit 1
-if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
-  swaymsg 'seat seat1 fallback true'
-fi
-swaymsg for_window [app_id="heroic"] fullscreen disable
-swaymsg for_window [class="heroic"] fullscreen disable
+if [ "$(compositor)" = "sway" ]; then
+  if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
+    swaymsg 'seat seat1 fallback true'
+  fi
+  swaymsg for_window [app_id="heroic"] fullscreen disable
+  swaymsg for_window [class="heroic"] fullscreen disable
 
-if systemctl is-active --quiet touchkeyboard.service; then
-  TOUCHKB_WAS_ACTIVE=1
-  systemctl stop touchkeyboard.service >/dev/null 2>&1 || true
-fi
-killall wvkbd-mobintl >/dev/null 2>&1 || true
-sleep 0.2
+  if systemctl is-active --quiet touchkeyboard.service; then
+    TOUCHKB_WAS_ACTIVE=1
+    systemctl stop touchkeyboard.service >/dev/null 2>&1 || true
+  fi
+  killall wvkbd-mobintl >/dev/null 2>&1 || true
+  sleep 0.2
 
-WVKBD_OUT="$(swaymsg -t get_outputs -r 2>/dev/null | jq -r '.[] | select(.focused == true) | .name' | head -n1)"
-WVKBD_ARGS=(
-  -L 500
-  -fg 6b6b75 -fg-sp 6b6b75 -bg 1d1d1d --text ffffff --text-sp ffffff -press 000000 --press-sp 000000 -fn 48 -l simple
-)
-[ -n "${WVKBD_OUT}" ] && WVKBD_ARGS+=(--output "${WVKBD_OUT}")
-/usr/bin/wvkbd-mobintl "${WVKBD_ARGS[@]}" >/dev/null 2>&1 &
-WVKBD_PID=$!
-sleep 0.25
-kill -USR2 "${WVKBD_PID}" 2>/dev/null || true
+  WVKBD_OUT="$(swaymsg -t get_outputs -r 2>/dev/null | jq -r '.[] | select(.focused == true) | .name' | head -n1)"
+  WVKBD_ARGS=(
+    -L 500
+    -fg 6b6b75 -fg-sp 6b6b75 -bg 1d1d1d --text ffffff --text-sp ffffff -press 000000 --press-sp 000000 -fn 48 -l simple
+  )
+  [ -n "${WVKBD_OUT}" ] && WVKBD_ARGS+=(--output "${WVKBD_OUT}")
+  /usr/bin/wvkbd-mobintl "${WVKBD_ARGS[@]}" >/dev/null 2>&1 &
+  WVKBD_PID=$!
+  sleep 0.25
+  kill -USR2 "${WVKBD_PID}" 2>/dev/null || true
+fi
 
 export ELECTRON_OZONE_PLATFORM_HINT=wayland
 "${HEROIC_BIN}" --no-sandbox --ozone-platform=wayland "$@"

@@ -1,0 +1,134 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+. /etc/profile
+
+rm -f "${XDG_RUNTIME_DIR}/bus"
+dbus-daemon --session --address="unix:path=${XDG_RUNTIME_DIR}/bus" --fork
+export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR}/bus"
+
+KWIN_READY=/run/rocknix/kwin-ready
+mkdir -p ${KWIN_READY%/*}
+
+export XDG_CONFIG_DIRS=/usr/share/rocknix-kwin/gaming:/etc/xdg
+export KWIN_DRM_PREFER_COLOR_DEPTH=24
+export KWIN_FULLSCREEN_SCALE_HINT_FILE=${SCANOUT_HINT_FILE}
+export KWIN_DISABLE_VULKAN=1
+[ -d /sys/module/msm ] && export KWIN_USE_OVERLAYS=1
+[ -e /dev/mali0 ] && export KWIN_COMPOSE=O2ES
+export KWIN_DRM_AFBC_PLANES=1
+export KWIN_DRM_MAIN_THREAD_COMMIT=1
+export KWIN_NO_IMPLICIT_FENCE_WAIT=1
+export KWIN_COMPOSITE_IMMEDIATELY=1
+export KWIN_SCREENSHOT_NO_PERMISSION_CHECKS=1
+plane_rotation || export KWIN_ENABLE_HW_ROTATION=0
+
+output_defaults() {
+  local rotation
+  [ -n "${WLR_CON}" ] || return 0
+  case "${WLR_CON_TRANSFORM}" in
+    90)  rotation=right ;;
+    180) rotation=inverted ;;
+    270) rotation=left ;;
+    *)   rotation=none ;;
+  esac
+  kscreen-doctor "output.${WLR_CON}.rotation.${rotation}" "output.${WLR_CON}.scale.1" \
+    "output.${WLR_CON}.brightness.100" >/dev/null 2>&1
+  local mode=$(get_setting system.display_mode)
+  [ -n "${mode}" ] && output_set_mode "$(echo "${mode}" | tr -cd '[:digit:].')"
+  dual_screen_defaults
+}
+
+second_panel() {
+  local connector name
+  for connector in /sys/class/drm/card*-DSI-*; do
+    name=${connector##*/}
+    name=${name#*-}
+    if [ "${name}" != "${WLR_CON}" ] && [ "$(cat "${connector}/status" 2>/dev/null)" = "connected" ]; then
+      echo "${name}"
+      return
+    fi
+  done
+}
+
+panel_size() {
+  local size=$(head -n 1 /sys/class/drm/card*-"${1}"/modes)
+  if [ "${1}" = "${WLR_CON}" ] && { [ "${WLR_CON_TRANSFORM}" = 90 ] || [ "${WLR_CON_TRANSFORM}" = 270 ]; }; then
+    echo "${size#*x}x${size%x*}"
+  else
+    echo "${size}"
+  fi
+}
+
+dual_screen_rules() {
+  local second=$(second_panel)
+  [ -n "${second}" ] || return 0
+  local main=$(panel_size "${WLR_CON}") other=$(panel_size "${second}")
+  local width=${main%x*}
+  [ "${other%x*}" -gt "${width}" ] && width=${other%x*}
+  mkdir -p /run/rocknix/kwin
+  cat >/run/rocknix/kwin/kwinrulesrc <<EOF
+[General]
+count=2
+rules=rocknix-span,rocknix-gaming
+
+[rocknix-span]
+Description=One window across both panels
+wmclass=drastic
+wmclassmatch=1
+types=1
+fullscreen=false
+fullscreenrule=2
+noborder=true
+noborderrule=2
+position=0,0
+positionrule=2
+size=${width},$((${main#*x} + ${other#*x}))
+sizerule=2
+EOF
+  export XDG_CONFIG_DIRS=/run/rocknix/kwin:${XDG_CONFIG_DIRS}
+}
+
+dual_screen_defaults() {
+  local second=$(second_panel)
+  [ -n "${second}" ] || return 0
+  local height=$(panel_size "${WLR_CON}")
+  height=${height#*x}
+  kscreen-doctor "output.${WLR_CON}.priority.1" "output.${WLR_CON}.position.0,0" "output.${second}.enable" \
+    "output.${second}.priority.2" "output.${second}.scale.1" "output.${second}.position.0,${height}" >/dev/null 2>&1
+  mkdir -p /run/rocknix
+  sed -e "s/@MAIN@/${WLR_CON}/" -e "s/@SECOND@/${second}/" /usr/share/rocknix-kwin/dualscreen.js > /run/rocknix/dualscreen.js
+  dbus-send --session --print-reply --dest=org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript \
+    string:/run/rocknix/dualscreen.js string:rocknix-dualscreen >/dev/null 2>&1
+  dbus-send --session --print-reply --dest=org.kde.KWin /Scripting org.kde.kwin.Scripting.start >/dev/null 2>&1
+}
+
+session_defaults() {
+  local i=0
+  while [ ${i} -lt 50 ] && { [ ! -S "${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY:-wayland-1}" ] || ! kscreen-doctor -j >/dev/null 2>&1; }; do
+    sleep 0.2
+    i=$((i + 1))
+  done
+  output_defaults
+  touch ${KWIN_READY}
+  /usr/bin/output_monitor &
+  kwin_osd on
+}
+session_defaults &
+
+little_cpus() {
+  local policy freq min cpus
+  for policy in /sys/devices/system/cpu/cpufreq/policy*; do
+    freq=$(cat "${policy}/cpuinfo_max_freq" 2>/dev/null) || continue
+    if [ -z "${min}" ] || [ "${freq}" -lt "${min}" ]; then
+      min=${freq}
+      cpus=$(cat "${policy}/related_cpus")
+    fi
+  done
+  echo ${cpus} | tr ' ' ','
+}
+
+dual_screen_rules
+CPUS=$(little_cpus)
+exec ${CPUS:+taskset -c ${CPUS}} kwin_wayland --drm --xwayland --socket "${WAYLAND_DISPLAY:-wayland-1}"

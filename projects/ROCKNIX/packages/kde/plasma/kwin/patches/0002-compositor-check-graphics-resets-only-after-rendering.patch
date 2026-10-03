@@ -1,0 +1,59 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Mon, 28 Sep 2026 04:21:00 -0700
+Subject: [PATCH] compositor: only check for graphics resets after rendering
+
+Direct scanout frames don't use the GPU, so only check for resets after
+rendering, or once a second.
+---
+--- a/src/compositor.cpp
++++ b/src/compositor.cpp
+@@ -651,13 +651,17 @@
+ 
+ void Compositor::composite(RenderLoop *renderLoop)
+ {
+-    if (m_backend->checkGraphicsReset()) {
+-        qCDebug(KWIN_CORE) << "Graphics reset occurred";
++    if (m_renderedSinceResetCheck || !m_resetCheckTimer.isValid() || m_resetCheckTimer.hasExpired(1000)) {
++        m_renderedSinceResetCheck = false;
++        m_resetCheckTimer.start();
++        if (m_backend->checkGraphicsReset()) {
++            qCDebug(KWIN_CORE) << "Graphics reset occurred";
+ #if KWIN_BUILD_NOTIFICATIONS
+-        KNotification::event(QStringLiteral("graphicsreset"), i18n("Desktop effects were restarted due to a graphics reset"));
++            KNotification::event(QStringLiteral("graphicsreset"), i18n("Desktop effects were restarted due to a graphics reset"));
+ #endif
+-        reinitialize();
+-        return;
++            reinitialize();
++            return;
++        }
+     }
+ 
+     WorkspaceScene *scene = kwinApp()->scene();
+@@ -805,6 +809,7 @@
+             layer.surfaceDamage |= layer.view->layer()->deviceRepaints();
+             layer.view->layer()->resetRepaints();
+             if (layer.view->layer()->isEnabled() && !layer.directScanout) {
++                m_renderedSinceResetCheck = true;
+                 result &= renderLayer(layer.view, logicalOutput, output, frame, layer.surfaceDamage);
+                 if (!result) {
+                     qCWarning(KWIN_CORE, "Rendering a layer failed!");
+--- a/src/compositor.h
++++ b/src/compositor.h
+@@ -13,6 +13,7 @@
+ #include "kwin_export.h"
+ #include "core/region.h"
+ 
++#include <QElapsedTimer>
+ #include <QHash>
+ #include <QObject>
+ 
+@@ -132,6 +133,8 @@
+     std::unordered_map<RenderLoop *, std::unordered_map<OutputLayer *, std::unique_ptr<ItemView>>> m_overlayViews;
+     std::unordered_set<RenderLoop *> m_brokenCursors;
+     std::optional<bool> m_allowOverlaysEnv;
++    bool m_renderedSinceResetCheck = true;
++    QElapsedTimer m_resetCheckTimer;
+     RenderLoopDrivenQAnimationDriver *m_renderLoopDrivenAnimationDriver;
+ };
+ 

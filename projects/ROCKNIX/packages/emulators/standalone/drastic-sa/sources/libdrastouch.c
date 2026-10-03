@@ -558,9 +558,9 @@ SDL_Window* SDL_CreateWindow(const char *title, int x, int y, int w, int h, Uint
             last_width = bounds.w;
             last_height = bounds.h;
             if (bounds.w + bounds.x > total_width)
-                total_width += bounds.w;
+                total_width = bounds.w + bounds.x;
             if (bounds.h + bounds.y > total_height)
-                total_height += bounds.h;
+                total_height = bounds.h + bounds.y;
         }
     }
 

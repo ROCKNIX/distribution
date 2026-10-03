@@ -1,0 +1,185 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Wed, 30 Sep 2026 12:00:00 -0700
+Subject: [PATCH] drm: scan out AFBC buffers on an AFBC-only plane
+
+With KWIN_DRM_AFBC_PLANES=1, the primary layer can also use an overlay
+plane that only takes AFBC, for buffers the primary plane can't scan
+out.
+---
+--- a/src/backends/drm/drm_egl_layer.cpp
++++ b/src/backends/drm/drm_egl_layer.cpp
+@@ -55,7 +55,7 @@
+     m_scanoutBuffer.reset();
+     return m_surface.startRendering(targetRect().size(),
+                                     drmOutput()->transform().combine(OutputTransform::FlipY),
+-                                    supportedDrmFormats(),
++                                    renderFormats(),
+                                     drmOutput()->blendingColor(),
+                                     drmOutput()->layerBlendingColor(),
+                                     drmOutput()->needsShadowBuffer() ? pipeline()->iccProfile() : nullptr,
+@@ -78,7 +78,7 @@
+         return false;
+     }
+     m_scanoutBuffer.reset();
+-    return m_surface.renderTestBuffer(targetRect().size(), supportedDrmFormats(), drmOutput()->nextState().colorPowerTradeoff, m_requiredAlphaBits) != nullptr;
++    return m_surface.renderTestBuffer(targetRect().size(), renderFormats(), drmOutput()->nextState().colorPowerTradeoff, m_requiredAlphaBits) != nullptr;
+ }
+ 
+ static const auto s_allowHardwareRotation = environmentVariableBoolValue("KWIN_ENABLE_HW_ROTATION");
+--- a/src/backends/drm/drm_gpu.cpp
++++ b/src/backends/drm/drm_gpu.cpp
+@@ -59,6 +59,7 @@
+ 
+ static const std::optional<bool> s_modifiersEnv = environmentVariableBoolValue("KWIN_DRM_USE_MODIFIERS");
+ static const std::optional<bool> s_colorPipelineEnv = environmentVariableBoolValue("KWIN_DRM_USE_COLOR_PIPELINE");
++static const bool s_afbcPlanes = environmentVariableBoolValue("KWIN_DRM_AFBC_PLANES").value_or(false);
+ 
+ DrmGpu::DrmGpu(DrmBackend *backend, int fd, std::unique_ptr<DrmDevice> &&device)
+     : m_fd(fd)
+@@ -848,6 +849,9 @@
+             ret.removeOne(pipeline->crtc());
+             // for modesets, only the primary plane should be enabled
+             ret.removeOne(pipeline->crtc()->primaryPlane());
++            if (const auto it = m_planeLayerMap.find(pipeline->crtc()->primaryPlane()); it != m_planeLayerMap.end()) {
++                ret.removeOne(it->second->afbcPlane());
++            }
+         }
+     }
+     return ret;
+@@ -893,6 +897,23 @@
+     }
+ }
+ 
++static bool isAfbcOnly(DrmPlane *plane)
++{
++    const auto formats = plane->formats();
++    if (formats.isEmpty()) {
++        return false;
++    }
++    for (const ModifierList &modifiers : formats) {
++        const bool afbc = !modifiers.isEmpty() && std::ranges::all_of(modifiers, [](uint64_t modifier) {
++            return modifier >> 56 == DRM_FORMAT_MOD_VENDOR_ARM && ((modifier >> 52) & 0xf) == DRM_FORMAT_MOD_ARM_TYPE_AFBC;
++        });
++        if (!afbc) {
++            return false;
++        }
++    }
++    return true;
++}
++
+ void DrmGpu::assignOutputLayers()
+ {
+     if (m_atomicModeSetting) {
+@@ -900,12 +921,27 @@
+             return plane.get();
+         }) | std::ranges::to<QList>();
+         const size_t enabledPipelinesCount = std::ranges::count_if(m_pipelines, &DrmPipeline::enabled);
++        for (const auto &[plane, layer] : m_planeLayerMap) {
++            layer->setAfbcPlane(nullptr);
++        }
+         for (DrmPipeline *pipeline : std::as_const(m_pipelines)) {
+             if (!pipeline->enabled()) {
+                 pipeline->setLayers({});
+                 continue;
+             }
+-            QList<DrmPipelineLayer *> layers = {m_planeLayerMap[pipeline->crtc()->primaryPlane()].get()};
++            DrmPipelineLayer *primary = m_planeLayerMap[pipeline->crtc()->primaryPlane()].get();
++            QList<DrmPipelineLayer *> layers = {primary};
++            if (s_afbcPlanes) {
++                for (DrmPlane *plane : freePlanes) {
++                    if (plane->isCrtcSupported(pipeline->crtc()->pipeIndex())
++                        && plane->type.enumValue() == DrmPlane::TypeIndex::Overlay
++                        && isAfbcOnly(plane)) {
++                        primary->setAfbcPlane(plane);
++                        freePlanes.removeOne(plane);
++                        break;
++                    }
++                }
++            }
+             for (DrmPlane *plane : freePlanes) {
+                 if (plane->isCrtcSupported(pipeline->crtc()->pipeIndex())
+                     && plane->type.enumValue() == DrmPlane::TypeIndex::Cursor) {
+--- a/src/backends/drm/drm_layer.cpp
++++ b/src/backends/drm/drm_layer.cpp
+@@ -99,6 +99,16 @@
+     return m_plane;
+ }
+ 
++DrmPlane *DrmPipelineLayer::afbcPlane() const
++{
++    return m_afbcPlane;
++}
++
++void DrmPipelineLayer::setAfbcPlane(DrmPlane *plane)
++{
++    m_afbcPlane = plane;
++}
++
+ DrmPipeline *DrmPipelineLayer::pipeline() const
+ {
+     return drmOutput()->pipeline();
+@@ -123,6 +133,14 @@
+ static const FormatModifierMap s_legacyCursorFormats = {{DRM_FORMAT_ARGB8888, {DRM_FORMAT_MOD_LINEAR}}};
+ 
+ FormatModifierMap DrmPipelineLayer::supportedDrmFormats() const
++{
++    if (m_afbcPlane) {
++        return renderFormats().merged(m_afbcPlane->formats());
++    }
++    return renderFormats();
++}
++
++FormatModifierMap DrmPipelineLayer::renderFormats() const
+ {
+     if (m_plane) {
+         if (m_plane->gpu()->forceLowBandwidthMode() && m_type == OutputLayerType::Primary) {
+--- a/src/backends/drm/drm_layer.h
++++ b/src/backends/drm/drm_layer.h
+@@ -45,13 +45,17 @@
+     virtual std::shared_ptr<DrmFramebuffer> currentBuffer() const = 0;
+ 
+     DrmPlane *plane() const;
++    DrmPlane *afbcPlane() const;
++    void setAfbcPlane(DrmPlane *plane);
+ 
+ protected:
+     DrmPipeline *pipeline() const;
+     DrmGpu *gpu() const;
+     DrmOutput *drmOutput() const;
++    FormatModifierMap renderFormats() const;
+ 
+     DrmPlane *m_plane = nullptr;
++    DrmPlane *m_afbcPlane = nullptr;
+ };
+ 
+ }
+--- a/src/backends/drm/drm_pipeline.cpp
++++ b/src/backends/drm/drm_pipeline.cpp
+@@ -229,6 +229,17 @@
+ 
+ DrmPipeline::Error DrmPipeline::prepareAtomicPlane(DrmAtomicCommit *commit, DrmPlane *plane, DrmPipelineLayer *layer, const std::shared_ptr<OutputFrame> &frame)
+ {
++    if (DrmPlane *afbcPlane = layer->afbcPlane()) {
++        const auto fb = layer->isEnabled() ? layer->currentBuffer() : nullptr;
++        const auto attrs = fb && fb->buffer() ? fb->buffer()->dmabufAttributes() : nullptr;
++        if (attrs && !plane->formats().containsFormat(attrs->format, attrs->modifier)
++            && afbcPlane->formats().containsFormat(attrs->format, attrs->modifier)) {
++            plane->disable(commit);
++            plane = afbcPlane;
++        } else {
++            afbcPlane->disable(commit);
++        }
++    }
+     if (!layer->isEnabled()) {
+         plane->disable(commit);
+         return Error::None;
+@@ -343,6 +354,9 @@
+             if (DrmPlane *plane = layer->plane()) {
+                 plane->disable(commit);
+             }
++            if (DrmPlane *plane = layer->afbcPlane()) {
++                plane->disable(commit);
++            }
+         }
+     }
+ }

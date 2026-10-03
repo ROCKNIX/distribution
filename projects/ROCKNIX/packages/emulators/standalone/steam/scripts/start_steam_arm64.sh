@@ -21,7 +21,7 @@ steam_set_cpu_affinity
 steam_debug_print
 
 steam_arm64_binfmt_and_proton_prep
-steam_read_sway_geometry
+steam_read_output_geometry
 steam_setup_environment
 steam_scope_reexec_if_needed "$@"
 steam_dual_screen_begin

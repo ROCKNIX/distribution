@@ -163,7 +163,7 @@ function sway_fullscreen {
   local QUERY_LIMIT=5
   local QUERY_COUNT=0
 
-  if echo "${UI_SERVICE}" | grep "sway"; then
+  if pidof sway >/dev/null 2>&1; then
     while [ $QUERY_COUNT -lt $QUERY_LIMIT ]; do
       # loop, attempting to fullscreen window for app_id
       ((QUERY_COUNT++))
@@ -245,16 +245,151 @@ function prerotate_env() {
   return 0
 }
 
+function output_list() {
+  if pidof kwin_wayland >/dev/null 2>&1; then
+    kscreen-doctor -j 2>/dev/null | jq -r '
+      .outputs[] | select(.enabled) | .currentModeId as $m | (.modes[] | select(.id == $m) | .size) as $s |
+      "\(.name) \($s.width) \($s.height) \({"1":"normal","2":"270","4":"180","8":"90"}[.rotation | tostring] // "normal") \(.priority == 1)"'
+  else
+    swaymsg -t get_outputs | jq -r '
+      .[] | select(.active and .current_mode != null) |
+      "\(.name) \(.current_mode.width) \(.current_mode.height) \(.transform) \(.focused)"'
+  fi
+}
+
+function output_logical_size() {
+  if pidof kwin_wayland >/dev/null 2>&1; then
+    kscreen-doctor -j 2>/dev/null | jq -r '[.outputs[] | select(.enabled)] | sort_by(.priority) | .[0] |
+      .scale as $f | .rotation as $r | .currentModeId as $m | (.modes[] | select(.id == $m) | .size) as $s |
+      [$s.width / $f | floor, $s.height / $f | floor] |
+      if ($r == 2 or $r == 8) then "\(.[1]) \(.[0])" else "\(.[0]) \(.[1])" end'
+  else
+    swaymsg -t get_outputs | jq -r '.[] | select(.focused == true) | "\(.rect.width) \(.rect.height)"'
+  fi
+}
+
+function output_set_scale() {
+  if pidof kwin_wayland >/dev/null 2>&1; then
+    kscreen-doctor "output.${1}.scale.${2}" >/dev/null 2>&1
+  else
+    swaymsg output "${1}" scale "${2}" >/dev/null 2>&1
+  fi
+}
+
+function compositor() {
+  if pidof kwin_wayland >/dev/null 2>&1; then
+    echo kwin
+  else
+    echo sway
+  fi
+}
+
+function session_compositor() {
+  local setting=$(get_setting system.compositor)
+  if [ -z "${setting}" ]; then
+    if [ -x /usr/bin/kwin_wayland ] && ! grep -qs Lontium /sys/class/drm/card*-DP-1/edid; then
+      setting=kwin
+    else
+      setting=sway
+    fi
+  fi
+  echo ${setting}
+}
+
+function compositor_service() {
+  echo "$(compositor).service"
+}
+
+function output_power() {
+  if [ "$(compositor)" = "kwin" ]; then
+    XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/var/run/0-runtime-dir} WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-1} \
+      kscreen-doctor --dpms "${1}" >/dev/null 2>&1
+  else
+    swaymsg "output * power ${1}" >/dev/null 2>&1
+  fi
+}
+
+function output_refresh() {
+  if [ "$(compositor)" = "kwin" ]; then
+    kscreen-doctor -j 2>/dev/null | jq -r '[.outputs[] | select(.enabled)] | sort_by(.priority) | .[0] |
+      .currentModeId as $m | .modes[] | select(.id == $m) | .refreshRate | round'
+  else
+    swaymsg -t get_outputs | jq -r '.[] | select(.focused) | ((.current_mode.refresh // 60000) + 500) / 1000 | floor'
+  fi
+}
+
+function output_connected() {
+  if [ "$(compositor)" = "kwin" ]; then
+    kscreen-doctor -j 2>/dev/null | jq -r '.outputs[] | select(.connected) | .name'
+  else
+    swaymsg -t get_outputs | jq -r '.[].name'
+  fi
+}
+
+function output_enable() {
+  if [ "$(compositor)" = "kwin" ]; then
+    if [ "${2}" = "on" ]; then
+      kscreen-doctor "output.${1}.enable" >/dev/null 2>&1
+    else
+      kscreen-doctor "output.${1}.disable" >/dev/null 2>&1
+    fi
+  elif [ "${2}" = "on" ]; then
+    wlr-randr --output "${1}" --preferred --on
+  else
+    wlr-randr --output "${1}" --off
+  fi
+}
+
+function output_modes() {
+  if [ "$(compositor)" = "kwin" ]; then
+    kscreen-doctor -j 2>/dev/null | jq -r '[.outputs[] | select(.enabled)] | sort_by(.priority) | .[0] |
+      .currentModeId as $c | .preferredModes as $p | .modes[] |
+      "\(.size.width) \(.size.height) \(.refreshRate) \([if .id == ($p[0] // "") then "preferred" else empty end,
+        if .id == $c then "current" else empty end] | join(", "))"' |
+      awk '{ printf "%dx%d px, %.6f Hz%s\n", $1, $2, $3, (NF > 3 ? " (" substr($0, index($0, $4)) ")" : "") }'
+  else
+    wlr-randr | awk '/Modes/{flag=1;next}/Position/{flag=0}flag'
+  fi
+}
+
+function output_set_mode() {
+  local out w h
+  read -r out w h <<< "$(output_list | awk '$5 == "true" { print $1, $2, $3; exit }')"
+  [ -n "${out}" ] || return 1
+  if [ "$(compositor)" = "kwin" ]; then
+    kscreen-doctor "output.${out}.mode.$(kscreen-doctor -j | jq -r --arg o "${out}" --arg r "${1}" \
+      --argjson w "${w}" --argjson h "${h}" '.outputs[] | select(.name == $o) |
+      if $r == "preferred" then .preferredModes[0] else
+        [.modes[] | select(.size.width == $w and .size.height == $h)] |
+        min_by(.refreshRate - ($r | tonumber) | if . < 0 then -. else . end) | .id end')" >/dev/null 2>&1
+  elif [ "${1}" = "preferred" ]; then
+    wlr-randr --output "${out}" --preferred
+  else
+    wlr-randr --output "${out}" --mode "${w}x${h}@${1}"
+  fi
+}
+
+function kwin_osd() {
+  if [ "${1}" = "on" ]; then
+    systemctl is-active --quiet rocknix-mako && return 0
+    systemd-run --quiet --collect --unit=rocknix-mako \
+      --setenv=XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/var/run/0-runtime-dir} --setenv=WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-1} \
+      --setenv=DBUS_SESSION_BUS_ADDRESS=unix:path=${XDG_RUNTIME_DIR:-/var/run/0-runtime-dir}/bus --setenv=HOME=/storage mako
+  else
+    systemctl stop rocknix-mako 2>/dev/null
+  fi
+}
+
 SCANOUT_HINT_FILE=/run/rocknix/fullscreen-scale-hint
 SCANOUT_SCALED_FILE=/run/rocknix/scanout-scaled-outputs
 SCANOUT_OWNER_FILE=/run/rocknix/scanout-owner
 
 function scanout_output_size() {
-  swaymsg -t get_outputs | jq -r --arg o "$1" --arg l "$2" '
-    .[] | select(.name == $o and .current_mode != null) |
-    (if (.transform | test("90|270")) then [.current_mode.height, .current_mode.width]
-     else [.current_mode.width, .current_mode.height] end) |
-    if $l == "landscape" and .[1] > .[0] then "\(.[1]) \(.[0])" else "\(.[0]) \(.[1])" end'
+  output_list | awk -v o="$1" -v l="$2" '$1 == o {
+    w = $2; h = $3
+    if ($4 ~ /90|270/) { t = w; w = h; h = t }
+    if (l == "landscape" && h > w) { t = w; w = h; h = t }
+    print w, h; exit }'
 }
 
 function scanout_set_render() {
@@ -268,7 +403,7 @@ function scanout_set_render() {
   fi
   [ "${render_h}" -ne "${screen_h}" ] && echo "${hint} ${SCANOUT_OWNER:-$$} ${out}" >> "${SCANOUT_HINT_FILE}"
   if [ "${scale}" != 1 ] || grep -qx "${out}" "${SCANOUT_SCALED_FILE}" 2>/dev/null; then
-    swaymsg output "${out}" scale "${scale}" >/dev/null 2>&1
+    output_set_scale "${out}" "${scale}"
     grep -qx "${out}" "${SCANOUT_SCALED_FILE}" 2>/dev/null || echo "${out}" >> "${SCANOUT_SCALED_FILE}"
   fi
 }
@@ -283,7 +418,7 @@ function scanout_reset() {
   local out P=${DEVICE_SCANOUT_SHARPNESS}
   if [ -f "${SCANOUT_SCALED_FILE}" ]; then
     while read -r out; do
-      swaymsg output "${out}" scale 1 >/dev/null 2>&1
+      output_set_scale "${out}" 1
     done < "${SCANOUT_SCALED_FILE}"
   fi
   if [ -d "${P}" ]; then

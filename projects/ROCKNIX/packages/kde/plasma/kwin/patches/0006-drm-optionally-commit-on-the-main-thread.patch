@@ -1,0 +1,88 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Tue, 29 Sep 2026 12:00:00 -0700
+Subject: [PATCH] drm: optionally commit on the main thread
+
+KWIN_DRM_MAIN_THREAD_COMMIT=1 commits from the main thread instead of
+waking the commit thread for every frame.
+---
+--- a/src/backends/drm/drm_commit_thread.cpp
++++ b/src/backends/drm/drm_commit_thread.cpp
+@@ -23,6 +23,8 @@
+ namespace KWin
+ {
+ 
++static const bool s_mainThreadCommit = environmentVariableBoolValue("KWIN_DRM_MAIN_THREAD_COMMIT").value_or(false);
++
+ DrmCommitThread::DrmCommitThread(DrmGpu *gpu, const QString &name)
+     : m_gpu(gpu)
+     , m_targetPageflipTime(std::chrono::steady_clock::now())
+@@ -30,6 +32,10 @@
+     if (!gpu->atomicModeSetting()) {
+         return;
+     }
++    if (s_mainThreadCommit) {
++        m_mainThread = true;
++        return;
++    }
+ 
+     m_thread.reset(QThread::create([this]() {
+         const auto thread = QThread::currentThread();
+@@ -204,6 +210,20 @@
+     }
+ }
+ 
++void DrmCommitThread::submitOnMainThread()
++{
++    if (m_committed || m_commits.empty()) {
++        return;
++    }
++    if (m_commits.size() > 1) {
++        auto merged = mergeCommits(m_commits);
++        std::ranges::move(m_commits, std::back_inserter(m_commitsToDelete));
++        m_commits.clear();
++        m_commits.push_back(std::move(merged));
++    }
++    submit();
++}
++
+ void DrmCommitThread::optimizeCommits(TimePoint pageflipTarget)
+ {
+     if (m_commits.size() <= 1) {
+@@ -346,6 +366,10 @@
+     }
+     m_targetPageflipTime = std::max(m_targetPageflipTime, newTarget);
+     m_commits.back()->setDeadline(m_targetPageflipTime - m_safetyMargin);
++    if (m_mainThread) {
++        submitOnMainThread();
++        return;
++    }
+     m_commitPending.notify_all();
+ }
+ 
+@@ -385,7 +409,11 @@
+     m_committed.reset();
+     if (!m_commits.empty()) {
+         m_targetPageflipTime = estimateNextVblank(std::chrono::steady_clock::now());
+-        m_commitPending.notify_all();
++        if (m_mainThread) {
++            submitOnMainThread();
++        } else {
++            m_commitPending.notify_all();
++        }
+     }
+ }
+ 
+--- a/src/backends/drm/drm_commit_thread.h
++++ b/src/backends/drm/drm_commit_thread.h
+@@ -49,9 +49,11 @@
+     TimePoint estimateNextVblank(TimePoint now) const;
+     void optimizeCommits(TimePoint pageflipTarget);
+     void submit();
++    void submitOnMainThread();
+     void handlePing();
+ 
+     DrmGpu *const m_gpu;
++    bool m_mainThread = false;
+     std::unique_ptr<DrmCommit> m_committed;
+     std::vector<std::unique_ptr<DrmAtomicCommit>> m_commits;
+     std::unique_ptr<QThread> m_thread;
