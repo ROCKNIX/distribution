@@ -357,5 +357,7 @@ post_install() {
   enable_service systemd-timesyncd.service
   enable_service systemd-timesyncd-setup.service
   enable_service systemd-resolved.service
+  enable_service systemd-oomd.socket
+  enable_service systemd-oomd.service
   enable_service debug-shell.service
 }
