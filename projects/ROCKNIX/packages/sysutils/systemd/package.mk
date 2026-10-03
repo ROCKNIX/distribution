@@ -269,6 +269,7 @@ post_makeinstall_target() {
 
   mkdir -p ${INSTALL}/usr/sbin
   cp ${PKG_DIR}/scripts/network-base-setup ${INSTALL}/usr/sbin
+  cp ${PKG_DIR}/scripts/hwdb-update-cached ${INSTALL}/usr/sbin
   cp ${PKG_DIR}/scripts/systemd-timesyncd-setup ${INSTALL}/usr/sbin
 
   # /etc/resolv.conf and /etc/hosts must be writable
