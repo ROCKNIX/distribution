@@ -165,6 +165,10 @@ post_makeinstall_target() {
 
   safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-journald-audit.socket
 
+  sed -e 's|^SUBSYSTEM=="block", TAG+="systemd"$|SUBSYSTEM=="block", ENV{ROCKNIX_INTERNAL_EMMC}!="1", TAG+="systemd"|' \
+      -i ${INSTALL}/usr/lib/udev/rules.d/99-systemd.rules
+  grep -q ROCKNIX_INTERNAL_EMMC ${INSTALL}/usr/lib/udev/rules.d/99-systemd.rules || die "99-systemd.rules block tag line changed"
+
   # adjust systemd-hwdb-update (we have read-only /etc).
   sed '/^ConditionNeedsUpdate=.*$/d' -i ${INSTALL}/usr/lib/systemd/system/systemd-hwdb-update.service
 
