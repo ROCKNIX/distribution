@@ -35,28 +35,16 @@ if [ -d $SYSTEM_ROOT/usr/share/bootloader/overlays ]; then
   done
 fi
 
-if [ -d $SYSTEM_ROOT/usr/share/bootloader/res ]; then
-  echo "Updating res..."
-  cp -rp $SYSTEM_ROOT/usr/share/bootloader/res $BOOT_ROOT
-fi
 if [ -f $SYSTEM_ROOT/usr/share/bootloader/u-boot.bin ]; then
   echo "Updating u-boot on: $BOOT_DISK..."
   dd if=$SYSTEM_ROOT/usr/share/bootloader/u-boot.bin of=$BOOT_DISK conv=fsync,notrunc bs=512 seek=1 &>/dev/null
 fi
 
 # REMOVE ME IN THE FUTURE!
-# Convert from boot.ini to extlinux and cleanup
-  [ -e /flash/boot.ini ] && rm -f /flash/boot.ini
-  if [ ! -e /flash/extlinux/extlinux.conf ]; then
-    mkdir -p /flash/extlinux
-    cat <<EOF >/flash/extlinux/extlinux.conf
-LABEL ROCKNIX
-  LINUX /KERNEL
-  FDTDIR /
-  APPEND boot=LABEL=ROCKNIX disk=LABEL=STORAGE rootwait quiet systemd.debug_shell=ttyAML0 console=ttyAML0,115200n8 console=tty0 no_console_suspend net.ifnames=0 consoleblank=0 video=HDMI-A-1:1920x1080@60
-EOF
-  fi
-  [ -e /flash/ODROIDBIOS.BIN ] && rm -f /flash/ODROIDBIOS.BIN
+# BSP u-boot cleanup
+[ -e /flash/boot.ini ] && rm -f /flash/boot.ini
+[ -e /flash/ODROIDBIOS.BIN ] && rm -f /flash/ODROIDBIOS.BIN
+[ -d /flash/res ] && rm -rf /flash/res
 # END
 
 # mount $BOOT_ROOT ro
