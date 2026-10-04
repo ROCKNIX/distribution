@@ -1,0 +1,51 @@
+From: Armada <armada@armada.dev>
+Subject: [PATCH] input: rsinput: keep trigger conversion independent of calibration
+
+The MCU reports descending trigger readings. trigger_*_max is the
+calibrated evdev range, not the MCU release reference. Using it for both
+subtracts the calibration correction from every sample as well as from
+the advertised range, so full travel still cannot reach 100 percent.
+Repeated calibration makes the error worse.
+
+Keep the original 0x610 release reference for conversion and let the
+calibrated maximum describe the observed travel only. Leave samples
+unclipped so a subsequent calibration can measure a larger travel.
+---
+ drivers/input/joystick/rsinput.c | 11 +++++++----
+ 1 file changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/input/joystick/rsinput.c b/drivers/input/joystick/rsinput.c
+index d34ba4d..17db13d 100644
+--- a/drivers/input/joystick/rsinput.c
++++ b/drivers/input/joystick/rsinput.c
+@@ -24,11 +24,14 @@
+ 
+ static int update_params=0;
+ 
+-static int trigger_left_max=0x610;
++/* MCU release reference; independent of the calibrated evdev maximum. */
++#define RSINPUT_TRIGGER_RELEASE 0x610
++
++static int trigger_left_max=RSINPUT_TRIGGER_RELEASE;
+ static int trigger_left_deadzone=0x0;
+ static int trigger_left_antideadzone=0x0;
+ 
+-static int trigger_right_max=0x610;
++static int trigger_right_max=RSINPUT_TRIGGER_RELEASE;
+ static int trigger_right_deadzone=0x0;
+ static int trigger_right_antideadzone=0x0;
+ 
+@@ -408,11 +411,11 @@ static void handle_cmd_status(struct rsinput_driver *drv, const uint8_t *data, s
+     }
+ 
+     int16_t raw_trig_l = (data[FRAME_POS_DATA_3] | (data[FRAME_POS_DATA_4] << 8));
+-    int16_t z = trigger_left_max - raw_trig_l;
++    int16_t z = RSINPUT_TRIGGER_RELEASE - raw_trig_l;
+     z = ( z < trigger_left_deadzone ) ? 0 : z - trigger_left_antideadzone;
+ 
+     int16_t raw_trig_r = (data[FRAME_POS_DATA_5] | (data[FRAME_POS_DATA_6] << 8));
+-    int16_t rz = trigger_right_max - raw_trig_r;
++    int16_t rz = RSINPUT_TRIGGER_RELEASE - raw_trig_r;
+     rz = ( rz < trigger_right_deadzone ) ? 0 : rz - trigger_right_antideadzone;
+ 
+     int16_t raw_x = -(int16_t)(data[FRAME_POS_DATA_7] | (data[FRAME_POS_DATA_8] << 8));
