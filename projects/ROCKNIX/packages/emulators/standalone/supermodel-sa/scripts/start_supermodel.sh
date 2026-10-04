@@ -69,9 +69,11 @@ then
 fi
 
 #RESOLUTION
-if [ "$RESOLUTION" = "0" ]
+# Supermodel centers the image in -res, so full has to be the window size
+read -r SCREEN_W SCREEN_H <<< "$(swaymsg -t get_outputs | jq -r '.[] | select(.focused == true) | "\(.rect.width) \(.rect.height)"')"
+if [ "$RESOLUTION" != "1" ] && [ "$RESOLUTION" != "2" ] && [ -n "${SCREEN_H}" ]
 then
-  OPTIONS+=(-res=1920,1080)
+  OPTIONS+=(-res=${SCREEN_W},${SCREEN_H})
 elif [ "$RESOLUTION" = "1" ]
 then
   OPTIONS+=(-res=496,384)
