@@ -1,0 +1,95 @@
+--- a/tools/Makefile
++++ b/tools/Makefile
+@@ -164,7 +164,10 @@
+ quiet_cmd_wrap = WRAP    $@
+ cmd_wrap = echo "\#include <../$(patsubst $(obj)/%,%,$@)>" >$@
+ 
+-$(obj)/lib/%.c $(obj)/common/%.c:
++$(obj)/lib/%.c:
++	$(call cmd,wrap)
++
++$(obj)/common/%.c:
+ 	$(call cmd,wrap)
+ 
+ clean-dirs := lib common
+--- a/configs/odroidgou_defconfig
++++ b/configs/odroidgou_defconfig
+@@ -5,3 +5,6 @@
+ CONFIG_DM_GPIO=y
+ CONFIG_AML_GPIO=y
+ CONFIG_OF_LIBFDT_OVERLAY=y
++CONFIG_FIT=y
++CONFIG_FIT_SIGNATURE=y
++CONFIG_FIT_VERBOSE=y
+--- a/lib/rsa/rsa-sign.c
++++ b/lib/rsa/rsa-sign.c
+@@ -210,7 +210,7 @@
+ 		ret = rsa_err("Could not obtain signature");
+ 		goto err_sign;
+ 	}
+-	EVP_MD_CTX_cleanup(context);
++	EVP_MD_CTX_reset(context);
+ 	EVP_MD_CTX_destroy(context);
+ 	EVP_PKEY_free(key);
+ 
+@@ -276,17 +276,20 @@
+ 	if (!e)
+ 		goto cleanup;
+ 
+-	if (BN_num_bits(key->e) > 64)
++	const BIGNUM *key_n, *key_e, *key_d;
++	RSA_get0_key(key, &key_n, &key_e, &key_d);
++
++	if (BN_num_bits(key_e) > 64)
+ 		goto cleanup;
+ 
+-	*e = BN_get_word(key->e);
++	*e = BN_get_word(key_e);
+ 
+-	if (BN_num_bits(key->e) < 33) {
++	if (BN_num_bits(key_e) < 33) {
+ 		ret = 0;
+ 		goto cleanup;
+ 	}
+ 
+-	bn_te = BN_dup(key->e);
++	bn_te = BN_dup(key_e);
+ 	if (!bn_te)
+ 		goto cleanup;
+ 
+@@ -337,7 +340,10 @@
+ 	if (0 != rsa_get_exponent(key, exponent))
+ 		ret = -1;
+ 
+-	if (!BN_copy(n, key->n) || !BN_set_word(big1, 1L) ||
++	const BIGNUM *key_n, *key_e, *key_d;
++	RSA_get0_key(key, &key_n, &key_e, &key_d);
++
++	if (!BN_copy(n, key_n) || !BN_set_word(big1, 1L) ||
+ 	    !BN_set_word(big2, 2L) || !BN_set_word(big32, 32L))
+ 		ret = -1;
+ 
+--- a/common/cmd_autoscript.c
++++ b/common/cmd_autoscript.c
+@@ -45,6 +45,10 @@
+ #endif
+ #include <cli_hush.h>
+ 
++#ifndef IMAGE_FORMAT_LEGACY
++#define IMAGE_FORMAT_LEGACY 0x01
++#endif
++
+ int
+ autoscript (ulong addr, const char *fit_uname)
+ {
+--- a/lib/Makefile
++++ b/lib/Makefile
+@@ -7,7 +7,7 @@
+ 
+ ifndef CONFIG_SPL_BUILD
+ 
+-obj-$(CONFIG_RSA) += rsa/
++obj-y += rsa/
+ obj-$(CONFIG_LZMA) += lzma/
+ obj-$(CONFIG_LZO) += lzo/
+ obj-$(CONFIG_ZLIB) += zlib/
