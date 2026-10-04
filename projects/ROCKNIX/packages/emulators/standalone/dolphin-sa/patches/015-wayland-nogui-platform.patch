@@ -84,14 +84,15 @@ index f4dc8a9474..95ac128499 100644
  #endif
 diff --git a/Source/Core/DolphinNoGUI/PlatformWayland.cpp b/Source/Core/DolphinNoGUI/PlatformWayland.cpp
 new file mode 100644
-index 0000000000..21b48d3167
+index 0000000000..a17fbac8c4
 --- /dev/null
 +++ b/Source/Core/DolphinNoGUI/PlatformWayland.cpp
-@@ -0,0 +1,431 @@
+@@ -0,0 +1,450 @@
 +// Copyright 2018 Dolphin Emulator Project
 +// Licensed under GPLv2+
 +// Refer to the license.txt file included.
 +
++#include <poll.h>
 +#include <unistd.h>
 +
 +#include "DolphinNoGUI/Platform.h"
@@ -171,6 +172,8 @@ index 0000000000..21b48d3167
 +  int m_surface_height = 0;
 +  int m_buffer_width = 0;
 +  int m_buffer_height = 0;
++  int m_presented_width = 0;
++  int m_presented_height = 0;
 +  uint32_t m_scale = 120;
 +};
 +
@@ -279,12 +282,8 @@ index 0000000000..21b48d3167
 +  const int height = static_cast<int>((m_surface_height * scale + 60) / 120);
 +  if (m_viewport)
 +    wp_viewport_set_destination(m_viewport, m_surface_width, m_surface_height);
-+  if (width == m_buffer_width && height == m_buffer_height)
-+    return;
 +  m_buffer_width = width;
 +  m_buffer_height = height;
-+  if (g_presenter)
-+    g_presenter->ResizeSurface(width, height);
 +}
 +
 +void PlatformWayland::TopLevelClose(void* data, struct xdg_toplevel* xdg_toplevel)
@@ -350,6 +349,8 @@ index 0000000000..21b48d3167
 +  m_surface_height = Config::Get(Config::MAIN_RENDER_WINDOW_HEIGHT);
 +  m_buffer_width = m_surface_width;
 +  m_buffer_height = m_surface_height;
++  m_presented_width = m_buffer_width;
++  m_presented_height = m_buffer_height;
 +  m_region = wl_compositor_create_region(m_compositor);
 +  wl_region_add(m_region, 0, 0, m_surface_width, m_surface_height);
 +  wl_surface_set_opaque_region(m_surface, m_region);
@@ -511,7 +512,25 @@ index 0000000000..21b48d3167
 +
 +void PlatformWayland::ProcessEvents()
 +{
++  // the GPU driver only reads its own queues, so read the default one here
++  while (wl_display_prepare_read(m_display) != 0)
++    wl_display_dispatch_pending(m_display);
++  wl_display_flush(m_display);
++  pollfd pfd = {wl_display_get_fd(m_display), POLLIN, 0};
++  if (poll(&pfd, 1, 0) > 0)
++    wl_display_read_events(m_display);
++  else
++    wl_display_cancel_read(m_display);
 +  wl_display_dispatch_pending(m_display);
++
++  // the size can arrive before the presenter exists
++  if (g_presenter &&
++      (m_buffer_width != m_presented_width || m_buffer_height != m_presented_height))
++  {
++    m_presented_width = m_buffer_width;
++    m_presented_height = m_buffer_height;
++    g_presenter->ResizeSurface(m_buffer_width, m_buffer_height);
++  }
 +}
 +}  // namespace
 +
