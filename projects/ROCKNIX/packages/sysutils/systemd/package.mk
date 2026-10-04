@@ -165,6 +165,11 @@ post_makeinstall_target() {
 
   safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-journald-audit.socket
 
+  local late="devlink leds regulator genpd_provider genpd memory thermal hwmon dma wakeup bdi serial-base clockevents
+              workqueue faux remoteproc gpio event_source vtconsole usb_power_delivery power_supply"
+  printf 'EARLY_FILTER=%s\nLATE_FILTER=%s\n' "$(printf -- '--subsystem-nomatch=%s ' ${late})" \
+         "$(printf -- '--subsystem-match=%s ' ${late})" > ${INSTALL}/usr/lib/udev/coldplug-late.conf
+
   sed -e 's|^SUBSYSTEM=="block", TAG+="systemd"$|SUBSYSTEM=="block", ENV{ROCKNIX_INTERNAL_EMMC}!="1", TAG+="systemd"|' \
       -i ${INSTALL}/usr/lib/udev/rules.d/99-systemd.rules
   grep -q ROCKNIX_INTERNAL_EMMC ${INSTALL}/usr/lib/udev/rules.d/99-systemd.rules || die "99-systemd.rules block tag line changed"
@@ -365,5 +370,6 @@ post_install() {
   enable_service systemd-resolved.service
   enable_service systemd-oomd.socket
   enable_service systemd-oomd.service
+  enable_service udev-trigger-late.timer
   enable_service debug-shell.service
 }
