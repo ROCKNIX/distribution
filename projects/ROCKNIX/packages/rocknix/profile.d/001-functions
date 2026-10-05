@@ -26,73 +26,33 @@ function log() {
 }
 
 function get_setting() {
-  if [ -n "${3}" ]
-  then
-    ### Test to see if we have a game setting.
-    VAR="$2\[\"$(echo ${3} | sed -E "s~'~\\\x27~g"';s~[()&]~\\&~g')\"\]\.$1"
-    OUTPUT=$(awk 'BEGIN {FS="="} /^'"${VAR}"'/ {print $NF}' ${J_CONF})
-    if [ ! -z "${OUTPUT}" ]
-    then
-      echo ${OUTPUT}
-      return
-    else
-      ### If not, check to see if we have a system setting.
-      LOCAL=$(awk -F: '/^'"${2}.${1}"'=/ { st = index($0,"=");print substr($0,st+1);exit}' ${J_CONF})
-      if [ ! -z "${LOCAL}" ]
-      then
-        echo ${LOCAL}
-        return
-      fi
-    fi
-  fi
+  # get_setting <key> [system] [game]
+  local settings key LC_ALL=C
+  local -a keys=() BASH_REMATCH
+  local rest_of_line=$'([^\n]*)'
+  [ -n "${3}" ] && keys+=("${2}[\"${3}\"].${1}")
+  [ -n "${2}" ] && keys+=("${2}.${1}")
+  keys+=("system.${1}" "${1}" "global.${1}")
 
-  if [ -z "${3}" ] && [ -n "${2}" ]
-  then
-    ### Check to see if we have a global setting.
-    LOCAL=$(awk -F: '/^'"${2}.${1}"'=/ {  st = index($0,"=");print substr($0,st+1);exit}' ${J_CONF})
-    if [ ! -z "${LOCAL}" ]
+  IFS= read -r -d '' settings <"${J_CONF}" 2>/dev/null || :
+  for key in "${keys[@]}"
+  do
+    if [[ $'\n'${settings} =~ $'\n'"${key}="${rest_of_line} ]] && [ -n "${BASH_REMATCH[1]}" ]
     then
-      echo ${LOCAL}
+      echo ${BASH_REMATCH[1]}
       return
     fi
-  fi
-
-  ### Check to see if we have a "system." global setting.
-  SYSTEM=$(awk -F: '/^system.'"${1}"='/ { st = index($0,"=");print substr($0,st+1);exit}' ${J_CONF})
-  if [ -n "${SYSTEM}" ]
-  then
-    echo ${SYSTEM}
-    return
-  fi
-
-  ### Check to see if we have a "global." global setting."
-  LOCAL=$(awk -F: '/^'"${1}"='/ { st = index($0,"=");print substr($0,st+1);exit}' ${J_CONF})
-  if [ -z "${LOCAL}" ]
-  then
-    awk -F: '/^global.'"${1}"='/ { st = index($0,"=");print substr($0,st+1);exit}' ${J_CONF}
-    return
-  else
-    echo ${LOCAL}
-  fi
-  return
+  done
 }
 
 function wait_lock() {
-  while true
-  do
-    if (set -o noclobber; echo "$$" > "${J_CONF_LOCK}") 2>/dev/null
-    then
-      # Save the exit status before anything else runs: 'exit $?' after rm
-      # re-exited with rm's 0, so every script that ever took this lock (runemu.sh
-      # among them) exited 0 however it ended. Release only a lock this shell still
-      # holds -- callers rm it themselves, the trap outlives them, and another
-      # process may own the file by the time this one exits.
-      trap 'rc=$?; [ "$(cat "${J_CONF_LOCK}" 2>/dev/null)" = "$$" ] && rm -f "${J_CONF_LOCK}"; exit "${rc}"' INT TERM EXIT
-      break
-    else
-     sleep 1
-    fi
-  done
+  # flock is dropped automatically if the script dies
+  exec {J_CONF_LOCK_FD}>>"${J_CONF_LOCK}"
+  flock -x "${J_CONF_LOCK_FD}"
+}
+
+function release_lock() {
+  exec {J_CONF_LOCK_FD}>&-
 }
 
 function del_setting() {
@@ -101,14 +61,18 @@ function del_setting() {
   then
     sed -i "/^${1}=/d" "${J_CONF}"
   fi
-  rm -f "${J_CONF_LOCK}"
+  release_lock
 }
 
 function sort_settings() {
   wait_lock
-  cat "${J_CONF}" | grep ^[a-z0-9] | sort >"${J_CONF}.tmp"
-  mv "${J_CONF}.tmp" "${J_CONF}"
-  rm -f "${J_CONF_LOCK}"
+  if grep "^[a-z0-9]" "${J_CONF}" | sort >"${J_CONF}.tmp"
+  then
+    mv -f "${J_CONF}.tmp" "${J_CONF}"
+  else
+    rm -f "${J_CONF}.tmp"
+  fi
+  release_lock
 }
 
 function set_kill() {
@@ -144,7 +108,7 @@ function set_setting() {
     then
       wait_lock
       echo "${1}=${2}" >> "${J_CONF}"
-      rm -f "${J_CONF_LOCK}"
+      release_lock
     fi
   fi
 }
