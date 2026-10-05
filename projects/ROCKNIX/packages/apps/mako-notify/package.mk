@@ -13,4 +13,7 @@ PKG_TOOLCHAIN="make"
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin
     cp -a ${PKG_BUILD}/mako-notify ${INSTALL}/usr/bin
+
+  mkdir -p ${INSTALL}/usr/config/mako
+    cp -a ${PKG_DIR}/config/* ${INSTALL}/usr/config/mako
 }
