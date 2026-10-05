@@ -11,31 +11,30 @@ why we traverse the lines and using last entry in case
 multiple sources are mount over same mount point
 
 Signed-off-by: Peter Vicman <peter.vicman@gmail.com>
+[ROCKNIX: rebased for busybox 1.38, fixed per-line leak in the mountinfo read loop]
 ---
- util-linux/mount.c | 48 ++++++++++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 48 insertions(+)
 
 diff --git a/util-linux/mount.c b/util-linux/mount.c
-index 84c85c0..bc3fbda 100644
 --- a/util-linux/mount.c
 +++ b/util-linux/mount.c
-@@ -1887,6 +1887,50 @@ static int nfsmount(struct mntent *mp, unsigned long vfsflags, char *filteropts)
+@@ -1917,7 +1917,46 @@
+ }
  
  #endif // !ENABLE_FEATURE_MOUNT_NFS
- 
++
 +// Check mount point in /proc/self/mountinfo and identify bind mount
 +// return 1 for bind mount, 0 for normal mount
 +static int check_bind_mount(struct mntent *mp)
 +{
-+int mnt_dir_len;
-+char *p;
-+FILE *fp;
-+char *line = NULL;
-+int ret = 0;
-+
++	int mnt_dir_len;
++	char *p;
++	FILE *fp;
++	char *line;
++	int ret = 0;
+ 
 +	// https://www.kernel.org/doc/Documentation/filesystems/proc.txt
-+	// 21 20 179:20 /coreelec_flash /flash ro,noatime shared:2 - ext4 /dev/data rw,resgid=1065,data=ordered
-+	// 20 22 179:1 / /flash ro,noatime shared:2 - vfat /dev/mmcblk1p1 ro,fmask=0022,dmask=0022,codepage=437,iocharset=iso8859-1,shortname=mixed,errors=remount-ro
++	// 21 20 179:20 /rocknix_flash /flash ro,noatime shared:2 - ext4 /dev/data rw
++	// 20 22 179:1 / /flash ro,noatime shared:2 - vfat /dev/mmcblk1p1 ro
 +
 +	fp = fopen("/proc/self/mountinfo", "r");
 +	if (fp == NULL)
@@ -51,36 +50,28 @@ index 84c85c0..bc3fbda 100644
 +	while ((line = xmalloc_fgetline(fp)) != NULL) {
 +		// find mount point
 +		p = strstr(line, mp->mnt_dir);
-+		if (p == NULL)
-+			continue;
-+			
-+		// bind mount has folder for root and not just "/"
-+		ret = 0;  // always use result from last entry
-+		if (strncmp(p - 2, "/ ", 2) != 0)
-+			ret = 1;
-+	}
-+
-+	if (line != NULL)
++		if (p != NULL) {
++			// a bind mount names a subdirectory as its root, not just "/"
++			ret = (strncmp(p - 2, "/ ", 2) != 0);  // last entry wins
++		}
 +		free(line);
++	}
 +
 +	fclose(fp);
 +	return ret;
 +}
 +
- // Mount one directory.  Handles CIFS, NFS, loopback, autobind, and filesystem
- // type detection.  Returns 0 for success, nonzero for failure.
- // NB: mp->xxx fields may be trashed on exit
-@@ -2058,6 +2102,10 @@ static int singlemount(struct mntent *mp, int ignore_busy)
+ // Find "...,NAME=NUM,..." in the option string, remove "NAME=NUM" option
+ // and return NUM.
+ // Return 0 if not found.
+@@ -2152,6 +2191,10 @@
+ 		} else if (S_ISDIR(st.st_mode) && !mp->mnt_type)
  			vfsflags |= MS_BIND;
  	}
- 
-+	// add explicit MS_BIND if remounting bind mount
-+	if ((vfsflags & MS_REMOUNT) && (check_bind_mount(mp) == 1))
-+		vfsflags |= MS_BIND;
 +
++	// add explicit MS_BIND if remounting a bind mount
++	if ((vfsflags & MS_REMOUNT) && check_bind_mount(mp))
++		vfsflags |= MS_BIND;
+ 
  	// If we know the fstype (or don't need to), jump straight
  	// to the actual mount.
- 	if (mp->mnt_type || (vfsflags & (MS_REMOUNT | MS_BIND | MS_MOVE))) {
--- 
-2.7.4
-

@@ -3,19 +3,18 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="systemd"
-PKG_VERSION="255.8"
-PKG_SHA256="e770b9c4b5e36c1badf94444a27c9cd427931251009e4363f3239ad45ff75f3d"
-PKG_LICENSE="LGPL2.1+"
+PKG_VERSION="261.2"
+PKG_SHA256="ed1059ff964f5df35b6056434cc17cc83f86dc913f10489948a0b19b6081c5ec"
+PKG_LICENSE="LGPL-2.1-or-later"
 PKG_SITE="http://www.freedesktop.org/wiki/Software/systemd"
-PKG_URL="https://github.com/systemd/systemd-stable/archive/v${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain libcap kmod util-linux libidn2 Python3:host Jinja2:host pcre2 zstd libgcrypt openssl"
+PKG_URL="https://github.com/systemd/systemd/archive/v${PKG_VERSION}.tar.gz"
+PKG_DEPENDS_TARGET="toolchain kmod util-linux libidn2 Python3:host Jinja2:host pcre2 zstd openssl"
 PKG_LONGDESC="A system and session manager for Linux, compatible with SysV and LSB init scripts."
+PKG_BUILD_FLAGS="+lto"
 
 PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
-                       -Drootprefix=/usr \
-                       -Dsplit-usr=false \
+                       -Dfallback-hostname=ROCKNIX \
                        -Dsplit-bin=true \
-                       -Ddefault-hierarchy=hybrid \
                        -Dtty-gid=5 \
                        -Dtests=false \
                        -Dseccomp=false \
@@ -32,11 +31,9 @@ PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Dmicrohttpd=false \
                        -Dlibcryptsetup=false \
                        -Dlibcurl=false \
-                       -Dlibidn=false \
                        -Dlibidn2=true \
-                       -Dlibiptc=false \
                        -Dqrencode=false \
-                       -Dgcrypt=true \
+                       -Dgcrypt=false \
                        -Dgnutls=false \
                        -Dopenssl=true \
                        -Dp11kit=false \
@@ -52,7 +49,7 @@ PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Ddefault-dnssec=no \
                        -Dimportd=false \
                        -Dremote=false \
-                       -Dutmp=true \
+                       -Dutmp=false \
                        -Dhibernate=false \
                        -Denvironment-d=false \
                        -Dbinfmt=true \
@@ -94,14 +91,30 @@ PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Dlink-udev-shared=true \
                        -Dlink-systemctl-shared=true \
                        -Dlink-networkd-shared=false \
+                       -Djournal-storage-default=auto \
+                       -Dtty-mode=0620 \
+                       -Dshellprofiledir=no \
+                       -Dsshconfdir=no \
+                       -Dsshdconfdir=no \
+                       -Dsshdprivsepdir=no \
+                       -Dmountfsd=false \
+                       -Dnsresourced=false \
+                       -Dnspawn=disabled \
+                       -Dvmspawn=disabled \
+                       -Dsysinstall=false \
+                       -Dsysext=false \
+                       -Dstoragetm=false \
+                       -Dimds=disabled \
+                       -Dukify=disabled \
+                       -Dkernel-install=false \
+                       -Dlibarchive=disabled \
+                       -Dbpf-framework=disabled \
                        -Dbashcompletiondir=no \
                        -Dzshcompletiondir=no \
                        -Dkmod-path=/usr/bin/kmod \
                        -Dmount-path=/usr/bin/mount \
                        -Dumount-path=/usr/bin/umount \
-                       -Dversion-tag=${PKG_VERSION} \
-                       -Dc_args=-D__counted_by\(x\)\= \
-                       -Dcpp_args=-D__counted_by\(x\)\="
+                       -Dversion-tag=${PKG_VERSION}"
 if [ -n "${BUILD_WITH_DEBUG}" ]
 then
   PKG_MESON_OPTS_TARGET+=" -Ddebug-tty=${DEBUG_TTY}"
@@ -118,16 +131,14 @@ pre_configure_target() {
 
 post_makeinstall_target() {
   # remove unneeded stuff
-  safe_remove ${INSTALL}/etc/init.d
   safe_remove ${INSTALL}/etc/systemd/system
   safe_remove ${INSTALL}/etc/xdg
   safe_remove ${INSTALL}/etc/X11
-  safe_remove ${INSTALL}/usr/bin/kernel-install
-  safe_remove ${INSTALL}/usr/lib/kernel/install.d
   safe_remove ${INSTALL}/usr/lib/rpm
   safe_remove ${INSTALL}/usr/lib/systemd/user
   safe_remove ${INSTALL}/usr/lib/tmpfiles.d/etc.conf
   safe_remove ${INSTALL}/usr/lib/tmpfiles.d/home.conf
+  safe_remove ${INSTALL}/usr/lib/tmpfiles.d/root.conf
   safe_remove ${INSTALL}/usr/share/factory
 
   # remove Network adaper renaming rule, this is confusing
@@ -137,7 +148,6 @@ post_makeinstall_target() {
   safe_remove ${INSTALL}/usr/lib/udev/rules.d/73-seat-late.rules
 
   # remove getty units, we dont want a console
-  safe_remove ${INSTALL}/usr/lib/systemd/system/autovt@.service
   safe_remove ${INSTALL}/usr/lib/systemd/system/console-getty.service
   safe_remove ${INSTALL}/usr/lib/systemd/system/container-getty@.service
   safe_remove ${INSTALL}/usr/lib/systemd/system/getty.target
@@ -155,12 +165,48 @@ post_makeinstall_target() {
 
   safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-journald-audit.socket
 
+  local late="devlink leds regulator genpd_provider genpd memory thermal hwmon dma wakeup bdi serial-base clockevents
+              workqueue faux remoteproc gpio event_source vtconsole usb_power_delivery power_supply"
+  printf 'EARLY_FILTER=%s\nLATE_FILTER=%s\n' "$(printf -- '--subsystem-nomatch=%s ' ${late})" \
+         "$(printf -- '--subsystem-match=%s ' ${late})" > ${INSTALL}/usr/lib/udev/coldplug-late.conf
+
+  sed -e 's|^SUBSYSTEM=="block", TAG+="systemd"$|SUBSYSTEM=="block", ENV{ROCKNIX_INTERNAL_EMMC}!="1", TAG+="systemd"|' \
+      -i ${INSTALL}/usr/lib/udev/rules.d/99-systemd.rules
+  grep -q ROCKNIX_INTERNAL_EMMC ${INSTALL}/usr/lib/udev/rules.d/99-systemd.rules || die "99-systemd.rules block tag line changed"
+
   # adjust systemd-hwdb-update (we have read-only /etc).
   sed '/^ConditionNeedsUpdate=.*$/d' -i ${INSTALL}/usr/lib/systemd/system/systemd-hwdb-update.service
 
-  # remove nspawn
-  safe_remove ${INSTALL}/usr/bin/systemd-nspawn
-  safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-nspawn@.service
+  safe_remove ${INSTALL}/usr/bin/systemd-creds
+  safe_remove ${INSTALL}/usr/lib/tmpfiles.d/credstore.conf
+  safe_remove ${INSTALL}/usr/lib/tmpfiles.d/provision.conf
+  safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-creds.socket
+  safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-creds@.service
+  safe_remove ${INSTALL}/usr/lib/systemd/system/*.target.wants/systemd-creds.socket
+
+  safe_remove ${INSTALL}/usr/lib/systemd/systemd-factory-reset
+  safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-factory-reset*
+  safe_remove ${INSTALL}/usr/lib/systemd/system/*.target.wants/systemd-factory-reset*
+
+  safe_remove ${INSTALL}/usr/bin/storagectl
+  safe_remove ${INSTALL}/usr/bin/systemd-mstack
+  safe_remove ${INSTALL}/usr/bin/systemd-mute-console
+  safe_remove ${INSTALL}/usr/sbin/mount.mstack
+  safe_remove ${INSTALL}/usr/sbin/mount.storage
+  safe_remove ${INSTALL}/usr/lib/systemd/systemd-keyutil
+  safe_remove ${INSTALL}/usr/lib/systemd/systemd-sbsign
+  safe_remove ${INSTALL}/usr/lib/systemd/systemd-storage-*
+  safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-storage-*
+  safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-mute-console*
+  safe_remove ${INSTALL}/usr/lib/systemd/system/system-systemd\\x2dmute\\x2dconsole.slice
+  safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-ask-password.socket
+  safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-ask-password@.service
+  safe_remove ${INSTALL}/usr/lib/systemd/system/*.target.wants/systemd-storage-*
+  safe_remove ${INSTALL}/usr/lib/systemd/systemd-report*
+  safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-report-*
+  safe_remove ${INSTALL}/usr/lib/udev/rules.d/90-image-dissect.rules
+  safe_remove ${INSTALL}/usr/lib/systemd/system/*.target.wants/systemd-mute-console.socket
+  safe_remove ${INSTALL}/usr/lib/systemd/system/*.target.wants/systemd-ask-password.socket
 
   # remove unneeded generators
   for gen in ${INSTALL}/usr/lib/systemd/system-generators/*; do
@@ -228,6 +274,7 @@ post_makeinstall_target() {
 
   mkdir -p ${INSTALL}/usr/sbin
   cp ${PKG_DIR}/scripts/network-base-setup ${INSTALL}/usr/sbin
+  cp ${PKG_DIR}/scripts/hwdb-update-cached ${INSTALL}/usr/sbin
   cp ${PKG_DIR}/scripts/systemd-timesyncd-setup ${INSTALL}/usr/sbin
 
   # /etc/resolv.conf and /etc/hosts must be writable
@@ -238,9 +285,7 @@ post_makeinstall_target() {
   ln -sf /usr/bin/systemctl ${INSTALL}/usr/sbin/halt
   ln -sf /usr/bin/systemctl ${INSTALL}/usr/sbin/poweroff
   ln -sf /usr/bin/systemctl ${INSTALL}/usr/sbin/reboot
-  ln -sf /usr/bin/systemctl ${INSTALL}/usr/sbin/runlevel
   ln -sf /usr/bin/systemctl ${INSTALL}/usr/sbin/shutdown
-  ln -sf /usr/bin/systemctl ${INSTALL}/usr/sbin/telinit
 
   # strip
   debug_strip ${INSTALL}/usr
@@ -255,6 +300,13 @@ post_makeinstall_target() {
   ln -sf /storage/.config/resolved.conf.d ${INSTALL}/etc/systemd/resolved.conf.d
   ln -sf /storage/.config/sleep.conf.d ${INSTALL}/etc/systemd/sleep.conf.d
   ln -sf /storage/.config/timesyncd.conf.d ${INSTALL}/etc/systemd/timesyncd.conf.d
+  mkdir -p ${INSTALL}/usr/lib/systemd/timesyncd.conf.d
+  printf "[Time]\nSaveIntervalSec=15min\n" > ${INSTALL}/usr/lib/systemd/timesyncd.conf.d/10-rocknix.conf
+  cat >${INSTALL}/usr/lib/tmpfiles.d/rocknix-thp.conf <<EOF
+w- /sys/kernel/mm/transparent_hugepage/enabled - - - - ${THP_MODE:-madvise}
+w- /sys/kernel/mm/transparent_hugepage/defrag - - - - ${THP_DEFRAG:-defer+madvise}
+w- /sys/kernel/mm/transparent_hugepage/shmem_enabled - - - - advise
+EOF
   safe_remove ${INSTALL}/etc/sysctl.d
   ln -sf /storage/.config/sysctl.d ${INSTALL}/etc/sysctl.d
   safe_remove ${INSTALL}/etc/tmpfiles.d
@@ -296,7 +348,6 @@ post_install() {
   add_group cdrom 11
   add_group dialout 18
   add_group floppy 19
-  add_group utmp 22
   add_group tape 33
   add_group kvm 36
   add_group video 39 pipewire
@@ -304,6 +355,7 @@ post_install() {
   add_group input 104
   add_group render 105
   add_group sgx 106
+  add_group clock 107
   add_group users 100
   add_group nogroup 65534
   add_user nobody x 65534 65534 "nobody" "/" "/bin/false"
@@ -316,5 +368,8 @@ post_install() {
   enable_service systemd-timesyncd.service
   enable_service systemd-timesyncd-setup.service
   enable_service systemd-resolved.service
+  enable_service systemd-oomd.socket
+  enable_service systemd-oomd.service
+  enable_service udev-trigger-late.timer
   enable_service debug-shell.service
 }

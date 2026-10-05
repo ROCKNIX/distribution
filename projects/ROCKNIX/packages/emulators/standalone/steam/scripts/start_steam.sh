@@ -142,9 +142,11 @@ steam_scope_reexec_if_needed() {
     systemctl stop steam-bigpicture.scope 2>/dev/null || true
     exec systemd-run \
       --scope \
-      --slice=system.slice \
+      --slice=games.slice \
       --unit=steam-bigpicture \
       --collect \
+      --expand-environment=no \
+      -p TasksMax=infinity \
       -E _STEAM_SCOPE=1 \
       -E HOME="$HOME" \
       -E USER="$USER" \
