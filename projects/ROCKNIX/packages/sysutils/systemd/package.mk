@@ -275,6 +275,7 @@ post_makeinstall_target() {
   mkdir -p ${INSTALL}/usr/sbin
   cp ${PKG_DIR}/scripts/network-base-setup ${INSTALL}/usr/sbin
   cp ${PKG_DIR}/scripts/hwdb-update-cached ${INSTALL}/usr/sbin
+  cp ${PKG_DIR}/scripts/rtc-offset ${INSTALL}/usr/sbin
   cp ${PKG_DIR}/scripts/systemd-timesyncd-setup ${INSTALL}/usr/sbin
 
   # /etc/resolv.conf and /etc/hosts must be writable
@@ -371,5 +372,7 @@ post_install() {
   enable_service systemd-oomd.socket
   enable_service systemd-oomd.service
   enable_service udev-trigger-late.timer
+  enable_service rtc-offset.service
+  enable_service rtc-offset-sync.path
   enable_service debug-shell.service
 }
