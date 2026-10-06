@@ -54,7 +54,7 @@ PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Denvironment-d=false \
                        -Dbinfmt=true \
                        -Drepart=false \
-                       -Dcoredump=false \
+                       -Dcoredump=true \
                        -Dresolve=true \
                        -Dlogind=true \
                        -Dhostnamed=true \
@@ -302,6 +302,8 @@ post_makeinstall_target() {
   ln -sf /storage/.config/resolved.conf.d ${INSTALL}/etc/systemd/resolved.conf.d
   ln -sf /storage/.config/sleep.conf.d ${INSTALL}/etc/systemd/sleep.conf.d
   ln -sf /storage/.config/timesyncd.conf.d ${INSTALL}/etc/systemd/timesyncd.conf.d
+  mkdir -p ${INSTALL}/usr/lib/systemd/coredump.conf.d
+  printf "[Coredump]\nStorage=none\nProcessSizeMax=0\n" > ${INSTALL}/usr/lib/systemd/coredump.conf.d/10-rocknix.conf
   mkdir -p ${INSTALL}/usr/lib/systemd/timesyncd.conf.d
   printf "[Time]\nSaveIntervalSec=15min\n" > ${INSTALL}/usr/lib/systemd/timesyncd.conf.d/10-rocknix.conf
   cat >${INSTALL}/usr/lib/tmpfiles.d/rocknix-thp.conf <<EOF
@@ -337,6 +339,9 @@ post_install() {
 
   add_group systemd-oom 194
   add_user systemd-oom x 194 194 "systemd Userspace OOM Killer" "/" "/bin/false"
+
+  add_group systemd-coredump 195
+  add_user systemd-coredump x 195 195 "systemd Core Dumper" "/" "/bin/false"
 
   add_group systemd-resolve 192
   add_user systemd-resolve x 192 192 "systemd-resolve" "/" "/bin/false"
