@@ -54,7 +54,7 @@ PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Denvironment-d=false \
                        -Dbinfmt=true \
                        -Drepart=false \
-                       -Dcoredump=false \
+                       -Dcoredump=true \
                        -Dresolve=true \
                        -Dlogind=true \
                        -Dhostnamed=true \
@@ -245,8 +245,8 @@ post_makeinstall_target() {
   sed -e "s,^.*Compress=.*$,Compress=no,g" -i ${INSTALL}/etc/systemd/journald.conf
   sed -e "s,^.*MaxFileSec=.*$,MaxFileSec=0,g" -i ${INSTALL}/etc/systemd/journald.conf
   sed -e "s,^.*MaxRetentionSec=.*$,MaxRetentionSec=0,g" -i ${INSTALL}/etc/systemd/journald.conf
-  sed -e "s,^.*RuntimeMaxUse=.*$,RuntimeMaxUse=2M,g" -i ${INSTALL}/etc/systemd/journald.conf
-  sed -e "s,^.*RuntimeMaxFileSize=.*$,RuntimeMaxFileSize=128K,g" -i ${INSTALL}/etc/systemd/journald.conf
+  sed -e "s,^.*RuntimeMaxUse=.*$,RuntimeMaxUse=8M,g" -i ${INSTALL}/etc/systemd/journald.conf
+  sed -e "s,^.*RuntimeMaxFileSize=.*$,RuntimeMaxFileSize=1M,g" -i ${INSTALL}/etc/systemd/journald.conf
   sed -e "s,^.*SplitMode=.*$,SplitMode=none,g" -i ${INSTALL}/etc/systemd/journald.conf
   sed -e "s,^.*SystemMaxUse=.*$,SystemMaxUse=10M,g" -i ${INSTALL}/etc/systemd/journald.conf
   if [ "${BUILD_WITH_DEBUG}" = "yes" ]; then
@@ -260,6 +260,7 @@ post_makeinstall_target() {
 
   # SYSTEMD-RESOLVED CONFIGURATION
   sed -i 's/^#MulticastDNS=yes/MulticastDNS=no/' ${INSTALL}/etc/systemd/resolved.conf || echo "MulticastDNS=no" >> ${INSTALL}/etc/systemd/resolved.conf
+  sed -i 's/^#LLMNR=.*/LLMNR=no/' ${INSTALL}/etc/systemd/resolved.conf
   # FALLBACK DNS (Mixed Google/Cloudflare Anycast)
   sed -i 's/^#FallbackDNS=.*/FallbackDNS=8.8.8.8 1.1.1.1 2001:4860:4860::8888 2606:4700:4700::1111/' ${INSTALL}/etc/systemd/resolved.conf || echo "FallbackDNS=8.8.8.8 1.1.1.1 2001:4860:4860::8888 2606:4700:4700::1111" >> ${INSTALL}/etc/systemd/resolved.conf
 
@@ -275,6 +276,7 @@ post_makeinstall_target() {
   mkdir -p ${INSTALL}/usr/sbin
   cp ${PKG_DIR}/scripts/network-base-setup ${INSTALL}/usr/sbin
   cp ${PKG_DIR}/scripts/hwdb-update-cached ${INSTALL}/usr/sbin
+  cp ${PKG_DIR}/scripts/rtc-offset ${INSTALL}/usr/sbin
   cp ${PKG_DIR}/scripts/systemd-timesyncd-setup ${INSTALL}/usr/sbin
 
   # /etc/resolv.conf and /etc/hosts must be writable
@@ -300,6 +302,11 @@ post_makeinstall_target() {
   ln -sf /storage/.config/resolved.conf.d ${INSTALL}/etc/systemd/resolved.conf.d
   ln -sf /storage/.config/sleep.conf.d ${INSTALL}/etc/systemd/sleep.conf.d
   ln -sf /storage/.config/timesyncd.conf.d ${INSTALL}/etc/systemd/timesyncd.conf.d
+  ln -sf ../../etc/os-release ${INSTALL}/usr/lib/clock-epoch
+  mkdir -p ${INSTALL}/usr/lib/systemd/oomd/rules.d
+  cp ${PKG_DIR}/oomd/rules.d/*.oomrule ${INSTALL}/usr/lib/systemd/oomd/rules.d
+  mkdir -p ${INSTALL}/usr/lib/systemd/coredump.conf.d
+  printf "[Coredump]\nStorage=none\nProcessSizeMax=0\n" > ${INSTALL}/usr/lib/systemd/coredump.conf.d/10-rocknix.conf
   mkdir -p ${INSTALL}/usr/lib/systemd/timesyncd.conf.d
   printf "[Time]\nSaveIntervalSec=15min\n" > ${INSTALL}/usr/lib/systemd/timesyncd.conf.d/10-rocknix.conf
   cat >${INSTALL}/usr/lib/tmpfiles.d/rocknix-thp.conf <<EOF
@@ -336,6 +343,9 @@ post_install() {
   add_group systemd-oom 194
   add_user systemd-oom x 194 194 "systemd Userspace OOM Killer" "/" "/bin/false"
 
+  add_group systemd-coredump 195
+  add_user systemd-coredump x 195 195 "systemd Core Dumper" "/" "/bin/false"
+
   add_group systemd-resolve 192
   add_user systemd-resolve x 192 192 "systemd-resolve" "/" "/bin/false"
 
@@ -371,5 +381,7 @@ post_install() {
   enable_service systemd-oomd.socket
   enable_service systemd-oomd.service
   enable_service udev-trigger-late.timer
+  enable_service rtc-offset.service
+  enable_service rtc-offset-sync.path
   enable_service debug-shell.service
 }

@@ -140,6 +140,7 @@ steam_touch_calibration_end() {
 steam_scope_reexec_if_needed() {
   if [ -z "$_STEAM_SCOPE" ]; then
     systemctl stop steam-bigpicture.scope 2>/dev/null || true
+    echo 500 >/proc/self/oom_score_adj
     exec systemd-run \
       --scope \
       --slice=games.slice \
@@ -147,6 +148,7 @@ steam_scope_reexec_if_needed() {
       --collect \
       --expand-environment=no \
       -p TasksMax=infinity \
+      -p OOMPolicy=continue \
       -E _STEAM_SCOPE=1 \
       -E HOME="$HOME" \
       -E USER="$USER" \
