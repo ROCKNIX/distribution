@@ -3,6 +3,7 @@
 # Copyright (C) 2018-present 5schatten (https://github.com/5schatten)
 
 . /etc/profile
+set_kill set "-9 hatarisa"
 
 # Set some common variables
 HATARI_DIR_HOME=/storage/.hatari
