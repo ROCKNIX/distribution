@@ -6,7 +6,7 @@
 
 . /etc/profile
 
-set_kill set "-9 mupen64plus"
+set_kill set "-9 mupen64plus mupen64plus-simple"
 
 # Emulation Station features
 GAME=$(echo "${1}"| sed "s#^/.*/##")
