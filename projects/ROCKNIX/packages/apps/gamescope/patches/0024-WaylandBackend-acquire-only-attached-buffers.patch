@@ -1,0 +1,74 @@
+From: kapdon <94782486+kapdon@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 01:11:35 -0700
+Subject: [PATCH] WaylandBackend: acquire framebuffers only when attached
+
+Acquire at the shared attach site so frames skipped by the configure
+gate or clipping do not wait for a wl_buffer.release that cannot arrive.
+This also covers the black backing buffer.
+
+diff --git a/src/Backends/WaylandBackend.cpp b/src/Backends/WaylandBackend.cpp
+index 6a8fb51..400171d 100644
+--- a/src/Backends/WaylandBackend.cpp
++++ b/src/Backends/WaylandBackend.cpp
+@@ -132,7 +132,7 @@ namespace gamescope
+ 
+     struct WaylandPlaneState
+     {
+-        wl_buffer *pBuffer;
++        CWaylandFb *pFb;
+         int32_t nDestX;
+         int32_t nDestY;
+         double flSrcX;
+@@ -1126,13 +1126,11 @@ namespace gamescope
+                 uint32_t uCurrentPlane = 0;
+                 if ( bNeedsBacking )
+                 {
+-                    m_pBackend->GetBlackFb()->OnCompositorAcquire();
+-
+                     CWaylandPlane *pPlane = &m_Planes[uCurrentPlane++];
+                     pPlane->Present(
+                         WaylandPlaneState
+                         {
+-                            .pBuffer     = m_pBackend->GetBlackFb()->GetHostBuffer(),
++                            .pFb         = m_pBackend->GetBlackFb(),
+                             .flSrcWidth  = 1.0,
+                             .flSrcHeight = 1.0,
+                             .nDstWidth   = int32_t( g_nOutputWidth ),
+@@ -1481,7 +1479,7 @@ namespace gamescope
+ 
+         if ( oState )
+         {
+-            assert( oState->pBuffer );
++            assert( oState->pFb && oState->pFb->GetHostBuffer() );
+ 
+             if ( m_pFrame )
+             {
+@@ -1627,7 +1625,8 @@ namespace gamescope
+ 
+             m_bHasAttachedBuffer = true;
+ 
+-            wl_surface_attach( m_pSurface, oState->pBuffer, 0, 0 );
++            oState->pFb->OnCompositorAcquire();
++            wl_surface_attach( m_pSurface, oState->pFb->GetHostBuffer(), 0, 0 );
+             wl_surface_damage( m_pSurface, 0, 0, INT32_MAX, INT32_MAX );
+             wl_surface_set_opaque_region( m_pSurface, oState->bOpaque ? m_pBackend->GetFullRegion() : nullptr );
+             wl_surface_set_buffer_scale( m_pSurface, 1 );
+@@ -1677,16 +1676,13 @@ namespace gamescope
+     void CWaylandPlane::Present( const FrameInfo_t::Layer_t *pLayer )
+     {
+         CWaylandFb *pWaylandFb = pLayer && pLayer->tex != nullptr ? static_cast<CWaylandFb*>( pLayer->tex->GetBackendFb()->EnsureImported() ) : nullptr;
+-        wl_buffer *pBuffer = pWaylandFb ? pWaylandFb->GetHostBuffer() : nullptr;
+ 
+-        if ( pBuffer )
++        if ( pWaylandFb && pWaylandFb->GetHostBuffer() )
+         {
+-            pWaylandFb->OnCompositorAcquire();
+-
+             Present(
+                 ClipPlane( WaylandPlaneState
+                 {
+-                    .pBuffer     = pBuffer,
++                    .pFb         = pWaylandFb,
+                     .nDestX      = int32_t( -pLayer->offset.x ),
+                     .nDestY      = int32_t( -pLayer->offset.y ),
+                     .flSrcX      = 0.0,

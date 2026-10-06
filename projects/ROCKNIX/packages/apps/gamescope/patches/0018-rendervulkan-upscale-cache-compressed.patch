@@ -8,10 +8,11 @@ override. So the upscale image needed STORAGE usage for the compute
 stores, and turnip refuses UBWC for storage images before a7xx. Under
 FSR the one buffer that actually reaches the plane was always linear.
 
-diff -ruN gs-new/src/rendervulkan.cpp gs-fix/src/rendervulkan.cpp
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+index 29ef4d5..e475883 100644
 --- a/src/rendervulkan.cpp
 +++ b/src/rendervulkan.cpp
-@@ -4364,7 +4364,7 @@
+@@ -4620,7 +4620,7 @@ namespace
  
  ReshadeEffectPipeline *g_pLastReshadeEffect = nullptr;
  
@@ -20,18 +21,20 @@ diff -ruN gs-new/src/rendervulkan.cpp gs-fix/src/rendervulkan.cpp
  {
  	EOTF outputTF = frameInfo->outputEncodingEOTF;
  	if (!frameInfo->applyOutputColorMgmt)
-@@ -4411,5 +4411,6 @@
+@@ -4667,7 +4667,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
  
- 	// on tilers the fragment pass writes tile-linear, so rotation is free
+ 	// Overrides (screenshots, upscale cache) are logical-sized, so never rotated.
+ 	const uint32_t uOutputRotation = pOutputOverride ? 0u : g_uOutputRotation;
 -	const bool bWantGfxBlit = g_bCompositeGraphics && !pOutputOverride;
-+	// screenshots are only read back, the upscale cache is scanned out and must stay compressed
 +	const bool bWantGfxBlit = g_bCompositeGraphics && ( !pOutputOverride || bAllowGfxBlit );
  
- 	auto cmdBuffer = pInCommandBuffer ? std::move( pInCommandBuffer ) : g_device.commandBuffer();
-diff -ruN gs-new/src/rendervulkan.hpp gs-fix/src/rendervulkan.hpp
+ 	// The pre-emptive upscale is the only caller that brings its own command buffer.
+ 	const bool bPreemptiveUpscale = pOutputOverride != nullptr && pInCommandBuffer != nullptr;
+diff --git a/src/rendervulkan.hpp b/src/rendervulkan.hpp
+index 00128c4..032c2cb 100644
 --- a/src/rendervulkan.hpp
 +++ b/src/rendervulkan.hpp
-@@ -457,7 +457,7 @@
+@@ -463,7 +463,7 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_dmabuf( struct wl
  gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width, uint32_t height, uint32_t contentWidth, uint32_t contentHeight, uint32_t drmFormat, CVulkanTexture::createFlags texCreateFlags, void *bits );
  gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wlr_buffer *buf, gamescope::OwningRc<gamescope::IBackendFb> pBackendFb );
  
@@ -40,22 +43,22 @@ diff -ruN gs-new/src/rendervulkan.hpp gs-fix/src/rendervulkan.hpp
  void vulkan_wait( uint64_t ulSeqNo, bool bReset );
  gamescope::Rc<CVulkanTexture> vulkan_get_last_output_image( bool partial, bool defer );
  gamescope::Rc<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace = k_EStreamColorspace_Unknown);
-diff -ruN gs-new/src/steamcompmgr.cpp gs-fix/src/steamcompmgr.cpp
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+index 860cbe6..3cff54a 100644
 --- a/src/steamcompmgr.cpp
 +++ b/src/steamcompmgr.cpp
-@@ -7539,7 +7539,9 @@
+@@ -8319,7 +8319,8 @@ static TempUpscaleImage_t *GetTempUpscaleImage( global_focus_t *pFocus, uint32_t
  
  	CVulkanTexture::createFlags imageFlags;
  	imageFlags.bSampled = true;
 -	imageFlags.bStorage = true;
-+	// storage forces linear, an attachment can stay compressed
 +	imageFlags.bStorage = !g_bCompositeGraphics;
 +	imageFlags.bColorAttachment = g_bCompositeGraphics;
  	imageFlags.bFlippable = true;
  	pTexture->BInit( g_nOutputWidth, g_nOutputHeight, 1, uDrmFormat, imageFlags );
- 	TempUpscaleImage_t &image = g_pUpscaleImages.emplace_back( std::move( pTexture ), std::move( pTimeline ) );
-@@ -7700,7 +7702,7 @@
- 				vulkan_wait( *s_ulLastPreemptiveUpscaleSeqNo, true );
+ 	TempUpscaleImage_t &image = pFocus->UpscaleImages.emplace_back( std::move( pTexture ), std::move( pTimeline ) );
+@@ -8510,7 +8511,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
+ 				vulkan_wait( *pUpscaleFocus->oLastPreemptiveUpscaleSeqNo, true );
  			}
  
 -			std::optional<uint64_t> seqNo = vulkan_composite( &upscaledFrameInfo, nullptr, false, pTempImage->pTexture, false, std::move( pCommandBuffer ) );
