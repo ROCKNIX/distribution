@@ -97,6 +97,11 @@ EOF
 
 ### Run the game in its own games.slice scope.
 GAME_UNIT="game-$$"
+function game_oom_kills() {
+        local kills=$(awk '$1 == "oom_kill" {print $2}' /sys/fs/cgroup/games.slice/memory.events 2>/dev/null)
+        echo "${kills:-0}"
+}
+
 function game_scope() {
         if [ ! -d /run/systemd/system ]; then
                 "$@"
@@ -104,15 +109,24 @@ function game_scope() {
         fi
         systemctl reset-failed "${GAME_UNIT}.scope" 2>/dev/null
         systemctl thaw games.slice 2>/dev/null
-        systemd-run --scope --quiet --expand-environment=no --slice=games.slice --unit="${GAME_UNIT}" \
-                --description="${PLATFORM}: ${ROMNAME##*/}" -p StopPropagatedFrom=essway.service \
-                -p TimeoutStopSec=5s -p TasksMax=infinity -- "$@"
+        GAME_OOM_KILLS=$(game_oom_kills)
+        GAME_START=$(date +%s)
+        (
+                echo 500 >/proc/self/oom_score_adj
+                exec systemd-run --scope --quiet --expand-environment=no --slice=games.slice --unit="${GAME_UNIT}" \
+                        --description="${PLATFORM}: ${ROMNAME##*/}" -p StopPropagatedFrom=essway.service \
+                        -p TimeoutStopSec=5s -p TasksMax=infinity -p OOMPolicy=continue -- "$@"
+        )
 }
 
 function game_scope_stop() {
         [ -d /run/systemd/system ] || return
         systemctl stop "${GAME_UNIT}.scope" 2>/dev/null
-        [ "$(systemctl show -P Result "${GAME_UNIT}.scope" 2>/dev/null)" = "oom-kill" ] && GAME_OOM=1
+        # the game itself was killed for memory, a helper it outlived doesn't count
+        if [ "${1}" = "137" ]; then
+                [ "$(game_oom_kills)" != "${GAME_OOM_KILLS}" ] && GAME_OOM=1
+                journalctl -q -o cat -t systemd --since "@${GAME_START}" | grep -q "systemd-oomd killed" && GAME_OOM=1
+        fi
         systemctl reset-failed "${GAME_UNIT}.scope" 2>/dev/null
 }
 
@@ -594,7 +608,7 @@ else
         ${VERBOSE} && log $0 "Executing $(eval echo ${RUNTHIS})"
         eval game_scope ${RUNTHIS} &>>${OUTPUT_LOG}
         ret_error=$?
-        game_scope_stop
+        game_scope_stop ${ret_error}
 fi
 
 ### Switch back to performance mode to clean up
