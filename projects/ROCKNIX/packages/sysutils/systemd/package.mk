@@ -260,6 +260,7 @@ post_makeinstall_target() {
 
   # SYSTEMD-RESOLVED CONFIGURATION
   sed -i 's/^#MulticastDNS=yes/MulticastDNS=no/' ${INSTALL}/etc/systemd/resolved.conf || echo "MulticastDNS=no" >> ${INSTALL}/etc/systemd/resolved.conf
+  sed -i 's/^#LLMNR=.*/LLMNR=no/' ${INSTALL}/etc/systemd/resolved.conf
   # FALLBACK DNS (Mixed Google/Cloudflare Anycast)
   sed -i 's/^#FallbackDNS=.*/FallbackDNS=8.8.8.8 1.1.1.1 2001:4860:4860::8888 2606:4700:4700::1111/' ${INSTALL}/etc/systemd/resolved.conf || echo "FallbackDNS=8.8.8.8 1.1.1.1 2001:4860:4860::8888 2606:4700:4700::1111" >> ${INSTALL}/etc/systemd/resolved.conf
 
