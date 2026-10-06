@@ -175,13 +175,50 @@ stop_volume_repeat() {
     VOLUME_REPEAT_PID=""
 }
 
+### Skip shells and terminals so start scripts still clean up after their emulator.
+game_pids() {
+  local CHILD
+  for CHILD in $(pgrep -P ${1}); do
+    case "$(readlink /proc/${CHILD}/exe)" in
+      */bash|*/sh|*/busybox|*/foot) ;;
+      *) echo ${CHILD} ;;
+    esac
+    game_pids ${CHILD}
+  done
+}
+
 ### Simple functions to execute button actions, including global kill.
 execute_kill() {
-  if [ -e "/tmp/.process-kill-data" ]; then
-    TO_KILL="$(cat /tmp/.process-kill-data)"
+  local TO_KILL="" NAME ROOT NAMED="" GAME=""
+  [ -e "/tmp/.process-kill-data" ] && TO_KILL="$(cat /tmp/.process-kill-data)"
+  for NAME in ${TO_KILL}; do
+    [[ "${NAME}" == -* ]] || NAMED+=" $(pidof ${NAME})"
+  done
+  for ROOT in $(pidof runemu.sh foot); do
+    GAME+=" $(game_pids ${ROOT})"
+  done
+  NAMED=$(echo ${NAMED})
+  GAME=$(echo $(printf '%s\n' ${GAME} | sort -u))
+
+  ### A second SIGTERM makes RetroArch exit without saving.
+  if [ -n "${NAMED}" ]; then
     ${DEBUG} && log $0 "Execute: killall ${TO_KILL}"
     killall ${TO_KILL} 2>/dev/null
+  elif [ -n "${GAME}" ]; then
+    ${DEBUG} && log $0 "Execute: kill ${GAME}"
+    kill ${GAME} 2>/dev/null
   fi
+
+  ### ES saves its gamelists on SIGTERM.
+  if [ -z "${NAMED}${GAME}" ] || [ "${TO_KILL}" = "emulationstation" ]; then
+    return
+  fi
+
+  (
+    sleep 5
+    ${DEBUG} && log $0 "Execute: kill -9 ${NAMED} ${GAME}"
+    kill -9 ${NAMED} ${GAME} 2>/dev/null
+  ) &
 }
 
 execute_action() {
