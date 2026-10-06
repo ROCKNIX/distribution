@@ -26,4 +26,8 @@ post_install() {
   then
     enable_service volume-fixup.service
   fi
+  if [ "${DEVICE}" = "SM6115" ]
+  then
+    enable_service duolite-bottom-screen.service
+  fi
 }

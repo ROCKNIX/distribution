@@ -89,5 +89,6 @@ export LD_PRELOAD="/usr/lib/libdrastouch.so"
 export SDL_TOUCH_MOUSE_EVENTS="0"
 export DSHOOK_MIC_THRESH="${MICTHRESH}"
 export DSHOOK_SHADER="${SHADER:-none}"
+[ "${QUIRK_DEVICE}" = "Retroid Pocket Duo Lite" ] && export DSHOOK_WINDOW_SIZE="1280x1920"
 ./drastic "$1"
 kill -9 $(pidof gptokeyb)

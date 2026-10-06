@@ -203,6 +203,13 @@ case ${HW_DEVICE} in
     RK3566|RK3588|S922X)
         [[ $(/usr/bin/gpudriver) == "libmali" ]] && export QT_QPA_PLATFORM=wayland
     ;;
+    SM6115)
+        # Only on the Duo Lite, which also needs its vblank/vsync to be 
+        # handled by melonDS so it doesn't hang in OpenGL render mode
+        [ "${QUIRK_DEVICE}" = "Retroid Pocket Duo Lite" ] && \
+            export QT_QPA_PLATFORM=wayland && \
+            export vblank_mode=1
+    ;;
 esac
 
 @PANFROST@
