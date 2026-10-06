@@ -257,5 +257,6 @@ else
   ${GPTOKEYB} azahar -c /tmp/azahar.gptk &
 fi
 
+cd "${CONF_DIR}"
 ${EMUPERF} /usr/bin/azahar "${1}"
 kill -9 $(pidof gptokeyb)

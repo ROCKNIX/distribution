@@ -471,4 +471,5 @@ fi
   echo "Launching /usr/bin/${DOLPHIN_CORE} ${CMD} -e ${1}"
 
 # Run Dolphin emulator
+  cd "${CONF_DIR}"
   ${EMUPERF} /usr/bin/${DOLPHIN_CORE} ${CMD} -e "${1}"

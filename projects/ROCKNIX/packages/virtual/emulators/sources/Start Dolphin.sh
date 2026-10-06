@@ -49,4 +49,5 @@ export QT_QPA_PLATFORM=wayland
 # Match on the process instead so this works whichever platform plugin is in use.
 sway_fullscreen "dolphin-emu" "pidof" &
 
+cd "${CONF_DIR}"
 /usr/bin/dolphin-emu >/dev/null 2>&1
