@@ -1,0 +1,214 @@
+From: kapdon <94782486+kapdon@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 13:51:02 -0700
+Subject: [PATCH] rendervulkan: use a storage image for failed graphics pipelines
+
+Keep attachment-only outputs compressed on the normal path. On graphics
+pipeline failure, compute into a storage-capable scratch image and copy
+back to the original output. Do not publish an unsignaled upscale cache
+entry when composition fails.
+
+diff --git a/src/rendervulkan.hpp b/src/rendervulkan.hpp
+--- a/src/rendervulkan.hpp
++++ b/src/rendervulkan.hpp
+@@ -186,6 +186,7 @@
+ 	inline const struct wlr_dmabuf_attributes& dmabuf() { return m_dmabuf; }
+ 	inline VkImage vkImage() { return m_vkImage; }
+ 	inline bool outputImage() { return m_bOutputImage; }
++	inline bool storageImage() const { return m_bStorageImage; }
+ 	inline bool externalImage() { return m_bExternal; }
+ 	inline VkDeviceSize totalSize() const { return m_size; }
+ 	inline uint32_t drmFormat() const { return m_drmFormat; }
+@@ -214,6 +215,7 @@
+ 	bool m_bInitialized = false;
+ 	bool m_bExternal = false;
+ 	bool m_bOutputImage = false;
++	bool m_bStorageImage = false;
+ 
+ 	uint32_t m_drmFormat = DRM_FORMAT_INVALID;
+ 
+@@ -605,6 +607,7 @@
+ 
+ 	// NIS and FSR
+ 	gamescope::OwningRc<CVulkanTexture> tmpOutput;
++	gamescope::OwningRc<CVulkanTexture> computeFallback;
+ 
+ 	// NIS
+ 	gamescope::OwningRc<CVulkanTexture> nisScalerImage;
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -2431,6 +2431,7 @@
+ {
+ 	m_pBackendFb = std::move( pBackendFb );
+ 	m_drmFormat = drmFormat;
++	m_bStorageImage = flags.bStorage;
+ 	VkResult res = VK_ERROR_INITIALIZATION_FAILED;
+ 
+ 	VkImageTiling tiling = (flags.bMappable || flags.bLinear) ? VK_IMAGE_TILING_LINEAR : VK_IMAGE_TILING_OPTIMAL;
+@@ -3002,6 +3003,7 @@
+ bool CVulkanTexture::BInitFromSwapchain( VkImage image, uint32_t width, uint32_t height, VkFormat format )
+ {
+ 	m_drmFormat = VulkanFormatToDRM( format );
++	m_bStorageImage = true;
+ 	m_vkImage = image;
+ 	m_vkImageMemory = VK_NULL_HANDLE;
+ 	m_width = width;
+@@ -3766,7 +3768,7 @@
+ 	outputImageflags.bStorage = !g_bCompositeGraphics; // storage forces linear, attachment-only can take UBWC
+ 	outputImageflags.bColorAttachment = g_bCompositeGraphics;
+ 	outputImageflags.bTransferSrc = true; // for screenshots
+-	outputImageflags.bTransferDst = g_bCompositeBlit; // for composite-blit
++	outputImageflags.bTransferDst = g_bCompositeBlit || g_bCompositeGraphics; // for composite-blit
+ 	outputImageflags.bSampled = true; // for pipewire blits
+ 	outputImageflags.bOutputImage = true;
+ 
+@@ -4859,6 +4861,35 @@
+ 		uOutputRotation = g_uPreRotation;
+ 	const bool bWantGfxBlit = g_bCompositeGraphics && ( !pOutputOverride || bAllowGfxBlit );
+ 
++	gamescope::Rc<CVulkanTexture> fallbackDestination;
++	auto prepareComputeTarget = [&]() -> bool
++	{
++		if ( compositeImage->storageImage() )
++			return true;
++
++		auto &cached = g_output.computeFallback;
++		if ( !cached || cached->width() != compositeImage->width() ||
++		     cached->height() != compositeImage->height() ||
++		     cached->drmFormat() != compositeImage->drmFormat() )
++		{
++			CVulkanTexture::createFlags flags;
++			flags.bStorage = true;
++			flags.bTransferSrc = true;
++			gamescope::OwningRc<CVulkanTexture> scratch = new CVulkanTexture();
++			if ( !scratch->BInit( compositeImage->width(), compositeImage->height(), 1,
++			                     compositeImage->drmFormat(), flags ) )
++			{
++				vk_log.errorf( "composite-graphics: failed to allocate compute fallback" );
++				return false;
++			}
++			cached = std::move( scratch );
++		}
++
++		fallbackDestination = compositeImage;
++		compositeImage = cached;
++		return true;
++	};
++
+ 	// The pre-emptive upscale is the only caller that brings its own command buffer.
+ 	const bool bPreemptiveUpscale = pOutputOverride != nullptr && pInCommandBuffer != nullptr;
+ 	auto cmdBuffer = pInCommandBuffer ? std::move( pInCommandBuffer ) : g_device.commandBuffer();
+@@ -4916,6 +4947,9 @@
+ 		}
+ 		else
+ 		{
++			if ( !prepareComputeTarget() )
++				return std::nullopt;
++
+ 			cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_RCAS, frameInfo->layers.count(), frameInfo->ycbcrMask() & ~1, 0u, frameInfo->colorspaceMask(), outputTF ));
+ 			bind_all_layers(cmdBuffer.get(), frameInfo);
+ 			cmdBuffer->bindTexture(0, g_output.tmpOutput);
+@@ -4976,6 +5010,9 @@
+ 		}
+ 		else
+ 		{
++			if ( !prepareComputeTarget() )
++				return std::nullopt;
++
+ 			cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BLIT, nisFrameInfo.layers.count(), nisFrameInfo.ycbcrMask(), 0u, nisFrameInfo.colorspaceMask(), outputTF ));
+ 			bind_all_layers(cmdBuffer.get(), &nisFrameInfo);
+ 			cmdBuffer->bindTarget(compositeImage);
+@@ -5031,6 +5068,9 @@
+ 		else
+ 		{
+ 			type = bCondBlur ? SHADER_TYPE_BLUR_COND : SHADER_TYPE_BLUR;
++			if ( !prepareComputeTarget() )
++				return std::nullopt;
++
+ 			cmdBuffer->bindPipeline(g_device.pipeline(type, frameInfo->layers.count(), frameInfo->ycbcrMask(), blur_layer_count, frameInfo->colorspaceMask(), outputTF ));
+ 			bind_all_layers(cmdBuffer.get(), frameInfo);
+ 			cmdBuffer->bindTarget(compositeImage);
+@@ -5056,6 +5096,9 @@
+ 		}
+ 		else
+ 		{
++			if ( !prepareComputeTarget() )
++				return std::nullopt;
++
+ 			cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BLIT, frameInfo->layers.count(), frameInfo->ycbcrMask(), 0u, frameInfo->colorspaceMask(), outputTF ));
+ 			bind_all_layers(cmdBuffer.get(), frameInfo);
+ 			cmdBuffer->bindTarget(compositeImage);
+@@ -5067,6 +5110,12 @@
+ 		}
+ 	}
+ 
++	if ( fallbackDestination )
++	{
++		cmdBuffer->copyImage( compositeImage, fallbackDestination );
++		compositeImage = std::move( fallbackDestination );
++	}
++
+ 	if ( pPipewireTexture != nullptr )
+ 	{
+ 
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -8322,6 +8322,7 @@
+ 	imageFlags.bSampled = true;
+ 	imageFlags.bStorage = !g_bCompositeGraphics;
+ 	imageFlags.bColorAttachment = g_bCompositeGraphics;
++	imageFlags.bTransferDst = g_bCompositeGraphics;
+ 	imageFlags.bTransferSrc = g_bCompositeBlit;
+ 	imageFlags.bFlippable = true;
+ 	pTexture->BInit( g_nOutputWidth, g_nOutputHeight, 1, uDrmFormat, imageFlags );
+@@ -8515,26 +8516,34 @@
+ 
+ 			std::optional<uint64_t> seqNo = vulkan_composite( &upscaledFrameInfo, nullptr, false, pTempImage->pTexture, false, std::move( pCommandBuffer ), true );
+ 
+-			if ( cv_upscale_preemptive_debug_force_sync )
++			if ( !seqNo )
+ 			{
+-				vulkan_wait( *seqNo, true );
++				--pTempImage->ulLastPoint;
++				bPreemptiveUpscale = false;
+ 			}
++			else
++			{
++				if ( cv_upscale_preemptive_debug_force_sync )
++				{
++					vulkan_wait( *seqNo, true );
++				}
+ 
+-			pUpscaleFocus->oLastPreemptiveUpscaleSeqNo = seqNo;
++				pUpscaleFocus->oLastPreemptiveUpscaleSeqNo = seqNo;
+ 
+-			newCommit->upscaledTexture = std::optional<UpscaledTexture_t>
+-			{
+-				std::in_place_t{},
+-				upscaledFrameInfo.eUpscaleFilter,
+-				upscaledFrameInfo.eUpscaleScaler,
+-				g_nOutputWidth,
+-				g_nOutputHeight,
+-				pTempImage->pTexture,
+-				upscaledFrameInfo.outputEncodingEOTF == EOTF_Gamma22 ? VK_COLOR_SPACE_SRGB_NONLINEAR_KHR : VK_COLOR_SPACE_HDR10_ST2084_EXT,
+-			};
++				newCommit->upscaledTexture = std::optional<UpscaledTexture_t>
++				{
++					std::in_place_t{},
++					upscaledFrameInfo.eUpscaleFilter,
++					upscaledFrameInfo.eUpscaleScaler,
++					g_nOutputWidth,
++					g_nOutputHeight,
++					pTempImage->pTexture,
++					upscaledFrameInfo.outputEncodingEOTF == EOTF_Gamma22 ? VK_COLOR_SPACE_SRGB_NONLINEAR_KHR : VK_COLOR_SPACE_HDR10_ST2084_EXT,
++				};
+ 
+-			// Manifest a new acquire timeline point with this inline work.
+-			eventFd = gamescope::CAcquireTimelinePoint( pTempImage->pReleaseTimeline, ulNextReleasePoint ).CreateEventFd();
++				// Manifest a new acquire timeline point with this inline work.
++				eventFd = gamescope::CAcquireTimelinePoint( pTempImage->pReleaseTimeline, ulNextReleasePoint ).CreateEventFd();
++			}
+ 
+ 			//xwm_log.infof( "Pre-emptively upscaling!" );
+ 		}
