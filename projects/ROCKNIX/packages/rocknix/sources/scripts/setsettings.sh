@@ -641,6 +641,7 @@ function set_translation() {
         ;;
         *)
             add_setting "none" "ai_service_enable" "true"
+            add_setting "ai_service_pause" "ai_service_pause"
             local AI_LANG="$(game_setting ai_target_lang)"
             local AI_URL="$(game_setting ai_service_url)"
             case ${AI_URL} in
