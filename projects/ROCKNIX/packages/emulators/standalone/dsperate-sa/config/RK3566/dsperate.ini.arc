@@ -40,8 +40,6 @@ vsync = true
 [keys]
 
 [pad]
-x = x
-y = y
 stick_dpad = none
 stylus_axis = none
 stylus_dpad = rightstick
