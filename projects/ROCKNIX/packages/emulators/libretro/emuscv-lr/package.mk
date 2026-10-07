@@ -16,7 +16,9 @@ PKG_MAKE_OPTS_TARGET="platform=unix"
 
 pre_configure_target() {
   export TERM=xterm
+  CFLAGS+=" -DPNG_ARM_NEON_OPT=0"
   CXXFLAGS+=" -I$(get_build_dir glibc)/sysdeps/unix/sysv/linux/x86"
+  LDFLAGS+=" -lSDL2"
   sed -i 's~tools/bin2c/~'${TOOLCHAIN}'/usr/bin/~g' Makefile.libretro
 }
 

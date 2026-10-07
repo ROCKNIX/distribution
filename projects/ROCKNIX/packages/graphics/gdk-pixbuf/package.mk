@@ -13,6 +13,8 @@ pre_configure_target() {
                          -Drelocatable=false \
                          -Dinstalled_tests=false \
                          -Dglycin=disabled \
+                         -Dothers=enabled \
+                         -Dlegacy_xpm=enabled \
                          -Dtests=false"
 
   if [ "${DISPLAYSERVER}" != "x11" ]; then
