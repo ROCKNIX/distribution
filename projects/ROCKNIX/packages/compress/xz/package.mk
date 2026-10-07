@@ -3,6 +3,7 @@
 
 . ${ROOT}/packages/compress/xz/package.mk
 
+PKG_DEPENDS_HOST="ccache:host"
 PKG_BUILD_FLAGS="+pic +pic:host"
 
 PKG_CONFIGURE_OPTS_HOST="--disable-shared \
