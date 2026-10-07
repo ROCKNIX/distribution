@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="dsperate-sa"
-PKG_VERSION="3.0.1"
-PKG_SHA256="6b0027e00e6d5ef1d20f8a15830f618f7ee147ffa8fac1f6371d264e316ede12"
+PKG_VERSION="3.0.2"
+PKG_SHA256="6792d96b303f48d99bea925544f550bd9a217f06b2249a605e3c90c9aaa559a6"
 PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/beebono/DSperate"
 PKG_URL="${PKG_SITE}/releases/download/v${PKG_VERSION}/dsperate-v${PKG_VERSION}-linux-${TARGET_ARCH}.tar.gz"
