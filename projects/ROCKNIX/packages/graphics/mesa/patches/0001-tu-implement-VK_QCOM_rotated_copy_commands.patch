@@ -1,0 +1,458 @@
+From a724ffb612e30c2df67bc33129c6f65b5582682d Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Mon, 21 Sep 2026 13:47:22 -0700
+Subject: [PATCH] tu: implement VK_QCOM_rotated_copy_commands
+
+The 2D engine can rotate while it copies, so buffer/image copies and most
+rotated blits just set the rotation on the 2D blit. A blit that also
+mirrors one axis at 90 or 270 degrees, or uses a cubic filter, goes
+through the 3D path, which swaps the texture coordinates in the shader.
+---
+ docs/features.txt                     |   1 +
+ src/freedreno/vulkan/tu_clear_blit.cc | 266 +++++++++++++++++++++++---
+ src/freedreno/vulkan/tu_device.cc     |   1 +
+ src/freedreno/vulkan/tu_device.h      |   2 +
+ 4 files changed, 248 insertions(+), 22 deletions(-)
+
+diff --git a/docs/features.txt b/docs/features.txt
+index ada13f68970..75ac2a0f923 100644
+--- a/docs/features.txt
++++ b/docs/features.txt
+@@ -748,6 +748,7 @@ Khronos extensions that are not part of any Vulkan version:
+   VK_QCOM_multiview_per_view_render_areas               DONE (tu)
+   VK_QCOM_multiview_per_view_viewports                  DONE (tu)
+   VK_QCOM_render_pass_shader_resolve                    DONE (tu)
++  VK_QCOM_rotated_copy_commands                         DONE (tu)
+   VK_VALVE_fragment_density_map_layered                 DONE (tu)
+   VK_VALVE_mutable_descriptor_type                      DONE (anv, hasvk, hk, nvk, panvk/v9+, radv, tu, vn)
+   VK_VALVE_shader_mixed_float_dot_product               DONE (radv/{vega20,navi14,gfx10.3+})
+diff --git a/src/freedreno/vulkan/tu_clear_blit.cc b/src/freedreno/vulkan/tu_clear_blit.cc
+index 387c7d54849..595a77e479c 100644
+--- a/src/freedreno/vulkan/tu_clear_blit.cc
++++ b/src/freedreno/vulkan/tu_clear_blit.cc
+@@ -300,6 +300,125 @@ r2d_coords(struct tu_cmd_buffer *cmd,
+                    GRAS_A2D_SRC_YMAX(CHIP, src.y + extent.height - 1));
+ }
+ 
++/* VK_QCOM_rotated_copy_commands. ROTATE_90 is clockwise, same as Vulkan. */
++static enum a6xx_rotation
++tu_copy_transform_rotation(const void *pnext)
++{
++   const VkCopyCommandTransformInfoQCOM *transform_info =
++      vk_find_struct_const(pnext, COPY_COMMAND_TRANSFORM_INFO_QCOM);
++   if (!transform_info)
++      return ROTATE_0;
++   switch (transform_info->transform) {
++   case VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR:
++      return ROTATE_90;
++   case VK_SURFACE_TRANSFORM_ROTATE_180_BIT_KHR:
++      return ROTATE_180;
++   case VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR:
++      return ROTATE_270;
++   default:
++      return ROTATE_0;
++   }
++}
++
++static inline bool
++tu_rotation_transposes(enum a6xx_rotation rot)
++{
++   return rot == ROTATE_90 || rot == ROTATE_270;
++}
++
++static inline enum a6xx_rotation
++tu_rotation_inverse(enum a6xx_rotation rot)
++{
++   return rot == ROTATE_90 ? ROTATE_270 : rot == ROTATE_270 ? ROTATE_90 : rot;
++}
++
++/* The 2d rotation for a rotated blit, if the transform plus any mirroring
++ * from reversed offsets is something the 2d engine can do.
++ */
++static bool
++tu_blit_2d_rotation(enum a6xx_rotation rot, const VkImageBlit2 *info, enum a6xx_rotation *out)
++{
++   static const enum a6xx_rotation rotate_180_mirrored[2][2] = {
++      {ROTATE_180, ROTATE_VFLIP},
++      {ROTATE_HFLIP, ROTATE_0},
++   };
++   const bool src_x_reversed = info->srcOffsets[1].x < info->srcOffsets[0].x;
++   const bool src_y_reversed = info->srcOffsets[1].y < info->srcOffsets[0].y;
++   const bool dst_x_reversed = info->dstOffsets[1].x < info->dstOffsets[0].x;
++   const bool dst_y_reversed = info->dstOffsets[1].y < info->dstOffsets[0].y;
++
++   const bool transposes = tu_rotation_transposes(rot);
++   const bool mirror_x = src_x_reversed != (transposes ? dst_y_reversed : dst_x_reversed);
++   const bool mirror_y = src_y_reversed != (transposes ? dst_x_reversed : dst_y_reversed);
++
++   if (!transposes) {
++      /* 180 is both flips */
++      assert(rot == ROTATE_180);
++      *out = rotate_180_mirrored[mirror_y][mirror_x];
++      return true;
++   }
++
++   /* 90 or 270 with both axes reversed is the other one, with one reversed
++    * it's a transpose, which the 2d engine can't do
++    */
++   if (mirror_x != mirror_y)
++      return false;
++   *out = mirror_x ? tu_rotation_inverse(rot) : rot;
++   return true;
++}
++
++/* Top-left of the copied region, which the spec rotates around imageOffset. */
++static VkOffset2D
++tu_rotated_region_origin(enum a6xx_rotation rot, VkOffset3D offset, VkExtent3D extent)
++{
++   switch (rot) {
++   case ROTATE_90:
++      return (VkOffset2D) { offset.x - (int32_t) extent.height, offset.y };
++   case ROTATE_180:
++      return (VkOffset2D) { offset.x - (int32_t) extent.width, offset.y - (int32_t) extent.height };
++   case ROTATE_270:
++      return (VkOffset2D) { offset.x, offset.y - (int32_t) extent.width };
++   default:
++      return (VkOffset2D) { offset.x, offset.y };
++   }
++}
++
++/* Where texels [row_x, row_x + count) of buffer row y land in the rotated region. */
++static VkOffset2D
++tu_rotated_strip(enum a6xx_rotation rot, uint32_t y, uint32_t row_x, uint32_t count, uint32_t width, uint32_t height,
++                 VkExtent2D *strip_extent)
++{
++   switch (rot) {
++   case ROTATE_90:
++      *strip_extent = (VkExtent2D) { 1, count };
++      return (VkOffset2D) { (int32_t) (height - 1 - y), (int32_t) row_x };
++   case ROTATE_180:
++      *strip_extent = (VkExtent2D) { count, 1 };
++      return (VkOffset2D) { (int32_t) (width - row_x - count), (int32_t) (height - 1 - y) };
++   case ROTATE_270:
++      *strip_extent = (VkExtent2D) { 1, count };
++      return (VkOffset2D) { (int32_t) y, (int32_t) (width - row_x - count) };
++   default:
++      *strip_extent = (VkExtent2D) { count, 1 };
++      return (VkOffset2D) { (int32_t) row_x, (int32_t) y };
++   }
++}
++
++/* Like r2d_coords, but src and dst sizes can differ (swapped for 90/270). */
++template <chip CHIP>
++static void
++r2d_coords_ex(struct tu_cs *cs,
++              const VkOffset2D dst,
++              const VkExtent2D dst_extent,
++              const VkOffset2D src,
++              const VkExtent2D src_extent)
++{
++   tu_cs_emit_regs(cs, GRAS_A2D_DEST_TL(CHIP, .x = dst.x, .y = dst.y),
++                   GRAS_A2D_DEST_BR(CHIP, .x = dst.x + dst_extent.width - 1, .y = dst.y + dst_extent.height - 1));
++   tu_cs_emit_regs(cs, GRAS_A2D_SRC_XMIN(CHIP, src.x), GRAS_A2D_SRC_XMAX(CHIP, src.x + src_extent.width - 1),
++                   GRAS_A2D_SRC_YMIN(CHIP, src.y), GRAS_A2D_SRC_YMAX(CHIP, src.y + src_extent.height - 1));
++}
++
+ static void
+ r2d_clear_value(struct tu_cmd_buffer *cmd,
+                 struct tu_cs *cs,
+@@ -831,7 +950,7 @@ build_clear_vs_shader(void)
+ }
+ 
+ static nir_shader *
+-build_blit_fs_shader(bool zscale)
++build_blit_fs_shader(bool zscale, bool swap_coords)
+ {
+    nir_builder _b =
+       nir_builder_init_simple_shader(MESA_SHADER_FRAGMENT, NULL,
+@@ -851,8 +970,14 @@ build_blit_fs_shader(bool zscale)
+    b->shader->info.num_textures = 1;
+    BITSET_SET(b->shader->info.textures_used, 0);
+ 
++   /* rotated blits: source x and y follow destination y and x */
++   static const unsigned swapped[] = { 1, 0, 2 };
++   nir_def *coords = nir_load_var(b, in_coords);
++   if (swap_coords)
++      coords = nir_swizzle(b, coords, swapped, coord_components);
++
+    nir_def *res =
+-      nir_tex(b, nir_load_var(b, in_coords),
++      nir_tex(b, coords,
+               .texture_index = 0, .sampler_index = 0,
+               .dim = zscale ? GLSL_SAMPLER_DIM_3D : GLSL_SAMPLER_DIM_2D,
+ 
+@@ -1007,8 +1132,10 @@ tu_init_clear_blit_shaders(struct tu_device *dev)
+    compile_shader(dev, build_blit_vs_shader(), 3, &offset, GLOBAL_SH_VS_BLIT);
+    compile_shader(dev, build_multi_blit_vs_shader(), 3, &offset, GLOBAL_SH_VS_MULTI_BLIT);
+    compile_shader(dev, build_clear_vs_shader(), 2, &offset, GLOBAL_SH_VS_CLEAR);
+-   compile_shader(dev, build_blit_fs_shader(false), 0, &offset, GLOBAL_SH_FS_BLIT);
+-   compile_shader(dev, build_blit_fs_shader(true), 0, &offset, GLOBAL_SH_FS_BLIT_ZSCALE);
++   compile_shader(dev, build_blit_fs_shader(false, false), 0, &offset, GLOBAL_SH_FS_BLIT);
++   compile_shader(dev, build_blit_fs_shader(true, false), 0, &offset, GLOBAL_SH_FS_BLIT_ZSCALE);
++   compile_shader(dev, build_blit_fs_shader(false, true), 0, &offset, GLOBAL_SH_FS_BLIT_SWAP_COORDS);
++   compile_shader(dev, build_blit_fs_shader(true, true), 0, &offset, GLOBAL_SH_FS_BLIT_ZSCALE_SWAP_COORDS);
+    compile_shader(dev, build_ms_copy_fs_shader(), 0, &offset, GLOBAL_SH_FS_COPY_MS);
+    for (unsigned i = 0; i < 3; i++) {
+       compile_shader(dev, build_ms_resolve_fs_shader(2 << i), 0, &offset,
+@@ -1040,7 +1167,7 @@ template <chip CHIP>
+ static void
+ r3d_common(struct tu_cmd_buffer *cmd, struct tu_cs *cs, enum r3d_type type,
+            uint32_t rts_mask, bool z_scale, VkSampleCountFlagBits src_samples,
+-           VkSampleCountFlagBits dst_samples)
++           VkSampleCountFlagBits dst_samples, bool swap_coords = false)
+ {
+    enum global_shader vs_id =
+       type == R3D_CLEAR ? GLOBAL_SH_VS_CLEAR :
+@@ -1052,7 +1179,9 @@ r3d_common(struct tu_cmd_buffer *cmd, struct tu_cs *cs, enum r3d_type type,
+    enum global_shader fs_id = GLOBAL_SH_FS_BLIT;
+ 
+    if (z_scale) {
+-      fs_id = GLOBAL_SH_FS_BLIT_ZSCALE;
++      fs_id = swap_coords ? GLOBAL_SH_FS_BLIT_ZSCALE_SWAP_COORDS : GLOBAL_SH_FS_BLIT_ZSCALE;
++   } else if (swap_coords) {
++      fs_id = GLOBAL_SH_FS_BLIT_SWAP_COORDS;
+    } else if (src_samples != VK_SAMPLE_COUNT_1_BIT) {
+       /* COPY_MS reads load_sample_id, which is 0 on a 1x destination. */
+       fs_id = dst_samples == VK_SAMPLE_COUNT_1_BIT
+@@ -1737,6 +1866,7 @@ enum r3d_blit_param {
+    R3D_USE_MULTI_BLIT = 1 << 3,
+    R3D_OUTSIDE_PASS = 1 << 4,
+    R3D_OVERLAPPING = 1 << 5,
++   R3D_SWAP_COORDS = 1 << 6,
+ };
+ 
+ template <chip CHIP>
+@@ -1797,7 +1927,7 @@ r3d_setup(struct tu_cmd_buffer *cmd,
+    const enum r3d_type type = (clear) ? R3D_CLEAR :
+       ((blit_param & R3D_USE_MULTI_BLIT) ? R3D_MULTI_BLIT : R3D_BLIT);
+    r3d_common<CHIP>(cmd, cs, type, 1, blit_param & R3D_Z_SCALE, src_samples,
+-                    dst_samples);
++                    dst_samples, blit_param & R3D_SWAP_COORDS);
+ 
+    tu_cs_emit_regs(cs, A6XX_SP_PS_MRT_CNTL(.mrt = 1));
+    tu_cs_emit_regs(cs, A6XX_RB_PS_MRT_CNTL(.mrt = 1));
+@@ -2002,6 +2132,34 @@ coords(const struct blit_ops *ops,
+                (VkExtent2D) {extent.width, extent.height});
+ }
+ 
++/* Sets blit coordinates to copy a 1D horizontal strip of a row
++ * between a buffer and an image, handling any rotation.
++ */
++template <chip CHIP>
++static void
++buffer_row_coords(const struct blit_ops *ops, struct tu_cmd_buffer *cmd, struct tu_cs *cs, bool to_image,
++                  enum a6xx_rotation rot, VkOffset3D offset, VkExtent3D extent,
++                  uint32_t y, uint32_t buf_x, uint32_t row_x, uint32_t count)
++{
++   const VkOffset2D buf = { (int32_t) buf_x, 0 };
++   const VkExtent2D buf_extent = { count, 1 };
++
++   if (rot == ROTATE_0) {
++      const VkOffset2D img = { offset.x + (int32_t) row_x, offset.y + (int32_t) y };
++      ops->coords(cmd, cs, to_image ? img : buf, to_image ? buf : img, buf_extent);
++      return;
++   }
++
++   VkExtent2D img_extent;
++   const VkOffset2D origin = tu_rotated_region_origin(rot, offset, extent);
++   const VkOffset2D strip = tu_rotated_strip(rot, y, row_x, count, extent.width, extent.height, &img_extent);
++   const VkOffset2D img = { origin.x + strip.x, origin.y + strip.y };
++   if (to_image)
++      r2d_coords_ex<CHIP>(cs, img, img_extent, buf, buf_extent);
++   else
++      r2d_coords_ex<CHIP>(cs, buf, buf_extent, img, img_extent);
++}
++
+ /* Decides the VK format to treat our data as for a memcpy-style blit. We have
+  * to be a bit careful because we have to pick a format with matching UBWC
+  * compression behavior, so no just returning R8_UINT/R16_UINT/R32_UINT for
+@@ -2474,6 +2632,21 @@ tu6_blit_image(struct tu_cmd_buffer *cmd,
+       blit_param = z_scale ? R3D_Z_SCALE : 0;
+    }
+ 
++   /* rotated blits: the 2d path when the result is a plain rotation or flip,
++    * otherwise the 3d path with the source coords rotated
++    */
++   const enum a6xx_rotation copy_rot = tu_copy_transform_rotation(info->pNext);
++   if (copy_rot != ROTATE_0) {
++      enum a6xx_rotation rot_2d;
++      if (ops == &r2d_ops<CHIP> && tu_blit_2d_rotation(copy_rot, info, &rot_2d)) {
++         blit_param = rot_2d;
++      } else {
++         ops = &r3d_ops<CHIP>;
++         blit_param = (z_scale ? R3D_Z_SCALE : 0) |
++                      (tu_rotation_transposes(copy_rot) ? R3D_SWAP_COORDS : 0);
++      }
++   }
++
+    /* use the right format in setup() for D32_S8 */
+    enum pipe_format src_format = tu_aspects_to_plane(
+       src_image->vk.format, info->srcSubresource.aspectMask);
+@@ -2488,10 +2661,32 @@ tu6_blit_image(struct tu_cmd_buffer *cmd,
+               (VkSampleCountFlagBits) dst_image->layout[0].nr_samples);
+ 
+    if (ops == &r3d_ops<CHIP>) {
++      /* for rotated blits the corners get rotated source coords, and the
++       * shader swaps them back for 90 and 270
++       */
++      const VkOffset3D *src_offsets = info->srcOffsets;
++      float u0 = src_offsets[0].x, v0 = src_offsets[0].y;
++      float u1 = src_offsets[1].x, v1 = src_offsets[1].y;
++      if (copy_rot == ROTATE_90) {
++         u0 = src_offsets[1].y;
++         v0 = src_offsets[0].x;
++         u1 = src_offsets[0].y;
++         v1 = src_offsets[1].x;
++      } else if (copy_rot == ROTATE_180) {
++         u0 = src_offsets[1].x;
++         v0 = src_offsets[1].y;
++         u1 = src_offsets[0].x;
++         v1 = src_offsets[0].y;
++      } else if (copy_rot == ROTATE_270) {
++         u0 = src_offsets[0].y;
++         v0 = src_offsets[1].x;
++         u1 = src_offsets[1].y;
++         v1 = src_offsets[0].x;
++      }
+       const float coords[] = { info->dstOffsets[0].x, info->dstOffsets[0].y,
+-                               info->srcOffsets[0].x, info->srcOffsets[0].y,
++                               u0, v0,
+                                info->dstOffsets[1].x, info->dstOffsets[1].y,
+-                               info->srcOffsets[1].x, info->srcOffsets[1].y };
++                               u1, v1 };
+       r3d_coords_raw(cmd, cs, coords);
+    } else {
+       tu_cs_emit_regs(cs,
+@@ -2638,6 +2833,17 @@ tu_copy_buffer_to_image(struct tu_cmd_buffer *cmd,
+    uint32_t pitch = src_width * block_size;
+    uint32_t layer_size = src_height * pitch;
+ 
++   /* only the 2d path can rotate, a6xx still needs the per-row loop for unaligned buffers */
++   const enum a6xx_rotation copy_rot = tu_copy_transform_rotation(info->pNext);
++   const VkOffset2D rot_origin = tu_rotated_region_origin(copy_rot, offset, extent);
++   VkExtent2D img_extent = { extent.width, extent.height };
++   if (copy_rot != ROTATE_0) {
++      blit_param = copy_rot;
++      ops = &r2d_ops<CHIP>;
++      if (tu_rotation_transposes(copy_rot))
++         img_extent = (VkExtent2D) { extent.height, extent.width };
++   }
++
+    ops->setup(cmd, cs, src_format, dst_format,
+               info->imageSubresource.aspectMask, blit_param, false, dst_image->layout[0].ubwc,
+               (VkSampleCountFlagBits) dst_image->layout[0].nr_samples,
+@@ -2667,8 +2873,7 @@ tu_copy_buffer_to_image(struct tu_cmd_buffer *cmd,
+ 
+             ops->src_buffer(cmd, cs, src_format, src_va & ~63, pitch,
+                             x + clamped_width, 1, dst_format);
+-            ops->coords(cmd, cs, (VkOffset2D) {offset.x, offset.y + y},  (VkOffset2D) {x},
+-                        (VkExtent2D) {clamped_width, 1});
++            buffer_row_coords<CHIP>(ops, cmd, cs, true, copy_rot, offset, extent, y, x, 0, clamped_width);
+             ops->run(cmd, cs);
+ 
+             if (excess_width) {
+@@ -2677,10 +2882,8 @@ tu_copy_buffer_to_image(struct tu_cmd_buffer *cmd,
+                assert((src_va_overflow & 63) == 0);
+                ops->src_buffer(cmd, cs, src_format, src_va_overflow & ~63,
+                                pitch, excess_width, 1, dst_format);
+-               ops->coords(
+-                  cmd, cs,
+-                  (VkOffset2D) { offset.x + clamped_width, offset.y + y },
+-                  (VkOffset2D) { 0 }, (VkExtent2D) { excess_width, 1 });
++               buffer_row_coords<CHIP>(ops, cmd, cs, true, copy_rot, offset, extent, y, 0, clamped_width,
++                                       excess_width);
+                ops->run(cmd, cs);
+             }
+             src_va += pitch;
+@@ -2700,7 +2903,12 @@ tu_copy_buffer_to_image(struct tu_cmd_buffer *cmd,
+             ops->src_buffer(cmd, cs, src_format, src_va, pitch, extent.width,
+                             extent.height, dst_format);
+          }
+-         coords(ops, cmd, cs, offset, (VkOffset3D) {}, extent);
++         if (copy_rot != ROTATE_0) {
++            r2d_coords_ex<CHIP>(cs, rot_origin, img_extent, (VkOffset2D) { 0, 0 },
++                                (VkExtent2D) { extent.width, extent.height });
++         } else {
++            coords(ops, cmd, cs, offset, (VkOffset3D) {}, extent);
++         }
+          ops->run(cmd, cs);
+       }
+    }
+@@ -2860,6 +3068,17 @@ tu_copy_image_to_buffer(struct tu_cmd_buffer *cmd,
+    uint32_t pitch = dst_width * block_size;
+    uint32_t layer_size = pitch * dst_height;
+ 
++   /* only the 2d path can rotate, reading back into the buffer needs the inverse */
++   const enum a6xx_rotation copy_rot = tu_copy_transform_rotation(info->pNext);
++   const VkOffset2D rot_origin = tu_rotated_region_origin(copy_rot, offset, extent);
++   VkExtent2D img_extent = { extent.width, extent.height };
++   if (copy_rot != ROTATE_0) {
++      blit_param = tu_rotation_inverse(copy_rot);
++      ops = &r2d_ops<CHIP>;
++      if (tu_rotation_transposes(copy_rot))
++         img_extent = (VkExtent2D) { extent.height, extent.width };
++   }
++
+    handle_buffer_unaligned_store<CHIP>(cmd,
+                                        vk_buffer_address(&dst_buffer->vk, info->bufferOffset),
+                                        layer_size * layers, unaligned_store);
+@@ -2889,17 +3108,15 @@ tu_copy_image_to_buffer(struct tu_cmd_buffer *cmd,
+             uint32_t clamped_width = extent.width - excess_width;
+ 
+             ops->dst_buffer(cs, dst_format, dst_va & ~63, 0, src_format);
+-            ops->coords(cmd, cs, (VkOffset2D) {x}, (VkOffset2D) {offset.x, offset.y + y},
+-                        (VkExtent2D) {clamped_width, 1});
++            buffer_row_coords<CHIP>(ops, cmd, cs, false, copy_rot, offset, extent, y, x, 0, clamped_width);
+             ops->run(cmd, cs);
+ 
+             if (excess_width) {
+                uint64_t dst_va_overflow = (dst_va + clamped_width * block_size);
+                assert((dst_va_overflow & 63) == 0);
+                ops->dst_buffer(cs, dst_format, dst_va_overflow, 0, src_format);
+-               ops->coords(cmd, cs, (VkOffset2D) { 0 },
+-                           (VkOffset2D) { offset.x + clamped_width, offset.y + y },
+-                           (VkExtent2D) { excess_width, 1 });
++               buffer_row_coords<CHIP>(ops, cmd, cs, false, copy_rot, offset, extent, y, 0, clamped_width,
++                                       excess_width);
+                ops->run(cmd, cs);
+             }
+ 
+@@ -2907,7 +3124,12 @@ tu_copy_image_to_buffer(struct tu_cmd_buffer *cmd,
+          }
+       } else {
+          ops->dst_buffer(cs, dst_format, dst_va, pitch, src_format);
+-         coords(ops, cmd, cs, (VkOffset3D) {0, 0}, offset, extent);
++         if (copy_rot != ROTATE_0) {
++            r2d_coords_ex<CHIP>(cs, (VkOffset2D) { 0, 0 }, (VkExtent2D) { extent.width, extent.height }, rot_origin,
++                                img_extent);
++         } else {
++            coords(ops, cmd, cs, (VkOffset3D) { 0, 0 }, offset, extent);
++         }
+          ops->run(cmd, cs);
+       }
+    }
+diff --git a/src/freedreno/vulkan/tu_device.cc b/src/freedreno/vulkan/tu_device.cc
+index e8ef94037dc..a626272e188 100644
+--- a/src/freedreno/vulkan/tu_device.cc
++++ b/src/freedreno/vulkan/tu_device.cc
+@@ -410,6 +410,7 @@ get_device_extensions(const struct tu_physical_device *device,
+       .QCOM_multiview_per_view_viewports =
+          device->info->props.has_per_view_viewport,
+       .QCOM_render_pass_shader_resolve = true,
++      .QCOM_rotated_copy_commands = true,
+       .VALVE_fragment_density_map_layered = tu_is_vk_1_1(device),
+       .VALVE_mutable_descriptor_type = true,
+    } };
+diff --git a/src/freedreno/vulkan/tu_device.h b/src/freedreno/vulkan/tu_device.h
+index 4ed479ce8c2..ae097a5bb43 100644
+--- a/src/freedreno/vulkan/tu_device.h
++++ b/src/freedreno/vulkan/tu_device.h
+@@ -50,6 +50,8 @@ enum global_shader {
+    GLOBAL_SH_VS_CLEAR,
+    GLOBAL_SH_FS_BLIT,
+    GLOBAL_SH_FS_BLIT_ZSCALE,
++   GLOBAL_SH_FS_BLIT_SWAP_COORDS,
++   GLOBAL_SH_FS_BLIT_ZSCALE_SWAP_COORDS,
+    GLOBAL_SH_FS_COPY_MS,
+    GLOBAL_SH_FS_RESOLVE_MS2,
+    GLOBAL_SH_FS_RESOLVE_MS4,
