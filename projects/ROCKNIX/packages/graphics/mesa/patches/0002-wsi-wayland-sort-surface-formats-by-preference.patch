@@ -1,0 +1,90 @@
+From 94d4cc86899452a5dcb798baf4b30808d302863d Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Mon, 21 Sep 2026 20:18:05 -0700
+Subject: [PATCH] wsi/wayland: sort surface formats by preference
+
+Formats were listed in compositor order and most apps take the first one.
+On wlroots with a Qualcomm display that is a 16-bit float format, which
+doubles the bandwidth for SDR content and can't be scanned out directly.
+
+List 8-bit UNORM first, then sRGB, 10-bit, other packed formats, 16-bit
+UNORM and float last. The compositor's order is kept within each group.
+---
+ src/vulkan/wsi/wsi_common_wayland.c | 50 +++++++++++++++++++++++++++++
+ 1 file changed, 50 insertions(+)
+
+diff --git a/src/vulkan/wsi/wsi_common_wayland.c b/src/vulkan/wsi/wsi_common_wayland.c
+index 33a4059617c..20050922a1b 100644
+--- a/src/vulkan/wsi/wsi_common_wayland.c
++++ b/src/vulkan/wsi/wsi_common_wayland.c
+@@ -2157,6 +2157,54 @@ wsi_wl_surface_get_capabilities2(VkIcdSurfaceBase *surface,
+    return result;
+ }
+ 
++static int
++wsi_wl_format_rank(VkFormat format)
++{
++   switch (format) {
++   case VK_FORMAT_B8G8R8A8_UNORM:
++   case VK_FORMAT_R8G8B8A8_UNORM:
++   case VK_FORMAT_A8B8G8R8_UNORM_PACK32:
++      return 0;
++   case VK_FORMAT_B8G8R8A8_SRGB:
++   case VK_FORMAT_R8G8B8A8_SRGB:
++   case VK_FORMAT_A8B8G8R8_SRGB_PACK32:
++      return 1;
++   case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
++   case VK_FORMAT_A2R10G10B10_UNORM_PACK32:
++      return 2;
++   case VK_FORMAT_R16G16B16A16_UNORM:
++      return 4;
++   case VK_FORMAT_R16G16B16A16_SFLOAT:
++      return 5;
++   default:
++      return 3;
++   }
++}
++
++static void
++wsi_wl_display_sort_formats(struct wsi_wl_display *display)
++{
++   /* u_vector pads elements to a power of two, so on 32-bit they are further
++    * apart than sizeof(struct wsi_wl_format)
++    */
++   char *base = u_vector_tail(&display->formats);
++   const size_t stride = display->formats.element_size;
++   const uint32_t count = u_vector_length(&display->formats);
++   /* stable, so formats of the same rank keep the compositor's order */
++   for (uint32_t i = 1; i < count; i++) {
++      struct wsi_wl_format key = *(struct wsi_wl_format *)(base + i * stride);
++      const int rank = wsi_wl_format_rank(key.vk_format);
++      uint32_t j = i;
++      for (; j > 0; j--) {
++         struct wsi_wl_format *prev = (struct wsi_wl_format *)(base + (j - 1) * stride);
++         if (wsi_wl_format_rank(prev->vk_format) <= rank)
++            break;
++         *(struct wsi_wl_format *)(base + j * stride) = *prev;
++      }
++      *(struct wsi_wl_format *)(base + j * stride) = key;
++   }
++}
++
+ static VkResult
+ wsi_wl_surface_get_formats(VkIcdSurfaceBase *icd_surface,
+                            struct wsi_device *wsi_device,
+@@ -2173,6 +2221,7 @@ wsi_wl_surface_get_formats(VkIcdSurfaceBase *icd_surface,
+    if (wsi_wl_display_init(wsi, &display, surface->display, true,
+                            wsi_device->sw, "mesa formats query"))
+       return VK_ERROR_SURFACE_LOST_KHR;
++   wsi_wl_display_sort_formats(&display);
+ 
+    VK_OUTARRAY_MAKE_TYPED(VkSurfaceFormatKHR, out,
+                           pSurfaceFormats, pSurfaceFormatCount);
+@@ -2218,6 +2267,7 @@ wsi_wl_surface_get_formats2(VkIcdSurfaceBase *icd_surface,
+    if (wsi_wl_display_init(wsi, &display, surface->display, true,
+                            wsi_device->sw, "mesa formats2 query"))
+       return VK_ERROR_SURFACE_LOST_KHR;
++   wsi_wl_display_sort_formats(&display);
+ 
+    VK_OUTARRAY_MAKE_TYPED(VkSurfaceFormat2KHR, out,
+                           pSurfaceFormats, pSurfaceFormatCount);

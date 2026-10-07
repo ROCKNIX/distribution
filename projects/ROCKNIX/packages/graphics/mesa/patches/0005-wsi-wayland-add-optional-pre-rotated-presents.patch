@@ -1,0 +1,346 @@
+From c16e4ccfc772a94d59e7f23a2b583727ef93468b Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Tue, 22 Sep 2026 15:52:14 -0700
+Subject: [PATCH] wsi/wayland: add optional pre-rotated presents
+
+With a rotated output the compositor has to rotate every client buffer on
+the GPU and can't scan it out directly. Most apps don't pre-rotate, and
+the WSI can't see the output transform, so add a driconf option,
+vk_wsi_wayland_prerotate, set to the output's wl_output transform (90,
+180 or 270).
+
+When it is set and the swapchain's preTransform is identity, each present
+is blitted into a rotated dma-buf with VK_QCOM_rotated_copy_commands and
+tagged with that transform. The app still renders unrotated. The exported
+image keeps its modifiers and explicit sync. Drivers without the
+extension ignore the option.
+---
+ src/util/drirc_gen.py               |  2 +
+ src/vulkan/wsi/wsi_common.c         | 52 +++++++++++++++---
+ src/vulkan/wsi/wsi_common.h         |  5 ++
+ src/vulkan/wsi/wsi_common_drm.c     | 84 ++++++++++++++++++++++++++++-
+ src/vulkan/wsi/wsi_common_private.h | 11 ++++
+ src/vulkan/wsi/wsi_common_wayland.c | 43 ++++++++++++++-
+ 6 files changed, 187 insertions(+), 10 deletions(-)
+
+diff --git a/src/util/drirc_gen.py b/src/util/drirc_gen.py
+index faffd362492..de5883192e7 100644
+--- a/src/util/drirc_gen.py
++++ b/src/util/drirc_gen.py
+@@ -384,6 +384,8 @@ def add_common_vk_wsi_options(debug_options, performance_options, defaults=None)
+           "Force the X11 WSI to create at least the number of image specified by the driver in VkSurfaceCapabilitiesKHR::minImageCount"),
+         B("vk_google_display_timing", defaults.get("vk_google_display_timing", False),
+           "Expose VK_GOOGLE_display_timing even if fully conformant support can't be guaranteed on all enabled surface types, e.g., (X)Wayland"),
++        I("vk_wsi_wayland_prerotate", defaults.get("vk_wsi_wayland_prerotate", 0), 0, 270,
++          "Pre-rotate Wayland presents for an output with this wl_output transform (90, 180 or 270), so the compositor does not have to rotate them. Needs VK_QCOM_rotated_copy_commands. 0 disables it."),
+     ])
+ 
+     debug_options.extend([
+diff --git a/src/vulkan/wsi/wsi_common.c b/src/vulkan/wsi/wsi_common.c
+index 15a1c30d5a2..e88e050b8f5 100644
+--- a/src/vulkan/wsi/wsi_common.c
++++ b/src/vulkan/wsi/wsi_common.c
+@@ -314,6 +314,12 @@ wsi_device_init(struct wsi_device *wsi,
+             driQueryOptionb(dri_options, "vk_wsi_disable_unordered_submits");
+       }
+ 
++      if (driCheckOption(dri_options, "vk_wsi_wayland_prerotate", DRI_INT) &&
++          supported_extensions->QCOM_rotated_copy_commands && wsi->CmdBlitImage2) {
++         wsi->wayland.prerotate_degrees =
++            driQueryOptioni(dri_options, "vk_wsi_wayland_prerotate");
++      }
++
+    }
+ 
+    /* can_present_on_device is a function pointer used to determine if images
+@@ -413,6 +419,8 @@ get_blit_type(const struct wsi_device *wsi,
+    case WSI_IMAGE_TYPE_DRM: {
+       const struct wsi_drm_image_params *drm_params =
+          container_of(params, const struct wsi_drm_image_params, base);
++      if (drm_params->prerotate)
++         return WSI_SWAPCHAIN_IMAGE_BLIT;
+       return wsi_drm_image_needs_buffer_blit(wsi, drm_params) ?
+          WSI_SWAPCHAIN_BUFFER_BLIT : WSI_SWAPCHAIN_NO_BLIT;
+    }
+@@ -3316,7 +3324,7 @@ wsi_cmd_blit_image_to_image(VkCommandBuffer cmd_buffer,
+                             const struct wsi_image_info *info,
+                             struct wsi_image *image)
+ {
+-   assert(info->image_type == WSI_IMAGE_TYPE_DXGI);
++   assert(info->image_type == WSI_IMAGE_TYPE_DXGI || info->prerotate);
+ 
+    VkImageMemoryBarrier img_mem_barriers[2] = {
+       {
+@@ -3356,6 +3364,8 @@ wsi_cmd_blit_image_to_image(VkCommandBuffer cmd_buffer,
+          },
+       },
+    };
++   if (info->prerotate)
++      img_mem_barriers[1].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    wsi->CmdPipelineBarrier(cmd_buffer,
+                            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                            VK_PIPELINE_STAGE_TRANSFER_BIT,
+@@ -3381,12 +3391,40 @@ wsi_cmd_blit_image_to_image(VkCommandBuffer cmd_buffer,
+       .dstOffset = { .x = 0, .y = 0, .z = 0 },
+       .extent = info->create.extent,
+    };
+-   wsi->CmdCopyImage(cmd_buffer,
+-                     image->image,
+-                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+-                     image->blit.image,
+-                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+-                     1, &image_copy);
++   if (info->prerotate) {
++      const VkCopyCommandTransformInfoQCOM transform_info = {
++         .sType = VK_STRUCTURE_TYPE_COPY_COMMAND_TRANSFORM_INFO_QCOM,
++         .transform = info->prerotate_transform,
++      };
++      const VkImageBlit2 region = {
++         .sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2,
++         .pNext = info->prerotate_transform != VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR ? &transform_info : NULL,
++         .srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
++         .srcOffsets = { { 0, 0, 0 },
++                         { (int32_t) info->create.extent.width, (int32_t) info->create.extent.height, 1 } },
++         .dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
++         .dstOffsets = { { 0, 0, 0 },
++                         { (int32_t) info->prerotate_extent.width, (int32_t) info->prerotate_extent.height, 1 } },
++      };
++      const VkBlitImageInfo2 blit_info = {
++         .sType = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2,
++         .srcImage = image->image,
++         .srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
++         .dstImage = image->blit.image,
++         .dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
++         .regionCount = 1,
++         .pRegions = &region,
++         .filter = VK_FILTER_NEAREST,
++      };
++      wsi->CmdBlitImage2(cmd_buffer, &blit_info);
++   } else {
++      wsi->CmdCopyImage(cmd_buffer,
++                        image->image,
++                        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
++                        image->blit.image,
++                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
++                        1, &image_copy);
++   }
+ 
+    img_mem_barriers[0].srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    img_mem_barriers[0].dstAccessMask = 0;
+diff --git a/src/vulkan/wsi/wsi_common.h b/src/vulkan/wsi/wsi_common.h
+index 7542cfbfddd..80d71329f6d 100644
+--- a/src/vulkan/wsi/wsi_common.h
++++ b/src/vulkan/wsi/wsi_common.h
+@@ -169,6 +169,11 @@ struct wsi_device {
+    struct {
+       /* Don't use the commit-timing protocol for pacing */
+       bool disable_timestamps;
++
++      /* Output transform (90, 180 or 270) to pre-rotate presents for,
++       * 0 if off. Needs VK_QCOM_rotated_copy_commands.
++       */
++      uint32_t prerotate_degrees;
+    } wayland;
+ 
+    /*
+diff --git a/src/vulkan/wsi/wsi_common_drm.c b/src/vulkan/wsi/wsi_common_drm.c
+index dbf65b2d423..af8bf5861ae 100644
+--- a/src/vulkan/wsi/wsi_common_drm.c
++++ b/src/vulkan/wsi/wsi_common_drm.c
+@@ -922,6 +922,86 @@ wsi_drm_image_needs_buffer_blit(const struct wsi_device *wsi,
+    return true;
+ }
+ 
++static VkResult
++wsi_create_prerotate_image_mem(const struct wsi_swapchain *chain,
++                               const struct wsi_image_info *info,
++                               struct wsi_image *image)
++{
++   const struct wsi_device *wsi = chain->wsi;
++   VkResult result;
++
++   VkMemoryRequirements reqs;
++   wsi->GetImageMemoryRequirements(chain->device, image->image, &reqs);
++   const VkMemoryDedicatedAllocateInfo dedicated_info = {
++      .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,
++      .image = image->image,
++   };
++   const VkMemoryAllocateInfo memory_info = {
++      .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
++      .pNext = &dedicated_info,
++      .allocationSize = reqs.size,
++      .memoryTypeIndex = wsi_select_device_memory_type(wsi, reqs.memoryTypeBits),
++   };
++   result = wsi->AllocateMemory(chain->device, &memory_info, &chain->alloc, &image->memory);
++   if (result != VK_SUCCESS)
++      return result;
++
++   result = wsi->CreateImage(chain->device, &info->prerotate_create, &chain->alloc, &image->blit.image);
++   if (result != VK_SUCCESS)
++      return result;
++
++   VkImage app_image = image->image;
++   VkDeviceMemory app_memory = image->memory;
++   image->image = image->blit.image;
++   image->memory = VK_NULL_HANDLE;
++   result = wsi_create_native_image_mem(chain, info, image);
++   if (result == VK_SUCCESS)
++      result = wsi->BindImageMemory(chain->device, image->image, image->memory, 0);
++   image->blit.memory = image->memory;
++   image->image = app_image;
++   image->memory = app_memory;
++   return result;
++}
++
++static VkResult
++wsi_configure_prerotate_image(const struct wsi_swapchain *chain,
++                              const VkSwapchainCreateInfoKHR *pCreateInfo,
++                              const struct wsi_drm_image_params *params,
++                              struct wsi_image_info *info)
++{
++   VkResult result = wsi_configure_native_image(chain, pCreateInfo, params, info);
++   if (result != VK_SUCCESS)
++      return result;
++
++   info->prerotate = true;
++   info->prerotate_extent = params->prerotate_extent;
++   info->prerotate_transform = params->prerotate_transform;
++
++   /* the exported copy is only a blit destination, it takes the external
++    * memory, WSI and modifier structs from the native chain
++    */
++   info->prerotate_create = info->create;
++   info->prerotate_create.pNext = &info->ext_mem;
++   info->prerotate_create.flags &= ~(VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT |
++                                     VK_IMAGE_CREATE_EXTENDED_USAGE_BIT);
++   info->prerotate_create.extent = (VkExtent3D) { params->prerotate_extent.width, params->prerotate_extent.height, 1 };
++   info->prerotate_create.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT |
++                                  (info->create.usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
++   info->prerotate_wsi = info->wsi;
++   info->prerotate_wsi.pNext = info->drm_mod_list.drmFormatModifierCount > 0 ? &info->drm_mod_list : NULL;
++
++   /* the app renders here, not exported, and keeps the rest of the chain */
++   assert(info->create.pNext == &info->ext_mem);
++   info->create.pNext = info->ext_mem.pNext;
++   info->ext_mem.pNext = &info->prerotate_wsi;
++   info->usage2.pNext = NULL;
++   info->wsi.scanout = false;
++   info->create.tiling = VK_IMAGE_TILING_OPTIMAL;
++   wsi_configure_image_blit_image(chain, info);
++   info->create_mem = wsi_create_prerotate_image_mem;
++   return VK_SUCCESS;
++}
++
+ VkResult
+ wsi_drm_configure_image(const struct wsi_swapchain *chain,
+                         const VkSwapchainCreateInfoKHR *pCreateInfo,
+@@ -930,7 +1010,9 @@ wsi_drm_configure_image(const struct wsi_swapchain *chain,
+ {
+    assert(params->base.image_type == WSI_IMAGE_TYPE_DRM);
+ 
+-   if (chain->blit.type == WSI_SWAPCHAIN_BUFFER_BLIT) {
++   if (chain->blit.type == WSI_SWAPCHAIN_IMAGE_BLIT) {
++      return wsi_configure_prerotate_image(chain, pCreateInfo, params, info);
++   } else if (chain->blit.type == WSI_SWAPCHAIN_BUFFER_BLIT) {
+       return wsi_configure_prime_image(chain, pCreateInfo,
+                                        params,
+                                        info);
+diff --git a/src/vulkan/wsi/wsi_common_private.h b/src/vulkan/wsi/wsi_common_private.h
+index 3d2cd7d2e51..5655a704f92 100644
+--- a/src/vulkan/wsi/wsi_common_private.h
++++ b/src/vulkan/wsi/wsi_common_private.h
+@@ -71,6 +71,11 @@ struct wsi_drm_image_params {
+    uint32_t num_modifier_lists;
+    const uint32_t *num_modifiers;
+    const uint64_t *const *modifiers;
++
++   /* blit each present into a rotated copy (VK_QCOM_rotated_copy_commands) */
++   bool prerotate;
++   VkExtent2D prerotate_extent;
++   VkSurfaceTransformFlagBitsKHR prerotate_transform;
+ };
+ 
+ struct wsi_dxgi_image_params {
+@@ -83,6 +88,12 @@ typedef uint32_t (*wsi_memory_type_select_cb)(const struct wsi_device *wsi,
+ 
+ struct wsi_image_info {
+    VkImageCreateInfo create;
++
++   bool prerotate;
++   VkExtent2D prerotate_extent;
++   VkSurfaceTransformFlagBitsKHR prerotate_transform;
++   VkImageCreateInfo prerotate_create;
++   struct wsi_image_create_info prerotate_wsi;
+    struct wsi_image_create_info wsi;
+    VkImageUsageFlags2CreateInfoKHR usage2;
+    VkExternalMemoryImageCreateInfo ext_mem;
+diff --git a/src/vulkan/wsi/wsi_common_wayland.c b/src/vulkan/wsi/wsi_common_wayland.c
+index a6f67b8ed9a..83f04b73c45 100644
+--- a/src/vulkan/wsi/wsi_common_wayland.c
++++ b/src/vulkan/wsi/wsi_common_wayland.c
+@@ -208,6 +208,8 @@ struct wsi_wl_swapchain {
+    enum wsi_wl_buffer_type buffer_type;
+ 
+    enum wl_output_transform buffer_transform;
++   bool prerotate;
++   VkExtent2D present_extent;
+    uint32_t drm_format;
+    enum wl_shm_format shm_format;
+ 
+@@ -3696,10 +3698,11 @@ wsi_wl_image_init(struct wsi_wl_swapchain *chain,
+                                         image->base.drm_modifier & 0xffffffff);
+       }
+ 
++      const VkExtent2D buffer_extent = chain->prerotate ? chain->present_extent : chain->extent;
+       struct wl_buffer *buffer =
+          zwp_linux_buffer_params_v1_create_immed(params,
+-                                                 chain->extent.width,
+-                                                 chain->extent.height,
++                                                 buffer_extent.width,
++                                                 buffer_extent.height,
+                                                  chain->drm_format,
+                                                  0);
+       zwp_linux_buffer_params_v1_destroy(params);
+@@ -4000,6 +4003,42 @@ wsi_wl_surface_create_swapchain(VkIcdSurfaceBase *icd_surface,
+       image_params = &drm_image_params.base;
+    }
+ 
++#ifdef HAVE_LIBDRM
++   /* the rotated copy replaces the native image, not a PRIME buffer */
++   if (buffer_type == WSI_WL_BUFFER_NATIVE && wsi_device->wayland.prerotate_degrees &&
++       pCreateInfo->preTransform == VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR &&
++       !wsi_drm_image_needs_buffer_blit(wsi_device, &drm_image_params) &&
++       wl_proxy_get_version((struct wl_proxy *)wsi_wl_surface->base.surface) >=
++          WL_SURFACE_SET_BUFFER_TRANSFORM_SINCE_VERSION) {
++      /* rotate so the buffer transform matches the output transform */
++      VkSurfaceTransformFlagBitsKHR transform;
++      switch (wsi_device->wayland.prerotate_degrees) {
++      case 90:
++         transform = VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR;
++         break;
++      case 180:
++         transform = VK_SURFACE_TRANSFORM_ROTATE_180_BIT_KHR;
++         break;
++      case 270:
++         transform = VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR;
++         break;
++      default:
++         transform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
++         break;
++      }
++      if (transform != VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR) {
++         chain->prerotate = true;
++         chain->buffer_transform = wsi_wl_transform_from_vk(transform);
++         chain->present_extent = transform == VK_SURFACE_TRANSFORM_ROTATE_180_BIT_KHR
++            ? pCreateInfo->imageExtent
++            : (VkExtent2D) { pCreateInfo->imageExtent.height, pCreateInfo->imageExtent.width };
++         drm_image_params.prerotate = true;
++         drm_image_params.prerotate_extent = chain->present_extent;
++         drm_image_params.prerotate_transform = transform;
++      }
++   }
++#endif
++
+    result = wsi_swapchain_init(wsi_device, &chain->base, device,
+                                pCreateInfo, image_params, pAllocator);
+    if (result != VK_SUCCESS)

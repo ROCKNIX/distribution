@@ -1,0 +1,39 @@
+From 7703bc91b70e690918de232158b6a4c39c3ea49b Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Tue, 22 Sep 2026 19:09:33 -0700
+Subject: [PATCH] wsi/wayland: keep the modifier on feedback changes when
+ pre-rotating
+
+Becoming a scanout candidate changes the dma-buf feedback. Reallocating on
+that bounced the surface between the render and scanout tranches forever,
+so keep the swapchain while its modifier is still offered. Other
+swapchains still reallocate, since that is how they move to a better
+modifier.
+---
+ src/vulkan/wsi/wsi_common_wayland.c | 13 +++++++++++--
+ 1 file changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/src/vulkan/wsi/wsi_common_wayland.c b/src/vulkan/wsi/wsi_common_wayland.c
+index 83f04b73c45..b89def03cb8 100644
+--- a/src/vulkan/wsi/wsi_common_wayland.c
++++ b/src/vulkan/wsi/wsi_common_wayland.c
+@@ -2536,8 +2536,17 @@ surface_dmabuf_feedback_done(void *data,
+    if (f && !sets_of_modifiers_are_the_same(u_vector_length(&f->modifiers),
+                                             u_vector_tail(&f->modifiers),
+                                             chain->num_drm_modifiers,
+-                                            chain->drm_modifiers))
+-      wsi_wl_surface->chain->suboptimal = true;
++                                            chain->drm_modifiers)) {
++      bool modifier_offered = false;
++      if (chain->prerotate && chain->base.image_count > 0) {
++         const uint64_t current_modifier = chain->images[0].base.drm_modifier;
++         const uint64_t *offered = u_vector_tail(&f->modifiers);
++         for (uint32_t i = 0; i < u_vector_length(&f->modifiers) && !modifier_offered; i++)
++            modifier_offered = offered[i] == current_modifier;
++      }
++      if (!modifier_offered)
++         wsi_wl_surface->chain->suboptimal = true;
++   }
+ }
+ 
+ static const struct zwp_linux_dmabuf_feedback_v1_listener
