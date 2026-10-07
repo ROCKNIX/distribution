@@ -846,6 +846,11 @@ function set_runahead() {
     esac
 }
 
+function set_latency() {
+    add_setting "video_frame_delay_auto" "video_frame_delay_auto"
+    add_setting "vrr_runloop_enable" "vrr_runloop_enable"
+}
+
 function set_audiolatency() {
     add_setting "audiolatency" "audio_latency"
 }
@@ -1333,6 +1338,7 @@ set_savestates &
 set_autosave &
 set_netplay &
 set_runahead &
+set_latency &
 set_audiolatency &
 set_analogsupport &
 set_tatemode &
