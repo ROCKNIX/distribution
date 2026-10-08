@@ -31,7 +31,7 @@ log_msg() {
 # Ensure we cleanup background processes on exit
 cleanup() {
     # Restore cursor
-    tput cnorm > /dev/tty 2>/dev/null
+    printf '\033[?25h' > /dev/tty 2>/dev/null
 }
 trap cleanup EXIT
 
@@ -48,7 +48,7 @@ show_ui_message() {
     local pid_monitor=""
       
     # Hide Cursor for cleaner UI
-    tput civis > /dev/tty 2>/dev/null
+    printf '\033[?25l' > /dev/tty 2>/dev/null
 
     # Force a sane terminal type
     if [[ -z "$TERM" || "$TERM" == "dumb" ]]; then
@@ -102,7 +102,7 @@ show_ui_message() {
     # Clean up the monitor if dialog timed out naturally
     kill $pid_monitor >/dev/null 2>&1
       
-    tput cnorm > /dev/tty 2>/dev/null
+    printf '\033[?25h' > /dev/tty 2>/dev/null
 }
 
 # --- 3. Configuration & Connectivity Checks ---
