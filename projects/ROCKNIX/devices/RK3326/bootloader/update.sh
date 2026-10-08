@@ -55,7 +55,8 @@ if [ ! -f $BOOT_ROOT/extlinux/extlinux.conf ]; then
   cp -f $SYSTEM_ROOT/usr/share/bootloader/extlinux/* $BOOT_ROOT/extlinux/
 fi
 
-CONSOLEDEV=$(grep -l Y /sys/devices/platform/*/*/*/tty/tty*/console | head -1 | xargs -r dirname)
+CONSOLEDEV=$(grep -l Y /sys/devices/platform/*/*/*/tty/tty*/console | head -n 1)
+CONSOLEDEV=${CONSOLEDEV%/console}
 if [ ${SUBDEVICE} == "a" ]; then
   log "Using legacy u-boot "
   UBOOT_VARIANT="a_uboot.bin"
