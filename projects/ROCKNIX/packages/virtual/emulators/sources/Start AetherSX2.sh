@@ -5,7 +5,7 @@
 
 source /etc/profile
 
-set_kill set "aethersx2-sa"
+set_kill set "aethersx2"
 
 #Set OpenGL 3.3 on panfrost
   export MESA_GL_VERSION_OVERRIDE=3.3

@@ -175,13 +175,55 @@ stop_volume_repeat() {
     VOLUME_REPEAT_PID=""
 }
 
+### Skip shells and terminals so start scripts still clean up after their emulator.
+game_pids() {
+  local CHILD
+  for CHILD in $(pgrep -P ${1}); do
+    case "$(readlink /proc/${CHILD}/exe)" in
+      */bash|*/sh|*/busybox|*/foot) ;;
+      *) echo ${CHILD} ;;
+    esac
+    game_pids ${CHILD}
+  done
+}
+
 ### Simple functions to execute button actions, including global kill.
+### The quit hotkey sends the signal registered with set_kill. If no process
+### has that name, the processes started by runemu.sh or foot get SIGTERM
+### instead. Whatever is still running 5 seconds later gets SIGKILL.
 execute_kill() {
-  if [ -e "/tmp/.process-kill-data" ]; then
-    TO_KILL="$(cat /tmp/.process-kill-data)"
+  local TO_KILL="" NAME ROOT NAMED="" GAME=""
+  [ -e "/tmp/.process-kill-data" ] && TO_KILL="$(cat /tmp/.process-kill-data)"
+  for NAME in ${TO_KILL}; do
+    [[ "${NAME}" == -* ]] || NAMED+=" $(pidof ${NAME})"
+  done
+  for ROOT in $(pidof runemu.sh foot); do
+    GAME+=" $(game_pids ${ROOT})"
+  done
+  NAMED=$(echo ${NAMED})
+  GAME=$(echo $(printf '%s\n' ${GAME} | sort -u))
+
+  ### Signal only one set, a second SIGTERM makes RetroArch exit without saving.
+  if [ -n "${NAMED}" ]; then
     ${DEBUG} && log $0 "Execute: killall ${TO_KILL}"
     killall ${TO_KILL} 2>/dev/null
+  elif [ -n "${GAME}" ]; then
+    ${DEBUG} && log $0 "Execute: kill ${GAME}"
+    kill ${GAME} 2>/dev/null
   fi
+
+  ### Never force ES, it saves its gamelists on SIGTERM.
+  if [ -z "${NAMED}${GAME}" ] || [ "${TO_KILL}" = "emulationstation" ]; then
+    return
+  fi
+
+  ### An app that handles SIGTERM saves and exits well within 5 seconds.
+  ### One that is hung never does, so this is what still lets the user out.
+  (
+    sleep 5
+    ${DEBUG} && log $0 "Execute: kill -9 ${NAMED} ${GAME}"
+    kill -9 ${NAMED} ${GAME} 2>/dev/null
+  ) &
 }
 
 execute_action() {
@@ -408,6 +450,9 @@ set +e
         if [[ "${line}" =~ ${PRESS} ]]; then
           ${DEBUG} && log $0 "${FUNCTION_HOTKEY_A_EVENT}: Pressed"
           HOTKEY_A_PRESSED=true
+          if [ "${HOTKEY_B_PRESSED}" = true ] && [ "${HOTKEY_C_PRESSED}" = true ]; then
+            execute_kill
+          fi
         elif [[ "${line}" =~ ${RELEASE} ]]; then
           ${DEBUG} && log $0 "${FUNCTION_HOTKEY_A_EVENT}: Released"
           HOTKEY_A_PRESSED=false
