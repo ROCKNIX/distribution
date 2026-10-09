@@ -66,6 +66,7 @@ SLAYOUT=$(get_setting screen_layout "${PLATFORM}" "${GAME}")
 CSHADERS=$(get_setting cache_shaders "${PLATFORM}" "${GAME}")
 HSHADERS=$(get_setting hardware_shaders "${PLATFORM}" "${GAME}")
 ACCURATE_HW_SHADERS=$(get_setting accurate_hardware_shaders "${PLATFORM}" "${GAME}")
+ASYNC_SHADER_COMPILATION=$(get_setting async_shader_compilation "${PLATFORM}" "${GAME}")
 DISABLE_RIGHT_EYE_RENDER=$(get_setting disable_right_eye_render "${PLATFORM}" "${GAME}")
 SIMULATE_3DS_GPU_TIMINGS=$(get_setting simulate_3ds_gpu_timings "${PLATFORM}" "${GAME}")
 SIMULATE_HEADPHONES_PLUGGED=$(get_setting simulate_headphones_plugged "${PLATFORM}" "${GAME}")
@@ -136,6 +137,14 @@ sed -i '/^shaders_accurate_mul\\default=/c\shaders_accurate_mul\\default=false' 
 case "${ACCURATE_HW_SHADERS}" in
   0) sed -i '/^shaders_accurate_mul=/c\shaders_accurate_mul=false' ${CONF_FILE};;
   *) sed -i '/^shaders_accurate_mul=/c\shaders_accurate_mul=true' ${CONF_FILE};;
+esac
+
+# Async shader compilation - default to true
+sed -i '/^async_shader_compilation\\default=/c\async_shader_compilation\\default=false' ${CONF_FILE}
+
+case "${ASYNC_SHADER_COMPILATION}" in
+  0) sed -i '/^async_shader_compilation=/c\async_shader_compilation=false' ${CONF_FILE};;
+  *) sed -i '/^async_shader_compilation=/c\async_shader_compilation=true' ${CONF_FILE};;
 esac
 
 # Screen Layout - default to Top / Bottom, swap = false
