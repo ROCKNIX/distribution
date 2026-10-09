@@ -1,0 +1,97 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+. /etc/profile
+
+calibrate() {
+python3 - "$@" <<'EOF'
+import fcntl, glob, os, struct, sys, time
+
+DRM_IOCTL_WAIT_VBLANK = 0xC018643A
+STEP = 4
+
+attr, target = sys.argv[1], int(sys.argv[2])
+tolerance, big_error = (0.05, 0.1) if target == 60 else (0.2, 0.4)
+
+
+def wait(fd, pipe):
+    buf = bytearray(struct.pack("IIqq", 1 | pipe << 1, 1, 0, 0))
+    fcntl.ioctl(fd, DRM_IOCTL_WAIT_VBLANK, buf)
+    _, _, sec, usec = struct.unpack("IIqq", buf)
+    return sec + usec / 1e6
+
+
+def find():
+    for card in sorted(glob.glob("/dev/dri/card*")):
+        fd = os.open(card, os.O_RDWR)
+        for pipe in range(8):
+            try:
+                wait(fd, pipe)
+                return fd, pipe
+            except OSError:
+                pass
+        os.close(fd)
+    sys.exit("No active display")
+
+
+def rate():
+    ts, end = [], time.monotonic() + 0.5
+    while time.monotonic() < end:
+        ts.append(wait(fd, pipe))
+    return (len(ts) - 1) / (ts[-1] - ts[0])
+
+
+def write(value):
+    with open(attr, "w") as f:
+        f.write(str(value))
+    time.sleep(0.5)
+
+
+os.sched_setscheduler(0, os.SCHED_FIFO, os.sched_param(10))
+fd, pipe = find()
+start = int(open(attr).read())
+value = start // STEP * STEP
+start_rate = rate()
+deadline = time.monotonic() + 60
+adjust_until = time.monotonic() + 15
+try:
+    write(value)
+    while time.monotonic() < deadline:
+        delta = rate() - target
+        settled = 0 <= delta <= tolerance
+        if time.monotonic() < adjust_until:
+            if not settled:
+                step = STEP if abs(delta) < big_error else 2 * STEP
+                value += step if delta > 0 else -step
+                write(value)
+        elif settled:
+            print(f"{target} Hz: {start_rate:.3f} -> {target + delta:.3f} Hz "
+                  f"(0x{start:x} -> 0x{value:x})", file=sys.stderr)
+            print(value)
+            sys.exit(0)
+        else:
+            adjust_until = time.monotonic() + 3.75
+except OSError:
+    pass
+write(start)
+sys.exit(f"{target} Hz: no stable value in range")
+EOF
+}
+
+PANEL=$(dirname /sys/bus/mipi-dsi/devices/*/frame_len_60)
+OUTPUT=$(wlr-randr | awk 'NR==1 {print $1}')
+CURRENT=$(wlr-randr --output ${OUTPUT} | awk '/current/ {print $3}')
+
+for RATE in 60 120
+do
+  MODE=$(wlr-randr --output ${OUTPUT} | awk -v r=${RATE} '/ px, / && int($3 + 0.5) == r {print $3}')
+  echo "Calibrating ${RATE} Hz..."
+  set_refresh_rate ${MODE}
+  sleep 2
+  VALUE=$(calibrate ${PANEL}/frame_len_${RATE} ${RATE}) || break
+  set_setting display.frame_len_${RATE} ${VALUE}
+done
+
+set_refresh_rate ${CURRENT}
+sleep 5
