@@ -2,7 +2,7 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="azahar-sa"
-PKG_VERSION="fbd3fb02f71e5f9ed5134037fd59bad96c7d2b8a" # tag 2126.0
+PKG_VERSION="219d743a1e698101fe1ab8bef43e6563126c3c27" # tag 2126.2
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/azahar-emu/azahar"
 PKG_URL="${PKG_SITE}.git"
