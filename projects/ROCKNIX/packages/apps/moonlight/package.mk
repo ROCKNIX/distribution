@@ -35,6 +35,7 @@ else
   PKG_TOOLCHAIN="cmake"
 
   PKG_CMAKE_OPTS_TARGET+=" -DENABLE_CEC=OFF"
+  PKG_CMAKE_OPTS_TARGET+=" -DCMAKE_C_STANDARD_LIBRARIES=-lcrypto"
 
   post_makeinstall_target() {
     mkdir -p ${INSTALL}/usr/config/moonlight

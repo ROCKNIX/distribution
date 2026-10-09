@@ -2,11 +2,11 @@
 # Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="glew"
-PKG_VERSION="2.2.0"
-PKG_SHA256="d4fc82893cfb00109578d0a1a2337fb8ca335b3ceccf97b97e5cc7f08e4353e1"
+PKG_VERSION="2.3.1"
+PKG_SHA256="b64790f94b926acd7e8f84c5d6000a86cb43967bd1e688b03089079799c9e889"
 PKG_LICENSE="BSD"
 PKG_SITE="http://glew.sourceforge.net/"
-PKG_URL="${SOURCEFORGE_SRC}/glew/glew/${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tgz"
+PKG_URL="https://downloads.sourceforge.net/project/glew/glew/${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tgz"
 PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="GLEW - The OpenGL Extension Wrangler Library"
 PKG_TOOLCHAIN="cmake"
