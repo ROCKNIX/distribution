@@ -314,6 +314,8 @@ w- /sys/kernel/mm/transparent_hugepage/enabled - - - - ${THP_MODE:-madvise}
 w- /sys/kernel/mm/transparent_hugepage/defrag - - - - ${THP_DEFRAG:-defer+madvise}
 w- /sys/kernel/mm/transparent_hugepage/shmem_enabled - - - - advise
 EOF
+  mkdir -p ${INSTALL}/usr/lib/systemd/system-environment-generators
+  cp ${PKG_DIR}/scripts/low-memory-tunables ${INSTALL}/usr/lib/systemd/system-environment-generators/50-low-memory-tunables
   safe_remove ${INSTALL}/etc/sysctl.d
   ln -sf /storage/.config/sysctl.d ${INSTALL}/etc/sysctl.d
   safe_remove ${INSTALL}/etc/tmpfiles.d
