@@ -11,6 +11,7 @@ PKG_DEPENDS_TARGET="boost toolchain SDL2 freetype curl freeimage bash rapidjson 
 PKG_NEED_UNPACK="busybox"
 PKG_LONGDESC="Emulationstation emulator frontend"
 PKG_BUILD_FLAGS="-gold"
+PKG_PATCH_DIRS+=" ${DEVICE}"
 
 PKG_CMAKE_OPTS_TARGET+=" -DROCKNIX=1 \
                          -DDISABLE_KODI=1 \
