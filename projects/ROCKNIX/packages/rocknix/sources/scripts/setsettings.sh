@@ -641,6 +641,7 @@ function set_translation() {
         ;;
         *)
             add_setting "none" "ai_service_enable" "true"
+            add_setting "ai_service_pause" "ai_service_pause"
             local AI_LANG="$(game_setting ai_target_lang)"
             local AI_URL="$(game_setting ai_service_url)"
             case ${AI_URL} in
@@ -843,6 +844,11 @@ function set_runahead() {
             fi
         ;;
     esac
+}
+
+function set_latency() {
+    add_setting "video_frame_delay_auto" "video_frame_delay_auto"
+    add_setting "vrr_runloop_enable" "vrr_runloop_enable"
 }
 
 function set_audiolatency() {
@@ -1332,6 +1338,7 @@ set_savestates &
 set_autosave &
 set_netplay &
 set_runahead &
+set_latency &
 set_audiolatency &
 set_analogsupport &
 set_tatemode &

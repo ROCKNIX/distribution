@@ -17,7 +17,7 @@ enabled=$(get_setting "global.retroachievements")
 hardcore=$(get_setting "global.retroachievements.hardcore")
 encore=$(get_setting "global.retroachievements.encore")
 leaderboards=$(get_setting "global.retroachievements.leaderboards")
-unofficial=$(get_setting "global.retroachievements.unofficial")
+unofficial=$(get_setting "global.retroachievements.testunofficial")
 
 # Convert values from 0/1 to true/false
 to_bool() { [ "${1}" = "1" ] && echo "true" || echo "false"; }
