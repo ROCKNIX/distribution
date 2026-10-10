@@ -1,0 +1,422 @@
+From a88471d50cb7d55e1c803050f596184aab630a08 Mon Sep 17 00:00:00 2001
+From: Zhenyu Qi <qzydustin@hotmail.com>
+Date: Sun, 4 Oct 2026 17:22:50 -0700
+Subject: [PATCH] devfreq: add a PX30/RK3326 DMC driver
+
+The DDR rate of the PX30 is changed by Rockchip's BL31: the kernel puts
+the request into a page shared with the firmware and issues
+ROCKCHIP_SIP_DRAM_FREQ. ROUND_RATE lets the firmware prepare the switch
+to that rate and SET_RATE performs it; SET_RATE without the preceding
+ROUND_RATE hangs the SoC. SET_RATE may return with the switch still
+pending; the firmware then finishes from FIQ and raises the "complete"
+interrupt, which is lost if it is only enabled around the switch, so it
+stays enabled.
+
+The firmware can also wait for the display's vertical blanking before
+switching; that is not requested, as switching while the panel scans
+showed no glitches.
+
+The load comes from the DFI, whose PX30 registers match the RK3568
+ones. The second shared page would carry DDR timings from the DT; it is
+left empty so the loader's settings stay in effect. vdd_logic is shared
+with the GPU, so only a minimum voltage is requested.
+---
+ drivers/devfreq/Kconfig              |  12 +
+ drivers/devfreq/Makefile             |   1 +
+ drivers/devfreq/event/rockchip-dfi.c |   1 +
+ drivers/devfreq/px30_dmc.c           | 336 +++++++++++++++++++++++++++
+ 4 files changed, 350 insertions(+)
+ create mode 100644 drivers/devfreq/px30_dmc.c
+
+diff --git a/drivers/devfreq/Kconfig b/drivers/devfreq/Kconfig
+index c999c4a1e..fe9ccaac1 100644
+--- a/drivers/devfreq/Kconfig
++++ b/drivers/devfreq/Kconfig
+@@ -140,6 +140,18 @@ config ARM_MEDIATEK_CCI_DEVFREQ
+ 	  buck voltages and update a proper CCI frequency. Use the notification
+ 	  to get the regulator status.
+ 
++config ARM_PX30_DMC_DEVFREQ
++	tristate "ARM PX30 DMC DEVFREQ Driver"
++	depends on (ARCH_ROCKCHIP && HAVE_ARM_SMCCC) || \
++		(COMPILE_TEST && HAVE_ARM_SMCCC)
++	select DEVFREQ_EVENT_ROCKCHIP_DFI
++	select DEVFREQ_GOV_SIMPLE_ONDEMAND
++	select PM_DEVFREQ_EVENT
++	select PM_OPP
++	help
++	  This adds the DEVFREQ driver for the PX30/RK3326 DMC (Dynamic Memory
++	  Controller). The DDR rate is changed by Rockchip's BL31 firmware.
++
+ config ARM_RK3399_DMC_DEVFREQ
+ 	tristate "ARM RK3399 DMC DEVFREQ Driver"
+ 	depends on (ARCH_ROCKCHIP && HAVE_ARM_SMCCC) || \
+diff --git a/drivers/devfreq/Makefile b/drivers/devfreq/Makefile
+index 404179d79..388bd14b4 100644
+--- a/drivers/devfreq/Makefile
++++ b/drivers/devfreq/Makefile
+@@ -13,6 +13,7 @@ obj-$(CONFIG_ARM_HISI_UNCORE_DEVFREQ)	+= hisi_uncore_freq.o
+ obj-$(CONFIG_ARM_IMX_BUS_DEVFREQ)	+= imx-bus.o
+ obj-$(CONFIG_ARM_IMX8M_DDRC_DEVFREQ)	+= imx8m-ddrc.o
+ obj-$(CONFIG_ARM_MEDIATEK_CCI_DEVFREQ)	+= mtk-cci-devfreq.o
++obj-$(CONFIG_ARM_PX30_DMC_DEVFREQ)	+= px30_dmc.o
+ obj-$(CONFIG_ARM_RK3399_DMC_DEVFREQ)	+= rk3399_dmc.o
+ obj-$(CONFIG_ARM_SUN8I_A33_MBUS_DEVFREQ)	+= sun8i-a33-mbus.o
+ obj-$(CONFIG_ARM_TEGRA_DEVFREQ)		+= tegra30-devfreq.o
+diff --git a/drivers/devfreq/event/rockchip-dfi.c b/drivers/devfreq/event/rockchip-dfi.c
+index 5e6e7e900..57bc13a79 100644
+--- a/drivers/devfreq/event/rockchip-dfi.c
++++ b/drivers/devfreq/event/rockchip-dfi.c
+@@ -808,6 +808,7 @@ static int rk3588_dfi_init(struct rockchip_dfi *dfi)
+ };
+ 
+ static const struct of_device_id rockchip_dfi_id_match[] = {
++	{ .compatible = "rockchip,px30-dfi", .data = rk3568_dfi_init },
+ 	{ .compatible = "rockchip,rk3399-dfi", .data = rk3399_dfi_init },
+ 	{ .compatible = "rockchip,rk3568-dfi", .data = rk3568_dfi_init },
+ 	{ .compatible = "rockchip,rk3588-dfi", .data = rk3588_dfi_init },
+diff --git a/drivers/devfreq/px30_dmc.c b/drivers/devfreq/px30_dmc.c
+new file mode 100644
+index 000000000..6401a4c4f
+--- /dev/null
++++ b/drivers/devfreq/px30_dmc.c
+@@ -0,0 +1,336 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * PX30/RK3326 DDR frequency scaling.
++ *
++ * The rate change itself is done by Rockchip's BL31: the kernel puts the
++ * request into a page shared with the firmware and issues
++ * ROCKCHIP_SIP_DRAM_FREQ. ROUND_RATE lets the firmware prepare the switch,
++ * SET_RATE performs it and raises an interrupt when it is done.
++ */
++
++#include <linux/arm-smccc.h>
++#include <linux/completion.h>
++#include <linux/devfreq.h>
++#include <linux/devfreq-event.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/mod_devicetable.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/pm_opp.h>
++#include <linux/pm_qos.h>
++#include <linux/regulator/consumer.h>
++#include <linux/sizes.h>
++
++#include <soc/rockchip/pm_domains.h>
++#include <soc/rockchip/rockchip_sip.h>
++
++#define PX30_SIP_SHARE_MEM		0x82000009
++#define PX30_SHARE_PAGE_TYPE_DDR	2
++#define PX30_DRAM_GET_VERSION		0x08
++#define PX30_SET_RATE_PENDING		-6
++
++/* Start of the request page shared with BL31 */
++struct px30_dmc_params {
++	u32 hz;
++	u32 lcdc_type;
++	u32 vop;
++	u32 vop_dclk_mode;
++	u32 sr_idle_en;
++	u32 addr_mcu_el3;
++	u32 wait_flag1;
++	u32 wait_flag0;
++	u32 complt_hwirq;
++};
++
++struct px30_dmc {
++	struct device *dev;
++	struct devfreq *devfreq;
++	struct devfreq_dev_profile profile;
++	struct devfreq_simple_ondemand_data ondemand;
++	struct devfreq_event_dev *edev;
++	struct regulator *vdd;
++	struct px30_dmc_params __iomem *params;
++	struct completion done;
++	struct pm_qos_request qos;
++	unsigned long rate;
++	unsigned long volt;
++};
++
++static struct arm_smccc_res px30_dmc_sip(unsigned long arg0, unsigned long cmd)
++{
++	struct arm_smccc_res res;
++
++	arm_smccc_smc(ROCKCHIP_SIP_DRAM_FREQ, arg0, 0, cmd, 0, 0, 0, 0, &res);
++	return res;
++}
++
++static irqreturn_t px30_dmc_done_irq(int irq, void *data)
++{
++	struct px30_dmc *dmc = data;
++
++	complete(&dmc->done);
++	return IRQ_HANDLED;
++}
++
++static int px30_dmc_set_rate(struct px30_dmc *dmc, unsigned long rate)
++{
++	struct arm_smccc_res res;
++
++	writel(rate, &dmc->params->hz);
++	res = px30_dmc_sip(PX30_SHARE_PAGE_TYPE_DDR,
++			   ROCKCHIP_SIP_CONFIG_DRAM_ROUND_RATE);
++	if (res.a0 || !res.a1)
++		return -EINVAL;
++	rate = res.a1;
++
++	writel(rate, &dmc->params->hz);
++
++	reinit_completion(&dmc->done);
++	res = px30_dmc_sip(PX30_SHARE_PAGE_TYPE_DDR,
++			   ROCKCHIP_SIP_CONFIG_DRAM_SET_RATE);
++	if ((int)res.a1 == PX30_SET_RATE_PENDING) {
++		/* BL31 finishes from FIQ, keep the CPUs out of deep idle */
++		cpu_latency_qos_update_request(&dmc->qos, 0);
++		if (!wait_for_completion_timeout(&dmc->done, msecs_to_jiffies(85)))
++			dev_warn(dmc->dev, "timed out switching to %lu Hz\n", rate);
++		cpu_latency_qos_update_request(&dmc->qos, PM_QOS_DEFAULT_VALUE);
++	}
++	if (res.a0)
++		return -EIO;
++
++	res = px30_dmc_sip(PX30_SHARE_PAGE_TYPE_DDR,
++			   ROCKCHIP_SIP_CONFIG_DRAM_GET_RATE);
++	if (res.a0)
++		return -EIO;
++
++	dmc->rate = res.a1;
++	return dmc->rate == rate ? 0 : -EIO;
++}
++
++static int px30_dmc_target(struct device *dev, unsigned long *freq, u32 flags)
++{
++	struct px30_dmc *dmc = dev_get_drvdata(dev);
++	unsigned long old = dmc->rate, rate, volt;
++	struct dev_pm_opp *opp;
++	int ret;
++
++	opp = devfreq_recommended_opp(dev, freq, flags);
++	if (IS_ERR(opp))
++		return PTR_ERR(opp);
++	rate = dev_pm_opp_get_freq(opp);
++	volt = dev_pm_opp_get_voltage(opp);
++	dev_pm_opp_put(opp);
++
++	if (rate == old)
++		return 0;
++
++	/* vdd_logic also feeds the GPU, so only ask for a minimum */
++	if (rate > old) {
++		ret = regulator_set_voltage(dmc->vdd, volt, INT_MAX);
++		if (ret)
++			return ret;
++	}
++
++	ret = rockchip_pmu_block();
++	if (!ret) {
++		ret = px30_dmc_set_rate(dmc, rate);
++		rockchip_pmu_unblock();
++	}
++	if (ret) {
++		if (rate > old)
++			regulator_set_voltage(dmc->vdd, dmc->volt, INT_MAX);
++		return ret;
++	}
++
++	if (rate < old)
++		regulator_set_voltage(dmc->vdd, volt, INT_MAX);
++
++	dmc->volt = volt;
++	*freq = dmc->rate;
++	return 0;
++}
++
++static int px30_dmc_get_dev_status(struct device *dev,
++				   struct devfreq_dev_status *stat)
++{
++	struct px30_dmc *dmc = dev_get_drvdata(dev);
++	struct devfreq_event_data edata;
++	int ret;
++
++	ret = devfreq_event_get_event(dmc->edev, &edata);
++	if (ret < 0)
++		return ret;
++
++	stat->current_frequency = dmc->rate;
++	stat->busy_time = edata.load_count;
++	stat->total_time = edata.total_count;
++	return 0;
++}
++
++static int px30_dmc_get_cur_freq(struct device *dev, unsigned long *freq)
++{
++	struct px30_dmc *dmc = dev_get_drvdata(dev);
++
++	*freq = dmc->rate;
++	return 0;
++}
++
++static void px30_dmc_disable_edev(void *data)
++{
++	devfreq_event_disable_edev(data);
++}
++
++static void px30_dmc_remove_qos(void *data)
++{
++	cpu_latency_qos_remove_request(data);
++}
++
++static int px30_dmc_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct arm_smccc_res res;
++	struct dev_pm_opp *opp;
++	struct px30_dmc *dmc;
++	unsigned long freq;
++	int irq, ret;
++
++	res = px30_dmc_sip(0, PX30_DRAM_GET_VERSION);
++	if (res.a0 || res.a1 < 0x103)
++		return dev_err_probe(dev, -ENODEV,
++				     "BL31 without DRAM DVFS (0x%lx)\n", res.a1);
++
++	dmc = devm_kzalloc(dev, sizeof(*dmc), GFP_KERNEL);
++	if (!dmc)
++		return -ENOMEM;
++	dmc->dev = dev;
++	init_completion(&dmc->done);
++	platform_set_drvdata(pdev, dmc);
++
++	dmc->vdd = devm_regulator_get(dev, "center");
++	if (IS_ERR(dmc->vdd))
++		return dev_err_probe(dev, PTR_ERR(dmc->vdd),
++				     "failed to get center supply\n");
++
++	dmc->edev = devfreq_event_get_edev_by_phandle(dev, "devfreq-events", 0);
++	if (IS_ERR(dmc->edev))
++		return -EPROBE_DEFER;
++
++	/* Request page plus an empty timing page: keep the loader's DDR setup */
++	arm_smccc_smc(PX30_SIP_SHARE_MEM, 2, PX30_SHARE_PAGE_TYPE_DDR, 0,
++		      0, 0, 0, 0, &res);
++	if (res.a0)
++		return dev_err_probe(dev, -ENOMEM, "no BL31 share memory\n");
++	dmc->params = devm_ioremap(dev, res.a1, 2 * SZ_4K);
++	if (!dmc->params)
++		return -ENOMEM;
++	memset_io(dmc->params, 0, 2 * SZ_4K);
++
++	irq = platform_get_irq_byname(pdev, "complete");
++	if (irq < 0)
++		return irq;
++	ret = devm_request_irq(dev, irq, px30_dmc_done_irq, 0, dev_name(dev), dmc);
++	if (ret)
++		return ret;
++	writel(irqd_to_hwirq(irq_get_irq_data(irq)), &dmc->params->complt_hwirq);
++
++	res = px30_dmc_sip(PX30_SHARE_PAGE_TYPE_DDR,
++			   ROCKCHIP_SIP_CONFIG_DRAM_INIT);
++	if (res.a0)
++		return dev_err_probe(dev, -EIO, "BL31 DRAM init failed\n");
++
++	res = px30_dmc_sip(PX30_SHARE_PAGE_TYPE_DDR,
++			   ROCKCHIP_SIP_CONFIG_DRAM_GET_RATE);
++	if (res.a0)
++		return dev_err_probe(dev, -EIO, "BL31 DRAM get rate failed\n");
++	dmc->rate = res.a1;
++
++	ret = devm_pm_opp_of_add_table(dev);
++	if (ret)
++		return dev_err_probe(dev, ret, "invalid operating points\n");
++
++	ret = devfreq_event_enable_edev(dmc->edev);
++	if (ret)
++		return ret;
++	ret = devm_add_action_or_reset(dev, px30_dmc_disable_edev, dmc->edev);
++	if (ret)
++		return ret;
++
++	cpu_latency_qos_add_request(&dmc->qos, PM_QOS_DEFAULT_VALUE);
++	ret = devm_add_action_or_reset(dev, px30_dmc_remove_qos, &dmc->qos);
++	if (ret)
++		return ret;
++
++	freq = dmc->rate;
++	opp = devfreq_recommended_opp(dev, &freq, DEVFREQ_FLAG_LEAST_UPPER_BOUND);
++	if (IS_ERR(opp))
++		return PTR_ERR(opp);
++	dmc->volt = dev_pm_opp_get_voltage(opp);
++	dev_pm_opp_put(opp);
++	ret = regulator_set_voltage(dmc->vdd, dmc->volt, INT_MAX);
++	if (ret)
++		return ret;
++
++	dmc->ondemand.upthreshold = 40;
++	dmc->ondemand.downdifferential = 20;
++	dmc->profile = (struct devfreq_dev_profile) {
++		.polling_ms	= 50,
++		.target		= px30_dmc_target,
++		.get_dev_status	= px30_dmc_get_dev_status,
++		.get_cur_freq	= px30_dmc_get_cur_freq,
++		.initial_freq	= freq,
++	};
++
++	dmc->devfreq = devm_devfreq_add_device(dev, &dmc->profile,
++					       DEVFREQ_GOV_SIMPLE_ONDEMAND,
++					       &dmc->ondemand);
++	if (IS_ERR(dmc->devfreq))
++		return PTR_ERR(dmc->devfreq);
++
++	return devm_devfreq_register_opp_notifier(dev, dmc->devfreq);
++}
++
++static int px30_dmc_suspend(struct device *dev)
++{
++	struct px30_dmc *dmc = dev_get_drvdata(dev);
++	int ret;
++
++	ret = devfreq_event_disable_edev(dmc->edev);
++	if (ret < 0)
++		return ret;
++
++	return devfreq_suspend_device(dmc->devfreq);
++}
++
++static int px30_dmc_resume(struct device *dev)
++{
++	struct px30_dmc *dmc = dev_get_drvdata(dev);
++	int ret;
++
++	ret = devfreq_event_enable_edev(dmc->edev);
++	if (ret < 0)
++		return ret;
++
++	return devfreq_resume_device(dmc->devfreq);
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(px30_dmc_pm, px30_dmc_suspend, px30_dmc_resume);
++
++static const struct of_device_id px30_dmc_of_match[] = {
++	{ .compatible = "rockchip,px30-dmc" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, px30_dmc_of_match);
++
++static struct platform_driver px30_dmc_driver = {
++	.probe	= px30_dmc_probe,
++	.driver = {
++		.name		= "px30-dmc",
++		.pm		= pm_sleep_ptr(&px30_dmc_pm),
++		.of_match_table	= px30_dmc_of_match,
++	},
++};
++module_platform_driver(px30_dmc_driver);
++
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("PX30 DDR frequency scaling through Rockchip BL31");
+-- 
+2.55.0
+
