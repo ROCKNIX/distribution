@@ -7,7 +7,7 @@ PKG_SHA256="f4007a96d4d1280e7ac8a5552a99233bfa41475dd3a6f5865444107e77430f34"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/vba-next"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="Optimized port of VBA-M to Libretro."
 
 PKG_MAKE_OPTS_TARGET="-f Makefile.libretro"

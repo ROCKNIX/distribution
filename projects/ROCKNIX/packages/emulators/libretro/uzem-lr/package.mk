@@ -7,7 +7,7 @@ PKG_SHA256="b51bc49a11891c97cb98228798de9dcb9d15327f15aac21cab190d184d2e1d68"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/libretro/libretro-uzem"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="A retro-minimalist game console engine for the ATMega644"
 
 makeinstall_target() {

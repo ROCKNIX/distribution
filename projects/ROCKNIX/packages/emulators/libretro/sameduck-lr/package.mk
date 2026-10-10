@@ -7,7 +7,7 @@ PKG_SHA256="101bd2876c0b6c63abc91b3971fa1c203c955d4a86a5c54ce6172ee5ab729456"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/LIJI32/SameBoy"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="Mega Duck/Cougar Boy emulator written in C"
 
 PKG_MAKE_OPTS_TARGET="-C libretro"

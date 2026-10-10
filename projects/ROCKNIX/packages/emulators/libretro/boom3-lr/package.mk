@@ -7,7 +7,7 @@ PKG_SHA256="613d655c7f05dd2fd90fc27721165efad2be6c30ed85d82a07d28d81e30324cc"
 PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/libretro/boom3"
 PKG_URL="https://github.com/libretro/boom3/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="Doom3 - dhewm3 port to libretro."
 PKG_TOOLCHAIN="make"
 

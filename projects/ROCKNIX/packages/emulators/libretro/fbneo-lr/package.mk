@@ -7,7 +7,7 @@ PKG_SHA256="48e35bf75aa76200fb2bc64fa12d25606e0b7ebe3dcc41c37a641c33f93601d5"
 PKG_LICENSE="Non-commercial"
 PKG_SITE="https://github.com/libretro/FBNeo"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="Port of Final Burn Neo to Libretro (v0.2.97.38)."
 PKG_TOOLCHAIN="make"
 

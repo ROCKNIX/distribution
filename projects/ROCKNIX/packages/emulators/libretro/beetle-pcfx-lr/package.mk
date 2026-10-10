@@ -7,7 +7,7 @@ PKG_SHA256="af1d5b2ecafb43e668e5ff24978772e180397d8305003c8f3c6bd960aa9bf11b"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/beetle-pcfx-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="libretro implementation of Mednafen PC-FX."
 
 if [ "${ARCH}" == "i386" -o "${ARCH}" == "x86_64" ]; then

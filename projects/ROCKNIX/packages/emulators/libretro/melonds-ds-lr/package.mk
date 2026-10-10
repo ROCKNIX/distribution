@@ -7,7 +7,7 @@ PKG_SHA256="40faf8f205106a52e86fd37c15390d88bf92433329838766c7d87715098b15dc"
 PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/JesseTG/melonds-ds"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="An enhanced remake of the melonDS core for libretro that prioritizes standalone parity, reliability, and usability."
 PKG_BUILD_FLAGS="+lto-off"
 

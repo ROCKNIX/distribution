@@ -7,7 +7,7 @@ PKG_SHA256="04181eaa570acdb384920b2363eabf07b1d6d64701e806b852435aec0aa587ee"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/daphne"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="This is a Daphne core"
 PKG_TOOLCHAIN="make"
 

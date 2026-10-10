@@ -7,7 +7,7 @@ PKG_SHA256="0b1661fb1c7d19746bd0e5d76fa10beccc5338328928e79ec620a4253a3216c4"
 PKG_LICENSE="MAME"
 PKG_SITE="https://github.com/libretro/mame2003-plus-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="MAME - Multiple Arcade Machine Emulator"
 
 makeinstall_target() {

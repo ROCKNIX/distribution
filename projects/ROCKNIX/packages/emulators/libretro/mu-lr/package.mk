@@ -7,7 +7,7 @@ PKG_SHA256="595b18df6da9b4dc3750d95e0597ad4952e70a79d748b5e1cf3865384ff1d17c"
 PKG_LICENSE="Non-commercial"
 PKG_SITE="https://github.com/libretro/Mu"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="An emulator for the Palm m515 OS ported to libretro."
 PKG_TOOLCHAIN="make"
 

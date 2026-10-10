@@ -7,7 +7,7 @@ PKG_SHA256="3b0d4a94d3ba8293dbbe6e1dd7bd1cdd8ad3d70b52dc248299380d86b3e70812"
 PKG_LICENSE="BSD-3-Clause"
 PKG_SITE="https://github.com/libretro/xmil-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="Libretro port of X Millennium Sharp X1 emulator"
 PKG_TOOLCHAIN="make"
 

@@ -7,7 +7,7 @@ PKG_SHA256="9a7c2e4041753c8235f403bfa48f93b6049509f857d45e42e0657efffbebd898"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/RACE"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="This is the RACE NGPC emulator modified by theelf to run on the PSP."
 
 makeinstall_target() {

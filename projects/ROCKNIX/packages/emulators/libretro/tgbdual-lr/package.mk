@@ -7,7 +7,7 @@ PKG_SHA256="4f6bc3e93664db811794369c9b0ebbcca59c2edf4df311f4312e309a3e2ed95c"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/tgbdual-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="libretro port of TGB Dual"
 
 makeinstall_target() {

@@ -7,7 +7,7 @@ PKG_SHA256="7cd39760926133dd94cffc597ef558b9c7e505cbccc8e716e82809b2641e9db0"
 PKG_LICENSE="BSD-3-Clause"
 PKG_SITE="https://github.com/libretro/quasi88-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="A port of QUASI88, a PC-8800 series emulator by Showzoh Fukunaga, to the libretro API"
 
 pre_configure_target() {

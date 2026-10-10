@@ -7,7 +7,7 @@ PKG_SHA256="55406bddfc8476543feb7a557fea5d19c585313f4f84f37e0cd3a0899e4bed71"
 PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/drhelius/Geargrafx"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="Geargrafx is a very accurate, cross-platform TurboGrafx-16 / PC Engine / SuperGrafx / PCE CD-ROM² emulator written in C++ that runs on Windows, macOS, Linux, BSD and RetroArch."
 PKG_TOOLCHAIN="make"
 

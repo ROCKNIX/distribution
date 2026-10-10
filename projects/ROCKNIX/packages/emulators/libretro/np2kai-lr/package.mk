@@ -7,7 +7,7 @@ PKG_SHA256="8080b89ac0f9a63c9430fd60b3c129f63c1dbbe38b41f086a1df802dd2b4b53b"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/AZO234/NP2kai"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="Neko Project II kai"
 PKG_TOOLCHAIN="make"
 

@@ -4,10 +4,9 @@
 PKG_NAME="dolphin-lr"
 PKG_VERSION="2ce4b654546b4dde495df5cb5ca7f13fbf6df5c9"
 PKG_LICENSE="GPL-2.0-or-later"
-PKG_DEPENDS_TARGET="toolchain libevdev libdrm ffmpeg zlib libpng lzo libusb"
+PKG_DEPENDS_TARGET="toolchain retroarch libevdev libdrm ffmpeg zlib libpng lzo libusb"
 PKG_SITE="https://github.com/libretro/dolphin"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Dolphin Libretro, a Gamecube & Wii emulator core for Retroarch"
 PKG_TOOLCHAIN="cmake"
 

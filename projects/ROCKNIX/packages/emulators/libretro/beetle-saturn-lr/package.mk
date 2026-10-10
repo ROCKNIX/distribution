@@ -7,7 +7,7 @@ PKG_SHA256="cce418de1ed227c44d2127cd2f726d0d51d80afed7ce31a330a3759f096c4ada"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/beetle-saturn-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="Beetle Saturn libretro, a fork from mednafen"
 
 if [ ! "${OPENGL}" = "no" ]; then

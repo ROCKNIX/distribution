@@ -7,7 +7,7 @@ PKG_SHA256="0cf48d8ef4846ce2b0b26fac4068cfbe2ab4c90794ede1af66c343fbfe079b2f"
 PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/DerKoun/bsnes-hd"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="bsnes-hd is a fork of bsnes that adds HD video features such as widescreen, HD Mode 7 and true color"
 PKG_TOOLCHAIN="make"
 

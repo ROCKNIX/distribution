@@ -7,7 +7,7 @@ PKG_SHA256="02630caca19b3e5ba4a1132c78cca7c2ac7238169f7014d8f345b86540ce4fc7"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/beetle-vb-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="libretro implementation of Mednafen VB. (VirtualBoy)"
 
 makeinstall_target() {
