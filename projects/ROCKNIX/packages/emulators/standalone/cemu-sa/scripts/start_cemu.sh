@@ -15,11 +15,6 @@ then
   PASINK=$(pactl info | grep 'Default Sink:' | cut -d ' ' -f 3)
 fi
 
-# Set up mime db
-mkdir -p /storage/.local/share/mime/packages
-cp -rf /usr/share/mime/packages/* /storage/.local/share/mime/packages
-update-mime-database /storage/.local/share/mime
-
 # Set common paths
 CEMU_CONFIG_ROOT="/storage/.config/Cemu"
 CEMU_CACHE_LOG="${CEMU_CONFIG_ROOT}/share/log.txt"
