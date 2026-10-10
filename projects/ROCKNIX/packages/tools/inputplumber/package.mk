@@ -2,12 +2,12 @@
 # Copyright (C) 2025 ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="inputplumber"
-PKG_VERSION="v0.79.0"
-PKG_SHA256="123c858139d3b78e3f075158ce16b8fdc8067a10e31a93cb1e7f2aea816106bd"
+PKG_VERSION="0.79.0"
+PKG_SHA256="9f72f52b350be3dcf71e2c4704418101dd0af9350e413a7574b30216215cec5f"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/ShadowBlip/InputPlumber"
-PKG_URL="https://github.com/ShadowBlip/InputPlumber/releases/download/${PKG_VERSION}/inputplumber-aarch64.tar.gz"
-PKG_DEPENDS_TARGET="toolchain systemd libevdev libiio polkit"
+PKG_URL="${PKG_SITE}/archive/refs/tags/v${PKG_VERSION}.tar.gz"
+PKG_DEPENDS_TARGET="toolchain cargo:host cargo rust llvm:host systemd libevdev libiio polkit"
 PKG_LONGDESC="Open source input router and remapper daemon for Linux"
 PKG_TOOLCHAIN="manual"
 
@@ -36,9 +36,22 @@ post_unpack() {
   done
 }
 
+make_target() {
+  export LIBCLANG_PATH=${TOOLCHAIN}/lib
+  export LD_LIBRARY_PATH=${TOOLCHAIN}/lib:${LD_LIBRARY_PATH}
+  export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=${SYSROOT_PREFIX} -isystem ${SYSROOT_PREFIX}/usr/include"
+
+  cargo build \
+    --target ${TARGET_NAME} \
+    --release
+}
+
 makeinstall_target() {
+  mkdir -p ${INSTALL}/usr/bin
+  cp ${PKG_BUILD}/.${TARGET_NAME}/target/${TARGET_NAME}/release/inputplumber ${INSTALL}/usr/bin/
+
   mkdir -p ${INSTALL}/usr
-  rsync -ar ${PKG_BUILD}/usr/ ${INSTALL}/usr/
+  rsync -ar ${PKG_BUILD}/rootfs/usr/ ${INSTALL}/usr/
 
   # sources/ is overlaid with cp, so pin the mode udev needs to run the shim.
   chmod 0755 ${INSTALL}/usr/lib/inputplumber/setfacl-shim/setfacl
