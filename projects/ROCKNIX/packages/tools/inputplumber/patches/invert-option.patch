@@ -1,0 +1,293 @@
+From 5c429e142ec41af64142e11e13dbf118a49361eb Mon Sep 17 00:00:00 2001
+From: honjow <honjow311@gmail.com>
+Date: Sat, 28 Mar 2026 04:23:20 +0800
+Subject: [PATCH 1/4] fix: correct unsigned axis normalization and add inverted
+ option
+
+- normalize_unsigned_value now accounts for min offset: (value - min) / (max - min)
+- denormalize_unsigned_value updated accordingly
+- Add `inverted` field to EvdevConfig for capability maps, allowing
+  axes with reversed hardware polarity (e.g. ADC triggers) to be
+  properly mapped without device tree changes
+---
+ .../schema/capability_map_v2.json             |  5 +++++
+ src/config/capability_map/evdev.rs            |  4 ++++
+ src/input/event/evdev.rs                      | 21 ++++++++++++-------
+ src/input/event/evdev/translator.rs           | 17 ++++++++++-----
+ 4 files changed, 34 insertions(+), 13 deletions(-)
+
+diff --git a/rootfs/usr/share/inputplumber/schema/capability_map_v2.json b/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
+index 38d21393..ebb20fb2 100644
+--- a/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
++++ b/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
+@@ -268,6 +268,11 @@
+           "maximum": 65535,
+           "minimum": 0
+         },
++        "inverted": {
++          "description": "If true, invert the axis value. For triggers (0.0~1.0), this applies 1.0 - value. For joystick axes (-1.0~1.0), this negates the value.",
++          "type": "boolean",
++          "default": false
++        },
+         "value_type": {
+           "$ref": "#/$defs/ValueType"
+         }
+diff --git a/src/config/capability_map/evdev.rs b/src/config/capability_map/evdev.rs
+index 12a7435d..b96d8108 100644
+--- a/src/config/capability_map/evdev.rs
++++ b/src/config/capability_map/evdev.rs
+@@ -10,6 +10,10 @@ pub struct EvdevConfig {
+     pub event_value: Option<u16>,
+     pub value_type: ValueType,
+     pub axis_direction: Option<AxisDirection>,
++    /// If true, invert the axis value. For triggers (0.0~1.0), this applies
++    /// `1.0 - value`. For joystick axes (-1.0~1.0), this negates the value.
++    #[serde(default)]
++    pub inverted: bool,
+ }
+ 
+ #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, PartialEq)]
+ /// The AxisDirection is used to determine if a button value should be mapped
+diff --git a/src/input/event/evdev/translator.rs b/src/input/event/evdev/translator.rs
+index 465f6dc3..bb406fe7 100644
+--- a/src/input/event/evdev/translator.rs
++++ b/src/input/event/evdev/translator.rs
+@@ -251,7 +251,7 @@ impl EventTranslator {
+             }
+ 
+             // Normalize the input value
+-            let value = self.get_input_value(event, &evdev_config.value_type);
++            let value = self.get_input_value(event, &evdev_config.value_type, evdev_config.inverted);
+             log::trace!(
+                 "Translated value {:?} {} to {:?}",
+                 event.code(),
+@@ -447,8 +447,15 @@ impl EventTranslator {
+     }
+ 
+     /// Returns the normalized value of the event expressed as an [InputValue].
+-    fn get_input_value(&self, event: &InputEvent, value_type: &ValueType) -> InputValue {
+-        let normal_value = self.get_normalized_value(event, value_type);
++    fn get_input_value(&self, event: &InputEvent, value_type: &ValueType, inverted: bool) -> InputValue {
++        let mut normal_value = self.get_normalized_value(event, value_type);
++
++        if inverted {
++            normal_value = match value_type {
++                ValueType::Trigger | ValueType::Button => 1.0 - normal_value,
++                _ => -normal_value,
++            };
++        }
+ 
+         match value_type {
+             ValueType::Button => {
+From 2c14a2ee7c2dce61bdb41d2264599a121ebbcb2c Mon Sep 17 00:00:00 2001
+From: honjow <honjow311@gmail.com>
+Date: Mon, 30 Mar 2026 05:53:42 +0800
+Subject: [PATCH 2/4] refactor(CapabilityMap): rename inverted to invert for
+ consistency
+
+---
+ rootfs/usr/share/inputplumber/schema/capability_map_v2.json | 4 ++--
+ src/config/capability_map/evdev.rs                          | 6 +++---
+ src/input/event/evdev/translator.rs                         | 2 +-
+ 3 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/rootfs/usr/share/inputplumber/schema/capability_map_v2.json b/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
+index ebb20fb2..f7f3ddcf 100644
+--- a/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
++++ b/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
+@@ -268,8 +268,8 @@
+           "maximum": 65535,
+           "minimum": 0
+         },
+-        "inverted": {
+-          "description": "If true, invert the axis value. For triggers (0.0~1.0), this applies 1.0 - value. For joystick axes (-1.0~1.0), this negates the value.",
++        "invert": {
++          "description": "If true, invert the axis value. For triggers (0.0 to 1.0), this applies 1.0 - value. For joystick axes (-1.0 to 1.0), this negates the value.",
+           "type": "boolean",
+           "default": false
+         },
+diff --git a/src/config/capability_map/evdev.rs b/src/config/capability_map/evdev.rs
+index b96d8108..0526fb56 100644
+--- a/src/config/capability_map/evdev.rs
++++ b/src/config/capability_map/evdev.rs
+@@ -10,10 +10,10 @@ pub struct EvdevConfig {
+     pub event_value: Option<u16>,
+     pub value_type: ValueType,
+     pub axis_direction: Option<AxisDirection>,
+-    /// If true, invert the axis value. For triggers (0.0~1.0), this applies
+-    /// `1.0 - value`. For joystick axes (-1.0~1.0), this negates the value.
++    /// If true, invert the axis value. For triggers (0.0 to 1.0), this applies
++    /// `1.0 - value`. For joystick axes (-1.0 to 1.0), this negates the value.
+     #[serde(default)]
+-    pub inverted: bool,
++    pub invert: bool,
+ }
+ 
+ #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, PartialEq)]
+diff --git a/src/input/event/evdev/translator.rs b/src/input/event/evdev/translator.rs
+index bb406fe7..66b56b7b 100644
+--- a/src/input/event/evdev/translator.rs
++++ b/src/input/event/evdev/translator.rs
+@@ -251,7 +251,7 @@ impl EventTranslator {
+             }
+ 
+             // Normalize the input value
+-            let value = self.get_input_value(event, &evdev_config.value_type, evdev_config.inverted);
++            let value = self.get_input_value(event, &evdev_config.value_type, evdev_config.invert);
+             log::trace!(
+                 "Translated value {:?} {} to {:?}",
+                 event.code(),
+
+From 19682eba5e25ec6ef103e833990f17e491861f89 Mon Sep 17 00:00:00 2001
+From: honjow <honjow311@gmail.com>
+Date: Wed, 1 Apr 2026 09:02:14 +0800
+Subject: [PATCH 3/4] refactor(CapabilityMap): remove invert option from evdev
+ source config
+
+Remove the invert field added to EvdevConfig as it is out of scope for
+the unsigned axis normalization fix and overlaps with existing invert
+support in PR #534.
+---
+ .../inputplumber/schema/capability_map_v2.json      |  5 -----
+ src/config/capability_map/evdev.rs                  |  4 ----
+ src/input/event/evdev/translator.rs                 | 13 +++----------
+ 3 files changed, 3 insertions(+), 19 deletions(-)
+
+diff --git a/rootfs/usr/share/inputplumber/schema/capability_map_v2.json b/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
+index f7f3ddcf..38d21393 100644
+--- a/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
++++ b/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
+@@ -268,11 +268,6 @@
+           "maximum": 65535,
+           "minimum": 0
+         },
+-        "invert": {
+-          "description": "If true, invert the axis value. For triggers (0.0 to 1.0), this applies 1.0 - value. For joystick axes (-1.0 to 1.0), this negates the value.",
+-          "type": "boolean",
+-          "default": false
+-        },
+         "value_type": {
+           "$ref": "#/$defs/ValueType"
+         }
+diff --git a/src/config/capability_map/evdev.rs b/src/config/capability_map/evdev.rs
+index 0526fb56..12a7435d 100644
+--- a/src/config/capability_map/evdev.rs
++++ b/src/config/capability_map/evdev.rs
+@@ -10,10 +10,6 @@ pub struct EvdevConfig {
+     pub event_value: Option<u16>,
+     pub value_type: ValueType,
+     pub axis_direction: Option<AxisDirection>,
+-    /// If true, invert the axis value. For triggers (0.0 to 1.0), this applies
+-    /// `1.0 - value`. For joystick axes (-1.0 to 1.0), this negates the value.
+-    #[serde(default)]
+-    pub invert: bool,
+ }
+ 
+ #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, PartialEq)]
+diff --git a/src/input/event/evdev/translator.rs b/src/input/event/evdev/translator.rs
+index 66b56b7b..dad3838d 100644
+--- a/src/input/event/evdev/translator.rs
++++ b/src/input/event/evdev/translator.rs
+@@ -251,7 +251,7 @@ impl EventTranslator {
+             }
+ 
+             // Normalize the input value
+-            let value = self.get_input_value(event, &evdev_config.value_type, evdev_config.invert);
++            let value = self.get_input_value(event, &evdev_config.value_type);
+             log::trace!(
+                 "Translated value {:?} {} to {:?}",
+                 event.code(),
+@@ -447,15 +447,8 @@ impl EventTranslator {
+     }
+ 
+     /// Returns the normalized value of the event expressed as an [InputValue].
+-    fn get_input_value(&self, event: &InputEvent, value_type: &ValueType, inverted: bool) -> InputValue {
+-        let mut normal_value = self.get_normalized_value(event, value_type);
+-
+-        if inverted {
+-            normal_value = match value_type {
+-                ValueType::Trigger | ValueType::Button => 1.0 - normal_value,
+-                _ => -normal_value,
+-            };
+-        }
++    fn get_input_value(&self, event: &InputEvent, value_type: &ValueType) -> InputValue {
++        let normal_value = self.get_normalized_value(event, value_type);
+ 
+         match value_type {
+             ValueType::Button => {
+
+From 916f2033fe40636814731f941efc84eb42172f97 Mon Sep 17 00:00:00 2001
+From: sydarn <sydarn@proton.me>
+Date: Sat, 2 May 2026 23:06:35 +0200
+Subject: [PATCH 4/4] Revert "refactor(CapabilityMap): remove invert option
+ from evdev source config"
+
+This reverts commit 19682eba5e25ec6ef103e833990f17e491861f89.
+---
+ .../inputplumber/schema/capability_map_v2.json      |  5 +++++
+ src/config/capability_map/evdev.rs                  |  4 ++++
+ src/input/event/evdev/translator.rs                 | 13 ++++++++++---
+ 3 files changed, 19 insertions(+), 3 deletions(-)
+
+diff --git a/rootfs/usr/share/inputplumber/schema/capability_map_v2.json b/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
+index 38d21393..f7f3ddcf 100644
+--- a/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
++++ b/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
+@@ -268,6 +268,11 @@
+           "maximum": 65535,
+           "minimum": 0
+         },
++        "invert": {
++          "description": "If true, invert the axis value. For triggers (0.0 to 1.0), this applies 1.0 - value. For joystick axes (-1.0 to 1.0), this negates the value.",
++          "type": "boolean",
++          "default": false
++        },
+         "value_type": {
+           "$ref": "#/$defs/ValueType"
+         }
+diff --git a/src/config/capability_map/evdev.rs b/src/config/capability_map/evdev.rs
+index 12a7435d..0526fb56 100644
+--- a/src/config/capability_map/evdev.rs
++++ b/src/config/capability_map/evdev.rs
+@@ -10,6 +10,10 @@ pub struct EvdevConfig {
+     pub event_value: Option<u16>,
+     pub value_type: ValueType,
+     pub axis_direction: Option<AxisDirection>,
++    /// If true, invert the axis value. For triggers (0.0 to 1.0), this applies
++    /// `1.0 - value`. For joystick axes (-1.0 to 1.0), this negates the value.
++    #[serde(default)]
++    pub invert: bool,
+ }
+ 
+ #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, PartialEq)]
+diff --git a/src/input/event/evdev/translator.rs b/src/input/event/evdev/translator.rs
+index dad3838d..66b56b7b 100644
+--- a/src/input/event/evdev/translator.rs
++++ b/src/input/event/evdev/translator.rs
+@@ -251,7 +251,7 @@ impl EventTranslator {
+             }
+ 
+             // Normalize the input value
+-            let value = self.get_input_value(event, &evdev_config.value_type);
++            let value = self.get_input_value(event, &evdev_config.value_type, evdev_config.invert);
+             log::trace!(
+                 "Translated value {:?} {} to {:?}",
+                 event.code(),
+@@ -447,8 +447,15 @@ impl EventTranslator {
+     }
+ 
+     /// Returns the normalized value of the event expressed as an [InputValue].
+-    fn get_input_value(&self, event: &InputEvent, value_type: &ValueType) -> InputValue {
+-        let normal_value = self.get_normalized_value(event, value_type);
++    fn get_input_value(&self, event: &InputEvent, value_type: &ValueType, inverted: bool) -> InputValue {
++        let mut normal_value = self.get_normalized_value(event, value_type);
++
++        if inverted {
++            normal_value = match value_type {
++                ValueType::Trigger | ValueType::Button => 1.0 - normal_value,
++                _ => -normal_value,
++            };
++        }
+ 
+         match value_type {
+             ValueType::Button => {
