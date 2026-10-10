@@ -7,7 +7,7 @@ PKG_SHA256="d9f495763ef000d2ddbb71956b56cd1aff67c3c4f8b54bfdbbc7ce2f8d9b1033"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/FCare/Kronos"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain boost zlib"
+PKG_DEPENDS_TARGET="toolchain retroarch boost zlib"
 PKG_LONGDESC="Kronos is a Sega Saturn emulator forked from yabause."
 PKG_TOOLCHAIN="make"
 

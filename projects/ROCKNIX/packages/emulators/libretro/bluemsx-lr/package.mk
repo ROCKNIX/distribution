@@ -7,7 +7,7 @@ PKG_SHA256="55d7f4feed17592d2c726469b00ec239cb4b8f2093a29b912931f25035838b9b"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/blueMSX-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="Port of blueMSX to the libretro API."
 
 PKG_MAKE_OPTS_TARGET="-f Makefile.libretro"

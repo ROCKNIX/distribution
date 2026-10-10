@@ -7,7 +7,7 @@ PKG_SHA256="c4cc7cad99bfa84b4dcf7860eeefc12ef181d4c21798445abbfa71060a01370f"
 PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/drhelius/Gearboy"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="Game Boy / Gameboy Color emulator for iOS, Mac, Raspberry Pi, Windows and Linux"
 PKG_TOOLCHAIN="make"
 

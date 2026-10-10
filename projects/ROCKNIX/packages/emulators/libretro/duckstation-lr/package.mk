@@ -7,7 +7,7 @@ PKG_SHA256="a716d0caa55c24cfa23495d46bf5268a58fec0055e23df41caa7239d7da28fa4"
 PKG_LICENSE="Non-commercial"
 PKG_SITE="https://github.com/stenzek/duckstation"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain SDL2 nasm:host pulseaudio openssl libidn2 nghttp2 zlib curl libevdev"
+PKG_DEPENDS_TARGET="toolchain retroarch SDL2 nasm:host pulseaudio openssl libidn2 nghttp2 zlib curl libevdev"
 PKG_LONGDESC="DuckStation - PlayStation 1, aka. PSX Emulator"
 
 PKG_CMAKE_OPTS_TARGET+=" -DBUILD_SDL_FRONTEND=OFF \

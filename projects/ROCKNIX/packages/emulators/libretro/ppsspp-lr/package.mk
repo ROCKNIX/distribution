@@ -6,7 +6,7 @@ PKG_VERSION="fa50bb1976065c4f8b1b47af227d367fe9771555" # v1.20.4
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/hrydgard/ppsspp"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain SDL2 libzip zstd"
+PKG_DEPENDS_TARGET="toolchain retroarch SDL2 libzip zstd"
 PKG_LONGDESC="A PSP emulator for Android, Windows, Mac, Linux and Blackberry 10, written in C++."
 
 if [ ! "${OPENGL}" = "no" ]; then

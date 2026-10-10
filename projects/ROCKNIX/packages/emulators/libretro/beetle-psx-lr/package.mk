@@ -7,7 +7,7 @@ PKG_SHA256="e50d45fa48e9f0971fe35c810896137a5ff9944e0c199d8f252403ecf959da08"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/beetle-psx-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="Fork of Mednafen PSX"
 
 if [ ! "${OPENGL}" = "no" ]; then

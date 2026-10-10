@@ -7,7 +7,7 @@ PKG_SHA256="05283c5d35f7cfdc447b3a45631983a82f155c5048f390d1a85e088bd3966b35"
 PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/libretro/neocd_libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain flac libogg libvorbis"
+PKG_DEPENDS_TARGET="toolchain retroarch flac libogg libvorbis"
 PKG_LONGDESC="Neo Geo CD emulator for libretro "
 
 makeinstall_target() {

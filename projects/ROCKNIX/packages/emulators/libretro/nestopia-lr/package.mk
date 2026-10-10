@@ -7,7 +7,7 @@ PKG_SHA256="b7cad4c35ea0ba7b27990107e738e96a2f1a248321929561258717b5f53e06e4"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/nestopia"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="Libretro implementation of NEStopia. (Nintendo Entertainment System)"
 PKG_TOOLCHAIN="make"
 

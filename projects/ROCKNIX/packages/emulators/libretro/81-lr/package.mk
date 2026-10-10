@@ -7,7 +7,7 @@ PKG_SHA256="fe8645529ce2140d29d2cad65dc2144bb3a41d858fd23345f85e412081d26aad"
 PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/libretro/81-libretro"
 PKG_URL="https://github.com/libretro/81-libretro/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="A port of the EightyOne ZX81 Emulator to libretro"
 
 PKG_MAKE_OPTS_TARGET="-f Makefile.libretro"

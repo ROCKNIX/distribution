@@ -7,7 +7,7 @@ PKG_SHA256="3f3193561e6f58640ed6818b5c51fd7e3706083e9f211eb9f2282f12d189e5d4"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/same_cdi"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain expat zlib flac sqlite"
+PKG_DEPENDS_TARGET="toolchain retroarch expat zlib flac sqlite"
 PKG_LONGDESC="SAME_CDI is a Single Arcade/Machine Emulator for libretro"
 PKG_TOOLCHAIN="make"
 

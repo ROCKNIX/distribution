@@ -8,7 +8,7 @@ PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/skylersaleh/SkyEmu"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_LONGDESC="SkyEmu is a low level GameBoy, GameBoy Color, Game Boy Advance, and DS emulator."
-PKG_DEPENDS_TARGET="toolchain SDL2 openssl curl"
+PKG_DEPENDS_TARGET="toolchain retroarch SDL2 openssl curl"
 
 PKG_CMAKE_OPTS_TARGET="-DENABLE_RETRO_ACHIEVEMENTS=ON \
                        -DRETRO_CORE_ONLY=ON"

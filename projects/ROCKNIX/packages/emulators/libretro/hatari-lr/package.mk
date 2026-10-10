@@ -7,7 +7,7 @@ PKG_SHA256="f45c64793a082f1d5a33cb32560276cfd32945912c958066e422f819489817d8"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/hatari"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain capsimg"
+PKG_DEPENDS_TARGET="toolchain retroarch capsimg"
 PKG_LONGDESC="New rebasing of Hatari based on Mercurial upstream. Tries to be a shallow fork for easy upstreaming later on."
 PKG_TOOLCHAIN="make"
 

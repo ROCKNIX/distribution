@@ -7,7 +7,7 @@ PKG_SHA256="472783d978a7309bb47f093e588b5951367ce54c120ef785de04b677b2683ccc"
 PKG_LICENSE="AGPL-2.0-or-later"
 PKG_SITE="https://github.com/TimOelrichs/doublecherryGB-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="DoubleCherryGB is an open source (GPLv2) GB/GBC emulator."
 
 if [ "${OPENGL_SUPPORT}" = "yes" ]; then

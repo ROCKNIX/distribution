@@ -7,7 +7,7 @@ PKG_SHA256="8aa94bdd669bab05a10ff03c8a977eccd41a30063271da3f81a7a50b1a72f4ca"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/metallic77/flycast"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="Flycast is a multiplatform Sega Dreamcast emulator "
 PKG_BUILD_FLAGS="-gold"
 
