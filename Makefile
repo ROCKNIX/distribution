@@ -78,6 +78,11 @@ SM4450:
 	PROJECT=ROCKNIX DEVICE=SM4450 ARCH=arm ./scripts/build_distro
 	PROJECT=ROCKNIX DEVICE=SM4450 ARCH=aarch64 ./scripts/build_distro
 
+SM6450:
+	unset DEVICE_ROOT
+	PROJECT=ROCKNIX DEVICE=SM6450 ARCH=arm ./scripts/build_distro
+	PROJECT=ROCKNIX DEVICE=SM6450 ARCH=aarch64 ./scripts/build_distro
+
 SM6115:
 	unset DEVICE_ROOT
 	PROJECT=ROCKNIX DEVICE=SM6115 ARCH=arm ./scripts/build_distro

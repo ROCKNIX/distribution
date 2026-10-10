@@ -1,0 +1,54 @@
+From: sunshineinabox <aqemail@gmail.com>
+Subject: [PATCH] input: pm8xxx-vibrator: add a maximum drive voltage property
+
+The PMI632-style vibrator LDO goes up to 3.544 V but the motor behind
+it may be rated lower. Let qcom,vib-max-microvolt cap the top of
+the level range so full-strength rumble stays within the motor's rating.
+
+---
+--- a/Documentation/devicetree/bindings/input/qcom,pm8xxx-vib.yaml
++++ b/Documentation/devicetree/bindings/input/qcom,pm8xxx-vib.yaml
+@@ -28,6 +28,9 @@
+   reg:
+     maxItems: 1
+ 
++  qcom,vib-max-microvolt:
++    description: Upper drive voltage for a motor rated below the LDO range.
++
+ required:
+   - compatible
+   - reg
+--- a/drivers/input/misc/pm8xxx-vibrator.c
++++ b/drivers/input/misc/pm8xxx-vibrator.c
+@@ -14,8 +14,8 @@
+ #define VIB_MAX_LEVEL_mV(vib)	(vib->drv2_addr ? 3544 : 3100)
+ #define VIB_MIN_LEVEL_mV(vib)	(vib->drv2_addr ? 1504 : 1200)
+ #define VIB_PER_STEP_mV(vib)	(vib->drv2_addr ? 8 : 100)
+-#define VIB_MAX_LEVELS(vib) \
+-	(VIB_MAX_LEVEL_mV(vib) - VIB_MIN_LEVEL_mV(vib) + VIB_PER_STEP_mV(vib))
++#define VIB_MAX_LEVELS(vib)		\
++	(vib->max_level_mv - VIB_MIN_LEVEL_mV(vib) + VIB_PER_STEP_mV(vib))
+ 
+ #define MAX_FF_SPEED		0xff
+ 
+@@ -86,6 +86,7 @@
+ 	unsigned int enable_addr;
+ 	unsigned int drv_addr;
+ 	unsigned int drv2_addr;
++	unsigned int max_level_mv;
+ 	int speed;
+ 	int level;
+ 	bool active;
+@@ -231,6 +232,12 @@
+ 	vib->drv_addr = reg_base + regs->drv_offset;
+ 	vib->drv2_addr = reg_base + regs->drv2_offset;
+ 
++	/* the motor may be rated below what the LDO can drive */
++	vib->max_level_mv = VIB_MAX_LEVEL_mV(vib);
++	if (!device_property_read_u32(&pdev->dev, "qcom,vib-max-microvolt", &val))
++		vib->max_level_mv = clamp(val / 1000, VIB_MIN_LEVEL_mV(vib),
++					  VIB_MAX_LEVEL_mV(vib));
++
+ 	/* operate in manual mode */
+ 	error = regmap_read(vib->regmap, vib->drv_addr, &val);
+ 	if (error < 0)
