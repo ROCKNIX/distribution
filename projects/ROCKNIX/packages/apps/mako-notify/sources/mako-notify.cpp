@@ -14,6 +14,7 @@
 
 const std::string CONFIG_DIR = "/storage/.config/mako";
 const std::string CONFIG_FILE = CONFIG_DIR + "/config";
+const std::string DEFAULT_CONFIG_FILE = "/usr/config/mako/config";
 
 void ensure_mako_config() {
     // Check if directory exists
@@ -28,26 +29,19 @@ void ensure_mako_config() {
 
     // Check if file exists
     if (stat(CONFIG_FILE.c_str(), &st) != 0) {
-        // File does not exist, create it with default contents
+        // File does not exist, copy the default config
+        std::ifstream ifs(DEFAULT_CONFIG_FILE);
+        if (!ifs) {
+            std::cerr << "Failed to read " << DEFAULT_CONFIG_FILE << std::endl;
+            return;
+        }
         std::ofstream ofs(CONFIG_FILE);
         if (!ofs) {
             std::cerr << "Failed to create config file at " << CONFIG_FILE << std::endl;
             return;
         }
 
-        ofs <<
-"max-visible=1\n"
-"layer=overlay\n"
-"font=monospace 30\n"
-"text-color=#ffffff\n"
-"text-alignment=center\n"
-"background-color=#000000\n"
-"border-size=0\n"
-"border-radius=10\n"
-"default-timeout=1500\n"
-"anchor=top-center\n"
-"width=500\n";
-
+        ofs << ifs.rdbuf();
         ofs.close();
 
         // Config was just created, reload mako to pick it up
