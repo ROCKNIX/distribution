@@ -4,13 +4,13 @@
 # Copyright (C) 2026-present ROCKNIX (https://rocknix.org)
 
 # ROCKNIX Memory Manager
-# Logic: 0/Empty = Off, "Auto" = Smart Calculation, "Resume" = Hibernation Sizing.
+# Logic: 0/Empty = Off, "Auto" = 100% of RAM, "N%" = Percent of RAM, "Resume" = Hibernation Sizing.
 
 # --- 1. CONFIGURATION CASCADE ---
 
 # A. Internal Safe Defaults (Hardcoded Fallback)
 DEFAULT_ZRAM_SIZE="0"
-DEFAULT_ZRAM_ALGO="zstd"
+DEFAULT_ZRAM_ALGO="lz4"
 DEFAULT_SWAP_FILE_SIZE="0"
 DEFAULT_SWAP_PRIORITY="auto"
 DEFAULT_VM_WATERMARK_FACTOR="auto"
@@ -371,19 +371,21 @@ apply_tuning() {
 perform_optimization() {
     # Proactive Maintenance Logic
     # 1. ZRAM Recompression (if Hybrid Tiering is active)
-    if [ "$ZRAM_SIZE_VAL" -gt 0 ] && [ -n "$SECONDARY_ALGO" ] && [ -f /sys/block/zram0/recompress ]; then
-        logger -t memory-manager "Optimizing: Triggering ZRAM recompression ($SECONDARY_ALGO)..."
-        if grep -q "$SECONDARY_ALGO" /sys/block/zram0/recomp_algorithm 2>/dev/null; then
-             # Recompress huge/idle pages to secondary algo
-             echo "algo=$SECONDARY_ALGO type=huge_idle" > /sys/block/zram0/recompress 2>/dev/null
-        fi
-    fi
+    recompress_idle
     
     # 2. Memory Compaction (if Fragmentation is high)
     if [ -f /proc/sys/vm/compact_memory ]; then
         logger -t memory-manager "Optimizing: Triggering Memory Compaction..."
         echo 1 > /proc/sys/vm/compact_memory
     fi
+}
+
+recompress_idle() {
+    [ -n "$SECONDARY_ALGO" ] || return
+    grep -q "zram0" /proc/swaps || return
+    grep -q "$SECONDARY_ALGO" /sys/block/zram0/recomp_algorithm 2>/dev/null || return
+    echo "algo=$SECONDARY_ALGO type=idle" > /sys/block/zram0/recompress 2>/dev/null
+    echo all > /sys/block/zram0/idle
 }
 
 setup_zram() {
@@ -415,6 +417,7 @@ setup_zram() {
     fi
     
     echo $((ZRAM_SIZE_VAL * 1024 * 1024)) > /sys/block/zram0/disksize
+    echo $((TOTAL_MEM_MB / 2))M > /sys/block/zram0/mem_limit
     mkswap /dev/zram0 >/dev/null
     swapon -p 100 /dev/zram0
 
@@ -479,12 +482,14 @@ while [[ $# -gt 0 ]]; do
         --reload) ACTION="reload"; shift ;;
         --drop-caches) ACTION="drop-caches"; shift ;;
         --optimize) ACTION="optimize"; shift ;;
+        --recompress) ACTION="recompress"; shift ;;
         --status) ACTION="status"; shift ;;
         --json) ACTION="json"; shift ;;
+        --get-zram) ACTION="get-zram"; shift ;;
         --help|-h)
             echo "Usage: rocknix-memory-manager [OPTIONS] [ACTION]"
             echo "Config Options (Writes to .config/swap.conf):"
-            echo "  --zram-size [0|Auto|MB]      Set ZRAM size"
+            echo "  --zram-size [0|Auto|N%|MB]   Set ZRAM size"
             echo "  --zram-algo [zstd|lzo|lz4]   Set ZRAM compression"
             echo "  --swap-size [0|Auto|Resume]  Set Disk Swap size"
             echo "  --swap-priority [Auto|Stripe] Set Swap priority"
@@ -496,8 +501,10 @@ while [[ $# -gt 0 ]]; do
             echo "  --setup        Initial setup"
             echo "  --reload       Safe reload (teardown -> setup)"
             echo "  --optimize     Run runtime optimizations (Recompress/Compact)"
+            echo "  --recompress   Recompress idle ZRAM pages with the secondary algorithm"
             echo "  --status       Show status (default interactive)"
             echo "  --json         Show status in JSON"
+            echo "  --get-zram     Print the configured ZRAM size and algorithm"
             exit 0
             ;;
         *) if [ -z "$ACTION" ]; then ACTION="setup"; fi; shift ;;
@@ -514,14 +521,11 @@ fi
 ZRAM_SIZE_VAL=0
 ZRAM_STATUS="Off"
 if [[ "${ZRAM_SIZE,,}" == "auto" ]]; then
-    if [ "$IS_LOW_RAM" = true ]; then
-        ZRAM_SIZE_VAL=$((TOTAL_MEM_MB * 3 / 4))
-    elif [ "$IS_MID_RAM" = true ]; then
-        ZRAM_SIZE_VAL=$((TOTAL_MEM_MB / 2))
-    else
-        ZRAM_SIZE_VAL=6144
-    fi
+    ZRAM_SIZE_VAL=$TOTAL_MEM_MB
     ZRAM_STATUS="Auto (${ZRAM_SIZE_VAL}MB)"
+elif [[ "$ZRAM_SIZE" =~ ^([0-9]+)%$ ]] && [ "${BASH_REMATCH[1]}" -gt 0 ]; then
+    ZRAM_SIZE_VAL=$((TOTAL_MEM_MB * BASH_REMATCH[1] / 100))
+    ZRAM_STATUS="${ZRAM_SIZE} (${ZRAM_SIZE_VAL}MB)"
 elif [[ "$ZRAM_SIZE" =~ ^[0-9]+$ ]] && [ "$ZRAM_SIZE" -gt 0 ]; then
     ZRAM_SIZE_VAL=$ZRAM_SIZE
     ZRAM_STATUS="${ZRAM_SIZE_VAL}MB"
@@ -551,7 +555,7 @@ PRIMARY_ALGO="$ZRAM_ALGO"
 SECONDARY_ALGO=""
 
 if [[ "$ZRAM_ALGO" == "zstd" ]]; then
-    PRIMARY_ALGO="lzo-rle"
+    PRIMARY_ALGO="lz4"
     SECONDARY_ALGO="zstd"
 fi
 
@@ -592,6 +596,9 @@ case "$ACTION" in
         exec 1> >(logger -s -t memory-manager) 2>&1
         perform_optimization
         ;;
+    recompress)
+        recompress_idle
+        ;;
     drop-caches)
         drop_caches
         ;;
@@ -600,6 +607,10 @@ case "$ACTION" in
         ;;
     json)
         show_status_json
+        ;;
+    get-zram)
+        echo "$ZRAM_SIZE"
+        echo "$ZRAM_ALGO"
         ;;
 esac
 exit 0
