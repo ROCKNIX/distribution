@@ -1,14 +1,9 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
-PKG_NAME="glew"
-PKG_VERSION="2.3.1"
-PKG_SHA256="b64790f94b926acd7e8f84c5d6000a86cb43967bd1e688b03089079799c9e889"
-PKG_LICENSE="BSD"
-PKG_SITE="http://glew.sourceforge.net/"
-PKG_URL="https://downloads.sourceforge.net/project/glew/glew/${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tgz"
+. ${ROOT}/packages/graphics/glew/package.mk
+
 PKG_DEPENDS_TARGET="toolchain"
-PKG_LONGDESC="GLEW - The OpenGL Extension Wrangler Library"
 PKG_TOOLCHAIN="cmake"
 
 PKG_CMAKE_OPTS_TARGET="-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
@@ -22,14 +17,16 @@ if [ ! "${OPENGL}" = "no" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
 fi
 
+unset -f make_target makeinstall_target
+
 pre_configure() {
   PKG_CMAKE_SCRIPT=${PKG_BUILD}/build/cmake/CMakeLists.txt
 }
 
 pre_configure_target() {
-  PKG_CMAKE_OPTS_TARGET+="      -DBUILD_UTILS=OFF \
-				-DGLEW_REGAL=OFF \
-				-DGLEW_OSMESA=OFF \
-				-DGLEW_EGL=ON \
-				-DBUILD_SHARED_LIBS=ON"
+  PKG_CMAKE_OPTS_TARGET+=" -DBUILD_UTILS=OFF \
+                           -DGLEW_REGAL=OFF \
+                           -DGLEW_OSMESA=OFF \
+                           -DGLEW_EGL=ON \
+                           -DBUILD_SHARED_LIBS=ON"
 }

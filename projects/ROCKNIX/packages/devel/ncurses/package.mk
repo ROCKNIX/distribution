@@ -1,98 +1,30 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2009-2016 Stephan Raue (stephan@openelec.tv)
-# Copyright (C) 2017-present Team LibreELEC (https://libreelec.tv)
-# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
-PKG_NAME="ncurses"
-PKG_VERSION="6.6"
-PKG_SHA256="355b4cbbed880b0381a04c46617b7656e362585d52e9cf84a67e2009b749ff11"
-PKG_LICENSE="MIT"
-PKG_SITE="http://www.gnu.org/software/ncurses/"
-PKG_URL="http://invisible-mirror.net/archives/ncurses/ncurses-${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_HOST="ccache:host"
-PKG_DEPENDS_TARGET="autotools:host gcc:host zlib ncurses:host"
-PKG_LONGDESC="A library is a free software emulation of curses in System V Release 4.0, and more."
-PKG_BUILD_FLAGS="+pic"
+. ${ROOT}/packages/devel/ncurses/package.mk
 
-PKG_CONFIGURE_OPTS_TARGET="--without-ada \
-                           --without-cxx \
-                           --without-cxx-binding \
-                           --disable-db-install \
-                           --without-manpages \
-                           --without-progs \
-                           --without-tests \
-                           --with-shared \
-                           --with-normal \
-                           --without-debug \
-                           --without-profile \
-                           --with-termlib \
-                           --without-ticlib \
-                           --without-gpm \
-                           --without-dbmalloc \
-                           --without-dmalloc \
-                           --disable-rpath \
-                           --disable-database \
-                           --with-fallbacks=linux,screen,xterm,xterm-color,dumb,st-256color \
-                           --with-termpath=/storage/.config/termcap \
-                           --disable-big-core \
-                           --enable-termcap \
-                           --enable-getcap \
-                           --disable-getcap-cache \
-                           --enable-symlinks \
-                           --disable-bsdpad \
-                           --without-rcs-ids \
-                           --enable-ext-funcs \
-                           --disable-const \
-                           --enable-no-padding \
-                           --enable-pc-files \
-                           --with-pkg-config-libdir=/usr/lib/pkgconfig \
-                           --enable-tcap-names \
-                           --without-develop \
-                           --disable-hard-tabs \
-                           --disable-xmc-glitch \
-                           --disable-hashmap \
-                           --disable-safe-sprintf \
-                           --disable-scroll-hints \
-                           --enable-widec \
-                           --disable-echo \
-                           --disable-warnings \
-                           --enable-home-terminfo \
-                           --enable-lib-suffixes \
-                           --disable-assertions \
-                           --enable-leaks \
-                           --enable-sigwinch \
-                           --cache-file=config.cache"
+PKG_URL="https://ftpmirror.gnu.org/ncurses/ncurses-${PKG_VERSION}.tar.gz"
 
-PKG_CONFIGURE_OPTS_HOST="--enable-termcap \
-                         --with-termlib \
-                         --with-shared \
-                         --enable-pc-files \
-                         --without-tests \
-                         --without-manpages"
+PKG_CONFIGURE_OPTS_TARGET="${PKG_CONFIGURE_OPTS_TARGET/--without-shared/--with-shared}"
+PKG_CONFIGURE_OPTS_TARGET="${PKG_CONFIGURE_OPTS_TARGET/--without-termlib/--with-termlib}"
+PKG_CONFIGURE_OPTS_TARGET="${PKG_CONFIGURE_OPTS_TARGET/--disable-sigwinch/}"
+PKG_CONFIGURE_OPTS_TARGET="${PKG_CONFIGURE_OPTS_TARGET/--disable-tcap-names/--enable-tcap-names}"
+PKG_CONFIGURE_OPTS_TARGET="${PKG_CONFIGURE_OPTS_TARGET/--enable-hashmap/--disable-hashmap}"
+PKG_CONFIGURE_OPTS_TARGET="${PKG_CONFIGURE_OPTS_TARGET/--disable-home-terminfo/--enable-home-terminfo}"
+PKG_CONFIGURE_OPTS_TARGET+=" --enable-lib-suffixes"
+PKG_CONFIGURE_OPTS_HOST+=" --without-tests"
 
+eval "core_$(declare -f pre_configure_target)"
 pre_configure_target() {
-  cat >config.cache <<EOF
-cf_cv_builtin_bool=yes
-cf_cv_header_stdbool_h=yes
-EOF
-
+  core_pre_configure_target
   CFLAGS="${CFLAGS} -std=gnu17"
 }
 
+eval "core_$(declare -f post_makeinstall_target)"
 post_makeinstall_target() {
-  local f
-  cp misc/ncurses-config ${TOOLCHAIN}/bin
-  chmod +x ${TOOLCHAIN}/bin/ncurses-config
-  sed -e "s:\(['=\" ]\)/usr:\\1${PKG_ORIG_SYSROOT_PREFIX}/usr:g" -i ${TOOLCHAIN}/bin/ncurses-config
-  rm -f ${TOOLCHAIN}/bin/ncurses6-config
-  rm -rf ${INSTALL}/usr/bin
-  # create links to be compatible with any ncurses include path and lib names
-  ln -sf . ${SYSROOT_PREFIX}/usr/include/ncursesw
-  ln -sf . ${SYSROOT_PREFIX}/usr/include/ncurses
-  for f in form menu ncurses panel tinfo; do
-    ln -sf lib${f}w.a ${SYSROOT_PREFIX}/usr/lib/lib${f}.a
-    ln -sf ${f}w.pc ${SYSROOT_PREFIX}/usr/lib/pkgconfig/${f}.pc
-  done
+  core_post_makeinstall_target
+  ln -sf libtinfow.a ${SYSROOT_PREFIX}/usr/lib/libtinfo.a
+  ln -sf tinfow.pc ${SYSROOT_PREFIX}/usr/lib/pkgconfig/tinfo.pc
   cd ${INSTALL}/usr/lib
   for LIB in *w*.so*
   do

@@ -3,4 +3,4 @@
 
 . ${ROOT}/packages/lang/nasm/package.mk
 
-PKG_ARCH="any"
+unset PKG_ARCH
