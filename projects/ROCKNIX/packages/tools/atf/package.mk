@@ -15,17 +15,18 @@ PKG_PATCH_DIRS+="${DEVICE}"
 case ${DEVICE} in
   H700)
     PKG_VERSION="2.12.0"
+    PKG_SHA256="d95aaf292792c98035910d7e6c64ebfb297c897fef510415db1612f6d39f9223"
     PKG_DEPENDS_TARGET+=" h700-suspend-stub"
     # BL31 embeds the stubs; rebuild when they change
     PKG_NEED_UNPACK+=" $(get_pkg_directory h700-suspend-stub) ${SYSROOT_PREFIX}/usr/share/h700-suspend-stub"
   ;;
   *)
     PKG_VERSION="2.10.0"
-    PKG_SHA256="696b8e53923aac4474532da7dd681f0bd044b329732facd65aeabea3e61adca9"
+    PKG_SHA256="6b1d5e89c311c5e7eaeb062713953311464c0378ab3e4ebc7ede72a746964bb1"
     ;;
 esac
 
-PKG_URL="https://github.com/ARM-software/arm-trusted-firmware/archive/v${PKG_VERSION}.tar.gz"
+PKG_URL="https://github.com/TrustedFirmware-A/trusted-firmware-a/archive/v${PKG_VERSION}.tar.gz"
 
 
 [ -n "${KERNEL_TOOLCHAIN}" ] && PKG_DEPENDS_TARGET+=" gcc-${KERNEL_TOOLCHAIN}:host"

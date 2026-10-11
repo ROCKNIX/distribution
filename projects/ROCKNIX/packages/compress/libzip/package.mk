@@ -1,12 +1,12 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2009-2016 Stephan Raue (stephan@openelec.tv)
-# Copyright (C) 2019-present Team LibreELEC (https://libreelec.tv)
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
-PKG_NAME="libzip"
-PKG_VERSION="1.11.1"
-PKG_SHA256="721e0e4e851073b508c243fd75eda04e4c5006158a900441de10ce274cc3b633"
-PKG_LICENSE="GPL"
-PKG_SITE="https://libzip.org/download"
-PKG_URL="${PKG_SITE}/${PKG_NAME}-${PKG_VERSION}.tar.xz"
-PKG_DEPENDS_TARGET="toolchain zlib gnutls openssl"
-PKG_LONGDESC="A C library for reading, creating, and modifying zip archives."
+. ${ROOT}/packages/addons/addon-depends/libzip/package.mk
+
+PKG_DEPENDS_TARGET+=" gnutls openssl zstd"
+PKG_CMAKE_OPTS_TARGET="${PKG_CMAKE_OPTS_TARGET/-DENABLE_GNUTLS=OFF/-DENABLE_GNUTLS=ON}"
+PKG_CMAKE_OPTS_TARGET="${PKG_CMAKE_OPTS_TARGET/-DENABLE_OPENSSL=OFF/-DENABLE_OPENSSL=ON}"
+PKG_CMAKE_OPTS_TARGET="${PKG_CMAKE_OPTS_TARGET/-DBUILD_SHARED_LIBS=OFF/-DBUILD_SHARED_LIBS=ON}"
+PKG_CMAKE_OPTS_TARGET="${PKG_CMAKE_OPTS_TARGET/-DENABLE_ZSTD=OFF/-DENABLE_ZSTD=ON}"
+
+unset -f post_makeinstall_target
