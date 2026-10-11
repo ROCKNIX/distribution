@@ -39,7 +39,7 @@ then
   rm -f ${CONFIG_DIR}/keymapv2.json
 
   # Handle inputplumber platforms first
-  if [[ "${HW_DEVICE}" =~ RK3576|SM6115|SM4450|SM8550|SM8650|SM8750|SM8250 ]]; then
+  if [ -d "/usr/share/inputplumber/" ]; then
     GAMEPAD="'Sony Interactive Entertainment DualSense Wireless Controller'"
   else
     # Check for js0, else fall back to joypad
@@ -52,9 +52,11 @@ then
 
   GAMEPADCONFIG=$(xmlstarlet sel -t -c "//inputList/inputConfig[@deviceName=${GAMEPAD}]" -n /storage/.emulationstation/es_input.cfg)
 
-  MAPPING_FILE="/usr/config/yabasanshiro/devices/keymapv2_$(eval echo $GAMEPAD).json"
+  # Determine mapping file from QUIRK DEVICE
+  MAPPING_FILE="/usr/config/yabasanshiro/devices/keymapv2_$(eval echo $QUIRK_DEVICE).json"
   if [ -e "${MAPPING_FILE}" ]; then
-    cp ${MAPPING_FILE} ${CONFIG_DIR}/keymapv2.json
+    # Some files may be symlinks
+    cp -L "${MAPPING_FILE}" ${CONFIG_DIR}/keymapv2.json
   fi
 
   if [ ! -z "${GAMEPADCONFIG}" ]
