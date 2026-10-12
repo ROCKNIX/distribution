@@ -16,6 +16,8 @@ pre_configure_target() {
 if [ "${DEVICE}" = "RK3588" ]; then
   #BSP name?, probably can be removed when moving to mainline
   HEAP_NAME=cma
+elif [ "${DEVICE}" = "RK3566" ]; then
+  HEAP_NAME=system
 else
   HEAP_NAME=linux,cma
 fi
