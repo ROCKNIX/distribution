@@ -37,6 +37,13 @@ tmpdir=$(mktemp -d)
 
 while IFS=$'\x1f' read -r subject author commit_hash; do
   [[ -z "$subject" ]] && continue
+  github_username=""
+  if command -v gh >/dev/null 2>&1 && [[ -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ]]; then
+    github_username=$(gh api "repos/ROCKNIX/distribution/commits/${commit_hash}" --jq '.author.login // empty' 2>/dev/null || true)
+  fi
+  if [[ -n "${github_username}" ]]; then
+    author="@${github_username}"
+  fi
   short_hash="${commit_hash:0:7}"
   line="- ${subject} (${author}) ([${short_hash}](https://github.com/ROCKNIX/distribution/commit/${commit_hash}))"
   category="🔩 Other"
