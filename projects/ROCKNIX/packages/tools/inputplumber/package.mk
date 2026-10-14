@@ -17,10 +17,12 @@ PKG_TOOLCHAIN="manual"
 # files would compete for the same source devices. Drop them.
 PKG_DROP_DEVICE_CONFIGS="
   50-ayaneo_pocket_s2.yaml
+  50-ayaneo_pocket_ds.yaml
   50-ayn_odin2.yaml
   50-ayn_odin2_mini.yaml
   50-ayn_odin3.yaml
   50-ayn_thor.yaml
+  50-ayn_thor_lite.yaml
   50-konkr_pocket_fit.yaml
   50-konkr_pocket_fit_elite.yaml
   50-retroid_pocket5.yaml
