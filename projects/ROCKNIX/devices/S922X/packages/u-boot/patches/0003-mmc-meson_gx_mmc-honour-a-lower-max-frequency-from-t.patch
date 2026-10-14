@@ -1,0 +1,50 @@
+From bcbb44500e6063fc869c87fc3da62f2e9e9ef56c Mon Sep 17 00:00:00 2001
+From: Shigeaki Asai <y-asai.0816@docomonet.jp>
+Date: Wed, 14 Oct 2026 09:30:00 +0900
+Subject: [PATCH 3/4] mmc: meson_gx_mmc: honour a lower max-frequency from the
+ device tree
+
+Commit 8fa0db145f6 ("mmc: meson_gx_mmc: reduce maximum frequency")
+lowered the limit to 40MHz for all boards. Some eMMCs need less: on the
+ODROID-GO Ultra the 8-bit bus often fails at 40MHz after a cold boot
+(see the next patch). The driver never reads the "max-frequency"
+property, so such a board cannot lower the clock in its device tree.
+
+Use the property when it is lower than the driver's limit. Device trees
+shared with Linux usually set a higher value (50MHz or 200MHz), so
+nothing changes for them.
+
+This patch was written with the help of Claude (claude-opus-5-5).
+
+Signed-off-by: Shigeaki Asai <y-asai.0816@docomonet.jp>
+---
+ drivers/mmc/meson_gx_mmc.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/drivers/mmc/meson_gx_mmc.c b/drivers/mmc/meson_gx_mmc.c
+index 76af3873e15..8bc41f1cea2 100644
+--- a/drivers/mmc/meson_gx_mmc.c
++++ b/drivers/mmc/meson_gx_mmc.c
+@@ -13,6 +13,7 @@
+ #include <asm/io.h>
+ #include <asm/gpio.h>
+ #include <linux/delay.h>
++#include <linux/kernel.h>
+ #include <linux/log2.h>
+ #include "meson_gx_mmc.h"
+ 
+@@ -352,6 +353,11 @@ static int meson_mmc_probe(struct udevice *dev)
+ 	cfg->b_max = 511; /* max 512 - 1 blocks */
+ 	cfg->name = dev->name;
+ 
++	/* A lower "max-frequency" in the device tree limits the bus clock */
++	cfg->f_max = min_t(uint, cfg->f_max,
++			   dev_read_u32_default(dev, "max-frequency",
++						cfg->f_max));
++
+ 	if (IS_ENABLED(CONFIG_SPL_BUILD)) {
+ 		cfg->host_caps &= ~(MMC_MODE_HS_52MHz | MMC_MODE_HS);
+ 		cfg->f_max = 6000000; /* 6 MHz */
+-- 
+2.47.3
+
