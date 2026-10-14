@@ -2,8 +2,8 @@
 # Copyright (C) 2025 ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="inputplumber"
-PKG_VERSION="0.79.0"
-PKG_SHA256="9f72f52b350be3dcf71e2c4704418101dd0af9350e413a7574b30216215cec5f"
+PKG_VERSION="0.82.0"
+PKG_SHA256="aaee9b65b47a21756169eb1c49eb258ecdd1896fb8dd4996c2b50d11af049d21"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/ShadowBlip/InputPlumber"
 PKG_URL="${PKG_SITE}/archive/refs/tags/v${PKG_VERSION}.tar.gz"
