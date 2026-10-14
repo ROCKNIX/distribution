@@ -16,10 +16,10 @@ fi
 # mount $BOOT_ROOT rw
 mount -o remount,rw $BOOT_ROOT
 
-if [ -d "$SYSTEM_ROOT/usr/share/bootloader/rocknix_abl" ]; then
-  mkdir -p $BOOT_ROOT/rocknix_abl
-  echo "Updating ROCKNIX ABL on SD..."
-  cp $SYSTEM_ROOT/usr/share/bootloader/rocknix_abl/* $BOOT_ROOT/rocknix_abl
+if [ -d "$SYSTEM_ROOT/usr/share/bootloader/openabl" ]; then
+  mkdir -p $BOOT_ROOT/openabl
+  echo "Updating OpenABL on SD..."
+  cp $SYSTEM_ROOT/usr/share/bootloader/openabl/* $BOOT_ROOT/openabl
 fi
 
 $SYSTEM_ROOT/usr/bin/updateabl

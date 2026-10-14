@@ -54,7 +54,7 @@ while IFS=$'\x1f' read -r subject author commit_hash; do
     revert*)
       category="↩️ Reverts" ;;
     # Kernel & Boot
-    linux|u-boot*|kernel*|dtc|dt-overlays|rkbin|atf|mkbootimg|grub|syslinux|amlogic-boot-fip|exynos-boot-fip|crust|bootloader|installer|qcom-abl|rocknix-abl|device-tree-overlays|mali-bifrost|rocknix-joypad|dtbocfg|generic-dsi|ap6256-firmware|ap6611s-firmware|esp8089-firmware|extra-firmware|g610-mali-csffw|ibt-firmware|iwlwifi-firmware|kernel-firmware|rtl8188fu-firmware|rtl8812au|rtl8814au|rtl8821au|rtl8821cu|rtl8851bu|rtl88x2bu|rtw88|arm-efi|patches|linux-drivers|linux-firmware|abl)
+    linux|u-boot*|kernel*|dtc|dt-overlays|rkbin|atf|mkbootimg|grub|syslinux|amlogic-boot-fip|exynos-boot-fip|crust|bootloader|installer|qcom-abl|rocknix-abl|openabl|device-tree-overlays|mali-bifrost|rocknix-joypad|dtbocfg|generic-dsi|ap6256-firmware|ap6611s-firmware|esp8089-firmware|extra-firmware|g610-mali-csffw|ibt-firmware|iwlwifi-firmware|kernel-firmware|rtl8188fu-firmware|rtl8812au|rtl8814au|rtl8821au|rtl8821cu|rtl8851bu|rtl88x2bu|rtw88|arm-efi|patches|linux-drivers|linux-firmware|abl)
       category="🐧 Kernel & Boot" ;;
     # Emulators & Frontend
     *-sa|*-lr|retroarch|emulationstation|gamecontrollerdb|rocknix-systems|hypseus*|openbor*|pico-8*|heroic*|amiberry*|mednafen*|steam*|box64|box86|fex-emu|wine|portmaster*|moonlight*|lowerdeck*|themes*|es-themes*|oga*|m8c*|supersnes9x|pcsx2)
