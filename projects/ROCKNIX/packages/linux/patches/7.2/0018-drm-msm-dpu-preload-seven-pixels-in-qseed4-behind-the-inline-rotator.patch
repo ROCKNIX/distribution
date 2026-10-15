@@ -1,0 +1,53 @@
+From: enij90 <226572015+enij90@users.noreply.github.com>
+Subject: [PATCH] drm/msm/dpu: preload seven pixels in QSEED4 behind the inline
+ rotator
+
+With true inline rotation (patch 0066) the rotator output feeds the QSEED4
+scaler, which is programmed with the default horizontal preload of 4. That
+is three pixels short: every rotated pipe repeats its first output pixel
+four times and then runs three source lines late. A portrait panel driven
+in landscape puts each full-screen layer on two pipes, one per mixer, so
+the left pipe loses three source lines at the seam in the middle of the
+screen and the right pipe shows the last line of its half four times
+there. This is the line that made the TB321FU fall back to rotating every
+frame with a shader.
+
+Measured on SM8650 (Lenovo TB321FU) by writing back the left mixer output
+of a rotated UBWC layer whose pixels encode their source line: preload 4
+leaves the output 3 lines late, 5 -> 2, 6 -> 1, 8 -> 1 early, and 7 is
+exact, both 1:1 and upscaled 1080p, wherever the source rectangle and the
+destination start. The vertical preload has no effect.
+
+Use a horizontal preload of 7 for QSEED4 pipes that rotate.
+
+[ROCKNIX: from https://github.com/enij90/armada-tb321fu/blob/ee94cd659e0cffd4640db8e64ce62f50e28aa37e/packages/kernel/patches/0818-drm-msm-dpu-preload-seven-pixels-in-qseed4-behind-the-inline-rotator.patch]
+---
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c	2026-10-09 21:26:49.249114263 +0200
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c	2026-10-09 21:26:49.371042876 +0200
+@@ -55,6 +55,15 @@
+ #define DPU_QSEED3_DEFAULT_PRELOAD_V 0x3
+ #define DPU_QSEED4_DEFAULT_PRELOAD_V 0x2
+ #define DPU_QSEED4_DEFAULT_PRELOAD_H 0x4
++/*
++ * With the true inline rotator in front of it, QSEED4 needs three more
++ * pixels of horizontal preload: with the default of 4 every rotated pipe
++ * repeats its first output pixel four times and then runs three source
++ * lines late, which on a panel split across two mixers drops three lines
++ * at the seam. Measured on SM8650 by writing back the mixer output (1:1 and
++ * upscaled): 4 -> 3 lines late, 5 -> 2, 6 -> 1, 7 -> exact, 8 -> 1 early.
++ */
++#define DPU_QSEED4_ROT90_PRELOAD_H 0x7
+ 
+ #define DEFAULT_REFRESH_RATE	60
+ 
+@@ -471,7 +480,9 @@
+ 		}
+ 
+ 		if (pipe_hw->cap->sblk->scaler_blk.version >= 0x3000) {
+-			scale_cfg->preload_x[i] = DPU_QSEED4_DEFAULT_PRELOAD_H;
++			scale_cfg->preload_x[i] = inline_rotation ?
++				DPU_QSEED4_ROT90_PRELOAD_H :
++				DPU_QSEED4_DEFAULT_PRELOAD_H;
+ 			scale_cfg->preload_y[i] = DPU_QSEED4_DEFAULT_PRELOAD_V;
+ 		} else {
+ 			scale_cfg->preload_x[i] = DPU_QSEED3_DEFAULT_PRELOAD_H;
