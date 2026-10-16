@@ -90,7 +90,7 @@ case "${DEVICE}" in
     ;;
   S922X)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 pcsx_rearmed-lr"
-    PKG_EMUS+=" aethersx2-sa azahar-sa bigpemu-sa dolphin-sa drastic-sa duckstation-sa melonds-sa vita3k-sa armsx2-sa yabadabadoo-lr"
+    PKG_EMUS+=" aethersx2-sa azahar-sa bigpemu-sa dolphin-sa drastic-sa duckstation-sa melonds-sa vita3k-sa armsx2-sa"
     LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr uae4arm-lr"
     ;;
   AMD64)
