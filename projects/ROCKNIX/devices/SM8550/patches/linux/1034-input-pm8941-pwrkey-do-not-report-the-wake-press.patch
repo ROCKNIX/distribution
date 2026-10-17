@@ -1,0 +1,99 @@
+From: shuuri-labs <61762328+shuuri-labs@users.noreply.github.com>
+Subject: [PATCH] input: pm8941-pwrkey: do not report the press that wakes the system
+
+The wake press reaches userspace as a normal KEY_POWER, so logind, the
+desktop's power manager and any power-button daemon read it as "suspend
+now" and put the device straight back to sleep, or blank the panel.
+
+ACPI power buttons drop the wake press (acpi_button_notify). Do the same:
+events within a second of resume belong to the wake press and are not
+reported, nor is a release still pending after that. Both edges of a quick
+tap can be handled after the key is up; reporting the second would trip the
+missing-press fallback into a full press. A wake from another source keeps
+the next press.
+---
+--- a/drivers/input/misc/pm8941-pwrkey.c
++++ b/drivers/input/misc/pm8941-pwrkey.c
+@@ -54,6 +54,9 @@
+ #define  PON_DBC_SHIFT_GEN1		6
+ #define  PON_DBC_SHIFT_GEN2		14
+ 
++/* The wake IRQ's handler runs within ms of resume; a second, deliberate press can't. */
++#define PM8941_WAKE_WINDOW_MS		1000
++
+ struct pm8941_data {
+ 	unsigned int	pull_up_bit;
+ 	unsigned int	status_bit;
+@@ -81,6 +84,9 @@
+ 	u32 sw_debounce_time_us;
+ 	ktime_t sw_debounce_end_time;
+ 	bool last_status;
++	bool suspended;
++	bool drop_release;
++	ktime_t resume_time;
+ 	const struct pm8941_data *data;
+ };
+ 
+@@ -166,6 +172,27 @@
+ 		return IRQ_HANDLED;
+ 
+ 	sts &= pwrkey->data->status_bit;
++
++	/*
++	 * The press that wakes the system is not a key press: userspace reads it as
++	 * "suspend now" and puts the device straight back to sleep. Both its edges can
++	 * land after the key is up, so drop everything in the window, then any release
++	 * still pending. A wake from another source keeps the next press.
++	 */
++	if (pwrkey->suspended) {
++		if (ktime_before(ktime_get(),
++				 ktime_add_ms(pwrkey->resume_time, PM8941_WAKE_WINDOW_MS))) {
++			pwrkey->drop_release = sts;
++			pwrkey->last_status = sts;
++			return IRQ_HANDLED;
++		}
++		pwrkey->suspended = false;
++	}
++	if (pwrkey->drop_release) {
++		pwrkey->drop_release = sts;
++		pwrkey->last_status = sts;
++		return IRQ_HANDLED;
++	}
+ 
+ 	if (pwrkey->sw_debounce_time_us && !sts)
+ 		pwrkey->sw_debounce_end_time = ktime_add_us(ktime_get(),
+@@ -226,10 +253,21 @@
+ 
+ 	if (device_may_wakeup(dev))
+ 		enable_irq_wake(pwrkey->irq);
++	pwrkey->suspended = true;
+ 
+ 	return 0;
+ }
+ 
++/* noirq: runs before a pending wake IRQ is handled, so the window always covers it. */
++static int pm8941_pwrkey_resume_noirq(struct device *dev)
++{
++	struct pm8941_pwrkey *pwrkey = dev_get_drvdata(dev);
++
++	pwrkey->resume_time = ktime_get();
++
++	return 0;
++}
++
+ static int pm8941_pwrkey_resume(struct device *dev)
+ {
+ 	struct pm8941_pwrkey *pwrkey = dev_get_drvdata(dev);
+@@ -240,8 +278,10 @@
+ 	return 0;
+ }
+ 
+-static DEFINE_SIMPLE_DEV_PM_OPS(pm8941_pwr_key_pm_ops,
+-				pm8941_pwrkey_suspend, pm8941_pwrkey_resume);
++static const struct dev_pm_ops pm8941_pwr_key_pm_ops = {
++	SYSTEM_SLEEP_PM_OPS(pm8941_pwrkey_suspend, pm8941_pwrkey_resume)
++	NOIRQ_SYSTEM_SLEEP_PM_OPS(NULL, pm8941_pwrkey_resume_noirq)
++};
+ 
+ static int pm8941_pwrkey_probe(struct platform_device *pdev)
+ {
