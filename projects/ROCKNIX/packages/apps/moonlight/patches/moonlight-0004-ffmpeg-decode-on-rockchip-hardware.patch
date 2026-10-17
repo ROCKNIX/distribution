@@ -1,0 +1,122 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Fri, 16 Oct 2026 13:36:00 -0700
+Subject: [PATCH] ffmpeg: decode on Rockchip hardware
+
+Try the rkmpp decoders, hand the native decoders a v4l2request device,
+and download DRM PRIME frames to NV12 for the SDL renderer.
+---
+diff --git a/src/video/ffmpeg.c b/src/video/ffmpeg.c
+--- a/src/video/ffmpeg.c
++++ b/src/video/ffmpeg.c
+@@ -25,6 +25,7 @@
+ 
+ #include <Limelight.h>
+ #include <libavcodec/avcodec.h>
++#include <libavutil/hwcontext.h>
+ 
+ #include <stdlib.h>
+ #include <pthread.h>
+@@ -36,6 +37,8 @@
+ static const AVCodec* decoder;
+ static AVCodecContext* decoder_ctx;
+ static AVFrame** dec_frames;
++static AVFrame** sw_frames;
++static AVBufferRef* hw_device_ctx;
+ 
+ static int dec_frames_cnt;
+ static int current_frame, next_frame;
+@@ -61,6 +64,12 @@
+ 
+   ffmpeg_decoder = perf_lvl & VAAPI_ACCELERATION ? VAAPI : SOFTWARE;
+ 
++  if (ffmpeg_decoder == SOFTWARE) {
++    enum AVHWDeviceType hw_type = av_hwdevice_find_type_by_name("v4l2request");
++    if (hw_type != AV_HWDEVICE_TYPE_NONE)
++      av_hwdevice_ctx_create(&hw_device_ctx, hw_type, NULL, NULL, 0);
++  }
++
+   for (int try = 0; try < 6; try++) {
+     if (videoFormat & VIDEO_FORMAT_MASK_H264) {
+       if (ffmpeg_decoder == SOFTWARE) {
+@@ -68,16 +77,18 @@
+         if (try == 1) decoder = avcodec_find_decoder_by_name("h264_nvmpi"); // Tegra
+         if (try == 2) decoder = avcodec_find_decoder_by_name("h264_omx"); // VisionFive
+         if (try == 3) decoder = avcodec_find_decoder_by_name("h264_v4l2m2m"); // Stateful V4L2
++        if (try == 4) decoder = avcodec_find_decoder_by_name("h264_rkmpp"); // Rockchip MPP
+       }
+-      if (try == 4) decoder = avcodec_find_decoder_by_name("h264"); // Software and hwaccel
++      if (try == 5) decoder = avcodec_find_decoder_by_name("h264"); // Software and hwaccel
+     } else if (videoFormat & VIDEO_FORMAT_MASK_H265) {
+       if (ffmpeg_decoder == SOFTWARE) {
+         if (try == 0) decoder = avcodec_find_decoder_by_name("hevc_nvv4l2"); // Tegra
+         if (try == 1) decoder = avcodec_find_decoder_by_name("hevc_nvmpi"); // Tegra
+         if (try == 2) decoder = avcodec_find_decoder_by_name("hevc_omx"); // VisionFive
+         if (try == 3) decoder = avcodec_find_decoder_by_name("hevc_v4l2m2m"); // Stateful V4L2
++        if (try == 4) decoder = avcodec_find_decoder_by_name("hevc_rkmpp"); // Rockchip MPP
+       }
+-      if (try == 4) decoder = avcodec_find_decoder_by_name("hevc"); // Software and hwaccel
++      if (try == 5) decoder = avcodec_find_decoder_by_name("hevc"); // Software and hwaccel
+     } else if (videoFormat & VIDEO_FORMAT_MASK_AV1) {
+       if (ffmpeg_decoder == SOFTWARE) {
+         if (try == 0) decoder = avcodec_find_decoder_by_name("libdav1d");
+@@ -120,6 +131,9 @@
+     decoder_ctx->height = height;
+     decoder_ctx->pix_fmt = AV_PIX_FMT_YUV420P;
+ 
++    if (hw_device_ctx)
++      decoder_ctx->hw_device_ctx = av_buffer_ref(hw_device_ctx);
++
+     int err = avcodec_open2(decoder_ctx, decoder, NULL);
+     if (err < 0) {
+       printf("Couldn't open codec: %s\n", decoder->name);
+@@ -139,14 +153,16 @@
+ 
+   dec_frames_cnt = buffer_count;
+   dec_frames = malloc(buffer_count * sizeof(AVFrame*));
+-  if (dec_frames == NULL) {
++  sw_frames = calloc(buffer_count, sizeof(AVFrame*));
++  if (dec_frames == NULL || sw_frames == NULL) {
+     fprintf(stderr, "Couldn't allocate frames");
+     return -1;
+   }
+ 
+   for (int i = 0; i < buffer_count; i++) {
+     dec_frames[i] = av_frame_alloc();
+-    if (dec_frames[i] == NULL) {
++    sw_frames[i] = av_frame_alloc();
++    if (dec_frames[i] == NULL || sw_frames[i] == NULL) {
+       fprintf(stderr, "Couldn't allocate frame");
+       return -1;
+     }
+@@ -173,6 +189,13 @@
+         av_frame_free(&dec_frames[i]);
+     }
+   }
++  if (sw_frames) {
++    for (int i = 0; i < dec_frames_cnt; i++) {
++      if (sw_frames[i])
++        av_frame_free(&sw_frames[i]);
++    }
++  }
++  av_buffer_unref(&hw_device_ctx);
+ }
+ 
+ AVFrame* ffmpeg_get_frame(bool native_frame) {
+@@ -181,6 +204,17 @@
+     current_frame = next_frame;
+     next_frame = (current_frame+1) % dec_frames_cnt;
+ 
++    if (ffmpeg_decoder == SOFTWARE && dec_frames[current_frame]->hw_frames_ctx) {
++      av_frame_unref(sw_frames[current_frame]);
++      err = av_hwframe_transfer_data(sw_frames[current_frame], dec_frames[current_frame], 0);
++      av_frame_unref(dec_frames[current_frame]);
++      if (err < 0) {
++        fprintf(stderr, "Couldn't download frame\n");
++        return NULL;
++      }
++      return sw_frames[current_frame];
++    }
++
+     if (ffmpeg_decoder == SOFTWARE || native_frame)
+       return dec_frames[current_frame];
+   } else if (err != AVERROR(EAGAIN)) {
