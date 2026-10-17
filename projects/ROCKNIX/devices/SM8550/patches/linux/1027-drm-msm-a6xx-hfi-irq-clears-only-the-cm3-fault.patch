@@ -1,0 +1,44 @@
+From: gennro <gennro2004@gmail.com>
+Subject: [PATCH] drm/msm/a6xx: the HFI IRQ clears only the CM3 fault bit
+
+a6xx_hfi_irq() clears every bit it reads from GMU2HOST_INTR_INFO, though
+it only handles CM3_FAULT, the one bit the HFI interrupt is unmasked for.
+The other bits there are polled for under gmu->lock: MSGQ by
+a6xx_hfi_wait_for_msg_interrupt() and the OOB acks by a6xx_gmu_set_oob().
+When the handler runs between the GMU setting one of them and the poll
+seeing it, the answer is lost: the poll times out although the GMU
+answered.
+
+On the Adreno 740 (SM8550, AYN Odin 2 Portal) with GPU runtime PM the HFI
+interrupt fires without a CM3 fault every few seconds while the GPU wakes
+up and sleeps (counted in /proc/interrupts; no "GMU firmware fault" is
+logged), and now and then it lands in that window:
+
+- "Message HFI_H2F_MSG_GX_BW_PERF_VOTE id N timed out waiting for
+  response", with GMU2HOST_INTR_INFO reading 0 for 10 more seconds, then
+  "Unexpected message id N on the response queue" at the next message:
+  the response had been in the queue all along;
+- "Timeout waiting for GMU OOB set GPU_SET: 0x0" when hw_init() wakes
+  the GPU. hw_init() then fails, the GPU runs uninitialized (a CP fault
+  at iova 0, ring 2) and recovery hangs the display.
+
+Clear only CM3_FAULT, as the downstream driver (kgsl) does, which writes
+its HFI_IRQ_MASK to GMU2HOST_INTR_CLR rather than the status it read.
+---
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+@@ -64,7 +64,13 @@
+ 	struct a6xx_gmu *gmu = data;
+ 	u32 status;
+ 
+-	status = gmu_read(gmu, REG_A6XX_GMU_GMU2HOST_INTR_INFO);
++	/*
++	 * Only clear what this handler deals with: the HFI response (MSGQ) and
++	 * OOB ack bits are polled for, and clearing them here loses the GMU's
++	 * answer to whoever is waiting for it.
++	 */
++	status = gmu_read(gmu, REG_A6XX_GMU_GMU2HOST_INTR_INFO) &
++		 A6XX_GMU_GMU2HOST_INTR_INFO_CM3_FAULT;
+ 	gmu_write(gmu, REG_A6XX_GMU_GMU2HOST_INTR_CLR, status);
+ 
+ 	if (status & A6XX_GMU_GMU2HOST_INTR_INFO_CM3_FAULT) {
