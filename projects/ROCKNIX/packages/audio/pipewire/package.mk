@@ -2,12 +2,12 @@
 # Copyright (C) 2021-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="pipewire"
-PKG_VERSION="1.2.6"
-PKG_SHA256="8d9b4e95dba33d218c760fecbb71672c86a56917f803e96fe6c3af62fa783a95"
-PKG_LICENSE="LGPL"
+PKG_VERSION="1.6.8"
+PKG_SHA256="8181172a1d95131f6af8bbc0b98f90b2a33349b042b84c3ce57dd5d11348cc58"
+PKG_LICENSE="MIT"
 PKG_SITE="https://pipewire.org"
 PKG_URL="https://github.com/PipeWire/pipewire/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain libpthread-stubs dbus ncurses alsa-lib pulseaudio systemd libsndfile libusb"
+PKG_DEPENDS_TARGET="toolchain libpthread-stubs dbus glib ncurses alsa-lib pulseaudio systemd libsndfile libusb"
 PKG_LONGDESC="PipeWire is a server and user space API to deal with multimedia pipeline"
 PKG_PATCH_DIRS+=" ${DEVICE}"
 
@@ -28,9 +28,9 @@ fi
 
 if [ "${VULKAN_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" vulkan-loader vulkan-headers"
-  PKG_PIPEWIRE_VULKAN+="-Dvulkan=enabled \
-                        -Dx11=disabled \
-                        -Dx11-xfixes=disabled"
+  PKG_PIPEWIRE_VULKAN="-Dvulkan=enabled"
+else
+  PKG_PIPEWIRE_VULKAN="-Dvulkan=disabled"
 fi
 
 PKG_MESON_OPTS_TARGET="-Ddocs=disabled \
@@ -40,7 +40,7 @@ PKG_MESON_OPTS_TARGET="-Ddocs=disabled \
                        -Dinstalled_tests=disabled \
                        -Dgstreamer=disabled \
                        -Dgstreamer-device-provider=disabled \
-                       -Dsystemd=enabled \
+                       -Dlibsystemd=enabled \
                        -Dsystemd-system-service=enabled \
                        -Dsystemd-user-service=disabled \
                        -Dpipewire-alsa=enabled \
@@ -66,6 +66,8 @@ PKG_MESON_OPTS_TARGET="-Ddocs=disabled \
                        -Dvideotestsrc=disabled \
                        -Dvolume=enabled \
                        ${PKG_PIPEWIRE_VULKAN} \
+                       -Dx11=disabled \
+                       -Dx11-xfixes=disabled \
                        -Dpw-cat=enabled \
                        -Dudev=enabled \
                        -Dudevrulesdir=/usr/lib/udev/rules.d \
@@ -82,9 +84,48 @@ PKG_MESON_OPTS_TARGET="-Ddocs=disabled \
                        -Dlibcanberra=disabled \
                        -Dlegacy-rtkit=false"
 
+case ${DEVICE} in
+  SM6115|SM8550|SM8650|SM8750)
+    PKG_PIPEWIRE_QUANTUM="960"
+    PKG_PIPEWIRE_PULSE_QUANTUM="960"
+    ;;
+  SM8250)
+    PKG_PIPEWIRE_PULSE_QUANTUM="1024"
+    PKG_MESON_OPTS_TARGET+=" -Drtprio-client=99"
+    ;;
+esac
+
 pre_configure_target() {
   export TARGET_CFLAGS="${TARGET_CFLAGS} -Wno-error=float-conversion"
   export TARGET_LDFLAGS="${TARGET_LDFLAGS} -lncursesw -ltinfow"
+}
+
+post_makeinstall_target() {
+  cp ${PKG_DIR}/system.d/pipewire-pulse.service ${PKG_DIR}/system.d/pipewire-pulse.socket \
+     ${INSTALL}/usr/lib/systemd/system
+
+  mkdir -p ${INSTALL}/usr/share/dbus-1/system.d
+    cp ${PKG_DIR}/config/pipewire-pulse-dbus.conf ${INSTALL}/usr/share/dbus-1/system.d
+
+  if [ -n "${PKG_PIPEWIRE_QUANTUM}" ]; then
+    mkdir -p ${INSTALL}/usr/share/pipewire/pipewire.conf.d
+    cat >${INSTALL}/usr/share/pipewire/pipewire.conf.d/50-rocknix-latency.conf <<EOF
+context.properties = {
+    default.clock.min-quantum = ${PKG_PIPEWIRE_QUANTUM}
+}
+EOF
+  fi
+
+  if [ -n "${PKG_PIPEWIRE_PULSE_QUANTUM}" ]; then
+    mkdir -p ${INSTALL}/usr/share/pipewire/pipewire-pulse.conf.d
+    cat >${INSTALL}/usr/share/pipewire/pipewire-pulse.conf.d/50-rocknix-latency.conf <<EOF
+pulse.properties = {
+    pulse.min.req     = ${PKG_PIPEWIRE_PULSE_QUANTUM}/48000
+    pulse.min.frag    = ${PKG_PIPEWIRE_PULSE_QUANTUM}/48000
+    pulse.min.quantum = ${PKG_PIPEWIRE_PULSE_QUANTUM}/48000
+}
+EOF
+  fi
 }
 
 post_install() {
