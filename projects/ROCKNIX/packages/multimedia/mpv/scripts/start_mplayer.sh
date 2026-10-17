@@ -16,6 +16,6 @@ else
   RES="${FBHEIGHT}x${FBWIDTH}"
 fi
 
-/usr/bin/mpv --fullscreen --geometry=${RES} --hwdec=auto-safe --input-gamepad=yes --input-ipc-server=/tmp/mpvsocket "${1}"
+/usr/bin/mpv --fullscreen --geometry=${RES} --input-gamepad=yes --input-ipc-server=/tmp/mpvsocket "${1}"
 systemctl stop mpv
 exit 0

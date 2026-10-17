@@ -43,4 +43,16 @@ post_makeinstall_target() {
 
   mkdir -p ${INSTALL}/etc/mpv
     cp ${PKG_DIR}/config/mpv.conf ${INSTALL}/etc/mpv/
+
+  case ${DEVICE} in
+    RK3326|RK3399|RK3566)
+      sed -i 's/^hwdec=.*/&\nhwdec-codecs=all/' ${INSTALL}/etc/mpv/mpv.conf ${INSTALL}/usr/config/mpv/mpv.conf
+    ;;
+    RK3588*)
+      sed -i 's/^hwdec=.*/hwdec=rkmpp,rkmpp-copy,auto/' ${INSTALL}/etc/mpv/mpv.conf ${INSTALL}/usr/config/mpv/mpv.conf
+    ;;
+    S922X|SM*)
+      sed -i 's/^hwdec=.*/hwdec=v4l2m2m-copy,auto/' ${INSTALL}/etc/mpv/mpv.conf ${INSTALL}/usr/config/mpv/mpv.conf
+    ;;
+  esac
 }
