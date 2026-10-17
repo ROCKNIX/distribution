@@ -426,34 +426,32 @@ setup_zram() {
 }
 
 setup_swapfile() {
-    [ "$SWAP_SIZE_VAL" -le 0 ] && return
+    # The swap file exists only while it is on, and always at the configured size
     TARGET_SWAP="${SWAPFILE:-/storage/.cache/swapfile}"
+    stop_swapfile || return 1
+    if [ "$SWAP_SIZE_VAL" -le 0 ]; then
+        rm -f "$TARGET_SWAP"
+        return
+    fi
     mkdir -p "$(dirname "$TARGET_SWAP")" 2>/dev/null
-    local cur=0
-    [ -f "$TARGET_SWAP" ] && cur=$(du -m "$TARGET_SWAP" | cut -f1)
     
-    if [ "$cur" -ne "$SWAP_SIZE_VAL" ]; then
-        [ -f "$TARGET_SWAP" ] && swapoff "$TARGET_SWAP" 2>/dev/null && rm "$TARGET_SWAP"
+    if [ ! -f "$TARGET_SWAP" ] || [ "$(stat -c %s "$TARGET_SWAP")" -ne $((SWAP_SIZE_VAL * 1024 * 1024)) ]; then
+        rm -f "$TARGET_SWAP"
         fallocate -l ${SWAP_SIZE_VAL}M "$TARGET_SWAP" 2>/dev/null || \
             dd if=/dev/zero of="$TARGET_SWAP" bs=1M count=$SWAP_SIZE_VAL status=none
         chmod 0600 "$TARGET_SWAP"
         mkswap "$TARGET_SWAP" >/dev/null
     fi
     
-    local prio=-2
+    # swapon only takes 0 to 32767 (a negative priority is dropped); Auto stays below ZRAM's 100
+    local prio=0
     if [[ "${SWAP_PRIORITY,,}" == "stripe" ]]; then
         prio=100
-    elif [[ "${SWAP_PRIORITY,,}" == "auto" ]]; then
-        if [ "$ZRAM_SIZE_VAL" -gt 0 ]; then
-            prio=-10
-        else
-            prio=-2
-        fi
-    elif [[ "$SWAP_PRIORITY" =~ ^-?[0-9]+$ ]]; then
+    elif [[ "$SWAP_PRIORITY" =~ ^[0-9]+$ ]] && [ "$SWAP_PRIORITY" -le 32767 ]; then
         prio=$SWAP_PRIORITY
     fi
     
-    swapon -p $prio "$TARGET_SWAP" 2>/dev/null
+    swapon -p $prio "$TARGET_SWAP"
 }
 
 drop_caches() {
@@ -486,6 +484,7 @@ while [[ $# -gt 0 ]]; do
         --status) ACTION="status"; shift ;;
         --json) ACTION="json"; shift ;;
         --get-zram) ACTION="get-zram"; shift ;;
+        --get-swap) ACTION="get-swap"; shift ;;
         --help|-h)
             echo "Usage: rocknix-memory-manager [OPTIONS] [ACTION]"
             echo "Config Options (Writes to .config/swap.conf):"
@@ -505,6 +504,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --status       Show status (default interactive)"
             echo "  --json         Show status in JSON"
             echo "  --get-zram     Print the configured ZRAM size and algorithm"
+            echo "  --get-swap     Print the swap file size in MB, 0 when off"
             exit 0
             ;;
         *) if [ -z "$ACTION" ]; then ACTION="setup"; fi; shift ;;
@@ -611,6 +611,9 @@ case "$ACTION" in
     get-zram)
         echo "$ZRAM_SIZE"
         echo "$ZRAM_ALGO"
+        ;;
+    get-swap)
+        echo "$SWAP_SIZE_VAL"
         ;;
 esac
 exit 0
