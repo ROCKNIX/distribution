@@ -34,7 +34,7 @@ PKG_DROP_DEVICE_CONFIGS="
 
 post_unpack() {
   for config in ${PKG_DROP_DEVICE_CONFIGS}; do
-    rm -f ${PKG_BUILD}/usr/share/inputplumber/devices/${config}
+    rm -f ${PKG_BUILD}/rootfs/usr/share/inputplumber/devices/${config}
   done
 }
 
