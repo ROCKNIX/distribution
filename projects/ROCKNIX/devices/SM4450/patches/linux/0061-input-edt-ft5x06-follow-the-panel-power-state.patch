@@ -1,0 +1,139 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Tue, 20 Oct 2026 19:30:00 -0700
+Subject: [PATCH] input: edt-ft5x06: follow the panel power state
+
+---
+--- a/drivers/input/touchscreen/edt-ft5x06.c
++++ b/drivers/input/touchscreen/edt-ft5x06.c
+@@ -34,6 +34,8 @@
+ 
+ #include <linux/unaligned.h>
+ 
++#include <drm/drm_panel.h>
++
+ #define WORK_REGISTER_THRESHOLD		0x00
+ #define WORK_REGISTER_REPORT_RATE	0x08
+ #define WORK_REGISTER_GAIN		0x30
+@@ -119,6 +121,11 @@
+ 
+ 	struct regmap *regmap;
+ 
++	struct drm_panel_follower panel_follower;
++	struct work_struct panel_on_work;
++	bool is_panel_follower;
++	bool irq_off;
++
+ #if defined(CONFIG_DEBUG_FS)
+ 	u8 *raw_buffer;
+ 	size_t raw_bufsize;
+@@ -1111,8 +1118,67 @@
+ 
+ 	regulator_disable(data->vcc);
+ 	regulator_disable(data->iovcc);
++}
++
++static void edt_ft5x06_panel_on_work(struct work_struct *work)
++{
++	struct edt_ft5x06_ts_data *tsdata =
++		container_of(work, struct edt_ft5x06_ts_data, panel_on_work);
++
++	if (tsdata->reset_gpio) {
++		gpiod_set_value_cansleep(tsdata->reset_gpio, 1);
++		usleep_range(5000, 6000);
++		gpiod_set_value_cansleep(tsdata->reset_gpio, 0);
++		msleep(300);
++	}
++
++	edt_ft5x06_restore_reg_parameters(tsdata);
++
++	if (tsdata->irq_off) {
++		tsdata->irq_off = false;
++		enable_irq(tsdata->client->irq);
++	}
++}
++
++static int edt_ft5x06_panel_enabled(struct drm_panel_follower *follower)
++{
++	struct edt_ft5x06_ts_data *tsdata =
++		container_of(follower, struct edt_ft5x06_ts_data, panel_follower);
++
++	schedule_work(&tsdata->panel_on_work);
++
++	return 0;
++}
++
++static int edt_ft5x06_panel_disabling(struct drm_panel_follower *follower)
++{
++	struct edt_ft5x06_ts_data *tsdata =
++		container_of(follower, struct edt_ft5x06_ts_data, panel_follower);
++
++	cancel_work_sync(&tsdata->panel_on_work);
++
++	if (!tsdata->irq_off) {
++		tsdata->irq_off = true;
++		disable_irq(tsdata->client->irq);
++	}
++
++	gpiod_set_value_cansleep(tsdata->reset_gpio, 1);
++
++	return 0;
+ }
+ 
++static const struct drm_panel_follower_funcs edt_ft5x06_panel_follower_funcs = {
++	.panel_enabled = edt_ft5x06_panel_enabled,
++	.panel_disabling = edt_ft5x06_panel_disabling,
++};
++
++static void edt_ft5x06_cancel_panel_work(void *data)
++{
++	struct edt_ft5x06_ts_data *tsdata = data;
++
++	cancel_work_sync(&tsdata->panel_on_work);
++}
++
+ static int edt_ft5x06_ts_probe(struct i2c_client *client)
+ {
+ 	const struct i2c_device_id *id = i2c_client_get_device_id(client);
+@@ -1325,6 +1391,23 @@
+ 	if (error)
+ 		return error;
+ 
++	if (drm_is_panel_follower(&client->dev)) {
++		INIT_WORK(&tsdata->panel_on_work, edt_ft5x06_panel_on_work);
++		error = devm_add_action_or_reset(&client->dev,
++						 edt_ft5x06_cancel_panel_work,
++						 tsdata);
++		if (error)
++			return error;
++
++		tsdata->panel_follower.funcs = &edt_ft5x06_panel_follower_funcs;
++		error = devm_drm_panel_add_follower(&client->dev,
++						    &tsdata->panel_follower);
++		if (error)
++			return error;
++
++		tsdata->is_panel_follower = true;
++	}
++
+ 	edt_ft5x06_ts_prepare_debugfs(tsdata);
+ 
+ 	dev_dbg(&client->dev,
+@@ -1350,7 +1434,7 @@
+ 	struct gpio_desc *reset_gpio = tsdata->reset_gpio;
+ 	int ret;
+ 
+-	if (device_may_wakeup(dev))
++	if (device_may_wakeup(dev) || tsdata->is_panel_follower)
+ 		return 0;
+ 
+ 	if (tsdata->suspend_mode == EDT_PMODE_NOT_SUPPORTED)
+@@ -1392,7 +1476,7 @@
+ 	struct edt_ft5x06_ts_data *tsdata = i2c_get_clientdata(client);
+ 	int ret = 0;
+ 
+-	if (device_may_wakeup(dev))
++	if (device_may_wakeup(dev) || tsdata->is_panel_follower)
+ 		return 0;
+ 
+ 	if (tsdata->suspend_mode == EDT_PMODE_NOT_SUPPORTED)
