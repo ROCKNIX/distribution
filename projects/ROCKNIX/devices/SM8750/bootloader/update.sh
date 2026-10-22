@@ -16,6 +16,18 @@ fi
 # mount $BOOT_ROOT rw
 mount -o remount,rw $BOOT_ROOT
 
+if [ -d $SYSTEM_ROOT/usr/share/bootloader/dtbs ]; then
+  echo "Updating device trees..."
+  mkdir -p $BOOT_ROOT/dtbs
+  cp -f $SYSTEM_ROOT/usr/share/bootloader/dtbs/* $BOOT_ROOT/dtbs
+fi
+
+if [ -d "$SYSTEM_ROOT/usr/share/bootloader/loader" ]; then
+  echo "Updating BLS configuration..."
+  mkdir -p $BOOT_ROOT/loader
+  cp -r $SYSTEM_ROOT/usr/share/bootloader/loader/* $BOOT_ROOT/loader
+fi
+
 if [ -d "$SYSTEM_ROOT/usr/share/bootloader/openabl" ]; then
   mkdir -p $BOOT_ROOT/openabl
   echo "Updating OpenABL on SD..."
