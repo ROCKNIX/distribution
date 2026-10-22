@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="batteryplus"
-PKG_VERSION="1c31e89ec1828d51710ad35a607bdfad7e18464e"
-PKG_SHA256="1619da9e945746ea589edb70efd1095b07d21207be3fa43a4c1598be5c2a2089"
+PKG_VERSION="31a3b629bc221bada24526cb6a91ded2d781c40e" # v1.2.1
+PKG_SHA256="bd03303e2c4e63772aba50b512708c5acf5a56a07c90052bbc7191b35607fb48"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/Mikhailzrick/knubat.components"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
