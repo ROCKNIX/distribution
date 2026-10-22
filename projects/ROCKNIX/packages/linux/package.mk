@@ -410,15 +410,6 @@ makeinstall_target() {
   rm -f ${INSTALL}/$(get_kernel_overlay_dir)/lib/modules/*/build
   rm -f ${INSTALL}/$(get_kernel_overlay_dir)/lib/modules/*/source
 
-  if [ "${BOOTLOADER}" = "arm-efi" ]; then
-    mkdir -p ${INSTALL}/usr/share/bootloader/boot/grub
-    for dtb in arch/${TARGET_KERNEL_ARCH}/boot/dts/**/*.dtb; do
-      if [ -f ${dtb} ]; then
-          cp -v ${dtb} ${INSTALL}/usr/share/bootloader/boot/grub
-      fi
-    done
-  fi
-
   if [ "${BOOTLOADER}" = "u-boot" ]; then
     mkdir -p ${INSTALL}/usr/share/bootloader
     for dtb in arch/${TARGET_KERNEL_ARCH}/boot/dts/**/*.dtb; do
