@@ -19,4 +19,11 @@ makeinstall_target() {
 
   mkdir -p ${INSTALL}/usr/share/commander
     cp -a ${PKG_BUILD}/res ${INSTALL}/usr/share/commander
+
+  # Non-InputPlumber platforms require custom input mapping
+  case ${DEVICE} in
+    H700|RK3326|RK3399|RK3588|S922X)
+      cp -a ${PKG_DIR}/config/commander.cfg ${INSTALL}/usr/share/commander
+      ;;
+  esac
 }

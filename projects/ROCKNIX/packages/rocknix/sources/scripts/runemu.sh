@@ -449,6 +449,18 @@ if [ "${DEVICE_MANGOHUD_SUPPORT}" == "true" ]; then
   fi
 fi
 
+### Sway hide cursor
+if echo "${UI_SERVICE}" | grep -q "sway"; then
+  HIDE_CURSOR=$(get_setting "rocknix.sway.hide_cursor" "${PLATFORM}" "${ROMNAME##*/}")
+  if [ "${HIDE_CURSOR}" = "1" ]; then
+    ${VERBOSE} && log $0 "Enabling sway hide_cursor (3 seconds)"
+    swaymsg "seat * hide_cursor 3000"
+  else
+    ${VERBOSE} && log $0 "Disabling sway hide_cursor"
+    swaymsg "seat * hide_cursor 0"
+  fi
+fi
+
 scaling_setting() {
   get_setting "rocknix.scaling.$1" "${PLATFORM}" "${ROMNAME##*/}"
 }
