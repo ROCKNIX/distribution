@@ -1,0 +1,303 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Fri, 25 Sep 2026 04:37:52 -0700
+Subject: [PATCH] wsialloc: allocate AFBC layouts through libgbm
+
+The dma_buf_heaps allocator can only size LINEAR buffers. With
+WSIALLOC_USE_GBM=1, ARM AFBC modifiers that a KMS plane can scan out
+are allocated through libgbm, YTR variants first. Anything else falls
+back to the heap path.
+---
+ CMakeLists.txt                         |   2 +-
+ util/wsialloc/wsialloc_dma_buf_heaps.c | 222 +++++++++++++++++++++++++
+ 2 files changed, 223 insertions(+), 1 deletion(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 1679c18..fc09c00 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -124,7 +124,7 @@ if(NOT SELECT_EXTERNAL_ALLOCATOR STREQUAL "none" AND EXTERNAL_WSIALLOC_LIBRARY S
+ 
+    if(SELECT_EXTERNAL_ALLOCATOR STREQUAL "dma_buf_heaps")
+       target_sources(wsialloc PRIVATE util/wsialloc/wsialloc_dma_buf_heaps.c util/wsialloc/wsialloc_helpers.c)
+-      target_link_libraries(wsialloc drm_utils)
++      target_link_libraries(wsialloc drm_utils ${LIBDRM_LDFLAGS} ${CMAKE_DL_LIBS})
+       # KERNEL_HEADER_DIR was a requirement of the old ion allocator (now removed) and is not needed
+       # for dma_buf_heaps - its uapi header linux/dma-heap.h is in the default include path. Honour it if set.
+       if(DEFINED KERNEL_HEADER_DIR)
+diff --git a/util/wsialloc/wsialloc_dma_buf_heaps.c b/util/wsialloc/wsialloc_dma_buf_heaps.c
+index 5339166..2021b09 100644
+--- a/util/wsialloc/wsialloc_dma_buf_heaps.c
++++ b/util/wsialloc/wsialloc_dma_buf_heaps.c
+@@ -26,17 +26,22 @@
+ #include "wsialloc_helpers.h"
+ 
+ #include <assert.h>
++#include <dlfcn.h>
+ #include <errno.h>
+ #include <fcntl.h>
+ #include <stdbool.h>
+ #include <stdint.h>
++#include <stdio.h>
+ #include <stdlib.h>
++#include <string.h>
+ #include <sys/ioctl.h>
+ #include <sys/stat.h>
+ #include <sys/types.h>
+ #include <sys/mman.h>
+ #include <unistd.h>
+ #include <linux/dma-heap.h>
++#include <xf86drm.h>
++#include <xf86drmMode.h>
+ 
+ /**
+  * @brief Version of the wsialloc interface we are implementing in this file.
+@@ -56,6 +61,26 @@ const uint32_t WSIALLOC_IMPLEMENTATION_VERSION_SYMBOL = WSIALLOC_IMPLEMENTATION_
+ #define STR_EXPAND(tok...) #tok
+ #define STR(tok) STR_EXPAND(tok)
+ 
++struct gbm_device;
++struct gbm_bo;
++
++struct wsialloc_gbm
++{
++   void *lib;
++   int drm_fd;
++   struct gbm_device *dev;
++   struct gbm_device *(*create_device)(int fd);
++   void (*device_destroy)(struct gbm_device *dev);
++   struct gbm_bo *(*bo_create_with_modifiers)(struct gbm_device *dev, uint32_t width, uint32_t height,
++                                             uint32_t format, const uint64_t *modifiers, const unsigned int count);
++   uint64_t (*bo_get_modifier)(struct gbm_bo *bo);
++   int (*bo_get_plane_count)(struct gbm_bo *bo);
++   uint32_t (*bo_get_stride_for_plane)(struct gbm_bo *bo, int plane);
++   uint32_t (*bo_get_offset)(struct gbm_bo *bo, int plane);
++   int (*bo_get_fd)(struct gbm_bo *bo);
++   void (*bo_destroy)(struct gbm_bo *bo);
++};
++
+ struct wsialloc_allocator
+ {
+    /* File descriptor for a DMA-BUF heap for allocating memory accessible to
+@@ -67,8 +93,194 @@ struct wsialloc_allocator
+     * accessible to the windowing system.
+     */
+    int protected_fd;
++
++   struct wsialloc_gbm gbm;
+ };
+ 
++#define GBM_LOAD(gbm, field, name) \
++   (((gbm)->field = (__typeof__((gbm)->field))dlsym((gbm)->lib, name)) != NULL)
++
++static void gbm_finish(struct wsialloc_gbm *gbm)
++{
++   if (gbm->dev != NULL)
++   {
++      gbm->device_destroy(gbm->dev);
++   }
++   if (gbm->drm_fd >= 0)
++   {
++      close(gbm->drm_fd);
++   }
++   if (gbm->lib != NULL)
++   {
++      dlclose(gbm->lib);
++   }
++   memset(gbm, 0, sizeof(*gbm));
++   gbm->drm_fd = -1;
++}
++
++static void gbm_init(struct wsialloc_gbm *gbm)
++{
++   memset(gbm, 0, sizeof(*gbm));
++   gbm->drm_fd = -1;
++
++   const char *env = getenv("WSIALLOC_USE_GBM");
++   if (env == NULL || strcmp(env, "1") != 0)
++   {
++      return;
++   }
++
++   gbm->lib = dlopen("libgbm.so.1", RTLD_NOW | RTLD_LOCAL);
++   bool loaded = gbm->lib != NULL && GBM_LOAD(gbm, create_device, "gbm_create_device") &&
++                 GBM_LOAD(gbm, device_destroy, "gbm_device_destroy") &&
++                 GBM_LOAD(gbm, bo_create_with_modifiers, "gbm_bo_create_with_modifiers") &&
++                 GBM_LOAD(gbm, bo_get_modifier, "gbm_bo_get_modifier") &&
++                 GBM_LOAD(gbm, bo_get_plane_count, "gbm_bo_get_plane_count") &&
++                 GBM_LOAD(gbm, bo_get_stride_for_plane, "gbm_bo_get_stride_for_plane") &&
++                 GBM_LOAD(gbm, bo_get_offset, "gbm_bo_get_offset") && GBM_LOAD(gbm, bo_get_fd, "gbm_bo_get_fd") &&
++                 GBM_LOAD(gbm, bo_destroy, "gbm_bo_destroy");
++
++   for (int i = 0; loaded && gbm->dev == NULL && i < 8; i++)
++   {
++      char path[32];
++      snprintf(path, sizeof(path), "/dev/dri/card%d", i);
++      gbm->drm_fd = open(path, O_RDWR | O_CLOEXEC);
++      gbm->dev = gbm->drm_fd >= 0 ? gbm->create_device(gbm->drm_fd) : NULL;
++      if (gbm->dev == NULL && gbm->drm_fd >= 0)
++      {
++         close(gbm->drm_fd);
++         gbm->drm_fd = -1;
++      }
++   }
++
++   if (gbm->dev == NULL)
++   {
++      gbm_finish(gbm);
++      return;
++   }
++   drmSetClientCap(gbm->drm_fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1);
++}
++
++static bool is_afbc(uint64_t modifier)
++{
++   return (modifier >> 56) == DRM_FORMAT_MOD_VENDOR_ARM && ((modifier >> 52) & 0xf) == DRM_FORMAT_MOD_ARM_TYPE_AFBC;
++}
++
++static bool kms_can_scan_out(int drm_fd, uint32_t fourcc, uint64_t modifier)
++{
++   bool found = false;
++   drmModePlaneRes *res = drmModeGetPlaneResources(drm_fd);
++   for (uint32_t i = 0; res != NULL && i < res->count_planes && !found; i++)
++   {
++      drmModeObjectProperties *props = drmModeObjectGetProperties(drm_fd, res->planes[i], DRM_MODE_OBJECT_PLANE);
++      for (uint32_t j = 0; props != NULL && j < props->count_props && !found; j++)
++      {
++         drmModePropertyRes *prop = drmModeGetProperty(drm_fd, props->props[j]);
++         if (prop != NULL && strcmp(prop->name, "IN_FORMATS") == 0)
++         {
++            drmModePropertyBlobRes *blob = drmModeGetPropertyBlob(drm_fd, (uint32_t)props->prop_values[j]);
++            drmModeFormatModifierIterator iter;
++            memset(&iter, 0, sizeof(iter));
++            while (blob != NULL && !found && drmModeFormatModifierBlobIterNext(blob, &iter))
++            {
++               found = iter.fmt == fourcc && iter.mod == modifier;
++            }
++            drmModeFreePropertyBlob(blob);
++         }
++         drmModeFreeProperty(prop);
++      }
++      drmModeFreeObjectProperties(props);
++   }
++   drmModeFreePlaneResources(res);
++   return found;
++}
++
++#define WSIALLOC_GBM_MAX_MODIFIERS 32
++
++static wsialloc_error gbm_alloc(const struct wsialloc_gbm *gbm, const wsialloc_allocate_info *info,
++                                wsialloc_allocate_result *result)
++{
++   for (unsigned i = 0; i < info->format_count; i++)
++   {
++      const uint32_t fourcc = info->formats[i].fourcc;
++      bool seen = false;
++      for (unsigned k = 0; k < i; k++)
++      {
++         seen = seen || info->formats[k].fourcc == fourcc;
++      }
++      if (seen)
++      {
++         continue;
++      }
++
++      uint64_t modifiers[WSIALLOC_GBM_MAX_MODIFIERS];
++      unsigned count = 0;
++      for (int pass = 0; pass < 2; pass++)
++      {
++         for (unsigned k = i; k < info->format_count && count < WSIALLOC_GBM_MAX_MODIFIERS; k++)
++         {
++            const uint64_t modifier = info->formats[k].modifier;
++            if (info->formats[k].fourcc == fourcc && is_afbc(modifier) &&
++                ((modifier & AFBC_FORMAT_MOD_YTR) != 0) == (pass == 0) &&
++                kms_can_scan_out(gbm->drm_fd, fourcc, modifier))
++            {
++               modifiers[count++] = modifier;
++            }
++         }
++      }
++      if (count == 0)
++      {
++         continue;
++      }
++
++      struct gbm_bo *bo = gbm->bo_create_with_modifiers(gbm->dev, info->width, info->height, fourcc, modifiers, count);
++      if (bo == NULL)
++      {
++         continue;
++      }
++
++      const uint64_t selected = gbm->bo_get_modifier(bo);
++      const int planes = gbm->bo_get_plane_count(bo);
++      const wsialloc_format *format = NULL;
++      for (unsigned k = i; k < info->format_count && format == NULL; k++)
++      {
++         if (info->formats[k].fourcc == fourcc && info->formats[k].modifier == selected)
++         {
++            format = &info->formats[k];
++         }
++      }
++
++      bool usable = format != NULL && planes > 0 && planes <= WSIALLOC_MAX_PLANES;
++      int fd = -1;
++      if (usable && !(info->flags & WSIALLOC_ALLOCATE_NO_MEMORY))
++      {
++         fd = gbm->bo_get_fd(bo);
++         usable = fd >= 0;
++      }
++      if (usable)
++      {
++         result->format = *format;
++         for (int plane = 0; plane < planes; plane++)
++         {
++            result->average_row_strides[plane] = (int)gbm->bo_get_stride_for_plane(bo, plane);
++            result->offsets[plane] = gbm->bo_get_offset(bo, plane);
++            if (fd >= 0)
++            {
++               result->buffer_fds[plane] = fd;
++            }
++         }
++         result->is_disjoint = false;
++      }
++      gbm->bo_destroy(bo);
++
++      if (usable)
++      {
++         return WSIALLOC_ERROR_NONE;
++      }
++   }
++
++   return WSIALLOC_ERROR_NOT_SUPPORTED;
++}
++
+ static int allocate(int fd, uint64_t size)
+ {
+    assert(size > 0);
+@@ -129,6 +343,8 @@ wsialloc_error wsialloc_new(wsialloc_allocator **allocator)
+       return WSIALLOC_ERROR_NO_RESOURCE;
+    }
+ 
++   gbm_init(&dma_buf_heaps->gbm);
++
+    *allocator = dma_buf_heaps;
+    return WSIALLOC_ERROR_NONE;
+ }
+@@ -151,6 +367,7 @@ void wsialloc_delete(wsialloc_allocator *allocator)
+ 
+    close_fd(allocator->memory_fd);
+    close_fd(allocator->protected_fd);
++   gbm_finish(&allocator->gbm);
+ 
+    allocator->memory_fd = -1;
+    allocator->protected_fd = -1;
+@@ -170,5 +387,10 @@ wsialloc_error wsialloc_alloc(wsialloc_allocator *allocator, const wsialloc_allo
+    {
+       return WSIALLOC_ERROR_NO_RESOURCE;
+    }
++   if (allocator->gbm.dev != NULL && !(info->flags & WSIALLOC_ALLOCATE_PROTECTED) &&
++       gbm_alloc(&allocator->gbm, info, result) == WSIALLOC_ERROR_NONE)
++   {
++      return WSIALLOC_ERROR_NONE;
++   }
+    return wsiallocp_alloc(allocator, dma_allocate, info, result);
+ }

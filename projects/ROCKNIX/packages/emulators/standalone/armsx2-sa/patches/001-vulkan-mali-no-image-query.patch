@@ -1,0 +1,227 @@
+diff --git a/bin/resources/shaders/common/fxaa.fx b/bin/resources/shaders/common/fxaa.fx
+index 3efba5c..951b944 100644
+--- a/bin/resources/shaders/common/fxaa.fx
++++ b/bin/resources/shaders/common/fxaa.fx
+@@ -30,6 +30,15 @@ layout(binding = 0) uniform sampler2D TextureSampler;
+ layout(location = 0) in vec2 PSin_t;
+ layout(location = 0) out vec4 SV_Target0;
+ layout(set = 0, binding = 0) uniform sampler2D TextureSampler;
++#ifdef DRIVER_NO_IMAGE_QUERY
++#if DRIVER_NO_IMAGE_QUERY
++// Set by GSDeviceVK::DoFXAA.
++layout(push_constant) uniform cb10
++{
++	vec2 u_source_size;
++};
++#endif
++#endif
+ 
+ #elif (FXAA_HLSL == 1)
+ Texture2D Texture : register(t0);
+@@ -455,7 +464,15 @@ float4 FxaaPass(float4 FxaaColor, float2 uv0, texture2d<float> tex)
+ 	FxaaColor = FxaaPixelShader(uv0, tex, 1.0/PixelSize.xy, FxaaSubpixMax, FxaaEdgeThreshold, FxaaEdgeThresholdMin);
+ 
+ 	#elif (FXAA_GLSL_130 == 1 || FXAA_GLSL_VK == 1)
++	#if defined(DRIVER_NO_IMAGE_QUERY) && FXAA_GLSL_VK == 1
++	#if DRIVER_NO_IMAGE_QUERY
++	vec2 PixelSize = u_source_size;
++	#else
+ 	vec2 PixelSize = vec2(textureSize(TextureSampler, 0));
++	#endif
++	#else
++	vec2 PixelSize = vec2(textureSize(TextureSampler, 0));
++	#endif
+ 	FxaaColor = FxaaPixelShader(uv0, TextureSampler, 1.0/PixelSize.xy, FxaaSubpixMax, FxaaEdgeThreshold, FxaaEdgeThresholdMin);
+ 	#elif defined(__METAL_VERSION__)
+ 	float2 PixelSize = float2(tex.get_width(), tex.get_height());
+diff --git a/bin/resources/shaders/vulkan/convert.glsl b/bin/resources/shaders/vulkan/convert.glsl
+index db4f844..e144f9a 100644
+--- a/bin/resources/shaders/vulkan/convert.glsl
++++ b/bin/resources/shaders/vulkan/convert.glsl
+@@ -281,8 +281,24 @@ void ps_convert_depth32_depth24()
+ }
+ #endif
+ 
++#if DRIVER_NO_IMAGE_QUERY
++#ifdef HAS_BILN
++#if HAS_BILN
++// Set by GSDeviceVK::DoStretchRect for the bilinear depth converts.
++layout(push_constant) uniform cb10
++{
++	ivec2 TexSize;
++};
++#define RGBA_DEPTH_TEX_SIZE TexSize
++#endif
++#endif
++#endif
++#ifndef RGBA_DEPTH_TEX_SIZE
++#define RGBA_DEPTH_TEX_SIZE textureSize(samp0, 0)
++#endif
++
+ #define SAMPLE_RGBA_DEPTH_BILN(CONVERT_FN) \
+-	ivec2 dims = textureSize(samp0, 0); \
++	ivec2 dims = RGBA_DEPTH_TEX_SIZE; \
+ 	vec2 top_left_f = v_tex * vec2(dims) - 0.5f; \
+ 	ivec2 top_left = ivec2(floor(top_left_f)); \
+ 	ivec4 coords = clamp(ivec4(top_left, top_left + 1), ivec4(0), dims.xyxy - 1); \
+diff --git a/bin/resources/shaders/vulkan/present.glsl b/bin/resources/shaders/vulkan/present.glsl
+index bc319b6..45d6e7b 100644
+--- a/bin/resources/shaders/vulkan/present.glsl
++++ b/bin/resources/shaders/vulkan/present.glsl
+@@ -100,7 +100,11 @@ void ps_filter_triangular() // triangular
+ void ps_filter_complex() // triangular
+ {
+ 	const float PI = 3.14159265359f;
++#if DRIVER_NO_IMAGE_QUERY
++	vec2 texdim = u_source_size;
++#else
+ 	vec2 texdim = vec2(textureSize(samp0, 0));
++#endif
+ 
+ 	o_col0 = (0.9 - 0.4 * cos(2 * PI * v_tex.y * texdim.y)) * sample_c(vec2(v_tex.x, (floor(v_tex.y * texdim.y) + 0.5) / texdim.y));
+ }
+diff --git a/bin/resources/shaders/vulkan/tfx.glsl b/bin/resources/shaders/vulkan/tfx.glsl
+index 6b786b3..cb4317d 100644
+--- a/bin/resources/shaders/vulkan/tfx.glsl
++++ b/bin/resources/shaders/vulkan/tfx.glsl
+@@ -757,7 +757,11 @@ vec4 sample_c_af(vec2 uv, float uv_w)
+ 	// Below taken from https://microsoft.github.io/DirectX-Specs/d3d/archive/D3D11_3_FunctionalSpec.htm#7.18.11%20LOD%20Calculations
+ 	// And https://registry.khronos.org/OpenGL/extensions/EXT/EXT_texture_filter_anisotropic.txt
+ 	// With guidance from https://pema.dev/2025/05/09/mipmaps-too-much-detail/ 
++#if DRIVER_NO_IMAGE_QUERY
++	vec2 sz = WH.zw;
++#else
+ 	vec2 sz = textureSize(Texture, 0);
++#endif
+ 	vec2 dX = dFdx(uv) * sz;
+ 	vec2 dY = dFdy(uv) * sz;
+ 
+diff --git a/pcsx2/GS/Renderers/Common/GSGPUDriverProfile.cpp b/pcsx2/GS/Renderers/Common/GSGPUDriverProfile.cpp
+index 992e784..a872450 100644
+--- a/pcsx2/GS/Renderers/Common/GSGPUDriverProfile.cpp
++++ b/pcsx2/GS/Renderers/Common/GSGPUDriverProfile.cpp
+@@ -399,7 +399,7 @@ static bool RuleMatches(const DriverRule& rule, const GpuProfileSelection& selec
+ // Sources and upstream revisions are mirrored in docs/gpu-driver-database.json. A known bug is
+ // not automatically an active workaround: expensive fallbacks stay off until they have a bounded,
+ // tested condition.
+-static constexpr std::array<DriverRule, 35> s_driver_rules = {{
++static constexpr std::array<DriverRule, 36> s_driver_rules = {{
+ 	{"gl-arm-buffer-stream", MobileGpuApi::OpenGL, RuntimeGpuProfile::Mali,
+ 		MobileGpuDriver::ArmProprietary, MobileGpuArchitecture::Unknown, 0, 0, 0, {}, {}, 0, 0, false,
+ 		Bug(DriverBug::BrokenBufferStreaming) | Bug(DriverBug::BrokenUnsynchronizedMapping) |
+@@ -455,6 +455,13 @@ static constexpr std::array<DriverRule, 35> s_driver_rules = {{
+ 		Workaround(DriverWorkaround::UseDescriptorSets) |
+ 			Workaround(DriverWorkaround::DisableAttachmentFeedbackLoopLayout) |
+ 			Workaround(DriverWorkaround::ScalarizeVectorBitwiseAnd)},
++	// r29 (g29p1, Rockchip RK3566/Mali-G52) segfaults in cmpbe_v2_compile_multiple_shaders on any
++	// pipeline whose SPIR-V has an image size query, at the first bilinear depth convert. Newer
++	// blobs are unmeasured, so the bound is the next major revision.
++	{"vk-arm-image-query-before-r30", MobileGpuApi::Vulkan, RuntimeGpuProfile::Mali,
++		MobileGpuDriver::ArmProprietary, MobileGpuArchitecture::Unknown, 0, 0, 0, {}, {30, 0, 0},
++		0, 0, false, Bug(DriverBug::BrokenImageQuery),
++		Workaround(DriverWorkaround::PassTextureSizeInUniform)},
+ 	// Slow cached readback (from Dolphin's BUG_SLOW_CACHED_READBACK_MEMORY) measured backwards on
+ 	// r44p1 / Mali-G615: a non-coherent cached type with explicit invalidates beat the coherent
+ 	// map about 12x per readback. That does not prove it wrong on older parts, so the preference
+diff --git a/pcsx2/GS/Renderers/Common/GSGPUProfile.cpp b/pcsx2/GS/Renderers/Common/GSGPUProfile.cpp
+index 0b82189..accacae 100644
+--- a/pcsx2/GS/Renderers/Common/GSGPUProfile.cpp
++++ b/pcsx2/GS/Renderers/Common/GSGPUProfile.cpp
+@@ -348,6 +348,7 @@ const char* GpuProfileDetector::BugToString(DriverBug value)
+ 		case DriverBug::BrokenGraphicsPipelineLibrary: return "BrokenGraphicsPipelineLibrary";
+ 		case DriverBug::BrokenRoaaDestinationRead: return "BrokenRoaaDestinationRead";
+ 		case DriverBug::BrokenBlendConstant: return "BrokenBlendConstant";
++		case DriverBug::BrokenImageQuery: return "BrokenImageQuery";
+ 		case DriverBug::Count:
+ 		default: return "Unknown";
+ 	}
+@@ -375,6 +376,7 @@ const char* GpuProfileDetector::WorkaroundToString(DriverWorkaround value)
+ 		case DriverWorkaround::DisableStencilBuffer: return "DisableStencilBuffer";
+ 		case DriverWorkaround::PreferVulkanRenderer: return "PreferVulkanRenderer";
+ 		case DriverWorkaround::PreferCachedStreamRingMemory: return "PreferCachedStreamRingMemory";
++		case DriverWorkaround::PassTextureSizeInUniform: return "PassTextureSizeInUniform";
+ 		case DriverWorkaround::Count:
+ 		default: return "Unknown";
+ 	}
+diff --git a/pcsx2/GS/Renderers/Common/GSGPUProfile.h b/pcsx2/GS/Renderers/Common/GSGPUProfile.h
+index fdf1068..8b2325b 100644
+--- a/pcsx2/GS/Renderers/Common/GSGPUProfile.h
++++ b/pcsx2/GS/Renderers/Common/GSGPUProfile.h
+@@ -129,6 +129,9 @@ enum class DriverBug : u8
+ 	/// The trigger is run history, not anything the draw carries, so it cannot be probed at
+ 	/// start-up and no emission order avoids it.
+ 	BrokenBlendConstant,
++	/// The shader compiler dereferences NULL on any pipeline whose SPIR-V queries an image size
++	/// (textureSize). Mali-G52 on the Arm proprietary r29 (g29p1) Vulkan driver.
++	BrokenImageQuery,
+ 	Count,
+ };
+ 
+@@ -170,6 +173,8 @@ enum class DriverWorkaround : u8
+ 	/// a defect. Without this bit the rings stay write-combined even when a cached coherent type
+ 	/// exists (that road lost on the SD865). See GSStreamRingMemoryPolicy.h.
+ 	PreferCachedStreamRingMemory,
++	/// Shaders take texture sizes from a uniform or push constant instead of textureSize().
++	PassTextureSizeInUniform,
+ 	Count,
+ };
+ 
+diff --git a/pcsx2/GS/Renderers/Vulkan/GSDeviceVK.cpp b/pcsx2/GS/Renderers/Vulkan/GSDeviceVK.cpp
+index a23210c..9b56ec9 100644
+--- a/pcsx2/GS/Renderers/Vulkan/GSDeviceVK.cpp
++++ b/pcsx2/GS/Renderers/Vulkan/GSDeviceVK.cpp
+@@ -4839,6 +4839,12 @@ void GSDeviceVK::DoStretchRect(GSTexture* sTex, const GSVector4& sRect, GSTextur
+ 	pxAssert(dTex);
+ 	filter = shader.SupportsBilinear() ? Nearest : filter; // Don't allow HW bilinear if SW bilinear is needed.
+ 	const bool allow_discard = (shader.Mask() == 0xf);
++	if (shader.Biln())
++	{
++		// SAMPLE_RGBA_DEPTH_BILN reads the source size from here under DRIVER_NO_IMAGE_QUERY.
++		const GSVector2i size(sTex->GetSize());
++		SetUtilityPushConstants(&size, sizeof(size));
++	}
+ 	DoStretchRect(static_cast<GSTextureVK*>(sTex), sRect, static_cast<GSTextureVK*>(dTex), dRect,
+ 		GetConvertPipeline(shader), filter, allow_discard);
+ }
+@@ -4974,6 +4980,11 @@ void GSDeviceVK::DoMultiStretchRects(
+ 	if (!InRenderPass())
+ 		BeginRenderPassForStretchRect(dTex, rc, rc, false);
+ 	SetUtilityTexture(rects[0].src, rects[0].filter == Biln ? m_linear_sampler : m_point_sampler);
++	if (shader.Biln())
++	{
++		const GSVector2i size(rects[0].src->GetSize());
++		SetUtilityPushConstants(&size, sizeof(size));
++	}
+ 
+ 	SetPipeline(GetConvertPipeline(shader.SetMask(rects[0].wmask.wrgba)));
+ 
+@@ -5406,6 +5417,9 @@ void GSDeviceVK::DoFXAA(GSTexture* sTex, GSTexture* dTex)
+ 	EndRenderPass();
+ 	OMSetRenderTargets(dTex, nullptr, dRect);
+ 	SetUtilityTexture(sTex, m_linear_sampler);
++	// fxaa.fx reads PixelSize from here under DRIVER_NO_IMAGE_QUERY.
++	const GSVector2 size(static_cast<float>(sTex->GetWidth()), static_cast<float>(sTex->GetHeight()));
++	SetUtilityPushConstants(&size, sizeof(size));
+ 	BeginRenderPass(m_utility_color_render_pass_discard, dRect);
+ 	dTex->SetState(GSTexture::State::Dirty);
+ 	SetPipeline(m_fxaa_pipeline);
+@@ -5943,6 +5957,8 @@ static void AddShaderHeader(std::stringstream& ss)
+ 		dev->UsesMobileDriverWorkaround(DriverWorkaround::ScalarizeVectorBitwiseAnd) ? 1 : 0);
+ 	AddMacro(ss, "DRIVER_REWRITE_UNIFORM_INDEXING",
+ 		dev->UsesMobileDriverWorkaround(DriverWorkaround::RewriteUniformIndexing) ? 1 : 0);
++	AddMacro(ss, "DRIVER_NO_IMAGE_QUERY",
++		dev->UsesMobileDriverWorkaround(DriverWorkaround::PassTextureSizeInUniform) ? 1 : 0);
+ 	// When no workaround is active these MUST expand to the bare operator, not to a function that
+ 	// happens to return it. Overloads cost an OpFunctionCall in the SPIR-V at every call site --
+ 	// including inside the texture loop in tfx.glsl and the region-clamp path -- and Qualcomm's
+diff --git a/pcsx2/ShaderCacheVersion.h b/pcsx2/ShaderCacheVersion.h
+index e540379..600ce0c 100644
+--- a/pcsx2/ShaderCacheVersion.h
++++ b/pcsx2/ShaderCacheVersion.h
+@@ -35,4 +35,5 @@
+ // PS constant buffer's former pad after RcpScaleFactor, instead of the texture's.
+ // 125: the weave and MAD buffering passes fill the undrawn field band where the display rect
+ // starts, read from FieldPad.xy as a row range, instead of from row 0 down to a row count.
+-static constexpr u32 SHADER_CACHE_VERSION = 125; // 108 was upstream PR 14688; their 109 = our 111, their 110 = our 115, their 112 = our 116, their 113 = our 117
++// 126: DRIVER_NO_IMAGE_QUERY (Mali r29) takes texture sizes from uniforms in convert/present/tfx/fxaa.
++static constexpr u32 SHADER_CACHE_VERSION = 126; // 108 was upstream PR 14688; their 109 = our 111, their 110 = our 115, their 112 = our 116, their 113 = our 117

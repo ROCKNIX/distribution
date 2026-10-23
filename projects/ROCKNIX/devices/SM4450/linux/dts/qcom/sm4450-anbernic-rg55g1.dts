@@ -34,6 +34,7 @@
 #include <dt-bindings/phy/phy-qcom-qmp.h>
 #include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
 #include <dt-bindings/power/qcom,rpmhpd.h>
+#include <dt-bindings/pwm/pwm.h>
 #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
 #include <dt-bindings/soc/qcom,gpr.h>
 #include <dt-bindings/sound/qcom,q6dsp-lpass-ports.h>
@@ -48,11 +49,11 @@
 
 	backlight: backlight {
 	    compatible = "pwm-backlight";
-	    /* Stock Android: PM6450 LPG channel 0, 100 us period. */
-	    pwms = <&pm6450_pwm 0 100000>;
+	    /* PM6450 LPG channel 0, 100 us period, active low */
+	    pwms = <&pm6450_pwm 0 100000 PWM_POLARITY_INVERTED>;
 		
-		brightness-levels = <4095 0>;
-	    num-interpolated-steps = <4095>;
+		brightness-levels = <825 4095>;
+	    num-interpolated-steps = <3270>;
 	    
 		/* Start at approximately 50% duty cycle. */
 	    default-brightness-level = <2048>;
@@ -388,9 +389,9 @@
 
 		framebuffer: framebuffer@b8000000 {
 			compatible = "simple-framebuffer";
-			reg = <0x0 0xb8000000 0x0 0x51bd00>;
+			reg = <0x0 0xb8000000 0x0 0x7e9000>;
 			width = <1080>;
-			height = <1240>;
+			height = <1920>;
 			stride = <4320>;
 			format = "x8r8g8b8";
 		};
@@ -410,48 +411,20 @@
 	};
 
 	/*
-	 * Panel rails. The stock DT enables the 1.8V rail from the panel node's
-	 * qcom,oled-vdd1v8-gpio (gpio97) and the positive/negative OLED bias
-	 * from an awinic aw3750x on i2c (outp gpio3, outn gpio2). There is no
-	 * mainline aw3750x driver, so the two bias outputs are modelled as
-	 * GPIO-enabled fixed regulators, which is all the panel needs.
+	 * Panel 1.8V rail, enabled from the stock panel node's
+	 * qcom,oled-vdd1v8-gpio (gpio97). The bias rails are on i2c8.
 	 */
 	vreg_panel_1p8: regulator-panel-1p8 {
 		compatible = "regulator-fixed";
 		regulator-name = "vreg_panel_1p8";
 		regulator-min-microvolt = <1800000>;
 		regulator-max-microvolt = <1800000>;
+		vin-supply = <&vreg_l21b_1p8>;
 		gpio = <&tlmm 97 GPIO_ACTIVE_HIGH>;
 		enable-active-high;
 		regulator-boot-on;
 		startup-delay-us = <1000>;
 		pinctrl-0 = <&panel_1p8_en_default>;
-		pinctrl-names = "default";
-	};
-
-	vreg_panel_avdd: regulator-panel-avdd {
-		compatible = "regulator-fixed";
-		regulator-name = "vreg_panel_avdd";
-		regulator-min-microvolt = <5500000>;
-		regulator-max-microvolt = <5500000>;
-		gpio = <&tlmm 3 GPIO_ACTIVE_HIGH>;
-		enable-active-high;
-		regulator-boot-on;
-		startup-delay-us = <1000>;
-		pinctrl-0 = <&panel_avdd_en_default>;
-		pinctrl-names = "default";
-	};
-
-	vreg_panel_avee: regulator-panel-avee {
-		compatible = "regulator-fixed";
-		regulator-name = "vreg_panel_avee";
-		regulator-min-microvolt = <5500000>;
-		regulator-max-microvolt = <5500000>;
-		gpio = <&tlmm 2 GPIO_ACTIVE_HIGH>;
-		enable-active-high;
-		regulator-boot-on;
-		startup-delay-us = <1000>;
-		pinctrl-0 = <&panel_avee_en_default>;
 		pinctrl-names = "default";
 	};
 
@@ -1655,13 +1628,12 @@
 				};
 			};
 
-			panel@0 {
+			panel: panel@0 {
 				compatible = "focaltech,ft7131m";
 				reg = <0>;
 
 				backlight = <&backlight>;
 
-				vdd-supply = <&vreg_l4e_3p0>;
 				vddio-supply = <&vreg_panel_1p8>;
 				avdd-supply = <&vreg_panel_avdd>;
 				avee-supply = <&vreg_panel_avee>;
@@ -1805,7 +1777,7 @@
 		};
 	};
 
-	gmu_wrapper: gmu@3d7d000 {
+	gmu_wrapper: gmu@3d6a000 {
 		compatible = "qcom,adreno-gmu-wrapper";
 		reg = <0x0 0x03d6a000 0x0 0x30000>;
 		reg-names = "gmu";
@@ -1908,6 +1880,13 @@
 		data-pins {
 			pins = "sdc2_data";
 			drive-strength = <10>;
+			bias-pull-up;
+		};
+
+		cd-pins {
+			pins = "gpio101";
+			function = "gpio";
+			drive-strength = <2>;
 			bias-pull-up;
 		};
 	};
@@ -2123,8 +2102,7 @@
 			interrupt-parent = <&tlmm>;
 			interrupts = <13 IRQ_TYPE_LEVEL_LOW>;
 			reset-gpios = <&tlmm 12 GPIO_ACTIVE_LOW>;
-
-			vcc-supply = <&vreg_l4e_3p0>;
+			panel = <&panel>;
 
 			pinctrl-0 = <&ts_active>;
 			pinctrl-1 = <&ts_int_suspend &ts_reset_suspend>;
@@ -2237,6 +2215,31 @@
 			sound-name-prefix = "Right";
 			awinic,audio-channel = <1>;
 			awinic,sync-flag;
+		};
+
+		regulator@3e {
+			compatible = "awinic,aw37503";
+			reg = <0x3e>;
+			pinctrl-0 = <&panel_avdd_en_default>, <&panel_avee_en_default>;
+			pinctrl-names = "default";
+
+			vreg_panel_avdd: outp {
+				regulator-name = "vreg_panel_avdd";
+				regulator-min-microvolt = <5600000>;
+				regulator-max-microvolt = <5600000>;
+				regulator-active-discharge = <1>;
+				enable-gpios = <&tlmm 3 GPIO_ACTIVE_HIGH>;
+				vin-supply = <&vph_pwr>;
+			};
+
+			vreg_panel_avee: outn {
+				regulator-name = "vreg_panel_avee";
+				regulator-min-microvolt = <5600000>;
+				regulator-max-microvolt = <5600000>;
+				regulator-active-discharge = <1>;
+				enable-gpios = <&tlmm 2 GPIO_ACTIVE_HIGH>;
+				vin-supply = <&vph_pwr>;
+			};
 		};
 
 		typec_mux: typec-mux@42 {
@@ -2723,7 +2726,7 @@
 
 		pm6450_pwm: pwm {
 			compatible = "qcom,pm6450-pwm";
-			#pwm-cells = <2>;
+			#pwm-cells = <3>;
 			pinctrl-0 = <&backlight_pwm_default>;
 			pinctrl-names = "default";
 		};

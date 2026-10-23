@@ -107,7 +107,7 @@
 |Sega|Mega Drive (megadrive)|1990|`megadrive`|.bin .gen .md .sg .smd .zip .7z|**retroarch:** genesis_plus_gx (default)<br>**retroarch:** genesis_plus_gx_wide<br>**retroarch:** picodrive<br>**mednafen:** md<br>|
 |Sega|Mega Drive (megadrive-japan)|1988|`megadrive-japan`|.bin .gen .md .sg .smd .zip .7z|**retroarch:** genesis_plus_gx (default)<br>**retroarch:** genesis_plus_gx_wide<br>**retroarch:** picodrive<br>**mednafen:** md<br>|
 |Sega|Naomi (naomi)|1998|`naomi`|.lst .bin .dat .zip .7z|**flycast:** flycast-sa (default)<br>**retroarch:** flycast<br>**retroarch:** flycast2021<br>|
-|Sega|Saturn (saturn)|1994|`saturn`|.cue .chd .iso .zip|**yabasanshiro:** yabasanshiro-sa (default)<br>**retroarch:** yabasanshiro<br>**retroarch:** beetle_saturn<br>**retroarch:** kronos<br>**mednafen:** ss<br>|
+|Sega|Saturn (saturn)|1994|`saturn`|.cue .chd .iso .zip|**yabasanshiro:** yabasanshiro-sa (default)<br>**retroarch:** yabasanshiro<br>**retroarch:** yabadabadoo<br>**retroarch:** beetle_saturn<br>**retroarch:** kronos<br>**mednafen:** ss<br>|
 |Sega|Sega 32X (sega32x)|1994|`sega32x`|.32x .smd .bin .md .zip .7z|**retroarch:** picodrive (default)<br>**ares:** ares-sa<br>|
 |Sega|Sega CD (segacd)|1991|`segacd`|.chd .cue .iso .m3u|**retroarch:** genesis_plus_gx (default)<br>**retroarch:** picodrive<br>**ares:** ares-sa<br>|
 |Sega|Sega Model 3 (segamodel3)|1996|`segamodel3`|.zip|**supermodel:** supermodel-sa (default)<br>|
@@ -123,7 +123,7 @@
 |SNK|Neo Geo Pocket (ngp)|1998|`ngp`|.ngp .ngc .zip .7z|**retroarch:** beetle_ngp (default)<br>**retroarch:** race<br>**mednafen:** ngp<br>**ares:** ares-sa<br>|
 |SNK|Neo Geo Pocket Color (ngpc)|1999|`ngpc`|.ngp .ngc .zip .7z|**retroarch:** beetle_ngp (default)<br>**retroarch:** race<br>**mednafen:** ngp<br>**ares:** ares-sa<br>|
 |Sony|PlayStation (psx)|1994|`psx`|.bin .cue .img .mdf .pbp .toc .cbn .m3u .ccd .chd .iso|**retroarch:** pcsx_rearmed32 (default)<br>**retroarch:** pcsx_rearmed<br>**retroarch:** beetle_psx<br>**mednafen:** psx<br>**retroarch:** duckstation<br>**duckstation:** duckstation-sa<br>**retroarch:** swanstation<br>|
-|Sony|PlayStation 2 (ps2)|2000|`ps2`|.iso .mdf .nrg .bin .img .dump .gz .cso .chd|**armsx2:** armsx2-sa (default)<br>**aethersx2:** aethersx2-sa<br>|
+|Sony|PlayStation 2 (ps2)|2000|`ps2`|.iso .mdf .nrg .bin .img .dump .gz .cso .chd|**armsx2:** armsx2-sa (default)<br>|
 |Sony|PlayStation 3 (ps3)|2006|`ps3`|.ps3 .psn .m3u|**rpcs3:** rpcs3-sa (default)<br>|
 |Sony|PlayStation Portable (psp)|2004|`psp`|.iso .cso .pbp .chd|**ppsspp:** ppsspp-sa (default)<br>**retroarch:** ppsspp<br>|
 |Sony|PlayStation Vita (psvita)|2011|`psvita`|.pkg .psvita .zip|**vita3k:** vita3k-sa (default)<br>|

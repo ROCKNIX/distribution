@@ -1,26 +1,19 @@
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2018-present Frank Hartung (supervisedthinking (@) gmail.com)
-# Copyright (C) 2021-present Team LibreELEC (https://libreelec.tv)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
-PKG_NAME="vulkan-loader"
-PKG_VERSION="1.4.347"
-PKG_SHA256="4b6002e4200d59d76bad1058b677fdbfab9abdb2ef3b3856a31026bc445341f0"
-PKG_LICENSE="Apache-2.0"
-PKG_SITE="https://github.com/KhronosGroup/Vulkan-Loader"
-PKG_URL="https://github.com/KhronosGroup/Vulkan-Loader/archive/v${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain Python3:host vulkan-headers libxcb libX11 libXrandr wayland"
-PKG_LONGDESC="Vulkan Installable Client Driver (ICD) Loader."
+. ${ROOT}/packages/graphics/vulkan/vulkan-loader/package.mk
+
+PKG_DEPENDS_TARGET+=" libxcb libX11 libXrandr"
 
 pre_configure_target() {
   PKG_CMAKE_OPTS_TARGET="-DBUILD_TESTS=OFF \
                          -DCMAKE_BUILD_TYPE=Release"
 
   # GAS / GNU Assembler is only supported by aarch64 & x86_64
-  HOST_ARCH=$(uname -m)
-  case ${HOST_ARCH} in
-     arm|aarch64)
-       PKG_CMAKE_OPTS_TARGET+=" -DUSE_GAS=OFF"
-     ;;
+  case $(uname -m) in
+    arm|aarch64)
+      PKG_CMAKE_OPTS_TARGET+=" -DUSE_GAS=OFF"
+      ;;
   esac
 
   if [ "${DISPLAYSERVER}" = "x11" ]; then

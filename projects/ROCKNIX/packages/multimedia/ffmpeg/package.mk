@@ -3,17 +3,15 @@
 # Copyright (C) 2017-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="ffmpeg"
-PKG_LICENSE="LGPLv2.1+"
+PKG_LICENSE="LGPL-3.0-or-later"
 PKG_SITE="https://ffmpeg.org"
 PKG_DEPENDS_TARGET="toolchain zlib bzip2 openssl speex"
 PKG_LONGDESC="FFmpeg is a complete, cross-platform solution to record, convert and stream audio and video."
 
-PKG_VERSION="7.1.1"
-PKG_SHA256="733984395e0dbbe5c046abda2dc49a5544e7e0e1e2366bba849222ae9e3a03b1"
+PKG_VERSION="9.0"
+PKG_SHA256="7f607a00dd0d28a729d5a4811205812eef01cf6ef6155025febb6f36a9062d52"
 PKG_URL="http://ffmpeg.org/releases/ffmpeg-${PKG_VERSION}.tar.xz"
 PKG_PATCH_DIRS="libreelec"
-
-PKG_PATCH_DIRS+=" v4l2-request v4l2-drmprime"
 
 post_unpack() {
   # Fix FFmpeg version
@@ -32,13 +30,18 @@ PKG_FFMPEG_HWACCEL="--enable-hwaccels"
 case ${DEVICE} in
   RK3588*)
     V4L2_SUPPORT=no
+    PKG_DEPENDS_TARGET+=" rkmpp libdrm"
+    PKG_NEED_UNPACK+=" $(get_pkg_directory libdrm)"
+    PKG_FFMPEG_RKMPP="--enable-rkmpp --enable-libdrm"
+  ;;
+  RK3326*|RK3399*)
+    PKG_PATCH_DIRS+=" v4l2-request vf-deinterlace-v4l2m2m"
+  ;;
+  RK*)
+    PKG_PATCH_DIRS+=" v4l2-request detlev vf-deinterlace-v4l2m2m"
   ;;
   *)
-    case ${DEVICE} in
-      RK*)
-        PKG_PATCH_DIRS+=" vf-deinterlace-v4l2m2m"
-      ;;
-    esac
+    PKG_PATCH_DIRS+=" v4l2-request"
   ;;
 esac
 
@@ -60,11 +63,14 @@ if [ "${V4L2_SUPPORT}" = "yes" ]; then
     PKG_DEPENDS_TARGET+=" systemd"
     PKG_NEED_UNPACK+=" $(get_pkg_directory systemd)"
     PKG_FFMPEG_V4L2+=" --enable-libudev --enable-v4l2-request"
-  else
+  elif listcontains "${PKG_PATCH_DIRS}" "v4l2-request"; then
     PKG_FFMPEG_V4L2+=" --disable-libudev --disable-v4l2-request"
   fi
 else
-  PKG_FFMPEG_V4L2="--disable-v4l2_m2m --disable-libudev --disable-v4l2-request"
+  PKG_FFMPEG_V4L2="--disable-v4l2_m2m"
+  if listcontains "${PKG_PATCH_DIRS}" "v4l2-request"; then
+    PKG_FFMPEG_V4L2+=" --disable-libudev --disable-v4l2-request"
+  fi
 fi
 
 if [ "${VAAPI_SUPPORT}" = "yes" ]; then
@@ -104,12 +110,6 @@ fi
 if [ "${TARGET_ARCH}" = "x86_64" ]; then
   PKG_DEPENDS_TARGET+=" nasm:host"
 fi
-
-case ${DEVICE} in
-  RK*)
-    PKG_DEPENDS_TARGET+=" rkmpp"
-  ;;
-esac
 
 if target_has_feature "(neon|sse)"; then
   PKG_DEPENDS_TARGET+=" dav1d"
@@ -164,7 +164,6 @@ configure_target() {
               --enable-avcodec \
               --enable-avformat \
               --enable-swscale \
-              --enable-postproc \
               --enable-avfilter \
               --disable-devices \
               --enable-pthreads \
@@ -174,6 +173,7 @@ configure_target() {
               --enable-swscale-alpha \
               --disable-small \
               ${PKG_FFMPEG_V4L2} \
+              ${PKG_FFMPEG_RKMPP} \
               ${PKG_FFMPEG_VAAPI} \
               ${PKG_FFMPEG_VDPAU} \
               --enable-runtime-cpudetect \

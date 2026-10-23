@@ -107,5 +107,8 @@ post_makeinstall_target() {
   if [[ "${DEVICE}" =~ RK3326|RK3566|RK3576 ]] && [ "${ARCH}" = "arm" ]; then
     mv "${INSTALL}"/usr/lib32/mali/libMaliVulkan.* "${INSTALL}"/usr/lib32/
   fi
+  if [[ "${DEVICE}" =~ RK3326|RK3566|RK3576 ]]; then
+    rm -f "${INSTALL}"/etc/profile.d/mali-priority.sh
+  fi
 
 }

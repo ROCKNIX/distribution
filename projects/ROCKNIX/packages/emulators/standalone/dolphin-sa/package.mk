@@ -54,6 +54,7 @@ PKG_CMAKE_OPTS_TARGET+=" -DENABLE_QT=ON \
                          -DENABLE_NOGUI=ON \
                          -DENABLE_EVDEV=ON \
                          -DENABLE_SDL=ON \
+                         -DSDL_PIPEWIRE=OFF \
                          -DUSE_DISCORD_PRESENCE=OFF \
                          -DBUILD_SHARED_LIBS=OFF \
                          -DLINUX_LOCAL_DEV=OFF \

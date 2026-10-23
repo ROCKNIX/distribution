@@ -1,0 +1,117 @@
+From: sunshineinabox <aqemail@gmail.com>
+Subject: [PATCH] drm/rockchip: vop: add AFBC support for PX30
+
+The PX30 big VOP has one AFBC decoder that feeds win1. Expose win1 as an AFBC-only overlay and program the decoder like the vendor kernel does.
+
+--- a/drivers/gpu/drm/rockchip/rockchip_vop_reg.h
++++ b/drivers/gpu/drm/rockchip/rockchip_vop_reg.h
+@@ -950,6 +950,10 @@
+ #define PX30_BLANKING_VALUE			0x001f4
+ #define PX30_FLAG_REG_FRM_VALID			0x001f8
+ #define PX30_FLAG_REG				0x001fc
++#define PX30_AFBCD0_CTRL			0x00240
++#define PX30_AFBCD0_HDR_PTR			0x00244
++#define PX30_AFBCD0_PIC_SIZE			0x00248
++#define PX30_AFBCD0_PIC_OFFSET			0x0024c
+ #define PX30_HWC_LUT_ADDR			0x00600
+ #define PX30_GAMMA_LUT_ADDR			0x00a00
+ /* px30 register definition end */
+--- a/drivers/gpu/drm/rockchip/rockchip_vop_reg.c
++++ b/drivers/gpu/drm/rockchip/rockchip_vop_reg.c
+@@ -97,6 +97,11 @@
+ 
+ static const uint64_t format_modifiers_win_lite[] = {
+ 	DRM_FORMAT_MOD_LINEAR,
++	DRM_FORMAT_MOD_INVALID,
++};
++
++static const uint64_t format_modifiers_afbc[] = {
++	ROCKCHIP_AFBC_MOD,
+ 	DRM_FORMAT_MOD_INVALID,
+ };
+ 
+@@ -325,6 +330,23 @@
+ 	.data_formats = formats_win_lite,
+ 	.nformats = ARRAY_SIZE(formats_win_lite),
+ 	.format_modifiers = format_modifiers_win_lite,
++	.enable = VOP_REG(PX30_WIN1_CTRL0, 0x1, 0),
++	.format = VOP_REG(PX30_WIN1_CTRL0, 0x7, 4),
++	.rb_swap = VOP_REG(PX30_WIN1_CTRL0, 0x1, 12),
++	.uv_swap = VOP_REG(PX30_WIN1_CTRL0, 0x1, 15),
++	.dsp_info = VOP_REG(PX30_WIN1_DSP_INFO, 0xffffffff, 0),
++	.dsp_st = VOP_REG(PX30_WIN1_DSP_ST, 0xffffffff, 0),
++	.yrgb_mst = VOP_REG(PX30_WIN1_MST, 0xffffffff, 0),
++	.yrgb_vir = VOP_REG(PX30_WIN1_VIR, 0x1fff, 0),
++	.alpha_pre_mul = VOP_REG(PX30_WIN1_ALPHA_CTRL, 0x1, 2),
++	.alpha_mode = VOP_REG(PX30_WIN1_ALPHA_CTRL, 0x1, 1),
++	.alpha_en = VOP_REG(PX30_WIN1_ALPHA_CTRL, 0x1, 0),
++};
++
++static const struct vop_win_phy px30_win1_afbc_data = {
++	.data_formats = formats_win_lite,
++	.nformats = ARRAY_SIZE(formats_win_lite),
++	.format_modifiers = format_modifiers_afbc,
+ 	.enable = VOP_REG(PX30_WIN1_CTRL0, 0x1, 0),
+ 	.format = VOP_REG(PX30_WIN1_CTRL0, 0x7, 4),
+ 	.rb_swap = VOP_REG(PX30_WIN1_CTRL0, 0x1, 12),
+@@ -358,10 +380,19 @@
+ static const struct vop_win_data px30_vop_big_win_data[] = {
+ 	{ .base = 0x00, .phy = &px30_win0_data,
+ 	  .type = DRM_PLANE_TYPE_PRIMARY },
+-	{ .base = 0x00, .phy = &px30_win1_data,
++	{ .base = 0x00, .phy = &px30_win1_afbc_data,
+ 	  .type = DRM_PLANE_TYPE_OVERLAY },
+ 	{ .base = 0x00, .phy = &px30_win2_data,
+ 	  .type = DRM_PLANE_TYPE_CURSOR },
++};
++
++static const struct vop_afbc px30_vop_afbc = {
++	.enable = VOP_REG(PX30_AFBCD0_CTRL, 0x1, 0),
++	.format = VOP_REG(PX30_AFBCD0_CTRL, 0x1f, 4),
++	.pic_vir_width = VOP_REG(PX30_AFBCD0_CTRL, 0xffff, 16),
++	.pic_offset = VOP_REG(PX30_AFBCD0_PIC_OFFSET, 0xffffffff, 0),
++	.pic_size = VOP_REG(PX30_AFBCD0_PIC_SIZE, 0xffffffff, 0),
++	.hdr_ptr = VOP_REG(PX30_AFBCD0_HDR_PTR, 0xffffffff, 0),
+ };
+ 
+ static const struct vop_data px30_vop_big = {
+@@ -371,6 +402,7 @@
+ 	.common = &px30_common,
+ 	.modeset = &px30_modeset,
+ 	.output = &px30_output,
++	.afbc = &px30_vop_afbc,
+ 	.win = px30_vop_big_win_data,
+ 	.win_size = ARRAY_SIZE(px30_vop_big_win_data),
+ 	.max_output = { 1920, 1080 },
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
+@@ -863,6 +863,12 @@
+ 
+ 		if (!vop->data->afbc) {
+ 			DRM_DEBUG_KMS("vop does not support AFBC\n");
++			return -EINVAL;
++		}
++
++		if (vop->data->afbc->pic_vir_width.mask &&
++		    !IS_ALIGNED(fb->width, 16)) {
++			DRM_DEBUG_KMS("AFBC width %u is not 16 aligned\n", fb->width);
+ 			return -EINVAL;
+ 		}
+ 
+@@ -988,7 +994,15 @@
+ 		VOP_AFBC_SET(vop, hreg_block_split, 0);
+ 		VOP_AFBC_SET(vop, win_sel, VOP_WIN_TO_INDEX(vop_win));
+ 		VOP_AFBC_SET(vop, hdr_ptr, dma_addr);
+-		VOP_AFBC_SET(vop, pic_size, act_info);
++		if (vop->data->afbc->pic_vir_width.mask) {
++			VOP_AFBC_SET(vop, pic_vir_width, fb->width);
++			VOP_AFBC_SET(vop, pic_offset, 0);
++			VOP_AFBC_SET(vop, pic_size,
++				     (ALIGN(actual_h, 16) - 1) << 16 |
++				     (ALIGN(actual_w, 16) - 1));
++		} else {
++			VOP_AFBC_SET(vop, pic_size, act_info);
++		}
+ 	}
+ 
+ 	VOP_WIN_SET(vop, win, format, format);
