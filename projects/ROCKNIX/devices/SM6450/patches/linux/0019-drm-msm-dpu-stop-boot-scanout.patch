@@ -1,0 +1,103 @@
+From: sunshineinabox <aqemail@gmail.com>
+Subject: [PATCH] drm/msm/dpu: stop a timing engine the bootloader left running
+
+The bootloader can leave an INTF timing engine scanning out its splash
+buffer. Disable every enabled INTF before the DPU is reset so the
+takeover does not race a running pipeline.
+
+On DPU 5.0+ the timing engine enable is latched through the CTL, so also
+clear the INTF from every CTL's active config, mark the INTF flush
+pending and trigger the flush before polling INTF_STATUS.
+
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
+@@ -10,6 +10,7 @@
+ #define pr_fmt(fmt)	"[drm:%s:%d] " fmt, __func__, __LINE__
+ 
+ #include <linux/debugfs.h>
++#include <linux/delay.h>
+ #include <linux/dma-buf.h>
+ #include <linux/of_irq.h>
+ #include <linux/pm_opp.h>
+@@ -31,6 +32,7 @@
+ #include "dpu_crtc.h"
+ #include "dpu_encoder.h"
+ #include "dpu_formats.h"
++#include "dpu_hw_intf.h"
+ #include "dpu_hw_vbif.h"
+ #include "dpu_kms.h"
+ #include "dpu_plane.h"
+@@ -1134,6 +1136,64 @@
+ }
+ 
+ #define	DPU_PERF_DEFAULT_MAX_CORE_CLK_RATE	412500000
++
++/*
++ * The bootloader may leave a timing engine running to keep its splash on screen.
++ */
++static void dpu_kms_stop_boot_scanout(struct dpu_kms *dpu_kms)
++{
++	struct dpu_hw_intf_status status;
++	struct dpu_hw_intf_cfg intf_cfg;
++	struct dpu_hw_intf *intf;
++	struct dpu_hw_ctl *ctl;
++	u32 frames;
++	int i, j;
++
++	for (i = INTF_0; i < INTF_MAX; i++) {
++		intf = dpu_rm_get_intf(&dpu_kms->rm, i);
++		if (!intf || !intf->ops.get_status || !intf->ops.enable_timing)
++			continue;
++
++		intf->ops.get_status(intf, &status);
++		if (!status.is_en)
++			continue;
++
++		intf->ops.enable_timing(intf, 0);
++
++		if (intf->mdss_ver->core_major_ver < 5) {
++			/* no INTF_STATUS before DPU 5.0, wait out a frame */
++			msleep(20);
++			continue;
++		}
++
++		/* active CTLs only latch the timing engine disable through a flush */
++		memset(&intf_cfg, 0, sizeof(intf_cfg));
++		intf_cfg.intf = i;
++		for (j = 0; j < ARRAY_SIZE(dpu_kms->rm.ctl_blks); j++) {
++			if (!dpu_kms->rm.ctl_blks[j])
++				continue;
++			ctl = to_dpu_hw_ctl(dpu_kms->rm.ctl_blks[j]);
++			if (ctl->ops.reset_intf_cfg)
++				ctl->ops.reset_intf_cfg(ctl, &intf_cfg);
++			if (ctl->ops.update_pending_flush_intf)
++				ctl->ops.update_pending_flush_intf(ctl, i);
++			if (ctl->ops.trigger_flush)
++				ctl->ops.trigger_flush(ctl);
++		}
++
++		intf->ops.get_status(intf, &status);
++		frames = status.frame_count;
++		for (j = 0; j < 50; j++) {
++			intf->ops.get_status(intf, &status);
++			if (!status.is_en)
++				break;
++			usleep_range(1000, 2000);
++		}
++		/* INTF_STATUS may stay set once the engine is idle; a frozen frame counter says it stopped */
++		if (status.is_en && status.frame_count != frames)
++			DPU_ERROR("INTF_%d: boot scanout did not stop\n", i - INTF_0);
++	}
++}
+ 
+ static int dpu_kms_hw_init(struct msm_kms *kms)
+ {
+@@ -1202,6 +1262,8 @@
+ 		DPU_ERROR("rm init failed: %d\n", rc);
+ 		goto err_pm_put;
+ 	}
++
++	dpu_kms_stop_boot_scanout(dpu_kms);
+ 
+ 	dpu_kms->hw_mdp = dpu_hw_mdptop_init(dev,
+ 					     dpu_kms->catalog->mdp,
