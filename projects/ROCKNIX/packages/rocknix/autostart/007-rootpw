@@ -14,4 +14,31 @@ then
 fi
 
 ROOTPASS=$(get_setting root.password)
-setrootpass "${ROOTPASS}"
+
+### setrootpass re-hashes the password, re-adds it to Samba and regenerates
+### Syncthing credentials (seconds on slow devices). /etc/shadow lives in
+### /storage/.cache, so only re-apply when the password, the shadow entry or
+### the Samba password file changed since the last time it was applied.
+applied_state() {
+  { printf '%s\n' "${ROOTPASS}"
+    awk -F: '/^root:/{print $2}' /storage/.cache/shadow
+    cat /storage/.cache/samba/smbpasswd
+  } 2>/dev/null | sha256sum | cut -d' ' -f1
+}
+### setrootpass has no useful exit status: check that shadow holds a hash,
+### else leave no marker so the next boot retries. Samba is not checked:
+### smbpasswd may keep root in its own passdb and leave this file empty.
+applied_ok() {
+  awk -F: '/^root:/{found=1; ok=($2 ~ /^\$/)} END{exit !(found && ok)}' /storage/.cache/shadow 2>/dev/null
+}
+MARKER=/storage/.cache/rootpass.applied
+if [ "$(cat "${MARKER}" 2>/dev/null)" != "$(applied_state)" ]
+then
+  setrootpass "${ROOTPASS}"
+  if applied_ok
+  then
+    applied_state > "${MARKER}"
+  else
+    rm -f "${MARKER}"
+  fi
+fi
