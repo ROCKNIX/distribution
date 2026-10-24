@@ -2,8 +2,8 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="openabl"
-PKG_VERSION="1.1"
-PKG_SHA256="520cd8fecd26da728259e376561902d9c86b85ad859511066fb1cd4b02b6ab52"
+PKG_VERSION="1.2"
+PKG_SHA256="28cb97d1b387f28ddba28ed57fdc7d8b1c2ac2cdcd26af9c672620d41abddd4f"
 PKG_SITE="https://github.com/OpenHandheldCollective/OpenABL"
 PKG_URL="https://github.com/OpenHandheldCollective/OpenABL/releases/download/v${PKG_VERSION}/openabl-v${PKG_VERSION}.tar.gz"
 PKG_LONGDESC="OpenABL: an open-source alternative boot loader for Qualcomm devices"
