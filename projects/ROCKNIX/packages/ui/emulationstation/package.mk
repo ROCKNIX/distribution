@@ -103,7 +103,7 @@ EOF
 
   #ARMSX2's own Turnip ships only on these devices (see armsx2-sa)
   case ${DEVICE} in
-    SM4450|SM6115|SM8250|SM8550|SM8650) ;;
+    SM4450|SM6115|SM8250|SM8550|SM8650|SDM845) ;;
     *) xmlstarlet ed --inplace -d '//core[@name="armsx2-sa"]//feature[@name="vulkan driver"]' ${INSTALL}/usr/config/emulationstation/es_features.cfg ;;
   esac
 }
