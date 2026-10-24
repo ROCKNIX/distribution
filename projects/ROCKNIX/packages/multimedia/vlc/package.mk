@@ -11,6 +11,10 @@ PKG_URL="https://mirror.netcologne.de/videolan.org/${PKG_NAME}/${PKG_VERSION}/$P
 PKG_DEPENDS_TARGET="toolchain libdvbpsi gnutls ffmpeg libmpeg2 zlib flac libvorbis libxml2 pulseaudio SDL2 x264 x265 aom libogg"
 PKG_LONGDESC="VideoLAN multimedia player and streamer"
 PKG_TOOLCHAIN="autotools"
+# VLC's avcodec, avformat and swscale plugins link FFmpeg's versioned
+# sonames: rebuild VLC when FFmpeg changes, or a major FFmpeg bump leaves
+# plugins that link libraries the image no longer has.
+PKG_NEED_UNPACK="$(get_pkg_directory ffmpeg)"
 
 pre_configure_target() {
   export CFLAGS="${CFLAGS} -Wno-error=incompatible-pointer-types"
