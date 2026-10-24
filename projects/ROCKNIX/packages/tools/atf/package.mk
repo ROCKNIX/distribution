@@ -17,7 +17,6 @@ case ${DEVICE} in
     PKG_VERSION="2.12.0"
     PKG_SHA256="d95aaf292792c98035910d7e6c64ebfb297c897fef510415db1612f6d39f9223"
     PKG_DEPENDS_TARGET+=" h700-suspend-stub"
-    # BL31 embeds the stubs; rebuild when they change
     PKG_NEED_UNPACK+=" $(get_pkg_directory h700-suspend-stub) ${SYSROOT_PREFIX}/usr/share/h700-suspend-stub"
   ;;
   *)
@@ -50,9 +49,7 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/share/bootloader
   cp -a build/${ATF_PLATFORM}/release/${ATF_BL31_BINARY} ${INSTALL}/usr/share/bootloader
 
-  # u-boot embeds BL31 at build time. It read it straight out of this package's
-  # build directory, which neither survives AUTOREMOVE nor crosses a CI job
-  # boundary. Stage it in the sysroot, which is carried between jobs.
+  # Stage BL31 in the sysroot: a build dir neither survives AUTOREMOVE nor crosses a CI job
   if [ -n "${ATF_BL31_BINARY}" ]; then
     mkdir -p ${SYSROOT_PREFIX}/usr/share/${PKG_NAME}
     cp -a build/${ATF_PLATFORM}/release/${ATF_BL31_BINARY} ${SYSROOT_PREFIX}/usr/share/${PKG_NAME}

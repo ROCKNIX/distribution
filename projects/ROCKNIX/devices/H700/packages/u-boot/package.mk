@@ -28,8 +28,7 @@ makeinstall_target() {
   mkdir -p $INSTALL/usr/share/bootloader
 
   for PKG_SUBDEVICE in ${SUBDEVICES}; do
-    # scripts/build redirects SYSROOT_PREFIX to a per-package staging dir for
-    # the duration of makeinstall; PKG_ORIG_SYSROOT_PREFIX is the shared one.
+    # scripts/build redirects SYSROOT_PREFIX to a per-package staging dir during makeinstall
     PKG_UBOOTBIN=${PKG_ORIG_SYSROOT_PREFIX}/usr/share/u-boot-${PKG_SUBDEVICE}/u-boot-sunxi-with-spl.bin
     cp -av ${PKG_UBOOTBIN} $INSTALL/usr/share/bootloader/H700_${PKG_SUBDEVICE}_u-boot-sunxi-with-spl.bin
   done
