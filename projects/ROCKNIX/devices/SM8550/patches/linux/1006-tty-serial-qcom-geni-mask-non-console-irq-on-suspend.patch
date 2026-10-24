@@ -1,0 +1,69 @@
+From: jaewun <jaewun@users.noreply.github.com>
+Subject: [PATCH] tty: serial: qcom-geni: mask non-console IRQ across system suspend
+
+A peripheral that streams continuously over a non-console geni UART -- the AYN
+gamepad MCU on 89c000.serial (irq 190) -- keeps transmitting across the
+system-suspend teardown. uart_suspend_port() sets uport->suspended = 1 before
+the line is quiet, and qcom_geni_serial_isr() then returns IRQ_NONE for every
+subsequent interrupt WITHOUT clearing the GENI IRQ status. The level-triggered
+line immediately re-asserts and storms; the kernel's spurious-interrupt detector
+fires ("irq 190: nobody cared") and permanently disables the IRQ. That kills the
+gamepad after resume, and the wedged geni state cascades into a hard suspend hang
+on the following cycle ("first suspend works, the next one wedges").
+
+The existing rsinput_suspend() MCU quiesce (1005) cannot prevent this on Thor:
+the gamepad node has no reset-gpios, so only enable-gpios is toggled and the MCU
+keeps its UART TX alive; the live trace confirms the storm still happens.
+
+Fix it at the controller: mask the IRQ at the GIC in qcom_geni_serial_suspend()
+for non-console ports, before uart_suspend_port() runs. At that point
+uport->suspended is still 0, so the ISR still services and clears the IRQ;
+disable_irq() -> synchronize_irq() therefore drains the last in-flight handler
+and returns, and the masked line delivers no further hardirqs, so the storm can
+never reach the spurious detector. Balance it with enable_irq() in
+qcom_geni_serial_resume(), after uart_resume_port() has re-initialised the port.
+
+The console UART (uart_console()) is deliberately left untouched. The non-console
+geni UARTs here are not wakeup sources (no wakeup-source in DT, device_may_wakeup()
+is false), so the enable_irq_wake() early-return in uart_suspend_port() is not
+taken; the disable/enable pair is self-balanced regardless.
+
+Signed-off-by: jaewun <jaewun@users.noreply.github.com>
+---
+diff --git a/drivers/tty/serial/qcom_geni_serial.c b/drivers/tty/serial/qcom_geni_serial.c
+--- a/drivers/tty/serial/qcom_geni_serial.c
++++ b/drivers/tty/serial/qcom_geni_serial.c
+@@ -1956,6 +1956,23 @@
+ 	struct qcom_geni_private_data *private_data = uport->private_data;
+
+ 	/*
++	 * A peer that keeps streaming into a non-console geni UART across the
++	 * suspend teardown (e.g. the gamepad MCU on irq 190) storms the RX IRQ
++	 * once uart_suspend_port() sets uport->suspended: the ISR then returns
++	 * IRQ_NONE without clearing the line, the level IRQ re-asserts, and the
++	 * spurious-IRQ detector ("nobody cared") permanently disables it -- which
++	 * kills the gamepad after resume and wedges the next suspend. Mask it
++	 * here, while the ISR still services and acks the IRQ, so synchronize_irq()
++	 * drains the last handler cleanly and the masked line delivers no further
++	 * hardirqs. These geni UARTs are not wakeup sources, so the
++	 * device_may_wakeup() early-return in uart_suspend_port() is not taken and
++	 * this disable_irq() is balanced by enable_irq() in
++	 * qcom_geni_serial_resume().
++	 */
++	if (!uart_console(uport))
++		disable_irq(uport->irq);
++
++	/*
+ 	 * This is done so we can hit the lowest possible state in suspend
+ 	 * even with no_console_suspend
+ 	 */
+@@ -1974,6 +1991,9 @@
+ 	struct qcom_geni_private_data *private_data = uport->private_data;
+
+ 	ret = uart_resume_port(private_data->drv, uport);
++	/* Balance the disable_irq() taken in qcom_geni_serial_suspend(). */
++	if (!uart_console(uport))
++		enable_irq(uport->irq);
+ 	if (uart_console(uport)) {
+ 		geni_icc_set_tag(&port->se, QCOM_ICC_TAG_ALWAYS);
+ 		geni_icc_set_bw(&port->se);

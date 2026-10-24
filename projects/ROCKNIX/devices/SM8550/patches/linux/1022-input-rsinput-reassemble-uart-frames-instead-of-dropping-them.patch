@@ -1,0 +1,139 @@
+From: virtudude <virtudude@protonmail.com>
+Subject: [PATCH] input: rsinput: reassemble UART frames instead of dropping them
+
+rsinput_rx() treated each serdev callback as exactly one frame,
+checksummed the whole payload, and discarded everything on mismatch.
+serdev makes no such guarantee: a callback may carry part of a frame
+or multiple frames, and either case threw away good input.
+
+Steady streaming mostly hid it; resume did not. After the port
+reopens, reception can begin in the middle of a frame, and the
+controller stays dead until a callback happens to align with a frame
+boundary. The symptoms are an intermittently dead controller after
+wake and "Checksum mismatch" bursts at resume.
+
+Buffer incoming bytes instead, resynchronise on the frame header,
+validate and deliver complete frames, and retain any incomplete tail.
+A frame length larger than the receive buffer is treated as noise and
+skipped a byte at a time so corrupt data cannot wedge the parser.
+
+[ROCKNIX: rebased onto the version handshake (1021), and drop the
+buffered tail whenever the MCU is powered on, so a partial frame from
+before suspend cannot swallow the handshake's version reply.]
+---
+--- a/drivers/input/joystick/rsinput.c
++++ b/drivers/input/joystick/rsinput.c
+@@ -151,6 +151,7 @@
+     bool invert_rx;
+     bool invert_ry;
+     uint8_t rx_buf[1024];
++    size_t rx_len;
+     uint8_t sequence_number;
+     struct completion version_ack;
+     /*
+@@ -228,6 +229,15 @@
+ 
+     msleep(100);
+ 
++    /*
++     * Drop any partial frame left from before the MCU lost power, so the
++     * first reply after power-on is not parsed as the tail of a stale
++     * frame. Only ever zeroed here, and rsinput_rx() bounds every access
++     * by the buffer size, so racing a late callback costs at most one
++     * frame, which the header resync recovers.
++     */
++    drv->rx_len = 0;
++
+     if (drv->enable_gpio)
+         gpiod_set_value_cansleep(drv->enable_gpio, 1);
+ 
+@@ -481,39 +491,74 @@
+     }
+ }
+ 
++/*
++ * serdev makes no framing guarantee: a callback may contain part of a
++ * frame or multiple frames.
++ */
+ static size_t rsinput_rx(struct serdev_device *serdev, const u8 *data, size_t count) {
+     struct rsinput_driver *drv = serdev_device_get_drvdata(serdev);
+-    uint8_t received_checksum, computed_checksum;
++    size_t consumed = 0, avail;
+ 
+     if (!drv || !data || count == 0) {
+         dev_warn_ratelimited(&serdev->dev, "Invalid RX data\n");
+-        goto error;
++        return count;
+     }
+ 
+     if (count > sizeof(drv->rx_buf)) {
+         dev_warn_ratelimited(&serdev->dev, "RX buffer overflow\n");
+-        goto error;
++        return count;
+     }
+ 
+-    memcpy(drv->rx_buf, data, count);
++    /*
++     * If the buffered partial frame plus the new bytes would overflow the
++     * buffer, discard the partial frame and resynchronise on the new bytes.
++     */
++    if (drv->rx_len + count > sizeof(drv->rx_buf))
++        drv->rx_len = 0;
+ 
+-    if (count < MCU_PKT_SIZE_MIN) {
+-        dev_warn_ratelimited(&serdev->dev, "Frame too short for checksum validation\n");
+-        goto error;
+-    }
++    memcpy(drv->rx_buf + drv->rx_len, data, count);
++    drv->rx_len += count;
++    avail = drv->rx_len;
++
++    while (avail >= MCU_PKT_SIZE_MIN) {
++        const uint8_t *frame = drv->rx_buf + consumed;
++        uint16_t payload_length;
++        size_t frame_length;
++
++        if (frame[0] != FRAME_HEAD_1 || frame[1] != FRAME_HEAD_2 ||
++            frame[2] != FRAME_HEAD_3 || frame[3] != FRAME_HEAD_4) {
++            consumed++;
++            avail--;
++            continue;
++        }
+ 
+-    received_checksum = drv->rx_buf[count - 1];
++        payload_length = frame[FRAME_POS_LEN_L] |
++                         (frame[FRAME_POS_LEN_H] << 8);
++        frame_length = MCU_PKT_SIZE_MIN + payload_length;
++
++        if (frame_length > sizeof(drv->rx_buf)) {
++            consumed++;
++            avail--;
++            continue;
++        }
+ 
+-    computed_checksum = compute_checksum(drv->rx_buf, count);
++        if (avail < frame_length)
++            break;
+ 
+-    if (computed_checksum != received_checksum) {
+-        dev_warn_ratelimited(&serdev->dev, "Checksum mismatch\n");
+-        goto error;
++        if (compute_checksum(frame, frame_length) == frame[frame_length - 1])
++            rsinput_process_data(drv, frame, frame_length);
++        else
++            dev_warn_ratelimited(&serdev->dev, "Checksum mismatch\n");
++
++        consumed += frame_length;
++        avail -= frame_length;
+     }
+ 
+-    rsinput_process_data(drv, drv->rx_buf, count);
++    if (consumed) {
++        memmove(drv->rx_buf, drv->rx_buf + consumed, avail);
++        drv->rx_len = avail;
++    }
+ 
+-error:
+     return count;
+ }
+ 

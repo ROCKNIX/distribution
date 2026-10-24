@@ -1,0 +1,35 @@
+From: Luke Johnson <jaewun@me.com>
+Subject: [PATCH] PCI: qcom: skip L2/L3-ready LTSSM poll after PME_TurnOff (SM8550)
+
+On SM8550 the L2/L3-ready poll read_poll_timeout(dw_pcie_get_ltssm) in
+dw_pcie_suspend_noirq() accesses a controller LTSSM register after the
+PME_Turn_Off broadcast, which the SoC cannot service at that point (the
+read wedges/faults), so system suspend never resumes. Confirmed needed
+on AYN Thor: with the get_ltssm helper corrected to read PARF_LTSSM,
+suspend still crashes at the L2-wait; only skipping the poll lets it
+proceed. Set pp->skip_l23_ready so the DWC core waits a fixed delay for
+L2/L3 entry instead of polling, matching i.MX6's handling.
+
+7.2 carries the mainline D3cold series natively (d3cold eligibility
+helper, get_ltssm, the skip_l23_ready escape hatch), but nothing sets
+the flag for qcom. This lands in the SM8550 device patch dir, so only
+SM8550 builds are affected.
+---
+--- a/drivers/pci/controller/dwc/pcie-qcom.c	2026-08-25 19:11:23.915612378 +0800
++++ b/drivers/pci/controller/dwc/pcie-qcom.c	2026-08-25 19:11:26.562970425 +0800
+@@ -2109,6 +2109,15 @@
+ 
+ 	pp->ops = &qcom_pcie_dw_ops;
+ 
++	/*
++	 * SM8550: the L2/L3-ready poll in dw_pcie_suspend_noirq() reads a
++	 * controller LTSSM register after the PME_Turn_Off broadcast, which
++	 * this SoC cannot service at that point; the read wedges suspend with
++	 * no resume. Skip the poll and use the fixed delay instead, as other
++	 * DWC platforms (e.g. i.MX6) do for the same limitation.
++	 */
++	pp->skip_l23_ready = true;
++
+ 	ret = qcom_pcie_parse_ports(pcie);
+ 	if (ret) {
+ 		if (ret != -ENODEV) {
