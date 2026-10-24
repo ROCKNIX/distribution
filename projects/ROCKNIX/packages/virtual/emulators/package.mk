@@ -15,7 +15,7 @@ EMUS_32BIT=""
 
 PKG_RETROARCH="core-info libretro-database retroarch retroarch-assets retroarch-joypads retroarch-overlays retropie-shaders slang-shaders"
 
-LIBRETRO_CORES="81-lr a5200-lr arduous-lr atari800-lr b2-lr beetle-gba-lr beetle-lynx-lr beetle-ngp-lr beetle-pce-lr beetle-pce-fast-lr \
+LIBRETRO_CORES="81-lr a5200-lr arduous-lr armgba-lr atari800-lr b2-lr beetle-gba-lr beetle-lynx-lr beetle-ngp-lr beetle-pce-lr beetle-pce-fast-lr \
                 beetle-pcfx-lr bk-lr bsnes2014-balanced-lr bsnes-mercury-balanced-lr beetle-supafaust-lr beetle-supergrafx-lr           \
                 beetle-vb-lr beetle-wswan-lr bluemsx-lr cap32-lr crocods-lr daphne-lr doublecherrygb-lr dosbox-core-lr dosbox-pure-lr   \
                 easyrpg-lr emuscv-lr fake08-lr fbalpha2012-lr fbalpha2019-lr fbneo-lr fceumm-lr flycast-lr fmsx-lr                      \
@@ -438,6 +438,7 @@ makeinstall_target() {
 
   ### Nintendo GameBoy
   add_emu_core gb retroarch gambatte true
+  add_emu_core gb retroarch armgba false
   add_emu_core gb retroarch sameboy false
   add_emu_core gb retroarch gearboy false
   add_emu_core gb retroarch tgbdual false
@@ -505,6 +506,7 @@ makeinstall_target() {
 
   ### Nintendo GameBoy Advance
   add_emu_core gba retroarch mgba true
+  add_emu_core gba retroarch armgba false
   add_emu_core gba retroarch vbam false
   add_emu_core gba retroarch vba_next false
   add_emu_core gba retroarch beetle_gba false
@@ -589,6 +591,7 @@ makeinstall_target() {
 
   ### Nintendo GameBoy Color
   add_emu_core gbc retroarch gambatte true
+  add_emu_core gbc retroarch armgba false
   add_emu_core gbc retroarch sameboy false
   add_emu_core gbc retroarch gearboy false
   add_emu_core gbc retroarch tgbdual false
