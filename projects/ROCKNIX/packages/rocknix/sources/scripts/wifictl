@@ -94,11 +94,13 @@ connect_wifi() {
   sleep 2
 
   if [[ -n "${TARGET_PSK}" ]]; then
+    local connect_result=0
     ${NMCLI} connection delete id "${TARGET_SSID}" >/dev/null 2>&1 || true
-    ${NMCLI} -w 90 device wifi connect "${TARGET_SSID}" password "${TARGET_PSK}" ifname "${WIFI_DEV}" >/dev/null 2>&1
+    ${NMCLI} -w 90 device wifi connect "${TARGET_SSID}" password "${TARGET_PSK}" ifname "${WIFI_DEV}" >/dev/null 2>&1 || connect_result=$?
     ${NMCLI} connection modify "${TARGET_SSID}" wifi-sec.psk-flags 0 >/dev/null 2>&1 || true
+    return "${connect_result}"
   else
-    if ${NMCLI} -w 30 connection up id "${TARGET_SSID}" ifname "${WIFI_DEV}" >/dev/null 2>&1; then
+    if activate_saved_connection "${TARGET_SSID}"; then
       return 0
     fi
 
@@ -207,11 +209,52 @@ forget_saved_network() {
   fi
 }
 
+# iwd may ask for the PSK again after a failed handshake, even with a saved
+# profile. Supply it to nmcli's secret agent without putting it in argv/logs.
+activate_saved_connection() (
+  local target_id="${1}" saved_psk password_file
+  saved_psk=$(${NMCLI} --show-secrets --escape no -g 802-11-wireless-security.psk connection show id "${target_id}" 2>/dev/null || true)
+  if [[ -z "${saved_psk}" ]]; then
+    ${NMCLI} -w 90 connection up id "${target_id}" ifname "${WIFI_DEV}" >/dev/null 2>&1
+    return $?
+  fi
+
+  password_file=$(mktemp /tmp/wifictl-secrets.XXXXXX) || return 1
+  trap 'rm -f -- "${password_file}"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  printf '802-11-wireless-security.psk:%s\n' "${saved_psk}" >"${password_file}" || return 1
+  ${NMCLI} -w 90 connection up id "${target_id}" ifname "${WIFI_DEV}" passwd-file "${password_file}" >/dev/null 2>&1
+)
+
+# NetworkManager's iwd backend rejects a visible saved network in stage 1
+# when its AP list is still empty after a service restart. Request a scan
+# and briefly wait for that SSID before asking the secret agent to activate.
+wait_for_saved_network_scan() {
+  local target_id="${1}" target_ssid hidden attempt
+  target_ssid=$(${NMCLI} --escape no -g 802-11-wireless.ssid connection show id "${target_id}" 2>/dev/null || true)
+  hidden=$(${NMCLI} -g 802-11-wireless.hidden connection show id "${target_id}" 2>/dev/null || true)
+  [[ -n "${target_ssid}" && "${hidden}" != "yes" ]] || return 0
+
+  for attempt in {0..10}; do
+    if ${NMCLI} --escape no -g SSID device wifi list ifname "${WIFI_DEV}" 2>/dev/null | grep -Fxq -- "${target_ssid}"; then
+      return 0
+    fi
+    if [[ ${attempt} -eq 0 ]]; then
+      ${NMCLI} -w 15 device wifi rescan ifname "${WIFI_DEV}" >/dev/null 2>&1 || true
+    fi
+    [[ ${attempt} -eq 10 ]] || sleep 1
+  done
+  # Retain nmcli's activation result if scanning fails or the AP is absent.
+  return 0
+}
+
 connect_saved_network() {
   local target_id="${1:-}"
   wait_for_wifi
   ${NMCLI} connection reload >/dev/null 2>&1 || true
-  ${NMCLI} -w 30 connection up id "${target_id}" ifname "${WIFI_DEV}" >/dev/null 2>&1
+  wait_for_saved_network_scan "${target_id}"
+  activate_saved_connection "${target_id}"
 }
 
 # -----------------------------------------------------------------------------
