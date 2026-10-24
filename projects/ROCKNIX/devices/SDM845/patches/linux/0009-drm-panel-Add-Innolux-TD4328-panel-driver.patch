@@ -1,0 +1,345 @@
+From d972a904079479daa347c6ad505cd0063d310504 Mon Sep 17 00:00:00 2001
+From: Anton Bambura <jenneron@protonmail.com>
+Date: Wed, 15 Jun 2022 22:05:40 +0700
+Subject: [PATCH] drm: panel: Add Innolux TD4328 panel driver
+
+Add Innolux TD4328 panel driver used by AYN Odin device.
+
+Signed-off-by: Anton Bambura <jenneron@protonmail.com>
+---
+ drivers/gpu/drm/panel/Kconfig                 |   9 +
+ drivers/gpu/drm/panel/Makefile                |   1 +
+ .../gpu/drm/panel/panel-synaptics-td4328.c    | 289 ++++++++++++++++++
+ 3 files changed, 299 insertions(+)
+ create mode 100644 drivers/gpu/drm/panel/panel-synaptics-td4328.c
+
+diff --git a/drivers/gpu/drm/panel/Kconfig b/drivers/gpu/drm/panel/Kconfig
+index b30d7781745c..90359fdfcaad 100644
+--- a/drivers/gpu/drm/panel/Kconfig
++++ b/drivers/gpu/drm/panel/Kconfig
+@@ -1209,6 +1209,15 @@ config DRM_PANEL_SYNAPTICS_R63353
+ 	  Say Y if you want to enable support for panels based on the
+ 	  Synaptics R63353 controller.
+ 
++config DRM_PANEL_SYNAPTICS_TD4328
++	tristate "Synaptics TD4328 DSI panel"
++	depends on OF
++	depends on DRM_MIPI_DSI
++	depends on BACKLIGHT_CLASS_DEVICE
++	help
++	  Say Y here if you want to enable support for the panels built
++	  around the Synaptics TD4328 display controller.
++
+ config DRM_PANEL_SYNAPTICS_TDDI
+ 	tristate "Synaptics TDDI display panels"
+ 	depends on OF
+diff --git a/drivers/gpu/drm/panel/Makefile b/drivers/gpu/drm/panel/Makefile
+index 4532f79021ea..2aeca9a61797 100644
+--- a/drivers/gpu/drm/panel/Makefile
++++ b/drivers/gpu/drm/panel/Makefile
+@@ -114,6 +114,7 @@ obj-$(CONFIG_DRM_PANEL_SITRONIX_ST7703) += panel-sitronix-st7703.o
+ obj-$(CONFIG_DRM_PANEL_SITRONIX_ST7789V) += panel-sitronix-st7789v.o
+ obj-$(CONFIG_DRM_PANEL_SUMMIT) += panel-summit.o
+ obj-$(CONFIG_DRM_PANEL_SYNAPTICS_R63353) += panel-synaptics-r63353.o
++obj-$(CONFIG_DRM_PANEL_SYNAPTICS_TD4328) += panel-synaptics-td4328.o
+ obj-$(CONFIG_DRM_PANEL_SYNAPTICS_TDDI) += panel-synaptics-tddi.o
+ obj-$(CONFIG_DRM_PANEL_SONY_ACX565AKM) += panel-sony-acx565akm.o
+ obj-$(CONFIG_DRM_PANEL_SONY_TD4353_JDI) += panel-sony-td4353-jdi.o
+diff --git a/drivers/gpu/drm/panel/panel-synaptics-td4328.c b/drivers/gpu/drm/panel/panel-synaptics-td4328.c
+new file mode 100644
+index 000000000000..b4af9e6e56c8
+--- /dev/null
++++ b/drivers/gpu/drm/panel/panel-synaptics-td4328.c
+@@ -0,0 +1,289 @@
++// SPDX-License-Identifier: GPL-2.0-only
++// Copyright (c) 2026 FIXME
++// Generated with linux-mdss-dsi-panel-driver-generator from vendor device tree:
++//   Copyright (c) 2013, The Linux Foundation. All rights reserved. (FIXME)
++
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/mod_devicetable.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/regulator/consumer.h>
++
++#include <drm/drm_mipi_dsi.h>
++#include <drm/drm_modes.h>
++#include <drm/drm_panel.h>
++#include <drm/drm_probe_helper.h>
++
++struct synaptics_td4328 {
++	struct drm_panel panel;
++	struct mipi_dsi_device *dsi;
++	struct regulator *vddio;
++	struct regulator *vddpos;
++	struct regulator *vddneg;
++	struct gpio_desc *enable_gpio;
++	struct gpio_desc *reset_gpio;
++	enum drm_panel_orientation orientation;
++};
++
++static inline struct synaptics_td4328 *to_synaptics_td4328(struct drm_panel *panel)
++{
++	return container_of_const(panel, struct synaptics_td4328, panel);
++}
++
++static void synaptics_td4328_reset(struct synaptics_td4328 *ctx)
++{
++	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
++	usleep_range(10000, 11000);
++	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++	usleep_range(10000, 11000);
++	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
++	msleep(80);
++}
++
++static int synaptics_td4328_on(struct synaptics_td4328 *ctx)
++{
++	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
++
++	ctx->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
++
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xb0, 0x00);
++	if (of_device_is_compatible(ctx->dsi->dev.of_node, "ayn,odin-m0-panel"))
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xc2,
++						 0x01, 0xf7, 0x80, 0x08, 0x68, 0x08,
++						 0x0c, 0x10, 0x00, 0x08, 0x70, 0x00,
++						 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++						 0x03, 0x83, 0x00, 0x00, 0x00);
++	else if (of_device_is_compatible(ctx->dsi->dev.of_node, "ayn,odin-m2-panel"))
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xc2,
++						 0x01, 0xf7, 0x80, 0x04, 0x68, 0x08,
++						 0x09, 0x10, 0x00, 0x08, 0x30, 0x00,
++						 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++						 0x02, 0x80, 0x00, 0x00, 0x00);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xd6, 0x01);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xb0, 0x03);
++	mipi_dsi_dcs_set_column_address_multi(&dsi_ctx, 0x0000, 0x0437);
++	mipi_dsi_dcs_set_page_address_multi(&dsi_ctx, 0x0000, 0x077f);
++	mipi_dsi_dcs_set_tear_on_multi(&dsi_ctx, MIPI_DSI_DCS_TEAR_MODE_VBLANK);
++	mipi_dsi_dcs_exit_sleep_mode_multi(&dsi_ctx);
++	mipi_dsi_msleep(&dsi_ctx, 150);
++	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
++	mipi_dsi_msleep(&dsi_ctx, 50);
++
++	return dsi_ctx.accum_err;
++}
++
++static int synaptics_td4328_off(struct synaptics_td4328 *ctx)
++{
++	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
++
++	ctx->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
++
++	mipi_dsi_dcs_set_display_off_multi(&dsi_ctx);
++	mipi_dsi_usleep_range(&dsi_ctx, 5000, 6000);
++	mipi_dsi_dcs_enter_sleep_mode_multi(&dsi_ctx);
++	mipi_dsi_msleep(&dsi_ctx, 83);
++
++	return dsi_ctx.accum_err;
++}
++
++static int synaptics_td4328_prepare(struct drm_panel *panel)
++{
++	struct synaptics_td4328 *ctx = to_synaptics_td4328(panel);
++	struct device *dev = &ctx->dsi->dev;
++	int ret;
++
++	ret = regulator_enable(ctx->vddio);
++	if (ret)
++		return ret;
++
++	msleep(20);
++
++	ret = regulator_enable(ctx->vddpos);
++	if (ret)
++		goto disable_vddio;
++
++	ret = regulator_enable(ctx->vddneg);
++	if (ret)
++		goto disable_vddpos;
++
++	msleep(20);
++
++	gpiod_set_value_cansleep(ctx->enable_gpio, 1);
++	msleep(20);
++
++	synaptics_td4328_reset(ctx);
++
++	ret = synaptics_td4328_on(ctx);
++	if (ret < 0) {
++		dev_err(dev, "Failed to initialize panel: %d\n", ret);
++		gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++		gpiod_set_value_cansleep(ctx->enable_gpio, 0);
++		goto disable_vddneg;
++	}
++
++	return 0;
++
++disable_vddneg:
++	regulator_disable(ctx->vddneg);
++disable_vddpos:
++	regulator_disable(ctx->vddpos);
++disable_vddio:
++	regulator_disable(ctx->vddio);
++
++	return ret;
++}
++
++static int synaptics_td4328_unprepare(struct drm_panel *panel)
++{
++	struct synaptics_td4328 *ctx = to_synaptics_td4328(panel);
++	struct device *dev = &ctx->dsi->dev;
++	int ret;
++
++	ret = synaptics_td4328_off(ctx);
++	if (ret < 0)
++		dev_err(dev, "Failed to un-initialize panel: %d\n", ret);
++
++	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++	gpiod_set_value_cansleep(ctx->enable_gpio, 0);
++	regulator_disable(ctx->vddneg);
++	regulator_disable(ctx->vddpos);
++	regulator_disable(ctx->vddio);
++
++	return 0;
++}
++
++static const struct drm_display_mode synaptics_td4328_mode = {
++	.clock = (1080 + 60 + 10 + 60) * (1920 + 20 + 8 + 20) * 60 / 1000,
++	.hdisplay = 1080,
++	.hsync_start = 1080 + 60,
++	.hsync_end = 1080 + 60 + 10,
++	.htotal = 1080 + 60 + 10 + 60,
++	.vdisplay = 1920,
++	.vsync_start = 1920 + 20,
++	.vsync_end = 1920 + 20 + 8,
++	.vtotal = 1920 + 20 + 8 + 20,
++	.width_mm = 75,
++	.height_mm = 132,
++	.type = DRM_MODE_TYPE_DRIVER,
++};
++
++static int synaptics_td4328_get_modes(struct drm_panel *panel,
++				      struct drm_connector *connector)
++{
++	return drm_connector_helper_get_modes_fixed(connector, &synaptics_td4328_mode);
++}
++
++static enum drm_panel_orientation
++synaptics_td4328_get_orientation(struct drm_panel *panel)
++{
++	struct synaptics_td4328 *ctx = to_synaptics_td4328(panel);
++
++	return ctx->orientation;
++}
++
++static const struct drm_panel_funcs synaptics_td4328_panel_funcs = {
++	.prepare = synaptics_td4328_prepare,
++	.unprepare = synaptics_td4328_unprepare,
++	.get_modes = synaptics_td4328_get_modes,
++	.get_orientation = synaptics_td4328_get_orientation,
++};
++
++static int synaptics_td4328_probe(struct mipi_dsi_device *dsi)
++{
++	struct device *dev = &dsi->dev;
++	struct synaptics_td4328 *ctx;
++	int ret;
++
++	ctx = devm_drm_panel_alloc(dev, struct synaptics_td4328, panel,
++				   &synaptics_td4328_panel_funcs,
++				   DRM_MODE_CONNECTOR_DSI);
++	if (IS_ERR(ctx))
++		return PTR_ERR(ctx);
++
++	ret = of_drm_get_panel_orientation(dev->of_node, &ctx->orientation);
++	if (ret)
++		return dev_err_probe(dev, ret, "Failed to get orientation\n");
++
++	ctx->vddio = devm_regulator_get(dev, "vddio");
++	if (IS_ERR(ctx->vddio))
++		return dev_err_probe(dev, PTR_ERR(ctx->vddio),
++				     "Failed to get vddio regulator\n");
++
++	ctx->vddpos = devm_regulator_get(dev, "vddpos");
++	if (IS_ERR(ctx->vddpos))
++		return dev_err_probe(dev, PTR_ERR(ctx->vddpos),
++				     "Failed to get vddpos regulator\n");
++
++	ctx->vddneg = devm_regulator_get(dev, "vddneg");
++	if (IS_ERR(ctx->vddneg))
++		return dev_err_probe(dev, PTR_ERR(ctx->vddneg),
++				     "Failed to get vddneg regulator\n");
++
++	ctx->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
++	if (IS_ERR(ctx->reset_gpio))
++		return dev_err_probe(dev, PTR_ERR(ctx->reset_gpio),
++				     "Failed to get reset-gpios\n");
++
++	ctx->enable_gpio = devm_gpiod_get(dev, "enable", GPIOD_OUT_LOW);
++	if (IS_ERR(ctx->enable_gpio))
++		return dev_err_probe(dev, PTR_ERR(ctx->enable_gpio),
++				     "Failed to get enable-gpios\n");
++
++	ctx->dsi = dsi;
++	mipi_dsi_set_drvdata(dsi, ctx);
++
++	dsi->lanes = 4;
++	dsi->format = MIPI_DSI_FMT_RGB888;
++	dsi->mode_flags = MIPI_DSI_MODE_NO_EOT_PACKET |
++			  MIPI_DSI_CLOCK_NON_CONTINUOUS;
++
++	ctx->panel.prepare_prev_first = true;
++
++	ret = drm_panel_of_backlight(&ctx->panel);
++	if (ret)
++		return dev_err_probe(dev, ret, "Failed to get backlight\n");
++
++	drm_panel_add(&ctx->panel);
++
++	ret = mipi_dsi_attach(dsi);
++	if (ret < 0) {
++		drm_panel_remove(&ctx->panel);
++		return dev_err_probe(dev, ret, "Failed to attach to DSI host\n");
++	}
++
++	return 0;
++}
++
++static void synaptics_td4328_remove(struct mipi_dsi_device *dsi)
++{
++	struct synaptics_td4328 *ctx = mipi_dsi_get_drvdata(dsi);
++	int ret;
++
++	ret = mipi_dsi_detach(dsi);
++	if (ret < 0)
++		dev_err(&dsi->dev, "Failed to detach from DSI host: %d\n", ret);
++
++	drm_panel_remove(&ctx->panel);
++}
++
++static const struct of_device_id synaptics_td4328_of_match[] = {
++	{ .compatible = "ayn,odin-m0-panel" },
++	{ .compatible = "ayn,odin-m2-panel" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, synaptics_td4328_of_match);
++
++static struct mipi_dsi_driver synaptics_td4328_driver = {
++	.probe = synaptics_td4328_probe,
++	.remove = synaptics_td4328_remove,
++	.driver = {
++		.name = "panel-synaptics-td4328",
++		.of_match_table = synaptics_td4328_of_match,
++	},
++};
++module_mipi_dsi_driver(synaptics_td4328_driver);
++
++MODULE_AUTHOR("linux-mdss-dsi-panel-driver-generator <fix@me>"); // FIXME
++MODULE_DESCRIPTION("DRM driver for Synaptics TD4328 cmd mode dsi panel without DSC");
++MODULE_LICENSE("GPL");
+-- 
+GitLab
+
