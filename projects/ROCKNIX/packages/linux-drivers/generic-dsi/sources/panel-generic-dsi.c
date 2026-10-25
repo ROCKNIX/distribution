@@ -398,16 +398,7 @@ static int generic_panel_unprepare(struct drm_panel *panel)
     if (!ctx->prepared)
         return 0;
 
-    /*
-     * Both DCS writes below are best-effort: a failure here (DSI bus
-     * busy/timeout, which is more likely to happen right as the rest of
-     * the pipeline is changing state during suspend) must not abort the
-     * power-down that follows. Bailing out here used to leave the panel
-     * powered on with ctx->prepared still true, which also made the next
-     * prepare() a no-op - so a single failed DCS write during suspend
-     * could leave the screen stuck on/corrupted until reboot instead of
-     * just for that one suspend cycle.
-     */
+    /* Both DCS writes below are best-effort: a failure must not abort the power-down */
     ret = mipi_dsi_dcs_set_display_off(dsi);
     if (ret < 0)
         dev_err(ctx->dev, "failed to set display off: %d\n", ret);
