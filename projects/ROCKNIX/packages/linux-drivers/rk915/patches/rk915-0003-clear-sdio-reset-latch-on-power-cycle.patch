@@ -1,0 +1,67 @@
+rk915: clear the sdio_reset latch when the chip is power-cycled
+
+_sdio_reset() latches a file-static flag on the first io error:
+
+    static bool sdio_reset;
+    int _sdio_reset(struct host_io_info *host) { sdio_reset = true; return 0; }
+
+and every sdio accessor then short-circuits *returning success without doing any
+i/o*:
+
+    static int sdio_send_data(struct host_io_info *host, u32 addr, u8 *buf, u32 len)
+    {
+            if (sdio_reset == true)
+                    return 0;
+            return sdio_memcpy_toio(func, addr, buf, len);
+    }
+
+rk915_io_reset() calls it from six sites in hal_io.c, so any io error arms it.
+Nothing cleared it except sdio_probe(), i.e. a module (re)load.
+
+The consequence is that firmware error recovery could never work. Recovery
+power-cycles the chip and re-downloads the firmware, but every write is a silent
+no-op that reports success. Measured with per-block timing, a failing download
+wrote 4096 bytes in 2us - 2 GB/s, which the bus cannot do - against 269us for the
+same block on a working download. The readback is therefore all zeroes:
+
+    rk915: 30550/48056 bytes differ, first at 0x0 (wrote 0x81 read 0x00)
+    rk915: rk915_download: check downloaded fw failed
+    rk915: fw_bring_up: rk915_download_firmware failed
+    WARNING: net/mac80211/util.c:1956 at ieee80211_reconfig+0xb0c/0x12b4
+
+mac80211 then shuts every interface down and the link stays dead - which is
+exactly why reloading the module was the only thing that ever brought it back:
+sdio_probe() cleared the latch.
+
+By the time rk915_sdio_power_cycle() has reset the card, re-enabled the function
+and restored the block size, i/o is valid again, so drop the latch there.
+
+Verified on a Gusgu H7 with a reproducer that kills the link in ~10s under
+inbound TCP: 23 recoveries, 31 successful firmware downloads, zero download
+failures, and the link returns on its own with the same interface and lease.
+
+--- a/src/sdio.c	2026-08-27 13:24:01.819863640 -0400
++++ b/src/sdio.c	2026-08-27 13:24:01.820603502 -0400
+@@ -542,6 +542,22 @@
+ 		ret = sdio_enable_func(func);
+ 	if (!ret)
+ 		ret = sdio_set_block_size(func, 512);
++	if (!ret) {
++		/*
++		 * _sdio_reset() latches sdio_reset on the first io error, and
++		 * every accessor then returns 0 *without doing any i/o*. The
++		 * latch was only ever cleared by sdio_probe(), so after one
++		 * error the firmware download that error recovery depends on
++		 * writes into nothing while reporting success - 4KB "written"
++		 * in 2us - the readback is all zeroes, the chip never reaches
++		 * WAIT_PATCH, and mac80211 tears the device down. That is why
++		 * only a module reload ever brought the link back.
++		 *
++		 * The card has just been reset, re-enabled and had its block
++		 * size restored, so i/o is valid again: drop the latch.
++		 */
++		sdio_reset = false;
++	}
+ 	sdio_release_host(func);
+ 	if (ret)
+ 		rk915_err("%s: failed (%d)\n", __func__, ret);
