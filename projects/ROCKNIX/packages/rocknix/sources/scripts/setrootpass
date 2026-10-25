@@ -5,6 +5,18 @@
 . /etc/profile
 
 ROOTPASS="$1"
+MARKER=/storage/.cache/rootpass.applied
+
+applied_state() {
+  { printf '%s\n' "${ROOTPASS}"
+    awk -F: '/^root/{print $2}' /storage/.cache/shadow
+    cat /storage/.cache/samba/smbpasswd
+  } 2>/dev/null | sha256sum | cut -d' ' -f1
+}
+
+if [ "$(cat "${MARKER}" 2>/dev/null)" = "$(applied_state)" ]; then
+  exit 0
+fi
 
 LPC=$(awk -F: '/^root/{print $3}' /storage/.cache/shadow)
 CURRENT=$(awk -F: '/^root/{print $2}' /storage/.cache/shadow)
@@ -25,6 +37,12 @@ syncthing generate --gui-user "root" --gui-password "${ROOTPASS}" >/dev/null 2>&
 
 # Save the password so we can display it in ES
 set_setting root.password "${ROOTPASS}"
+
+if [ -n "${NEW}" ] && [ "$(awk -F: '/^root/{print $2}' /storage/.cache/shadow)" = "${NEW}" ]; then
+  applied_state > "${MARKER}"
+else
+  rm -f "${MARKER}"
+fi
 
 # Restart syncthing if it was enabled.
 SYNCSTATUS=$(get_setting syncthing.enabled)
