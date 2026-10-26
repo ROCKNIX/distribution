@@ -1,26 +1,29 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Kailash <kailash.sudhakar@gmail.com>
-Date: Sun, 21 Sep 2026 19:40:00 +0530
-Subject: [PATCH] sunxi: add AXP717 charge-only boot support
+Date: Mon, 21 Sep 2026 19:40:00 +0530
+Subject: [PATCH] sunxi: AXP717: stay off when powered on by the charger
 
-When USB power is plugged into an AXP717-managed device while powered off,
-the PMIC powers on the system by default. With CONFIG_AXP_DISABLE_BOOT_ON_POWERON
-enabled, detect USB-only power-on with valid VBUS and present battery, and
-shut down back to the off-state charging mode while preserving button
-power-on events.
+The AXP717 powers the H700 up when USB power comes in. With
+CONFIG_AXP_DISABLE_BOOT_ON_POWERON, SPL powers it down again (soft power-off,
+REG27) when REG20 names a charger or battery cause and not the key, and a
+battery is present: off-state charging goes on.
+
+From ROCKNIX PR 3364 (Kailash). Reworked here: REG20 is tested as a mask, as
+it can hold two causes at once (the original wanted exactly the VBUS bit and
+booted then), and the charger/boost checks of REG19 are gone.
 ---
- arch/arm/mach-sunxi/Kconfig |  5 ++++-
+ arch/arm/mach-sunxi/Kconfig |  2 +-
  board/sunxi/board.c         | 19 +++++++++++++++++++
  include/axp717.h            | 19 +++++++++++++++++++
  include/axp_pmic.h          |  1 +
- 4 files changed, 43 insertions(+), 1 deletion(-)
+ 4 files changed, 40 insertions(+), 1 deletion(-)
  create mode 100644 include/axp717.h
 
 diff --git a/arch/arm/mach-sunxi/Kconfig b/arch/arm/mach-sunxi/Kconfig
-index e979ee4a..f7576546 100644
+index e979ee4a..582e69ea 100644
 --- a/arch/arm/mach-sunxi/Kconfig
 +++ b/arch/arm/mach-sunxi/Kconfig
-@@ -954,12 +954,15 @@ config AXP_GPIO
+@@ -954,7 +954,7 @@ config AXP_GPIO
  
  config AXP_DISABLE_BOOT_ON_POWERON
  	bool "Disable device boot on power plug-in"
@@ -29,16 +32,8 @@ index e979ee4a..f7576546 100644
  	---help---
  	  Say Y here to prevent the device from booting up because of a plug-in
  	  event. When set, the device will boot into the SPL briefly to
- 	  determine why it was powered on, and if it was determined because of
- 	  a plug-in event instead of a button press event it will shut back off.
-+	  On AXP717, this requires a USB-only power-on cause, valid VBUS, a
-+	  present battery, and the charger enabled with boost disabled. The
-+	  charger settings are preserved; button starts are allowed.
- 
- config VIDEO_SUNXI
- 	bool "Enable graphical uboot console on HDMI, LCD or VGA"
 diff --git a/board/sunxi/board.c b/board/sunxi/board.c
-index 2929bc17..2669de68 100644
+index 2929bc17..260fe7f7 100644
 --- a/board/sunxi/board.c
 +++ b/board/sunxi/board.c
 @@ -573,6 +573,24 @@ void sunxi_board_init(void)
@@ -46,21 +41,21 @@ index 2929bc17..2669de68 100644
  
  	if (IS_ENABLED(CONFIG_AXP_DISABLE_BOOT_ON_POWERON) && !power_failed) {
 +#if defined(CONFIG_AXP717_POWER)
-+		u8 cause, status, modules;
++		/*
++		 * Powered on by the charger (or the battery) and not by the key, with a battery to
++		 * charge: off again, still charging. REG20 can hold more than one cause at once (a
++		 * plug-in while the battery passes 3.3 V); anything without one of these boots.
++		 */
++		u8 cause, status;
 +
 +		if (sunxi_get_boot_device() != BOOT_DEVICE_BOARD &&
 +		    !pmic_bus_read(AXP717_POWERON_STATUS, &cause) &&
 +		    !pmic_bus_read(AXP717_PMU_STATUS1, &status) &&
-+		    !pmic_bus_read(AXP717_MODULE_ENABLE2, &modules)) {
-+			if (cause == AXP717_POWERON_VBUS &&
-+			    (status & (AXP717_STATUS_VBUS_GOOD | AXP717_STATUS_BAT_PRESENT)) ==
-+			    (AXP717_STATUS_VBUS_GOOD | AXP717_STATUS_BAT_PRESENT) &&
-+			    (modules & AXP717_CHARGER_ENABLE) &&
-+			    !(modules & AXP717_BOOST_ENABLE)) {
-+				printf("Power on by plug-in, shutting down.\n");
-+				pmic_bus_setbits(AXP717_SHUTDOWN, AXP717_SHUTDOWN_POWEROFF);
-+				mdelay(500);
-+			}
++		    (cause & AXP717_POWERON_CHARGER) && !(cause & AXP717_POWERON_KEY) &&
++		    (status & AXP717_STATUS_BAT_PRESENT)) {
++			printf("Power on by plug-in, shutting down.\n");
++			pmic_bus_setbits(AXP717_SHUTDOWN, AXP717_SHUTDOWN_POWEROFF);
++			mdelay(500);
 +		}
 +#else
  		u8 boot_reason;
@@ -76,7 +71,7 @@ index 2929bc17..2669de68 100644
  #ifdef CONFIG_AXP_DCDC1_VOLT
 diff --git a/include/axp717.h b/include/axp717.h
 new file mode 100644
-index 00000000..d43f79a8
+index 00000000..c5f21c2c
 --- /dev/null
 +++ b/include/axp717.h
 @@ -0,0 +1,19 @@
@@ -87,15 +82,15 @@ index 00000000..d43f79a8
 +#include <linux/bitops.h>
 +
 +#define AXP717_PMU_STATUS1		0x00
-+#define AXP717_MODULE_ENABLE2		0x19
 +#define AXP717_POWERON_STATUS		0x20
 +#define AXP717_SHUTDOWN			0x27
 +
-+#define AXP717_STATUS_VBUS_GOOD		BIT(5)
 +#define AXP717_STATUS_BAT_PRESENT	BIT(3)
-+#define AXP717_CHARGER_ENABLE		BIT(1)
-+#define AXP717_BOOST_ENABLE		BIT(4)
-+#define AXP717_POWERON_VBUS		BIT(2)
++/* REG20: the power key (POWERON mode, or EN mode held high) */
++#define AXP717_POWERON_KEY		(BIT(0) | BIT(5))
++/* REG20: VBUS inserted, battery charged past 3.3 V, battery inserted */
++#define AXP717_POWERON_CHARGER		(BIT(2) | BIT(3) | BIT(4))
++/* REG27: soft power-off */
 +#define AXP717_SHUTDOWN_POWEROFF	BIT(0)
 +
 +#endif
@@ -112,3 +107,5 @@ index 1806a727..71c0ce82 100644
  #include <axp818.h>
  
 -- 
+2.56.0
+
