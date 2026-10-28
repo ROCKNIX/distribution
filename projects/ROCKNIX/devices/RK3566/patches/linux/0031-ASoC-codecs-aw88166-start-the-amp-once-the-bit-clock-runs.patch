@@ -11,13 +11,14 @@ Queue the start from mute_stream with mute_unmute_on_trigger set, so
 it runs after the CPU DAI trigger, and cancel a pending start before
 the POST_PMD stop.
 
-By the time the amp stops the bit clock is already gone, so the clock
-interrupts are always latched and every stop reloaded the DSP firmware.
-Only treat a PLL interrupt as a stop failure.
+By the time the amp stops the bit clock is already gone, so the PLL
+and clock interrupts are always latched and every stop reloaded the
+DSP firmware, ~300ms per amp. Drop the stop check; the start path
+already CRC checks the DSP memory and reloads it on failure.
 ---
- sound/soc/codecs/aw88166.c | 68 +++++++++++++++++++++++++-------------------
- sound/soc/codecs/aw88166.h |  5 -----
- 2 files changed, 38 insertions(+), 35 deletions(-)
+ sound/soc/codecs/aw88166.c |   85 +++++++++++++++++---------------------------
+ sound/soc/codecs/aw88166.h |    5 ---
+ 2 files changed, 32 insertions(+), 58 deletions(-)
 
 diff --git a/sound/soc/codecs/aw88166.c b/sound/soc/codecs/aw88166.c
 --- a/sound/soc/codecs/aw88166.c
@@ -41,7 +42,7 @@ diff --git a/sound/soc/codecs/aw88166.c b/sound/soc/codecs/aw88166.c
  {
  	int ret;
  
-@@ -1200,12 +1190,17 @@
+@@ -1200,35 +1190,21 @@
  		return;
  	}
  
@@ -52,30 +53,57 @@ diff --git a/sound/soc/codecs/aw88166.c b/sound/soc/codecs/aw88166.c
 -			&aw88166->start_work,
 -			AW88166_START_WORK_DELAY_MS);
 +	aw88166_start_pa(aw88166);
-+}
-+
+ }
+ 
+-static int aw_dev_check_sysint(struct aw_device *aw_dev)
 +static void aw88166_startup_work(struct work_struct *work)
-+{
+ {
+-	u16 reg_val;
+-
+-	aw_dev_get_int_status(aw_dev, &reg_val);
+-	if (reg_val & AW88166_BIT_SYSINT_CHECK) {
+-		dev_err(aw_dev->dev, "pa stop check fail:0x%04x\n", reg_val);
+-		return -EINVAL;
+-	}
 +	struct aw88166 *aw88166 =
 +		container_of(work, struct aw88166, start_work.work);
-+
+ 
+-	return 0;
 +	mutex_lock(&aw88166->lock);
 +	aw88166_start(aw88166);
 +	mutex_unlock(&aw88166->lock);
  }
  
- static int aw_dev_check_sysint(struct aw_device *aw_dev)
-@@ -1213,7 +1208,8 @@
- 	u16 reg_val;
+ static int aw88166_stop(struct aw_device *aw_dev)
+ {
+-	struct aw_sec_data_desc *dsp_cfg =
+-		&aw_dev->prof_info.prof_desc[aw_dev->prof_cur].sec_desc[AW88395_DATA_TYPE_DSP_CFG];
+-	struct aw_sec_data_desc *dsp_fw =
+-		&aw_dev->prof_info.prof_desc[aw_dev->prof_cur].sec_desc[AW88395_DATA_TYPE_DSP_FW];
+-	int int_st;
+-
+ 	if (aw_dev->status == AW88166_DEV_PW_OFF) {
+ 		dev_dbg(aw_dev->dev, "already power off");
+ 		return 0;
+@@ -1242,28 +1218,38 @@
+ 	aw_dev_i2s_tx_enable(aw_dev, false);
+ 	usleep_range(AW88166_1000_US, AW88166_1000_US + 100);
  
- 	aw_dev_get_int_status(aw_dev, &reg_val);
--	if (reg_val & AW88166_BIT_SYSINT_CHECK) {
-+	/* the I2S clock is already gone by the time the amp stops */
-+	if (reg_val & AW88166_PLLI_INT_INTERRUPT) {
- 		dev_err(aw_dev->dev, "pa stop check fail:0x%04x\n", reg_val);
- 		return -EINVAL;
- 	}
-@@ -1260,10 +1256,29 @@
+-	int_st = aw_dev_check_sysint(aw_dev);
+-
+ 	aw_dev_dsp_enable(aw_dev, false);
+ 
+ 	aw_dev_amppd(aw_dev, true);
+ 
+-	if (int_st) {
+-		aw_dev_select_memclk(aw_dev, AW88166_DEV_MEMCLK_OSC);
+-		aw_dev_dsp_update_fw(aw_dev, dsp_fw->data, dsp_fw->len);
+-		aw_dev_dsp_update_cfg(aw_dev, dsp_cfg->data, dsp_cfg->len);
+-		aw_dev_select_memclk(aw_dev, AW88166_DEV_MEMCLK_PLL);
+-	}
+-
+ 	aw_dev_pwd(aw_dev, true);
+ 
  	return 0;
  }
  
@@ -105,7 +133,7 @@ diff --git a/sound/soc/codecs/aw88166.c b/sound/soc/codecs/aw88166.c
  		.playback = {
  			.stream_name = "Speaker_Playback",
  			.channels_min = 1,
-@@ -1429,7 +1444,7 @@
+@@ -1429,7 +1415,7 @@
  
  	if (aw88166->aw_pa->status) {
  		aw88166_stop(aw88166->aw_pa);
@@ -114,7 +142,7 @@ diff --git a/sound/soc/codecs/aw88166.c b/sound/soc/codecs/aw88166.c
  	}
  
  	mutex_unlock(&aw88166->lock);
-@@ -1650,17 +1665,10 @@
+@@ -1650,17 +1636,10 @@
  	struct snd_soc_component *component = snd_soc_dapm_to_component(w->dapm);
  	struct aw88166 *aw88166 = snd_soc_component_get_drvdata(component);
  
@@ -135,7 +163,7 @@ diff --git a/sound/soc/codecs/aw88166.c b/sound/soc/codecs/aw88166.c
  	mutex_unlock(&aw88166->lock);
  
  	return 0;
-@@ -1670,7 +1678,7 @@
+@@ -1670,7 +1649,7 @@
  	 /* playback */
  	SND_SOC_DAPM_AIF_IN_E("AIF_RX", "Speaker_Playback", 0, SND_SOC_NOPM, 0, 0,
  					aw88166_playback_event,
