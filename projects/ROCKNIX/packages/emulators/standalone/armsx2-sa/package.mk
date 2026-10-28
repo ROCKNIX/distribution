@@ -25,7 +25,7 @@ fi
 # Ship ARMSX2's own Turnip build on the Adreno 6xx/7xx families. SM8750
 # (Adreno 8xx) keeps the system driver.
 case ${DEVICE} in
-  SM4450|SM6115|SM8250|SM8550|SM8650)
+  SM4450|SM6115|SM8250|SM8550|SM8650|SDM845)
     PKG_DEPENDS_TARGET+=" armsx2-turnip"
     ;;
 esac
