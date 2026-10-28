@@ -27,8 +27,8 @@ pre_make_target() {
   PKG_UBOOT_CONFIG="rocknix_rk3326_defconfig"
   PKG_RKBIN="$(get_build_dir rkbin)"
   PKG_MINILOADER="${PKG_RKBIN}/bin/rk33/rk3326_miniloader_v1.40.bin"
-  PKG_BL31="${PKG_RKBIN}/bin/rk33/rk3326_bl31_v1.34.elf"
-  PKG_DDR_BIN="${PKG_RKBIN}/bin/rk33/rk3326_ddr_333MHz_v2.11.bin"
+  PKG_BL31="${PKG_RKBIN}/bin/rk33/rk3326_bl31_v1.37.elf"
+  PKG_DDR_BIN="${PKG_RKBIN}/bin/rk33/rk3326_ddr_333MHz_v2.12.bin"
 }
 
 make_target() {
