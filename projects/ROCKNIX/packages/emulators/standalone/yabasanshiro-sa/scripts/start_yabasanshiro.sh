@@ -120,5 +120,12 @@ else
   unset EMUPERF
 fi
 
+# temporarily notify users about replacing the emulator
+sed -i 's/font=monospace.*/font=monospace 18/' ~/.config/mako/config
+makoctl reload
+mako-notify "Yabasanshiro-SA is getting replaced by Yabasanshiro-Pirry. Don't rely on save states, make proper saves."
+sed -i 's/font=monospace.*/font=monospace 30/' ~/.config/mako/config
+(sleep 15; makoctl reload) &
+
 echo "Command: yabasanshiro -r ${RES} -i "${1}" ${BIOS}" >>/var/log/exec.log 2>&1
 ${EMUPERF} yabasanshiro -r ${RES} -i "${1}" ${BIOS} >>/var/log/exec.log 2>&1 ||:
