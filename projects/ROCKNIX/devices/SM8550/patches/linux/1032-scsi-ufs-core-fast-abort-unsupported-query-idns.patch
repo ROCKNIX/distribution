@@ -1,0 +1,136 @@
+From d1fa5cea5dcd72a9ec21b835c572a28c0c3f4fbf Mon Sep 17 00:00:00 2001
+From: Stanley Jhu <stanleyjhu@google.com>
+Date: Fri, 11 Sep 2026 10:43:18 +0800
+Subject: [PATCH] scsi: ufs: core: Fast-abort unsupported Query IDNs
+
+[ Upstream commit d1fa5cea5dcd72a9ec21b835c572a28c0c3f4fbf ]
+
+JEDEC JESD220F specifies that devices not supporting an optional Query IDN
+return QUERY_RESULT_INVALID_IDN (0xFD) in the Query Response UPIU.
+
+ufshcd_dev_cmd_completion() maps all non-zero Query responses to -EINVAL
+and logs dev_err(). A device declining an optional IDN is spec-compliant,
+so this reports an error that did not occur and leaves the retry loops
+resending a request the device will never accept.
+
+Decode 0xFD as -EOPNOTSUPP, terminate the query retry loops on it, and drop
+the dev_err() in the query wrappers and descriptor readers for that
+case. Other errors are logged and retried as before.
+
+The suppressed dev_err() calls carried the opcode and IDN; log them with
+dev_dbg() where the response is decoded.
+
+Signed-off-by: Stanley Jhu <stanleyjhu@google.com>
+Tested-by: Xilin Wu <sophon@radxa.com>
+Link: https://patch.msgid.link/20260911024319.1346706-2-stanleyjhu@google.com
+Signed-off-by: Martin K. Petersen (Oracle) <mkp@kernel.org>
+---
+ drivers/ufs/core/ufshcd.c | 29 +++++++++++++++++++++++------
+ 1 file changed, 23 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/ufs/core/ufshcd.c b/drivers/ufs/core/ufshcd.c
+index 234e18b50..0bc3adbe9 100644
+--- a/drivers/ufs/core/ufshcd.c
++++ b/drivers/ufs/core/ufshcd.c
+@@ -3308,6 +3308,11 @@ ufshcd_dev_cmd_completion(struct ufs_hba *hba, struct ufshcd_lrb *lrbp)
+ 
+ 		if (response == 0) {
+ 			err = ufshcd_copy_query_response(hba, lrbp);
++		} else if (response == QUERY_RESULT_INVALID_IDN) {
++			err = -EOPNOTSUPP;
++			dev_dbg(hba->dev, "%s: unsupported opcode 0x%x idn 0x%x\n",
++				__func__, lrbp->ucd_req_ptr->qr.opcode,
++				lrbp->ucd_req_ptr->qr.idn);
+ 		} else {
+ 			err = -EINVAL;
+ 			dev_err(hba->dev, "%s: unexpected response in Query RSP: %x\n",
+@@ -3470,6 +3475,8 @@ static int ufshcd_query_flag_retry(struct ufs_hba *hba,
+ 
+ 	for (retries = 0; retries < QUERY_REQ_RETRIES; retries++) {
+ 		ret = ufshcd_query_flag(hba, opcode, idn, index, flag_res);
++		if (ret == -EOPNOTSUPP)
++			return ret;
+ 		if (ret)
+ 			dev_dbg(hba->dev,
+ 				"%s: failed with error %d, retries %d\n",
+@@ -3536,7 +3543,8 @@ int ufshcd_query_flag(struct ufs_hba *hba, enum query_opcode opcode,
+ 	}
+ 
+ 	err = ufshcd_exec_dev_cmd(hba, DEV_CMD_TYPE_QUERY, timeout);
+-
++	if (err == -EOPNOTSUPP)
++		goto out_unlock;
+ 	if (err) {
+ 		dev_err(hba->dev,
+ 			"%s: Sending flag query for idn %d failed, err = %d\n",
+@@ -3601,7 +3609,8 @@ int ufshcd_query_attr(struct ufs_hba *hba, enum query_opcode opcode,
+ 	}
+ 
+ 	err = ufshcd_exec_dev_cmd(hba, DEV_CMD_TYPE_QUERY, dev_cmd_timeout);
+-
++	if (err == -EOPNOTSUPP)
++		goto out_unlock;
+ 	if (err) {
+ 		dev_err(hba->dev, "%s: opcode 0x%.2x for idn %d failed, index %d, err = %d\n",
+ 				__func__, opcode, idn, index, err);
+@@ -3639,6 +3648,8 @@ int ufshcd_query_attr_retry(struct ufs_hba *hba,
+ 	for (retries = QUERY_REQ_RETRIES; retries > 0; retries--) {
+ 		ret = ufshcd_query_attr(hba, opcode, idn, index,
+ 						selector, attr_val);
++		if (ret == -EOPNOTSUPP)
++			return ret;
+ 		if (ret)
+ 			dev_dbg(hba->dev, "%s: failed with error %d, retries %d\n",
+ 				__func__, ret, retries);
+@@ -3700,6 +3711,8 @@ int ufshcd_query_attr_qword(struct ufs_hba *hba, enum query_opcode opcode,
+ 	}
+ 
+ 	err = ufshcd_exec_dev_cmd(hba, DEV_CMD_TYPE_QUERY, dev_cmd_timeout);
++	if (err == -EOPNOTSUPP)
++		goto out_unlock;
+ 	if (err) {
+ 		dev_err(hba->dev, "%s: opcode 0x%.2x for idn %d failed, index %d, selector %d, err = %d\n",
+ 			__func__, opcode, idn, index, sel, err);
+@@ -3763,7 +3776,8 @@ static int __ufshcd_query_descriptor(struct ufs_hba *hba,
+ 	}
+ 
+ 	err = ufshcd_exec_dev_cmd(hba, DEV_CMD_TYPE_QUERY, dev_cmd_timeout);
+-
++	if (err == -EOPNOTSUPP)
++		goto out_unlock;
+ 	if (err) {
+ 		dev_err(hba->dev, "%s: opcode 0x%.2x for idn %d failed, index %d, err = %d\n",
+ 				__func__, opcode, idn, index, err);
+@@ -3806,7 +3820,7 @@ int ufshcd_query_descriptor_retry(struct ufs_hba *hba,
+ 	for (retries = QUERY_REQ_RETRIES; retries > 0; retries--) {
+ 		err = __ufshcd_query_descriptor(hba, opcode, idn, index,
+ 						selector, desc_buf, buf_len);
+-		if (!err || err == -EINVAL)
++		if (!err || err == -EINVAL || err == -EOPNOTSUPP)
+ 			break;
+ 	}
+ 
+@@ -3855,6 +3869,8 @@ int ufshcd_read_desc_param(struct ufs_hba *hba,
+ 	ret = ufshcd_query_descriptor_retry(hba, UPIU_QUERY_OPCODE_READ_DESC,
+ 					    desc_id, desc_index, 0,
+ 					    desc_buf, &buff_len);
++	if (ret == -EOPNOTSUPP)
++		goto out;
+ 	if (ret) {
+ 		dev_err(hba->dev, "%s: Failed reading descriptor. desc_id %d, desc_index %d, param_offset %d, ret %d\n",
+ 			__func__, desc_id, desc_index, param_offset, ret);
+@@ -3941,8 +3957,9 @@ int ufshcd_read_string_desc(struct ufs_hba *hba, u8 desc_index, u8 **buf, enum u
+ 	ret = ufshcd_read_desc_param(hba, QUERY_DESC_IDN_STRING, desc_index, 0,
+ 				     (u8 *)uc_str, QUERY_DESC_MAX_SIZE);
+ 	if (ret < 0) {
+-		dev_err(hba->dev, "Reading String Desc failed after %d retries. err = %d\n",
+-			QUERY_REQ_RETRIES, ret);
++		if (ret != -EOPNOTSUPP)
++			dev_err(hba->dev, "Reading String Desc failed after %d retries. err = %d\n",
++				QUERY_REQ_RETRIES, ret);
+ 		str = NULL;
+ 		goto out;
+ 	}
+-- 
+2.56.0
+
