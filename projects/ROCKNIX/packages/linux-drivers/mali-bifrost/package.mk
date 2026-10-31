@@ -26,8 +26,8 @@ make_target() {
       ;;
   esac
 
-  kernel_make KDIR=$(kernel_path) -C ${PKG_BUILD} \
-       CONFIG_MALI_MIDGARD=m CONFIG_MALI_PLATFORM_NAME=${MALI_PLATFORM} CONFIG_MALI_REAL_HW=y CONFIG_MALI_DEVFREQ=y CONFIG_MALI_GATOR_SUPPORT=y
+  kernel_make KDIR=$(kernel_path) -C ${PKG_BUILD}/product/kernel/drivers/gpu/arm/midgard \
+       CONFIG_MALI_MIDGARD=m CONFIG_MALI_PLATFORM_NAME=${MALI_PLATFORM} CONFIG_MALI_REAL_HW=y
 }
 
 makeinstall_target() {
