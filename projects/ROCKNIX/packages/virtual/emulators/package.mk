@@ -9,7 +9,7 @@ PKG_LONGDESC="Emulation metapackage."
 PKG_TOOLCHAIN="manual"
 
 PKG_EMUS="amiberry duckstation-sa flycast-sa gzdoom-sa hatarisa hypseus-singe moonlight mupen64plus-sa openbor pico-8   \
-          ppsspp-sa scummvm-sa touchhle-sa vice-sa wine yabasanshiro-sa"
+          ppsspp-sa scummvm-sa touchhle-sa vice-sa wine yabasanshiro-pirry-sa"
 
 EMUS_32BIT=""
 
@@ -1341,7 +1341,7 @@ makeinstall_target() {
   add_es_system megaduck
 
   ### Sega Saturn
-  add_emu_core saturn yabasanshiro yabasanshiro-sa true
+  add_emu_core saturn yabasanshiro yabasanshiro-pirry-sa true
   add_emu_core saturn retroarch yabasanshiro false
   add_emu_core saturn retroarch yabadabadoo false
   case ${DEVICE} in
