@@ -14,12 +14,7 @@ PKG_URL="http://ffmpeg.org/releases/ffmpeg-${PKG_VERSION}.tar.xz"
 PKG_PATCH_DIRS="libreelec"
 
 post_unpack() {
-  # Fix FFmpeg version
-  if [ "${DEVICE}" = "S922X" ]; then
-    echo "${PKG_FFMPEG_BRANCH}-${PKG_VERSION:0:7}" > ${PKG_BUILD}/VERSION
-  else
-    echo "${PKG_VERSION}" > ${PKG_BUILD}/RELEASE
-  fi
+  echo "${PKG_VERSION}" > ${PKG_BUILD}/RELEASE
 }
 
 # Dependencies
@@ -39,6 +34,9 @@ case ${DEVICE} in
   ;;
   RK*)
     PKG_PATCH_DIRS+=" v4l2-request detlev vf-deinterlace-v4l2m2m"
+  ;;
+  S922X)
+    PKG_PATCH_DIRS+=" rpi"
   ;;
   *)
     PKG_PATCH_DIRS+=" v4l2-request"
