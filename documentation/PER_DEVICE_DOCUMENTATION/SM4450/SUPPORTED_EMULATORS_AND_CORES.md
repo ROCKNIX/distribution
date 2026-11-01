@@ -52,7 +52,7 @@
 |Microsoft|MSX (msx)|1983|`msx`|.dsk .mx1 .mx2 .rom .zip .7z .m3u|**retroarch:** bluemsx (default)<br>**retroarch:** fmsx<br>|
 |Microsoft|MSX 2 (msx2)|1988|`msx2`|.dsk .mx1 .mx2 .rom .zip .7z .m3u|**retroarch:** bluemsx (default)<br>**retroarch:** fmsx<br>|
 |Microsoft|Windows (windows)|System|`windows`|.sh|**wine:** wine (default)<br>|
-|Microsoft|Xbox (xbox)|2001|`xbox`|.iso|**xemu:** xemu-sa (default)<br>|
+|Microsoft|Xbox (xbox)|2001|`xbox`|.iso .chd|**retroarch:** hakux (default)<br>|
 |NEC|PC Engine (pcengine)|1987|`pcengine`|.pce .bin .zip .7z|**retroarch:** beetle_pce_fast (default)<br>**retroarch:** beetle_pce<br>**retroarch:** beetle_supergrafx<br>**retroarch:** geargrafx<br>**mednafen:** pce<br>**mednafen:** pce_fast<br>|
 |NEC|PC Engine CD (pcenginecd)|1988|`pcenginecd`|.cue .ccd .chd .toc .m3u|**retroarch:** beetle_pce_fast (default)<br>**retroarch:** beetle_pce<br>**retroarch:** beetle_supergrafx<br>**retroarch:** geargrafx<br>**mednafen:** pce<br>**mednafen:** pce_fast<br>|
 |NEC|PC-8800 (pc-8800)|1981|`pc88`|.d88 .u88 .m3u|**retroarch:** quasi88 (default)<br>|
