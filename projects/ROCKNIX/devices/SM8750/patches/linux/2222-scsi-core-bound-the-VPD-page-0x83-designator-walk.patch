@@ -1,0 +1,127 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Michael Bommarito <michael.bommarito@gmail.com>
+Date: Sat, 11 Jul 2026 11:07:18 -0400
+Subject: [PATCH] scsi: core: bound the VPD page 0x83 designator walk
+
+scsi_vpd_lun_id(), scsi_vpd_tpg_id() and sd_get_unique_id() walk the VPD
+page 0x83 designator list with a stride of d[3] + 4 taken from the
+device-supplied designator length d[3], without checking it against the
+bytes remaining in the page. A device, or a compromised virtio/hypervisor
+block backend, that returns a page 0x83 whose final designator length runs
+past vpd_pg83->len makes the walk read out of bounds of the cached VPD
+buffer.
+
+Impact: a malicious or malfunctioning SCSI device, or a compromised
+hypervisor block backend, drives an out-of-bounds read of the cached VPD
+page 0x83 buffer (KASAN) during LUN-id, target-port-group, or unique-id
+computation.
+
+Bound each iteration: stop the walk when fewer than four header bytes
+remain and when the designator length exceeds the bytes left in the page,
+in all three walkers.
+
+Fixes: 9983bed3907c ("scsi: Add scsi_vpd_lun_id()")
+Cc: stable@vger.kernel.org
+Assisted-by: Claude:claude-opus-4-8
+Signed-off-by: Michael Bommarito <michael.bommarito@gmail.com>
+Link: https://lore.kernel.org/r/20260711150718.2916641-1-michael.bommarito@gmail.com
+---
+ drivers/scsi/scsi_lib.c | 27 ++++++++++++++++++++-------
+ drivers/scsi/sd.c       | 10 +++++++++-
+ 2 files changed, 29 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/scsi/scsi_lib.c b/drivers/scsi/scsi_lib.c
+index 22e2e3223440d..407440bbf46c1 100644
+--- a/drivers/scsi/scsi_lib.c
++++ b/drivers/scsi/scsi_lib.c
+@@ -3375,6 +3375,7 @@ int scsi_vpd_lun_id(struct scsi_device *sdev, char *id, size_t id_len)
+ 	u8 cur_id_size = 0;
+ 	const unsigned char *d, *cur_id_str;
+ 	const struct scsi_vpd *vpd_pg83;
++	size_t off;
+ 	int id_size = -EINVAL;
+ 
+ 	rcu_read_lock();
+@@ -3391,11 +3392,17 @@ int scsi_vpd_lun_id(struct scsi_device *sdev, char *id, size_t id_len)
+ 	}
+ 
+ 	memset(id, 0, id_len);
+-	for (d = vpd_pg83->data + 4;
+-	     d < vpd_pg83->data + vpd_pg83->len;
+-	     d += d[3] + 4) {
+-		u8 prio = designator_prio(d);
++	for (off = 4; off < vpd_pg83->len; off += d[3] + 4) {
++		u8 prio;
+ 
++		if (vpd_pg83->len - off < 4)
++			break;
++
++		d = vpd_pg83->data + off;
++		if (d[3] > vpd_pg83->len - off - 4)
++			break;
++
++		prio = designator_prio(d);
+ 		if (prio == 0 || cur_id_prio > prio)
+ 			continue;
+ 
+@@ -3545,6 +3552,7 @@ int scsi_vpd_tpg_id(struct scsi_device *sdev, int *rel_id)
+ {
+ 	const unsigned char *d;
+ 	const struct scsi_vpd *vpd_pg83;
++	size_t off;
+ 	int group_id = -EAGAIN, rel_port = -1;
+ 
+ 	rcu_read_lock();
+@@ -3554,8 +3562,14 @@ int scsi_vpd_tpg_id(struct scsi_device *sdev, int *rel_id)
+ 		return -ENXIO;
+ 	}
+ 
+-	d = vpd_pg83->data + 4;
+-	while (d < vpd_pg83->data + vpd_pg83->len) {
++	for (off = 4; off < vpd_pg83->len; off += d[3] + 4) {
++		if (vpd_pg83->len - off < 4)
++			break;
++
++		d = vpd_pg83->data + off;
++		if (d[3] > vpd_pg83->len - off - 4)
++			break;
++
+ 		switch (d[1] & 0xf) {
+ 		case 0x4:
+ 			/* Relative target port */
+@@ -3568,7 +3582,6 @@ int scsi_vpd_tpg_id(struct scsi_device *sdev, int *rel_id)
+ 		default:
+ 			break;
+ 		}
+-		d += d[3] + 4;
+ 	}
+ 	rcu_read_unlock();
+ 
+diff --git a/drivers/scsi/sd.c b/drivers/scsi/sd.c
+index 599e75f333343..5b8fa74052f2e 100644
+--- a/drivers/scsi/sd.c
++++ b/drivers/scsi/sd.c
+@@ -1949,6 +1949,7 @@ static int sd_get_unique_id(struct gendisk *disk, u8 id[16],
+ 	struct scsi_device *sdev = scsi_disk(disk)->device;
+ 	const struct scsi_vpd *vpd;
+ 	const unsigned char *d;
++	size_t off;
+ 	int ret = -ENXIO, len;
+ 
+ 	rcu_read_lock();
+@@ -1957,7 +1958,14 @@ static int sd_get_unique_id(struct gendisk *disk, u8 id[16],
+ 		goto out_unlock;
+ 
+ 	ret = -EINVAL;
+-	for (d = vpd->data + 4; d < vpd->data + vpd->len; d += d[3] + 4) {
++	for (off = 4; off < vpd->len; off += d[3] + 4) {
++		if (vpd->len - off < 4)
++			break;
++
++		d = vpd->data + off;
++		if (d[3] > vpd->len - off - 4)
++			break;
++
+ 		/* we only care about designators with LU association */
+ 		if (((d[1] >> 4) & 0x3) != 0x00)
+ 			continue;

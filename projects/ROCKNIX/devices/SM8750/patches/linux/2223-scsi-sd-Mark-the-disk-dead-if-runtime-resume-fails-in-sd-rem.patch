@@ -1,0 +1,76 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bart Van Assche <bvanassche@acm.org>
+Date: Mon, 19 Oct 2026 14:55:32 -0700
+Subject: [PATCH] scsi: sd: Mark the disk dead if runtime resume fails in sd_remove()
+
+If a SCSI disk is unplugged while runtime suspended, its request queue
+is still in the pm-only state when sd_remove() is called. The runtime
+resume attempted by scsi_autopm_get_device() fails because the parent
+device, e.g. a USB device in the USB_STATE_NOTATTACHED state, cannot be
+resumed. Hence, sdev_runtime_resume() is not called and the pm-only
+state is not cleared. Next, del_gendisk() calls
+blk_report_disk_dead(disk, false), which calls sync_filesystem(). Any
+bio submitted by the filesystem waits forever in __bio_queue_enter()
+because the queue will never leave the pm-only state and because
+GD_DEAD has not yet been set:
+
+ __bio_queue_enter+0xb8/0x174
+ blk_mq_submit_bio+0x640/0x7e4
+ [ ... ]
+ exfat_sync_fs+0xa4/0xe0
+ sync_filesystem+0xa8/0xdc
+ fs_bdev_mark_dead+0x30/0x88
+ bdev_mark_dead+0x54/0xc4
+ blk_report_disk_dead+0x8c/0xd4
+ del_gendisk+0xa0/0x2f8
+ sd_remove+0x30/0x60
+ [ ... ]
+ scsi_remove_host+0x88/0x18c
+ usb_stor_disconnect+0x68/0xf4
+
+Fix this hang by calling blk_mark_disk_dead() if runtime resume fails.
+This sets GD_DEAD, tells the filesystem that the disk has been removed
+without attempting to sync it, and wakes up any bios that are waiting
+in __bio_queue_enter(). Syncing the filesystem is not possible anyway
+if runtime resume failed, so no data is lost that could otherwise have
+been written. If runtime resume succeeds, behavior is not changed.
+
+Please note that this patch converts temporary runtime resume failures
+into permanent failures. Before this patch, if runtime resume fails
+temporarily, a filesytem sync would be postponed until a later resume
+succeeds.
+
+Cc: Christoph Hellwig <hch@lst.de>
+Tested-by: Lianqin Hu <hulianqin@vivo.com>
+Reported-by: Lianqin Hu <hulianqin@vivo.com>
+Closes: https://lore.kernel.org/all/TYUPR06MB6217DD31B1B3CD09E431CC12D2922@TYUPR06MB6217.apcprd06.prod.outlook.com/
+Fixes: 6f8191fdf41d ("block: simplify disk shutdown")
+Cc: stable@vger.kernel.org
+Signed-off-by: Bart Van Assche <bvanassche@acm.org>
+Reviewed-by: John Garry <john.garry@linux.dev>
+Link: https://lore.kernel.org/r/2c0c76d70f0fe197932836b9bcf8496095135d1b.1792446921.git.bvanassche@acm.org
+---
+ drivers/scsi/sd.c | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/scsi/sd.c b/drivers/scsi/sd.c
+index b0d2542fd317..dc45df819c42 100644
+--- a/drivers/scsi/sd.c
++++ b/drivers/scsi/sd.c
+@@ -4268,7 +4268,15 @@ static void sd_remove(struct scsi_device *sdp)
+ 	struct device *dev = &sdp->sdev_gendev;
+ 	struct scsi_disk *sdkp = dev_get_drvdata(dev);
+ 
+-	scsi_autopm_get_device(sdkp->device);
++	/*
++	 * If runtime resume fails, e.g. because the device was unplugged
++	 * while runtime suspended, the request queue stays in the pm-only
++	 * state and any I/O submitted by del_gendisk(), e.g. from
++	 * sync_filesystem(), would wait forever in __bio_queue_enter().
++	 * Prevent this by marking the disk dead.
++	 */
++	if (scsi_autopm_get_device(sdkp->device) < 0)
++		blk_mark_disk_dead(sdkp->disk);
+ 
+ 	device_del(&sdkp->disk_dev);
+ 	del_gendisk(sdkp->disk);
