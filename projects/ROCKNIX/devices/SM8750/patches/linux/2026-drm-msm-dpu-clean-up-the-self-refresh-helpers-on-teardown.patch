@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+Date: Sat, 24 Oct 2026 02:19:44 +0300
+Subject: [PATCH] drm/msm/dpu: clean up the self-refresh helpers on teardown
+
+Unbinding the display driver on MSM8996 with DPU oopses about a second
+later:
+
+  Unable to handle kernel NULL pointer dereference at virtual address 0000000000000870
+  pc : drm_atomic_commit_alloc+0x10/0x9c
+  lr : drm_self_refresh_helper_entry_work+0x5c/0x1dc
+
+dpu_crtc_init() sets up the self-refresh helper for each CRTC, but
+nothing ever calls drm_self_refresh_helper_cleanup(). Every modeset
+commit, including the one which shuts the display down on unbind, queues
+the delayed entry work of the helper, which then runs after the CRTC
+and the DRM device have been freed, and its data is leaked.
+
+Clean the helpers up when tearing down the DPU hardware, which cancels
+the pending work while the KMS is still intact. Doing it from a managed
+action instead would not be enough: the DRM device, and its managed
+resources with it, outlives the unbind as long as userspace holds it
+open.
+
+Fixes: 1122697810e5 ("drm/msm/disp/dpu: add PSR support for eDP interface in dpu driver")
+Assisted-by: LLM
+Signed-off-by: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+Reviewed-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261024-msm-kms-destroy-fixes-v3-11-66a30120a5ea@oss.qualcomm.com
+---
+ drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
+index 65ba8fa697e9..934ba47b2dae 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
+@@ -17,6 +17,7 @@
+ #include <drm/drm_crtc.h>
+ #include <drm/drm_file.h>
+ #include <drm/drm_framebuffer.h>
++#include <drm/drm_self_refresh_helper.h>
+ #include <drm/drm_vblank.h>
+ #include <drm/drm_writeback.h>
+ 
+@@ -885,8 +886,18 @@ static int _dpu_kms_drm_obj_init(struct dpu_kms *dpu_kms)
+ 	return 0;
+ }
+ 
++static void dpu_kms_self_refresh_cleanup(struct dpu_kms *dpu_kms)
++{
++	struct drm_crtc *crtc;
++
++	drm_for_each_crtc(crtc, dpu_kms->dev)
++		drm_self_refresh_helper_cleanup(crtc);
++}
++
+ static void _dpu_kms_hw_destroy(struct dpu_kms *dpu_kms)
+ {
++	dpu_kms_self_refresh_cleanup(dpu_kms);
++
+ 	dpu_kms->hw_intr = NULL;
+ 
+ 	/* safe to call these more than once during shutdown */

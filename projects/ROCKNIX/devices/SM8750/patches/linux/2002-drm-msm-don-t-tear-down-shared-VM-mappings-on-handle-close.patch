@@ -1,0 +1,108 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+Date: Sat, 22 Aug 2026 11:48:59 +0300
+Subject: [PATCH] drm/msm: don't tear down shared VM mappings on handle close
+
+On targets (like A530 / MSM8996) without per-process pgtables
+msm_gpu_create_private_vm() uses the global VM, so all DRM files share
+one GPU address space.  msm_gem_close() unmaps the object from ctx->vm,
+which on those targets pulls the buffer out from under every other file
+that still has it open, and frees the iova for immediate reuse.
+
+A dma-buf imported into a second file hits this as soon as the exporter
+closes its handle: the importer's texture keeps sampling the old
+address, which the next allocation has taken over.  On a530 this is
+every ext_image_dma_buf_import sampling test, reading back all zeros.
+
+The VMA teardown a shared VM needs is the one already used for kms->vm
+-- defer it to the @vma_ref drop, when the last handle and dma_buf
+reference are gone.  That restores the pre-drm_gpuvm lifetime without
+reintroducing the reference loop, since a BO with a live vma_ref is held
+by userspace anyway.
+
+Fixes: 111fdd2198e6 ("drm/msm: drm_gpuvm conversion")
+Assisted-by: LLM
+Signed-off-by: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+Tested-by: Alexey Minnekhanov <alexeymin@minlexx.ru>
+Link: https://lore.kernel.org/r/20260822-msm-fix-export-v1-2-917b3cbedd43@oss.qualcomm.com
+---
+ drivers/gpu/drm/msm/msm_gem.c | 13 ++++++++++++-
+ drivers/gpu/drm/msm/msm_gpu.c |  4 +++-
+ drivers/gpu/drm/msm/msm_gpu.h |  3 +++
+ 3 files changed, 18 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/msm_gem.c b/drivers/gpu/drm/msm/msm_gem.c
+index f90afffe3442..e73cf49c360e 100644
+--- a/drivers/gpu/drm/msm/msm_gem.c
++++ b/drivers/gpu/drm/msm/msm_gem.c
+@@ -63,6 +63,7 @@ static void put_iova_spaces(struct drm_gem_object *obj, struct drm_gpuvm *vm,
+ 
+ static void msm_gem_close(struct drm_gem_object *obj, struct drm_file *file)
+ {
++	struct msm_drm_private *priv = obj->dev->dev_private;
+ 	struct msm_context *ctx = file->driver_priv;
+ 
+ 	update_ctx_mem(file, -obj->size);
+@@ -84,6 +85,10 @@ static void msm_gem_close(struct drm_gem_object *obj, struct drm_file *file)
+ 	if (msm_context_is_vmbind(ctx))
+ 		return;
+ 
++	/* A global VM's VMAs are torn down by the @vma_ref drop above */
++	if (priv->gpu && ctx->vm == priv->gpu->vm)
++		return;
++
+ 	/*
+ 	 * TODO we might need to kick this to a queue to avoid blocking
+ 	 * in CLOSE ioctl
+@@ -95,7 +100,7 @@ static void msm_gem_close(struct drm_gem_object *obj, struct drm_file *file)
+ }
+ 
+ /*
+- * Get/put for kms->vm VMA
++ * Get/put for VMAs in VMs shared between contexts: kms->vm, gpu->vm
+  */
+ 
+ void msm_gem_vma_get(struct drm_gem_object *obj)
+@@ -110,6 +115,12 @@ void msm_gem_vma_put(struct drm_gem_object *obj)
+ 	if (atomic_dec_return(&to_msm_bo(obj)->vma_ref))
+ 		return;
+ 
++	if (priv->gpu && priv->gpu->vm_shared) {
++		dma_resv_wait_timeout(obj->resv, DMA_RESV_USAGE_BOOKKEEP, false,
++				      MAX_SCHEDULE_TIMEOUT);
++		put_iova_spaces(obj, priv->gpu->vm, true, "vma_put");
++	}
++
+ 	if (!priv->kms)
+ 		return;
+ 
+diff --git a/drivers/gpu/drm/msm/msm_gpu.c b/drivers/gpu/drm/msm/msm_gpu.c
+index 0c2c35636251..31d84e2b123a 100644
+--- a/drivers/gpu/drm/msm/msm_gpu.c
++++ b/drivers/gpu/drm/msm/msm_gpu.c
+@@ -879,8 +879,10 @@ msm_gpu_create_private_vm(struct msm_gpu *gpu, struct task_struct *task,
+ 			to_msm_vm(vm)->pid = get_pid(task_pid(task));
+ 	}
+ 
+-	if (IS_ERR_OR_NULL(vm) && kernel_managed)
++	if (IS_ERR_OR_NULL(vm) && kernel_managed) {
+ 		vm = drm_gpuvm_get(gpu->vm);
++		gpu->vm_shared = true;
++	}
+ 
+ 	return vm;
+ }
+diff --git a/drivers/gpu/drm/msm/msm_gpu.h b/drivers/gpu/drm/msm/msm_gpu.h
+index d27d54bdb7a7..7722776e9129 100644
+--- a/drivers/gpu/drm/msm/msm_gpu.h
++++ b/drivers/gpu/drm/msm/msm_gpu.h
+@@ -223,6 +223,9 @@ struct msm_gpu {
+ 
+ 	struct drm_gpuvm *vm;
+ 
++	/** @vm_shared: Has @vm been handed out as a context VM? */
++	bool vm_shared;
++
+ 	/* Power Control: */
+ 	struct regulator *gpu_reg, *gpu_cx;
+ 	struct clk_bulk_data *grp_clks;

@@ -1,0 +1,145 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mohammed AlHashim <eng.m7mdhashim.1@gmail.com>
+Date: Mon, 19 Oct 2026 16:38:55 +0300
+Subject: [PATCH] drm/msm/adreno: Register devfreq after the GPU-specific init
+
+a6xx_gpu_init() registers devfreq through adreno_gpu_init() ->
+msm_gpu_init() -> msm_devfreq_init(), and only afterwards calls
+a6xx_gmu_init(), which fills gmu->gpu_freqs[] and sets
+gmu->nr_gpu_freqs. The devfreq sysfs node and the cooling device are
+live in that window, so a write to min_freq or max_freq, or a thermal
+QoS update, can reach a6xx_gmu_set_freq() while nr_gpu_freqs is still
+0.
+
+The lookup loop then compares a u32 perf_index against
+gmu->nr_gpu_freqs - 1. With a count of 0 the bound converts to
+UINT_MAX, so the loop reads past the end of gpu_freqs[] until it hits
+unmapped memory. It faults with devfreq's lock held, so every later
+GPU user blocks and the machine hangs.
+
+This was hit at boot on an X1P42100 (Adreno X1-45) laptop, where a udev
+rule wrote min_freq as soon as the devfreq device appeared:
+
+  Unable to handle kernel paging request at virtual address ffff000b80000000
+  Internal error: Oops: 0000000096000005 [#1]  SMP
+  CPU: 0 UID: 0 PID: 487 Comm: (udev-worker) Tainted: G        W  O
+  Hardware name: SAMSUNG ELECTRONICS CO., LTD. Galaxy Book4 Edge/NP750XQA-KB2US
+  pc : a6xx_gmu_set_freq+0x74/0x2a0 [msm]
+  lr : a6xx_gmu_set_freq+0x3c/0x2a0 [msm]
+  ...
+  x4 : 00000000ffffffff ...
+
+x4 holds the wrapped loop bound. The faulting address is 1 GiB
+aligned, which matches a linear read running off the end of the
+linear map.
+
+Move msm_devfreq_init() out of msm_gpu_init() and call it last in
+adreno_bind(), once the generation's init function has returned, so
+devfreq only appears after the freq and bandwidth tables are complete.
+Do it after dev_pm_opp_of_find_icc_paths() so a deferral there does not
+leave a devfreq or cooling device behind.
+This also closes the narrower race where a6xx_gmu_pwrlevels_probe()
+writes the tables and counts while a6xx_gmu_set_freq() may already be
+running, and it does not drop a frequency request the way an early
+return in a6xx_gmu_set_freq() would.
+
+a2xx has no gpu_busy() and never registers devfreq. a3xx, a4xx and
+a5xx build nothing after msm_gpu_init() that the devfreq callbacks
+read, and a6xx parts with a GMU wrapper or RGMU set the rate through
+the OPP core, so for all of them devfreq simply appears a little later
+in the same bind. GPU runtime PM is only enabled on first open, in
+adreno_load_gpu(), so no resume or suspend can reach
+msm_devfreq_resume() or msm_devfreq_suspend() during bind, and both
+return early through has_devfreq() in any case.
+
+Fixes: a2c3c0a54d4c ("drm/msm/a6xx: Add devfreq support for a6xx")
+Cc: stable@vger.kernel.org
+Suggested-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Assisted-by: LLM
+Signed-off-by: Mohammed AlHashim <eng.m7mdhashim.1@gmail.com>
+Link: https://lore.kernel.org/r/20261019-msm-gmu-freq-guard-v2-1-799eb15890ba@gmail.com
+---
+How this was found and tested:
+
+- Seen twice at boot (2026-10-03 and 2026-10-05) on a Samsung Galaxy
+  Book4 Edge 15" (NP750XQA, X1P42100 / Adreno X1-45) running a
+  downstream 7.2.7 tree with an out-of-tree device tree. Both oopses
+  were at a6xx_gmu_set_freq+0x74, about 9 s after power-on, from a udev
+  rule writing min_freq when the devfreq device appeared. The log ends
+  at "Call trace:" because the machine hung.
+- With v1's guard applied to the same downstream tree, the laptop has
+  booted 20 times since 2026-10-14 with no oops. That only shows the
+  guard did no harm. It does not prove the race was closed, because the
+  udev rule was moved to a delayed systemd unit on 2026-10-06 and the
+  window is narrow.
+- v2, backported to the same downstream tree in place of v1's guard,
+  booted 5 times with the original udev rule restored, so min_freq was
+  written the moment the devfreq device appeared. All 5 boots were
+  clean and the floor was applied (min_freq and cur_freq read back as
+  requested). Suspend/resume could not be tested: s2idle does not yet
+  resume on this machine for an unrelated reason.
+- On v7.3-rc7 v2 is only build-tested (arm64 defconfig, W=1, all of
+  drivers/gpu/drm/msm/). It has not been run on mainline or msm-next,
+  and I could only reason about a3xx-a5xx from the source.
+
+AI disclosure: an LLM coding assistant helped read the oops, trace the
+init ordering, check the other GPU generations and draft this commit
+message. I reviewed the result, tested it as described above, and take
+responsibility for it.
+---
+Changes in v2:
+- Register devfreq from adreno_bind() after the GPU-specific init,
+  instead of returning early in a6xx_gmu_set_freq() (Konrad).
+- This also addresses the two Sashiko findings on v1: the residual
+  race with a6xx_gmu_pwrlevels_probe() and the dropped frequency
+  request on resume.
+- Register devfreq after dev_pm_opp_of_find_icc_paths(), so a probe
+  deferral there does not leave a devfreq or cooling device behind.
+- Retitled from "drm/msm/a6xx: Don't set GPU freq before the GMU freq
+  table is built", since the change now touches common adreno code.
+- Link to v1: https://patch.msgid.link/20261018-msm-gmu-freq-guard-v1-1-dd92dcccee86@gmail.com
+---
+ drivers/gpu/drm/msm/adreno/adreno_device.c | 8 ++++++++
+ drivers/gpu/drm/msm/msm_gpu.c              | 2 --
+ 2 files changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/adreno_device.c b/drivers/gpu/drm/msm/adreno/adreno_device.c
+index 05c77fe27..52d90e1d1 100644
+--- a/drivers/gpu/drm/msm/adreno/adreno_device.c
++++ b/drivers/gpu/drm/msm/adreno/adreno_device.c
+@@ -247,6 +247,14 @@ static int adreno_bind(struct device *dev, struct device *master, void *data)
+ 	if (ret)
+ 		return ret;
+ 
++	/*
++	 * Register devfreq last: its sysfs, QoS and cooling device can reach
++	 * gpu_set_freq() as soon as it exists, and on a6xx the GMU freq and
++	 * bandwidth tables are only built by a6xx_gmu_init(), after
++	 * msm_gpu_init().
++	 */
++	msm_devfreq_init(gpu);
++
+ 	return 0;
+ }
+ 
+diff --git a/drivers/gpu/drm/msm/msm_gpu.c b/drivers/gpu/drm/msm/msm_gpu.c
+index 0c2c35636..452da9272 100644
+--- a/drivers/gpu/drm/msm/msm_gpu.c
++++ b/drivers/gpu/drm/msm/msm_gpu.c
+@@ -968,8 +968,6 @@ int msm_gpu_init(struct drm_device *drm, struct platform_device *pdev,
+ 
+ 	platform_set_drvdata(pdev, &gpu->adreno_smmu);
+ 
+-	msm_devfreq_init(gpu);
+-
+ 	gpu->vm = gpu->funcs->create_vm(gpu, pdev);
+ 	if (IS_ERR(gpu->vm)) {
+ 		ret = PTR_ERR(gpu->vm);
+
+---
+base-commit: 24a19b953e2a3d0ea5a8c4951a0ab8f32720c907
+change-id: 20261018-msm-gmu-freq-guard-e5ac83581fb5
+
+Best regards,
+--  
+Mohammed AlHashim <eng.m7mdhashim.1@gmail.com>

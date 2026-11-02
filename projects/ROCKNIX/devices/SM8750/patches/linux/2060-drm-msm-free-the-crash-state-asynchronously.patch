@@ -1,0 +1,106 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nico Angelo Dela Cruz <nicoangelodelacruz@gmail.com>
+Date: Mon, 02 Nov 2026 01:55:51 +0800
+Subject: [PATCH] drm/msm: free the crash state asynchronously
+
+msm_gpu_crashstate_capture() sets gpu->crashstate and calls
+dev_coredumpm() while the caller (recover_worker() or
+msm_gpu_fault_crashstate_capture()) holds gpu->lock. When devcoredump
+is disabled (/sys/class/devcoredump/disabled, a write-once knob) or
+its allocation fails, dev_coredumpm_timeout() calls the free callback
+synchronously.
+
+msm_gpu_devcoredump_free() then calls msm_gpu_crashstate_put(), which
+does mutex_lock(&gpu->lock) and so recursively takes a mutex the
+caller already holds. On systems with devcoredump disabled, every GPU
+recovery that captures a crash state deadlocks.
+
+Defer the put to a work item on system_dfl_wq instead. This is safe
+because msm_gpu_devcoredump_read() takes and drops its own crash
+state reference, and the work takes gpu->lock normally once the
+holder has released it. gpu->crashstate stays set until the work
+runs, which only means a capture in that window is skipped.
+msm_gpu_cleanup() flushes an already queued free before teardown.
+
+Tested on an Adreno 830 with /sys/class/devcoredump/disabled set to 1:
+IGT msm_recovery gpu-fault recovers and the GPU resumes.
+
+Fixes: c0fec7f562ec ("drm/msm/gpu: Capture the GPU state on a GPU hang")
+Cc: stable@vger.kernel.org
+Signed-off-by: Nico Angelo Dela Cruz <nicoangelodelacruz@gmail.com>
+Link: https://lore.kernel.org/r/20261101175553.53746-3-nicoangelodelacruz@gmail.com
+---
+ drivers/gpu/drm/msm/msm_gpu.c | 21 ++++++++++++++++++++-
+ drivers/gpu/drm/msm/msm_gpu.h |  6 ++++++
+ 2 files changed, 26 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/msm/msm_gpu.c b/drivers/gpu/drm/msm/msm_gpu.c
+index caa86279f..fded78fdb 100644
+--- a/drivers/gpu/drm/msm/msm_gpu.c
++++ b/drivers/gpu/drm/msm/msm_gpu.c
+@@ -175,6 +175,14 @@ int msm_gpu_hw_init(struct msm_gpu *gpu)
+ 	return ret;
+ }
+ 
++static void msm_gpu_crashstate_free_worker(struct work_struct *work)
++{
++	struct msm_gpu *gpu = container_of(work, struct msm_gpu,
++					   crashstate_free_work);
++
++	msm_gpu_crashstate_put(gpu);
++}
++
+ #ifdef CONFIG_DEV_COREDUMP
+ static ssize_t msm_gpu_devcoredump_read(char *buffer, loff_t offset,
+ 		size_t count, void *data, size_t datalen)
+@@ -215,7 +223,13 @@ static void msm_gpu_devcoredump_free(void *data)
+ {
+ 	struct msm_gpu *gpu = data;
+ 
+-	msm_gpu_crashstate_put(gpu);
++	/*
++	 * dev_coredumpm() calls this synchronously when it can't keep the
++	 * dump (devcoredump disabled, or out of memory), while
++	 * msm_gpu_crashstate_capture() holds gpu->lock, which
++	 * msm_gpu_crashstate_put() also takes.  Defer the put to a worker.
++	 */
++	queue_work(system_dfl_wq, &gpu->crashstate_free_work);
+ }
+ 
+ static void msm_gpu_crashstate_get_bo(struct msm_gpu_state *state,
+@@ -899,6 +913,7 @@ int msm_gpu_init(struct drm_device *drm, struct platform_device *pdev,
+ 	gpu->dev = drm;
+ 	gpu->funcs = funcs;
+ 	gpu->name = name;
++	INIT_WORK(&gpu->crashstate_free_work, msm_gpu_crashstate_free_worker);
+ 
+ 	gpu->worker = kthread_run_worker(0, "gpu-worker");
+ 	if (IS_ERR(gpu->worker)) {
+@@ -1047,6 +1062,10 @@ void msm_gpu_cleanup(struct msm_gpu *gpu)
+ 
+ 	DBG("%s", gpu->name);
+ 
++	/* May be unset if probe failed before msm_gpu_init() */
++	if (gpu->crashstate_free_work.func)
++		flush_work(&gpu->crashstate_free_work);
++
+ 	for (i = 0; i < ARRAY_SIZE(gpu->rb); i++) {
+ 		msm_ringbuffer_destroy(gpu->rb[i]);
+ 		gpu->rb[i] = NULL;
+diff --git a/drivers/gpu/drm/msm/msm_gpu.h b/drivers/gpu/drm/msm/msm_gpu.h
+index 5cf220f75..db9e11e7f 100644
+--- a/drivers/gpu/drm/msm/msm_gpu.h
++++ b/drivers/gpu/drm/msm/msm_gpu.h
+@@ -258,6 +258,12 @@ struct msm_gpu {
+ 
+ 	struct msm_gpu_state *crashstate;
+ 
++	/**
++	 * @crashstate_free_work: drops the devcoredump's crashstate reference
++	 * outside of @lock, see msm_gpu_devcoredump_free().
++	 */
++	struct work_struct crashstate_free_work;
++
+ 	/**
+ 	 * @recovery_in_progress: true while recover_worker() holds @lock, so
+ 	 * that fault capture and GMU waits don't wait on a fault devcoredump

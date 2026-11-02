@@ -1,0 +1,102 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mohammed AlHashim <eng.m7mdhashim.1@gmail.com>
+Date: Sun, 18 Oct 2026 21:29:32 +0300
+Subject: [PATCH] drm/msm/a6xx: Don't set GPU freq before the GMU freq table is built
+
+a6xx_gpu_init() registers devfreq through adreno_gpu_init() ->
+msm_gpu_init() -> msm_devfreq_init(), and only afterwards calls
+a6xx_gmu_init(), which fills gmu->gpu_freqs[] and sets
+gmu->nr_gpu_freqs. The devfreq sysfs node is visible in that window,
+so a write to min_freq or max_freq can reach a6xx_gmu_set_freq() while
+nr_gpu_freqs is still 0.
+
+The lookup loop then compares a u32 perf_index against
+gmu->nr_gpu_freqs - 1. With a count of 0 the bound converts to
+UINT_MAX, so the loop reads past the end of gpu_freqs[] until it hits
+unmapped memory. It faults with devfreq's lock held, so every later
+GPU user blocks and the machine hangs.
+
+This was hit at boot on an X1P42100 (Adreno X1-45) laptop, where a udev
+rule wrote min_freq as soon as the devfreq device appeared:
+
+  Unable to handle kernel paging request at virtual address ffff000b80000000
+  Internal error: Oops: 0000000096000005 [#1]  SMP
+  CPU: 0 UID: 0 PID: 487 Comm: (udev-worker) Tainted: G        W  O
+  Hardware name: SAMSUNG ELECTRONICS CO., LTD. Galaxy Book4 Edge/NP750XQA-KB2US
+  pc : a6xx_gmu_set_freq+0x74/0x2a0 [msm]
+  lr : a6xx_gmu_set_freq+0x3c/0x2a0 [msm]
+  ...
+  x4 : 00000000ffffffff ...
+
+x4 holds the wrapped loop bound. The faulting address is 1 GiB
+aligned, which matches a linear read running off the end of the
+linear map.
+
+Return early while the table is empty. The request is not lost: the
+limit is kept as a PM QoS request, and devfreq applies it the next time
+it re-evaluates its target, for example when the GPU resumes. The root
+cause is the init ordering, and registering devfreq after
+a6xx_gmu_init() would also close the window. This guard is the smaller
+change and is easy to backport.
+
+Fixes: a2c3c0a54d4c ("drm/msm/a6xx: Add devfreq support for a6xx")
+Cc: stable@vger.kernel.org
+Assisted-by: LLM
+Signed-off-by: Mohammed AlHashim <eng.m7mdhashim.1@gmail.com>
+Link: https://lore.kernel.org/r/20261018-msm-gmu-freq-guard-v1-1-dd92dcccee86@gmail.com
+---
+How this was found and tested:
+
+- Seen twice at boot (2026-10-03 and 2026-10-05) on a Samsung Galaxy
+  Book4 Edge 15" (NP750XQA, X1P42100 / Adreno X1-45) running a
+  downstream 7.2.7 tree with an out-of-tree device tree. Both oopses
+  were at a6xx_gmu_set_freq+0x74, about 9 s after power-on, from a udev
+  rule writing min_freq when the devfreq device appeared. The log ends
+  at "Call trace:" because the machine hung.
+- With this guard applied to the same downstream tree, the laptop has
+  booted 20 times since 2026-10-14 with no oops. That shows the guard
+  does no harm. It does not prove it closes the race, because the udev
+  rule was moved to a delayed systemd unit on 2026-10-06 and the window
+  is narrow.
+- On v7.3-rc7 the change is only build-tested (arm64 defconfig, W=1).
+  It has not been run on mainline or msm-next. The function is
+  identical in v7.3-rc7, msm-next and msm-fixes, so it should apply to
+  any of them.
+
+If you'd rather fix the ordering, so devfreq is registered after
+a6xx_gmu_init(), I'm happy to rework it that way.
+
+AI disclosure: an LLM coding assistant helped read the oops, trace the
+init ordering and draft this commit message. I reviewed the result,
+tested it as described above, and take responsibility for it.
+---
+ drivers/gpu/drm/msm/adreno/a6xx_gmu.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+index 6d49c51df..b1cbe5d34 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+@@ -164,6 +164,14 @@ void a6xx_gmu_set_freq(struct msm_gpu *gpu, struct dev_pm_opp *opp,
+ 	unsigned long gpu_freq;
+ 	int ret = 0;
+ 
++	/*
++	 * devfreq is registered before a6xx_gmu_init() builds the freq table,
++	 * so a min_freq write can land here with nr_gpu_freqs == 0. The u32
++	 * bound below would then wrap to UINT_MAX and walk off gpu_freqs[].
++	 */
++	if (!gmu->nr_gpu_freqs)
++		return;
++
+ 	gpu_freq = dev_pm_opp_get_freq(opp);
+ 
+ 	if (gpu_freq == gmu->freq)
+
+---
+base-commit: 24a19b953e2a3d0ea5a8c4951a0ab8f32720c907
+change-id: 20261018-msm-gmu-freq-guard-e5ac83581fb5
+
+Best regards,
+--  
+Mohammed AlHashim <eng.m7mdhashim.1@gmail.com>
