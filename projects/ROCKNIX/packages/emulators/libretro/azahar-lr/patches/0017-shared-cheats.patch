@@ -1,0 +1,646 @@
+From: dArkOS RG52 Mini port
+Subject: 3DS cheats: a folder shared with the standalone Azahar, RetroArch's menu
+
+Adapted for ROCKNIX: the paths below are ROCKNIX's, not dArkOS's.
+
+retro_cheat_reset and retro_cheat_set did nothing, so RetroArch's cheats
+never reached the core. Now (shared_cheats.cpp):
+
+- The cheats live in /storage/.config/azahar/cheats, the standalone
+  Azahar's cheats folder, laid out as GammaOS's azahar-nano keeps them
+  (CheatDb, GammaOSNextDistribution-14 dbb613ef825): <TID>.txt is every
+  cheat of a title with its *citra_enabled mark, custom/<TID>.txt the
+  user's own. The core's cheats folder points there, so its cheat engine
+  loads the list at boot and saves the marks to it.
+- Before a game boots the list is rebuilt: the user's own cheats, then the
+  database's (/usr/share/azahar/cheats3ds, one <TID>.txt per title, if
+  present), the marks carried over by name and code, then by name; cheats
+  of the list in neither source are kept as the user's own.
+- RetroArch gets the same list as the game's cheat file
+  (/tmp/database/cht/Azahar/<content>.cht), which it reads right after
+  retro_load_game, for Quick Menu > Cheats. Applying cheats there is a
+  reset and one set per enabled cheat, counted among the enabled ones, so
+  each is found in the engine by its code and switched; a code typed into
+  RetroArch becomes one of the user's own ("RetroArch code N"). The marks
+  are saved at the next frame and when the game closes.
+
+A user's cheat that the database has too (same name and code) is listed
+once, where the database has it.
+
+AZAHAR_CHEATS_DIR, AZAHAR_CHEAT_DB and AZAHAR_RA_CHEATS_DIR override the
+three paths.
+
+--- a/src/citra_libretro/CMakeLists.txt
++++ b/src/citra_libretro/CMakeLists.txt
+@@ -13,7 +13,9 @@ add_library(citra_libretro_common OBJECT
+         environment.cpp
+         environment.h
+         core_settings.cpp
+-        core_settings.h)
++        core_settings.h
++        shared_cheats.cpp
++        shared_cheats.h)
+ 
+ target_compile_definitions(citra_libretro_common PRIVATE HAVE_LIBRETRO)
+ target_link_libraries(citra_libretro_common PRIVATE citra_common citra_core video_core libretro tsl::robin_map)
+--- a/src/citra_libretro/citra_libretro.cpp
++++ b/src/citra_libretro/citra_libretro.cpp
+@@ -32,6 +32,7 @@
+ #include "citra_libretro/core_settings.h"
+ #include "citra_libretro/environment.h"
+ #include "citra_libretro/input/input_factory.h"
++#include "citra_libretro/shared_cheats.h"
+ 
+ #include "common/arch.h"
+ #if CITRA_ARCH(x86_64)
+@@ -232,6 +233,8 @@ void retro_run() {
+         Core::System::GetInstance().ApplySettings();
+         emu_instance->emu_window->UpdateLayout();
+     }
++    // dArkOS: cheats switched in RetroArch's menu, into the shared list
++    LibRetro::SharedCheats::Flush();
+ 
+     // Poll microphone input from the frontend and buffer it for the emulator
+     // This must be done from the main thread as LibRetro's mic interface is not thread-safe
+@@ -542,6 +545,8 @@ bool retro_load_game(const struct retro_game_info* info) {
+             program_id = 0;
+         }
+         LibRetro::SetTitle(program_id);
++        // dArkOS: its cheats, from the folder shared with GammaOS, listed for RetroArch
++        LibRetro::SharedCheats::Prepare(program_id, LibRetro::settings.file_path);
+         // Stash the loader so System::Load can reuse it instead of re-opening
+         Core::System::GetInstance().RegisterAppLoaderEarly(loader);
+     }
+@@ -629,6 +634,7 @@ bool retro_load_game(const struct retro_game_info* info) {
+ void retro_unload_game() {
+     DropSavestate();
+     LOG_DEBUG(Frontend, "Unloading game...");
++    LibRetro::SharedCheats::Flush();
+     Core::System::GetInstance().Shutdown();
+ }
+ 
+@@ -756,7 +762,11 @@ size_t retro_get_memory_size(unsigned id) {
+ }
+ 
+ void retro_cheat_reset() {
+-    DropSavestate();}
++    DropSavestate();
++    LibRetro::SharedCheats::Reset();
++}
+ 
+ void retro_cheat_set(unsigned index, bool enabled, const char* code) {
+-    DropSavestate();}
++    DropSavestate();
++    LibRetro::SharedCheats::Set(index, enabled, code);
++}
+--- a/src/citra_libretro/core_settings.cpp
++++ b/src/citra_libretro/core_settings.cpp
+@@ -8,6 +8,7 @@
+ 
+ #include "citra_libretro/core_settings.h"
+ #include "citra_libretro/environment.h"
++#include "citra_libretro/shared_cheats.h"
+ 
+ #include "common/file_util.h"
+ #include "common/settings.h"
+@@ -1310,6 +1311,10 @@ void ParseCoreOptions(void) {
+     ParseLayoutOptions();
+     ParseStorageOptions();
+     ParseInputOptions();
++
++    // The user paths were just set again; the cheats folder is the one shared with the
++    // standalone Azahar (shared_cheats.h).
++    SharedCheats::UseSharedDir();
+ }
+ 
+ } // namespace LibRetro
+--- /dev/null
++++ b/src/citra_libretro/shared_cheats.cpp
+@@ -0,0 +1,490 @@
++// Copyright 2026 dArkOS RG52 Mini port
++// Licensed under GPLv2 or any later version
++// Refer to the license.txt file included.
++
++// The list is built as azahar-nano's CheatDb.cpp builds it (TheGammaSqueeze,
++// GammaOSNextDistribution-14 dbb613ef825, frameworks/base/cmds/azahar-nano), so that dArkOS and
++// GammaOS keep one list and one set of marks in the shared folder.
++
++#include <algorithm>
++#include <cctype>
++#include <cstdio>
++#include <cstdlib>
++#include <fstream>
++#include <memory>
++#include <sstream>
++#include <vector>
++#include <sys/stat.h>
++#include <fmt/format.h>
++
++#include "citra_libretro/shared_cheats.h"
++#include "common/file_util.h"
++#include "common/logging/log.h"
++#include "core/cheats/cheat_base.h"
++#include "core/cheats/cheats.h"
++#include "core/cheats/gateway_cheat.h"
++#include "core/core.h"
++
++namespace LibRetro::SharedCheats {
++
++namespace {
++
++struct Cheat {
++    std::string name;
++    std::string comments;          // '\n' separated, without the leading '*'
++    std::vector<std::string> code; // "XXXXXXXX YYYYYYYY" lines
++    bool enabled = false;
++};
++
++constexpr const char* kEnabledMark = "*citra_enabled";
++
++u64 g_title_id = 0;
++bool g_dirty = false;              // marks changed by RetroArch, not saved yet
++std::vector<bool> g_matched;       // engine cheats the current apply round has set
++
++std::string EnvOr(const char* name, const std::string& fallback) {
++    const char* v = std::getenv(name);
++    return v != nullptr && *v != '\0' ? std::string(v) : fallback;
++}
++
++/// ROCKNIX: the standalone Azahar's cheats folder, so both keep one list
++std::string SharedDir() {
++    return EnvOr("AZAHAR_CHEATS_DIR", "/storage/.config/azahar/cheats");
++}
++
++/// GammaOS's cheats3ds.zip unpacked, one <TID>.txt per title
++std::string DatabaseDir() {
++    return EnvOr("AZAHAR_CHEAT_DB", "/usr/share/azahar/cheats3ds");
++}
++
++/// RetroArch's cheat_database_path as ROCKNIX sets it, and the core's library name
++std::string RetroArchDir() {
++    return EnvOr("AZAHAR_RA_CHEATS_DIR", "/tmp/database/cht") + "/Azahar";
++}
++
++std::string TidName(u64 title_id) {
++    return fmt::format("{:016X}", title_id);
++}
++
++std::string CheatFile(u64 title_id) {
++    return SharedDir() + "/" + TidName(title_id) + ".txt";
++}
++
++std::string CustomFile(u64 title_id) {
++    return SharedDir() + "/custom/" + TidName(title_id) + ".txt";
++}
++
++std::string Trim(const std::string& s) {
++    std::size_t a = 0, b = s.size();
++    while (a < b && std::isspace(static_cast<unsigned char>(s[a]))) {
++        a++;
++    }
++    while (b > a && std::isspace(static_cast<unsigned char>(s[b - 1]))) {
++        b--;
++    }
++    return s.substr(a, b - a);
++}
++
++std::string Lower(std::string s) {
++    for (char& c : s) {
++        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
++    }
++    return s;
++}
++
++/// Android keeps its files on the shared card 0660 and its folders 0770, group media_rw (ark is in
++/// it); ours the same, so that either system can write what the other made. Fails harmlessly on
++/// what Android made (not ours to change).
++void ShareMode(const std::string& path, bool dir) {
++    chmod(path.c_str(), dir ? 02770 : 0660);
++}
++
++/// The shared folder and its custom/, made if missing, with the shared modes.
++bool MakeSharedDirs() {
++    const std::string root = SharedDir();
++    if (!FileUtil::CreateFullPath(root + "/custom/")) {
++        return false;
++    }
++    // the levels this core may have made: .../cheats/3ds/azahar and its custom/
++    std::string d = root;
++    for (const char* level : {"azahar", "3ds", "cheats"}) {
++        const auto slash = d.find_last_of('/');
++        if (slash == std::string::npos || d.substr(slash + 1) != level) {
++            break;
++        }
++        ShareMode(d, true);
++        d.erase(slash);
++    }
++    ShareMode(root + "/custom", true);
++    return true;
++}
++
++bool ReadText(const std::string& path, std::string* out) {
++    std::ifstream f(path, std::ios::binary);
++    if (!f) {
++        return false;
++    }
++    std::stringstream ss;
++    ss << f.rdbuf();
++    *out = ss.str();
++    return true;
++}
++
++/// Through a temporary file, so a reader never sees half of it.
++bool WriteText(const std::string& path, const std::string& text) {
++    const std::string tmp = path + ".tmp";
++    {
++        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
++        if (!f) {
++            return false;
++        }
++        f << text;
++        if (!f) {
++            return false;
++        }
++    }
++    ShareMode(tmp, false);
++    if (std::rename(tmp.c_str(), path.c_str()) != 0) {
++        std::remove(tmp.c_str());
++        return false;
++    }
++    return true;
++}
++
++/// Gateway / CTRPF cheat text (Azahar's own cheat file format).
++std::vector<Cheat> ParseText(const std::string& text) {
++    std::vector<Cheat> out;
++    Cheat cur;
++    bool have = false;
++    const auto flush = [&] {
++        if (have && !cur.code.empty()) {
++            out.push_back(cur);
++        }
++        cur = Cheat();
++        have = false;
++    };
++    std::istringstream in(text);
++    std::string raw;
++    while (std::getline(in, raw)) {
++        raw.erase(std::remove(raw.begin(), raw.end(), '\0'), raw.end());
++        const std::string line = Trim(raw);
++        if (line.empty()) {
++            continue;
++        }
++        if (line.size() >= 2 && line.front() == '[' && line.back() == ']') {
++            flush();
++            cur.name = Trim(line.substr(1, line.size() - 2));
++            have = true;
++        } else if (!have) {
++            continue;
++        } else if (line == kEnabledMark) {
++            cur.enabled = true;
++        } else if (line.front() == '*') {
++            if (!cur.comments.empty()) {
++                cur.comments += '\n';
++            }
++            cur.comments += Trim(line.substr(1));
++        } else if (line.size() >= 2 && line.front() == '{' && line.back() == '}') {
++            const std::string c = Trim(line.substr(1, line.size() - 2));
++            if (!c.empty()) {
++                if (!cur.comments.empty()) {
++                    cur.comments += '\n';
++                }
++                cur.comments += c;
++            }
++        } else {
++            cur.code.push_back(line);
++        }
++    }
++    flush();
++    return out;
++}
++
++std::string RenderText(const std::vector<Cheat>& cheats) {
++    std::string out;
++    for (const Cheat& c : cheats) {
++        out += '[' + c.name + "]\n";
++        if (c.enabled) {
++            out += kEnabledMark;
++            out += '\n';
++        }
++        std::istringstream cs(c.comments);
++        std::string line;
++        while (std::getline(cs, line)) {
++            if (!line.empty()) {
++                out += '*' + line + '\n';
++            }
++        }
++        for (const std::string& l : c.code) {
++            out += l + '\n';
++        }
++        out += '\n';
++    }
++    return out;
++}
++
++/// Code text, hex words separated by spaces, line breaks or RetroArch's '+', as
++/// "XXXXXXXX YYYYYYYY" lines; empty if it is not such a code.
++std::vector<std::string> CodeLines(std::string text) {
++    std::replace(text.begin(), text.end(), '+', ' ');
++    std::vector<std::string> words;
++    std::string cur;
++    for (const char c : text + " ") {
++        if (std::isspace(static_cast<unsigned char>(c))) {
++            if (cur.size() == 16) { // one line written without its space
++                words.push_back(cur.substr(0, 8));
++                words.push_back(cur.substr(8));
++            } else if (!cur.empty()) {
++                words.push_back(cur);
++            }
++            cur.clear();
++        } else {
++            cur += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
++        }
++    }
++    if (words.empty() || words.size() % 2 != 0) {
++        return {};
++    }
++    std::vector<std::string> lines;
++    for (std::size_t i = 0; i < words.size(); i += 2) {
++        for (const std::string& w : {words[i], words[i + 1]}) {
++            if (w.size() != 8 || !std::all_of(w.begin(), w.end(), [](char c) {
++                    return std::isxdigit(static_cast<unsigned char>(c));
++                })) {
++                return {};
++            }
++        }
++        lines.push_back(words[i] + ' ' + words[i + 1]);
++    }
++    return lines;
++}
++
++bool SameCheat(const Cheat& a, const Cheat& b) {
++    return Lower(a.name) == Lower(b.name) && a.code == b.code;
++}
++
++void WriteReadme(const std::string& custom_dir) {
++    const std::string path = custom_dir + "README.txt";
++    if (FileUtil::Exists(path)) {
++        return;
++    }
++    WriteText(path,
++              "Your own 3DS cheats, one file per game named by its title id, for example\n"
++              "0004000000053F00.txt. The standalone Azahar shares the folder above.\n"
++              "\n"
++              "The format is the Gateway / CTRPF text format:\n"
++              "\n"
++              "[Cheat name]\n"
++              "*an optional comment line\n"
++              "D3000000 14000000\n"
++              "128B6044 00005050\n"
++              "D2000000 00000000\n"
++              "\n"
++              "The cheats here are merged with the built-in database when a game starts and\n"
++              "come first in the list. Codes added in RetroArch's cheat menu are written here.\n");
++}
++
++/// RetroArch reads <cheat_database_path>/<library name>/<content basename>.cht after
++/// retro_load_game and lists it in Quick Menu > Cheats.
++void WriteRetroArchList(const std::vector<Cheat>& cheats, const std::string& content_path) {
++    std::string base = content_path.substr(content_path.find_last_of('/') + 1);
++    const auto dot = base.find_last_of('.');
++    if (dot != std::string::npos && dot > 0) {
++        base.erase(dot);
++    }
++    const std::string dir = RetroArchDir() + "/";
++    if (base.empty() || !FileUtil::CreateFullPath(dir)) {
++        return;
++    }
++    std::string out = fmt::format("cheats = {}\n\n", cheats.size());
++    for (std::size_t i = 0; i < cheats.size(); i++) {
++        std::string desc = cheats[i].name;
++        std::replace(desc.begin(), desc.end(), '"', '\'');
++        std::string code;
++        for (const std::string& l : cheats[i].code) {
++            code += (code.empty() ? "" : "+") + l;
++        }
++        out += fmt::format("cheat{0}_desc = \"{1}\"\ncheat{0}_code = \"{2}\"\n"
++                           "cheat{0}_enable = {3}\n\n",
++                           i, desc, code, cheats[i].enabled ? "true" : "false");
++    }
++    if (!WriteText(dir + base + ".cht", out)) {
++        LOG_WARNING(Frontend, "cheats: could not write {}{}.cht", dir, base);
++    }
++}
++
++} // namespace
++
++void UseSharedDir() {
++    const std::string dir = SharedDir() + "/";
++    if (FileUtil::IsDirectory(dir) || MakeSharedDirs()) {
++        FileUtil::UpdateUserPath(FileUtil::UserPath::CheatsDir, SharedDir());
++    }
++}
++
++void Prepare(u64 title_id, const std::string& content_path) {
++    g_title_id = title_id;
++    g_dirty = false;
++    g_matched.clear();
++    const std::string custom_dir = SharedDir() + "/custom/";
++    if (title_id == 0 || !MakeSharedDirs()) {
++        return;
++    }
++    WriteReadme(custom_dir);
++    UseSharedDir();
++
++    std::string text;
++    std::vector<Cheat> previous;
++    if (ReadText(CheatFile(title_id), &text)) {
++        previous = ParseText(text);
++    }
++    std::vector<Cheat> custom;
++    if (ReadText(CustomFile(title_id), &text)) {
++        custom = ParseText(text);
++    }
++    std::vector<Cheat> db;
++    if (ReadText(DatabaseDir() + "/" + TidName(title_id) + ".txt", &text)) {
++        db = ParseText(text);
++    }
++
++    // Cheats of the list that belong to neither source were the user's (written into the list
++    // by hand, or added from a menu before): kept as their own.
++    bool custom_changed = false;
++    const auto in = [](const std::vector<Cheat>& list, const Cheat& c) {
++        return std::any_of(list.begin(), list.end(),
++                           [&](const Cheat& l) { return SameCheat(l, c); });
++    };
++    for (const Cheat& p : previous) {
++        if (!in(custom, p) && !in(db, p)) {
++            Cheat c = p;
++            c.enabled = false;
++            custom.push_back(c);
++            custom_changed = true;
++        }
++    }
++    if (custom_changed) {
++        WriteText(CustomFile(title_id), RenderText(custom));
++    }
++
++    // A cheat of the user's that the database has too (the same name and code: adopted from a list
++    // that another system's database wrote) is listed once, where the database has it. GammaOS
++    // merges the same way, so both systems keep one list even when their databases differ.
++    std::vector<Cheat> merged;
++    for (const Cheat& c : custom) {
++        if (!in(db, c)) {
++            merged.push_back(c);
++        }
++    }
++    merged.insert(merged.end(), db.begin(), db.end());
++    // the marks carry over by name and code, then by name alone
++    std::vector<bool> used(previous.size(), false);
++    for (const bool by_code : {true, false}) {
++        for (Cheat& m : merged) {
++            if (by_code) {
++                m.enabled = false;
++            } else if (m.enabled) {
++                continue;
++            }
++            for (std::size_t i = 0; i < previous.size(); i++) {
++                if (!used[i] && previous[i].enabled &&
++                    (by_code ? SameCheat(previous[i], m) : Lower(previous[i].name) == Lower(m.name))) {
++                    m.enabled = true;
++                    used[i] = true;
++                    break;
++                }
++            }
++        }
++    }
++
++    if (merged.empty()) {
++        std::remove(CheatFile(title_id).c_str());
++    } else {
++        if (!WriteText(CheatFile(title_id), RenderText(merged))) {
++            LOG_WARNING(Frontend, "cheats: could not write {}", CheatFile(title_id));
++        }
++        WriteRetroArchList(merged, content_path);
++    }
++    LOG_INFO(Frontend, "cheats: {}: {} own + {} database -> {} listed, {} on", TidName(title_id),
++             custom.size(), db.size(), merged.size(),
++             std::count_if(merged.begin(), merged.end(), [](const Cheat& c) { return c.enabled; }));
++}
++
++void Reset() {
++    auto& system = Core::System::GetInstance();
++    if (!system.IsPoweredOn()) {
++        return; // at boot the engine takes the marks from <TID>.txt itself
++    }
++    const auto cheats = system.CheatEngine().GetCheats();
++    for (const auto& c : cheats) {
++        if (c->IsEnabled()) {
++            c->SetEnabled(false);
++            g_dirty = true;
++        }
++    }
++    g_matched.assign(cheats.size(), false);
++}
++
++void Set(unsigned index, bool enabled, const char* code) {
++    auto& system = Core::System::GetInstance();
++    if (!system.IsPoweredOn() || code == nullptr || g_title_id == 0) {
++        return;
++    }
++    const std::vector<std::string> lines = CodeLines(code);
++    if (lines.empty()) {
++        LOG_WARNING(Frontend, "cheats: RetroArch cheat {} is not a Gateway code: {}", index, code);
++        return;
++    }
++    auto& engine = system.CheatEngine();
++    const auto cheats = engine.GetCheats();
++    g_matched.resize(cheats.size(), false);
++    for (std::size_t i = 0; i < cheats.size(); i++) {
++        if (g_matched[i] || CodeLines(cheats[i]->GetCode()) != lines) {
++            continue;
++        }
++        g_matched[i] = true;
++        if (cheats[i]->IsEnabled() != enabled) {
++            cheats[i]->SetEnabled(enabled);
++            g_dirty = true;
++        }
++        return;
++    }
++    if (!enabled) {
++        return;
++    }
++    // A code typed into RetroArch's menu: one of the user's own from now on.
++    std::string text;
++    std::vector<Cheat> custom;
++    if (ReadText(CustomFile(g_title_id), &text)) {
++        custom = ParseText(text);
++    }
++    Cheat c;
++    c.name = fmt::format("RetroArch code {}", custom.size() + 1);
++    c.code = lines;
++    custom.push_back(c);
++    WriteText(CustomFile(g_title_id), RenderText(custom));
++    std::string joined;
++    for (const std::string& l : lines) {
++        joined += l + '\n';
++    }
++    auto cheat = std::make_shared<::Cheats::GatewayCheat>(c.name, joined, "");
++    cheat->SetEnabled(true);
++    engine.AddCheat(std::move(cheat));
++    g_matched.push_back(true);
++    g_dirty = true;
++    LOG_INFO(Frontend, "cheats: {} added as \"{}\"", code, c.name);
++}
++
++void Flush() {
++    if (!g_dirty) {
++        return;
++    }
++    g_dirty = false;
++    auto& system = Core::System::GetInstance();
++    if (!system.IsPoweredOn() || g_title_id == 0) {
++        return;
++    }
++    UseSharedDir(); // an option change reset the user paths
++    system.CheatEngine().SaveCheatFile(g_title_id);
++}
++
++} // namespace LibRetro::SharedCheats
+--- /dev/null
++++ b/src/citra_libretro/shared_cheats.h
+@@ -0,0 +1,34 @@
++// Copyright 2026 dArkOS RG52 Mini port
++// Licensed under GPLv2 or any later version
++// Refer to the license.txt file included.
++
++#pragma once
++
++#include <string>
++#include "common/common_types.h"
++
++/// 3DS cheats in a folder shared with the standalone Azahar, and RetroArch's cheat menu over
++/// them. /storage/.config/azahar/cheats (Azahar's own format) holds, as azahar-nano's CheatDb does:
++///   <TID>.txt         every cheat of a title with its *citra_enabled mark: the file Azahar's
++///                     cheat engine loads at boot (its cheats folder points here) and saves to
++///   custom/<TID>.txt  the user's own cheats, as written
++/// Before a game boots, <TID>.txt is rebuilt from custom/ and then the database (GammaOS's
++/// cheats3ds.zip, unpacked), the marks kept by name, and RetroArch gets the same list as the
++/// game's cheat file, which it reads right after retro_load_game (Quick Menu > Cheats).
++namespace LibRetro::SharedCheats {
++
++/// Points Azahar's cheats folder at the shared one; again after every FileUtil::SetUserPath.
++void UseSharedDir();
++
++/// Rebuilds the title's list and hands it to RetroArch. Called from retro_load_game.
++void Prepare(u64 title_id, const std::string& content_path);
++
++/// retro_cheat_reset and retro_cheat_set: RetroArch applies its list as a reset and then one set
++/// per enabled cheat, numbered among the enabled ones only, so a cheat is found by its code.
++void Reset();
++void Set(unsigned index, bool enabled, const char* code);
++
++/// Saves the marks RetroArch changed into <TID>.txt (nothing to do when none changed).
++void Flush();
++
++} // namespace LibRetro::SharedCheats

@@ -1,0 +1,80 @@
+From 4034f6c16b7c7368df2776adbea538f85d530db6 Mon Sep 17 00:00:00 2001
+From: Wunk <wunkolo@gmail.com>
+Date: Sat, 12 Sep 2026 07:40:39 -0700
+Subject: [PATCH] video_core: Skip zero-area renderpasses (#2544)
+
+* math_util: Add `GetArea` Rectangle property
+
+Fixes a `Height * Height` typo in https://github.com/azahar-emu/azahar/pull/2510 and also adds `GetArea` to the `Rectangle` type
+
+* renderer_gl: Skip zero-area renderpasses
+
+Similar optimization as the Vulkan version, but on OpenGL. The intersection between the viewport and the surface-rect can sometimes not intersect at all, leading to zero-area render-passes. These draws should be culled entirely to avoid creating zero-area render-passes in Vulkan.
+
+Was able to verify that this gets hit when running [3D Thunder Blade](https://github.com/azahar-emu/azahar/issues/1645) with OpenGL as well as Vulkan.
+---
+ src/common/math_util.h                           | 5 ++++-
+ src/video_core/renderer_opengl/gl_rasterizer.cpp | 6 +++++-
+ src/video_core/renderer_vulkan/vk_rasterizer.cpp | 2 +-
+ 3 files changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/src/common/math_util.h b/src/common/math_util.h
+index e7bb791df..1225bdb9d 100644
+--- a/src/common/math_util.h
++++ b/src/common/math_util.h
+@@ -1,4 +1,4 @@
+-// Copyright 2014-2025 Citra Emulator Project / Azahar Emulator Project
++// Copyright 2014-2026 Citra Emulator Project / Azahar Emulator Project
+ // Licensed under GPLv2 or any later version
+ // Refer to the license.txt file included.
+ 
+@@ -58,6 +58,9 @@ struct Rectangle {
+     [[nodiscard]] T GetHeight() const {
+         return std::abs(static_cast<std::make_signed_t<T>>(bottom - top));
+     }
++    [[nodiscard]] T GetArea() const {
++        return GetWidth() * GetHeight();
++    }
+     [[nodiscard]] Rectangle<T> TranslateX(const T x) const {
+         return Rectangle{left + x, top, right + x, bottom};
+     }
+diff --git a/src/video_core/renderer_opengl/gl_rasterizer.cpp b/src/video_core/renderer_opengl/gl_rasterizer.cpp
+index 7c820e9f7..179150661 100644
+--- a/src/video_core/renderer_opengl/gl_rasterizer.cpp
++++ b/src/video_core/renderer_opengl/gl_rasterizer.cpp
+@@ -581,6 +581,11 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
+         return true;
+     }
+ 
++    const auto draw_rect = fb_helper.DrawRect();
++    if (draw_rect.GetArea() == 0) {
++        return true;
++    }
++
+     // Bind the framebuffer surfaces
+     if (shadow_rendering) {
+         state.image_shadow_buffer = framebuffer->Attachment(SurfaceType::Color);
+@@ -598,7 +603,6 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
+ 
+     // Viewport can have negative offsets or larger dimensions than our framebuffer sub-rect.
+     // Enable scissor test to prevent drawing outside of the framebuffer region
+-    const auto draw_rect = fb_helper.DrawRect();
+     state.scissor.enabled = true;
+     state.scissor.x = draw_rect.left;
+     state.scissor.y = draw_rect.bottom;
+diff --git a/src/video_core/renderer_vulkan/vk_rasterizer.cpp b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
+index b50274f9a..09aa7a80b 100644
+--- a/src/video_core/renderer_vulkan/vk_rasterizer.cpp
++++ b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
+@@ -561,7 +561,7 @@ bool RasterizerVulkan::Draw(bool accelerate, bool is_indexed) {
+     }
+ 
+     const auto draw_rect = fb_helper.DrawRect();
+-    if (draw_rect.GetHeight() * draw_rect.GetHeight() == 0) {
++    if (draw_rect.GetArea() == 0) {
+         return true;
+     }
+ 
+-- 
+2.43.0
+
