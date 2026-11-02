@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Anup Vishwakarma <anup.vishwakarma@oss.qualcomm.com>
+Date: Mon, 21 Sep 2026 22:06:19 +0530
+Subject: [PATCH] remoteproc: qcom_q6v5_adsp: Fix 64-bit address truncation in translation
+
+In adsp_da_to_va(), the offset calculation results are stored in a
+signed 32-bit integer (offset). On 64-bit architectures, this can
+truncate the 64-bit address arithmetic result if the subtraction exceeds
+2GB, causing erroneous bounds check failures or invalid pointer
+translations.
+
+Fix this by using an unsigned size_t offset and explicit comparison-based
+bounds checking. Check that the address is above the base before
+subtracting, and use the form (len > mem_size - offset) instead of
+(offset + len > mem_size) to avoid unsigned overflow.
+
+Signed-off-by: Anup Vishwakarma <anup.vishwakarma@oss.qualcomm.com>
+Reviewed-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20260921-b4-q6v5_address_truncation_fixes_upstream-v1-2-f19b4b947bba@oss.qualcomm.com
+---
+ drivers/remoteproc/qcom_q6v5_adsp.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/remoteproc/qcom_q6v5_adsp.c b/drivers/remoteproc/qcom_q6v5_adsp.c
+index 46d9169a37f6..b014e7498f63 100644
+--- a/drivers/remoteproc/qcom_q6v5_adsp.c
++++ b/drivers/remoteproc/qcom_q6v5_adsp.c
+@@ -486,10 +486,13 @@ static int adsp_stop(struct rproc *rproc)
+ static void *adsp_da_to_va(struct rproc *rproc, u64 da, size_t len, bool *is_iomem)
+ {
+ 	struct qcom_adsp *adsp = rproc->priv;
+-	int offset;
++	size_t offset;
++
++	if (da < adsp->mem_reloc)
++		return NULL;
+ 
+ 	offset = da - adsp->mem_reloc;
+-	if (offset < 0 || offset + len > adsp->mem_size)
++	if (offset > adsp->mem_size || len > adsp->mem_size - offset)
+ 		return NULL;
+ 
+ 	return (__force void *)adsp->mem_region + offset;

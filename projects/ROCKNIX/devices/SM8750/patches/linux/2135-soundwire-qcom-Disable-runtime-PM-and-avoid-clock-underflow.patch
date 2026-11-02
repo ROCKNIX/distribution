@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lee Jones <lee@kernel.org>
+Date: Fri, 30 Oct 2026 10:46:47 +0000
+Subject: [PATCH] soundwire: qcom: Disable runtime PM and avoid clock underflow in qcom_swrm_remove()
+
+When the controller is runtime-suspended, swrm_runtime_suspend() has
+already disabled ctrl->hclk.  If the device is unbound in that state,
+qcom_swrm_remove() omits pm_runtime_disable() and unconditionally calls
+clk_disable_unprepare(), triggering a clock enable count underflow and
+leaving runtime PM enabled.
+
+Resume the device before removing the bus master, disable runtime PM,
+and only disable ctrl->hclk if the device is not runtime-suspended.
+
+Fixes: 74e79da9fd46 ("soundwire: qcom: add runtime pm support")
+Closes: https://sashiko.dev/#/bug/linux-e26e04cd-3dec-4a3d-94e6-f45403c4bb57
+Cc: stable@vger.kernel.org
+Signed-off-by: Lee Jones <lee@kernel.org>
+Link: https://lore.kernel.org/r/20261030104840.3361217-9-lee@kernel.org
+---
+ drivers/soundwire/qcom.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/soundwire/qcom.c b/drivers/soundwire/qcom.c
+index 205011234030..246bc063b850 100644
+--- a/drivers/soundwire/qcom.c
++++ b/drivers/soundwire/qcom.c
+@@ -1791,8 +1791,13 @@ static void qcom_swrm_remove(struct platform_device *pdev)
+ {
+ 	struct qcom_swrm_ctrl *ctrl = dev_get_drvdata(&pdev->dev);
+ 
++	pm_runtime_get_sync(&pdev->dev);
+ 	sdw_bus_master_delete(&ctrl->bus);
+-	clk_disable_unprepare(ctrl->hclk);
++	pm_runtime_disable(&pdev->dev);
++	pm_runtime_put_noidle(&pdev->dev);
++	if (!pm_runtime_status_suspended(&pdev->dev))
++		clk_disable_unprepare(ctrl->hclk);
++	pm_runtime_set_suspended(&pdev->dev);
+ }
+ 
+ static int __maybe_unused swrm_runtime_resume(struct device *dev)

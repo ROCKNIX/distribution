@@ -1,0 +1,56 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Charles Keepax <ckeepax@opensource.cirrus.com>
+Date: Mon, 12 Oct 2026 11:55:38 +0100
+Subject: [PATCH] soundwire: bus: Don't unassign dev_num before unregistering device
+
+Don't mark dev_num as unassigned until after the driver remove has
+been called. The driver may want to communicate with the device
+as part of the driver remove operation, so the dev_num should
+remain assigned until that has completed. This requires moving from
+device_unregister() to manually calling device_del() and device_put()
+to ensure that the slave struct isn't freed too early.
+
+Reviewed-by: Pierre-Louis Bossart <pierre-louis.bossart@linux.dev>
+Signed-off-by: Charles Keepax <ckeepax@opensource.cirrus.com>
+Link: https://lore.kernel.org/r/20261012105540.1686405-2-ckeepax@opensource.cirrus.com
+---
+
+Changes since v2:
+ - Added comment to explain splitting of device_unregister()
+
+ drivers/soundwire/bus.c | 15 +++++++++++++--
+ 1 file changed, 13 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/soundwire/bus.c b/drivers/soundwire/bus.c
+index aeaae5a57c89d..eddff9a5fd35d 100644
+--- a/drivers/soundwire/bus.c
++++ b/drivers/soundwire/bus.c
+@@ -175,8 +175,18 @@ static int sdw_delete_slave(struct device *dev, void *data)
+ 
+ 	sdw_slave_debugfs_exit(slave);
+ 
+-	mutex_lock(&bus->bus_lock);
++	/*
++	 * Split device_unregister(), the framework level needs to access
++	 * members of the slave structure after the slave driver has been
++	 * removed, thus the device_put() needs to be delayed. The device
++	 * number needs to be marked as unused and the slave needs to be
++	 * removed from the slave list. These can't be done before the
++	 * drivers remove callback as the remove callback should still
++	 * be able to communicate with the device.
++	 */
++	device_del(dev);
+ 
++	mutex_lock(&bus->bus_lock);
+ 	if (slave->dev_num) { /* clear dev_num if assigned */
+ 		clear_bit(slave->dev_num, bus->assigned);
+ 		if (bus->ops && bus->ops->put_device_num)
+@@ -185,7 +195,8 @@ static int sdw_delete_slave(struct device *dev, void *data)
+ 	list_del_init(&slave->node);
+ 	mutex_unlock(&bus->bus_lock);
+ 
+-	device_unregister(dev);
++	put_device(dev);
++
+ 	return 0;
+ }

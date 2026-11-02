@@ -1,0 +1,91 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Srinivas Kandagatla <srinivas.kandagatla@oss.qualcomm.com>
+Date: Tue, 08 Sep 2026 09:28:01 +0100
+Subject: [PATCH] ASoC: codecs: lpass-wsa-macro: use v2.5 Compander1 addresses on v2.5+
+
+wsa_macro_set_spkr_mode() unconditionally writes CDC_WSA_COMPANDER1_CTL3
+(0x5CC) and CDC_WSA_COMPANDER1_CTL7 (0x5DC).  On v2.5+ silicon these
+registers moved to CDC_2_5_WSA_COMPANDER1_CTL3 (0x5EC) and
+CDC_2_5_WSA_COMPANDER1_CTL7 (0x5FC); the v2.1 addresses are dead on
+that hardware, so the update_bits() calls take a bus error:
+
+  wsa_macro 6c90000.codec: ASoC error (-5): at
+    snd_soc_component_update_bits() on 6c90000.codec for
+    register: [0x000005dc]
+
+The flat regcache had been hiding the read side of this by returning
+the zero-initialised cache slot instead of doing a bus read, so the
+error only becomes visible once the cache reports the miss honestly
+and regmap falls back to a real bus read.
+
+Select the correct address for Compander1 CTL3/CTL7 based on
+codec_version.  The Compander0 and Boost registers used in the same
+function have the same address across versions, so they stay
+unchanged.  Also collapse the two mode branches to a single sequence
+with mode-selected values, which is what the switch was doing anyway.
+
+Fixes: 727de4fbc546 ("ASoC: codecs: lpass-wsa-macro: Correct support for newer v2.5 version")
+Cc: stable@vger.kernel.org
+Signed-off-by: Srinivas Kandagatla <srinivas.kandagatla@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20260908082806.648797-2-srinivas.kandagatla@oss.qualcomm.com
+---
+ sound/soc/codecs/lpass-wsa-macro.c | 42 ++++++++++++++++++------------
+ 1 file changed, 25 insertions(+), 17 deletions(-)
+
+diff --git a/sound/soc/codecs/lpass-wsa-macro.c b/sound/soc/codecs/lpass-wsa-macro.c
+index cfd2ac0a6cda..7a2b0cf9398a 100644
+--- a/sound/soc/codecs/lpass-wsa-macro.c
++++ b/sound/soc/codecs/lpass-wsa-macro.c
+@@ -1129,27 +1129,35 @@ static const struct regmap_config wsa_regmap_config = {
+ int wsa_macro_set_spkr_mode(struct snd_soc_component *component, int mode)
+ {
+ 	struct wsa_macro *wsa = snd_soc_component_get_drvdata(component);
++	unsigned int comp1_ctl3, comp1_ctl7;
++	u8 comp_val, boost_val;
+ 
+ 	wsa->spkr_mode = mode;
+ 
+-	switch (mode) {
+-	case WSA_MACRO_SPKR_MODE_1:
+-		snd_soc_component_update_bits(component, CDC_WSA_COMPANDER0_CTL3, 0x80, 0x00);
+-		snd_soc_component_update_bits(component, CDC_WSA_COMPANDER1_CTL3, 0x80, 0x00);
+-		snd_soc_component_update_bits(component, CDC_WSA_COMPANDER0_CTL7, 0x01, 0x00);
+-		snd_soc_component_update_bits(component, CDC_WSA_COMPANDER1_CTL7, 0x01, 0x00);
+-		snd_soc_component_update_bits(component, CDC_WSA_BOOST0_BOOST_CTL, 0x7C, 0x44);
+-		snd_soc_component_update_bits(component, CDC_WSA_BOOST1_BOOST_CTL, 0x7C, 0x44);
+-		break;
+-	default:
+-		snd_soc_component_update_bits(component, CDC_WSA_COMPANDER0_CTL3, 0x80, 0x80);
+-		snd_soc_component_update_bits(component, CDC_WSA_COMPANDER1_CTL3, 0x80, 0x80);
+-		snd_soc_component_update_bits(component, CDC_WSA_COMPANDER0_CTL7, 0x01, 0x01);
+-		snd_soc_component_update_bits(component, CDC_WSA_COMPANDER1_CTL7, 0x01, 0x01);
+-		snd_soc_component_update_bits(component, CDC_WSA_BOOST0_BOOST_CTL, 0x7C, 0x58);
+-		snd_soc_component_update_bits(component, CDC_WSA_BOOST1_BOOST_CTL, 0x7C, 0x58);
+-		break;
++	/* Compander1 CTL3/CTL7 moved on v2.5+ silicon. */
++	if (wsa->codec_version >= LPASS_CODEC_VERSION_2_5) {
++		comp1_ctl3 = CDC_2_5_WSA_COMPANDER1_CTL3;
++		comp1_ctl7 = CDC_2_5_WSA_COMPANDER1_CTL7;
++	} else {
++		comp1_ctl3 = CDC_WSA_COMPANDER1_CTL3;
++		comp1_ctl7 = CDC_WSA_COMPANDER1_CTL7;
+ 	}
++
++	if (mode == WSA_MACRO_SPKR_MODE_1) {
++		comp_val = 0x00;
++		boost_val = 0x44;
++	} else {
++		comp_val = 0x80;
++		boost_val = 0x58;
++	}
++
++	snd_soc_component_update_bits(component, CDC_WSA_COMPANDER0_CTL3, 0x80, comp_val);
++	snd_soc_component_update_bits(component, comp1_ctl3, 0x80, comp_val);
++	snd_soc_component_update_bits(component, CDC_WSA_COMPANDER0_CTL7, 0x01, comp_val ? 0x01 : 0x00);
++	snd_soc_component_update_bits(component, comp1_ctl7, 0x01, comp_val ? 0x01 : 0x00);
++	snd_soc_component_update_bits(component, CDC_WSA_BOOST0_BOOST_CTL, 0x7C, boost_val);
++	snd_soc_component_update_bits(component, CDC_WSA_BOOST1_BOOST_CTL, 0x7C, boost_val);
++
+ 	return 0;
+ }
+ EXPORT_SYMBOL(wsa_macro_set_spkr_mode);

@@ -1,0 +1,66 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Anup Vishwakarma <anup.vishwakarma@oss.qualcomm.com>
+Date: Mon, 21 Sep 2026 22:06:18 +0530
+Subject: [PATCH] remoteproc: qcom_q6v5_pas: Fix 64-bit address truncation in dump and translation
+
+In qcom_pas_segment_dump() and qcom_pas_da_to_va(), the offset
+calculation results are stored in signed 32-bit integers (total_offset
+and offset). On 64-bit architectures, this can truncate the 64-bit
+address arithmetic result if the subtraction or addition exceeds 2GB,
+causing erroneous bounds check failures or invalid pointer translations.
+
+Fix this by using unsigned size_t offsets and explicit comparison-based
+bounds checking. Check that the address is above the base before
+subtracting, and use the form (len > mem_size - offset) instead of
+(offset + len > mem_size) to avoid unsigned overflow.
+
+Signed-off-by: Anup Vishwakarma <anup.vishwakarma@oss.qualcomm.com>
+Reviewed-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20260921-b4-q6v5_address_truncation_fixes_upstream-v1-1-f19b4b947bba@oss.qualcomm.com
+---
+ drivers/remoteproc/qcom_q6v5_pas.c | 22 +++++++++++++++++-----
+ 1 file changed, 17 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/remoteproc/qcom_q6v5_pas.c b/drivers/remoteproc/qcom_q6v5_pas.c
+index a005546c265d..c95a030949d7 100644
+--- a/drivers/remoteproc/qcom_q6v5_pas.c
++++ b/drivers/remoteproc/qcom_q6v5_pas.c
+@@ -130,10 +130,19 @@ static void qcom_pas_segment_dump(struct rproc *rproc,
+ 				  void *dest, size_t offset, size_t size)
+ {
+ 	struct qcom_pas *pas = rproc->priv;
+-	int total_offset;
++	u64 addr = segment->da + segment->offset + offset;
++	size_t total_offset;
+ 
+-	total_offset = segment->da + segment->offset + offset - pas->mem_phys;
+-	if (total_offset < 0 || total_offset + size > pas->mem_size) {
++	if (addr < pas->mem_phys) {
++		dev_err(pas->dev,
++			"invalid copy request for segment %pad with offset %zu and size %zu)\n",
++			&segment->da, offset, size);
++		memset(dest, 0xff, size);
++		return;
++	}
++
++	total_offset = addr - pas->mem_phys;
++	if (total_offset > pas->mem_size || size > pas->mem_size - total_offset) {
+ 		dev_err(pas->dev,
+ 			"invalid copy request for segment %pad with offset %zu and size %zu)\n",
+ 			&segment->da, offset, size);
+@@ -445,10 +454,13 @@ static int qcom_pas_stop(struct rproc *rproc)
+ static void *qcom_pas_da_to_va(struct rproc *rproc, u64 da, size_t len, bool *is_iomem)
+ {
+ 	struct qcom_pas *pas = rproc->priv;
+-	int offset;
++	size_t offset;
++
++	if (da < pas->mem_reloc)
++		return NULL;
+ 
+ 	offset = da - pas->mem_reloc;
+-	if (offset < 0 || offset + len > pas->mem_size)
++	if (offset > pas->mem_size || len > pas->mem_size - offset)
+ 		return NULL;
+ 
+ 	if (is_iomem)

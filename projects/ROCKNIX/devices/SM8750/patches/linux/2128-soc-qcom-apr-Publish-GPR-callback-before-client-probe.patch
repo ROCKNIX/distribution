@@ -1,0 +1,68 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mohit Sharma <mohit.sharma@oss.qualcomm.com>
+Date: Thu, 22 Oct 2026 20:11:30 +0530
+Subject: [PATCH] soc: qcom: apr: Publish GPR callback before client probe
+
+A GPR service driver can issue synchronous commands from its probe path,
+or populate child devices which issue commands before the parent probe
+returns. The APR/GPR bus currently installs the GPR service callback only
+after the service driver's probe has completed.
+
+If a response arrives while the client probe is still running, GPR finds
+the destination service but cannot dispatch the response because the
+service callback is NULL. The client waiting for the response eventually
+times out.
+
+This was observed intermittently on Qualcomm Lemans and Monaco platforms
+when q6apm child probing sent an APM shared-memory map command before the
+parent probe returned. The failure has the following signature:
+
+  qcom-apm ... CMD timeout for [100100c] opcode
+  q6apm-dai ... Audio Start: Buffer Allocation failed rc = -110
+  snd-sc8280xp ... ASoC: can't create pcm MultiMedia1 Playback :-110
+
+Install the GPR callback before invoking the client probe so responses to
+probe-time commands can be dispatched. Clear the callback again if probe
+fails, and preserve the existing callback ordering for APR clients.
+
+Fixes: ec1471a898cc ("soc: qcom: apr: Add GPR support")
+Cc: stable@vger.kernel.org
+Co-developed-by: Ajay Kumar Nandam <ajay.nandam@oss.qualcomm.com>
+Signed-off-by: Ajay Kumar Nandam <ajay.nandam@oss.qualcomm.com>
+Signed-off-by: Mohit Sharma <mohit.sharma@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261022144130.2443667-3-mohit.sharma@oss.qualcomm.com
+---
+ drivers/soc/qcom/apr.c | 15 +++++++++++++--
+ 1 file changed, 13 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/soc/qcom/apr.c b/drivers/soc/qcom/apr.c
+index ea7f83916d8d..829e5c8fdf98 100644
+--- a/drivers/soc/qcom/apr.c
++++ b/drivers/soc/qcom/apr.c
+@@ -365,13 +365,24 @@ static int apr_device_probe(struct device *dev)
+ {
+ 	struct apr_device *adev = to_apr_device(dev);
+ 	struct apr_driver *adrv = to_apr_driver(dev->driver);
++	struct packet_router *apr = dev_get_drvdata(dev->parent);
+ 	int ret;
+ 
++	if (apr->type == PR_TYPE_GPR)
++		adev->svc.callback = adrv->gpr_callback;
++
+ 	ret = adrv->probe(adev);
+-	if (!ret)
++	if (ret) {
++		if (apr->type == PR_TYPE_GPR)
++			adev->svc.callback = NULL;
++
++		return ret;
++	}
++
++	if (apr->type != PR_TYPE_GPR)
+ 		adev->svc.callback = adrv->gpr_callback;
+ 
+-	return ret;
++	return 0;
+ }
+ 
+ static void apr_device_remove(struct device *dev)

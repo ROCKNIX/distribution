@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lee Jones <lee@kernel.org>
+Date: Fri, 30 Oct 2026 10:46:40 +0000
+Subject: [PATCH] soundwire: bus: Hold bus_lock when looking up slave devices
+
+sdw_get_slave() iterates over bus->slaves and requires bus->bus_lock to
+be held by the caller.  However, sdw_handle_slave_status() and
+sdw_clear_slave_status() drop bus->bus_lock immediately before calling
+sdw_get_slave().  If a concurrent slave teardown unlinks the node via
+list_del_init() and frees the slave while bus->bus_lock is dropped,
+sdw_get_slave() can spin forever on the self-referential list entry or
+dereference freed memory.
+
+Keep bus->bus_lock held across the sdw_get_slave() lookup in
+sdw_handle_slave_status() and sdw_clear_slave_status().
+
+Fixes: b0a9c37b0178 ("soundwire: Add slave status handling")
+Closes: https://sashiko.dev/#/bug/linux-b0e65a93-dfd4-4e3d-a96c-8f13ba0aafd2
+Cc: stable@vger.kernel.org
+Signed-off-by: Lee Jones <lee@kernel.org>
+Link: https://lore.kernel.org/r/20261030104840.3361217-2-lee@kernel.org
+---
+ drivers/soundwire/bus.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/soundwire/bus.c b/drivers/soundwire/bus.c
+index aeaae5a57c89..15c66effbf4f 100644
+--- a/drivers/soundwire/bus.c
++++ b/drivers/soundwire/bus.c
+@@ -1907,9 +1907,9 @@ int sdw_handle_slave_status(struct sdw_bus *bus,
+ 			mutex_unlock(&bus->bus_lock);
+ 			continue;
+ 		}
+-		mutex_unlock(&bus->bus_lock);
+ 
+ 		slave = sdw_get_slave(bus, i);
++		mutex_unlock(&bus->bus_lock);
+ 		if (!slave)
+ 			continue;
+ 
+@@ -1954,9 +1954,9 @@ int sdw_handle_slave_status(struct sdw_bus *bus,
+ 			mutex_unlock(&bus->bus_lock);
+ 			continue;
+ 		}
+-		mutex_unlock(&bus->bus_lock);
+ 
+ 		slave = sdw_get_slave(bus, i);
++		mutex_unlock(&bus->bus_lock);
+ 		if (!slave)
+ 			continue;
+ 
+@@ -2052,9 +2052,9 @@ void sdw_clear_slave_status(struct sdw_bus *bus, u32 request)
+ 			mutex_unlock(&bus->bus_lock);
+ 			continue;
+ 		}
+-		mutex_unlock(&bus->bus_lock);
+ 
+ 		slave = sdw_get_slave(bus, i);
++		mutex_unlock(&bus->bus_lock);
+ 		if (!slave)
+ 			continue;

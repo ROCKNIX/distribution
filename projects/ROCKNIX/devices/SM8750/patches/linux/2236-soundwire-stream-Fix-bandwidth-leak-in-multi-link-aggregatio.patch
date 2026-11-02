@@ -1,0 +1,90 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: David Lin <david.lin@intel.com>
+Date: Mon, 02 Nov 2026 14:04:37 +0800
+Subject: [PATCH] soundwire: stream: Fix bandwidth leak in multi-link aggregation failure
+
+When preparing a multi-link aggregation stream, a failure on a subsequent
+link during _sdw_prepare_stream() causes the stream preparation to fail.
+However, the bandwidth allocated on the preceding successful links is never
+released, causing a cumulative bandwidth leak.
+
+Fix this by saving a snapshot of each bus's parameters before making any
+modifications. In case of failure, we iterate through the stream's master
+list and restore each bus to its original parameter state, ensuring an
+atomic rollback and preventing any bandwidth leaks.
+
+Signed-off-by: David Lin <david.lin@intel.com>
+Co-developed-by: Bard Liao <yung-chuan.liao@linux.intel.com>
+Signed-off-by: Bard Liao <yung-chuan.liao@linux.intel.com>
+Reviewed-by: Péter Ujfalusi <peter.ujfalusi@linux.intel.com>
+Link: https://lore.kernel.org/r/20261102060437.824814-3-yung-chuan.liao@linux.intel.com
+---
+ drivers/soundwire/bus.h    |  3 +++
+ drivers/soundwire/stream.c | 17 +++++++++++++----
+ 2 files changed, 16 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/soundwire/bus.h b/drivers/soundwire/bus.h
+index 44e4f5193917..476387b70472 100644
+--- a/drivers/soundwire/bus.h
++++ b/drivers/soundwire/bus.h
+@@ -155,6 +155,8 @@ struct sdw_slave_runtime {
+  *
+  * @bus: Bus handle
+  * @stream: Stream runtime handle
++ * @params_backup: Snapshot of original bus parameters saved before stream
++ * preparation, used for rollback recovery on failure.
+  * @direction: Data direction for Master
+  * @ch_count: Number of channels handled by the Master for
+  * this stream, can be zero.
+@@ -166,6 +168,7 @@ struct sdw_slave_runtime {
+ struct sdw_master_runtime {
+ 	struct sdw_bus *bus;
+ 	struct sdw_stream_runtime *stream;
++	struct sdw_bus_params params_backup;
+ 	enum sdw_data_direction direction;
+ 	unsigned int ch_count;
+ 	struct list_head slave_rt_list;
+diff --git a/drivers/soundwire/stream.c b/drivers/soundwire/stream.c
+index 96613dd0677c..86d951cc92f7 100644
+--- a/drivers/soundwire/stream.c
++++ b/drivers/soundwire/stream.c
+@@ -1477,19 +1477,22 @@ static int _sdw_prepare_stream(struct sdw_stream_runtime *stream,
+ 	struct sdw_master_runtime *m_rt;
+ 	struct sdw_bus *bus;
+ 	struct sdw_master_prop *prop;
+-	struct sdw_bus_params params;
+ 	int ret;
+ 
++	/* Pre-pass: snapshot original bus parameters for all masters */
++	list_for_each_entry(m_rt, &stream->master_list, stream_node)
++		m_rt->params_backup = m_rt->bus->params;
++
+ 	/* Prepare  Master(s) and Slave(s) port(s) associated with stream */
+ 	list_for_each_entry(m_rt, &stream->master_list, stream_node) {
+ 		bus = m_rt->bus;
+ 		prop = &bus->prop;
+-		memcpy(&params, &bus->params, sizeof(params));
+ 
+ 		/* TODO: Support Asynchronous mode */
+ 		if ((prop->max_clk_freq % stream->params.rate) != 0) {
+ 			dev_err(bus->dev, "Async mode not supported\n");
+-			return -EINVAL;
++			ret = -EINVAL;
++			goto restore_params;
+ 		}
+ 
+ 		if (update_params) {
+@@ -1540,7 +1543,13 @@ static int _sdw_prepare_stream(struct sdw_stream_runtime *stream,
+ 	return ret;
+ 
+ restore_params:
+-	memcpy(&bus->params, &params, sizeof(params));
++	/*
++	 * Revert all masters to their snapshotted original parameters.
++	 * Any master that was not modified will safely revert to its own original state.
++	 */
++	list_for_each_entry(m_rt, &stream->master_list, stream_node)
++		m_rt->bus->params = m_rt->params_backup;
++
+ 	return ret;
+ }

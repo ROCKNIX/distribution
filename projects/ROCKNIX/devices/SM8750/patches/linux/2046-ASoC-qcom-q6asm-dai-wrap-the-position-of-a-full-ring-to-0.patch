@@ -1,0 +1,53 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vladyslav Tymoshchuk <tvlad744@gmail.com>
+Date: Wed, 14 Oct 2026 19:27:02 +0300
+Subject: [PATCH] ASoC: qcom: q6asm-dai: wrap the position of a full ring to 0
+
+Commit 44432315444c ("ASoC: qcom: q6asm-dai: use q6asm_get_hw_pointer")
+took the position from the number of period buffers the DSP has
+returned in the current lap, 1..periods, and reports one frame less
+than that, as q6apm-dai does.
+
+One frame short, a playback stream whose application stops feeding it
+never reaches the stop threshold: the DSP returns the last queued
+buffer, the position stops at appl_ptr - 1 and no period interrupt
+comes any more, so ALSA never detects the underrun, the stream stays
+RUNNING and drain only ends on its timeout. On capture, the last frame
+of each period is held back until the next one.
+
+Before that commit the position wrapped to 0 at the end of the ring.
+Do that again, as for q6apm-dai.
+
+Fixes: 44432315444c ("ASoC: qcom: q6asm-dai: use q6asm_get_hw_pointer")
+Cc: stable@vger.kernel.org
+Assisted-by: Claude:claude-opus-5-5
+Signed-off-by: Vladyslav Tymoshchuk <tvlad744@gmail.com>
+Link: https://lore.kernel.org/r/20261014162703.10172-4-tvlad744@gmail.com
+---
+Compile-tested only: I have no Q6ASM hardware (sdm845, sm8250 RB5...).
+A test on such a board would be welcome. The hw pointer of q6asm is not
+reset on a new prepare either (the same as patch 2 for q6apm); I left
+that alone as I cannot test the q6asm prepare paths.
+
+ sound/soc/qcom/qdsp6/q6asm-dai.c | 7 +++----
+ 1 file changed, 3 insertions(+), 4 deletions(-)
+
+diff --git a/sound/soc/qcom/qdsp6/q6asm-dai.c b/sound/soc/qcom/qdsp6/q6asm-dai.c
+index cd4f82bb8cc7..4261c3048c36 100644
+--- a/sound/soc/qcom/qdsp6/q6asm-dai.c
++++ b/sound/soc/qcom/qdsp6/q6asm-dai.c
+@@ -485,11 +485,10 @@ static snd_pcm_uframes_t q6asm_dai_pointer(struct snd_soc_component *component,
+ 	struct q6asm_dai_rtd *prtd = runtime->private_data;
+ 	snd_pcm_uframes_t ptr;
+ 
+-	ptr = q6asm_get_hw_pointer(prtd->audio_client, substream->stream) * runtime->period_size;
+-	if (ptr)
+-		return ptr - 1;
++	/* a full lap of period buffers is the start of the ring again */
++	ptr = q6asm_get_hw_pointer(prtd->audio_client, substream->stream) % runtime->periods;
+ 
+-	return 0;
++	return ptr * runtime->period_size;
+ }
+ 
+ static int q6asm_dai_hw_params(struct snd_soc_component *component,

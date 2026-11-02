@@ -1,0 +1,53 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Anup Vishwakarma <anup.vishwakarma@oss.qualcomm.com>
+Date: Tue, 22 Sep 2026 01:03:52 +0530
+Subject: [PATCH] remoteproc: qcom_q6v5_pas: Preserve shutdown error in qcom_pas_stop()
+
+qcom_pas_stop() unconditionally overwrites ret with the return value of
+qcom_smem_bust_hwspin_lock_by_host(), discarding any earlier shutdown
+error from qcom_pas_shutdown(). If the primary shutdown fails but the
+hwspin_lock bust succeeds, the function returns 0, silently masking the
+failure from the remoteproc core.
+
+Use a separate local variable for the hwspin_lock result and only update
+ret if it is currently 0, consistent with how the DTB shutdown error is
+already handled in the same function.
+
+Fixes: 568b13b65078 ("remoteproc: qcom_q6v5_pas: Add hwspinlock bust on stop")
+Signed-off-by: Anup Vishwakarma <anup.vishwakarma@oss.qualcomm.com>
+Reviewed-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20260922-b4-q6v5_pas_stop_preserve_shutdown_error-v1-1-2adced730893@oss.qualcomm.com
+---
+ drivers/remoteproc/qcom_q6v5_pas.c | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/remoteproc/qcom_q6v5_pas.c b/drivers/remoteproc/qcom_q6v5_pas.c
+index a005546c265d..845aed000a1b 100644
+--- a/drivers/remoteproc/qcom_q6v5_pas.c
++++ b/drivers/remoteproc/qcom_q6v5_pas.c
+@@ -436,8 +436,15 @@ static int qcom_pas_stop(struct rproc *rproc)
+ 	if (handover)
+ 		qcom_pas_handover(&pas->q6v5);
+ 
+-	if (pas->smem_host_id)
+-		ret = qcom_smem_bust_hwspin_lock_by_host(pas->smem_host_id);
++	if (pas->smem_host_id) {
++		int lock_ret = qcom_smem_bust_hwspin_lock_by_host(pas->smem_host_id);
++
++		if (lock_ret) {
++			dev_err(pas->dev, "failed to bust hwspin_lock: %d\n", lock_ret);
++			if (!ret)
++				ret = lock_ret;
++		}
++	}
+ 
+ 	return ret;
+ }
+
+---
+base-commit: 5c4d4169604b335c38bbc79bc1fc03042981fc6f
+change-id: 20260922-b4-q6v5_pas_stop_preserve_shutdown_error-39be7e8133e6
+
+Best regards,
+--  
+Anup Vishwakarma <anup.vishwakarma@oss.qualcomm.com>

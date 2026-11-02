@@ -1,0 +1,60 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Shawn Guo <shengchao.guo@oss.qualcomm.com>
+Date: Wed, 21 Oct 2026 12:10:42 +0800
+Subject: [PATCH] ASoC: qcom: q6apm: Fix unmap regions response handling
+
+The DSP acknowledges APM_CMD_SHARED_MEM_UNMAP_REGIONS with a
+GPR_BASIC_RSP_RESULT packet whose payload carries the acknowledged
+opcode and the status. apm_callback() stores hdr->opcode, i.e.
+GPR_BASIC_RSP_RESULT itself, as the result opcode, so
+audioreach_send_cmd_sync(), which waits for 0x0100100d, never sees a
+match and gives up after five seconds even though the DSP has already
+processed the command:
+
+  qcom-apm gprsvc:service:2:1: CMD timeout for [100100d] opcode
+
+Each mapped graph costs a five second stall on unmap, and the forced
+status of 0 also hides real DSP failures from the caller.
+
+Record the opcode and status from the response payload, like the other
+basic-result commands do, and only drop the cached mapping handle when
+the DSP reports success.
+
+Fixes: 8ea6e25c8536 ("ASoC: qcom: q6apm: Add support for early buffer mapping on DSP")
+Cc: stable@vger.kernel.org
+Reviewed-by: Srinivas Kandagatla <srinivas.kandagatla@oss.qualcomm.com>
+Signed-off-by: Shawn Guo <shengchao.guo@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261021041044.2080369-2-shengchao.guo@oss.qualcomm.com
+---
+ sound/soc/qcom/qdsp6/q6apm.c | 15 +++++++--------
+ 1 file changed, 7 insertions(+), 8 deletions(-)
+
+diff --git a/sound/soc/qcom/qdsp6/q6apm.c b/sound/soc/qcom/qdsp6/q6apm.c
+index b6b1ef6833b3..fa7f5dfca418 100644
+--- a/sound/soc/qcom/qdsp6/q6apm.c
++++ b/sound/soc/qcom/qdsp6/q6apm.c
+@@ -960,17 +960,16 @@ static int apm_callback(const struct gpr_resp_pkt *data, void *priv, int op)
+ 			wake_up(&apm->wait);
+ 			break;
+ 		case APM_CMD_SHARED_MEM_UNMAP_REGIONS:
+-			apm->result.opcode = hdr->opcode;
+-			apm->result.status = 0;
+-			rsp = data->payload;
+-
+-			info = idr_find(&apm->graph_info_idr, hdr->token);
+-			if (info)
+-				info->mem_map_handle = 0;
+-			else
++			apm->result.opcode = result->opcode;
++			apm->result.status = result->status;
++			if (result->status)
+ 				dev_err(dev, "Error (%d) Processing 0x%08x cmd\n", result->status,
+ 					result->opcode);
+ 
++			info = idr_find(&apm->graph_info_idr, hdr->token);
++			if (info && !result->status)
++				info->mem_map_handle = 0;
++
+ 			wake_up(&apm->wait);
+ 			break;
+ 		default:

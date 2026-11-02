@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tang Bin <tangbin@cmss.chinamobile.com>
+Date: Wed, 28 Oct 2026 19:45:00 +0800
+Subject: [PATCH] ASoC: codecs: lpass-rx-macro: fix PM ref leak in swclk_gate_enable
+
+swclk_gate_enable() calls pm_runtime_resume_and_get() (incrementing the PM
+usage counter and, via of_pm_clk_add_clks, enabling mclk) before
+rx_macro_mclk_enable(). On rx_macro_mclk_enable() failure it called
+clk_disable_unprepare(rx->mclk) and returned, leaking the PM usage counter
+and potentially unbalancing the clock that the PM clock domain also
+manages. The sibling tx-macro/va-macro drivers call
+pm_runtime_put_autosuspend() here; do the same.
+
+Fixes: e38cbb75248a ("ASoC: codecs: lpass-rx-macro: Propagate regcache_sync() errors")
+Signed-off-by: Tang Bin <tangbin@cmss.chinamobile.com>
+Reviewed-by: Prasad Kumpatla<prasad.kumpatla@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261028114501.2192-1-tangbin@cmss.chinamobile.com
+---
+ sound/soc/codecs/lpass-rx-macro.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/sound/soc/codecs/lpass-rx-macro.c b/sound/soc/codecs/lpass-rx-macro.c
+index 282a6aaa9..1737d525c 100644
+--- a/sound/soc/codecs/lpass-rx-macro.c
++++ b/sound/soc/codecs/lpass-rx-macro.c
+@@ -3681,7 +3681,7 @@ static int swclk_gate_enable(struct clk_hw *hw)
+ 
+ 	ret = rx_macro_mclk_enable(rx, true);
+ 	if (ret) {
+-		clk_disable_unprepare(rx->mclk);
++		pm_runtime_put_autosuspend(rx->dev);
+ 		return ret;
+ 	}

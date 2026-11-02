@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lee Jones <lee@kernel.org>
+Date: Fri, 30 Oct 2026 10:46:46 +0000
+Subject: [PATCH] soundwire: qcom: Prevent pconfig buffer overflow in qcom_swrm_stream_alloc_ports()
+
+qcom_swrm_stream_alloc_ports() allocates the pconfig array with
+ctrl->nports elements, but only checks that the assigned port number pn
+is below maxport.  When multiple slave ports map to the same master port
+via m_port_map or the stream requests more slave ports than
+ctrl->nports, nports increments past ctrl->nports and writes out of
+bounds of pconfig.
+
+Verify that nports is less than maxport before writing to
+pconfig[nports].
+
+Fixes: 9e53a66a2f2f ("soundwire: qcom: deprecate qcom,din/out-ports")
+Closes: https://sashiko.dev/#/bug/linux-543ea0c0-a6e5-4b03-a041-ea0a760802c1
+Cc: stable@vger.kernel.org
+Signed-off-by: Lee Jones <lee@kernel.org>
+Link: https://lore.kernel.org/r/20261030104840.3361217-8-lee@kernel.org
+---
+ drivers/soundwire/qcom.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/drivers/soundwire/qcom.c b/drivers/soundwire/qcom.c
+index 6e0c5fb10efa..205011234030 100644
+--- a/drivers/soundwire/qcom.c
++++ b/drivers/soundwire/qcom.c
+@@ -1343,6 +1343,11 @@ static int qcom_swrm_stream_alloc_ports(struct qcom_swrm_ctrl *ctrl,
+ 		list_for_each_entry(s_rt, &m_rt->slave_rt_list, m_rt_node) {
+ 			slave = s_rt->slave;
+ 			list_for_each_entry(p_rt, &s_rt->port_list, port_node) {
++				if (nports >= maxport) {
++					dev_err(ctrl->dev, "All ports busy\n");
++					return -EBUSY;
++				}
++
+ 				m_port = slave->m_port_map[p_rt->num];
+ 				/* Port numbers start from 1 - 14*/
+ 				if (m_port)

@@ -1,0 +1,38 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Zongmin Zhou <zhouzongmin@kylinos.cn>
+Date: Thu, 24 Sep 2026 14:28:56 +0800
+Subject: [PATCH] slimbus: messaging: fix leaked PM vote on tid allocation failure
+
+In slim_do_transfer(), when a transaction needs a tid and
+slim_alloc_txn_tid() fails, the function returns directly instead of
+jumping to slim_xfer_err. The runtime PM vote taken earlier with
+pm_runtime_get_sync() is then never released, leaving the controller
+permanently powered up.
+
+As txn->tid is still 0 at that point, jumping to slim_xfer_err drops
+the vote exactly like it is done for other failed transactions.
+
+Fixes: d3062a2109309 ("slimbus: messaging: add slim_alloc/free_txn_tid()")
+Cc: stable@vger.kernel.org
+Signed-off-by: Zongmin Zhou <zhouzongmin@kylinos.cn>
+Link: https://lore.kernel.org/r/20260924062856.42977-1-min_halo@163.com
+---
+Changes in v2:
+- Add Cc: stable@vger.kernel.org as suggested by Srinivas.
+
+ drivers/slimbus/messaging.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/slimbus/messaging.c b/drivers/slimbus/messaging.c
+index e2dbe4a66b70..ee127ef42046 100644
+--- a/drivers/slimbus/messaging.c
++++ b/drivers/slimbus/messaging.c
+@@ -139,7 +139,7 @@ int slim_do_transfer(struct slim_controller *ctrl, struct slim_msg_txn *txn)
+ 	if (need_tid) {
+ 		ret = slim_alloc_txn_tid(ctrl, txn);
+ 		if (ret)
+-			return ret;
++			goto slim_xfer_err;
+ 
+ 		if (!txn->msg->comp)
+ 			txn->comp = &done;

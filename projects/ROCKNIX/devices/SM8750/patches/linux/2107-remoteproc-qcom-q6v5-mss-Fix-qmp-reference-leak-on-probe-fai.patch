@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Anup Vishwakarma <anup.vishwakarma@oss.qualcomm.com>
+Date: Thu, 03 Sep 2026 21:37:14 +0530
+Subject: [PATCH] remoteproc: qcom_q6v5_mss: Fix qmp reference leak on probe failure
+
+q6v5_probe() calls qcom_q6v5_init(), which acquires a qmp device
+reference via qmp_get(). If qcom_add_sysmon_subdev() or rproc_add()
+subsequently fails, the error unwind falls through remove_subdevs:
+without ever calling qcom_q6v5_deinit(), leaking the reference.
+
+The three sibling drivers (qcom_q6v5_adsp.c, qcom_q6v5_pas.c,
+qcom_q6v5_wcss.c) all correctly call qcom_q6v5_deinit() in their
+probe error unwind. Add the missing call at the end of
+remove_subdevs:, right before detach_proxy_pds:, so
+qcom_q6v5_init()'s own failure path (which jumps directly to
+detach_proxy_pds:) still correctly skips it.
+
+Fixes: c1fe10d238c0 ("remoteproc: qcom: q6v5: Use qmp_send to update co-processor load state")
+Signed-off-by: Anup Vishwakarma <anup.vishwakarma@oss.qualcomm.com>
+Reviewed-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20260903-b4-q6v5_mss_probe_deinit_upstream-v1-1-c40a6d317be4@oss.qualcomm.com
+---
+ drivers/remoteproc/qcom_q6v5_mss.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/remoteproc/qcom_q6v5_mss.c b/drivers/remoteproc/qcom_q6v5_mss.c
+index 2f71ed2feff6..387538ead2df 100644
+--- a/drivers/remoteproc/qcom_q6v5_mss.c
++++ b/drivers/remoteproc/qcom_q6v5_mss.c
+@@ -2224,6 +2224,7 @@ static int q6v5_probe(struct platform_device *pdev)
+ 	qcom_remove_ssr_subdev(rproc, &qproc->ssr_subdev);
+ 	qcom_remove_smd_subdev(rproc, &qproc->smd_subdev);
+ 	qcom_remove_glink_subdev(rproc, &qproc->glink_subdev);
++	qcom_q6v5_deinit(&qproc->q6v5);
+ detach_proxy_pds:
+ 	q6v5_pds_detach(qproc, qproc->proxy_pds, qproc->proxy_pd_count);
+ 
+
+---
+base-commit: 32b6ef9a5d0eca44f9cd91f52f4faa89f145a0de
+change-id: 20260903-b4-q6v5_mss_probe_deinit_upstream-92f76de554cc
+
+Best regards,
+--  
+Anup Vishwakarma <anup.vishwakarma@oss.qualcomm.com>
