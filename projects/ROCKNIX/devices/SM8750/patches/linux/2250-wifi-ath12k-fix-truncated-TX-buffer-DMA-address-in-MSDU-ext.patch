@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Baochen Qiang <baochen.qiang@oss.qualcomm.com>
+Date: Tue, 18 Aug 2026 10:03:41 +0800
+Subject: [PATCH] wifi: ath12k: fix truncated TX buffer DMA address in MSDU ext descriptor
+
+ath12k_wifi7_hal_tx_cmd_ext_desc_setup() programs the low 32 bits of the
+TX buffer physical address into HAL_TX_MSDU_EXT_INFO0_BUF_PTR_LO but
+hardcodes the high bits field HAL_TX_MSDU_EXT_INFO1_BUF_PTR_HI to 0x0.
+
+dma_addr_t is 64-bit on platforms with CONFIG_ARCH_DMA_ADDR_T_64BIT, so
+whenever a TX buffer is mapped above the 4 GB boundary the upper bits of
+paddr are dropped and the firmware is handed a truncated address,
+leading to potential TX failures.
+
+Write the upper bits of paddr into BUF_PTR_HI to fix this issue.
+
+Issue found during code review, compile tested only.
+
+Fixes: d889913205cf ("wifi: ath12k: driver for Qualcomm Wi-Fi 7 devices")
+Signed-off-by: Baochen Qiang <baochen.qiang@oss.qualcomm.com>
+Reviewed-by: Rameshkumar Sundaram <rameshkumar.sundaram@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20260818-ath12k-truncated-tx-dma-addr-v1-1-ead978969371@oss.qualcomm.com
+---
+ drivers/net/wireless/ath/ath12k/wifi7/dp_tx.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/wifi7/dp_tx.c b/drivers/net/wireless/ath/ath12k/wifi7/dp_tx.c
+index d2749de44553..87edfcd3672d 100644
+--- a/drivers/net/wireless/ath/ath12k/wifi7/dp_tx.c
++++ b/drivers/net/wireless/ath/ath12k/wifi7/dp_tx.c
+@@ -20,7 +20,7 @@ ath12k_wifi7_hal_tx_cmd_ext_desc_setup(struct ath12k_base *ab,
+ {
+ 	tcl_ext_cmd->info0 = le32_encode_bits(ti->paddr,
+ 					      HAL_TX_MSDU_EXT_INFO0_BUF_PTR_LO);
+-	tcl_ext_cmd->info1 = le32_encode_bits(0x0,
++	tcl_ext_cmd->info1 = le32_encode_bits((u64)ti->paddr >> HAL_ADDR_MSB_REG_SHIFT,
+ 					      HAL_TX_MSDU_EXT_INFO1_BUF_PTR_HI) |
+ 			       le32_encode_bits(ti->data_len,
+ 						HAL_TX_MSDU_EXT_INFO1_BUF_LEN);
+
+---
+base-commit: 4fa10e991f77b4c929d1959900a6ed422b9e2ac5
+change-id: 20260811-ath12k-truncated-tx-dma-addr-5f94d897db2d
+
+Best regards,

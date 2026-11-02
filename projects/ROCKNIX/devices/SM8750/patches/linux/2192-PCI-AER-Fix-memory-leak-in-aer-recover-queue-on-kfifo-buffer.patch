@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Priyank Rathod <rathodpriyank@google.com>
+Date: Mon, 28 Sep 2026 17:40:12 +0000
+Subject: [PATCH] PCI/AER: Fix memory leak in aer_recover_queue() on kfifo buffer overflow
+
+When ACPI APEI/GHES processes PCIe AER error records, it allocates memory
+for aer_capability_regs (aer_regs) from ghes_estatus_pool and passes it
+to aer_recover_queue() to be enqueued into aer_recover_ring.
+
+If kfifo_in_spinlocked() fails due to a buffer overflow,
+aer_recover_queue() logged an error message but returned without freeing
+aer_regs. Because the entry was rejected and never inserted into the
+queue, aer_recover_work_func() could never dequeue or free it, leaking
+the allocated ghes_estatus_pool memory.
+
+aer_recover_queue() returns void, so the caller ghes_handle_aer() cannot
+free the buffer itself: ownership is transferred to the AER code, which
+until now only released it on the success path.
+
+Free aer_regs via ghes_estatus_pool_region_free() when
+kfifo_in_spinlocked() fails on buffer overflow.
+
+Fixes: e2abc47a5a1a ("ACPI: APEI: Fix AER info corruption when error status data has multiple sections")
+Cc: stable@vger.kernel.org
+Reviewed-by: Kuppuswamy Sathyanarayanan <sathyanarayanan.kuppuswamy@linux.intel.com>
+Signed-off-by: Priyank Rathod <rathodpriyank@google.com>
+Link: https://lore.kernel.org/r/20260928-b4-fix-aer-memleaks-v5-1-ba6b94c9c9a6@google.com
+---
+ drivers/pci/pcie/aer.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/pci/pcie/aer.c b/drivers/pci/pcie/aer.c
+index d8dcd238fda1..b013b853b555 100644
+--- a/drivers/pci/pcie/aer.c
++++ b/drivers/pci/pcie/aer.c
+@@ -1415,11 +1415,14 @@ void aer_recover_queue(int domain, unsigned int bus, unsigned int devfn,
+ 	};
+ 
+ 	if (kfifo_in_spinlocked(&aer_recover_ring, &entry, 1,
+-				 &aer_recover_ring_lock))
++				 &aer_recover_ring_lock)) {
+ 		schedule_work(&aer_recover_work);
+-	else
++	} else {
+ 		pr_err("buffer overflow in recovery for %04x:%02x:%02x.%x\n",
+ 		       domain, bus, PCI_SLOT(devfn), PCI_FUNC(devfn));
++		ghes_estatus_pool_region_free((unsigned long)aer_regs,
++					      sizeof(struct aer_capability_regs));
++	}
+ }
+ EXPORT_SYMBOL_GPL(aer_recover_queue);
+ #endif

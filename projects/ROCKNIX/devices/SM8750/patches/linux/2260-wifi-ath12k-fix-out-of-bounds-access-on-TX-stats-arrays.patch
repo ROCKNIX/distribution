@@ -1,0 +1,63 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Pardeep Kaur <pardeep.kaur@oss.qualcomm.com>
+Date: Wed, 19 Aug 2026 11:02:40 +0530
+Subject: [PATCH] wifi: ath12k: fix out-of-bounds access on TX stats arrays
+
+The fw_tx_status[], tx_wbm_rel_source[], and tqm_rel_reason[] arrays
+are indexed directly by values read from hardware without bounds checks.
+Values at or beyond MAX_FW_TX_STATUS, HAL_WBM_REL_SRC_MODULE_MAX, or
+MAX_TQM_RELEASE_REASON respectively would write past the end of the
+arrays causing memory corruption.
+
+Add likely() bounds checks before incrementing each counter. For
+tx_wbm_rel_source[] and tqm_rel_reason[], add WARN_ON_ONCE() on the
+out-of-bounds else branch. For fw_tx_status[], no WARN_ON_ONCE is added
+since the switch statement that follows already calls ath12k_warn() in
+its default: branch for unknown values, avoiding a double-warn.
+
+Tested-on: QCN9274 hw2.0 PCI WLAN.WBE.1.6.r1-00402-QCAHKSWPL_SILICONZ-1
+
+Fixes: c5c62287e690 ("wifi: ath12k: Add device dp stats support")
+Signed-off-by: Pardeep Kaur <pardeep.kaur@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20260819053247.1420393-2-pardeep.kaur@oss.qualcomm.com
+---
+ drivers/net/wireless/ath/ath12k/wifi7/dp_tx.c | 13 ++++++++++---
+ 1 file changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/wifi7/dp_tx.c b/drivers/net/wireless/ath/ath12k/wifi7/dp_tx.c
+index 587d58eeccfa..3d635cac8f8c 100644
+--- a/drivers/net/wireless/ath/ath12k/wifi7/dp_tx.c
++++ b/drivers/net/wireless/ath/ath12k/wifi7/dp_tx.c
+@@ -582,7 +582,8 @@ ath12k_dp_tx_process_htt_tx_complete(struct ath12k_dp *dp, void *desc,
+ 
+ 	wbm_status = le32_get_bits(status_desc->info0,
+ 				   HTT_TX_WBM_COMP_INFO0_STATUS);
+-	dp->device_stats.fw_tx_status[wbm_status]++;
++	if (likely(wbm_status < MAX_FW_TX_STATUS))
++		dp->device_stats.fw_tx_status[wbm_status]++;
+ 
+ 	switch (wbm_status) {
+ 	case HAL_WBM_REL_HTT_TX_COMP_STATUS_OK:
+@@ -984,11 +985,17 @@ void ath12k_wifi7_dp_tx_completion_handler(struct ath12k_dp *dp, int ring_id)
+ 		/* Find the HAL_WBM_RELEASE_INFO0_REL_SRC_MODULE value */
+ 		buf_rel_source = le32_get_bits(tx_status->info0,
+ 					       HAL_WBM_RELEASE_INFO0_REL_SRC_MODULE);
+-		dp->device_stats.tx_wbm_rel_source[buf_rel_source]++;
++		if (likely(buf_rel_source < HAL_WBM_REL_SRC_MODULE_MAX))
++			dp->device_stats.tx_wbm_rel_source[buf_rel_source]++;
++		else
++			WARN_ON_ONCE(1);
+ 
+ 		rel_status = le32_get_bits(tx_status->info0,
+ 					   HAL_WBM_COMPL_TX_INFO0_TQM_RELEASE_REASON);
+-		dp->device_stats.tqm_rel_reason[rel_status]++;
++		if (likely(rel_status < MAX_TQM_RELEASE_REASON))
++			dp->device_stats.tqm_rel_reason[rel_status]++;
++		else
++			WARN_ON_ONCE(1);
+ 
+ 		/* Release descriptor as soon as extracting necessary info
+ 		 * to reduce contention
+base-commit: e07447e65447
+--
+2.34.1

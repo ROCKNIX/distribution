@@ -1,0 +1,86 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Priyank Rathod <rathodpriyank@google.com>
+Date: Fri, 18 Sep 2026 17:24:48 +0000
+Subject: [PATCH] PCI/AER: Fix struct pci_dev reference leak in aer_process_err_devices()
+
+When an AER error occurs, candidate error-source devices are added to
+e_info->dev[] by add_error_device(), which takes a reference with
+pci_dev_get().
+
+A device can be recorded without any error status being present: the
+Requester ID fast path in is_error_source(),
+
+	if (e_info->id == pci_dev_id(dev))
+		return true;
+
+matches purely on the ID reported by the Root Port and returns true
+without reading the device's AER status registers.
+
+In aer_process_err_devices(), handle_error_source() is called only if
+aer_get_device_error_info() returns non-zero, i.e. only if an unmasked
+error status bit is actually set. It returns 0 if the device has become
+inaccessible (status and mask both read as all ones, so
+status & ~mask == 0) or if no unmasked status bit is set.
+
+Because handle_error_source() was responsible for calling pci_dev_put(),
+skipping it permanently leaks the reference taken in add_error_device().
+
+Decouple reference lifetime from error handling by moving pci_dev_put()
+out of handle_error_source() and into the aer_process_err_devices() loop,
+so every recorded device is put exactly once.
+
+handle_error_source() is static and aer_process_err_devices() is its only
+caller, so no other path is affected.
+
+Fixes: 60271ab044a5 ("PCI/AER: Take reference on error devices")
+Signed-off-by: Priyank Rathod <rathodpriyank@google.com>
+Link: https://lore.kernel.org/r/20260918-fix-aer-refcount-leak-v2-1-bdd1ff1c35a9@google.com
+---
+Changes in v2:
+- Corrected Fixes tag from 1ab4a3c80508 to 60271ab044a5 ("PCI/AER: Take
+  reference on error devices"), which added both the pci_dev_get() in
+  add_error_device() and the conditionally-reached pci_dev_put() in
+  handle_error_source(). Thanks to Lukas Wunner for catching this.
+- Removed the speculative topology list from the commit message. As Lukas
+  pointed out, error reporting is not enabled on devices without an AER
+  capability (pcie_aer_is_native() bails on !dev->aer_cap), so the
+  dev->aer_cap == 0 reasoning was wrong and is gone.
+- Explained instead why a device with no error status can be present in
+  e_info->dev[]: the Requester ID fast path in is_error_source() matches
+  on e_info->id alone, without reading any AER status register.
+- Added a Fixes tag; the imbalance dates back to v4.20. I have not added
+  Cc: stable, since you indicated the path is an unlikely corner case -
+  happy to add it if you think it is warranted.
+- Cc: Keith Busch and Sinan Kaya, author and reviewer of 60271ab044a5.
+- Rebased onto v7.3-rc3+ (f259f446f519); applies cleanly to pci/next as well.
+- Link to v1: https://lore.kernel.org/r/20260830-fix-aer-refcount-leak-v1-1-64e1013add12@google.com
+---
+ drivers/pci/pcie/aer.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/pci/pcie/aer.c b/drivers/pci/pcie/aer.c
+index d8dcd238fda1..bc761410d56d 100644
+--- a/drivers/pci/pcie/aer.c
++++ b/drivers/pci/pcie/aer.c
+@@ -1340,7 +1340,6 @@ static void handle_error_source(struct pci_dev *dev, struct aer_err_info *info)
+ {
+ 	cxl_rch_handle_error(dev, info);
+ 	pci_aer_handle_error(dev, info);
+-	pci_dev_put(dev);
+ }
+ 
+ #ifdef CONFIG_ACPI_APEI_PCIEAER
+@@ -1518,6 +1517,7 @@ static inline void aer_process_err_devices(struct aer_err_info *e_info)
+ 	for (i = 0; i < e_info->error_dev_num && e_info->dev[i]; i++) {
+ 		if (aer_get_device_error_info(e_info, i))
+ 			handle_error_source(e_info->dev[i], e_info);
++		pci_dev_put(e_info->dev[i]);
+ 	}
+ }
+ 
+
+---
+base-commit: a077be4fde21ee6e751fa70eb641ef5d9bf2fc48
+change-id: 20260830-fix-aer-refcount-leak-6378f84d62ba
+
+Best regards,

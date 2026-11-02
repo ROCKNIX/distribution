@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Michael Pfeifroth <micpf@westermo.com>
+Date: Thu, 03 Sep 2026 15:29:38 +0200
+Subject: [PATCH] wifi: ath12k: fix freq range overflow when reg rules not yet parsed
+
+ath12k_regd_update() resets ab->reg_freq_{2,5,6}ghz.start_freq to INT_MAX
+before the per-band regulatory rules are parsed, and firmware delivers the
+2 GHz rules before the 5/6 GHz ones. If it runs for a radio whose rules are
+not applied yet, freq_low stays at INT_MAX, and MHZ_TO_KHZ(freq_low)
+overflows u32 into an inverted, empty range. cfg80211 then rejects AP
+bring-up on that band with "Failed to set beacon parameters".
+
+Reject non-positive-width ranges; a later ath12k_regd_update() installs the
+correct range once the rules exist.
+
+Fixes: 0d777aa2ca77 ("wifi: ath12k: fix mac pdev frequency range update")
+Cc: stable@vger.kernel.org
+Tested-on: QCN9274 hw2.0 PCI WLAN.WBE.1.6-01243-QCAHKSWPL_SILICONZ-1
+Signed-off-by: Michael Pfeifroth <micpf@westermo.com>
+Link: https://lore.kernel.org/r/apl2QtZu6EwGL0dD@mpf-ESPRIMO-P9012
+---
+ drivers/net/wireless/ath/ath12k/mac.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/mac.c b/drivers/net/wireless/ath/ath12k/mac.c
+index 99bf5cf79..654c58d7c 100644
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -14125,7 +14125,7 @@ EXPORT_SYMBOL(ath12k_mac_op_set_rekey_data);
+ void ath12k_mac_update_freq_range(struct ath12k *ar,
+ 				  u32 freq_low, u32 freq_high)
+ {
+-	if (!(freq_low && freq_high))
++	if (!freq_low || freq_low >= freq_high)
+ 		return;
+ 
+ 	if (ar->freq_range.start_freq || ar->freq_range.end_freq) {

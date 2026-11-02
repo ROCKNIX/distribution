@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yury Murashka <yurypm@arista.com>
+Date: Sun, 27 Sep 2026 20:02:03 +0200
+Subject: [PATCH] PCI/ERR: Avoid stale error status bits on recovery failure
+
+pcie_do_recovery() only clears the error status bits of an error-reporting
+device if recovery succeeds, but not if it fails.  (E.g. because reset
+failed, drivers are missing pci_error_handlers or those handlers failed.)
+
+One undesirable consequence is that the AER driver may subsequently
+identify a wrong device when searching for error-reporting devices in
+is_error_source(), due to stale bits on an unaffected device.
+
+Avoid by clearing error status bits on recovery failure.
+
+Link: https://lore.kernel.org/r/CAPzpGcRCTCZtaX1EVaJNZ103THZKsoszZduY7=gwfYdcrMo-SQ@mail.gmail.com/
+Signed-off-by: Yury Murashka <yurypm@arista.com>
+[lukas: drop cmdline param, rewrite commit msg, tag for stable]
+Signed-off-by: Lukas Wunner <lukas@wunner.de>
+Cc: stable@vger.kernel.org
+Link: https://lore.kernel.org/r/c7048e7dafe470f1f85709169c31b5aafe7ad59f.1790531238.git.lukas@wunner.de
+---
+ drivers/pci/pcie/err.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/drivers/pci/pcie/err.c b/drivers/pci/pcie/err.c
+index d77403d8855b..cfcfc7e4f10d 100644
+--- a/drivers/pci/pcie/err.c
++++ b/drivers/pci/pcie/err.c
+@@ -284,6 +284,11 @@ pci_ers_result_t pcie_do_recovery(struct pci_dev *dev,
+ 	return status;
+ 
+ failed:
++	if (host->native_aer || pcie_ports_native) {
++		pcie_clear_device_status(dev);
++		pci_aer_clear_nonfatal_status(dev);
++	}
++
+ 	pci_walk_bridge(bridge, pci_pm_runtime_put, NULL);
+ 
+ 	pci_walk_bridge(bridge, report_perm_failure_detected, NULL);

@@ -1,0 +1,107 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Keng-Yu Lin <keng-yu.lin@hpe.com>
+Date: Thu, 08 Oct 2026 21:37:08 +0800
+Subject: [PATCH] PCI/PM: Restore BARs after powering up during enumeration
+
+Commit 4d4c10f763d7 ("PCI: Explicitly put devices into D0 when
+initializing") added pci_pm_power_up_and_verify_state() to pci_pm_init().
+The helper ignores pci_power_up()'s return value indicating that BARs
+need restoring.  Its resume callers restore saved configuration
+afterwards; pci_pm_init() does not.
+
+D3hot-to-D0 may reset a device and lose its BARs (PCI PM 1.2, sec 5.4.1).
+After enumeration powers it up, pci_enable_device() reads D0 and skips
+the full power-up path.  Previously, a device still in D3hot at enable
+time took that path, including BAR restoration.
+
+On AMD Venice SP7, two AMD xHCI controllers [1022:17d2] are in runtime
+D3hot with No_Soft_Reset clear before kdump.  Diagnostic reads on
+v7.3-rc6-37 show the following for 0000:01:00.4 in the crash kernel:
+
+                                   PMCSR      BAR0
+  before the platform power call   0003       f4100004
+  after the platform power call    0003       f4100004
+  after native D0 power-up         0000       00000004
+
+The upper BAR DWORD stays zero.  pci_power_up() returns 1, but the BAR
+address remains zero while dev->resource[0] still contains 0xf4100000.
+Without this patch, the last console messages are around:
+
+  pci 0000:01:00.4: enabling device (0000 -> 0002)
+
+With this patch, BAR0 is written back to 0xf4100004 and reads back
+correctly.  The second controller's BAR is restored in the same way.
+Both controllers initialize, kdump saves a vmcore and the machine
+reboots.
+
+The same happens on an AMD Turin server with a different xHCI
+[1022:1557]: the crash kernel reads the controller back in D3hot, the
+D0 transition clears BAR0 and the restore rewrites it with a matching
+readback.  kdump succeeds there as well.  On both systems, a normal
+boot performs no BAR writes from this path; the only crash-kernel
+writes are the cleared xHCI BARs.
+
+Pass the restore-needed result to pci_pm_init() and restore the BARs
+after confirming D0.  Read the power state back before powering up, as
+pci_enable_device_flags() does at enable time: the state is still
+PCI_UNKNOWN here, which pci_power_up() treats as a possible D3hot entry,
+so devices the firmware left in D0 would be rewritten too.  With the
+readback, only devices actually found in D3hot or D3cold are restored.
+Leave the existing power-up and platform calls in place.
+
+Fixes: 4d4c10f763d7 ("PCI: Explicitly put devices into D0 when initializing")
+Cc: stable@vger.kernel.org
+Signed-off-by: Keng-Yu Lin <keng-yu.lin@hpe.com>
+Link: https://lore.kernel.org/r/20261008133708.947908-1-keng-yu.lin@hpe.com
+---
+ drivers/pci/pci.c | 14 +++++++++++---
+ drivers/pci/pci.h |  2 +-
+ 2 files changed, 12 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/pci/pci.c b/drivers/pci/pci.c
+index 8cc6a89130b5..f34e4d259151 100644
+--- a/drivers/pci/pci.c
++++ b/drivers/pci/pci.c
+@@ -3181,10 +3181,13 @@ void pci_d3cold_disable(struct pci_dev *dev)
+ }
+ EXPORT_SYMBOL_GPL(pci_d3cold_disable);
+ 
+-void pci_pm_power_up_and_verify_state(struct pci_dev *pci_dev)
++/* Return 1 if the BARs have to be restored, 0 or a negative errno otherwise */
++int pci_pm_power_up_and_verify_state(struct pci_dev *pci_dev)
+ {
+-	pci_power_up(pci_dev);
++	int ret = pci_power_up(pci_dev);
++
+ 	pci_update_current_state(pci_dev, PCI_D0);
++	return ret;
+ }
+ 
+ /**
+@@ -3255,7 +3258,12 @@ void pci_pm_init(struct pci_dev *dev)
+ 	}
+ 
+ poweron:
+-	pci_pm_power_up_and_verify_state(dev);
++	/* The restore decision in pci_power_up() needs the actual state. */
++	pci_update_current_state(dev, dev->current_state);
++	/* Enumeration has no saved config space to restore afterwards. */
++	if (pci_pm_power_up_and_verify_state(dev) > 0 &&
++	    dev->current_state == PCI_D0)
++		pci_restore_bars(dev);
+ 	pm_runtime_forbid(&dev->dev);
+ 
+ 	/*
+diff --git a/drivers/pci/pci.h b/drivers/pci/pci.h
+index ba3c3fddddc2..96af0f1d081c 100644
+--- a/drivers/pci/pci.h
++++ b/drivers/pci/pci.h
+@@ -277,7 +277,7 @@ void pci_dev_adjust_pme(struct pci_dev *dev);
+ void pci_dev_complete_resume(struct pci_dev *pci_dev);
+ void pci_config_pm_runtime_get(struct pci_dev *dev);
+ void pci_config_pm_runtime_put(struct pci_dev *dev);
+-void pci_pm_power_up_and_verify_state(struct pci_dev *pci_dev);
++int pci_pm_power_up_and_verify_state(struct pci_dev *pci_dev);
+ void pci_pm_init(struct pci_dev *dev);
+ void pci_ea_init(struct pci_dev *dev);
+ bool pci_ea_fixed_busnrs(struct pci_dev *dev, u8 *sec, u8 *sub);

@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Toke Høiland-Jørgensen <toke@toke.dk>
+Date: Fri, 23 Oct 2026 13:00:51 +0200
+Subject: [PATCH] wifi: mac80211: reinstate IEEE80211_TX_CTL_AMPDU flag in ieee80211_tx_prep_agg()
+
+The commit 592234e941f1 ("wifi: mac80211: Fix iTXQ AMPDU fragmentation
+handling") changed the way handling of the IEEE80211_TX_CTL_AMPDU flag
+is done in mac80211, so the only place it is set is in
+ieee80211_tx_dequeue().
+
+This means that any frames that are sent to the driver via drv_tx() will
+no longer have the flag set. In particular, this affects packets going
+through ieee80211_tx_pending(). Evan reported that this can result in
+the ath9k driver failing to account such packets in its block ack
+window, eventually overrunning the window and stalling TX.
+
+Fix this by reinstating the flag in ieee80211_tx_prep_agg() when inside
+a valid block ack window. This should be harmless for the TXQ path, and
+will reinstate the previous behaviour for drivers that use the flag as a
+signal to track the packet in the window.
+
+Fixes: 592234e941f1 ("wifi: mac80211: Fix iTXQ AMPDU fragmentation handling")
+Cc: stable@vger.kernel.org
+Reported-by: Evan Severson <eseverson@gmail.com>
+Link: https://lore.kernel.org/all/20261014025734.2288693-1-eseverson@gmail.com/
+Signed-off-by: Toke Høiland-Jørgensen <toke@toke.dk>
+Tested-by: Evan Severson <eseverson@gmail.com>
+Link: https://lore.kernel.org/r/20261023110052.650519-1-toke@toke.dk
+---
+ net/mac80211/tx.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/net/mac80211/tx.c b/net/mac80211/tx.c
+index e9b6a0415d6a..0f46b5ff0c4a 100644
+--- a/net/mac80211/tx.c
++++ b/net/mac80211/tx.c
+@@ -1164,6 +1164,7 @@ static bool ieee80211_tx_prep_agg(struct ieee80211_tx_data *tx,
+ 	struct sk_buff *purge_skb = NULL;
+ 
+ 	if (test_bit(HT_AGG_STATE_OPERATIONAL, &tid_tx->state)) {
++		info->flags |= IEEE80211_TX_CTL_AMPDU;
+ 		reset_agg_timer = true;
+ 	} else if (test_bit(HT_AGG_STATE_WANT_START, &tid_tx->state)) {
+ 		/*
+@@ -1195,6 +1196,7 @@ static bool ieee80211_tx_prep_agg(struct ieee80211_tx_data *tx,
+ 		if (!tid_tx) {
+ 			/* do nothing, let packet pass through */
+ 		} else if (test_bit(HT_AGG_STATE_OPERATIONAL, &tid_tx->state)) {
++			info->flags |= IEEE80211_TX_CTL_AMPDU;
+ 			reset_agg_timer = true;
+ 		} else {
+ 			queued = true;

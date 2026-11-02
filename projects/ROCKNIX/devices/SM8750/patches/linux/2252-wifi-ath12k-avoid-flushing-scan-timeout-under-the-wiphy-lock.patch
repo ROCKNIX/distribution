@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Runyu Xiao <runyu.xiao@seu.edu.cn>
+Date: Fri, 03 Jul 2026 14:02:19 +0800
+Subject: [PATCH] wifi: ath12k: avoid flushing scan timeout under the wiphy lock
+
+ath12k_mac_op_stop() is called with the wiphy lock held. It then takes
+ah->hw_mutex and calls ath12k_mac_stop(), which synchronously cancels
+ar->scan.timeout.
+
+That can deadlock if the delayed work has started. The timeout worker
+ath12k_scan_timeout_work() takes the same wiphy lock before aborting the
+scan, so stop waits for a worker that cannot make progress until the
+wiphy lock is released.
+
+Drain ar->scan.timeout before entering the locked stop teardown, and
+remove the synchronous cancel from ath12k_mac_stop(). This preserves the
+stop-time drain while avoiding the wait-under-wiphy lock ordering.
+
+Fixes: d889913205cf ("wifi: ath12k: driver for Qualcomm Wi-Fi 7 devices")
+Cc: stable@vger.kernel.org
+Signed-off-by: Runyu Xiao <runyu.xiao@seu.edu.cn>
+Link: https://lore.kernel.org/r/20260703060219.2998148-1-runyu.xiao@seu.edu.cn
+---
+Changes in v2:
+  - Rebase on ath.git ath-current.
+  - Use ath-current subject tag as requested.
+  - Move the synchronous scan timeout drain out of the locked stop path
+    instead of adding it in the wrong start-path context.
+  - Update Fixes to the ath12k commit that introduced the stop-time
+    scan.timeout drain.
+
+ drivers/net/wireless/ath/ath12k/mac.c | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/mac.c b/drivers/net/wireless/ath/ath12k/mac.c
+index af354bef5c0d..6da9a2bda9fe 100644
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -9931,7 +9931,6 @@ static void ath12k_mac_stop(struct ath12k *ar)
+ 
+ 	clear_bit(ATH12K_FLAG_CAC_RUNNING, &ar->dev_flags);
+ 
+-	cancel_delayed_work_sync(&ar->scan.timeout);
+ 	wiphy_work_cancel(ath12k_ar_to_hw(ar)->wiphy, &ar->scan.vdev_clean_wk);
+ 	cancel_work_sync(&ar->regd_channel_update_work);
+ 	cancel_work_sync(&ar->regd_update_work);
+@@ -9975,6 +9974,15 @@ void ath12k_mac_op_stop(struct ieee80211_hw *hw, bool suspend)
+ 
+ 	lockdep_assert_wiphy(hw->wiphy);
+ 
++	/*
++	 * scan.timeout takes the wiphy lock before aborting the scan, so do
++	 * not wait for it from the locked stop path below.
++	 */
++	wiphy_unlock(hw->wiphy);
++	for_each_ar(ah, ar, i)
++		cancel_delayed_work_sync(&ar->scan.timeout);
++	wiphy_lock(hw->wiphy);
++
+ 	ath12k_drain_tx(ah);
+ 
+ 	mutex_lock(&ah->hw_mutex);

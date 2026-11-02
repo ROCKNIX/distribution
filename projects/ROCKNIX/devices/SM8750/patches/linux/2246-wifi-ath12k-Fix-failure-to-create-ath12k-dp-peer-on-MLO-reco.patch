@@ -1,0 +1,69 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Miaoqing Pan <miaoqing.pan@oss.qualcomm.com>
+Date: Tue, 15 Sep 2026 16:00:53 +0800
+Subject: [PATCH] wifi: ath12k: Fix failure to create ath12k_dp_peer on MLO reconnect
+
+In ath12k_mac_op_sta_state(), when transitioning an MLO station from
+IEEE80211_STA_NOTEXIST to IEEE80211_STA_NONE, after ath12k_dp_peer_create()
+succeeds, on is_sta_assoc_link verification failure, it takes the
+'goto exit' path instead of 'goto peer_delete', leaving a stale dp_peer on
+the dp_peers_list.
+
+On the next connection attempt, ath12k_dp_peer_create() finds the stale
+entry and returns -EEXIST (-17):
+
+    wlP4p1s0: failed to insert STA entry for the AP (error -17)
+
+Fix it by changing 'goto exit' to 'goto free_unassign_link'.
+
+Also, there is another error path in ath12k_mac_op_sta_state() that
+jumps to peer_delete after ath12k_mac_assign_link_sta() succeeds, without
+undoing the assignment through ath12k_mac_free_unassign_link_sta().
+As a result, the link RCU pointer remains assigned and a stale bit is
+left in ahsta->links_map, which can trigger the same -EEXIST failure
+on subsequent reconnect attempts. Fix this by redirecting that error
+path to free_unassign_link instead.
+
+Tested-on: WCN7850 hw2.0 PCI WLAN.HMT.1.1.c7-00108-QCAHMTSWPL_V1.0_V2.0_SILICONZ_UPSTREAM-3
+
+Fixes: 0cd46d1f36ce ("wifi: ath12k: identify assoc link vif in station mode")
+Fixes: ee16dcf573d5 ("wifi: ath12k: Define ath12k_dp_peer structure & APIs for create & delete")
+Signed-off-by: Miaoqing Pan <miaoqing.pan@oss.qualcomm.com>
+Reviewed-by: Rameshkumar Sundaram <rameshkumar.sundaram@oss.qualcomm.com>
+Reviewed-by: Baochen Qiang <baochen.qiang@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20260915080053.918500-1-miaoqing.pan@oss.qualcomm.com
+---
+ drivers/net/wireless/ath/ath12k/mac.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/mac.c b/drivers/net/wireless/ath/ath12k/mac.c
+index d4116ba0da08..57861003c15b 100644
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -7845,7 +7845,7 @@ int ath12k_mac_op_sta_state(struct ieee80211_hw *hw,
+ 				ath12k_hw_warn(ah, "failed to verify assoc link setting with link id %u\n",
+ 					       link_id);
+ 				ret = -EINVAL;
+-				goto exit;
++				goto free_unassign_link;
+ 			}
+ 
+ 			arsta->is_assoc_link = true;
+@@ -7903,7 +7903,7 @@ int ath12k_mac_op_sta_state(struct ieee80211_hw *hw,
+ 
+ 			if (old_state == IEEE80211_STA_NOTEXIST &&
+ 			    new_state == IEEE80211_STA_NONE)
+-				goto peer_delete;
++				goto free_unassign_link;
+ 			else
+ 				goto exit;
+ 		}
+@@ -7943,6 +7943,8 @@ int ath12k_mac_op_sta_state(struct ieee80211_hw *hw,
+ 	ret = 0;
+ 	goto exit;
+ 
++free_unassign_link:
++	ath12k_mac_free_unassign_link_sta(ah, ahsta, link_id);
+ peer_delete:
+ 	ath12k_dp_peer_delete(&ah->dp_hw, sta->addr, sta);
+ ml_peer_id_clear:

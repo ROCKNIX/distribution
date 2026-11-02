@@ -1,0 +1,100 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Stefan Roese <stefan.roese@mailbox.org>
+Date: Fri, 02 Oct 2026 11:10:28 +0200
+Subject: [PATCH] PCI/ASPM: Clear ASPM Control on links without common ASPM support
+
+pcie_aspm_cap_init() returns early when the two ends of a link share
+no ASPM state. It then never touches Link Control, so ASPM Control
+keeps whatever the device came out of reset with. Per PCIe r7.0, sec
+5.4.1.4, the result is undefined when L0s or L1 is enabled although
+the other end of the link does not support it.
+
+The Renesas uPD720201 xHCI (1912:0014) resets with LnkCtl 0x0003 (L0s
+and L1 enabled), as the Mini Card CEM and M.2 specs ask for. Behind the
+CPM Root Port of AMD Versal, which supports no ASPM, it only works
+because the chip clears ASPM Control itself during the firmware
+download by xhci-pci-renesas. Once the host has written Link Control,
+even with the unchanged value, it no longer does so. Since commit
+1a6845aaa6de ("PCI: Initialize RCB from pci_configure_device()")
+pci_configure_rcb() does such a write for every endpoint, ASPM stays
+enabled, and the first access to the xHCI BAR runs into completion
+timeouts that hang the system.
+
+Clear ASPM Control on every function of such a link, downstream
+component first, and only where it is set. Update the saved state as
+well, like the other ASPM Control writes in this file do. This matters
+for the upstream port, whose state may have been saved before, e.g.
+when a device is hot-added: a later pci_restore_state() after an AER or
+DPC reset must not enable ASPM again.
+
+Before (lspci -vvv -s 01:00.0):
+  LnkCtl: ASPM L0s L1 Enabled; RCB 64 bytes, LnkDisable- CommClk-
+
+After:
+  pci 0000:01:00.0: ASPM: link has no common ASPM support, clearing ASPM Control
+  LnkCtl: ASPM Disabled; RCB 64 bytes, LnkDisable- CommClk-
+
+Fixes: 1a6845aaa6de ("PCI: Initialize RCB from pci_configure_device()")
+Cc: stable@vger.kernel.org
+Assisted-by: Claude:claude-opus-5-5
+Signed-off-by: Stefan Roese <stefan.roese@mailbox.org>
+Link: https://lore.kernel.org/r/20261002091029.2225203-2-stefan.roese@mailbox.org
+---
+Changes in v2:
+- Make this the first patch and the actual fix, with Fixes: and stable
+  (was patch 2/2 without tags)
+- Update the saved state after clearing ASPM Control, so that
+  pci_restore_state() does not enable ASPM again on a port whose state
+  was saved before (sashiko)
+- Cite PCIe r7.0, sec 5.4.1.4, for the undefined state (Bjorn)
+- Reword the message to "link has no common ASPM support", which also
+  covers links where both ends support different ASPM states
+- Explain the Renesas mechanism and the RCB write in the message
+---
+ drivers/pci/pcie/aspm.c | 23 +++++++++++++++++++++--
+ 1 file changed, 21 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/pci/pcie/aspm.c b/drivers/pci/pcie/aspm.c
+index f8e64971c6c3..8920508c9a83 100644
+--- a/drivers/pci/pcie/aspm.c
++++ b/drivers/pci/pcie/aspm.c
+@@ -931,6 +931,19 @@ static void pcie_aspm_override_default_link_state(struct pcie_link_state *link)
+ 	}
+ }
+ 
++static void pcie_aspm_clear_aspmc(struct pci_dev *pdev)
++{
++	u16 lnkctl;
++
++	pcie_capability_read_word(pdev, PCI_EXP_LNKCTL, &lnkctl);
++	if (!(lnkctl & PCI_EXP_LNKCTL_ASPMC))
++		return;
++
++	pci_info(pdev, "ASPM: link has no common ASPM support, clearing ASPM Control\n");
++	pcie_capability_clear_word(pdev, PCI_EXP_LNKCTL, PCI_EXP_LNKCTL_ASPMC);
++	pci_update_aspm_saved_state(pdev);
++}
++
+ static void pcie_aspm_cap_init(struct pcie_link_state *link, int blacklist)
+ {
+ 	struct pci_dev *child = link->downstream, *parent = link->pdev;
+@@ -947,11 +960,17 @@ static void pcie_aspm_cap_init(struct pcie_link_state *link, int blacklist)
+ 
+ 	/*
+ 	 * If ASPM not supported, don't mess with the clocks and link,
+-	 * bail out now.
++	 * bail out now. A device may still come out of reset with ASPM
++	 * Control set, which the rest of this code never touches for
++	 * such a link. Clear it, downstream component first.
+ 	 */
+ 	if (!(parent->aspm_l0s_support && child->aspm_l0s_support) &&
+-	    !(parent->aspm_l1_support && child->aspm_l1_support))
++	    !(parent->aspm_l1_support && child->aspm_l1_support)) {
++		list_for_each_entry(fn, &linkbus->devices, bus_list)
++			pcie_aspm_clear_aspmc(fn);
++		pcie_aspm_clear_aspmc(parent);
+ 		return;
++	}
+ 
+ 	/* Configure common clock before checking latencies */
+ 	pcie_aspm_configure_common_clock(link);

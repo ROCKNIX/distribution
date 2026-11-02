@@ -1,0 +1,68 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Baochen Qiang <baochen.qiang@oss.qualcomm.com>
+Date: Thu, 29 Oct 2026 10:18:42 +0800
+Subject: [PATCH] wifi: ath12k: don't advertise EHT-MCS15 to firmware unless we support it
+
+ath12k_peer_assoc_h_eht() copies the peer's EHT PHY capabilities into
+the WMI peer assoc command as is, including the EHT-MCS15 support bits.
+Firmware rate control enables EHT-MCS15 for TX whenever those bits are
+set, without checking whether the local PHY supports MCS15.
+
+Currently WCN7850 firmware does not support EHT-MCS15 for TX and does
+not advertise it in its own EHT PHY capabilities. When connected to an
+AP that advertises MCS15 support, rate control may still select
+EHT-MCS15, and every PPDU at that rate is aborted by the PHY before it
+goes on the air. TX then stops for minutes while the association stays
+up, and frames sit in the queue until the firmware releases them as aged.
+
+Keep only the peer's MCS15 support bits that we also support ourselves
+to fix it. Chips that support MCS15 are not affected.
+
+Tested-on: WCN7850 hw2.0 PCI WLAN.HMT.1.1.c7-00108-QCAHMTSWPL_V1.0_V2.0_SILICONZ_UPSTREAM-3
+
+Fixes: 17bbb8aa74fd ("wifi: ath12k: prepare EHT peer assoc parameters")
+Reported-by: Vladimir Petrzhikovskii <vladimir@dfb.sh>
+Closes: https://bugzilla.kernel.org/show_bug.cgi?id=222136
+Tested-by: Vladimir Petrzhikovskii <vladimir@dfb.sh>
+Signed-off-by: Baochen Qiang <baochen.qiang@oss.qualcomm.com>
+Reviewed-by: Vasanthakumar Thiagarajan <vasanthakumar.thiagarajan@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261029-ath12k-mcs15-v1-1-3bcfab101f00@oss.qualcomm.com
+---
+ drivers/net/wireless/ath/ath12k/mac.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/drivers/net/wireless/ath/ath12k/mac.c b/drivers/net/wireless/ath/ath12k/mac.c
+index 01f8c6572f65..8f37ec6af6d3 100644
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -3366,6 +3366,7 @@ static void ath12k_peer_assoc_h_eht(struct ath12k *ar,
+ 	u32 *rx_mcs, *tx_mcs;
+ 	u16 *eht_mcs_mask;
+ 	u8 max_nss = 0;
++	u8 mcs15;
+ 
+ 	lockdep_assert_wiphy(ath12k_ar_to_hw(ar)->wiphy);
+ 
+@@ -3416,6 +3417,16 @@ static void ath12k_peer_assoc_h_eht(struct ath12k *ar,
+ 	memcpy(arg->peer_eht_cap_phy, eht_cap->eht_cap_elem.phy_cap_info,
+ 	       sizeof(eht_cap->eht_cap_elem.phy_cap_info));
+ 
++	/*
++	 * Firmware rate control enables EHT-MCS15 based only on the peer's
++	 * MCS15 support bits, so keep only the ones we support ourselves.
++	 */
++	mcs15 = u8_get_bits(eht_cap->eht_cap_elem.phy_cap_info[6] &
++			    own_eht_cap->eht_cap_elem.phy_cap_info[6],
++			    IEEE80211_EHT_PHY_CAP6_MCS15_SUPP_MASK);
++	u8p_replace_bits(&((u8 *)arg->peer_eht_cap_phy)[6], mcs15,
++			 IEEE80211_EHT_PHY_CAP6_MCS15_SUPP_MASK);
++
+ 	rx_mcs = arg->peer_eht_rx_mcs_set;
+ 	tx_mcs = arg->peer_eht_tx_mcs_set;
+ 
+
+---
+base-commit: fab2e70afb13485ea4b198b204af33dd15b8132c
+change-id: 20261023-ath12k-mcs15-818b3a574813
+
+Best regards,

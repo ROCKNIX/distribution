@@ -1,0 +1,72 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jiale Yao <yaojiale02@163.com>
+Date: Sat, 03 Oct 2026 18:19:43 +0800
+Subject: [PATCH] wifi: ath12k: validate MAC/PHY capability count before saving
+
+Firmware supplies the hardware mode count and the PHY bitmap for each
+mode in the service-ready-ext event. ath12k_wmi_save_all_mac_phy_info()
+uses those bitmaps to populate svc_ext_info->mac_phy_info, but the
+destination is a fixed array of ATH12K_MAX_MAC_PHY_CAP elements.
+
+If the total number of advertised PHY entries exceeds that limit, the
+loop writes beyond mac_phy_info and corrupts adjacent memory.
+
+ath12k_wmi_mac_phy_caps_parse() allocates the source array for
+tot_phy_id entries and rejects excess capability TLVs. However, if the
+event contains fewer capability TLVs than advertised, the remaining
+allocated entries stay zeroed and are saved as invalid PHY information.
+
+After parsing the MAC/PHY capability TLVs, validate the destination
+capacity and reject an incomplete capability list before saving any
+entries.
+
+Fixes: 062ade23991e ("wifi: ath12k: parse and save hardware mode info from WMI_SERVICE_READY_EXT_EVENTID event for later use")
+Cc: stable@vger.kernel.org
+Signed-off-by: Jiale Yao <yaojiale02@163.com>
+Reviewed-by: Baochen Qiang <baochen.qiang@oss.qualcomm.com>
+Reviewed-by: Rameshkumar Sundaram <rameshkumar.sundaram@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261003101944.596546-1-yaojiale02@163.com
+---
+
+Changes in v2:
+- Refer to the service-ready-ext event.
+- Describe a short capability list as a correctness issue instead of a
+  source-buffer overrun.
+- Move the checks after MAC/PHY capability parsing and use '<' for the
+  reachable count mismatch.
+
+diff --git a/drivers/net/wireless/ath/ath12k/wmi.c b/drivers/net/wireless/ath/ath12k/wmi.c
+index d5160af60e00..3e812c79a649 100644
+--- a/drivers/net/wireless/ath/ath12k/wmi.c
++++ b/drivers/net/wireless/ath/ath12k/wmi.c
+@@ -5050,6 +5050,7 @@ static int ath12k_wmi_svc_rdy_ext_parse(struct ath12k_base *ab,
+ 					u16 tag, u16 len,
+ 					const void *ptr, void *data)
+ {
++	struct ath12k_svc_ext_info *svc_ext_info = &ab->wmi_ab.svc_ext_info;
+ 	struct ath12k_wmi_pdev *wmi_handle = &ab->wmi_ab.wmi[0];
+ 	struct ath12k_wmi_svc_rdy_ext_parse *svc_rdy_ext = data;
+ 	int ret;
+@@ -5094,6 +5095,22 @@ static int ath12k_wmi_svc_rdy_ext_parse(struct ath12k_base *ab,
+ 				return ret;
+ 			}
+ 
++			if (svc_rdy_ext->tot_phy_id >
++			    ARRAY_SIZE(svc_ext_info->mac_phy_info)) {
++				ath12k_warn(ab, "too many PHY entries %u (max %zu)\n",
++					    svc_rdy_ext->tot_phy_id,
++					    ARRAY_SIZE(svc_ext_info->mac_phy_info));
++				return -EINVAL;
++			}
++
++			if (svc_rdy_ext->n_mac_phy_caps < svc_rdy_ext->tot_phy_id) {
++				ath12k_warn(ab,
++					    "not enough MAC/PHY caps %u, expected %u\n",
++					    svc_rdy_ext->n_mac_phy_caps,
++					    svc_rdy_ext->tot_phy_id);
++				return -EINVAL;
++			}
++
+ 			ath12k_wmi_save_all_mac_phy_info(ab, svc_rdy_ext);
+ 
+ 			svc_rdy_ext->mac_phy_done = true;

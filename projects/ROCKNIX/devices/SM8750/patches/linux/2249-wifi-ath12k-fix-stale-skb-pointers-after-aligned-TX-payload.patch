@@ -1,0 +1,59 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Baochen Qiang <baochen.qiang@oss.qualcomm.com>
+Date: Tue, 18 Aug 2026 09:44:48 +0800
+Subject: [PATCH] wifi: ath12k: fix stale skb pointers after aligned TX payload shift
+
+ath12k_wifi7_dp_tx() caches hdr, eth, and skb_cb from the skb before
+calling ath12k_dp_tx_align_payload(). That function may shift skb->data
+in place (when headroom or tailroom is sufficient) or reallocate the
+buffer entirely via skb_realloc_headroom(), freeing the original skb.
+In either case hdr, eth, and skb_cb are left pointing into stale memory.
+
+After alignment, only hdr is refreshed, leaving eth and skb_cb stale.
+skb_cb is written immediately after (storing DMA addresses), and eth is
+re-read on every TCL ring retry via the tcl_ring_sel goto, so both
+accesses are use-after-free or stale-pointer bugs depending on which
+alignment path was taken.
+
+Refresh eth (conditionally, to preserve the encap-mode distinction) and
+skb_cb alongside hdr after ath12k_dp_tx_align_payload() returns, so all
+three point into the live skb for all subsequent accesses.
+
+Issue found during code review, compile tested only.
+
+Fixes: 38055789d151 ("wifi: ath12k: use 128 bytes aligned iova in transmit path for WCN7850")
+Signed-off-by: Baochen Qiang <baochen.qiang@oss.qualcomm.com>
+Reviewed-by: Rameshkumar Sundaram <rameshkumar.sundaram@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20260818-ath12k-uaf-for-aligned-tx-v1-1-d6ae195b15e7@oss.qualcomm.com
+---
+ drivers/net/wireless/ath/ath12k/wifi7/dp_tx.c | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/wifi7/dp_tx.c b/drivers/net/wireless/ath/ath12k/wifi7/dp_tx.c
+index d2749de44553..6b8430260238 100644
+--- a/drivers/net/wireless/ath/ath12k/wifi7/dp_tx.c
++++ b/drivers/net/wireless/ath/ath12k/wifi7/dp_tx.c
+@@ -251,10 +251,15 @@ int ath12k_wifi7_dp_tx(struct ath12k_pdev_dp *dp_pdev, struct ath12k_link_vif *a
+ 			goto map;
+ 		}
+ 
+-		/* hdr is pointing to a wrong place after alignment,
+-		 * so refresh it for later use.
++		/*
++		 * The payload may have been shifted or even the entire buffer may have
++		 * been reallocated for alignment. In that case, hdr, eth and skb_cb
++		 * are stale pointers. Refresh them now for later dereference.
+ 		 */
+ 		hdr = (void *)skb->data;
++		if (eth)
++			eth = (struct ethhdr *)skb->data;
++		skb_cb = ATH12K_SKB_CB(skb);
+ 	}
+ map:
+ 	ti.paddr = dma_map_single(dp->dev, skb->data, skb->len, DMA_TO_DEVICE);
+
+---
+base-commit: 4fa10e991f77b4c929d1959900a6ed422b9e2ac5
+change-id: 20260811-ath12k-uaf-for-aligned-tx-a068d34b1548
+
+Best regards,

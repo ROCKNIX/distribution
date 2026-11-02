@@ -1,0 +1,136 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Michael Burch <me@michaelburch.net>
+Date: Tue, 13 Oct 2026 09:22:49 -0500
+Subject: [PATCH] Revert "phy: qcom: qmp-pcie: Skip PHY reset if already up"
+
+This reverts commit 910b828b22b7b91054b3bd4be676a017444b0e00.
+
+That commit skips the no-csr reset assert/deassert (and the 200-300us
+settle) whenever the bootloader already brought the PCIe QMP PHY up:
+
+  skip_reset = qmp->skip_init &&
+               !qphy_checkbits(pcs, cfg->regs[QPHY_PCS_STATUS],
+                               cfg->phy_status);
+
+and states its own assumption explicitly: "This relies on the assumption
+that when skip_init is enabled and the PHY is reported as up, the
+bootloader has already configured the PHY correctly and the link is in a
+usable state."
+
+That assumption does not hold on the Dell XPS 13 9345 (X1E80100).  UEFI
+boots from the NVMe behind pcie6a, so the PHY is always already started
+when Linux takes over, skip_init is true, and the reset is skipped.  The
+link then never retrains and the root port comes up with no endpoint:
+
+  qcom-pcie 1bf8000.pcie: Device found, but not active
+  pci 0006:00:00.0: [17cb:0111] type 01 class 0x060400 PCIe Root Port
+  (no 0006:01:00.0, no nvme at all)
+
+"Device found, but not active" is dw_pcie_wait_for_link() reporting LTSSM
+stuck in POLL.Active/POLL.Compliance -- receiver detected, training never
+completes -- so the machine cannot find its root filesystem and drops to
+a dracut emergency shell.  v7.2 is unaffected because it always performed
+the reset.
+
+The commit was applied on its own as patch 1/4 of "PCI: qcom: Add link
+retention support"; 2/4-4/4 have not landed. Without them,
+qcom_pcie_host_init() still asserts PERST# and resets the controller
+before qcom_pcie_phy_power_on(), so the link is down while
+QPHY_PCS_STATUS still reports the bootloader's state, and the skip's
+precondition never holds. Revert it until the rest of the series lands.
+
+Fixes: 910b828b22b7 ("phy: qcom: qmp-pcie: Skip PHY reset if already up")
+Signed-off-by: Michael Burch <me@michaelburch.net>
+Reviewed-by: Manivannan Sadhasivam <manivannan.sadhasivam@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261013-qmp-pcie-skip-reset-revert-v1@michaelburch.net
+---
+Reproduced today with Fedora's stock 7.3.0-0.rc7.58 kernel: the NVMe
+never enumerates and boot stops in dracut. It was first seen here on
+the stock 7.3.0-0.rc2 kernel. Every 7.3 build I have made with this
+revert finds the NVMe (Gen4 x4 link up); the latest are v7.3-rc6 based.
+Applying 2/4-4/4 of the original series on top of -rc2 also boots, but
+only with clk_ignore_unused here. This applies to v7.3-rc7 and to
+linux-phy fixes.
+
+Qiang Yu's "PCI: qcom: Align PHY init sequence with HPG" carries the
+same skip into the new phy_ops::reset. I'm replying there separately.
+
+#regzbot introduced: 910b828b22b7
+
+ drivers/phy/qualcomm/phy-qcom-qmp-pcie.c | 31 ++++++++----------------
+ 1 file changed, 10 insertions(+), 21 deletions(-)
+
+diff --git a/drivers/phy/qualcomm/phy-qcom-qmp-pcie.c b/drivers/phy/qualcomm/phy-qcom-qmp-pcie.c
+index da83358c97ea..17c53ae62fac 100644
+--- a/drivers/phy/qualcomm/phy-qcom-qmp-pcie.c
++++ b/drivers/phy/qualcomm/phy-qcom-qmp-pcie.c
+@@ -5677,7 +5677,6 @@ static int qmp_pcie_init(struct phy *phy)
+ 	struct qmp_pcie *qmp = phy_get_drvdata(phy);
+ 	const struct qmp_phy_cfg *cfg = qmp->cfg;
+ 	void __iomem *pcs = qmp->pcs;
+-	bool skip_reset;
+ 	int ret;
+ 
+ 	/*
+@@ -5693,9 +5692,6 @@ static int qmp_pcie_init(struct phy *phy)
+ 		qphy_checkbits(pcs, cfg->regs[QPHY_START_CTRL], SERDES_START | PCS_START) &&
+ 		qphy_checkbits(pcs, cfg->regs[QPHY_PCS_POWER_DOWN_CONTROL], cfg->pwrdn_ctrl);
+ 
+-	skip_reset = qmp->skip_init && !qphy_checkbits(pcs, cfg->regs[QPHY_PCS_STATUS],
+-							    cfg->phy_status);
+-
+ 	if (!qmp->skip_init && !cfg->tbls.serdes_num) {
+ 		dev_err(qmp->dev, "Init sequence not available\n");
+ 		return -ENODATA;
+@@ -5719,16 +5715,14 @@ static int qmp_pcie_init(struct phy *phy)
+ 		}
+ 	}
+ 
+-	if (!skip_reset) {
+-		ret = reset_control_assert(qmp->nocsr_reset);
+-		if (ret) {
+-			dev_err(qmp->dev, "no-csr reset assert failed\n");
+-			goto err_assert_reset;
+-		}
+-
+-		usleep_range(200, 300);
++	ret = reset_control_assert(qmp->nocsr_reset);
++	if (ret) {
++		dev_err(qmp->dev, "no-csr reset assert failed\n");
++		goto err_assert_reset;
+ 	}
+ 
++	usleep_range(200, 300);
++
+ 	if (!qmp->skip_init) {
+ 		ret = reset_control_bulk_deassert(cfg->num_resets, qmp->resets);
+ 		if (ret) {
+@@ -5777,11 +5771,8 @@ static int qmp_pcie_power_on(struct phy *phy)
+ 	void __iomem *pcs = qmp->pcs;
+ 	void __iomem *status;
+ 	unsigned int mask, val;
+-	bool skip_reset;
+ 	int ret;
+ 
+-	skip_reset = qmp->skip_init && !qphy_checkbits(pcs, cfg->regs[QPHY_PCS_STATUS],
+-							    cfg->phy_status);
+ 	/*
+ 	 * Write CSR register for PHY that doesn't support no_csr reset or has not
+ 	 * been initialized.
+@@ -5805,12 +5796,10 @@ static int qmp_pcie_power_on(struct phy *phy)
+ 	if (ret)
+ 		return ret;
+ 
+-	if (!skip_reset) {
+-		ret = reset_control_deassert(qmp->nocsr_reset);
+-		if (ret) {
+-			dev_err(qmp->dev, "no-csr reset deassert failed\n");
+-			goto err_disable_pipe_clk;
+-		}
++	ret = reset_control_deassert(qmp->nocsr_reset);
++	if (ret) {
++		dev_err(qmp->dev, "no-csr reset deassert failed\n");
++		goto err_disable_pipe_clk;
+ 	}
+ 
+ 	if (qmp->skip_init)

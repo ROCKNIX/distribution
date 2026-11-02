@@ -1,0 +1,55 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Birk Skyum <birk.skyum@pm.me>
+Date: Tue, 20 Oct 2026 21:35:09 +0000
+Subject: [PATCH] wifi: ath12k: don't count a vdev restart as a started vdev
+
+ath12k_mac_vdev_start_restart() increments ar->num_started_vdevs for a
+restart as well as for a start. A restart is not paired with a stop, so
+each one leaves the count one too high until the driver is restarted.
+ath12k_mac_update_vif_chan() restarts every vdev that is up when its
+channel context changes, for example when the AP changes the bandwidth
+of the link.
+
+Since commit 18ae7d0cdd76 ("wifi: ath12k: Avoid CPU busy-wait by
+handling VDEV_STAT and BCN_STAT"), ath12k_wmi_fw_stats_process()
+completes a WMI_REQUEST_VDEV_STAT request only after as many vdev stats
+events as there are started vdevs. With the count too high that never
+happens, so from then on every station statistics request waits the
+full 3 seconds in ath12k_mac_get_fw_stats(), with the wiphy lock held,
+and logs "time out while waiting for fw stats done".
+
+On a Lenovo Yoga Slim 7x connected to an MLO AP, the timeouts start a
+few seconds after the AP narrows its 5 GHz link from 160 to 80 MHz and
+repeat every 3 seconds until the driver is reloaded. While they last,
+channel switches take minutes to complete, transmits fail in bursts and
+group rekeys end in a deauthentication.
+
+Count only vdev starts, as ath11k does.
+
+With this change the Yoga went through the AP's next switch of that
+link, from channel 128 to channel 36 at 80 MHz, without a single
+timeout, and the switch completed in under two seconds.
+
+Tested-on: WCN7850 hw2.0 PCI WLAN.HMT.1.1.c7-00108-QCAHMTSWPL_V1.0_V2.0_SILICONZ_UPSTREAM-3
+
+Fixes: d889913205cf ("wifi: ath12k: driver for Qualcomm Wi-Fi 7 devices")
+Signed-off-by: Birk Skyum <birk.skyum@pm.me>
+Link: https://lore.kernel.org/r/20261020213505.31624-1-birk.skyum@pm.me
+---
+ drivers/net/wireless/ath/ath12k/mac.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/mac.c b/drivers/net/wireless/ath/ath12k/mac.c
+index 01f8c65..1b46723 100644
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -11472,7 +11472,8 @@ ath12k_mac_vdev_start_restart(struct ath12k_link_vif *arvif,
+ 						   &arvif->reg_tpc_info);
+ 	}
+ 
+-	ar->num_started_vdevs++;
++	if (!restart)
++		ar->num_started_vdevs++;
+ 	ath12k_dbg(ab, ATH12K_DBG_MAC,  "vdev %pM started, vdev_id %d\n",
+ 		   ahvif->vif->addr, arvif->vdev_id);
+ 

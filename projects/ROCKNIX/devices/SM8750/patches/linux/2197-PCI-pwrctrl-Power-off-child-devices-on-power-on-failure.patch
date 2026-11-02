@@ -1,0 +1,82 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lorenzo Bianconi <lorenzo.bianconi@oss.qualcomm.com>
+Date: Wed, 09 Sep 2026 17:28:29 +0200
+Subject: [PATCH] PCI/pwrctrl: Power off child devices on power-on failure
+
+pci_pwrctrl_power_on_device() recursively powers on the child nodes
+of a device before powering on the device itself. If powering on a
+child fails (e.g. returning -EPROBE_DEFER), the function returned
+immediately, leaving the sibling children that were already powered
+on in the same loop iteration enabled.
+
+Since probe deferral is a standard boot path, this leads to unbounded
+regulator and clock enable increments across retries. The error path
+in pci_pwrctrl_power_on_devices() only powers off the top-level
+children processed before the failing one and explicitly stops at it,
+so it can never clean up the siblings leaked deeper in the failed
+subtree.
+
+Power off the sibling children that were successfully powered on
+before a child fails, and power off all children if the device's own
+power_on() fails after its children were already enabled. Switch to a
+manual child iterator so the failing node can be tracked and its
+reference released in the error path.
+
+Fixes: b35cf3b6aa1e ("PCI/pwrctrl: Add APIs to power on/off pwrctrl devices")
+Signed-off-by: Lorenzo Bianconi <lorenzo.bianconi@oss.qualcomm.com>
+Reviewed-by: Manivannan Sadhasivam <manivannan.sadhasivam@oss.qualcomm.com>
+Reviewed-by: Bartosz Golaszewski <bartosz.golaszewski@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20260909-pwrtctl-power-on-rallback-v1-1-412ef996ba27@oss.qualcomm.com
+---
+ drivers/pci/pwrctrl/core.c | 19 +++++++++++++++++--
+ 1 file changed, 17 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/pci/pwrctrl/core.c b/drivers/pci/pwrctrl/core.c
+index 10d817aefb09..d29cd506972d 100644
+--- a/drivers/pci/pwrctrl/core.c
++++ b/drivers/pci/pwrctrl/core.c
+@@ -252,14 +252,16 @@ static int __pci_pwrctrl_power_on_device(struct device *dev)
+ static int pci_pwrctrl_power_on_device(struct device_node *np)
+ {
+ 	struct platform_device *pdev;
++	struct device_node *child;
+ 	int ret = 0;
+ 
+-	for_each_available_child_of_node_scoped(np, child) {
++	for_each_available_child_of_node(np, child) {
+ 		ret = pci_pwrctrl_power_on_device(child);
+ 		if (ret)
+-			return ret;
++			goto err_power_off;
+ 	}
+ 
++	child = NULL;
+ 	if (!pci_pwrctrl_is_required(np))
+ 		return 0;
+ 
+@@ -279,6 +281,19 @@ static int pci_pwrctrl_power_on_device(struct device_node *np)
+ 
+ 	platform_device_put(pdev);
+ 
++	if (ret)
++		goto err_power_off;
++
++	return 0;
++
++err_power_off:
++	for_each_available_child_of_node_scoped(np, tmp) {
++		if (tmp == child)
++			break;
++		pci_pwrctrl_power_off_device(tmp);
++	}
++	of_node_put(child);
++
+ 	return ret;
+ }
+ 
+
+---
+base-commit: 028f86457e822ab9de5b0d6d23efddc1b8b54ae1
+change-id: 20260908-pwrtctl-power-on-rallback-5c6364b080ce
+
+Best regards,

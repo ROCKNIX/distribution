@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Chunkai Deng <chunkai.deng@oss.qualcomm.com>
+Date: Fri, 16 Oct 2026 01:58:18 -0700
+Subject: [PATCH] net: qrtr: do not take the sock lock on blocking recv
+
+qrtr_recvmsg() takes lock_sock() before skb_recv_datagram() and keeps it
+while waiting for a datagram. Any other call on the same socket, such as
+sendmsg(), bind() or ioctl(), blocks until a packet arrives.
+
+Take the lock only once a datagram has been dequeued. The receive queue
+has its own lock and the enqueue path never takes the socket lock. The
+lock is still needed around the copy and skb_free_datagram(), since
+TIOCINQ peeks the queue under lock_sock() only.
+
+Testing SOCK_ZAPPED without the lock means a recv() racing with bind()
+may return -EADDRNOTAVAIL for a port that was just published. There is
+no ordering between the two calls anyway.
+
+Signed-off-by: Chunkai Deng <chunkai.deng@oss.qualcomm.com>
+Reviewed-by: Manivannan Sadhasivam <manivannan.sadhasivam@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261016-qrtr-add-shutdown-v1-1-e1cc01ca5919@oss.qualcomm.com
+---
+ net/qrtr/af_qrtr.c | 12 ++++--------
+ 1 file changed, 4 insertions(+), 8 deletions(-)
+
+diff --git a/net/qrtr/af_qrtr.c b/net/qrtr/af_qrtr.c
+index d02ef9a74c3ca..2d7339338e460 100644
+--- a/net/qrtr/af_qrtr.c
++++ b/net/qrtr/af_qrtr.c
+@@ -1034,18 +1034,14 @@ static int qrtr_recvmsg(struct socket *sock, struct msghdr *msg,
+ 	struct qrtr_cb *cb;
+ 	int copied, rc;
+ 
+-	lock_sock(sk);
+-
+-	if (sock_flag(sk, SOCK_ZAPPED)) {
+-		release_sock(sk);
++	if (sock_flag(sk, SOCK_ZAPPED))
+ 		return -EADDRNOTAVAIL;
+-	}
+ 
+ 	skb = skb_recv_datagram(sk, flags, &rc);
+-	if (!skb) {
+-		release_sock(sk);
++	if (!skb)
+ 		return rc;
+-	}
++
++	lock_sock(sk);
+ 	cb = (struct qrtr_cb *)skb->cb;
+ 
+ 	copied = skb->len;
