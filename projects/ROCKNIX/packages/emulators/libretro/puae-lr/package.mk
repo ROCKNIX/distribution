@@ -2,8 +2,8 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="puae-lr"
-PKG_VERSION="96ebfcfc2c66233ad37f6dc99ee991211dc719ad"
-PKG_SHA256="af671aa1b42eb5b97a05b3ac2e57b6f397f3e17bbd0be7ac204636c2321d3cf0"
+PKG_VERSION="356160901b4563a60d663829a2e1d07a9207671c"
+PKG_SHA256="00e9532adaecb6244a5553ccbbae2a0194d9bf80f349217238530930f97289e1"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/libretro-uae"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

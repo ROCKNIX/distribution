@@ -2,7 +2,7 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="wasm4-lr"
-PKG_VERSION="3f7a861a818b81d39ec430974f71a54361080f20"
+PKG_VERSION="9d6c962785cfe3719d0245fd279ecbe98a4dbb63"
 PKG_LICENSE="ISC"
 PKG_SITE="https://github.com/aduros/wasm4"
 PKG_URL="${PKG_SITE}.git"

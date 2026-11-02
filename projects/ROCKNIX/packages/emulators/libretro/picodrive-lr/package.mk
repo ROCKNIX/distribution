@@ -2,9 +2,9 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="picodrive-lr"
-PKG_VERSION="733c711a477a642fd2006d5a7a581b2790ec36b4"
+PKG_VERSION="07abb00550528f7bf53087d932dd3d747cf2d0df"
 PKG_LICENSE="MAME"
-PKG_SITE="https://github.com/libretro/picodrive"
+PKG_SITE="https://github.com/irixxxx/picodrive"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="Libretro implementation of PicoDrive. (Sega Megadrive/Genesis/Sega Master System/Sega GameGear/Sega CD/32X)"

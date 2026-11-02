@@ -2,8 +2,8 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="vice-lr"
-PKG_VERSION="91d0d4d884acd44b5240dfcdbd8bdc2f0f757dfd"
-PKG_SHA256="bb2d86206c7890fe036be79ecbf75cb83051e01ecf6b5b140f4950c0e6304356"
+PKG_VERSION="5ebe7d333ab15be57a9dde5f46c29a5bbd5f44f8"
+PKG_SHA256="45ed7b653473e0a819fdca3679e3797c4606edb8d115afa5fd26265044431225"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/vice-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
@@ -17,7 +17,7 @@ make_target() {
 
   for EMUTYPE in x128 x64sc x64dtv xscpu64 xplus4 xvic xcbm5x0 xcbm2 xpet x64; do
     make clean
-    make EMUTYPE=${EMUTYPE}
+    make platform=unix EMUTYPE=${EMUTYPE}
     mv vice_*_libretro.so built
   done
 }

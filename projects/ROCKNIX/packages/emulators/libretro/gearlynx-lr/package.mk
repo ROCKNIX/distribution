@@ -2,8 +2,8 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="gearlynx-lr"
-PKG_VERSION="6b8c8f781e430f5e5ec4bff48111b5b8927e4ca2"
-PKG_SHA256="4e5ff95ef0693abc3d49138d5ee759d31b839ec58b884527a9bd8a6d826176f2"
+PKG_VERSION="cb951ddc19ccbae73685d58e015565410ad524f8"
+PKG_SHA256="9e1cabacd6e769fb6464e859d34be2553c0e31c6001b0a1155f96b77c1b704a6"
 PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/drhelius/Gearlynx"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

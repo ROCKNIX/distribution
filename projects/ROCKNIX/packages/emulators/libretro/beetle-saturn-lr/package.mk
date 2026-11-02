@@ -2,8 +2,8 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="beetle-saturn-lr"
-PKG_VERSION="ed549bdac0e1a830bb794fa720e45c225a45355c"
-PKG_SHA256="cce418de1ed227c44d2127cd2f726d0d51d80afed7ce31a330a3759f096c4ada"
+PKG_VERSION="fcb42b696fbca91d021bc9f11d4c288e56b9c20e"
+PKG_SHA256="aac0c414b12df0633e61155ef0514f893281c28462fa15d98f5a04a5cb2122d2"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/beetle-saturn-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

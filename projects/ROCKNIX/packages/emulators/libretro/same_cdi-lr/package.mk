@@ -2,8 +2,8 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="same_cdi-lr"
-PKG_VERSION="7ee1d8e9cb4307b7cd44ee1dd757e9b3f48f41d5"
-PKG_SHA256="3f3193561e6f58640ed6818b5c51fd7e3706083e9f211eb9f2282f12d189e5d4"
+PKG_VERSION="ff9bb99a50d518aef6d2add1c49b7c44447e3e78"
+PKG_SHA256="a716b7de6d1f8e70d3b053cece9c2f11388f674c0071036b5cb3a9296bb473ce"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/same_cdi"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
@@ -26,16 +26,11 @@ PKG_MAKE_OPTS_TARGET="REGENIE=1 \
                       LIBRETRO_CPU= \
                       PLATFORM=arm64 \
                       ARCH= \
-                      TARGET=mame \
                       OSD=retro \
                       USE_SYSTEM_LIB_EXPAT=1 \
                       USE_SYSTEM_LIB_ZLIB=1 \
                       USE_SYSTEM_LIB_FLAC=FLAC,ogg \
                       USE_SYSTEM_LIB_SQLITE3=1"
-
-post_unpack() {
-  sed -i "s/-static-libstdc++//g" ${PKG_BUILD}/scripts/genie.lua
-}
 
 make_target() {
   unset ARCH
