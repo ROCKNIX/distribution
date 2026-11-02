@@ -22,8 +22,8 @@ fi
 pre_make_target() {
   PKG_UBOOT_CONFIG="generic-rk3576_defconfig"
   PKG_MINILOADER="spl/u-boot-spl.bin"
-  PKG_BL31="${PKG_RKBIN_DIR}/rk3576_bl31_v1.20.elf"
-  PKG_DDR_BIN="${PKG_RKBIN_DIR}/rk3576_ddr_lp4_2112MHz_lp5_2736MHz_v1.09.bin"
+  PKG_BL31="${PKG_RKBIN_DIR}/rk3576_bl31_v1.25.elf"
+  PKG_DDR_BIN="${PKG_RKBIN_DIR}/rk3576_ddr_lp4_2112MHz_lp5_2736MHz_v1.13.bin"
 }
 
 make_target() {

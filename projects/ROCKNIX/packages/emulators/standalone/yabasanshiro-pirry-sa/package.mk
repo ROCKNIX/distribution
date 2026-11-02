@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
-PKG_NAME="yabasanshiro-sa"
-PKG_VERSION="a40dace1ae0af3ebd45848549fdf396f40e3930f"
+PKG_NAME="yabasanshiro-pirry-sa"
+PKG_VERSION="ba771f1791bf59b858b2ffdbc25b3cf04a4d8996"
 PKG_LICENSE="GPL-2.0-or-later"
-PKG_SITE="https://github.com/sydarn/yabause"
+PKG_SITE="https://github.com/pirrypirrypirry/yabasanshiro-pirry"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain SDL2 boost openal-soft zlib"
 PKG_LONGDESC="Yabause is a Sega Saturn emulator and took over as Yaba Sanshiro"
@@ -48,10 +48,9 @@ configure_package() {
 pre_configure_target() {
   case ${ARCH} in
     aarch64)
-      PKG_CMAKE_OPTS_TARGET+=" -DYAB_WANT_ARM7=ON \
-                               -DYAB_WANT_DYNAREC_DEVMIYAX=ON \
-                               -DYAB_PORTS=retro_arena \
-                               -DCMAKE_PROJECT_INCLUDE=${PKG_BUILD}/yabause/src/retro_arena/n2.cmake"
+      PKG_CMAKE_OPTS_TARGET+=" -DYAB_WANT_DYNAREC_DEVMIYAX=ON \
+			       -DYAB_WANT_VULKAN=OFF \
+			       -DYAB_PORTS=retro_arena "
       ;;
   esac
 }
@@ -65,7 +64,7 @@ pre_make_target() {
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin
     cp -a ${PKG_BUILD}/.${TARGET_NAME}/src/retro_arena/yabasanshiro ${INSTALL}/usr/bin
-    cp -a ${PKG_DIR}/scripts/start_yabasanshiro.sh ${INSTALL}/usr/bin
+    cp -a ${PKG_DIR}/scripts/start_yabasanshiro-pirry.sh ${INSTALL}/usr/bin
 
   mkdir -p ${INSTALL}/usr/config/yabasanshiro
     cp -a ${PKG_DIR}/config/config ${INSTALL}/usr/config/yabasanshiro/.config
