@@ -1,0 +1,63 @@
+From d433dfded2fe31da6efbfdf42463115283199d11 Mon Sep 17 00:00:00 2001
+From: OpenSauce04 <opensauce04@gmail.com>
+Date: Tue, 15 Sep 2026 08:42:47 +0100
+Subject: [PATCH] video_core: Use nearest neighbor scaling in
+ Surface::BlitScale and TextureRuntime::BlitTextures
+
+---
+ src/video_core/renderer_opengl/gl_texture_runtime.cpp | 6 ++----
+ src/video_core/renderer_vulkan/vk_texture_runtime.cpp | 7 +++----
+ 2 files changed, 5 insertions(+), 8 deletions(-)
+
+diff --git a/src/video_core/renderer_opengl/gl_texture_runtime.cpp b/src/video_core/renderer_opengl/gl_texture_runtime.cpp
+index c7f38ed6a..212dda32e 100644
+--- a/src/video_core/renderer_opengl/gl_texture_runtime.cpp
++++ b/src/video_core/renderer_opengl/gl_texture_runtime.cpp
+@@ -312,9 +312,7 @@ bool TextureRuntime::BlitTextures(Surface& source, Surface& dest,
+     // Note: shadow map is treated as RGBA8 format in PICA, as well as in the rasterizer cache, but
+     // doing linear intepolation componentwise would cause incorrect value.
+     const GLbitfield buffer_mask = MakeBufferMask(source.type);
+-    const bool is_shadow_map = True(source.flags & SurfaceFlagBits::ShadowSource);
+-    const GLenum filter =
+-        buffer_mask == GL_COLOR_BUFFER_BIT && !is_shadow_map ? GL_LINEAR : GL_NEAREST;
++    constexpr GLenum filter = GL_NEAREST;
+     glBlitFramebuffer(blit.src_rect.left, blit.src_rect.bottom, blit.src_rect.right,
+                       blit.src_rect.top, blit.dst_rect.left, blit.dst_rect.bottom,
+                       blit.dst_rect.right, blit.dst_rect.top, buffer_mask, filter);
+@@ -636,7 +634,7 @@ void Surface::BlitScale(const VideoCore::TextureBlit& blit, bool up_scale) {
+     Attach(GL_DRAW_FRAMEBUFFER, blit.dst_level, blit.dst_layer, up_scale);
+ 
+     const GLenum buffer_mask = MakeBufferMask(type);
+-    const GLenum filter = buffer_mask == GL_COLOR_BUFFER_BIT ? GL_LINEAR : GL_NEAREST;
++    constexpr GLenum filter = GL_NEAREST;
+     glBlitFramebuffer(blit.src_rect.left, blit.src_rect.bottom, blit.src_rect.right,
+                       blit.src_rect.top, blit.dst_rect.left, blit.dst_rect.bottom,
+                       blit.dst_rect.right, blit.dst_rect.top, buffer_mask, filter);
+diff --git a/src/video_core/renderer_vulkan/vk_texture_runtime.cpp b/src/video_core/renderer_vulkan/vk_texture_runtime.cpp
+index 25e1bf4e8..7ed843509 100644
+--- a/src/video_core/renderer_vulkan/vk_texture_runtime.cpp
++++ b/src/video_core/renderer_vulkan/vk_texture_runtime.cpp
+@@ -607,7 +607,7 @@ bool TextureRuntime::BlitTextures(Surface& source, Surface& dest,
+ 
+     const RecordParams params = {
+         .aspect = source.Aspect(),
+-        .filter = MakeFilter(source.pixel_format),
++        .filter = vk::Filter::eNearest,
+         .pipeline_flags = source.PipelineStageFlags() | dest.PipelineStageFlags(),
+         .src_access = source.AccessFlags(),
+         .dst_access = dest.AccessFlags(),
+@@ -1370,9 +1370,8 @@ void Surface::BlitScale(const VideoCore::TextureBlit& blit, bool up_scale) {
+     const auto src_type = up_scale ? Type::Base : Type::Scaled;
+     const auto dst_type = up_scale ? Type::Scaled : Type::Base;
+ 
+-    scheduler.Record([src_image = Image(src_type), aspect = Aspect(),
+-                      filter = MakeFilter(pixel_format), dst_image = Image(dst_type),
+-                      blit](vk::CommandBuffer render_cmdbuf) {
++    scheduler.Record([src_image = Image(src_type), aspect = Aspect(), filter = vk::Filter::eNearest,
++                      dst_image = Image(dst_type), blit](vk::CommandBuffer render_cmdbuf) {
+         const std::array source_offsets = {
+             vk::Offset3D{static_cast<s32>(blit.src_rect.left),
+                          static_cast<s32>(blit.src_rect.bottom), 0},
+-- 
+2.43.0
+

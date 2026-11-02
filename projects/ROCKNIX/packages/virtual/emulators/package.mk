@@ -51,46 +51,46 @@ case "${DEVICE}" in
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 desmume-lr gpsp-lr pcsx_rearmed-lr yabadabadoo-lr"
     PKG_DEPENDS_TARGET+=" common-shaders glsl-shaders"
     PKG_EMUS+=" armsx2-sa azahar-sa dolphin-sa drastic-sa mednafen melonds-sa vita3k-sa"
-    LIBRETRO_CORES+=" dolphin-lr hakux-lr uae4arm-lr"
+    LIBRETRO_CORES+=" azahar-lr dolphin-lr hakux-lr uae4arm-lr"
     ;;
   RK3588)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 desmume-lr gpsp-lr pcsx_rearmed-lr yabadabadoo-lr"
     PKG_EMUS+=" armsx2-sa azahar-sa dolphin-sa drastic-sa mednafen melonds-sa supermodel-sa vita3k-sa"
-    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr uae4arm-lr"
+    LIBRETRO_CORES+=" azahar-lr beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr uae4arm-lr"
     ;;
   SM6115)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 desmume-lr gpsp-lr pcsx_rearmed-lr yabadabadoo-lr"
     PKG_EMUS+=" azahar-sa dolphin-sa drastic-sa mednafen melonds-sa supermodel-sa vita3k-sa armsx2-sa"
-    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr hakux-lr uae4arm-lr"
+    LIBRETRO_CORES+=" azahar-lr beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr hakux-lr uae4arm-lr"
     ;;
   # TODO: cemu and xemu testing, drop if unplayable
   SM4450)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 daedalusx64-sa desmume-lr gpsp-lr pcsx_rearmed-lr yabadabadoo-lr"
     PKG_EMUS+=" azahar-sa bigpemu-sa cemu-sa dolphin-sa heroic mednafen melonds-sa nanoboyadvance-sa supermodel-sa \
                 skyemu-sa steam vita3k-sa armsx2-sa"
-    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr hakux-lr kronos-lr uae4arm-lr"
+    LIBRETRO_CORES+=" azahar-lr beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr hakux-lr kronos-lr uae4arm-lr"
     ;;
   SM8250|SDM845)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 daedalusx64-sa desmume-lr gpsp-lr pcsx_rearmed-lr"
     PKG_EMUS+=" azahar-sa bigpemu-sa cemu-sa dolphin-sa heroic mednafen melonds-sa nanoboyadvance-sa rpcs3-sa supermodel-sa \
                 xemu-sa skyemu-sa steam vita3k-sa armsx2-sa"
-    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr hakux-lr kronos-lr uae4arm-lr"
+    LIBRETRO_CORES+=" azahar-lr beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr hakux-lr kronos-lr uae4arm-lr"
     ;;
   SM8550)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 daedalusx64-sa desmume-lr gpsp-lr pcsx_rearmed-lr"
     PKG_EMUS+=" ares-sa azahar-sa bigpemu-sa cemu-sa dolphin-sa drastic-sa gopher64-sa heroic mednafen melonds-sa nanoboyadvance-sa rpcs3-sa supermodel-sa \
                 xemu-sa skyemu-sa steam vita3k-sa armsx2-sa"
-    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr hakux-lr kronos-lr uae4arm-lr"
+    LIBRETRO_CORES+=" azahar-lr beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr hakux-lr kronos-lr uae4arm-lr"
     ;;
   SM8650|SM8750)
     PKG_EMUS+=" ares-sa azahar-sa bigpemu-sa cemu-sa dolphin-sa gopher64-sa heroic mednafen melonds-sa nanoboyadvance-sa rpcs3-sa supermodel-sa \
                 xemu-sa skyemu-sa steam vita3k-sa armsx2-sa"
-    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr hakux-lr kronos-lr uae4arm-lr"
+    LIBRETRO_CORES+=" azahar-lr beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr hakux-lr kronos-lr uae4arm-lr"
     ;;
   S922X)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 pcsx_rearmed-lr"
     PKG_EMUS+=" azahar-sa bigpemu-sa dolphin-sa drastic-sa duckstation-sa melonds-sa vita3k-sa armsx2-sa"
-    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr hakux-lr uae4arm-lr"
+    LIBRETRO_CORES+=" azahar-lr beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr hakux-lr uae4arm-lr"
     ;;
   AMD64)
     PKG_EMUS+=" ares-sa azahar-sa cemu-sa dolphin-sa gopher64-sa mednafen melonds-sa nanoboyadvance-sa \
@@ -172,7 +172,13 @@ makeinstall_target() {
 
   ### Nintendo 3DS
   case ${DEVICE} in
-    RK3576|RK3566|SM8250|SM8550|SM8650|SM8750|S922X|RK3588|SM4450|SM6115|AMD64|SDM845)
+    RK3576|RK3566|SM8250|SM8550|SM8650|SM8750|S922X|RK3588|SM4450|SM6115|SDM845)
+      add_emu_core 3ds azahar azahar-sa true
+      add_emu_core 3ds retroarch azahar false
+      add_es_system 3ds
+      install_script "Start Azahar.sh"
+    ;;
+    AMD64)
       add_emu_core 3ds azahar azahar-sa true
       add_es_system 3ds
       install_script "Start Azahar.sh"
