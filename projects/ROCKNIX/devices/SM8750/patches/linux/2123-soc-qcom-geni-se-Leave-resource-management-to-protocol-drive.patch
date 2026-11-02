@@ -1,0 +1,87 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Viken Dadhaniya <viken.dadhaniya@oss.qualcomm.com>
+Date: Sun, 25 Oct 2026 22:31:49 +0530
+Subject: [PATCH] soc: qcom: geni-se: Leave resource management to protocol drivers
+
+Protocol drivers power the Serial Engine (SE) up and down from their
+runtime PM callbacks. Firmware loading runs with a runtime PM reference
+held, so the resources and interconnect paths are already enabled.
+
+geni_load_se_fw() redundantly enables these resources and unconditionally
+disables them after programming the firmware. This drops the protocol
+driver's ICC vote while the device remains active.
+
+Leave resource management to the protocol drivers and keep the common
+firmware loader limited to programming the SE.
+
+Fixes: d4bf06592ad6 ("soc: qcom: geni-se: Add support to load QUP SE Firmware via Linux subsystem")
+Cc: stable@vger.kernel.org
+Signed-off-by: Viken Dadhaniya <viken.dadhaniya@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261025-gen-se-remove-resources-handling-v1-1-e81da6707b5f@oss.qualcomm.com
+---
+ drivers/soc/qcom/qcom-geni-se.c | 23 +++++------------------
+ 1 file changed, 5 insertions(+), 18 deletions(-)
+
+diff --git a/drivers/soc/qcom/qcom-geni-se.c b/drivers/soc/qcom/qcom-geni-se.c
+index 074087c592cc..ebca60c8496a 100644
+--- a/drivers/soc/qcom/qcom-geni-se.c
++++ b/drivers/soc/qcom/qcom-geni-se.c
+@@ -1453,18 +1453,6 @@ static int geni_load_se_fw(struct geni_se *se, const struct firmware *fw,
+ 	cfg_idx_arr = (const u8 *)hdr + le16_to_cpu(hdr->cfg_idx_offset);
+ 	cfg_val_arr = (const u32 *)((const u8 *)hdr + le16_to_cpu(hdr->cfg_val_offset));
+ 
+-	ret = geni_icc_set_bw(se);
+-	if (ret)
+-		return ret;
+-
+-	ret = geni_icc_enable(se);
+-	if (ret)
+-		return ret;
+-
+-	ret = geni_se_resources_on(se);
+-	if (ret)
+-		goto out_icc_disable;
+-
+ 	/*
+ 	 * Disable high-priority interrupts until all currently executing
+ 	 * low-priority interrupts have been fully handled.
+@@ -1514,7 +1502,7 @@ static int geni_load_se_fw(struct geni_se *se, const struct firmware *fw,
+ 
+ 	ret = geni_configure_xfer_mode(se, mode);
+ 	if (ret)
+-		goto out_resources_off;
++		return ret;
+ 
+ 	geni_enable_interrupts(se);
+ 
+@@ -1541,11 +1529,6 @@ static int geni_load_se_fw(struct geni_se *se, const struct firmware *fw,
+ 	else
+ 		geni_setbits32(se->base + SE_FIFO_IF_DISABLE, FIFO_IF_DISABLE);
+ 
+-out_resources_off:
+-	geni_se_resources_off(se);
+-
+-out_icc_disable:
+-	geni_icc_disable(se);
+ 	return ret;
+ }
+ 
+@@ -1559,6 +1542,10 @@ static int geni_load_se_fw(struct geni_se *se, const struct firmware *fw,
+  * UART protocol due to lack of GSI DMA support. Requests the firmware and loads
+  * it into the SE.
+  *
++ * The caller must keep the SE resources and interconnect paths enabled for the
++ * duration of this call, including holding a runtime PM reference when runtime
++ * PM manages these resources.
++ *
+  * Return: 0 on success, negative error code on failure.
+  */
+ int geni_load_se_firmware(struct geni_se *se, enum geni_se_protocol_type protocol)
+
+---
+base-commit: 20a33c6b6cbe7e4805dfb6cd68816937443aa148
+change-id: 20261025-gen-se-remove-resources-handling-d2196f7c25d6
+
+Best regards,
+--  
+Viken Dadhaniya <viken.dadhaniya@oss.qualcomm.com>

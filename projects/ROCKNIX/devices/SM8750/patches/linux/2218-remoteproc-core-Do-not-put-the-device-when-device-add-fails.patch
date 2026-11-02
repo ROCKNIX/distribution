@@ -1,0 +1,86 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yuqiang Sun <izaiahsun@gmail.com>
+Date: Thu, 29 Oct 2026 21:00:37 +0800
+Subject: [PATCH] remoteproc: core: Do not put the device when device_add() fails
+
+When device_add() fails, rproc_add() calls put_device() and then
+removes the character device.  The reference it drops is the one
+rproc_alloc() took with device_initialize(), which belongs to the
+caller: after a failed rproc_add(), every driver frees the rproc,
+either with rproc_free() or through devm_rproc_alloc(), and both drop
+that reference again.
+
+So the rproc is freed inside rproc_add(): by the put_device() itself,
+or, with CONFIG_REMOTEPROC_CDEV, by the cdev_del() that follows, when
+the character device drops its reference on the parent device.  The
+caller then uses the freed rproc and puts it a second time.
+
+With one allocation failure injected into device_add() (failslab
+restricted to rproc_add) while st_fdma probes, KASAN reports:
+
+  BUG: KASAN: slab-use-after-free in slim_clk_disable+0x38/0xf4 [st_slim_rproc]
+  Read of size 8 by task insmod/69
+  Call trace:
+   slim_clk_disable
+   st_slim_rproc_alloc
+   st_fdma_probe
+  Freed by task 69:
+   kfree
+   rproc_type_release
+   device_release
+   kobject_put
+   cdev_default_release
+   kobject_put
+   cdev_del
+   rproc_char_device_remove
+   rproc_add
+   st_slim_rproc_alloc
+
+followed by use-after-free reports in kobject_put() and
+refcount_warn_saturate() from the rproc_free() in
+st_slim_rproc_alloc().
+
+Remove the put_device(): the caller's rproc_free() drops the reference
+and releases the rproc, as it does for the other failures in
+rproc_add().
+
+The problem was found with kbound, a static analysis prototype that
+checks whether callers rely on an object after a callee returns a value
+for which the callee may have released it, on v7.2.12; it is present
+in rproc-next.
+
+Build-tested with x86_64 and arm64 allmodconfig (W=1, sparse): no new
+warnings.  Run-tested on QEMU's arm64 virt machine (TCG) with KASAN,
+using a device tree node for an ST FDMA with a SLIM core, so that
+st_fdma_probe() reaches rproc_add() without the hardware (no clocks,
+MMIO windows only mapped), and failing each allocation in rproc_add()
+in turn with failslab: before this patch every failure in device_add()
+(9 of 9) gives the reports above; with it nothing is reported, and the
+rproc is released once, by rproc_free().  Not tested on remoteproc
+hardware.
+
+Fixes: 7dbdb8bd7c02 ("remoteproc: core: Cleanup device in case of failure")
+Cc: stable@vger.kernel.org
+Assisted-by: Claude:claude-opus-5-5 kbound
+Signed-off-by: Yuqiang Sun <izaiahsun@gmail.com>
+Link: https://lore.kernel.org/r/20261029130037.5505-1-izaiahsun@gmail.com
+---
+ drivers/remoteproc/remoteproc_core.c | 4 +---
+ 1 file changed, 1 insertion(+), 3 deletions(-)
+
+diff --git a/drivers/remoteproc/remoteproc_core.c b/drivers/remoteproc/remoteproc_core.c
+index b88bf179507d..e4f44a3c8b4d 100644
+--- a/drivers/remoteproc/remoteproc_core.c
++++ b/drivers/remoteproc/remoteproc_core.c
+@@ -2309,10 +2309,8 @@ int rproc_add(struct rproc *rproc)
+ 		return ret;
+ 
+ 	ret = device_add(dev);
+-	if (ret < 0) {
+-		put_device(dev);
++	if (ret < 0)
+ 		goto rproc_remove_cdev;
+-	}
+ 
+ 	dev_info(dev, "%s is available\n", rproc->name);
+ 

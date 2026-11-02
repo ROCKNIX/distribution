@@ -1,0 +1,140 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Shawn Guo <shengchao.guo@oss.qualcomm.com>
+Date: Thu, 15 Oct 2026 09:38:26 +0800
+Subject: [PATCH] remoteproc: qcom: pas: Decide early_boot attach at probe time
+
+For early_boot subsystems, probe unconditionally marks the rproc
+RPROC_DETACHED and qcom_pas_attach() discovers from SMP2P whether the
+bootloader actually started the remote. If it did not, attach sets the
+state back to RPROC_OFFLINE and fails, expecting the core to boot the
+firmware instead. The core does not do that: rproc_boot() treats the
+attach failure as fatal and the remote is never started.
+
+This is hit on Nord with firmware where XBL no longer brings ADSP out
+of reset. The remote never publishes its inbound SMP2P entries, so the
+very first state read fails (debug print below) and the ADSP stays down:
+
+  qcom_q6v5_pas 4c00000.remoteproc: Failed to get fatal_irq state: -19
+  remoteproc remoteproc0: can't attach to rproc adsp: -19
+
+The ready, stop-ack and sysmon shutdown-ack signals cannot change while
+Linux has not yet interacted with the remote, so there is no reason to
+defer the decision to attach time. Check them in probe and only mark
+the rproc RPROC_DETACHED when the remote is up and has not been asked
+to stop; otherwise leave it RPROC_OFFLINE so the regular firmware boot
+path is taken. The ready state is read first so that a missing SMP2P
+entry -ENODEV is treated as "not running" before sysmon is queried.
+
+qcom_pas_attach() keeps only the fatal check, since that is the one
+signal that has to be acted upon once the rproc is attached.
+
+Assisted-by: LLM
+Fixes: 16472c99f469 ("remoteproc: qcom: pas: Add late attach support for subsystems")
+Cc: stable@vger.kernel.org
+Reviewed-by: Stephan Gerhold <stephan.gerhold@linaro.org>
+Reviewed-by: Bartosz Golaszewski <bartosz.golaszewski@oss.qualcomm.com>
+Signed-off-by: Shawn Guo <shengchao.guo@oss.qualcomm.com>
+Acked-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261015013827.716465-2-shengchao.guo@oss.qualcomm.com
+---
+ drivers/remoteproc/qcom_q6v5_pas.c | 64 +++++++++++++++---------------
+ 1 file changed, 33 insertions(+), 31 deletions(-)
+
+diff --git a/drivers/remoteproc/qcom_q6v5_pas.c b/drivers/remoteproc/qcom_q6v5_pas.c
+index 2e1e39826ffa..89450cbdb1ee 100644
+--- a/drivers/remoteproc/qcom_q6v5_pas.c
++++ b/drivers/remoteproc/qcom_q6v5_pas.c
+@@ -550,9 +550,7 @@ static unsigned long qcom_pas_panic(struct rproc *rproc)
+ static int qcom_pas_attach(struct rproc *rproc)
+ {
+ 	struct qcom_pas *pas = rproc->priv;
+-	bool ready_state;
+ 	bool crash_state;
+-	bool stop_state;
+ 	int ret;
+ 
+ 	pas->q6v5.handover_issued = true;
+@@ -570,42 +568,46 @@ static int qcom_pas_attach(struct rproc *rproc)
+ 		goto disable_running;
+ 	}
+ 
+-	ret = irq_get_irqchip_state(pas->q6v5.stop_irq,
+-				    IRQCHIP_STATE_LINE_LEVEL, &stop_state);
+-	if (ret)
+-		goto disable_running;
+-
+-	if (stop_state || qcom_sysmon_shutdown_irq_state(pas->sysmon)) {
+-		dev_info(pas->dev, "Subsystem found stop state set. Falling back to start.\n");
+-		goto unroll_attach;
+-	}
+-
+-	ret = irq_get_irqchip_state(pas->q6v5.ready_irq,
+-				    IRQCHIP_STATE_LINE_LEVEL, &ready_state);
+-	if (ret)
+-		goto disable_running;
+-
+-	if (unlikely(!ready_state)) {
+-		/*
+-		 * The bootloader may not support early boot, mark the state as
+-		 * RPROC_OFFLINE so that the PAS driver can load the firmware and
+-		 * start the remoteproc.
+-		 */
+-		dev_err(pas->dev, "Failed to get subsystem ready interrupt\n");
+-		goto unroll_attach;
+-	}
+-
+ 	return 0;
+ 
+-unroll_attach:
+-	pas->rproc->state = RPROC_OFFLINE;
+-	ret = -EINVAL;
+ disable_running:
+ 	pas->q6v5.running = false;
+ 
+ 	return ret;
+ }
+ 
++/*
++ * The bootloader may or may not have started the subsystem. Inspect the
++ * SMP2P state, which is static until Linux interacts with the remote, to
++ * decide whether to attach or to load and start the firmware.
++ */
++static bool qcom_pas_is_running(struct qcom_pas *pas)
++{
++	bool ready_state;
++	bool stop_state;
++	int ret;
++
++	/*
++	 * Check ready first: if the remote never published its SMP2P
++	 * entries the state read fails with -ENODEV.
++	 */
++	ret = irq_get_irqchip_state(pas->q6v5.ready_irq,
++				    IRQCHIP_STATE_LINE_LEVEL, &ready_state);
++	if (ret || !ready_state) {
++		dev_info(pas->dev, "Subsystem not running, not attaching\n");
++		return false;
++	}
++
++	ret = irq_get_irqchip_state(pas->q6v5.stop_irq,
++				    IRQCHIP_STATE_LINE_LEVEL, &stop_state);
++	if (ret || stop_state || qcom_sysmon_shutdown_irq_state(pas->sysmon)) {
++		dev_info(pas->dev, "Subsystem has stop state set, not attaching\n");
++		return false;
++	}
++
++	return true;
++}
++
+ static void qcom_pas_coredump(struct rproc *rproc)
+ {
+ 	struct qcom_pas *pas = rproc->priv;
+@@ -1024,7 +1026,7 @@ static int qcom_pas_probe(struct platform_device *pdev)
+ 	if (pas->dtb_pas_id)
+ 		pas->dtb_pas_ctx->use_tzmem = desc->needs_tzmem || rproc->has_iommu;
+ 
+-	if (desc->early_boot)
++	if (desc->early_boot && qcom_pas_is_running(pas))
+ 		pas->rproc->state = RPROC_DETACHED;
+ 
+ 	ret = qcom_pas_setup_tmd(pas, desc);

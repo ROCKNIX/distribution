@@ -1,0 +1,69 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: David Heidelberg <david@ixit.cz>
+Date: Fri, 18 Sep 2026 00:14:11 +0200
+Subject: [PATCH] serial: qcom-geni: power the console back up on system resume
+
+The console holds a runtime PM reference on its port, which keeps the
+port powered while the tty is closed. On system suspend
+pm_runtime_force_suspend() powers the port down regardless, but a single
+reference makes pm_runtime_need_not_resume() report the port as not in
+use, so it is marked runtime suspended instead of being flagged for
+pm_runtime_force_resume(). On system resume the port therefore stays
+powered down while uart_resume_port() goes on to program the termios
+settings and re-enable the console.
+
+If the tty has been opened before, uart_resume_port() ends up in
+startup(), whose runtime PM reference powers the port up again, and only
+the register writes made before that are lost. If the tty has never been
+opened (no getty on the port, /dev/console backed by another console),
+nothing powers the port back up and the console stays dead after the
+first suspend.
+
+Resume the port explicitly before uart_resume_port() when the console
+was force suspended.
+
+Assisted-by: LLM
+Fixes: aee1f94dab13 ("serial: qcom-geni: remove .pm callback, use runtime PM in startup/shutdown")
+Signed-off-by: David Heidelberg <david@ixit.cz>
+Link: https://lore.kernel.org/r/20260918-qcom-geni-pm-v1-1-cb587e215607@ixit.cz
+---
+ drivers/tty/serial/qcom_geni_serial.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/drivers/tty/serial/qcom_geni_serial.c b/drivers/tty/serial/qcom_geni_serial.c
+index a180a00c9e23d..0c9164a1fccda 100644
+--- a/drivers/tty/serial/qcom_geni_serial.c
++++ b/drivers/tty/serial/qcom_geni_serial.c
+@@ -2100,16 +2100,22 @@ static int qcom_geni_serial_resume(struct device *dev)
+ 	struct qcom_geni_private_data *private_data = uport->private_data;
+ 
+ 	if (console_suspend_enabled || !uart_console(uport)) {
+ 		ret = pm_runtime_force_resume(dev);
+ 		if (ret)
+ 			return ret;
+ 	}
+ 
++	if (console_suspend_enabled && uart_console(uport)) {
++		ret = pm_runtime_resume(dev);
++		if (ret < 0)
++			return ret;
++	}
++
+ 	ret = uart_resume_port(private_data->drv, uport);
+ 	if (uart_console(uport)) {
+ 		geni_icc_set_tag(&port->se, QCOM_ICC_TAG_ALWAYS);
+ 		geni_icc_set_bw(&port->se);
+ 	}
+ 	return ret;
+ }
+ 
+
+---
+base-commit: 3d83758432b5e6ed9507500a57efb0f3af41ee7d
+change-id: 20260918-qcom-geni-pm-e0ff5899c948
+prerequisite-change-id: 20260828-serial-qcom-geni-fix-unbalanced-rpm-resume-814e630326b9:v1
+prerequisite-patch-id: a2666a59a68190a3f438cec8aa167111c21dc8ca
+
+Best regards,
+--  
+David Heidelberg <david@ixit.cz>

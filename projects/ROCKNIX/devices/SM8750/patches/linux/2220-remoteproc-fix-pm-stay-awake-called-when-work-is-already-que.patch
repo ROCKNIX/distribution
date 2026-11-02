@@ -1,0 +1,38 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mukesh Ojha <mukesh.ojha@oss.qualcomm.com>
+Date: Thu, 30 Jul 2026 14:24:36 +0530
+Subject: [PATCH] remoteproc: fix pm_stay_awake called when work is already queued
+
+rproc_report_crash() calls pm_stay_awake() unconditionally before
+queue_work().  When multiple crash sources fire simultaneously (e.g.
+watchdog and fatal interrupts), the second call enqueues nothing because
+the work is already pending, but still increments the wakeup source
+active count.  The single pm_relax() that follows when the work runs
+leaves the wakeup source with a non-zero count, preventing suspend.
+
+Move pm_stay_awake() inside the queue_work() success path so the
+wakeup source is only held when a work item is actually enqueued.
+
+Fixes: a781e5aa5911 ("remoteproc: core: Prevent system suspend during remoteproc recovery")
+Cc: stable@vger.kernel.org
+Signed-off-by: Mukesh Ojha <mukesh.ojha@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20260730085437.1240215-2-mukesh.ojha@oss.qualcomm.com
+---
+ drivers/remoteproc/remoteproc_core.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/remoteproc/remoteproc_core.c b/drivers/remoteproc/remoteproc_core.c
+index ee9354ff69f0..9d36e2f06348 100644
+--- a/drivers/remoteproc/remoteproc_core.c
++++ b/drivers/remoteproc/remoteproc_core.c
+@@ -2754,8 +2754,8 @@ void rproc_report_crash(struct rproc *rproc, enum rproc_crash_type type)
+ 	}
+ 
+ 	/* Prevent suspend while the remoteproc is being recovered */
+-	pm_stay_awake(rproc->dev.parent);
+-	queue_work(rproc_recovery_wq, &rproc->crash_handler);
++	if (queue_work(rproc_recovery_wq, &rproc->crash_handler))
++		pm_stay_awake(rproc->dev.parent);
+ 	spin_unlock_irqrestore(&rproc->crash_handler_lock, flags);
+ 
+ 	dev_err(&rproc->dev, "crash detected in %s: type %s\n",

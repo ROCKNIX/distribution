@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mostafa Saleh <smostafa@google.com>
+Date: Fri, 23 Oct 2026 10:15:35 +0000
+Subject: [PATCH] dmaengine: qcom: bam_dma: Take a PM ref at remove()
+
+bam_dma_remove() calls pm_runtime_dont_use_autosuspend() and
+pm_runtime_force_suspend(), which on a BAM with its own clock disables
+bam_clk, and only then writes BAM_IRQ_SRCS_MSK_EE and terminates the
+channels, touching registers of a block whose clock has just been
+removed, causing the board to reset.
+
+Sashiko(Locally) also reports, it then calls clk_disable_unprepare()
+on a clock that runtime suspend already disabled, which can trigger
+"already disabled" warning in clk_core_disable().
+
+Hold a runtime PM reference across the register accesses and the
+channel teardown. Once the hardware is quiet, disable runtime PM with
+the device still active and drop the clock exactly once, balancing the
+clk_prepare_enable() in probe.
+
+Fixes: 7d2545599f5b ("dmaengine: qcom-bam-dma: Add pm_runtime support")
+Signed-off-by: Mostafa Saleh <smostafa@google.com>
+Reviewed-by: Frank Li <Frank.Li@nxp.com>
+Link: https://lore.kernel.org/r/20261023101536.3965344-2-smostafa@google.com
+---
+ drivers/dma/qcom/bam_dma.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/dma/qcom/bam_dma.c b/drivers/dma/qcom/bam_dma.c
+index f67a93a37d48..8a1f4e5d24d1 100644
+--- a/drivers/dma/qcom/bam_dma.c
++++ b/drivers/dma/qcom/bam_dma.c
+@@ -1403,12 +1403,10 @@ static void bam_dma_remove(struct platform_device *pdev)
+ 	struct bam_device *bdev = platform_get_drvdata(pdev);
+ 	u32 i;
+ 
+-	pm_runtime_dont_use_autosuspend(&pdev->dev);
+-	pm_runtime_force_suspend(&pdev->dev);
+-
+ 	of_dma_controller_free(pdev->dev.of_node);
+ 	dma_async_device_unregister(&bdev->common);
+ 
++	pm_runtime_get_sync(&pdev->dev);
+ 	/* mask all interrupts for this execution environment */
+ 	writel_relaxed(0, bam_addr(bdev, 0,  BAM_IRQ_SRCS_MSK_EE));
+ 
+@@ -1428,6 +1426,8 @@ static void bam_dma_remove(struct platform_device *pdev)
+ 
+ 	tasklet_kill(&bdev->task);
+ 
++	pm_runtime_disable(&pdev->dev);
++	pm_runtime_put_noidle(&pdev->dev);
+ 	clk_disable_unprepare(bdev->bamclk);
+ }

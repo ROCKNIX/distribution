@@ -1,0 +1,109 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Aniket Randive <aniket.randive@oss.qualcomm.com>
+Date: Mon, 31 Aug 2026 16:42:59 +0530
+Subject: [PATCH] serial: qcom-geni: Fix port_ida handling for console and probe errors
+
+The console port uses a fixed line number and is not allocated from
+port_ida. However, qcom_geni_serial_remove() unconditionally frees the
+line number for all ports, including the console port.
+
+Skip ida_free() for console ports so that only IDs allocated from
+port_ida are returned.
+
+Also release allocated IDs from the common probe error path. Currently,
+IDs are freed only on the wake-IRQ failure path, causing leaks when
+probe fails after a successful allocation. Move the ida_free() call to
+the common error path and guard it for console ports.
+
+Route resources_init() failures through the common error path so the
+allocated line number is released correctly.
+
+Allocate the port structure before calling ida_alloc_range() in
+get_port_from_line(). This prevents IDs from being left allocated when
+memory allocation fails.
+
+Signed-off-by: Aniket Randive <aniket.randive@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20260831-master-v2-1-0032ec7fd1ca@oss.qualcomm.com
+---
+Changes in v2:
+- Route port->dev_data->resources_init() failures through the common
+error path so allocated line numbers are not leaked.
+- Allocate the port structure before ida_alloc_range() in
+get_port_from_line() to prevent ID leaks on memory-allocation
+failures.
+---
+Link to v1: https://patch.msgid.link/20260828-master-v1-1-1f8afa5f82c2@oss.qualcomm.com
+---
+ drivers/tty/serial/qcom_geni_serial.c | 16 +++++++++-------
+ 1 file changed, 9 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/tty/serial/qcom_geni_serial.c b/drivers/tty/serial/qcom_geni_serial.c
+index 3633723acef8..ceaf560fd8dd 100644
+--- a/drivers/tty/serial/qcom_geni_serial.c
++++ b/drivers/tty/serial/qcom_geni_serial.c
+@@ -289,6 +289,10 @@ static struct qcom_geni_serial_port *get_port_from_line(int line, bool console,
+ 	} else {
+ 		int max_alias_num = of_alias_get_highest_id("serial");
+ 
++		port = devm_kzalloc(dev, sizeof(*port), GFP_KERNEL);
++		if (!port)
++			return ERR_PTR(-ENOMEM);
++
+ 		if (line < 0 || line >= nr_ports)
+ 			line = ida_alloc_range(&port_ida, max_alias_num + 1,
+ 					       nr_ports - 1, GFP_KERNEL);
+@@ -299,10 +303,6 @@ static struct qcom_geni_serial_port *get_port_from_line(int line, bool console,
+ 		if (line < 0)
+ 			return ERR_PTR(-ENXIO);
+ 
+-		port = devm_kzalloc(dev, sizeof(*port), GFP_KERNEL);
+-		if (!port)
+-			return ERR_PTR(-ENOMEM);
+-
+ 		port->uport.iotype = UPIO_MEM;
+ 		port->uport.ops = &qcom_geni_uart_pops;
+ 		port->uport.flags = UPF_BOOT_AUTOCONF;
+@@ -1897,7 +1897,7 @@ static int qcom_geni_serial_probe(struct platform_device *pdev)
+ 
+ 	ret = port->dev_data->resources_init(&port->se);
+ 	if (ret)
+-		return ret;
++		goto error;
+ 
+ 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+ 	if (!res) {
+@@ -1979,7 +1979,6 @@ static int qcom_geni_serial_probe(struct platform_device *pdev)
+ 						port->wakeup_irq);
+ 		if (ret) {
+ 			device_init_wakeup(&pdev->dev, false);
+-			ida_free(&port_ida, uport->line);
+ 			goto error;
+ 		}
+ 	}
+@@ -2003,6 +2002,8 @@ static int qcom_geni_serial_probe(struct platform_device *pdev)
+ 	return 0;
+ 
+ error:
++	if (!data->console)
++		ida_free(&port_ida, uport->line);
+ 	if (port->rx_dma_addr) {
+ 		dma_unmap_single(pdev->dev.parent, port->rx_dma_addr,
+ 				 DMA_RX_BUF_SIZE, DMA_FROM_DEVICE);
+@@ -2024,7 +2025,8 @@ static void qcom_geni_serial_remove(struct platform_device *pdev)
+ 	irq_work_sync(&port->tx_kick);
+ 	dev_pm_clear_wake_irq(&pdev->dev);
+ 	device_init_wakeup(&pdev->dev, false);
+-	ida_free(&port_ida, uport->line);
++	if (!port->dev_data->console)
++		ida_free(&port_ida, uport->line);
+ 	uart_remove_one_port(drv, &port->uport);
+ 
+ 	if (port->rx_dma_addr) {
+
+---
+base-commit: a8406e6c0b793ce0788019683837c40855b55995
+change-id: 20260828-master-3e806ba3492d
+
+Best regards,
+--  
+Aniket Randive <aniket.randive@oss.qualcomm.com>

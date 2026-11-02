@@ -1,0 +1,83 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Krzysztof Kozlowski <krzysztof.kozlowski@oss.qualcomm.com>
+Date: Sun, 01 Nov 2026 21:24:07 +0100
+Subject: [PATCH] soc: qcom: smp2p: Fix possible out-of-bounds read with too many inbound entries
+
+The inbound SMEM item is populated by the remote processor, so its
+contents, including number of entries, should be validated by the
+kernel.  Number of inbound entries is directly used when iterating over
+inbound data structure, so if it is higher than actual size of data,
+kernel would read memory out-of-bounds.
+
+Reported-by: Sashiko <sashiko-bot@kernel.org>
+Closes: https://sashiko.dev/#/bug/linux-b79427c9-5d22-4b48-8ee7-1d7808101e52
+Fixes: 8a9a7b9d14c2 ("soc: qcom: smp2p: Add irqchip state support")
+Fixes: 50e99641413e ("soc: qcom: smp2p: Qualcomm Shared Memory Point to Point")
+Cc: stable@vger.kernel.org
+Signed-off-by: Krzysztof Kozlowski <krzysztof.kozlowski@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261101202404.156522-6-krzysztof.kozlowski@oss.qualcomm.com
+---
+ drivers/soc/qcom/smp2p.c | 23 +++++++++++++++++++++--
+ 1 file changed, 21 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/soc/qcom/smp2p.c b/drivers/soc/qcom/smp2p.c
+index 784a164cf367..ff7c91645712 100644
+--- a/drivers/soc/qcom/smp2p.c
++++ b/drivers/soc/qcom/smp2p.c
+@@ -252,6 +252,21 @@ static int qcom_smp2p_in_version(struct qcom_smp2p *smp2p)
+ 	return in->version;
+ }
+ 
++static unsigned int qcom_smp2p_in_valid_entries(struct qcom_smp2p *smp2p)
++{
++	unsigned int valid_entries = smp2p->in->valid_entries;
++
++	/* Remote side controls the value, so do not trust it */
++	if (valid_entries > SMP2P_MAX_ENTRY) {
++		dev_err_ratelimited(smp2p->dev,
++				    "too many inbound entries: %u\n",
++				    valid_entries);
++		return SMP2P_MAX_ENTRY;
++	}
++
++	return valid_entries;
++}
++
+ static void qcom_smp2p_start_in(struct qcom_smp2p *smp2p)
+ {
+ 	unsigned int smem_id = smp2p->smem_items[SMP2P_INBOUND];
+@@ -259,6 +274,7 @@ static void qcom_smp2p_start_in(struct qcom_smp2p *smp2p)
+ 	char buf[SMP2P_MAX_ENTRY_NAME];
+ 	struct smp2p_smem_item *in;
+ 	struct smp2p_entry *entry;
++	unsigned int valid_entries;
+ 	size_t size;
+ 	int i;
+ 
+@@ -272,7 +288,8 @@ static void qcom_smp2p_start_in(struct qcom_smp2p *smp2p)
+ 	if (in->version == 0)
+ 		return;
+ 
+-	for (i = smp2p->valid_entries; i < in->valid_entries; i++) {
++	valid_entries = qcom_smp2p_in_valid_entries(smp2p);
++	for (i = smp2p->valid_entries; i < valid_entries; i++) {
+ 		list_for_each_entry(entry, &smp2p->inbound, node) {
+ 			memcpy(buf, in->entries[i].name, sizeof(buf));
+ 			if (!strcmp(buf, entry->name)) {
+@@ -292,13 +309,15 @@ static void qcom_smp2p_notify_in(struct qcom_smp2p *smp2p)
+ 	int irq_pin;
+ 	u32 status;
+ 	char buf[SMP2P_MAX_ENTRY_NAME];
++	unsigned int valid_entries;
+ 	u32 val;
+ 	int i;
+ 
+ 	in = smp2p->in;
+ 
+ 	/* Match newly created entries */
+-	for (i = smp2p->valid_entries; i < in->valid_entries; i++) {
++	valid_entries = qcom_smp2p_in_valid_entries(smp2p);
++	for (i = smp2p->valid_entries; i < valid_entries; i++) {
+ 		list_for_each_entry(entry, &smp2p->inbound, node) {
+ 			memcpy(buf, in->entries[i].name, sizeof(buf));
+ 			if (!strcmp(buf, entry->name)) {

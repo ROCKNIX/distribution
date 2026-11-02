@@ -1,0 +1,70 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Anup Vishwakarma <anup.vishwakarma@oss.qualcomm.com>
+Date: Wed, 16 Sep 2026 15:26:53 +0530
+Subject: [PATCH] mailbox: qcom-ipcc: Guard against NULL con_priv in send_data()
+
+qcom_ipcc_mbox_shutdown() clears chan->con_priv with no locking.
+qcom_ipcc_mbox_send_data() dereferences the same field without
+checking for NULL first, so a send racing a concurrent shutdown can
+crash:
+
+  mchan = chan->con_priv;
+  ...
+  hwirq = qcom_ipcc_get_hwirq(mchan->client_id, mchan->signal_id);
+
+Add the same NULL guard mbox_send_message() already uses for
+chan->cl, and bail out before dereferencing a cleared con_priv.
+
+To close the remaining race where send_data() reads con_priv a moment
+before a concurrent shutdown clears it, acquire the spinlock in
+qcom_ipcc_mbox_shutdown() using the modern guard(spinlock_irqsave)
+primitive before setting con_priv to NULL.
+
+Fixes: d6fbfdbc1274 ("mailbox: qcom-ipcc: Fix IPCC mbox channel exhaustion")
+Cc: stable@vger.kernel.org
+Signed-off-by: Anup Vishwakarma <anup.vishwakarma@oss.qualcomm.com>
+Reviewed-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20260916-b4-ipcc_send_data_null_check_upstream-v1-1-bfc61f5056a3@oss.qualcomm.com
+---
+ drivers/mailbox/qcom-ipcc.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/drivers/mailbox/qcom-ipcc.c b/drivers/mailbox/qcom-ipcc.c
+index 185b63f724d4..387aa72aeedf 100644
+--- a/drivers/mailbox/qcom-ipcc.c
++++ b/drivers/mailbox/qcom-ipcc.c
+@@ -10,6 +10,7 @@
+ #include <linux/mailbox_controller.h>
+ #include <linux/module.h>
+ #include <linux/platform_device.h>
++#include <linux/spinlock.h>
+ 
+ #include <dt-bindings/mailbox/qcom-ipcc.h>
+ 
+@@ -151,6 +152,9 @@ static int qcom_ipcc_mbox_send_data(struct mbox_chan *chan, void *data)
+ 	struct qcom_ipcc_chan_info *mchan = chan->con_priv;
+ 	u32 hwirq;
+ 
++	if (!mchan)
++		return -EINVAL;
++
+ 	hwirq = qcom_ipcc_get_hwirq(mchan->client_id, mchan->signal_id);
+ 	writel(hwirq, ipcc->base + IPCC_REG_SEND_ID);
+ 
+@@ -159,6 +163,8 @@ static int qcom_ipcc_mbox_send_data(struct mbox_chan *chan, void *data)
+ 
+ static void qcom_ipcc_mbox_shutdown(struct mbox_chan *chan)
+ {
++	guard(spinlock_irqsave)(&chan->lock);
++
+ 	chan->con_priv = NULL;
+ }
+ 
+
+---
+base-commit: e6e35979777d646fe3c7c94dca7dd32fb25d45f4
+change-id: 20260916-b4-ipcc_send_data_null_check_upstream-072b8856680f
+
+Best regards,
+--  
+Anup Vishwakarma <anup.vishwakarma@oss.qualcomm.com>

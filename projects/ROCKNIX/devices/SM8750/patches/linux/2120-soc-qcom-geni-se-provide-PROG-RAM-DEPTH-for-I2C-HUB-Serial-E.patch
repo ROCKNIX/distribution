@@ -1,0 +1,106 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Neil Armstrong <neil.armstrong@linaro.org>
+Date: Wed, 23 Sep 2026 10:51:45 +0200
+Subject: [PATCH] soc: qcom: geni-se: provide PROG_RAM_DEPTH for I2C HUB Serial Engines
+
+The I2C Hub serial elements lacks DMA, so the SE_HW_PARAM_2 register which
+is in the DMA register space doesn't exist for those instances.
+
+Provide the ram depth in the compatible data to be used instead
+of the reading the missing SE_HW_PARAM_2 register.
+
+Fixes: 522bfb4f33c0 ("soc: qcom: geni-se: Use HW PROG_RAM_DEPTH to validate firmware size")
+Reviewed-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Reviewed-by: Abel Vesa <abel.vesa@oss.qualcomm.com>
+Signed-off-by: Neil Armstrong <neil.armstrong@linaro.org>
+Link: https://lore.kernel.org/r/20260923-topic-sm8x50-i2c-hub-fw-ram-v3-1-44287b4e814b@linaro.org
+---
+Changes in v3:
+- Fix subject typo s/I2S/I2C/
+- Collect review
+- Link to v2: https://patch.msgid.link/20260918-topic-sm8x50-i2c-hub-fw-ram-v2-1-30e960966802@linaro.org
+
+Changes in v2:
+- Instead of ignoring the depth, use 1020 as the default HUB serial element depth
+- Link to v1: https://patch.msgid.link/20260917-topic-sm8x50-i2c-hub-fw-ram-v1-1-f49286d8c8db@linaro.org
+---
+ drivers/soc/qcom/qcom-geni-se.c | 14 ++++++++++++--
+ 1 file changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/soc/qcom/qcom-geni-se.c b/drivers/soc/qcom/qcom-geni-se.c
+index 873bfbd6b2b7..893a917be527 100644
+--- a/drivers/soc/qcom/qcom-geni-se.c
++++ b/drivers/soc/qcom/qcom-geni-se.c
+@@ -101,22 +101,26 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(geni_se_regs);
+  * @base:		Base address of this instance of QUP wrapper core
+  * @clks:		Handle to the primary & optional secondary AHB clocks
+  * @num_clks:		Count of clocks
++ * @prog_ram_depth:	Available CFG RAM depth for instance without SE_HW_PARAM_2
+  */
+ struct geni_wrapper {
+ 	struct device *dev;
+ 	void __iomem *base;
+ 	struct clk_bulk_data clks[MAX_CLKS];
+ 	unsigned int num_clks;
++	unsigned int prog_ram_depth;
+ };
+ 
+ /**
+  * struct geni_se_desc - Data structure to represent the QUP Wrapper resources
+  * @clks:		Name of the primary & optional secondary AHB clocks
+  * @num_clks:		Count of clock names
++ * @prog_ram_depth:	Available CFG RAM depth for instance without SE_HW_PARAM_2
+  */
+ struct geni_se_desc {
+ 	unsigned int num_clks;
+ 	const char * const *clks;
++	unsigned int prog_ram_depth;
+ };
+ 
+ static const char * const icc_path_names[] = {"qup-core", "qup-config",
+@@ -1241,6 +1245,7 @@ EXPORT_SYMBOL_GPL(geni_se_resources_init);
+ static struct se_fw_hdr *geni_find_protocol_fw(struct geni_se *se, const struct firmware *fw,
+ 					       enum geni_se_protocol_type protocol)
+ {
++	struct geni_wrapper *wrapper = se->wrapper;
+ 	struct device *dev = se->dev;
+ 	const struct elf32_hdr *ehdr;
+ 	const struct elf32_phdr *phdrs;
+@@ -1306,8 +1311,11 @@ static struct se_fw_hdr *geni_find_protocol_fw(struct geni_se *se, const struct
+ 			sefw->fw_size_in_items = cpu_to_le16(fw_size);
+ 		}
+ 
+-		prog_ram_depth = FIELD_GET(PROG_RAM_DEPTH_MSK,
+-					   readl_relaxed(se->base + SE_HW_PARAM_2));
++		if (wrapper->prog_ram_depth)
++			prog_ram_depth = wrapper->prog_ram_depth;
++		else
++			prog_ram_depth = FIELD_GET(PROG_RAM_DEPTH_MSK,
++					readl_relaxed(se->base + SE_HW_PARAM_2));
+ 		if (fw_size >= prog_ram_depth) {
+ 			dev_err(dev, "Firmware size (%u) exceeds RAM size (%u)\n",
+ 				fw_size, prog_ram_depth);
+@@ -1617,6 +1625,7 @@ static int geni_se_probe(struct platform_device *pdev)
+ 		return PTR_ERR(wrapper->base);
+ 
+ 	desc = device_get_match_data(&pdev->dev);
++	wrapper->prog_ram_depth = desc->prog_ram_depth;
+ 
+ 	if (!has_acpi_companion(&pdev->dev) && desc->num_clks) {
+ 		int i;
+@@ -1669,6 +1678,7 @@ static const char * const i2c_master_hub_clks[] = {
+ static const struct geni_se_desc i2c_master_hub_desc = {
+ 	.clks = i2c_master_hub_clks,
+ 	.num_clks = ARRAY_SIZE(i2c_master_hub_clks),
++	.prog_ram_depth = 1020,
+ };
+ 
+ static const struct of_device_id geni_se_dt_match[] = {
+
+---
+base-commit: fd73f4a6659897191fa0d40695fe370925dd3780
+change-id: 20260917-topic-sm8x50-i2c-hub-fw-ram-54c503be6038
+
+Best regards,
+--  
+Neil Armstrong <neil.armstrong@linaro.org>

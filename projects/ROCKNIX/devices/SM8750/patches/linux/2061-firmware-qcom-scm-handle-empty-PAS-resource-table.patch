@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mukesh Ojha <mukesh.ojha@oss.qualcomm.com>
+Date: Tue, 22 Sep 2026 01:26:35 +0530
+Subject: [PATCH] firmware: qcom_scm: handle empty PAS resource table
+
+The PAS resource-table query may successfully return a zero-sized
+table. kmemdup() with a zero length returns ZERO_SIZE_PTR,
+which is stored in rproc->table_ptr. The remoteproc core then
+dereferences this invalid pointer while processing resources.
+
+Treat a zero-sized result as an absent resource table and return
+NULL after releasing the TrustZone memory buffer. This allows the
+remoteproc core to skip resource-table processing.
+
+Fixes: 8b9d2050cfa0 ("firmware: qcom_scm: Add qcom_scm_pas_get_rsc_table() to get resource table")
+Signed-off-by: Mukesh Ojha <mukesh.ojha@oss.qualcomm.com>
+Reviewed-by: Bartosz Golaszewski <bartosz.golaszewski@oss.qualcomm.com>
+Reviewed-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20260921195636.1925869-2-mukesh.ojha@oss.qualcomm.com
+---
+Changes in v2:
+ - New change.
+
+ drivers/firmware/qcom/qcom_scm.c | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/firmware/qcom/qcom_scm.c b/drivers/firmware/qcom/qcom_scm.c
+index df20773dd754..b5959f833dd7 100644
+--- a/drivers/firmware/qcom/qcom_scm.c
++++ b/drivers/firmware/qcom/qcom_scm.c
+@@ -823,6 +823,14 @@ static void *qcom_scm_pas_get_rsc_table(struct device *dev,
+ 		goto free_input_rt;
+ 	}
+ 
++	*output_rt_size = size;
++
++	/* A zero-sized table means that TrustZone has no resource table. */
++	if (!size) {
++		tbl_ptr = NULL;
++		goto free_output_rt;
++	}
++
+ 	tbl_ptr = kmemdup(output_rt_tzm, size, GFP_KERNEL);
+ 	if (!tbl_ptr) {
+ 		qcom_tzmem_free(output_rt_tzm);
+@@ -830,7 +838,7 @@ static void *qcom_scm_pas_get_rsc_table(struct device *dev,
+ 		goto free_input_rt;
+ 	}
+ 
+-	*output_rt_size = size;
++free_output_rt:
+ 	qcom_tzmem_free(output_rt_tzm);
+ 
+ free_input_rt:
