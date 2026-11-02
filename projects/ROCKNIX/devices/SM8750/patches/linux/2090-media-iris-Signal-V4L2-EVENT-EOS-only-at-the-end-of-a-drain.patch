@@ -1,0 +1,106 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Christian Cortner <ccortner@gmail.com>
+Date: Tue, 27 Oct 2026 22:43:34 -0500
+Subject: [PATCH] media: iris: Signal V4L2_EVENT_EOS only at the end of a drain
+
+V4L2_EVENT_EOS is queued, and the m2m context marked stopped, for every
+LAST capture buffer, including the one that ends a source change. With
+a stream that changes resolution, a client gets EOS at the change and
+none at the end, and ffmpeg's h264_v4l2m2m stops decoding there.
+
+Do both only when IRIS_INST_SUB_DRAIN_LAST is set, which both HFI
+generations do before they return the LAST buffer of a drain. Use one
+helper for iris_vb2_buffer_done() and iris_vb2_buf_queue().
+
+Fixes: 84e17adae3e3 ("media: iris: add support for dynamic resolution change")
+Cc: stable@vger.kernel.org
+Assisted-by: LLM sparse smatch
+Link: https://lore.kernel.org/r/20261028034335.26075-4-ccortner@gmail.com
+---
+ .../media/platform/qcom/iris/iris_buffer.c    | 26 ++++++++++++++-----
+ .../media/platform/qcom/iris/iris_buffer.h    |  1 +
+ drivers/media/platform/qcom/iris/iris_vb2.c   |  6 +----
+ 3 files changed, 21 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_buffer.c b/drivers/media/platform/qcom/iris/iris_buffer.c
+index eb8de60c1177..178e50eadcf7 100644
+--- a/drivers/media/platform/qcom/iris/iris_buffer.c
++++ b/drivers/media/platform/qcom/iris/iris_buffer.c
+@@ -870,9 +870,26 @@ static void iris_get_ts_metadata(struct iris_inst *inst, u64 timestamp_ns,
+ 	vbuf->timecode = inst->tss[inst->metadata_idx].tc;
+ }
+ 
+-int iris_vb2_buffer_done(struct iris_inst *inst, struct iris_buffer *buf)
++/*
++ * Queue V4L2_EVENT_EOS and mark the m2m context stopped, once, when a LAST
++ * capture buffer ends a drain. The LAST buffer of a source change does not
++ * end the stream.
++ */
++void iris_vb2_signal_eos(struct iris_inst *inst)
+ {
++	static const struct v4l2_event eos = { .type = V4L2_EVENT_EOS };
+ 	struct v4l2_m2m_ctx *m2m_ctx = inst->m2m_ctx;
++
++	if (!(inst->sub_state & IRIS_INST_SUB_DRAIN_LAST) ||
++	    v4l2_m2m_has_stopped(m2m_ctx))
++		return;
++
++	v4l2_event_queue_fh(&inst->fh, &eos);
++	v4l2_m2m_mark_stopped(m2m_ctx);
++}
++
++int iris_vb2_buffer_done(struct iris_inst *inst, struct iris_buffer *buf)
++{
+ 	struct vb2_v4l2_buffer *vbuf;
+ 	struct vb2_buffer *vb2;
+ 	u32 type, state;
+@@ -913,12 +930,7 @@ int iris_vb2_buffer_done(struct iris_inst *inst, struct iris_buffer *buf)
+ 	}
+ 
+ 	if (vbuf->flags & V4L2_BUF_FLAG_LAST) {
+-		if (!v4l2_m2m_has_stopped(m2m_ctx)) {
+-			const struct v4l2_event ev = { .type = V4L2_EVENT_EOS };
+-
+-			v4l2_event_queue_fh(&inst->fh, &ev);
+-			v4l2_m2m_mark_stopped(m2m_ctx);
+-		}
++		iris_vb2_signal_eos(inst);
+ 		inst->last_buffer_dequeued = true;
+ 	}
+ 
+diff --git a/drivers/media/platform/qcom/iris/iris_buffer.h b/drivers/media/platform/qcom/iris/iris_buffer.h
+index ab8e5d953101..a8d2002e00ee 100644
+--- a/drivers/media/platform/qcom/iris/iris_buffer.h
++++ b/drivers/media/platform/qcom/iris/iris_buffer.h
+@@ -120,6 +120,7 @@ int iris_alloc_and_queue_input_int_bufs(struct iris_inst *inst);
+ int iris_queue_buffer(struct iris_inst *inst, struct iris_buffer *buf);
+ int iris_queue_deferred_buffers(struct iris_inst *inst, enum iris_buffer_type buf_type);
+ int iris_vb2_buffer_done(struct iris_inst *inst, struct iris_buffer *buf);
++void iris_vb2_signal_eos(struct iris_inst *inst);
+ void iris_vb2_queue_error(struct iris_inst *inst);
+ 
+ #endif
+diff --git a/drivers/media/platform/qcom/iris/iris_vb2.c b/drivers/media/platform/qcom/iris/iris_vb2.c
+index 8faf709c26c1..bb713da20605 100644
+--- a/drivers/media/platform/qcom/iris/iris_vb2.c
++++ b/drivers/media/platform/qcom/iris/iris_vb2.c
+@@ -290,7 +290,6 @@ int iris_vb2_buf_out_validate(struct vb2_buffer *vb)
+ 
+ void iris_vb2_buf_queue(struct vb2_buffer *vb2)
+ {
+-	static const struct v4l2_event eos = { .type = V4L2_EVENT_EOS };
+ 	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb2);
+ 	struct v4l2_m2m_ctx *m2m_ctx;
+ 	struct iris_inst *inst;
+@@ -324,10 +323,7 @@ void iris_vb2_buf_queue(struct vb2_buffer *vb2)
+ 			vbuf->field = V4L2_FIELD_NONE;
+ 			vb2_set_plane_payload(vb2, 0, 0);
+ 			v4l2_m2m_buf_done(vbuf, VB2_BUF_STATE_DONE);
+-			if (!v4l2_m2m_has_stopped(m2m_ctx)) {
+-				v4l2_event_queue_fh(&inst->fh, &eos);
+-				v4l2_m2m_mark_stopped(m2m_ctx);
+-			}
++			iris_vb2_signal_eos(inst);
+ 			inst->last_buffer_dequeued = true;
+ 			goto exit;
+ 		}

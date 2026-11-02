@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Christian Cortner <ccortner@gmail.com>
+Date: Tue, 27 Oct 2026 22:43:32 -0500
+Subject: [PATCH] media: iris: Don't flag an empty source change LAST buffer as an error
+
+The firmware ends both a drain and a source change with an empty
+capture buffer. Traced on glymur, it flags the first
+HFI_BUF_FW_FLAG_LAST (0x10000000) and the second
+HFI_BUF_FW_FLAG_PSC_LAST (0x20000000). Only LAST is exempt from the
+empty buffer check, so the client gets the source change buffer as
+LAST|ERROR, and ffmpeg's h264_v4l2m2m reports a decode error.
+
+Exempt HFI_BUF_FW_FLAG_PSC_LAST as well.
+
+Fixes: 7adc11e6abf6 ("media: iris: Send V4L2_BUF_FLAG_ERROR for capture buffers with 0 filled length")
+Cc: stable@vger.kernel.org
+Assisted-by: LLM sparse smatch
+Link: https://lore.kernel.org/r/20261028034335.26075-2-ccortner@gmail.com
+---
+ drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c b/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c
+index f0782c4b1e6e..b4fe9066fcb8 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c
+@@ -390,8 +390,13 @@ static int iris_hfi_gen2_handle_output_buffer(struct iris_inst *inst,
+ 
+ 	buf->flags = iris_hfi_gen2_get_driver_buffer_flags(inst, hfi_buffer->flags);
+ 
++	/*
++	 * The empty buffer that ends a drain (LAST) or a source change
++	 * (PSC_LAST) is not an error, the client just ignores it.
++	 */
+ 	if (!buf->data_size && inst->state == IRIS_INST_STREAMING &&
+-	    !(hfi_buffer->flags & HFI_BUF_FW_FLAG_LAST)) {
++	    !(hfi_buffer->flags &
++	      (HFI_BUF_FW_FLAG_LAST | HFI_BUF_FW_FLAG_PSC_LAST))) {
+ 		buf->flags |= V4L2_BUF_FLAG_ERROR;
+ 	}

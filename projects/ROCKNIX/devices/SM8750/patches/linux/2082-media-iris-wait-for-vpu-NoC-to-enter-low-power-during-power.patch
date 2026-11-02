@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vikash Garodia <vikash.garodia@oss.qualcomm.com>
+Date: Thu, 01 Oct 2026 20:47:21 +0530
+Subject: [PATCH] media: iris: wait for vpu NoC to enter low power during power off
+
+The recommended hardware sequence requires software to wait for vpu NoC
+to enter in low power mode and then deassert the low power idle (LPI)
+control. Add the missing LPI status poll and move the LPI control
+deassertion after the hardware acks LPI mode. This avoids any pending
+transactions on vpu NoC before shutting it down.
+
+Fixes: dde659d37036 ("media: iris: Introduce vpu ops for vpu4 with necessary hooks")
+Cc: stable@vger.kernel.org
+Co-developed-by: Vishnu Reddy <busanna.reddy@oss.qualcomm.com>
+Signed-off-by: Vishnu Reddy <busanna.reddy@oss.qualcomm.com>
+Signed-off-by: Vikash Garodia <vikash.garodia@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261001-kaanapali-iris-v4-1-642f9ac5e699@oss.qualcomm.com
+---
+ drivers/media/platform/qcom/iris/iris_vpu4x.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_vpu4x.c b/drivers/media/platform/qcom/iris/iris_vpu4x.c
+index 02e100a4045fced33d7a3545b632cc5f0955233f..32a161c8d534a34eee4e7778426b4947b6c17003 100644
+--- a/drivers/media/platform/qcom/iris/iris_vpu4x.c
++++ b/drivers/media/platform/qcom/iris/iris_vpu4x.c
+@@ -316,6 +316,10 @@ static void iris_vpu4x_power_off_hardware(struct iris_core *core)
+ 	if (!handshake_done && handshake_busy)
+ 		dev_err(core->dev, "LPI handshake timeout\n");
+ 
++	readl_poll_timeout(core->reg_base + AON_WRAPPER_MVP_NOC_LPI_STATUS,
++			   value, value & BIT(0), 200, 2000);
++	writel(0x0, core->reg_base + AON_WRAPPER_MVP_NOC_LPI_CONTROL);
++
+ 	writel(MVP_NOC_RESET_REQ_MASK, core->reg_base + AON_WRAPPER_MVP_NOC_RESET_REQ);
+ 	ret = readl_poll_timeout(core->reg_base + AON_WRAPPER_MVP_NOC_RESET_ACK,
+ 				 value, value & MVP_NOC_RESET_REQ_MASK, 200, 2000);
