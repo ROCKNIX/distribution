@@ -1,0 +1,288 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Faisal Hassan <faisal.hassan@oss.qualcomm.com>
+Date: Tue, 06 Oct 2026 22:52:54 +0530
+Subject: [PATCH] usb: dwc3: gadget: linearize SG requests that exceed the TRB cache
+
+The controller prefetches the TRBs of a transfer into an internal cache
+that holds DWC_USB3_CACHE_TRBS_PER_TRANSFER entries. Databook 4.2.3.3
+requires that the number of chained TRBs needed to construct a single
+packet never exceeds (DWC_USB3_CACHE_TRBS_PER_TRANSFER - 1), where the
+-1 accounts for the one Link TRB that may be part of the chain when a
+transfer wraps the TRB ring. The cache never holds more than 15 TRBs
+however the core was configured, so the usable budget is
+min(GHWPARAMS4[5:0] - 1, 15) data TRBs per packet.
+
+Each scatter-gather entry of a request is queued as one TRB, so a gadget
+function driver that hands down an IN request whose entries are smaller
+than MaxPacketSize can exceed that budget with no way of knowing it. On
+a SuperSpeed bulk IN endpoint, a 1024-byte request scattered across 16
+pages of 64 bytes needs 16 chained TRBs for its single packet, one more
+than the controller can cache: the controller never assembles the
+packet, the endpoint keeps responding NRDY and the request never
+completes. The same request runs fine at High-Speed, where the 512-byte
+MaxPacketSize splits it into two packets of 8 TRBs each.
+
+Walk the scatter-gather list of IN requests when they are queued,
+counting the TRBs each packet would be built from, and copy the request
+into a single contiguous buffer when a packet would exceed the budget.
+Doing it at queue time lets a failed allocation or a scatter-gather list
+shorter than the request length be returned to the function driver from
+usb_ep_queue(), instead of leaving a request on the pending list that can
+never be started. The original usb_request fields are restored on
+completion, so function drivers stay independent of the controller
+limitation.
+
+The host side already applies the equivalent workaround unconditionally
+for every dwc3 instance through XHCI_SG_TRB_CACHE_SIZE_QUIRK. A request
+that trips this check cannot be transferred at all, so applying the
+workaround unconditionally can only turn a stalled endpoint into one
+extra copy. That copy is a GFP_ATOMIC allocation of the request length,
+which reaches order-4 for a 64 KiB request, but it is only reached by
+requests that would otherwise never complete.
+
+Fixes: eeb720fb21d6 ("usb: dwc3: gadget: add support for SG lists")
+Cc: stable@vger.kernel.org
+Signed-off-by: Faisal Hassan <faisal.hassan@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261006172254.1058992-1-faisal.hassan@oss.qualcomm.com
+---
+Changes in v2:
+- Linearize at queue time in __dwc3_gadget_ep_queue() rather than in
+  dwc3_prepare_trbs(), so an allocation failure or a scatter-gather list
+  shorter than the request length is returned from usb_ep_queue()
+  instead of leaving the request stuck on the pending list.
+- Unmap a linearized request on giveback even if it never got a TRB,
+  so the bounce buffer is not freed while still DMA-mapped.
+- Add __GFP_NOWARN to the bounce buffer allocation, the failure is
+  reported to the caller.
+- Link to v1: https://lore.kernel.org/all/20261004031445.1450196-1-faisal.hassan@oss.qualcomm.com/
+
+ drivers/usb/dwc3/core.h   |  15 +++++
+ drivers/usb/dwc3/gadget.c | 133 +++++++++++++++++++++++++++++++++++++-
+ 2 files changed, 147 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/usb/dwc3/core.h b/drivers/usb/dwc3/core.h
+index 608daeb7ef10..af71abaac8ed 100644
+--- a/drivers/usb/dwc3/core.h
++++ b/drivers/usb/dwc3/core.h
+@@ -386,6 +386,7 @@
+ #define DWC3_GHWPARAMS3_FSPHY_IFC_ENA		1
+ 
+ /* Global HWPARAMS4 Register */
++#define DWC3_GHWPARAMS4_CACHE_TRBS_PER_TRANSFER(n)	((n) & GENMASK(5, 0))
+ #define DWC3_GHWPARAMS4_HIBER_SCRATCHBUFS(n)	(((n) & (0x0f << 13)) >> 13)
+ #define DWC3_MAX_HIBER_SCRATCHBUFS		15
+ 
+@@ -714,6 +715,7 @@ struct dwc3_event_buffer {
+ #define DWC3_EP_DIRECTION_RX	false
+ 
+ #define DWC3_TRB_NUM		256
++#define DWC3_TRB_CACHE_MAX	15
+ 
+ /**
+  * struct dwc3_ep - device side endpoint representation
+@@ -951,8 +953,15 @@ struct dwc3_hwparams {
+  * @trb: pointer to struct dwc3_trb
+  * @trb_dma: DMA address of @trb
+  * @num_trbs: number of TRBs used by this request
++ * @sg_trb_cache_buf: temporary linear buffer the scatter-gather list is
++ *			copied into when it exceeds the TRB cache budget
++ * @sg_trb_cache_sg: scatter-gather list replaced by @sg_trb_cache_buf
++ * @sg_trb_cache_num_sgs: number of entries in @sg_trb_cache_sg
++ * @sg_trb_cache_orig_buf: request buffer replaced by @sg_trb_cache_buf
+  * @direction: IN or OUT direction flag
+  * @mapped: true when request has been dma-mapped
++ * @sg_trb_cache_bounced: true while this request is queued through
++ *			@sg_trb_cache_buf instead of its scatter-gather list
+  */
+ struct dwc3_request {
+ 	struct usb_request	request;
+@@ -978,8 +987,14 @@ struct dwc3_request {
+ 
+ 	unsigned int		num_trbs;
+ 
++	void			*sg_trb_cache_buf;
++	struct scatterlist	*sg_trb_cache_sg;
++	unsigned int		sg_trb_cache_num_sgs;
++	void			*sg_trb_cache_orig_buf;
++
+ 	unsigned int		direction:1;
+ 	unsigned int		mapped:1;
++	unsigned int		sg_trb_cache_bounced:1;
+ };
+ 
+ /*
+diff --git a/drivers/usb/dwc3/gadget.c b/drivers/usb/dwc3/gadget.c
+index f245e66cd13d..7417d3c32dbf 100644
+--- a/drivers/usb/dwc3/gadget.c
++++ b/drivers/usb/dwc3/gadget.c
+@@ -190,6 +190,22 @@ static void dwc3_ep_inc_deq(struct dwc3_ep *dep)
+ 	dwc3_ep_inc_trb(&dep->trb_dequeue);
+ }
+ 
++static void dwc3_gadget_restore_sg_trb_cache_buf(struct dwc3_request *req)
++{
++	if (!req->sg_trb_cache_bounced)
++		return;
++
++	req->request.buf = req->sg_trb_cache_orig_buf;
++	req->request.sg = req->sg_trb_cache_sg;
++	req->request.num_sgs = req->sg_trb_cache_num_sgs;
++	kfree(req->sg_trb_cache_buf);
++	req->sg_trb_cache_buf = NULL;
++	req->sg_trb_cache_sg = NULL;
++	req->sg_trb_cache_num_sgs = 0;
++	req->sg_trb_cache_orig_buf = NULL;
++	req->sg_trb_cache_bounced = false;
++}
++
+ static void dwc3_gadget_del_and_unmap_request(struct dwc3_ep *dep,
+ 		struct dwc3_request *req, int status)
+ {
+@@ -202,10 +218,16 @@ static void dwc3_gadget_del_and_unmap_request(struct dwc3_ep *dep,
+ 	if (req->request.status == -EINPROGRESS)
+ 		req->request.status = status;
+ 
+-	if (req->trb)
++	/*
++	 * A linearized request may have been mapped without getting a TRB, so
++	 * unmap it before its buffer is freed.
++	 */
++	if (req->trb || req->sg_trb_cache_bounced)
+ 		usb_gadget_unmap_request_by_dev(dwc->sysdev,
+ 				&req->request, req->direction);
+ 
++	dwc3_gadget_restore_sg_trb_cache_buf(req);
++
+ 	req->trb = NULL;
+ 	trace_dwc3_gadget_giveback(req);
+ 
+@@ -1474,6 +1496,110 @@ static int dwc3_prepare_last_sg(struct dwc3_ep *dep,
+ 	return num_trbs;
+ }
+ 
++/*
++ * Each scatter-gather entry is queued as one TRB, so an IN request backed by
++ * entries smaller than MaxPacketSize can need more chained TRBs to construct a
++ * single packet than the controller is able to cache. Databook 4.2.3.3 limits
++ * the chained TRBs a single packet may be built from to
++ * (DWC_USB3_CACHE_TRBS_PER_TRANSFER - 1), where the -1 accounts for the single
++ * Link TRB the controller walks as part of the chain when a transfer wraps the
++ * TRB ring. The cache itself never holds more than DWC3_TRB_CACHE_MAX TRBs, so
++ * clamp the limit for cores built with a larger parameter.
++ *
++ * Walk the scatter-gather list counting the TRBs each packet would be built
++ * from, and report the requests that exceed that budget.
++ */
++static bool dwc3_gadget_sg_trb_cache_limit(struct dwc3_ep *dep,
++		struct dwc3_request *req)
++{
++	struct dwc3 *dwc = dep->dwc;
++	struct scatterlist *sg;
++	unsigned int cache_depth;
++	unsigned int max_trbs;
++	unsigned int maxp;
++	unsigned int fill = 0;
++	unsigned int trbs = 0;
++	int i;
++
++	if (!req->direction || !req->request.num_sgs)
++		return false;
++
++	if (req->request.sg_was_mapped || req->request.length == 0)
++		return false;
++
++	cache_depth = DWC3_GHWPARAMS4_CACHE_TRBS_PER_TRANSFER(dwc->hwparams.hwparams4);
++	if (cache_depth < 2)
++		return false;
++
++	max_trbs = min_t(unsigned int, cache_depth - 1, DWC3_TRB_CACHE_MAX);
++
++	/*
++	 * A list no longer than the budget cannot exceed it, whatever the
++	 * individual entry sizes are.
++	 */
++	if (req->request.num_sgs <= max_trbs)
++		return false;
++
++	maxp = usb_endpoint_maxp(dep->endpoint.desc);
++
++	for_each_sg(req->request.sg, sg, req->request.num_sgs, i) {
++		unsigned int len = sg->length;
++
++		trbs++;
++
++		while (fill + len >= maxp) {
++			len -= maxp - fill;
++			if (trbs > max_trbs)
++				return true;
++
++			fill = 0;
++			trbs = len ? 1 : 0;
++		}
++
++		fill += len;
++	}
++
++	/* The transfer may end with a short packet. */
++	return fill && trbs > max_trbs;
++}
++
++static int dwc3_gadget_linearize_sg_request(struct dwc3_ep *dep,
++		struct dwc3_request *req)
++{
++	void *buf;
++	size_t copied;
++
++	if (!dwc3_gadget_sg_trb_cache_limit(dep, req))
++		return 0;
++
++	buf = kmalloc(req->request.length, GFP_ATOMIC | __GFP_NOWARN);
++	if (!buf)
++		return -ENOMEM;
++
++	copied = sg_pcopy_to_buffer(req->request.sg, req->request.num_sgs,
++			buf, req->request.length, 0);
++	if (copied != req->request.length) {
++		kfree(buf);
++		return -EINVAL;
++	}
++
++	dev_dbg(dep->dwc->dev,
++		"%s: linearize SG request len=%u num_sgs=%u exceeding TRB cache\n",
++		dep->name, req->request.length, req->request.num_sgs);
++
++	req->sg_trb_cache_buf = buf;
++	req->sg_trb_cache_sg = req->request.sg;
++	req->sg_trb_cache_num_sgs = req->request.num_sgs;
++	req->sg_trb_cache_orig_buf = req->request.buf;
++	req->sg_trb_cache_bounced = true;
++
++	req->request.buf = buf;
++	req->request.sg = NULL;
++	req->request.num_sgs = 0;
++
++	return 0;
++}
++
+ static int dwc3_prepare_trbs_sg(struct dwc3_ep *dep,
+ 		struct dwc3_request *req)
+ {
+@@ -1985,6 +2111,7 @@ static int __dwc3_gadget_start_isoc(struct dwc3_ep *dep)
+ static int __dwc3_gadget_ep_queue(struct dwc3_ep *dep, struct dwc3_request *req)
+ {
+ 	struct dwc3		*dwc = dep->dwc;
++	int			ret;
+ 
+ 	if (!dep->endpoint.desc || !dwc->pullups_connected || !dwc->connected) {
+ 		dev_dbg(dwc->dev, "%s: can't queue to disabled endpoint\n",
+@@ -2001,6 +2128,10 @@ static int __dwc3_gadget_ep_queue(struct dwc3_ep *dep, struct dwc3_request *req)
+ 				dep->name, &req->request))
+ 		return -EINVAL;
+ 
++	ret = dwc3_gadget_linearize_sg_request(dep, req);
++	if (ret)
++		return ret;
++
+ 	pm_runtime_get(dwc->dev);
+ 
+ 	req->request.actual	= 0;
