@@ -1,0 +1,34 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jiale Yao <yaojiale02@163.com>
+Date: Mon, 19 Oct 2026 17:12:43 +0800
+Subject: [PATCH] Bluetooth: MGMT: Free cancelled adv monitor command
+
+MGMT_OP_REMOVE_ADV_MONITOR uses mgmt_pending_new(), so its command is
+not on hdev->mgmt_pending. When the command sync callback is cancelled,
+mgmt_remove_adv_monitor_complete() returns without freeing the command.
+This leaks the command, its parameter buffer, and its socket reference.
+
+Free the command before returning from the cancelled completion path.
+
+Fixes: e6ed54e86aae ("Bluetooth: MGMT: Fix UAF on mgmt_remove_adv_monitor_complete")
+Signed-off-by: Jiale Yao <yaojiale02@163.com>
+Link: https://lore.kernel.org/r/20261019091243.1847048-1-yaojiale02@163.com
+---
+ net/bluetooth/mgmt.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/net/bluetooth/mgmt.c b/net/bluetooth/mgmt.c
+index 251a896babd5..e54a838aeada 100644
+--- a/net/bluetooth/mgmt.c
++++ b/net/bluetooth/mgmt.c
+@@ -5682,8 +5682,10 @@ static void mgmt_remove_adv_monitor_complete(struct hci_dev *hdev,
+ 	struct mgmt_pending_cmd *cmd = data;
+ 	struct mgmt_cp_remove_adv_monitor *cp;
+ 
+-	if (status == -ECANCELED)
++	if (status == -ECANCELED) {
++		mgmt_pending_free(cmd);
+ 		return;
++	}
+ 
+ 	hci_dev_lock(hdev);

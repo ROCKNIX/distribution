@@ -1,0 +1,101 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cen Zhang <zzzccc427@gmail.com>
+Date: Tue, 06 Oct 2026 22:39:21 +0800
+Subject: [PATCH] Bluetooth: hci_sync: Serialize devcoredump reset during device open
+
+An ACTIVE devcoredump's buffer cursors must remain valid from the
+packet handler's state check through its copy. hci_devcd_rx() holds
+hdev->lock across that interval, and hci_devcd_reset() requires the
+same lock. However, hci_dev_open_sync() invokes reset without taking
+it.
+
+A registered VHCI controller can collect a dump through its debugfs
+interface while the controller is down. If a successful open overlaps
+with handling a nonempty dump packet, reset can run after the receiver's
+ACTIVE check and before its copy:
+
+  hci_devcd_rx()                    hci_dev_open_sync()
+    dequeue nonempty skb
+    hci_dev_lock(hdev)
+    handler observes ACTIVE
+                                     hdev->open(hdev) succeeds
+                                     hci_devcd_reset(hdev)
+                                       dump.tail = NULL
+                                       dump.state = IDLE
+    hci_devcd_copy()
+      compare against old dump.end
+      memcpy(NULL, ..., skb->len)
+    hci_dev_unlock(hdev)
+
+Reset leaves dump.end pointing at the old buffer and purges only queued
+packets, so it cannot discard the skb already dequeued by the receiver.
+The bounds check can pass with a NULL tail, leading to a nonempty copy
+to address zero. KASAN reported a 24-byte NULL write in hci_devcd_rx().
+
+Take hdev->lock around the open-time reset. The receiver then finishes
+its state check and copy using valid cursors before reset, or observes
+IDLE after reset and skips the copy.
+
+KASAN report as below:
+
+    BUG: KASAN: null-ptr-deref in hci_devcd_rx+0x5d5/0x1a80
+    Write of size 24 at addr 0000000000000000 by task kworker/u17:0/496
+    
+        CPU: 0 UID: 0 PID: 496 Comm: kworker/u17:0 Not tainted 
+    7.2.0-rc6-pmb-bt-functional-v1+ #1 PREEMPT(lazy) 
+        Hardware name: QEMU Ubuntu 24.04 PC v2 (i440FX + PIIX, arch_caps 
+    fix, 1996), BIOS 1.16.3-debian-1.16.3-2 04/01/2014
+    Workqueue: hci0 hci_devcd_rx
+    Call Trace:
+     <TASK>
+     dump_stack_lvl+0x93/0xd0
+     kasan_report+0xe0/0x110
+     ? hci_devcd_rx+0x5d5/0x1a80
+     kasan_check_range+0x105/0x1b0
+     __asan_memcpy+0x3c/0x60
+     hci_devcd_rx+0x5d5/0x1a80
+     ? srso_alias_return_thunk+0x5/0xfbef5
+     ? __pfx_hci_devcd_rx+0x10/0x10
+     ? srso_alias_return_thunk+0x5/0xfbef5
+     ? lock_release+0xc8/0x280
+     ? srso_alias_return_thunk+0x5/0xfbef5
+     process_one_work+0x908/0x19c0
+     ? __pfx_process_one_work+0x10/0x10
+     ? srso_alias_return_thunk+0x5/0xfbef5
+     ? lock_is_held_type+0x8f/0x100
+     ? srso_alias_return_thunk+0x5/0xfbef5
+     worker_thread+0x65c/0xe40
+     ? __pfx_worker_thread+0x10/0x10
+     kthread+0x34f/0x460
+     ? srso_alias_return_thunk+0x5/0xfbef5
+     ? __pfx_kthread+0x10/0x10
+     ret_from_fork+0x659/0x940
+     ? __pfx_ret_from_fork+0x10/0x10
+     ? srso_alias_return_thunk+0x5/0xfbef5
+     ? __switch_to+0x74f/0xf80
+     ? __pfx_kthread+0x10/0x10
+     ret_from_fork_asm+0x1a/0x30
+     </TASK>
+    ==================================================================
+    Disabling lock debugging due to kernel taint
+
+Fixes: 9695ef876fd1 ("Bluetooth: Add support for hci devcoredump")
+Assisted-by: LLM
+Signed-off-by: Cen Zhang <zzzccc427@gmail.com>
+Link: https://lore.kernel.org/r/pm-bluetooth-objects-candidate-0250-v3-f85e5bae9c76348c88b7@gmail.com
+---
+
+diff --git a/net/bluetooth/hci_sync.c b/net/bluetooth/hci_sync.c
+index 1fe11d3ef1aaa8118811fb778b591e0413b4b3f0..8e4fc26b3c42d72a33393bd0b381414c4c0f927e 100644
+--- a/net/bluetooth/hci_sync.c
++++ b/net/bluetooth/hci_sync.c
+@@ -5454,7 +5454,9 @@ int hci_dev_open_sync(struct hci_dev *hdev)
+ 		goto done;
+ 	}
+ 
++	hci_dev_lock(hdev);
+ 	hci_devcd_reset(hdev);
++	hci_dev_unlock(hdev);
+ 
+ 	set_bit(HCI_RUNNING, &hdev->flags);
+ 	hci_sock_dev_event(hdev, HCI_DEV_OPEN);

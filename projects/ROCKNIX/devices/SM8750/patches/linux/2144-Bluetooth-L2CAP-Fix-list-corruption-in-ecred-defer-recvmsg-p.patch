@@ -1,0 +1,136 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Doruk Tan Ozturk <doruk@0sec.ai>
+Date: Sun, 02 Aug 2026 15:20:29 +0200
+Subject: [PATCH] Bluetooth: L2CAP: Fix list corruption in ecred defer recvmsg path
+
+When a deferred L2CAP_MODE_EXT_FLOWCTL connection is accepted,
+l2cap_sock_recvmsg() (BT_CONNECT2 + BT_SK_DEFER_SETUP branch) calls
+__l2cap_ecred_conn_rsp_defer() while holding only lock_sock(sk).  That
+function walks conn->chan_l via __l2cap_chan_list_id() and, on the
+authorization/refuse path, removes channels with l2cap_chan_del() ->
+list_del(&chan->list) -- all without conn->lock.
+
+conn->chan_l is serialised by conn->lock and is concurrently mutated by
+the RX worker, which processes inbound signalling (e.g. an
+L2CAP_DISCONN_REQ -> l2cap_chan_del()) under conn->lock.  Every other
+walker of the list holds that lock: l2cap_chan_list() takes it around
+__l2cap_chan_list(), and the signalling handlers reach the list from
+l2cap_recv_frame(), which runs with it held.  The deferred-accept path
+from l2cap_sock_recvmsg() is the only one that does not, so a peer
+disconnect landing during the walk leaves it on a poisoned entry:
+
+  list_del corruption, ffff88810420c480->next is LIST_POISON1
+  (dead000000000100)
+  WARNING: CPU: 1 PID: 88 at lib/list_debug.c:56
+  __list_del_entry_valid_or_report+0xd6/0x140
+   l2cap_chan_del+0x7c/0x7c0
+   __l2cap_ecred_conn_rsp_defer+0x333/0x340
+   l2cap_sock_recvmsg+0x338/0x340
+   sock_recvmsg+0xec/0xf0
+   __sys_recvfrom+0x14c/0x1f0
+
+  BUG: KASAN: wild-memory-access in
+  __l2cap_ecred_conn_rsp_defer+0x1c0/0x340
+  Read of size 8 at addr dead000000000100 by task race/95
+   __l2cap_ecred_conn_rsp_defer+0x1c0/0x340
+   l2cap_sock_recvmsg+0x338/0x340
+   sock_recvmsg+0xec/0xf0
+   __sys_recvfrom+0x14c/0x1f0
+  Oops: general protection fault, probably for non-canonical
+  address 0xdead000000000100
+
+Take conn->lock around __l2cap_ecred_conn_rsp_defer().  The established
+lock order is conn->lock -> chan->lock -> sk_lock (the RX worker reaches
+the socket via l2cap_chan_del() -> l2cap_sock_teardown_cb() ->
+lock_sock_nested()), so the socket lock is dropped before conn->lock is
+taken, mirroring l2cap_sock_shutdown().  The conn is pinned with
+l2cap_conn_hold_unless_zero() across the unlocked window.  Only the
+EXT_FLOWCTL branch needs this; the LE and BR/EDR defer paths respond for
+a single channel and do not walk conn->chan_l.
+
+Reproduced with hci_vhci on a KASAN + PROVE_LOCKING kernel: a peer sends
+L2CAP_ECRED_CONN_REQ over LE, userspace accepts the deferred channels,
+and an L2CAP_DISCONN_REQ for a sibling channel races the recvmsg() that
+completes the accept.  7 of 10 unpatched boots reproduced it; 10 patched
+boots gave neither a splat nor a lockdep report.  Well-formed traffic is
+unaffected: the response is built from the same channels with the same
+contents, and the only case now skipped is a channel the RX worker has
+already removed from conn->chan_l, for which no response is meaningful.
+
+Found by 0sec (https://0sec.ai).
+Fixes: 15f02b910562 ("Bluetooth: L2CAP: Add initial code for Enhanced Credit Based Mode")
+Cc: stable@vger.kernel.org
+Assisted-by: 0sec:multi-model
+Signed-off-by: Doruk Tan Ozturk <doruk@0sec.ai>
+Link: https://lore.kernel.org/r/20260802132029.5118-1-doruk@0sec.ai
+---
+v2: Rewrite the commit message.  v1 called this the recvmsg-path sibling
+    of 41c2713b204e; that commit fixes iterator invalidation in a path
+    that already runs under conn->lock, not a missing lock, so the
+    reference is dropped and the invariant is stated directly instead.
+    v1 also cited l2cap_sock_cleanup_listen() as precedent for taking
+    conn->lock, which is backwards: it deliberately avoids conn->lock
+    because it runs under the parent sk lock.  Only l2cap_sock_shutdown()
+    is cited now.  The splat is quoted from an actual run.  Shorten the
+    subject to 80 columns and use the AGENT_NAME:MODEL_VERSION form for
+    Assisted-by.  The only code change from v1 is four comment lines on
+    why chan needs no extra reference across the unlocked window.
+
+    Note for stable: this uses FLAG_DEL, added by b66774b48dd9
+    ("Bluetooth: L2CAP: Fix UAF in channel timeout by holding conn ref",
+    v7.2-rc1).  Trees without that commit need it first; the patch does
+    not build otherwise.
+
+v1: https://lore.kernel.org/linux-bluetooth/20260714125209.39790-1-doruk@0sec.ai/
+ net/bluetooth/l2cap_sock.c | 37 +++++++++++++++++++++++++++++++++++--
+ 1 file changed, 35 insertions(+), 2 deletions(-)
+
+diff --git a/net/bluetooth/l2cap_sock.c b/net/bluetooth/l2cap_sock.c
+index 735167f73f312..af35608791994 100644
+--- a/net/bluetooth/l2cap_sock.c
++++ b/net/bluetooth/l2cap_sock.c
+@@ -1227,9 +1227,42 @@ static int l2cap_sock_recvmsg(struct socket *sock, struct msghdr *msg,
+ 	if (sk->sk_state == BT_CONNECT2 && test_bit(BT_SK_DEFER_SETUP,
+ 						    &bt_sk(sk)->flags)) {
+ 		if (pi->chan->mode == L2CAP_MODE_EXT_FLOWCTL) {
++			struct l2cap_chan *chan = pi->chan;
++			struct l2cap_conn *conn;
++
+ 			sk->sk_state = BT_CONNECTED;
+-			pi->chan->state = BT_CONNECTED;
+-			__l2cap_ecred_conn_rsp_defer(pi->chan);
++			chan->state = BT_CONNECTED;
++
++			/* __l2cap_ecred_conn_rsp_defer() walks and mutates
++			 * conn->chan_l (via __l2cap_chan_list_id() and
++			 * l2cap_chan_del()), which is serialised by conn->lock
++			 * and is concurrently modified by the RX worker.  The
++			 * established lock order is
++			 * conn->lock -> chan->lock -> sk_lock, so the socket
++			 * lock must be dropped before taking conn->lock to
++			 * avoid inverting it (lockdep deadlock).  Pin the conn
++			 * across the unlocked window; chan needs no extra
++			 * reference because the socket holds one until
++			 * sk->sk_socket is cleared, which cannot happen while
++			 * this call is in progress.
++			 */
++			conn = l2cap_conn_hold_unless_zero(chan->conn);
++			release_sock(sk);
++			if (conn) {
++				mutex_lock(&conn->lock);
++				/* The RX worker may have torn the channel down
++				 * (FLAG_DEL, removed from conn->chan_l) while the
++				 * socket lock was dropped; skip the response in
++				 * that case. conn->lock below serialises the
++				 * chan_l walk against the RX worker's
++				 * l2cap_chan_del().
++				 */
++				if (!test_bit(FLAG_DEL, &chan->flags))
++					__l2cap_ecred_conn_rsp_defer(chan);
++				mutex_unlock(&conn->lock);
++				l2cap_conn_put(conn);
++			}
++			lock_sock(sk);
+ 		} else if (bdaddr_type_is_le(pi->chan->src_type)) {
+ 			sk->sk_state = BT_CONNECTED;
+ 			pi->chan->state = BT_CONNECTED;

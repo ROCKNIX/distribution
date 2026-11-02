@@ -1,0 +1,124 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Du Yijie <nathandu@outlook.com>
+Date: Mon, 26 Oct 2026 23:16:40 +0800
+Subject: [PATCH] HID: playstation: ignore DualSense Bluetooth microphone reports
+
+If userspace enables microphone reports from a DualSense connected
+via Bluetooth, by sending a specific output report through hidraw,
+hid-playstation will misinterpret the microphone data as regular
+input reports, resulting in spurious events.
+
+Check the byte after report ID, which contains information necessary
+to distinguish the typical HID input report from other stuff like mic
+data, before parsing. If the byte indicates anything other than the
+typical HID input report, do not parse it. If the report looks like
+mic data, silently ignore it, otherwise report an error.
+
+Link: https://bugzilla.redhat.com/attachment.cgi?id=2161437
+Closes: https://bugzilla.redhat.com/show_bug.cgi?id=2554570
+Fixes: 799b2b533a29 ("HID: playstation: add DualSense Bluetooth support.")
+Tested-by: Du Yijie <nathandu@outlook.com>
+Signed-off-by: Du Yijie <nathandu@outlook.com>
+Link: https://lore.kernel.org/r/SY8PR01MB9299F0BA16B832F89BC6A4EDD1612@SY8PR01MB9299.ausprd01.prod.outlook.com
+---
+ drivers/hid/hid-playstation.c | 51 ++++++++++++++++++++++++++++++-----
+ 1 file changed, 44 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/hid/hid-playstation.c b/drivers/hid/hid-playstation.c
+index f9dc9378cf77..8bad1a9dae54 100644
+--- a/drivers/hid/hid-playstation.c
++++ b/drivers/hid/hid-playstation.c
+@@ -94,6 +94,13 @@ struct ps_led_info {
+ #define DS_FEATURE_REPORT_FIRMWARE_INFO		0x20
+ #define DS_FEATURE_REPORT_FIRMWARE_INFO_SIZE	64
+ 
++/* Metadata of Bluetooth input report. */
++#define DS_INPUT_SEQ_TAG	GENMASK(3, 0)
++#define DS_INPUT_SEQ_NO		GENMASK(7, 4)
++
++#define DS_INPUT_SEQ_TAG_INPUT_REPORT	1
++#define DS_INPUT_SEQ_TAG_MIC_REPORT	2
++
+ /* Button masks for DualSense input report. */
+ #define DS_BUTTONS0_HAT_SWITCH	GENMASK(3, 0)
+ #define DS_BUTTONS0_SQUARE	BIT(4)
+@@ -242,7 +249,7 @@ struct dualsense_touch_point {
+ static_assert(sizeof(struct dualsense_touch_point) == 4);
+ 
+ /* Main DualSense input report excluding any BT/USB specific headers. */
+-struct dualsense_input_report {
++struct dualsense_input_report_common {
+ 	u8 x, y;
+ 	u8 rx, ry;
+ 	u8 z, rz;
+@@ -264,7 +271,22 @@ struct dualsense_input_report {
+ 	u8 reserved4[8];
+ } __packed;
+ /* Common input report size shared equals the size of the USB report minus 1 byte for ReportID. */
+-static_assert(sizeof(struct dualsense_input_report) == DS_INPUT_REPORT_USB_SIZE - 1);
++static_assert(sizeof(struct dualsense_input_report_common) == DS_INPUT_REPORT_USB_SIZE - 1);
++
++struct dualsense_input_report_usb {
++	u8 report_id; /* 0x01 */
++	struct dualsense_input_report_common common;
++} __packed;
++static_assert(sizeof(struct dualsense_input_report_usb) == DS_INPUT_REPORT_USB_SIZE);
++
++struct dualsense_input_report_bt {
++	u8 report_id; /* 0x31 */
++	u8 seq_tag;
++	struct dualsense_input_report_common common;
++	u8 reserved[9];
++	__le32 crc32;
++} __packed;
++static_assert(sizeof(struct dualsense_input_report_bt) == DS_INPUT_REPORT_BT_SIZE);
+ 
+ /* Common data between DualSense BT/USB main output report. */
+ struct dualsense_output_report_common {
+@@ -1438,7 +1460,9 @@ static int dualsense_parse_report(struct ps_device *ps_dev, struct hid_report *r
+ {
+ 	struct hid_device *hdev = ps_dev->hdev;
+ 	struct dualsense *ds = container_of(ps_dev, struct dualsense, base);
+-	struct dualsense_input_report *ds_report;
++	struct dualsense_input_report_common *ds_report;
++	struct dualsense_input_report_bt *ds_report_bt;
++	struct dualsense_input_report_usb *ds_report_usb;
+ 	u8 battery_data, battery_capacity, charging_status, value;
+ 	int battery_status;
+ 	u32 sensor_timestamp;
+@@ -1452,18 +1476,31 @@ static int dualsense_parse_report(struct ps_device *ps_dev, struct hid_report *r
+ 	 */
+ 	if (hdev->bus == BUS_USB && report->id == DS_INPUT_REPORT_USB &&
+ 	    size == DS_INPUT_REPORT_USB_SIZE) {
+-		ds_report = (struct dualsense_input_report *)&data[1];
++		ds_report_usb = (struct dualsense_input_report_usb *)data;
++		ds_report = &ds_report_usb->common;
+ 	} else if (hdev->bus == BUS_BLUETOOTH && report->id == DS_INPUT_REPORT_BT &&
+ 		   size == DS_INPUT_REPORT_BT_SIZE) {
+-		/* Last 4 bytes of input report contain crc32 */
+-		u32 report_crc = get_unaligned_le32(&data[size - 4]);
++		ds_report_bt = (struct dualsense_input_report_bt *)data;
++		u32 report_crc = le32_to_cpu(ds_report_bt->crc32);
+ 
+ 		if (!ps_check_crc32(PS_INPUT_CRC32_SEED, data, size - 4, report_crc)) {
+ 			hid_err(hdev, "DualSense input CRC's check failed\n");
+ 			return -EILSEQ;
+ 		}
+ 
+-		ds_report = (struct dualsense_input_report *)&data[2];
++		unsigned int seq_tag = FIELD_GET(DS_INPUT_SEQ_TAG, ds_report_bt->seq_tag);
++
++		if (seq_tag == DS_INPUT_SEQ_TAG_MIC_REPORT) {
++			/* Microphone reports are silently ignored. */
++			return 0;
++		}
++
++		if (seq_tag != DS_INPUT_SEQ_TAG_INPUT_REPORT) {
++			hid_err(hdev, "Unknown seq_tag=%d\n", seq_tag);
++			return -1;
++		}
++
++		ds_report = &ds_report_bt->common;
+ 	} else {
+ 		hid_err(hdev, "Unhandled reportID=%d\n", report->id);
+ 		return -1;

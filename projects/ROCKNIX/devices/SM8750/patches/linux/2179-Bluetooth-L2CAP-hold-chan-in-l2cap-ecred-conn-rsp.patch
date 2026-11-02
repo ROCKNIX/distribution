@@ -1,0 +1,60 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Pauli Virtanen <pav@iki.fi>
+Date: Sat, 29 Aug 2026 17:20:06 +0300
+Subject: [PATCH] Bluetooth: L2CAP: hold chan in l2cap_ecred_conn_rsp()
+
+l2cap_chan_del() calls l2cap_chan_put() to drop the conn->chan_l
+reference.  If this was the last reference, UAF follows.
+
+l2cap_ecred_conn_rsp() iterates chan_l list and calls l2cap_chan_del()
+on some members, without holding chan reference.
+
+Fix by holding refcount while using chan after l2cap_chan_del().
+
+Since orig is looked up by dcid provided by remote, it's also possible
+orig == chan, so reference needs to be held also after orig use.
+
+Fixes: 41c2713b204e ("Bluetooth: L2CAP: Fix possible crash on l2cap_ecred_conn_rsp")
+Assisted-by: deepseek-v4-flash
+Signed-off-by: Pauli Virtanen <pav@iki.fi>
+Link: https://lore.kernel.org/r/6ad9b23ab2f5e3b0abcbadad91f9a667f426a596.1788013041.git.pav@iki.fi
+---
+ net/bluetooth/l2cap_core.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/net/bluetooth/l2cap_core.c b/net/bluetooth/l2cap_core.c
+index 750b13f76203..cc86399ef0f5 100644
+--- a/net/bluetooth/l2cap_core.c
++++ b/net/bluetooth/l2cap_core.c
+@@ -5513,12 +5513,14 @@ static inline int l2cap_ecred_conn_rsp(struct l2cap_conn *conn,
+ 		    chan->state == BT_CONNECTED)
+ 			continue;
+ 
++		l2cap_chan_hold(chan);
+ 		l2cap_chan_lock(chan);
+ 
+ 		/* Check that there is a dcid for each pending channel */
+ 		if (cmd_len < sizeof(dcid)) {
+ 			l2cap_chan_del(chan, ECONNREFUSED);
+ 			l2cap_chan_unlock(chan);
++			l2cap_chan_put(chan);
+ 			continue;
+ 		}
+ 
+@@ -5557,6 +5559,8 @@ static inline int l2cap_ecred_conn_rsp(struct l2cap_conn *conn,
+ 				__set_chan_timer(orig, 0);
+ 				l2cap_chan_unlock(orig);
+ 			}
++
++			l2cap_chan_put(chan);
+ 			continue;
+ 		}
+ 
+@@ -5602,6 +5606,7 @@ static inline int l2cap_ecred_conn_rsp(struct l2cap_conn *conn,
+ 		}
+ 
+ 		l2cap_chan_unlock(chan);
++		l2cap_chan_put(chan);
+ 	}
+ 
+ 	return err;

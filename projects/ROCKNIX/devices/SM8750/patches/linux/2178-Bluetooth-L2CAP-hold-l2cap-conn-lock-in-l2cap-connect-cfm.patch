@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Pauli Virtanen <pav@iki.fi>
+Date: Sat, 29 Aug 2026 17:20:03 +0300
+Subject: [PATCH] Bluetooth: L2CAP: hold l2cap_conn::lock in l2cap_connect_cfm()
+
+l2cap_new_connection() -> __l2cap_chan_add() modifies
+l2cap_conn::chan_l, which is guarded by l2cap_conn::lock. The lock is
+not held in l2cap_connect_cfm().
+
+Fix by holding conn->lock in l2cap_connect_cfm() to make the locking
+systematic.
+
+Fixes: ab4eedb790ca ("Bluetooth: L2CAP: Fix corrupted list in hci_chan_del")
+Signed-off-by: Pauli Virtanen <pav@iki.fi>
+Link: https://lore.kernel.org/r/19f7e8e2dc1b168dcbb848628333cb892c296d86.1788013041.git.pav@iki.fi
+---
+ net/bluetooth/l2cap_core.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/net/bluetooth/l2cap_core.c b/net/bluetooth/l2cap_core.c
+index c9b3321f7f90..44077e3d1e2d 100644
+--- a/net/bluetooth/l2cap_core.c
++++ b/net/bluetooth/l2cap_core.c
+@@ -7629,6 +7629,8 @@ static void l2cap_connect_cfm(struct hci_conn *hcon, u8 status)
+ 	 * we left off, because the list lock would prevent calling the
+ 	 * potentially sleeping l2cap_chan_lock() function.
+ 	 */
++	mutex_lock(&conn->lock);
++
+ 	pchan = l2cap_global_fixed_chan(NULL, hcon);
+ 	while (pchan) {
+ 		struct l2cap_chan *chan, *next;
+@@ -7653,6 +7655,8 @@ static void l2cap_connect_cfm(struct hci_conn *hcon, u8 status)
+ 		pchan = next;
+ 	}
+ 
++	mutex_unlock(&conn->lock);
++
+ 	l2cap_conn_ready(conn);
+ }

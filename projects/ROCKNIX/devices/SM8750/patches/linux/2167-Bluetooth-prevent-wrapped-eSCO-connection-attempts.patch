@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Zhiling Zou <zhilinz@nebusec.ai>
+Date: Sat, 12 Sep 2026 21:45:00 +0800
+Subject: [PATCH] Bluetooth: prevent wrapped eSCO connection attempts
+
+The eSCO retry counter is an 8-bit value.  Repeated synchronous
+connection failures can wrap it to zero, after which the eSCO parameter
+lookup uses an index before the start of its static table.
+
+Reject a wrapped attempt before the lookup and before building another
+enhanced synchronous-connection command.
+
+Fixes: b2af264ad3af ("Bluetooth: Add support for HCI_Enhanced_Setup_Synchronous_Connection command")
+Cc: stable@vger.kernel.org
+Reported-by: VEGA <vega@nebusec.ai>
+Assisted-by: LLM
+Signed-off-by: Zhiling Zou <zhilinz@nebusec.ai>
+Link: https://lore.kernel.org/r/a45e40e8a5360391b24f8d1a3a0cc7d03e8607de.1789220439.git.zhilinz@nebusec.ai
+---
+ net/bluetooth/hci_conn.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/net/bluetooth/hci_conn.c b/net/bluetooth/hci_conn.c
+index 8de98af2fb581..582b85f063874 100644
+--- a/net/bluetooth/hci_conn.c
++++ b/net/bluetooth/hci_conn.c
+@@ -217,6 +217,8 @@ static bool find_next_esco_param(struct hci_conn *conn,
+ {
+ 	if (!conn->parent)
+ 		return false;
++	if (!conn->attempt)
++		return false;
+ 
+ 	for (; conn->attempt <= size; conn->attempt++) {
+ 		if (lmp_esco_2m_capable(conn->parent) ||
+@@ -294,6 +296,8 @@ static int hci_enhanced_setup_sync(struct hci_dev *hdev, void *data)
+ 	conn->out = true;
+ 
+ 	conn->attempt++;
++	if (!conn->attempt)
++		return -EINVAL;
+ 
+ 	memset(&cp, 0x00, sizeof(cp));

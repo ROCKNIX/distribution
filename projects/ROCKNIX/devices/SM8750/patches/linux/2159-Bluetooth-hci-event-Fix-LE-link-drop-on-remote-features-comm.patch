@@ -1,0 +1,109 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Dewald <kevin@simpleble.org>
+Date: Tue, 13 Oct 2026 00:16:15 -0700
+Subject: [PATCH] Bluetooth: hci_event: Fix LE link drop on remote features command status
+
+When the local controller supports peripheral-initiated features
+exchange, the LE Read Remote Features procedure also runs for incoming
+connections, and it fails with Unsupported Remote Feature (0x1a) if the
+central does not support that feature. hci_le_remote_feat_complete_evt()
+and hci_le_read_all_remote_features_evt() handle this and let the
+connection transition into connected state.
+
+A controller can also return that error in the Command Status event
+instead. An Intel controller does so for a central that does not
+support peripheral-initiated features exchange, presumably because it
+already has the features of the central. hci_cs_le_read_remote_features()
+and hci_cs_le_read_all_remote_features() then confirm the connection as
+failed while it is still in BT_CONFIG, and the hci_conn_drop() in
+le_read_features_complete() disconnects it right away:
+
+  > HCI Event: LE Meta Event (0x3e) plen 31
+      LE Enhanced Connection Complete (0x0a)
+        Status: Success (0x00)
+        Role: Peripheral (0x01)
+  < HCI Command: LE Read Remote Used Features (0x08|0x0016) plen 2
+  > HCI Event: Command Status (0x0f) plen 4
+      LE Read Remote Used Features (0x08|0x0016) ncmd 1
+        Status: Unsupported Remote Feature / Unsupported LMP Feature (0x1a)
+  < HCI Command: Disconnect (0x01|0x0006) plen 3
+        Reason: Remote User Terminated Connection (0x13)
+
+Data the central sends afterwards is reported as:
+
+  Bluetooth: hci0: ACL packet for unknown connection handle 3585
+
+Handle Unsupported Remote Feature in the command status the same way as
+in the complete events.
+
+Fixes: 0fe29fd1cd77 ("Bluetooth: Read LE remote features during connection establishment")
+Fixes: a106e50be74b ("Bluetooth: HCI: Add support for LL Extended Feature Set")
+Assisted-by: Claude:claude-opus-5.5
+Signed-off-by: Kevin Dewald <kevin@simpleble.org>
+Link: https://lore.kernel.org/r/20261013071615.76382-1-kdewald@itba.edu.ar
+---
+Reproduced in test-runner on bluetooth-next with l2cap-tester, the
+emulator answering LE Read Remote Features and LE Read All Remote
+Features from the peripheral with Unsupported Remote Feature in the
+Command Status: "L2CAP LE Server - Success" and "L2CAP LE Server - SCI
+Default Mode" fail 5 out of 5 times without this patch, the link being
+dropped as above, and pass 5 out of 5 times with it. With the error in
+the complete events instead, they pass with and without the patch.
+
+The emulator change and a tester case can be sent as well if wanted.
+
+Not tested yet on the Intel controller the drop was seen with.
+
+ net/bluetooth/hci_event.c | 30 ++++++++++++++++++++++++++++--
+ 1 file changed, 28 insertions(+), 2 deletions(-)
+
+diff --git a/net/bluetooth/hci_event.c b/net/bluetooth/hci_event.c
+index c055d16cf..cad6ed5d8 100644
+--- a/net/bluetooth/hci_event.c
++++ b/net/bluetooth/hci_event.c
+@@ -3015,8 +3015,25 @@ static void hci_cs_le_read_remote_features(struct hci_dev *hdev, u8 status)
+ 	hci_dev_lock(hdev);
+ 
+ 	conn = hci_conn_hash_lookup_handle(hdev, __le16_to_cpu(cp->handle));
+-	if (conn && conn->state == BT_CONFIG)
++	if (conn && conn->state == BT_CONFIG) {
++		/* If the local controller supports peripheral-initiated
++		 * features exchange, but the remote controller does not,
++		 * then the controller may already return the error code
++		 * 0x1a for unsupported remote feature in the command
++		 * status.
++		 *
++		 * Handle it as hci_le_remote_feat_complete_evt() does and
++		 * allow the connection to transition into connected state.
++		 */
++		if (!conn->out &&
++		    status == HCI_ERROR_UNSUPPORTED_REMOTE_FEATURE &&
++		    (hdev->le_features[0] & HCI_LE_PERIPHERAL_FEATURES)) {
++			conn->state = BT_CONNECTED;
++			status = 0x00;
++		}
++
+ 		hci_connect_cfm(conn, status);
++	}
+ 
+ 	hci_dev_unlock(hdev);
+ }
+@@ -4113,8 +4130,17 @@ static void hci_cs_le_read_all_remote_features(struct hci_dev *hdev, u8 status)
+ 	hci_dev_lock(hdev);
+ 
+ 	conn = hci_conn_hash_lookup_handle(hdev, __le16_to_cpu(cp->handle));
+-	if (conn && conn->state == BT_CONFIG)
++	if (conn && conn->state == BT_CONFIG) {
++		/* See hci_cs_le_read_remote_features() */
++		if (!conn->out &&
++		    status == HCI_ERROR_UNSUPPORTED_REMOTE_FEATURE &&
++		    (hdev->le_features[0] & HCI_LE_PERIPHERAL_FEATURES)) {
++			conn->state = BT_CONNECTED;
++			status = 0x00;
++		}
++
+ 		hci_connect_cfm(conn, status);
++	}
+ 
+ 	hci_dev_unlock(hdev);
+ }

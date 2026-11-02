@@ -1,0 +1,80 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hui Peng <benquike@gmail.com>
+Date: Sat, 19 Sep 2026 11:54:36 +0000
+Subject: [PATCH] Bluetooth: MGMT: fix mesh_tx leak on hci_cmd_sync_queue() failure
+
+mesh_send() only queues mesh_send_sync() when no transmission is already
+in progress:
+
+	sending = hci_dev_test_flag(hdev, HCI_MESH_SENDING);
+	mesh_tx = mgmt_mesh_add(sk, hdev, send, len);
+
+	if (!mesh_tx)
+		err = -ENOMEM;
+	else if (!sending)
+		err = hci_cmd_sync_queue(hdev, mesh_send_sync, mesh_tx,
+					 mesh_send_start_complete);
+
+so the only way to reach the error path with a live mesh_tx is for that
+hci_cmd_sync_queue() call to fail, which can only happen when sending is
+false. The cleanup, however, is guarded the other way round:
+
+	if (mesh_tx) {
+		if (sending)
+			mgmt_mesh_remove(mesh_tx);
+	}
+
+With mesh_tx non-NULL the inner condition is therefore always false, and
+mgmt_mesh_remove() is never reached: the entry stays on
+hdev->mesh_pending even though the command has been failed back to
+userspace with MGMT_STATUS_FAILED. It is only released when the socket
+is closed or the controller goes away, and until then it counts against
+the MESH_HANDLES_MAX budget enforced by send_count(), so repeated
+failures eventually make MGMT_OP_MESH_SEND return MGMT_STATUS_BUSY.
+
+Conversely, when sending is true err is left at 0 and the success branch
+runs, so the guard never protects anything either.
+
+Drop the inner condition and remove the entry whenever one was added.
+
+Fixes: b338d91703fa ("Bluetooth: Implement support for Mesh")
+Assisted-by: LLM
+Signed-off-by: Hui Peng <benquike@gmail.com>
+Tested-by: Iaroslav Voitovych <yaroslav.voytovych@gmail.com>
+Link: https://lore.kernel.org/r/20260919115436.3998954-1-benquike@gmail.com
+---
+This is the remaining half of
+https://lore.kernel.org/all/20260919112517.3871992-1-benquike@gmail.com/
+("[PATCH v3] Bluetooth: MGMT: Fix mesh_tx Use-After-Free and leak in
+mesh_send()"), which I am withdrawing.
+
+That patch bundled this leak together with a fix for the mesh_tx
+use-after-free, and was written against mainline, so it neither applied
+to bluetooth-next nor was still needed: 71af682ba469 ("Bluetooth: mgmt:
+Dequeue pending mesh_send_sync entries on cancel") already fixed the
+use-after-free, and did it better than I had - dequeuing the pending
+mesh_send_sync entry at the point of the free rather than locking
+around the dereference. Only the leak was left, so this is just that,
+rebased onto bluetooth-next.
+
+Found by code inspection while investigating the use-after-free. I have
+not reproduced the leak on its own; hci_cmd_sync_queue() only fails on
+-ENOMEM or when the controller is going down, which I did not manage to
+induce reliably. Compile tested only.
+
+diff --git a/net/bluetooth/mgmt.c b/net/bluetooth/mgmt.c
+index 9d3de5a..8991aa8 100644
+--- a/net/bluetooth/mgmt.c
++++ b/net/bluetooth/mgmt.c
+@@ -2543,10 +2543,8 @@ static int mesh_send(struct sock *sk, struct hci_dev *hdev, void *data, u16 len)
+ 		err = mgmt_cmd_status(sk, hdev->id, MGMT_OP_MESH_SEND,
+ 				      MGMT_STATUS_FAILED);
+ 
+-		if (mesh_tx) {
+-			if (sending)
+-				mgmt_mesh_remove(mesh_tx);
+-		}
++		if (mesh_tx)
++			mgmt_mesh_remove(mesh_tx);
+ 	} else {
+ 		hci_dev_set_flag(hdev, HCI_MESH_SENDING);

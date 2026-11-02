@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Luiz Augusto von Dentz <luiz.von.dentz@intel.com>
+Date: Tue, 13 Oct 2026 10:22:02 -0400
+Subject: [PATCH] Bluetooth: Fix the LE Read Connection Interval response layout
+
+The response to HCI_OP_LE_READ_CONN_INTERVAL carries a
+Minimum_Supported_Connection_Interval octet between the status and
+Num_Groups, which was missing from the structure. Without it the minimum
+interval was read as the number of groups, and every group after it
+from one octet off.
+
+Take the minimum interval used to clamp the default rate parameters from
+that field rather than the smallest group minimum, as the number of
+groups can be zero, which left it unset.
+
+Fixes: 2f8784cfe8a9 ("Bluetooth: Add support for Shorter Connection Interval (SCI) feature")
+Assisted-by: OpenCode:claude-opus-5.5
+Signed-off-by: Luiz Augusto von Dentz <luiz.von.dentz@intel.com>
+Link: https://lore.kernel.org/r/20261013142202.544985-1-luiz.dentz@gmail.com
+---
+ include/net/bluetooth/hci.h |  1 +
+ net/bluetooth/hci_event.c   | 16 ++++------------
+ 2 files changed, 5 insertions(+), 12 deletions(-)
+
+diff --git a/include/net/bluetooth/hci.h b/include/net/bluetooth/hci.h
+index 1641d879dbda..9dc714d9145e 100644
+--- a/include/net/bluetooth/hci.h
++++ b/include/net/bluetooth/hci.h
+@@ -2527,6 +2527,7 @@ struct hci_le_conn_interval_group {
+ 
+ struct hci_rp_le_read_conn_interval {
+ 	__u8	status;
++	__u8	min;
+ 	__u8	num_grps;
+ 	struct hci_le_conn_interval_group grps[];
+ } __packed;
+diff --git a/net/bluetooth/hci_event.c b/net/bluetooth/hci_event.c
+index c055d16cfb8e..91a0157ff435 100644
+--- a/net/bluetooth/hci_event.c
++++ b/net/bluetooth/hci_event.c
+@@ -1269,8 +1269,6 @@ static u8 hci_cc_le_read_conn_interval(struct hci_dev *hdev, void *data,
+ 				       struct sk_buff *skb)
+ {
+ 	struct hci_rp_le_read_conn_interval *rp = data;
+-	u16 min_interval = 0;
+-	int i;
+ 
+ 	bt_dev_dbg(hdev, "status 0x%2.2x", rp->status);
+ 
+@@ -1283,17 +1281,11 @@ static u8 hci_cc_le_read_conn_interval(struct hci_dev *hdev, void *data,
+ 		return HCI_ERROR_UNSPECIFIED;
+ 	}
+ 
+-	/* Store the smallest minimum supported connection interval reported by
+-	 * the controller so the default rate parameters can be clamped to it.
++	/* Store the minimum supported connection interval so the default rate
++	 * parameters can be clamped to it. It is reported on its own rather
++	 * than derived from the groups, as there may be none.
+ 	 */
+-	for (i = 0; i < rp->num_grps; i++) {
+-		u16 min = le16_to_cpu(rp->grps[i].min);
+-
+-		if (!min_interval || min < min_interval)
+-			min_interval = min;
+-	}
+-
+-	hdev->le_min_rate_interval = min_interval;
++	hdev->le_min_rate_interval = rp->min;
+ 
+ 	return rp->status;
+ }

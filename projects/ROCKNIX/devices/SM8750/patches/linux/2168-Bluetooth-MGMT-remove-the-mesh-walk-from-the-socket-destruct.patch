@@ -1,0 +1,87 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Baul Lee <baul.lee@xbow.com>
+Date: Fri, 07 Aug 2026 19:15:27 +0900
+Subject: [PATCH] Bluetooth: MGMT: remove the mesh walk from the socket destructor
+
+hci_sock_destruct() calls mgmt_cleanup(), which walks hdev->mesh_pending
+on every registered controller looking for entries owned by the socket
+being destroyed, and completes the ones it finds.
+
+It can never find one.  mgmt_mesh_add() takes a reference on the owning
+socket for every entry it links onto the list and mgmt_mesh_remove()
+drops it again, so the socket's reference count cannot reach zero while
+one of its entries is there.
+
+The walk still races the list.  mgmt_mesh_next() loads mesh_tx->sk from
+every node it passes, including nodes owned by other sockets, while the
+cmd_sync worker unlinks and frees nodes of the same list under a
+different lock.  mgmt_cleanup() cannot take hdev->lock: it holds
+read_lock(&hci_dev_list_lock) across the walk, and hdev->lock sleeps.
+It is the one user of hdev->mesh_pending that cannot be brought under
+that lock.
+
+Remove mgmt_cleanup() and its caller.
+
+Discovered by XBOW, triaged by Baul Lee <baul.lee@xbow.com>
+
+Fixes: b338d91703fa ("Bluetooth: Implement support for Mesh")
+Cc: stable@vger.kernel.org
+Signed-off-by: Baul Lee <baul.lee@xbow.com>
+Link: https://lore.kernel.org/r/20260807101529.17348-2-baul.lee@xbow.com
+---
+ include/net/bluetooth/bluetooth.h |  1 -
+ net/bluetooth/hci_sock.c          |  1 -
+ net/bluetooth/mgmt.c              | 19 -------------------
+ 3 files changed, 21 deletions(-)
+
+diff --git a/include/net/bluetooth/bluetooth.h b/include/net/bluetooth/bluetooth.h
+index b624da5026f5..f49cec5f01e6 100644
+--- a/include/net/bluetooth/bluetooth.h
++++ b/include/net/bluetooth/bluetooth.h
+@@ -675,7 +675,6 @@ static inline bool iso_inited(void)
+ 
+ int mgmt_init(void);
+ void mgmt_exit(void);
+-void mgmt_cleanup(struct sock *sk);
+ 
+ void bt_sock_reclassify_lock(struct sock *sk, int proto);
+ 
+diff --git a/net/bluetooth/hci_sock.c b/net/bluetooth/hci_sock.c
+index 070ca388f9ac..5073f4fc3289 100644
+--- a/net/bluetooth/hci_sock.c
++++ b/net/bluetooth/hci_sock.c
+@@ -2164,7 +2164,6 @@ static int hci_sock_getsockopt(struct socket *sock, int level, int optname,
+ 
+ static void hci_sock_destruct(struct sock *sk)
+ {
+-	mgmt_cleanup(sk);
+ 	skb_queue_purge(&sk->sk_receive_queue);
+ 	skb_queue_purge(&sk->sk_write_queue);
+ 	skb_queue_purge(&sk->sk_error_queue);
+diff --git a/net/bluetooth/mgmt.c b/net/bluetooth/mgmt.c
+index 860c086011b7..97408904f74b 100644
+--- a/net/bluetooth/mgmt.c
++++ b/net/bluetooth/mgmt.c
+@@ -10894,22 +10894,3 @@ void mgmt_exit(void)
+ {
+ 	hci_mgmt_chan_unregister(&chan);
+ }
+-
+-void mgmt_cleanup(struct sock *sk)
+-{
+-	struct mgmt_mesh_tx *mesh_tx;
+-	struct hci_dev *hdev;
+-
+-	read_lock(&hci_dev_list_lock);
+-
+-	list_for_each_entry(hdev, &hci_dev_list, list) {
+-		do {
+-			mesh_tx = mgmt_mesh_next(hdev, sk);
+-
+-			if (mesh_tx)
+-				mesh_send_complete(hdev, mesh_tx, true);
+-		} while (mesh_tx);
+-	}
+-
+-	read_unlock(&hci_dev_list_lock);
+-}

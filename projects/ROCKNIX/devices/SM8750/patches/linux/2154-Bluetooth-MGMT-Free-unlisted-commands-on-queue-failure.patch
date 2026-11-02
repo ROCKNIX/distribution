@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jiale Yao <yaojiale02@163.com>
+Date: Wed, 28 Oct 2026 13:06:52 +0800
+Subject: [PATCH] Bluetooth: MGMT: Free unlisted commands on queue failure
+
+mgmt_pending_new() allocates a command without adding it to the pending
+list. set_phy_configuration() and read_local_ssp_oob_req() use this
+helper before queuing synchronous HCI work.
+
+If hci_cmd_sync_queue() fails, the work item does not take ownership of
+the command. The error paths call mgmt_pending_remove(), which assumes
+the command is linked and calls list_del() on its zeroed list node. This
+can cause a NULL pointer dereference instead of releasing the command.
+
+Free the unlisted command directly on queue failure.
+
+Fixes: 302a1f674c00 ("Bluetooth: MGMT: Fix possible UAFs")
+Cc: stable@vger.kernel.org
+Signed-off-by: Jiale Yao <yaojiale02@163.com>
+Link: https://lore.kernel.org/r/20261028050652.134403-1-yaojiale02@163.com
+---
+ net/bluetooth/mgmt.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/net/bluetooth/mgmt.c b/net/bluetooth/mgmt.c
+index 3b9c82bd2f02..66f167849942 100644
+--- a/net/bluetooth/mgmt.c
++++ b/net/bluetooth/mgmt.c
+@@ -4432,7 +4432,7 @@ static int set_phy_configuration(struct sock *sk, struct hci_dev *hdev,
+ 				      MGMT_STATUS_FAILED);
+ 
+ 		if (cmd)
+-			mgmt_pending_remove(cmd);
++			mgmt_pending_free(cmd);
+ 	}
+ 
+ unlock:
+@@ -8619,7 +8619,7 @@ static int read_local_ssp_oob_req(struct hci_dev *hdev, struct sock *sk,
+ 				 read_local_oob_ext_data_complete);
+ 
+ 	if (err < 0) {
+-		mgmt_pending_remove(cmd);
++		mgmt_pending_free(cmd);
+ 		return err;
+ 	}

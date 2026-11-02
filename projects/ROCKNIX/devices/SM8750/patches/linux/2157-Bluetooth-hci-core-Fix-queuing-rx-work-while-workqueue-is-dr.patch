@@ -1,0 +1,137 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Akhil Arul <akhilarul324@gmail.com>
+Date: Fri, 23 Oct 2026 21:46:09 +0530
+Subject: [PATCH] Bluetooth: hci_core: Fix queuing rx_work while workqueue is drained
+
+hci_recv_frame() drops a frame unless HCI_UP or HCI_INIT is set, but the
+check is not synchronized with hci_dev_close_sync().  A driver can pass
+the check, then close clears HCI_UP, flushes rx_work and starts
+drain_workqueue(), and the late queue_work() of rx_work hits the
+draining workqueue:
+
+  workqueue: cannot queue hci_rx_work on wq hci0
+  WARNING: kernel/workqueue.c:2352 at __queue_work+0x2c0/0x780
+  Call Trace:
+   queue_work_on+0xb2/0xc0
+   hci_recv_frame+0x18f/0x330
+   vhci_write+0x174/0x240
+   vfs_write+0x271/0x680
+   ksys_write+0x7c/0x110
+
+Skipping the queue_work() while HCI_CMD_DRAIN_WORKQUEUE is set, as done
+for tx_work, does not work for rx_work: the flag covers the whole close,
+and events still have to be received in that window, for the commands
+sent by hdev->shutdown() and for the reset done with
+HCI_QUIRK_RESET_ON_CLOSE.
+
+Run hci_recv_frame() under rcu_read_lock() and wait with
+synchronize_rcu() once HCI_UP has been cleared, so that every caller
+which still saw HCI_UP has queued its work before the workqueue is
+drained, and later callers drop the frame.
+
+HCI_INIT does not reopen that window.  Apart from the
+HCI_QUIRK_RESET_ON_CLOSE reset, which runs after drain_workqueue() has
+returned, it is only set by hci_dev_init_sync() during open, and open
+and close are serialized by hci_req_sync_lock.  So once the grace period
+has ended, nothing can pass the check and queue rx_work until the drain
+is over.
+
+Tested in qemu with the syzbot C reproducer, one run per boot: the
+warning showed up on 12 of 30 boots before and on none of 42 boots after.
+Bringing a vhci controller up and down 50 times behaves the same with
+and without this change.
+
+Fixes: 76727c02c1e1 ("Bluetooth: Call drain_workqueue() before resetting state")
+Reported-by: syzbot+2344fb8002f3ef5b1712@syzkaller.appspotmail.com
+Closes: https://syzkaller.appspot.com/bug?extid=2344fb8002f3ef5b1712
+Signed-off-by: Akhil Arul <akhilarul324@gmail.com>
+Link: https://lore.kernel.org/r/20261023161609.253097-1-akhilarul324@gmail.com
+---
+
+Notes:
+    Base: bluetooth-next 27731ba09195.
+    
+    Testing, in qemu (KVM, 2 vCPUs) with the syzbot C reproducer, one 18 s
+    run per boot, counting "cannot queue hci_rx_work" in dmesg:
+      before: 12 of 30 boots
+      after:   0 of 42 boots
+    The kernel has PROVE_LOCKING and PROVE_RCU enabled; there were no lockdep
+    or RCU reports with the change.  "command tx timeout" lines from the
+    reproducer's flooded controller appear at the same rate with and without
+    the change (2 of 30 and 2 of 42 boots).
+    
+    A vhci controller that answers every command, brought up and down 50
+    times with HCIDEVUP/HCIDEVDOWN, behaves the same with and without the
+    change: 49/50 up (the first HCIDEVUP returns EALREADY on both kernels
+    while the controller is still powering on) and 50/50 down.
+    
+    Cost: the extra grace period makes HCIDEVDOWN of that vhci controller
+    take 7.8 ms on average instead of 3.7 ms (50 cycles on each of 3 boots
+    per kernel).  hci_dev_close_sync() already waits for one grace period at
+    its start; that one cannot be reused because HCI_UP has to stay set
+    while hdev->shutdown() runs.
+    
+    Not done: no test on real hardware.
+    
+    hci_recv_diag() also queues rx_work unconditionally and has no HCI_UP
+    check at all.  It is only called by hardware drivers (btusb,
+    btintel_pcie, btmtk, btmtksdio, hci_qca) and by the coredump code, not
+    by vhci, so the syzbot reproducer cannot reach it; it is not touched
+    here.
+
+ net/bluetooth/hci_core.c | 9 +++++++++
+ net/bluetooth/hci_sync.c | 5 +++++
+ 2 files changed, 14 insertions(+)
+
+diff --git a/net/bluetooth/hci_core.c b/net/bluetooth/hci_core.c
+index d7291eca1..2a29cfdee 100644
+--- a/net/bluetooth/hci_core.c
++++ b/net/bluetooth/hci_core.c
+@@ -3002,8 +3002,14 @@ int hci_recv_frame(struct hci_dev *hdev, struct sk_buff *skb)
+ {
+ 	u8 dev_pkt_type;
+ 
++	/* Pairs with synchronize_rcu() in hci_dev_close_sync(), so rx_work is
++	 * not queued once the workqueue is being drained.
++	 */
++	rcu_read_lock();
++
+ 	if (!hdev || (!test_bit(HCI_UP, &hdev->flags)
+ 		      && !test_bit(HCI_INIT, &hdev->flags))) {
++		rcu_read_unlock();
+ 		kfree_skb(skb);
+ 		return -ENXIO;
+ 	}
+@@ -3039,6 +3045,7 @@ int hci_recv_frame(struct hci_dev *hdev, struct sk_buff *skb)
+ 	case HCI_DRV_PKT:
+ 		break;
+ 	default:
++		rcu_read_unlock();
+ 		kfree_skb(skb);
+ 		return -EINVAL;
+ 	}
+@@ -3052,6 +3059,8 @@ int hci_recv_frame(struct hci_dev *hdev, struct sk_buff *skb)
+ 	skb_queue_tail(&hdev->rx_q, skb);
+ 	queue_work(hdev->workqueue, &hdev->rx_work);
+ 
++	rcu_read_unlock();
++
+ 	return 0;
+ }
+ EXPORT_SYMBOL(hci_recv_frame);
+diff --git a/net/bluetooth/hci_sync.c b/net/bluetooth/hci_sync.c
+index c9e80b957..93dfe2e9b 100644
+--- a/net/bluetooth/hci_sync.c
++++ b/net/bluetooth/hci_sync.c
+@@ -5667,6 +5667,11 @@ int hci_dev_close_sync(struct hci_dev *hdev)
+ 		return err;
+ 	}
+ 
++	/* Wait for hci_recv_frame() callers that still saw HCI_UP, so that
++	 * none of them queues rx_work while the workqueue is drained below.
++	 */
++	synchronize_rcu();
++
+ 	hci_leds_update_powered(hdev, false);
+ 
+ 	/* Flush RX and TX works */

@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Binbin Deng <18983559317@163.com>
+Date: Mon, 19 Oct 2026 18:56:24 +0800
+Subject: [PATCH] Bluetooth: hci_core: Initialize LTK before publication
+
+hci_add_ltk() publishes a newly allocated LTK on hdev->long_term_keys
+before initializing its address, type, value, authentication state,
+encryption size, EDIV, and random value.  hci_find_ltk() and the debugfs
+long_term_keys_show() traverse this list under RCU and can therefore see
+a zero or partially initialized key before those stores complete.
+
+The race is reachable by racing an LTK addition with another CPU looking
+up or dumping long-term keys.  For example, userspace can issue
+MGMT_OP_LOAD_LONG_TERM_KEYS while another process reads the corresponding
+debugfs file.
+
+Initialize all fields of a new LTK before list_add_rcu() makes it visible
+to RCU readers.  Existing LTKs remain published and continue to be updated
+in place.
+
+Found during a static-analysis-assisted audit: candidate sites were
+surfaced by a Coccinelle rule, and the reader/writer paths were
+confirmed by LLM-assisted (GLM-5.3) code inspection.  The issue was
+not observed at runtime; it is identified by code inspection only.
+
+Fixes: 970d0f1b2803 ("Bluetooth: Convert LTK list to RCU")
+Assisted-by: GLM-5.3 coccinelle
+Signed-off-by: Binbin Deng <18983559317@163.com>
+Link: https://lore.kernel.org/r/20261019105624.489859-1-18983559317@163.com
+---
+ net/bluetooth/hci_core.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/net/bluetooth/hci_core.c b/net/bluetooth/hci_core.c
+index d183efaf9063..9500da51af85 100644
+--- a/net/bluetooth/hci_core.c
++++ b/net/bluetooth/hci_core.c
+@@ -1297,7 +1297,6 @@ struct smp_ltk *hci_add_ltk(struct hci_dev *hdev, bdaddr_t *bdaddr,
+ 		key = kzalloc_obj(*key);
+ 		if (!key)
+ 			return NULL;
+-		list_add_rcu(&key->list, &hdev->long_term_keys);
+ 	}
+ 
+ 	bacpy(&key->bdaddr, bdaddr);
+@@ -1309,6 +1308,9 @@ struct smp_ltk *hci_add_ltk(struct hci_dev *hdev, bdaddr_t *bdaddr,
+ 	key->enc_size = enc_size;
+ 	key->type = type;
+ 
++	if (!old_key)
++		list_add_rcu(&key->list, &hdev->long_term_keys);
++
+ 	return key;
+ }

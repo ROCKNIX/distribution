@@ -1,0 +1,101 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kyle Pepper <cochcoder@proton.me>
+Date: Wed, 14 Oct 2026 05:16:20 +0000
+Subject: [PATCH] Bluetooth: hci_sync: scan unfiltered for host-resolved RPAs
+
+Restore unfiltered scanning for pending IRK peers when the controller
+cannot resolve private addresses. Keep accept-list filtering while
+suspended and when forced by periodic advertising synchronization.
+
+Fixes: e209e5ccc5ac ("Bluetooth: MGMT: Mark LL Privacy as stable")
+Assisted-by: OpenCode:gpt-6.1-sol
+Signed-off-by: Kyle Pepper <cochcoder@proton.me>
+Link: https://lore.kernel.org/r/20261014051600.408746-1-cochcoder@proton.me
+---
+Changes since v1:
+- Restore the host-resolution fallback in hci_le_add_accept_list_sync()
+  instead of adding per-loop and final-filter bookkeeping.
+- Preserve filtering during suspend and forced periodic advertising sync.
+- Identify the removal of the old fallback in e209e5ccc5ac.
+- Add native mgmt-tester reproduction in the companion BlueZ
+  patch "mgmt-tester: Add host-resolved RPA scan checks".
+
+Previous submission:
+https://lore.kernel.org/linux-bluetooth/20261013031329.483597-1-cochcoder@proton.me/
+
+Testing on bluetooth-next 609a23989d63, with KASAN and lockdep enabled:
+                                upstream   revised
+  Auto-connect with IRK           FAIL       PASS
+  Background report with IRK      FAIL       PASS
+  Auto-connect without IRK        PASS       PASS
+  Background report without IRK   PASS       PASS
+
+The cases check scan programming through emulated HCI, as requested by
+Luiz. They do not test actual address rotation or radio reconnection.
+The complete mgmt suite was also run: upstream 503/512 pass, four fail,
+five not run; revision 506/512 pass, one fail, five not run. Both runs
+time out in "Set Static Address - Success 2". The upstream run also
+fails the two new IRK cases and "LL Privacy - Set Flags 3 (2 Devices to
+RL)", already listed as flaky; its pass is not attributed to this fix.
+No KASAN/lockdep diagnostic was captured in these runs.
+
+The revised implementation has not been newly tested on physical
+hardware. Changed-RPA reconnect, privacy-capable-controller and
+suspend/wake regressions remain unverified. No automatic audio-resume
+claim is made.
+
+ net/bluetooth/hci_sync.c | 13 +++++++++----
+ 1 file changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/net/bluetooth/hci_sync.c b/net/bluetooth/hci_sync.c
+index efbd2e538..03f706c1f 100644
+--- a/net/bluetooth/hci_sync.c
++++ b/net/bluetooth/hci_sync.c
+@@ -2618,7 +2618,7 @@ static int hci_le_set_privacy_mode_sync(struct hci_dev *hdev,
+  */
+ static int hci_le_add_accept_list_sync(struct hci_dev *hdev,
+ 				       struct conn_params *params,
+-				       u8 *num_entries)
++				       u8 *num_entries, bool force_filter)
+ {
+ 	struct hci_cp_le_add_to_accept_list cp;
+ 	int err;
+@@ -2631,6 +2631,11 @@ static int hci_le_add_accept_list_sync(struct hci_dev *hdev,
+ 		return 0;
+ 	}
+ 
++	/* Host-resolved peers need unfiltered scanning while awake. */
++	if (!force_filter && !hdev->suspended && !ll_privacy_capable(hdev) &&
++	    hci_find_irk_by_addr(hdev, &params->addr, params->addr_type))
++		return -EINVAL;
++
+ 	/* Select filter policy to accept all advertising */
+ 	if (*num_entries >= hdev->le_accept_list_size)
+ 		return -ENOSPC;
+@@ -2956,7 +2961,7 @@ static u8 hci_update_accept_list_sync(struct hci_dev *hdev)
+ 
+ 			num_entries = 1;
+ 			err = hci_le_add_accept_list_sync(hdev, &pa,
+-							  &num_entries);
++							  &num_entries, true);
+ 			goto done;
+ 		} else {
+ 			rcu_read_unlock();
+@@ -3020,7 +3025,7 @@ static u8 hci_update_accept_list_sync(struct hci_dev *hdev)
+ 
+ 	for (i = 0; i < n; ++i) {
+ 		err = hci_le_add_accept_list_sync(hdev, &params[i],
+-						  &num_entries);
++								&num_entries, false);
+ 		if (err) {
+ 			kvfree(params);
+ 			goto done;
+@@ -3042,7 +3047,7 @@ static u8 hci_update_accept_list_sync(struct hci_dev *hdev)
+ 
+ 	for (i = 0; i < n; ++i) {
+ 		err = hci_le_add_accept_list_sync(hdev, &params[i],
+-						  &num_entries);
++								&num_entries, false);
+ 		if (err) {
+ 			kvfree(params);
+ 			goto done;
