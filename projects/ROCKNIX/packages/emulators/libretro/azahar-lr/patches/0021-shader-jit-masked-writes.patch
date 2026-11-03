@@ -1,0 +1,150 @@
+From 847d329ee81e6bb92e8fcfff126f58fbed33ec77 Mon Sep 17 00:00:00 2001
+From: Wunk <wunkolo@gmail.com>
+Date: Mon, 12 Oct 2026 10:12:13 -0700
+Subject: [PATCH] shader_jit: Add masked write optimizations (#2597)
+
+* shader_jit_x64: Add AVX-512 optimization for masked writes
+
+Adds an AVX-512 optimization for masked writes by utilizing the `vmovaps` instruction with a write-mask.
+
+* shader_jit_x64: Add special-case contiguous masked writes
+
+Masked-writing the first 32 or 64 bits can reduce to a simple 32-bit or 64-bit store.
+
+* shader_jit_x64: Add AVX optimization for masked writes
+
+Adds an AVX2 optimization for masked writes by utilizing the `vmaskmovps` instruction with a write-mask.
+
+* shader_jit_a64: Add special-case contiguous masked writes
+
+Masked-writing the first 32 or 64 bits can reduce to a simple 32-bit or 64-bit store.
+---
+ .../shader/shader_jit_a64_compiler.cpp        | 25 +++++++----
+ .../shader/shader_jit_x64_compiler.cpp        | 44 +++++++++++++------
+ 2 files changed, 47 insertions(+), 22 deletions(-)
+
+diff --git a/src/video_core/shader/shader_jit_a64_compiler.cpp b/src/video_core/shader/shader_jit_a64_compiler.cpp
+index 5db5cbec8..bdc0f8541 100644
+--- a/src/video_core/shader/shader_jit_a64_compiler.cpp
++++ b/src/video_core/shader/shader_jit_a64_compiler.cpp
+@@ -351,16 +351,27 @@ void JitShader::Compile_DestEnable(Instruction instr, QReg src) {
+         // register...
+         if (dest.GetRegisterType() == RegisterType::Output) {
+             ADD(XSCRATCH0, STATE, dest_offset_disp);
+-
+             LDRB(XSCRATCH1.toW(), STATE, ShaderUnit::OutputBankOffset());
+             LSL(XSCRATCH1, XSCRATCH1, OutputBankShift);
+             ADD(XSCRATCH0, XSCRATCH0, XSCRATCH1);
+-
+-            LDR(VSCRATCH0, XSCRATCH0);
+         } else {
+-            LDR(VSCRATCH0, STATE, dest_offset_disp);
++            ADD(XSCRATCH0, STATE, dest_offset_disp);
++        }
++
++        // Special case masked-write of contiguous elements
++        if (swiz.dest_mask == 0b1000) {
++            ST1(List{src.Selem()[0]}, XSCRATCH0);
++            return;
++        } else if (swiz.dest_mask == 0b1100) {
++            ST1(List{src.Delem()[0]}, XSCRATCH0);
++            return;
++        } else if (swiz.dest_mask == 0b1110) {
++            ST1(List{src.Delem()[0]}, XSCRATCH0, POST_INDEXED, 8);
++            ST1(List{src.Selem()[2]}, XSCRATCH0);
++            return;
+         }
+ 
++        LDR(VSCRATCH0, XSCRATCH0);
+         // MOVI encodes a 64-bit value into an 8-bit immidiate by replicating bits
+         // The 8-bit immediate "a:b:c:d:e:f:g:h" maps to the 64-bit value:
+         // "aaaaaaaabbbbbbbbccccccccddddddddeeeeeeeeffffffffgggggggghhhhhhhh"
+@@ -394,11 +405,7 @@ void JitShader::Compile_DestEnable(Instruction instr, QReg src) {
+         BSL(VSCRATCH2.B16(), src.B16(), VSCRATCH0.B16());
+ 
+         // Store dest back to memory
+-        if (dest.GetRegisterType() == RegisterType::Output) {
+-            STR(VSCRATCH2, XSCRATCH0);
+-        } else {
+-            STR(VSCRATCH2, STATE, dest_offset_disp);
+-        }
++        STR(VSCRATCH2, XSCRATCH0);
+     }
+ }
+ 
+diff --git a/src/video_core/shader/shader_jit_x64_compiler.cpp b/src/video_core/shader/shader_jit_x64_compiler.cpp
+index 551c53c83..09146c4b5 100644
+--- a/src/video_core/shader/shader_jit_x64_compiler.cpp
++++ b/src/video_core/shader/shader_jit_x64_compiler.cpp
+@@ -340,24 +340,47 @@ void JitShader::Compile_DestEnable(Instruction instr, Xmm src) {
+         // Not all components are enabled, so mask the result when storing to the destination
+         // register...
+ 
++        Xbyak::Address dest_memory = xword[STATE + dest_offset_disp];
+         if (dest.GetRegisterType() == RegisterType::Output) {
+             lea(rax, ptr[STATE + dest_offset_disp]);
+-
+             movzx(ecx, byte[STATE + ShaderUnit::OutputBankOffset()]);
+             shl(rcx, OutputBankShift);
+             add(rax, rcx);
++            dest_memory = xword[rax];
++        }
++        const u8 write_mask = ((swiz.dest_mask & 1) << 3) | ((swiz.dest_mask & 8) >> 3) |
++                              ((swiz.dest_mask & 2) << 1) | ((swiz.dest_mask & 4) >> 1);
++
++        if (write_mask == 0b0001) {
++            movss(dest_memory, src);
++            return;
++        } else if (write_mask == 0b0011) {
++            movsd(dest_memory, src);
++            return;
++        }
+ 
+-            movaps(SCRATCH, xword[rax]);
+-        } else {
+-            movaps(SCRATCH, xword[STATE + dest_offset_disp]);
++        if (host_caps.has(Cpu::tAVX512F | Cpu::tAVX512VL | Cpu::tAVX512DQ)) {
++            // Masked write
++            mov(cx, write_mask);
++            kmovb(k1, ecx);
++            vmovaps(dest_memory | k1, src);
++            return;
+         }
+ 
++        if (host_caps.has(Cpu::tAVX)) {
++            // Masked write
++            xorps(SCRATCH, SCRATCH);
++            vblendps(SCRATCH, SCRATCH, NEGBIT, write_mask);
++            vmaskmovps(dest_memory, SCRATCH, src);
++            return;
++        }
++
++        // Load dest memory, blend it with incoming values, and write it back
++        movaps(SCRATCH, dest_memory);
+ #if !defined(CITRA_HAS_SSE42)
+         if (host_caps.has(Cpu::tSSE41)) {
+ #endif
+-            u8 mask = ((swiz.dest_mask & 1) << 3) | ((swiz.dest_mask & 8) >> 3) |
+-                      ((swiz.dest_mask & 2) << 1) | ((swiz.dest_mask & 4) >> 1);
+-            blendps(SCRATCH, src, mask);
++            blendps(SCRATCH, src, write_mask);
+ #if !defined(CITRA_HAS_SSE42)
+         } else {
+             movaps(SCRATCH2, src);
+@@ -375,12 +398,7 @@ void JitShader::Compile_DestEnable(Instruction instr, Xmm src) {
+ #endif
+ 
+         // Store dest back to memory
+-        if (dest.GetRegisterType() == RegisterType::Output) {
+-            movaps(xword[rax], SCRATCH);
+-        } else {
+-            // Store dest back to memory
+-            movaps(xword[STATE + dest_offset_disp], SCRATCH);
+-        }
++        movaps(dest_memory, SCRATCH);
+     }
+ }
+ 
+-- 
+2.43.0
+

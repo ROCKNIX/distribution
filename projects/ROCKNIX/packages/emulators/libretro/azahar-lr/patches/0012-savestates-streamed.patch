@@ -1,0 +1,372 @@
+From: dArkOS RG52 Mini port
+Subject: Save states in RetroArch: streamed through zstd, one per frame
+
+RetroArch saves through SaveStateBuffer and LoadStateBuffer, which GammaOS's
+streaming changes (patch 000) did not reach, and calls them more often than
+it seems. On an RG52 Mini, Super Mario 3D Land, a state of 292 MB serialized
+and 23 MB compressed:
+
+- RetroArch asks for the size two or three times for every save
+  (content_save_state, then content_get_rastate_size). Before every load it
+  asks again just to see that the size is not 0 (command_event_main_state),
+  and then saves its undo buffer. The core answered each question with a
+  whole new state. libretro: the state made for a frame now answers every
+  question about that frame. retro_run, retro_unserialize, retro_reset and
+  the cheat calls drop it.
+- Each such state took 9 s. The archive wrote into a growing string stream,
+  which was then copied whole and compressed at zstd's default level on one
+  thread, and about 800 MB of the rest went to swap on the way. Now the
+  archive writes into a stream buffer that compresses as it goes, at level 1
+  on four threads. The emulation is paused meanwhile, and the 292 MB are
+  never held. That takes 1.4 s.
+- A load decompressed into a vector and copied it into a string and a string
+  stream. Now the archive reads straight from a decompressing stream buffer
+  over RetroArch's data. That takes 1.9 s against 3.5 s.
+
+The result:
+- a save takes 1.4 s instead of about 27 s;
+- a load takes about 5 s (two states for RetroArch, then the load) instead of
+  about 30 s.
+
+The frame now carries no content size, so an older core cannot load a state
+made by this one. A state made by an older core still loads here, since
+decompression reads the stream either way.
+
+--- a/src/citra_libretro/citra_libretro.cpp
++++ b/src/citra_libretro/citra_libretro.cpp
+@@ -211,10 +211,13 @@ static void UpdateSettings() {
+     Core::System::GetInstance().ApplySettings();
+ }
+ 
++static void DropSavestate();
++
+ /**
+  * libretro callback; Called every game tick.
+  */
+ void retro_run() {
++    DropSavestate();
+     if (!emu_instance->game_loaded) {
+         // Game failed to load (e.g. encrypted ROM, bad path).
+         // Present an empty frame so RetroArch doesn't hang.
+@@ -475,6 +478,7 @@ static void context_destroy() {
+ }
+ 
+ void retro_reset() {
++    DropSavestate();
+     LOG_DEBUG(Frontend, "retro_reset");
+     Core::System::GetInstance().Shutdown();
+     emu_instance->game_loaded = do_load_game();
+@@ -617,6 +621,7 @@ bool retro_load_game(const struct retro_game_info* info) {
+ }
+ 
+ void retro_unload_game() {
++    DropSavestate();
+     LOG_DEBUG(Frontend, "Unloading game...");
+     Core::System::GetInstance().Shutdown();
+ }
+@@ -671,39 +676,52 @@ static bool DrainAsyncOperations(Core::System& system) {
+     return true;
+ }
+ 
++// dArkOS: the state made for a frame answers every question about that frame. RetroArch
++// asks for the size two or three times for each save (content_save_state, then
++// content_get_rastate_size) and saves before each load (its undo buffer), with no frame in
++// between, and each answer was a whole new state. retro_run and anything else that changes
++// the state drop it.
+ std::optional<std::vector<u8>> savestate = {};
+ 
+-size_t retro_serialize_size() {
++static void DropSavestate() {
++    savestate.reset();
++}
++
++static bool MakeSavestate() {
++    if (savestate.has_value())
++        return true;
+     auto& system = Core::System::GetInstance();
+     if (!system.IsPoweredOn())
+-        return 0;
++        return false;
+ 
+-    if (!DrainAsyncOperations(system)) {
+-        savestate.reset();
+-        return 0;
+-    }
++    if (!DrainAsyncOperations(system))
++        return false;
+ 
+     try {
+         savestate = system.SaveStateBuffer();
+-        return savestate->size();
++        return true;
+     } catch (const std::exception& e) {
+         LOG_ERROR(Frontend, "Error saving state: {}", e.what());
+         savestate.reset();
+-        return 0;
++        return false;
+     }
+ }
+ 
++size_t retro_serialize_size() {
++    return MakeSavestate() ? savestate->size() : 0;
++}
++
+ bool retro_serialize(void* data, size_t size) {
+-    if (!savestate.has_value())
++    if (!MakeSavestate())
+         return false;
+     if (size < savestate->size())
+         return false;
+     memcpy(data, savestate->data(), savestate->size());
+-    savestate.reset();
+     return true;
+ }
+ 
+ bool retro_unserialize(const void* data, size_t size) {
++    DropSavestate();
+     auto& system = Core::System::GetInstance();
+     if (!system.IsPoweredOn())
+         return false;
+@@ -731,6 +749,8 @@ size_t retro_get_memory_size(unsigned id) {
+     return 0;
+ }
+ 
+-void retro_cheat_reset() {}
++void retro_cheat_reset() {
++    DropSavestate();}
+ 
+-void retro_cheat_set(unsigned index, bool enabled, const char* code) {}
++void retro_cheat_set(unsigned index, bool enabled, const char* code) {
++    DropSavestate();}
+--- a/src/core/savestate.cpp
++++ b/src/core/savestate.cpp
+@@ -5,6 +5,7 @@
+ #include <chrono>
+ #include <deque>
+ #include <memory>
++#include <span>
+ #include <sstream>
+ #include <streambuf>
+ #include <zstd.h>
+@@ -326,6 +327,143 @@ bool WriteCompressedChunks(FileUtil::IOFile& file, std::deque<std::vector<char>>
+     return ok;
+ }
+ 
++/// dArkOS: an output stream buffer that compresses what the archive writes as it comes,
++/// onto the end of `out` as one zstd frame; with workers, the compression runs beside the
++/// serialization, and the serialized state is never held whole.
++class ZstdOutBuf final : public std::streambuf {
++public:
++    ZstdOutBuf(std::vector<u8>& out_, int level, int workers)
++        : out{out_}, cctx{ZSTD_createCCtx()} {
++        if (cctx) {
++            ZSTD_CCtx_setParameter(cctx, ZSTD_c_compressionLevel, level);
++            if (ZSTD_isError(ZSTD_CCtx_setParameter(cctx, ZSTD_c_nbWorkers, workers))) {
++                LOG_WARNING(Core, "save state: zstd without threads");
++            }
++        }
++        buf.resize(1 << 20);
++        tmp.resize(ZSTD_CStreamOutSize());
++        setp(buf.data(), buf.data() + buf.size());
++    }
++    ~ZstdOutBuf() override {
++        ZSTD_freeCCtx(cctx);
++    }
++    /// Ends the frame; call once the archive is done.
++    bool Finish() {
++        return Push(ZSTD_e_end) && !failed;
++    }
++    std::size_t In() const {
++        return total;
++    }
++
++protected:
++    int_type overflow(int_type ch) override {
++        if (!Push(ZSTD_e_continue)) {
++            return traits_type::eof();
++        }
++        if (!traits_type::eq_int_type(ch, traits_type::eof())) {
++            *pptr() = traits_type::to_char_type(ch);
++            pbump(1);
++        }
++        return traits_type::not_eof(ch);
++    }
++    std::streamsize xsputn(const char* data, std::streamsize count) override {
++        // big blocks (the memories) go to zstd as they are, without a copy into buf
++        if (count >= static_cast<std::streamsize>(buf.size())) {
++            if (!Push(ZSTD_e_continue) ||
++                !Feed(data, static_cast<std::size_t>(count), ZSTD_e_continue)) {
++                return 0;
++            }
++            return count;
++        }
++        return std::streambuf::xsputn(data, count);
++    }
++
++private:
++    bool Push(ZSTD_EndDirective mode) {
++        const bool ok = Feed(pbase(), static_cast<std::size_t>(pptr() - pbase()), mode);
++        setp(buf.data(), buf.data() + buf.size());
++        return ok;
++    }
++    bool Feed(const char* data, std::size_t n, ZSTD_EndDirective mode) {
++        if (failed || !cctx) {
++            failed = true;
++            return false;
++        }
++        total += n;
++        ZSTD_inBuffer src{data, n, 0};
++        for (;;) {
++            ZSTD_outBuffer dst{tmp.data(), tmp.size(), 0};
++            const std::size_t remaining = ZSTD_compressStream2(cctx, &dst, &src, mode);
++            if (ZSTD_isError(remaining)) {
++                LOG_ERROR(Core, "save state: compression failed: {}",
++                          ZSTD_getErrorName(remaining));
++                failed = true;
++                return false;
++            }
++            out.insert(out.end(), tmp.data(), tmp.data() + dst.pos);
++            if (mode == ZSTD_e_end ? remaining == 0 : src.pos == src.size) {
++                return true;
++            }
++        }
++    }
++
++    std::vector<u8>& out;
++    ZSTD_CCtx* cctx;
++    std::vector<char> buf;
++    std::vector<u8> tmp;
++    std::size_t total = 0;
++    bool failed = false;
++};
++
++/// dArkOS: a zstd stream held in memory, decompressed as the archive reads it; the whole
++/// decompressed state is never held.
++class ZstdMemInBuf final : public std::streambuf {
++public:
++    explicit ZstdMemInBuf(std::span<const u8> src_) : src{src_}, dctx{ZSTD_createDCtx()} {
++        out.resize(ZSTD_DStreamOutSize());
++        setg(out.data(), out.data(), out.data());
++    }
++    ~ZstdMemInBuf() override {
++        ZSTD_freeDCtx(dctx);
++    }
++    bool Failed() const {
++        return failed || !dctx;
++    }
++
++protected:
++    int_type underflow() override {
++        if (gptr() < egptr()) {
++            return traits_type::to_int_type(*gptr());
++        }
++        while (!failed && dctx) {
++            ZSTD_inBuffer in{src.data(), src.size(), pos};
++            ZSTD_outBuffer dst{out.data(), out.size(), 0};
++            const std::size_t ret = ZSTD_decompressStream(dctx, &dst, &in);
++            pos = in.pos;
++            if (ZSTD_isError(ret)) {
++                LOG_ERROR(Core, "save state: decompression failed: {}", ZSTD_getErrorName(ret));
++                failed = true;
++                break;
++            }
++            if (dst.pos > 0) {
++                setg(out.data(), out.data(), out.data() + dst.pos);
++                return traits_type::to_int_type(*gptr());
++            }
++            if (pos == src.size()) {
++                break;
++            }
++        }
++        return traits_type::eof();
++    }
++
++private:
++    std::span<const u8> src;
++    std::size_t pos = 0;
++    ZSTD_DCtx* dctx;
++    std::vector<char> out;
++    bool failed = false;
++};
++
+ } // namespace
+ 
+ void System::SaveState(u32 slot) const {
+@@ -464,15 +602,6 @@ void System::LoadState(u32 slot) {
+ }
+ 
+ std::vector<u8> System::SaveStateBuffer() const {
+-    std::ostringstream sstream{std::ios_base::binary};
+-    // Serialize
+-    oarchive oa{sstream};
+-    oa&* this;
+-
+-    const std::string& str{sstream.str()};
+-    const auto data = std::span<const u8>{reinterpret_cast<const u8*>(str.data()), str.size()};
+-    auto buffer = Common::Compression::CompressDataZSTDDefault(data);
+-
+     CSTHeader header{};
+     header.filetype = header_magic_bytes;
+     header.program_id = title_id;
+@@ -493,8 +622,28 @@ std::vector<u8> System::SaveStateBuffer() const {
+     std::memcpy(header.build_version.data(), build_version.c_str(),
+                 std::min(build_version.length(), sizeof(header.build_version) - 1));
+ 
++    // dArkOS: compressed as the archive writes, at level 1 on four threads (the emulation is
++    // paused while the frontend saves). The stock path held the serialized state (292 MB for
++    // Super Mario 3D Land) in a growing string stream, copied it, and compressed it at level 3
++    // on one thread: 9 s on an RG52 Mini against 1.4 s, and 800 MB of the rest pushed to swap.
++    const auto t0 = std::chrono::steady_clock::now();
+     std::vector<u8> result((u8*)&header, (u8*)&header + sizeof(header));
+-    std::copy(buffer.begin(), buffer.end(), std::back_inserter(result));
++    result.reserve(32 << 20);
++    ZstdOutBuf zout{result, 1, 4};
++    {
++        // Serialize
++        std::ostream ostream{&zout};
++        oarchive oa{ostream};
++        oa&* this;
++    }
++    if (!zout.Finish()) {
++        throw std::runtime_error("Could not compress the savestate");
++    }
++    LOG_INFO(Core, "save state: serialize and compress {} ms ({} MB to {} MB)",
++             std::chrono::duration_cast<std::chrono::milliseconds>(
++                 std::chrono::steady_clock::now() - t0)
++                 .count(),
++             zout.In() >> 20, result.size() >> 20);
+ 
+     return result;
+ }
+@@ -528,17 +677,23 @@ bool System::LoadStateBuffer(std::vector<u8> buffer) {
+                     Common::g_scm_rev, revision);
+     }
+ 
+-    std::vector<u8> state(buffer.begin() + sizeof(CSTHeader), buffer.end());
+-    auto decompressed = Common::Compression::DecompressDataZSTD(state);
+-
+-    std::istringstream sstream{
+-        std::string{reinterpret_cast<char*>(decompressed.data()), decompressed.size()},
+-        std::ios_base::binary};
+-    decompressed.clear();
++    // dArkOS: decompressed while the archive reads it, straight from the frontend's buffer (the
++    // stock path held the decompressed state three times over: the vector, a string and the
++    // string stream's copy).
++    const auto t0 = std::chrono::steady_clock::now();
++    ZstdMemInBuf zbuf{std::span<const u8>{buffer}.subspan(sizeof(CSTHeader))};
++    std::istream istream{&zbuf};
+ 
+     // Deserialize
+-    iarchive ia{sstream};
++    iarchive ia{istream};
+     ia&* this;
++    if (zbuf.Failed()) {
++        throw std::runtime_error("Could not decompress the savestate");
++    }
++    LOG_INFO(Core, "load state: decompress and deserialize {} ms",
++             std::chrono::duration_cast<std::chrono::milliseconds>(
++                 std::chrono::steady_clock::now() - t0)
++                 .count());
+ 
+     return true;
+ }

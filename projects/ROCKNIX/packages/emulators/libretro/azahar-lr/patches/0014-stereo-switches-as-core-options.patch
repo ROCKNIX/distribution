@@ -1,0 +1,286 @@
+From: dArkOS RG52 Mini port
+Subject: GammaOS's stereo_skip and async_gpu_flush_lag as core options
+
+Patch 013 turned the two switches on for Castlevania: Lords of Shadow -
+Mirror of Fate by its title ID, and the core read them once. Now they are
+core options under Graphics, so a game the list does not know can have them
+too, and one it knows can have them off:
+
+- Interleaved Right Eye Skip (citra_stereo_skip): Auto, Enabled, Disabled.
+- GPU Flush Lag (citra_gpu_flush_lag): Auto, Off, 8, 16, 24, 32, 64 jobs.
+
+Auto, the default, takes the title's value from title_switches in
+core_settings.cpp (Castlevania: the skip and a lag of 24) and leaves every
+other game to the property, that is the environment variable of patch 002,
+unset and so off, as GammaOS has them. A set environment variable still wins
+over the list at Auto.
+
+The renderer and the GPU read the values (Settings::values, -1 for "the
+property decides") at every display transfer and cache flush instead of once,
+so a change in the menu applies at once; turning the skip off forgets the
+right eye target it learned, which is then drawn and copied again.
+
+--- a/src/common/settings.h
++++ b/src/common/settings.h
+@@ -632,6 +632,11 @@
+     // GammaOS tweak: remember the guest code blocks the JIT compiled and compile
+     // them before the first frame of the next boot (and after state loads).
+     bool gammaos_jit_warmup = false;
++    // dArkOS: GammaOS's stereo_skip and async_gpu_flush_lag as the libretro core's options
++    // set them; -1 leaves them to the property (persist.gammaos.azahar_nano.*), as before.
++    // Read at every display transfer and cache flush, so a change applies at once.
++    std::atomic<int> gammaos_stereo_skip{-1};
++    std::atomic<int> gammaos_async_gpu_flush_lag{-1};
+     SwitchableSetting<SecondaryDisplayLayout> secondary_display_layout{
+         SecondaryDisplayLayout::OppositeScreenOnly, Keys::secondary_display_layout};
+     SwitchableSetting<std::vector<LayoutOption>> layouts_to_cycle{
+--- a/src/citra_libretro/core_settings.h
++++ b/src/citra_libretro/core_settings.h
+@@ -33,9 +33,14 @@
+ 
+     float motion_sensitivity;
+ 
++    u64 program_id = 0; // dArkOS: the loaded title, for the options at Auto
++
+ } extern settings;
+ 
+ void RegisterCoreOptions(void);
+ void ParseCoreOptions(void);
+ 
++/// dArkOS: the title being loaded (0 if unknown), for the options whose Auto depends on it.
++void SetTitle(u64 program_id);
++
+ } // namespace LibRetro
+--- a/src/citra_libretro/core_settings.cpp
++++ b/src/citra_libretro/core_settings.cpp
+@@ -2,6 +2,8 @@
+ // Licensed under GPLv2 or any later version
+ // Refer to the license.txt file included.
+ 
++#include <array>
++#include <cstdlib>
+ #include <boost/hana/string.hpp>
+ 
+ #include "citra_libretro/core_settings.h"
+@@ -62,6 +64,9 @@
+     citra_setting(BaseKeys::async_shader_compilation);
+ static constexpr const char* disable_right_eye_render =
+     citra_setting(BaseKeys::disable_right_eye_render);
++// dArkOS: GammaOS's switches persist.gammaos.azahar_nano.stereo_skip and async_gpu_flush_lag
++static constexpr const char* stereo_skip = "citra_stereo_skip";
++static constexpr const char* gpu_flush_lag = "citra_gpu_flush_lag";
+ static constexpr const char* use_disk_shader_cache = citra_setting(BaseKeys::use_disk_shader_cache);
+ static constexpr const char* resolution_factor = citra_setting(BaseKeys::resolution_factor);
+ static constexpr const char* texture_filter = citra_setting(BaseKeys::texture_filter);
+@@ -378,6 +383,47 @@
+         config::enabled
+     },
+     {
++        config::graphics::stereo_skip,
++        "Interleaved Right Eye Skip",
++        "Interleaved Right Eye Skip",
++        "For games that draw the two eyes object by object (Castlevania: Lords of Shadow - "
++        "Mirror of Fate, Metroid: Samus Returns), which Disable Right Eye Render does not catch: "
++        "find the right eye's picture and leave out what is drawn into it and copied out of it. "
++        "Much faster in such games; in others it can leave out effects or stop the top screen. "
++        "Auto: on for the games known to need it. Needs Disable Right Eye Render and 3D off.",
++        nullptr,
++        config::category::graphics,
++        {
++            { "auto", "Auto (known games)" },
++            { config::enabled, "Enabled" },
++            { config::disabled, "Disabled" },
++            { nullptr, nullptr }
++        },
++        "auto"
++    },
++    {
++        config::graphics::gpu_flush_lag,
++        "GPU Flush Lag",
++        "GPU Flush Lag",
++        "How many GPU jobs may still be queued when the game flushes its cache, instead of "
++        "waiting for all of them. Faster in games that flush often; a game may then read a "
++        "picture the GPU has not finished or change data the GPU has not used yet (flicker, "
++        "garbage). Auto: 24 for the games known to need it, else Off.",
++        nullptr,
++        config::category::graphics,
++        {
++            { "auto", "Auto (known games)" },
++            { "0", "Off (wait for the GPU)" },
++            { "8", "8" },
++            { "16", "16" },
++            { "24", "24" },
++            { "32", "32" },
++            { "64", "64" },
++            { nullptr, nullptr }
++        },
++        "auto"
++    },
++    {
+         config::graphics::use_disk_shader_cache,
+         "Hardware Shader Cache",
+         "Shader Cache",
+@@ -973,6 +1019,57 @@
+     return LibRetro::GetPreferredRenderer();
+ }
+ 
++/// dArkOS: GammaOS switches some games need, on for them with the options at Auto. Castlevania:
++/// Lords of Shadow - Mirror of Fate draws the two eyes object by object, a render pass for each
++/// draw on the Mali GPU (stereo_skip leaves the right eye out; with 3D off it is never shown),
++/// and flushes the CPU cache before each command list, where the GPU worker was drained
++/// (async_gpu_flush_lag lets it stay up to 24 jobs behind). Its intro on an RG52 Mini: 9.2 fps,
++/// 11.1 with the first, 14.4 with both, 20.1 with patch 013 on top.
++struct TitleSwitches {
++    u64 program_id;
++    int stereo_skip;
++    int gpu_flush_lag;
++};
++static constexpr std::array<TitleSwitches, 1> title_switches{{
++    {0x000400000009E500, 1, 24}, // Castlevania: Lords of Shadow - Mirror of Fate
++}};
++
++/// What an option at Auto leaves: the title's value, unless the switch's environment variable
++/// (the property, patch 002) is set; that then decides, as before there were options.
++static int AutoSwitch(const char* env, int TitleSwitches::*value) {
++    if (std::getenv(env) != nullptr) {
++        return -1;
++    }
++    for (const auto& t : title_switches) {
++        if (t.program_id == settings.program_id) {
++            return t.*value;
++        }
++    }
++    return -1;
++}
++
++static void ParseStereoSwitches() {
++    const std::string skip = LibRetro::FetchVariable(config::graphics::stereo_skip, "auto");
++    Settings::values.gammaos_stereo_skip =
++        skip == config::enabled    ? 1
++        : skip == config::disabled ? 0
++                                   : AutoSwitch("persist_gammaos_azahar_nano_stereo_skip",
++                                                &TitleSwitches::stereo_skip);
++    const std::string lag = LibRetro::FetchVariable(config::graphics::gpu_flush_lag, "auto");
++    Settings::values.gammaos_async_gpu_flush_lag =
++        lag == "auto" ? AutoSwitch("persist_gammaos_azahar_nano_async_gpu_flush_lag",
++                                   &TitleSwitches::gpu_flush_lag)
++                      : std::atoi(lag.c_str());
++}
++
++void SetTitle(u64 program_id) {
++    settings.program_id = program_id;
++    ParseStereoSwitches();
++    LOG_INFO(Frontend, "title {:016X}: stereo_skip {}, async_gpu_flush_lag {} (-1: property)",
++             program_id, Settings::values.gammaos_stereo_skip.load(),
++             Settings::values.gammaos_async_gpu_flush_lag.load());
++}
++
+ static void ParseGraphicsOptions(void) {
+     Settings::values.graphics_api =
+         GetGraphicsAPI(LibRetro::FetchVariable(config::graphics::graphics_api, "auto"));
+@@ -1013,6 +1110,8 @@
+     Settings::values.gammaos_hw_scissor = true;
+     Settings::values.gammaos_jit_warmup = true;
+ 
++    ParseStereoSwitches();
++
+     Settings::values.use_disk_shader_cache =
+         LibRetro::FetchVariable(config::graphics::use_disk_shader_cache, config::enabled) ==
+         config::enabled;
+--- a/src/citra_libretro/citra_libretro.cpp
++++ b/src/citra_libretro/citra_libretro.cpp
+@@ -2,7 +2,6 @@
+ // Licensed under GPLv2 or any later version
+ // Refer to the license.txt file included.
+ 
+-#include <array>
+ #include <list>
+ #include <numeric>
+ #include <vector>
+@@ -531,31 +530,6 @@
+     emu_instance->first_run_loop = true;
+ }
+ 
+-/// dArkOS: GammaOS switches (environment variables named like their Android properties) that some
+-/// games need, set for those games unless the environment sets them already; the core reads each
+-/// once, at the game's first GPU work. Castlevania: Lords of Shadow - Mirror of Fate draws the two
+-/// eyes object by object, a render pass for each draw on the Mali GPU: stereo_skip leaves the right
+-/// eye out (with 3D off it is never shown), and async_gpu_flush_lag lets the GPU worker stay up to
+-/// 24 jobs behind at the cache flush the game makes before each command list instead of draining
+-/// it there. Its intro on an RG52 Mini: 9.2 fps, 11.1 with the first, 14.4 with both (no flush
+-/// wait at all gave the same).
+-static void SetTitleSwitches(u64 program_id) {
+-    struct TitleSwitch {
+-        u64 program_id;
+-        const char* name;
+-        const char* value;
+-    };
+-    static constexpr std::array<TitleSwitch, 2> switches{{
+-        {0x000400000009E500, "persist_gammaos_azahar_nano_stereo_skip", "1"},
+-        {0x000400000009E500, "persist_gammaos_azahar_nano_async_gpu_flush_lag", "24"},
+-    }};
+-    for (const auto& s : switches) {
+-        if (s.program_id == program_id && setenv(s.name, s.value, 0) == 0) {
+-            LOG_INFO(Frontend, "title {:016X}: {}={}", program_id, s.name, getenv(s.name));
+-        }
+-    }
+-}
+-
+ /**
+  * libretro callback; Called when a game is to be loaded.
+  */
+@@ -607,10 +581,12 @@
+             }
+             return false;
+         }
++        // dArkOS: the title, for the core options whose Auto depends on it (core_settings.cpp)
+         u64 program_id{};
+-        if (loader->ReadProgramId(program_id) == Loader::ResultStatus::Success) {
+-            SetTitleSwitches(program_id);
++        if (loader->ReadProgramId(program_id) != Loader::ResultStatus::Success) {
++            program_id = 0;
+         }
++        LibRetro::SetTitle(program_id);
+         // Stash the loader so System::Load can reuse it instead of re-opening
+         Core::System::GetInstance().RegisterAppLoaderEarly(loader);
+     }
+--- a/src/video_core/gpu.cpp
++++ b/src/video_core/gpu.cpp
+@@ -1426,11 +1426,15 @@
+     }
+     // persist.gammaos.azahar_nano.async_gpu_flush_lag=N: CacheFlush lets N jobs stay in flight
+     // instead of waiting for the whole queue (0 = wait for everything, the safe default).
+-    static const int flush_lag = [] {
++    static const int flush_lag_prop = [] {
+         char v[PROP_VALUE_MAX] = {};
+         __system_property_get("persist.gammaos.azahar_nano.async_gpu_flush_lag", v);
+         return v[0] ? atoi(v) : 0;
+     }();
++    // dArkOS: the core option decides when it is not at Auto (or Auto knows the title).
++    const int flush_lag_opt =
++        Settings::values.gammaos_async_gpu_flush_lag.load(std::memory_order_relaxed);
++    const int flush_lag = flush_lag_opt >= 0 ? flush_lag_opt : flush_lag_prop;
+     if (AsyncQueued() && command.id == CommandId::CacheFlush && flush_lag > 0) {
+         if (async->pending.load(std::memory_order_acquire) > flush_lag) {
+             async->WaitPendingAtMost(flush_lag);
+--- a/src/video_core/renderer_vulkan/vk_rasterizer.cpp
++++ b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
+@@ -1721,11 +1721,17 @@
+                      lfb.address_left2, lfb.address_right1, lfb.address_right2, static_cast<u32>(lfb.active_fb));
+         }
+     }
+-    static const bool stereo_skip = [] {
++    static const bool stereo_skip_prop = [] {
+         char v[PROP_VALUE_MAX] = {};
+         __system_property_get("persist.gammaos.azahar_nano.stereo_skip", v);
+         return v[0] == '1';
+     }();
++    // dArkOS: the core option decides when it is not at Auto (or Auto knows the title).
++    const int stereo_skip_opt = Settings::values.gammaos_stereo_skip.load(std::memory_order_relaxed);
++    const bool stereo_skip = stereo_skip_opt >= 0 ? stereo_skip_opt != 0 : stereo_skip_prop;
++    if (!stereo_skip) {
++        stereo_right_rt = 0; // turned off in the menu: the target is drawn and copied again
++    }
+     if (stereo_skip) {
+         // GammaOS: games that draw both eyes interleaved draw by draw (Metroid: Samus
+         // Returns) render the right eye into a surface they later transfer into the right

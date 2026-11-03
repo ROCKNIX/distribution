@@ -1,0 +1,33 @@
+From: dArkOS RG52 Mini port
+Subject: Vulkan: an RGBA8 surface with deferred storage is made without storage usage
+
+GammaOS's rt_compress (patch 000) makes an RGBA8 surface no shadow pass has used
+without MUTABLE_FORMAT and without the storage usage the constructor adds, so that the
+driver can compress it, and gives it both in EnsureStorage when a storage view is asked
+for. But the format's traits carry storage for RGBA8 already (Instance::DetermineTraits),
+the surface kept it, and libmali gives no AFBC to an image with storage usage: Azahar's
+colour targets stayed uncompressed (the libmali session, 2026-10-29). Every storage view
+comes after EnsureStorage (shadow rendering, shadow textures, the D24S8 to RGBA8
+conversion), which makes the image anew with storage usage and MUTABLE_FORMAT; a
+non-mutable image could not take the R32 storage view anyway. On the RG52 Mini (libmali):
+Castlevania: Mirror of Fate's 240x400 and 240x320 targets are AFBC with this patch,
+U-Interleaved without it, the surfaces that took the shadow path stay as they were (the
+libmali session's memory dump, 2026-10-30). Fragment work a frame against 028: Castlevania
+36.35 -> 35.7 ms, Super Mario 3D Land 5.4 -> 5.1, Luigi's Mansion 2 the same (73.4 and
+73.8); the frame rate the same within noise. The pipeline cache stays valid: the layout is
+chosen when the image is made.
+
+--- a/src/video_core/renderer_vulkan/vk_texture_runtime.cpp
++++ b/src/video_core/renderer_vulkan/vk_texture_runtime.cpp
+@@ -892,6 +892,11 @@
+         // shadow-source texture that will get used in the utility descriptor-set
+         usage |= vk::ImageUsageFlagBits::eStorage;
+     }
++    if (!storage_capable) {
++        // dArkOS: traits.usage has storage for RGBA8 already (Instance::DetermineTraits), and
++        // Mali's driver does not compress an image with storage usage; EnsureStorage adds it back
++        usage &= ~vk::ImageUsageFlagBits::eStorage;
++    }
+ 
+     const bool need_format_list = is_mutable && instance.IsImageFormatListSupported();
+     handles[Type::Base].Create(width, height, levels, texture_type, format, usage, flags,
