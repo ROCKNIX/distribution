@@ -2,8 +2,8 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="beetle-pcfx-lr"
-PKG_VERSION="0580dee757adfdb9bf8b9c24693dde5f3d0a78a1"
-PKG_SHA256="af1d5b2ecafb43e668e5ff24978772e180397d8305003c8f3c6bd960aa9bf11b"
+PKG_VERSION="c1650bad5fbdcc3c3ccd45e29e3983e1ccf16cff"
+PKG_SHA256="479b00626f98bf94b60b1041cbfe622b7eb80af280e642fa73ae1a5dfab018d1"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/beetle-pcfx-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

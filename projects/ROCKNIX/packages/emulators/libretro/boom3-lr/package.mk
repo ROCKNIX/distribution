@@ -2,7 +2,7 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="boom3-lr"
-PKG_VERSION="0bea79abf5ec8262dfe9af73cb8c54ea6e2aeb98"
+PKG_VERSION="efe140ce8fdf8793f5a6fbba062fb34df7f55a81"
 PKG_SHA256="613d655c7f05dd2fd90fc27721165efad2be6c30ed85d82a07d28d81e30324cc"
 PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/libretro/boom3"

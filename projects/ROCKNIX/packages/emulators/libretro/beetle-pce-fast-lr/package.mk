@@ -2,8 +2,8 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="beetle-pce-fast-lr"
-PKG_VERSION="bebe2b13a840fbfd45cb501f5cd0efe01bdb1735"
-PKG_SHA256="509ce18c6d1191fdea45ce45d2f1224de6b3cd15a8acd53a8816a8ac6a191e35"
+PKG_VERSION="2de1ce1c3f237b161c126c54ba407990bb86d1e9"
+PKG_SHA256="6a6846f6d3b25d5883b23a80b78ea968127b306c36e21c9499a3b5be00f6831a"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/beetle-pce-fast-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

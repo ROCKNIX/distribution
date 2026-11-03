@@ -2,8 +2,8 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="virtualjaguar-lr"
-PKG_VERSION="e6709d27bd4561d10b5ca72d94522471a6fd10af"
-PKG_SHA256="1a10902e8b4c45e50d6df4d350fa58a2d6ed32cf86e9d78ba754f8636a67fe77"
+PKG_VERSION="ffea7893a59dd9b9e6f9b85c51627810338b0778"
+PKG_SHA256="508c8cced12de59071b47e1d5c59d242fb9488ba088404e6a67558511fcbc5b9"
 PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/libretro/virtualjaguar-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

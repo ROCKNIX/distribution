@@ -2,13 +2,12 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="flycast-lr"
-PKG_VERSION="c3763d8fc4208dd6f8f0bc456383543b8406a8a0"
+PKG_VERSION="7adbf3caef251b153e348df3f469a0f35878339d"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/flyinghead/flycast"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain retroarch zlib libzip"
 PKG_LONGDESC="Flycast is a multi-platform Sega Dreamcast, Naomi and Atomiswave emulator"
-#PKG_TOOLCHAIN="cmake"
 
 if [ "${OPENGL_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
@@ -32,13 +31,13 @@ else
   PKG_CMAKE_OPTS_TARGET+=" -DUSE_VULKAN=OFF"
 fi
 
-PKG_CMAKE_OPTS_TARGET+=" -Wno-dev -DLIBRETRO=ON \
+PKG_CMAKE_OPTS_TARGET+=" -DLIBRETRO=ON \
                          -DWITH_SYSTEM_ZLIB=ON \
                          -DUSE_OPENMP=ON"
 
 post_unpack() {
-  sed -i 's/"reicast"/"flycast"/g' ${PKG_BUILD}/shell/libretro/libretro_core_option_defines.h
-  sed -i 's/\-O[23]/-Ofast/' ${PKG_BUILD}/CMakeLists.txt
+  # needed for copying repo to build
+  :
 }
 
 makeinstall_target() {

@@ -2,8 +2,8 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="gpsp-lr"
-PKG_VERSION="8d268a6bb2cd799f8f2791ebb544a7ef550cfc6f"
-PKG_SHA256="0b7833468c5fee9da7dcb433de0c11701fbb0734dba2c8b3630bd054d607e004"
+PKG_VERSION="5819380c2ffb0900219d700a382ee68c464ebb99"
+PKG_SHA256="1dfc919966cd58ce1d8f2580041d9bffe2e313d9442260c713ed0286a048a733"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/gpsp"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

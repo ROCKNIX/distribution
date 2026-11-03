@@ -2,8 +2,8 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="beetle-vb-lr"
-PKG_VERSION="83ed42608601fb7b01d41e4f8fb2007a37b8c84e"
-PKG_SHA256="02630caca19b3e5ba4a1132c78cca7c2ac7238169f7014d8f345b86540ce4fc7"
+PKG_VERSION="d5ae54c8e23b573a3b34e888b2d48a588027e92c"
+PKG_SHA256="ccbed557d3f316c9123f81d1ca5357c5f12100bad6aea3326caefca2a1c08189"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/beetle-vb-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

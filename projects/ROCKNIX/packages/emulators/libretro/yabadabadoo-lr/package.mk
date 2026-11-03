@@ -2,7 +2,7 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="yabadabadoo-lr"
-PKG_VERSION="4c06da9779c485b532f43b3f18c4b81cb93cf11b"
+PKG_VERSION="953bca61e7d211bdc0428c3cbbebe184a92eb8ea"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/ProRapSuperstarOriginalMaster/Yabadabadoo"
 PKG_URL="${PKG_SITE}.git"

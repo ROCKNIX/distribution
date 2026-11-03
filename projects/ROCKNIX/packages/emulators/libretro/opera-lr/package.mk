@@ -2,8 +2,8 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="opera-lr"
-PKG_VERSION="a501a278d057b952d1ad6165549c59ab178ca497"
-PKG_SHA256="3e85e640401b970445a68120d7c7fe1e68e0e9b4bbfbb0dd99a98f97b23a76d5"
+PKG_VERSION="54fe4f3754e9b69c83ff50b5def5d6c60fef06ce"
+PKG_SHA256="1034d58acb38cd9fcb08da6d90980edd6a0439aaa9d47735f1c85d8e6143122b"
 PKG_LICENSE="LGPL with additional notes"
 PKG_SITE="https://github.com/libretro/opera-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
