@@ -15,8 +15,8 @@ case ${DEVICE} in
     PKG_SHA256="91bb06c090922e2e68febead60f37f45ebd02f18cd0237f7aac4db22d79ba7a4"
   ;;
   *)
-    PKG_VERSION="0.17.0"
-    PKG_SHA256="d2be36ee26ee29696ce75928577b1962417ece99735cc082169ef10fffce7532"
+    PKG_VERSION="0.19.0"
+    PKG_SHA256="1ba24abcbff8385ca2c533f1812bac79fa9a5dc78d41b120f1a25de15d0df63d"
   ;;
 esac
 
