@@ -1,0 +1,86 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Faisal Hassan <faisal.hassan@oss.qualcomm.com>
+Date: Thu, 29 Oct 2026 00:29:31 +0530
+Subject: [PATCH] usb: dwc3: qcom: Keep wakeup IRQ enable/disable balanced on
+ failed resume
+
+dwc3_qcom_resume() disables the wakeup interrupts before enabling the
+clocks. If clk_bulk_prepare_enable() fails, it returns with them
+disabled. The next suspend returns early on is_suspended without
+re-enabling them, and the next resume disables them again, so every
+failed resume leaves the disable depth one level deeper and host-mode
+wakeup is lost for good.
+
+Re-enabling them on the error path is not safe either: the
+level-triggered ss_phy interrupt can stay asserted, and the handler
+can't make progress while the controller is not resumed, so it would
+fire continuously.
+
+Track whether the wakeup interrupts are armed and make enabling and
+disabling them idempotent. A failed resume now leaves them disarmed and
+balanced, and the next suspend arms them again. Disarm them in resume
+regardless of the wakeup setting, so interrupts armed by a runtime
+suspend are also disarmed when system resume runs with device wakeup
+disabled.
+
+Signed-off-by: Faisal Hassan <faisal.hassan@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/a7e3c1e094be9cb4a282925a6c09e11bf746234f.1793212717.git.faisal.hassan@oss.qualcomm.com
+---
+ drivers/usb/dwc3/dwc3-qcom.c | 20 ++++++++++++++++++--
+ 1 file changed, 18 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/usb/dwc3/dwc3-qcom.c b/drivers/usb/dwc3/dwc3-qcom.c
+index d841623b1..57691f3f8 100644
+--- a/drivers/usb/dwc3/dwc3-qcom.c
++++ b/drivers/usb/dwc3/dwc3-qcom.c
+@@ -82,6 +82,7 @@ struct dwc3_qcom {
+ 	enum usb_dr_mode	mode;
+ 	bool			is_suspended;
+ 	bool			pm_suspended;
++	bool			wakeup_irqs_armed;
+ 	struct icc_path		*icc_path_ddr;
+ 	struct icc_path		*icc_path_apps;
+ 
+@@ -328,16 +329,26 @@ static void dwc3_qcom_disable_interrupts(struct dwc3_qcom *qcom)
+ {
+ 	int i;
+ 
++	if (!qcom->wakeup_irqs_armed)
++		return;
++
+ 	for (i = 0; i < qcom->num_ports; i++)
+ 		dwc3_qcom_disable_port_interrupts(&qcom->ports[i]);
++
++	qcom->wakeup_irqs_armed = false;
+ }
+ 
+ static void dwc3_qcom_enable_interrupts(struct dwc3_qcom *qcom)
+ {
+ 	int i;
+ 
++	if (qcom->wakeup_irqs_armed)
++		return;
++
+ 	for (i = 0; i < qcom->num_ports; i++)
+ 		dwc3_qcom_enable_port_interrupts(&qcom->ports[i]);
++
++	qcom->wakeup_irqs_armed = true;
+ }
+ 
+ static int dwc3_qcom_suspend(struct dwc3_qcom *qcom, bool wakeup)
+@@ -382,8 +393,13 @@ static int dwc3_qcom_resume(struct dwc3_qcom *qcom, bool wakeup)
+ 	if (!qcom->is_suspended)
+ 		return 0;
+ 
+-	if (dwc3_qcom_is_host(qcom) && wakeup)
+-		dwc3_qcom_disable_interrupts(qcom);
++	/*
++	 * Wakeup interrupts may have been armed by an earlier runtime suspend
++	 * even if wakeup is now disabled, so always disarm them. On failure
++	 * they stay disarmed, as a level-triggered wakeup line could otherwise
++	 * keep firing while the controller can't be resumed.
++	 */
++	dwc3_qcom_disable_interrupts(qcom);
+ 
+ 	ret = clk_bulk_prepare_enable(qcom->num_clocks, qcom->clks);
+ 	if (ret < 0)
