@@ -16,16 +16,16 @@ EMUS_32BIT=""
 PKG_RETROARCH="core-info libretro-database retroarch retroarch-assets retroarch-joypads retroarch-overlays retropie-shaders slang-shaders"
 
 LIBRETRO_CORES="81-lr a5200-lr arduous-lr atari800-lr b2-lr beetle-gba-lr beetle-lynx-lr beetle-ngp-lr beetle-pce-lr beetle-pce-fast-lr \
-                beetle-pcfx-lr bk-lr bsnes2014-balanced-lr bsnes-mercury-balanced-lr beetle-supafaust-lr beetle-supergrafx-lr          \
-                beetle-vb-lr beetle-wswan-lr bluemsx-lr cap32-lr crocods-lr daphne-lr doublecherrygb-lr dosbox-core-lr dosbox-pure-lr  \
+                beetle-pcfx-lr bk-lr bsnes2014-balanced-lr bsnes-mercury-balanced-lr beetle-supafaust-lr beetle-supergrafx-lr           \
+                beetle-vb-lr beetle-wswan-lr bluemsx-lr cap32-lr crocods-lr daphne-lr doublecherrygb-lr dosbox-core-lr dosbox-pure-lr   \
                 easyrpg-lr emuscv-lr fake08-lr fbalpha2012-lr fbalpha2019-lr fbneo-lr fceumm-lr flycast-lr fmsx-lr                      \
-                freeintv-lr freej2me-lr fuse-lr gambatte-lr gearboy-lr gearcoleco-lr geargrafx-lr gearlynx-lr gearsystem-lr \
+                freeintv-lr freej2me-lr fuse-lr gambatte-lr gearboy-lr gearcoleco-lr geargrafx-lr gearlynx-lr gearsystem-lr             \
                 geolith-lr genesis-plus-gx-lr genesis-plus-gx-wide-lr gw-lr handy-lr hatari-lr idtech-lr jaxe-lr mame-lr                \
                 mame2003-plus-lr mame2010-lr mame2015-lr melonds-lr melonds-ds-lr mesen-lr mesen-s-lr mgba-lr minivmac-lr mojozork-lr   \
-                mu-lr mupen64plus-nx-lr neocd_lr nestopia-lr np2kai-lr o2em-lr opera-lr parallel-n64-lr pcsx_rearmed-lr  \
+                mu-lr mupen64plus-nx-lr neocd_lr nestopia-lr np2kai-lr o2em-lr opera-lr parallel-n64-lr pcsx_rearmed-lr                 \
                 picodrive-lr pokemini-lr potator-lr prboom-lr prosystem-lr puae-lr puae2021-lr px68k-lr quasi88-lr quicknes-lr race-lr  \
                 same_cdi-lr sameboy-lr sameduck-lr scummvm-lr skyemu-lr smsplus-gx-lr snes9x-lr snes9x2002-lr snes9x2005_plus-lr        \
-                snes9x2010-lr stella-lr supersnes9x-lr swanstation-lr tgbdual-lr theodore-lr tic80-lr uzem-lr vba-next-lr       \
+                snes9x2010-lr stella-lr supersnes9x-lr swanstation-lr tgbdual-lr theodore-lr tic80-lr uzem-lr vba-next-lr               \
                 vbam-lr vecx-lr vice-lr vircon32-lr virtualjaguar-lr xmil-lr wasm4-lr yabasanshiro-lr"
 
 ### aarch64 libretro and sa cores
@@ -90,7 +90,7 @@ case "${DEVICE}" in
   S922X)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 pcsx_rearmed-lr"
     PKG_EMUS+=" azahar-sa bigpemu-sa dolphin-sa drastic-sa duckstation-sa melonds-sa vita3k-sa armsx2-sa"
-    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr uae4arm-lr"
+    LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr hakux-lr uae4arm-lr"
     ;;
   AMD64)
     PKG_EMUS+=" ares-sa azahar-sa cemu-sa dolphin-sa gopher64-sa mednafen melonds-sa nanoboyadvance-sa \
@@ -1374,7 +1374,7 @@ makeinstall_target() {
 
   ### Microsoft XBox
   case ${DEVICE} in
-    SM4450|SM6115)
+    S922X|SM4450|SM6115)
       add_emu_core xbox retroarch hakux true
       add_es_system xbox
       ;;
