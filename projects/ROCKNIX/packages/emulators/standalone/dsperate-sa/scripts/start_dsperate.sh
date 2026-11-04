@@ -143,6 +143,7 @@ esac
 
 #3D anti-aliasing
 case "${AA}" in
+	2) OPTS+=("--aa-enhanced") ;;
 	1) OPTS+=("--aa") ;;
 	0) OPTS+=("--no-aa") ;;
 esac
