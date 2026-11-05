@@ -9,6 +9,7 @@ PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_LICENSE="GPL-3.0-or-later"
 PKG_DEPENDS_TARGET="toolchain SDL2 alsa-lib libass openssl freetype zlib retroarch-assets core-info ffmpeg libass joyutils nss-mdns openal-soft libogg libvorbisidec libvorbis libvpx libpng libdrm pulseaudio miniupnpc flac xz"
 PKG_LONGDESC="Reference frontend for the libretro API."
+PKG_BUILD_FLAGS=" +lto"
 
 if [ "${PIPEWIRE_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" pipewire"

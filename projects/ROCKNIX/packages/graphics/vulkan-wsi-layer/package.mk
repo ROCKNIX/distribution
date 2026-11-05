@@ -11,6 +11,7 @@ PKG_DEPENDS_TARGET="toolchain libdrm wayland-protocols ${VULKAN}"
 PKG_DEPENDS_UNPACK="linux"
 PKG_LONGDESC="Implements Vulkan extensions for Window System Integration inside a Vulkan layer."
 PKG_TOOLCHAIN="cmake"
+PKG_BUILD_FLAGS=" +lto"
 
 pre_configure_target() {
 if [ "${DEVICE}" = "RK3588" ]; then

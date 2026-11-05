@@ -10,7 +10,7 @@ PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="boost toolchain SDL2 freetype curl freeimage bash rapidjson SDL2_mixer fping p7zip alsa vlc drm_tool poppler pugixml noto-sans-cjk ${OPENGLES}"
 PKG_NEED_UNPACK="busybox"
 PKG_LONGDESC="Emulationstation emulator frontend"
-PKG_BUILD_FLAGS="-gold"
+PKG_BUILD_FLAGS="-gold +lto"
 PKG_PATCH_DIRS+=" ${DEVICE}"
 
 PKG_CMAKE_OPTS_TARGET+=" -DROCKNIX=1 \
