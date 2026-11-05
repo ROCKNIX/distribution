@@ -6,7 +6,7 @@
 . /etc/profile
 
 GAME_PATH="/storage/roms/psvita/vita3k/ux0/app"
-GAME_DATA="/storage/.config/Vita3K/vita-gamelist.txt"
+GAME_DATA="/storage/roms/psvita/vita3k/vita-gamelist.txt"
 OUTPUT_PATH="/storage/roms/psvita"
 
 cd ${GAME_PATH}
