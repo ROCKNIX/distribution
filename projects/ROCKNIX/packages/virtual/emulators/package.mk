@@ -51,7 +51,7 @@ case "${DEVICE}" in
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 desmume-lr gpsp-lr pcsx_rearmed-lr yabadabadoo-lr"
     PKG_DEPENDS_TARGET+=" common-shaders glsl-shaders"
     PKG_EMUS+=" armsx2-sa azahar-sa dolphin-sa drastic-sa mednafen melonds-sa vita3k-sa"
-    LIBRETRO_CORES+=" dolphin-lr uae4arm-lr"
+    LIBRETRO_CORES+=" dolphin-lr hakux-lr uae4arm-lr"
     ;;
   RK3588)
     [ "${ENABLE_32BIT}" == "true" ] && EMUS_32BIT="box86 desmume-lr gpsp-lr pcsx_rearmed-lr yabadabadoo-lr"
@@ -1374,7 +1374,7 @@ makeinstall_target() {
 
   ### Microsoft XBox
   case ${DEVICE} in
-    S922X|SM4450|SM6115)
+    RK3566|RK3576|S922X|SM4450|SM6115)
       add_emu_core xbox retroarch hakux true
       add_es_system xbox
       ;;
