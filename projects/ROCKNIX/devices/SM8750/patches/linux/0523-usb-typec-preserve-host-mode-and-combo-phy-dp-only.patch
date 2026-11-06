@@ -1,0 +1,185 @@
+From: Chaz Bailey <charles.s.bailey@gmail.com>
+Subject: [PATCH] usb: typec: preserve host mode for altmode peripherals and fix combo PHY DP-only timeout
+
+When DisplayPort Alt Mode is entered (such as with AR glasses like Nreal Air,
+USB-C monitors, or docks), the partner often only advertises Alternate Mode
+SVIDs over USB-PD, leaving PARTNER_FLAG_USB unset in UCSI connector status.
+Previously, UCSI forced u_role to USB_ROLE_NONE whenever PARTNER_FLAG_USB
+was unset, immediately tearing down xHCI and disconnecting USB 2.0 devices
+such as onboard USB audio and IMU sensors on AR glasses.
+
+Furthermore, when connected to a powered dock (partner type DFP on initial attach),
+UCSI previously demoted u_role to USB_ROLE_DEVICE, immediately tearing down xHCI
+and causing a 6-7 second host teardown while DWC3 attempted peripheral mode.
+This delayed Alt Mode negotiation past the dock's billboard timeout (tAMEnter).
+Preserve USB_ROLE_HOST on DRD ports when partner is DFP, and immediately request
+a host data role swap (SET_UOR) so that the host can initiate Alt Mode discovery.
+Also parse 'try-power-role' from DT to set prefer_role.
+
+Finally, when the QMP combo PHY is placed into QMPPHY_MODE_DP_ONLY (e.g.
+Pin Assignment C, 4-lane DP), all SerDes lanes are allocated to DisplayPort
+and the USB3 PCS block is held in reset. When dwc3 subsequently initializes
+or resumes the host controller for USB 2.0 operation, qmp_combo_usb_power_on()
+attempted to configure USB3 PCS registers and polled PHYSTATUS, which never
+cleared in DP-only mode, causing a 10ms timeout (-110) and aborting dwc3 host
+mode initialization entirely.
+
+In QMPPHY_MODE_DP_ONLY, skip the USB3 PCS power-on and power-off sequences
+so that the separate USB 2.0 eUSB2 PHY and xHCI controller initialize cleanly.
+
+--- a/drivers/usb/typec/ucsi/ucsi.c
++++ b/drivers/usb/typec/ucsi/ucsi.c
+@@ -1339,8 +1339,13 @@
+ 		typec_set_data_role(con->port, TYPEC_HOST);
+ 		break;
+ 	case UCSI_CONSTAT_PARTNER_TYPE_DFP:
+-		u_role = USB_ROLE_DEVICE;
+-		typec_set_data_role(con->port, TYPEC_DEVICE);
++		if (con->typec_cap.data == TYPEC_PORT_DRD) {
++			u_role = USB_ROLE_HOST;
++			typec_set_data_role(con->port, TYPEC_HOST);
++		} else {
++			u_role = USB_ROLE_DEVICE;
++			typec_set_data_role(con->port, TYPEC_DEVICE);
++		}
+ 		break;
+ 	default:
+ 		break;
+@@ -1369,7 +1374,12 @@
+ 	}
+ 
+ 	/* Only notify USB controller if partner supports USB data */
+-	if (!(UCSI_CONSTAT(con, PARTNER_FLAG_USB)))
++	/*
++	 * Maintain USB host role if partner is a UFP or altmode partner.
++	 * Peripherals such as AR glasses or docks provide USB 2.0 (e.g. audio/input)
++	 * even when PARTNER_FLAG_USB is not set during PD negotiation.
++	 */
++	if (u_role != USB_ROLE_HOST && !(UCSI_CONSTAT(con, PARTNER_FLAG_USB) || UCSI_CONSTAT(con, PARTNER_FLAG_ALT_MODE)))
+ 		u_role = USB_ROLE_NONE;
+ 
+ 	ret = usb_role_switch_set_role(con->usb_role_sw, u_role);
+@@ -1441,6 +1448,8 @@
+ 	return 0;
+ }
+ 
++static int ucsi_partner_dr_swap_host(struct ucsi_connector *con);
++
+ static void ucsi_handle_connector_change(struct work_struct *work)
+ {
+ 	struct ucsi_connector *con = container_of(work, struct ucsi_connector,
+@@ -1499,6 +1508,9 @@
+ 		if (UCSI_CONSTAT(con, CONNECTED)) {
+ 			ucsi_register_partner(con);
+ 			ucsi_partner_task(con, ucsi_check_connection, 1, HZ);
++			if (con->typec_cap.data == TYPEC_PORT_DRD &&
++			    UCSI_CONSTAT(con, PARTNER_TYPE) == UCSI_CONSTAT_PARTNER_TYPE_DFP)
++				ucsi_partner_task(con, ucsi_partner_dr_swap_host, 1, 0);
+ 			if (con->ucsi->cap.features & UCSI_CAP_GET_PD_MESSAGE)
+ 				ucsi_partner_task(con, ucsi_get_partner_identity, 1, HZ);
+ 			if (con->ucsi->cap.features & UCSI_CAP_CABLE_DETAILS)
+@@ -1698,6 +1710,24 @@
+ 	return ret;
+ }
+ 
++static int ucsi_partner_dr_swap_host(struct ucsi_connector *con)
++{
++	u8 partner_type = UCSI_CONSTAT(con, PARTNER_TYPE);
++	u64 command;
++
++	if (partner_type != UCSI_CONSTAT_PARTNER_TYPE_DFP)
++		return 0;
++
++	dev_info(con->ucsi->dev, "con%d: partner is DFP on DRD port, requesting host data role via SET_UOR\n",
++		 con->num);
++
++	reinit_completion(&con->complete);
++	command = UCSI_SET_UOR | UCSI_CONNECTOR_NUMBER(con->num);
++	command |= UCSI_SET_UOR_ROLE(TYPEC_HOST);
++	command |= UCSI_SET_UOR_ACCEPT_ROLE_SWAPS;
++	return ucsi_role_cmd(con, command);
++}
++
+ static int ucsi_dr_swap(struct typec_port *port, enum typec_data_role role)
+ {
+ 	struct ucsi_connector *con = typec_get_drvdata(port);
+@@ -1866,6 +1896,16 @@
+ 	cap->pd_revision = ucsi->cap.pd_version;
+ 	cap->svdm_version = SVDM_VER_2_0;
+ 	cap->prefer_role = TYPEC_NO_PREFERRED_ROLE;
++	if (cap->fwnode) {
++		const char *cap_str;
++
++		if (!fwnode_property_read_string(cap->fwnode, "try-power-role", &cap_str)) {
++			int p_role = typec_find_power_role(cap_str);
++
++			if (p_role >= 0)
++				cap->prefer_role = p_role;
++		}
++	}
+ 
+ 	if (UCSI_CONCAP(con, OPMODE_AUDIO_ACCESSORY))
+ 		*accessory++ = TYPEC_ACCESSORY_AUDIO;
+@@ -1930,8 +1970,13 @@
+ 		typec_set_data_role(con->port, TYPEC_HOST);
+ 		break;
+ 	case UCSI_CONSTAT_PARTNER_TYPE_DFP:
+-		u_role = USB_ROLE_DEVICE;
+-		typec_set_data_role(con->port, TYPEC_DEVICE);
++		if (con->typec_cap.data == TYPEC_PORT_DRD) {
++			u_role = USB_ROLE_HOST;
++			typec_set_data_role(con->port, TYPEC_HOST);
++		} else {
++			u_role = USB_ROLE_DEVICE;
++			typec_set_data_role(con->port, TYPEC_DEVICE);
++		}
+ 		break;
+ 	default:
+ 		break;
+@@ -1944,6 +1989,9 @@
+ 		ucsi_pwr_opmode_change(con);
+ 		ucsi_orientation(con);
+ 		ucsi_port_psy_changed(con);
++		if (con->typec_cap.data == TYPEC_PORT_DRD &&
++		    UCSI_CONSTAT(con, PARTNER_TYPE) == UCSI_CONSTAT_PARTNER_TYPE_DFP)
++			ucsi_partner_task(con, ucsi_partner_dr_swap_host, 1, 0);
+ 		if (con->ucsi->cap.features & UCSI_CAP_GET_PD_MESSAGE)
+ 			ucsi_get_partner_identity(con);
+ 		if (con->ucsi->cap.features & UCSI_CAP_CABLE_DETAILS)
+@@ -1951,7 +1999,12 @@
+ 	}
+ 
+ 	/* Only notify USB controller if partner supports USB data */
+-	if (!(UCSI_CONSTAT(con, PARTNER_FLAG_USB)))
++	/*
++	 * Maintain USB host role if partner is a UFP or altmode partner.
++	 * Peripherals such as AR glasses or docks provide USB 2.0 (e.g. audio/input)
++	 * even when PARTNER_FLAG_USB is not set during PD negotiation.
++	 */
++	if (u_role != USB_ROLE_HOST && !(UCSI_CONSTAT(con, PARTNER_FLAG_USB) || UCSI_CONSTAT(con, PARTNER_FLAG_ALT_MODE)))
+ 		u_role = USB_ROLE_NONE;
+ 
+ 	ret = usb_role_switch_set_role(con->usb_role_sw, u_role);
+--- a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
++++ b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+@@ -3879,6 +3879,9 @@
+ 	unsigned int val;
+ 	int ret;
+ 
++	if (qmp->qmpphy_mode == QMPPHY_MODE_DP_ONLY)
++		return 0;
++
+ 	qmp_configure(qmp->dev, serdes, cfg->serdes_tbl, cfg->serdes_tbl_num);
+ 
+ 	/* Tx, Rx, and PCS configurations */
+@@ -3926,6 +3929,9 @@
+ 	struct qmp_combo *qmp = phy_get_drvdata(phy);
+ 	const struct qmp_phy_cfg *cfg = qmp->cfg;
+ 
++	if (qmp->qmpphy_mode == QMPPHY_MODE_DP_ONLY)
++		return 0;
++
+ 	/* PHY reset */
+ 	qphy_setbits(qmp->pcs, cfg->regs[QPHY_SW_RESET], SW_RESET);
+
+ 
