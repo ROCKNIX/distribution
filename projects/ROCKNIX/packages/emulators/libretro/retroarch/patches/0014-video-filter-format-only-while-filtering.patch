@@ -1,0 +1,115 @@
+From d1c3cb1b6f948dc03f717f7b72d49a63ca60f696 Mon Sep 17 00:00:00 2001
+From: libretroadmin <libretroadmin@users.noreply.github.com>
+Date: Fri, 11 Sep 2026 03:56:42 +0000
+Subject: [PATCH 14/15] video: the driver takes a software filter's format only
+ while it filters
+
+A filter can output another pixel format than the core's: ntsc_crt
+always gives XRGB8888. The driver is set up for the filter's format only
+while the filter is enabled; with video_filter_enable off a loaded
+filter stays in place for the toggle and the driver takes the core's
+format. VIDEO_FILTER_TOGGLE sets the driver up again when the loaded
+filter changes format (video_driver_filter_changes_format()) and stays
+instant when it does not, and removing the filter from the menu
+reinitialises video as resetting it does.
+
+Unfiltered frames so never reach a driver set up for another format,
+which read an RGB565 core's rows at four bytes a pixel, past the end of
+the frame, in the threaded video wrapper's copy and in the driver's
+upload.
+
+(cherry picked from commit 235f684cbc9b6ffcd1744c7b1efc11052c749e18)
+(backport: this version has no 10-bit pixel formats, so the core's
+32-bit test is XRGB8888 only, as in video_driver_init_internal())
+---
+ gfx/video_driver.c     | 14 +++++++++++++-
+ gfx/video_driver.h     |  5 +++++
+ menu/cbs/menu_cbs_ok.c |  6 ++++--
+ retroarch.c            |  5 +++++
+ 4 files changed, 27 insertions(+), 3 deletions(-)
+
+diff --git a/gfx/video_driver.c b/gfx/video_driver.c
+index f83c3e7aa2..c5cc22c2bf 100644
+--- a/gfx/video_driver.c
++++ b/gfx/video_driver.c
+@@ -1747,6 +1747,15 @@ void video_driver_filter_free(void)
+    video_st->flags          &= ~(VIDEO_FLAG_STATE_OUT_RGB32);
+ }
+ 
++bool video_driver_filter_changes_format(void)
++{
++   video_driver_state_t *video_st = &video_driver_st;
++   bool core_rgb32                = video_st->pix_fmt == RETRO_PIXEL_FORMAT_XRGB8888;
++   bool filter_rgb32              = (video_st->flags & VIDEO_FLAG_STATE_OUT_RGB32)
++         ? true : false;
++   return video_st->state_filter && filter_rgb32 != core_rgb32;
++}
++
+ void video_driver_init_filter(enum retro_pixel_format colfmt_int,
+       settings_t *settings)
+ {
+@@ -4168,7 +4177,10 @@ bool video_driver_init_internal(bool *video_is_threaded, bool verbosity_enabled)
+    video.font_size                   = settings->floats.video_font_size;
+    video.path_font                   = settings->paths.path_font;
+ #ifdef HAVE_VIDEO_FILTER
+-   video.rgb32                       = video_st->state_filter
++   /* A disabled filter stays loaded for the toggle, but the driver then
++    * gets the core's frames as they are, in the core's format */
++   video.rgb32                       =
++            (video_st->state_filter && settings->bools.video_filter_enable)
+          ? (video_st->flags & VIDEO_FLAG_STATE_OUT_RGB32)
+          : (video_driver_pix_fmt == RETRO_PIXEL_FORMAT_XRGB8888);
+ #else
+diff --git a/gfx/video_driver.h b/gfx/video_driver.h
+index 7935b1eadb..1a23715bc5 100644
+--- a/gfx/video_driver.h
++++ b/gfx/video_driver.h
+@@ -1371,6 +1371,11 @@ void video_driver_free_hw_context(void);
+ 
+ #ifdef HAVE_VIDEO_FILTER
+ void video_driver_filter_free(void);
++
++/* The loaded software filter outputs another pixel format than the
++ * core's, so the driver has to be set up again when it starts or stops
++ * receiving the filtered frames. */
++bool video_driver_filter_changes_format(void);
+ #endif
+ 
+ void video_driver_lock_new(void);
+diff --git a/menu/cbs/menu_cbs_ok.c b/menu/cbs/menu_cbs_ok.c
+index d545740427..6aa1d52fe1 100644
+--- a/menu/cbs/menu_cbs_ok.c
++++ b/menu/cbs/menu_cbs_ok.c
+@@ -3721,9 +3721,11 @@ static int action_ok_video_filter_remove(const char *path,
+       return -1;
+    if (*settings->paths.path_softfilter_plugin)
+    {
+-      /* Unload video filter */
++      /* Unload video filter. The driver was set up for its output
++       * (pixel format and scale), so set it up again without it, as
++       * the reset does */
+       settings->paths.path_softfilter_plugin[0] = '\0';
+-      video_driver_filter_free();
++      command_event(CMD_EVENT_REINIT, NULL);
+       /* Refresh menu */
+       menu_st->flags         |=  MENU_ST_FLAG_ENTRIES_NEED_REFRESH
+                              |  MENU_ST_FLAG_PREVENT_POPULATE;
+diff --git a/retroarch.c b/retroarch.c
+index b4b8a1da0d..c7e6c65df9 100644
+--- a/retroarch.c
++++ b/retroarch.c
+@@ -3575,6 +3575,11 @@ bool command_event(enum event_command cmd, void *data)
+ 
+             runloop_msg_queue_push(_msg, strlen(_msg), 1, 60, true, NULL,
+                   MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
++            /* The toggle is instant while the filter keeps the core's
++             * pixel format; one that changes it (ntsc_crt) needs the
++             * driver set up again for the frames it now receives */
++            if (video_driver_filter_changes_format())
++               command_event(CMD_EVENT_REINIT, NULL);
+ #endif
+          }
+          break;
+-- 
+2.55.0
+
