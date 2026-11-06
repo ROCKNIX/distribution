@@ -2,8 +2,8 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="extra-firmware"
-PKG_VERSION="925dfb5efbe5d6c3ca654f81e3e1f367f8492777"
-PKG_SHA256="b994fa1c451708bc7addd256e68e0a872559e54e4ddec27f73e6197d64aefc0c"
+PKG_VERSION="e9be72cf59cb03c2b0dcc7ab747f2d1ddf6b9fcc"
+PKG_SHA256="c508932372365452077307270e9b5c009730870fc135c4ff289a3dbdc6ae4424"
 PKG_LICENSE="proprietary"
 PKG_SITE="https://github.com/ROCKNIX/extra-firmware"
 PKG_URL="https://github.com/ROCKNIX/extra-firmware/archive/${PKG_VERSION}.tar.gz"
