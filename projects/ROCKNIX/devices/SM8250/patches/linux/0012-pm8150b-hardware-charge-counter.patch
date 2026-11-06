@@ -1,0 +1,193 @@
+From: Joey Doll <jcdoll@gmail.com>
+Subject: [PATCH] power: supply: qcom_fg: expose PM8150B v2 hardware charge counter
+
+Read CC_SOC through the Gen4 DMA interface and scale using the nominal
+capacity stored by the PMIC. Preserve SRAM contents and restore access
+configuration after each transaction. Other fuel gauge revisions retain
+their existing property set.
+
+The layout, signed decode, and scaling follow Qualcomm's qpnp-fg-gen4.c,
+fg-util.c, and fg-memif.c at Android kernel revision
+28ec0fbdef41e99b01d87e5d4d267f72dddf1dec.
+
+---
+
+diff --git a/drivers/power/supply/qcom_fg.c b/drivers/power/supply/qcom_fg.c
+--- a/drivers/power/supply/qcom_fg.c
++++ b/drivers/power/supply/qcom_fg.c
+@@ -1,11 +1,13 @@
+ // SPDX-License-Identifier: GPL-2.0-only
+ /* Copyright (c) 2020, The Linux Foundation. All rights reserved. */
+ 
++#include <linux/delay.h>
+ #include <linux/device.h>
+ #include <linux/interrupt.h>
+ #include <linux/kernel.h>
+ #include <linux/math64.h>
+ #include <linux/module.h>
++#include <linux/mutex.h>
+ #include <linux/of_address.h>
+ #include <linux/of_device.h>
+ #include <linux/of_irq.h>
+@@ -13,6 +15,7 @@
+ #include <linux/power_supply.h>
+ #include <linux/regmap.h>
+ #include <linux/types.h>
++#include <linux/unaligned.h>
+ #include <linux/workqueue.h>
+ 
+ /* SOC */
+@@ -45,6 +48,15 @@
+ #define MEM_IF_DMA_STS(chip)			(chip->ops->memif_base + 0x70)
+ #define MEM_IF_DMA_CTL(chip)			(chip->ops->memif_base + 0x71)
+ 
++/* PM8150B v2 DMA register offsets from the fuel-gauge base. */
++#define GEN4_MEM_INT_RT_STS		0x310
++#define GEN4_MEM_ARB_CFG		0x340
++#define GEN4_MEM_INTF_CFG		0x350
++#define GEN4_MEM_DMA_CTL		0x371
++#define GEN4_CC_SOC_V2			0x998
++#define GEN4_NOM_CAP			0x6ea
++#define GEN4_CC_SOC_MAX			GENMASK(29, 0)
++
+ /* SRAM addresses */
+ #define TEMP_THRESHOLD			0x454
+ #define BATT_TEMP			0x550
+@@ -87,6 +99,9 @@
+ 	struct regmap *regmap;
+ 	const struct qcom_fg_ops *ops;
+ 	struct notifier_block nb;
++	struct mutex dma_lock;
++	bool has_charge_counter;
++	struct power_supply_desc psy_desc;
+ 
+ 	struct power_supply *batt_psy;
+ 	struct power_supply_battery_info *batt_info;
+@@ -843,6 +858,69 @@
+ };
+ 
+ /* Gen4 fuel gauge. PM8150B and newer */
++/* PM8150B v2 SRAM layout and DMA arbitration follow Qualcomm fg-memif.c. */
++static int qcom_fg_gen4_get_charge_counter(struct qcom_fg_chip *chip, int *val)
++{
++	unsigned int arb, cfg, ctl, status;
++	u8 cc[4], nom[2];
++	int ret, release_ret;
++
++	mutex_lock(&chip->dma_lock);
++	ret = regmap_read(chip->regmap, chip->base + GEN4_MEM_ARB_CFG, &arb);
++	if (ret)
++		goto out;
++	ret = regmap_read(chip->regmap, chip->base + GEN4_MEM_INTF_CFG, &cfg);
++	if (ret)
++		goto out;
++	ret = regmap_read(chip->regmap, chip->base + GEN4_MEM_DMA_CTL, &ctl);
++	if (ret)
++		goto out;
++	if ((arb & BIT(0)) || (cfg & BIT(7))) {
++		ret = -EBUSY;
++		goto out;
++	}
++	ret = qcom_fg_masked_write(chip, GEN4_MEM_DMA_CTL, BIT(1), BIT(1));
++	if (ret)
++		goto release;
++	ret = qcom_fg_masked_write(chip, GEN4_MEM_ARB_CFG, BIT(0) | BIT(1), BIT(0) | BIT(1));
++	if (ret)
++		goto release;
++	ret = qcom_fg_masked_write(chip, GEN4_MEM_INTF_CFG, BIT(7) | BIT(5), BIT(7));
++	if (ret)
++		goto release;
++	usleep_range(40, 60);
++	ret = regmap_read_poll_timeout(chip->regmap, chip->base + GEN4_MEM_INT_RT_STS,
++			status, status & BIT(3), 10000, 500000);
++	if (ret)
++		goto release;
++	ret = qcom_fg_read(chip, cc, GEN4_CC_SOC_V2, sizeof(cc));
++	if (ret)
++		goto release;
++	ret = qcom_fg_read(chip, nom, GEN4_NOM_CAP, sizeof(nom));
++release:
++	release_ret = qcom_fg_masked_write(chip, GEN4_MEM_INTF_CFG,
++			BIT(7) | BIT(5), cfg & (BIT(7) | BIT(5)));
++	if (!ret)
++		ret = release_ret;
++	release_ret = qcom_fg_masked_write(chip, GEN4_MEM_ARB_CFG,
++			BIT(0) | BIT(1), arb & (BIT(0) | BIT(1)));
++	if (!ret)
++		ret = release_ret;
++	release_ret = qcom_fg_masked_write(chip, GEN4_MEM_DMA_CTL, BIT(1), ctl & BIT(1));
++	if (!ret)
++		ret = release_ret;
++	if (!ret) {
++		if (!get_unaligned_le16(nom))
++			ret = -ENODATA;
++		else
++			*val = div_s64((s64)(s32)get_unaligned_le32(cc) *
++				get_unaligned_le16(nom) * 1000, GEN4_CC_SOC_MAX);
++	}
++out:
++	mutex_unlock(&chip->dma_lock);
++	return ret;
++}
++
+ static const struct qcom_fg_ops ops_fg_gen4 = {
+ 	.get_capacity = qcom_fg_get_capacity,
+ 	.get_temperature = qcom_fg_gen4_get_temperature,
+@@ -935,6 +1013,11 @@
+ 	case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
+ 		val->intval = chip->batt_info->charge_full_design_uah;
+ 		break;
++	case POWER_SUPPLY_PROP_CHARGE_COUNTER:
++		if (!chip->has_charge_counter)
++			return -ENODATA;
++		ret = qcom_fg_gen4_get_charge_counter(chip, &val->intval);
++		break;
+ 	case POWER_SUPPLY_PROP_PRESENT:
+ 		val->intval = 1;
+ 		break;
+@@ -1137,10 +1220,12 @@
+ static int qcom_fg_probe(struct platform_device *pdev)
+ {
+ 	struct power_supply_config supply_config = {};
++	enum power_supply_property *props;
+ 	struct qcom_fg_chip *chip;
+ 	const __be32 *prop_addr;
+ 	int irq;
+ 	u8 dma_status;
++	unsigned int revision;
+ 	bool error_present;
+ 	int ret;
+ 
+@@ -1149,6 +1234,7 @@
+ 		return -ENOMEM;
+ 
+ 	chip->dev = &pdev->dev;
++	mutex_init(&chip->dma_lock);
+ 	chip->ops = of_device_get_match_data(&pdev->dev);
+ 
+ 	chip->regmap = dev_get_regmap(pdev->dev.parent, NULL);
+@@ -1204,8 +1290,23 @@
+ 	//supply_config.fwnode = pdev->dev.of_node;
+ 	supply_config.fwnode = dev_fwnode(&pdev->dev);
+ 
++	chip->psy_desc = batt_psy_desc;
++	if (chip->ops == &ops_fg_gen4) {
++		ret = regmap_read(chip->regmap, 0x103, &revision);
++		if (!ret && revision == 2) {
++			props = devm_kmalloc_array(chip->dev,
++				ARRAY_SIZE(qcom_fg_props) + 1, sizeof(*props), GFP_KERNEL);
++			if (!props)
++				return -ENOMEM;
++			memcpy(props, qcom_fg_props, sizeof(qcom_fg_props));
++			props[ARRAY_SIZE(qcom_fg_props)] = POWER_SUPPLY_PROP_CHARGE_COUNTER;
++			chip->has_charge_counter = true;
++			chip->psy_desc.properties = props;
++			chip->psy_desc.num_properties++;
++		}
++	}
+ 	chip->batt_psy = devm_power_supply_register(chip->dev,
+-			&batt_psy_desc, &supply_config);
++			&chip->psy_desc, &supply_config);
+ 	if (IS_ERR(chip->batt_psy)) {
+ 		if (PTR_ERR(chip->batt_psy) != -EPROBE_DEFER)
+ 			dev_err(&pdev->dev, "Failed to register battery\n");
