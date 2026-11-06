@@ -1,0 +1,1899 @@
+From 43a739c871e6cf0e0e2489324ed682b2dca09fc2 Mon Sep 17 00:00:00 2001
+From: ROCKNIX Project <dev@rocknix.org>
+Date: Fri, 28 Aug 2026 17:07:05 +0100
+Subject: [PATCH] leds: rgb: add AYANEO serial MCU support
+
+Bind the AYANEO serial MCU as the sole serdev owner of its dedicated UART.
+On the Pocket EVO, expose the two four-zone stick rings through eight
+multicolor LED class devices and a versioned, atomic device-level sysfs ABI.
+
+Implement the physically validated broadcast, per-ring, and direct-zone
+register frames, autonomous Rainbow and Reactive initializers, host-rendered
+Breath modes, exact shutdown, optional Xbox 360 controller-mode bootstrap,
+and suspend-safe state restoration. Only send the controller-mode sequence
+when the ayaneo,xbox360-mode property is present. All traffic and cached state
+share one mutex, and synchronous writes handle partial UART acceptance.
+
+Apply the device-tuned red-aware colour calibration only while serializing
+user RGB values. Expose ABI revision 3 so applications can atomically tune
+the device-wide green and blue percentages without corrupting semantic
+caches.
+---
+ .../sysfs-driver-ayaneo-pocket-evo-rgb        |  128 ++
+ .../bindings/leds/ayaneo,serial-mcu.yaml      |   48 +
+ drivers/leds/rgb/Kconfig                      |   13 +
+ drivers/leds/rgb/Makefile                     |    1 +
+ drivers/leds/rgb/leds-ayaneo-pocket-evo.c     | 1639 +++++++++++++++++
+ 5 files changed, 1829 insertions(+)
+ create mode 100644 Documentation/ABI/testing/sysfs-driver-ayaneo-pocket-evo-rgb
+ create mode 100644 Documentation/devicetree/bindings/leds/ayaneo,serial-mcu.yaml
+ create mode 100644 drivers/leds/rgb/leds-ayaneo-pocket-evo.c
+
+diff --git a/Documentation/ABI/testing/sysfs-driver-ayaneo-pocket-evo-rgb b/Documentation/ABI/testing/sysfs-driver-ayaneo-pocket-evo-rgb
+new file mode 100644
+index 0000000000000000000000000000000000000000..00caae96e584b8b08593833b00d3b505e91000e2
+--- /dev/null
++++ b/Documentation/ABI/testing/sysfs-driver-ayaneo-pocket-evo-rgb
+@@ -0,0 +1,128 @@
++What:		/sys/bus/serial/devices/.../rgb/abi_version
++Date:		August 2026
++KernelVersion:	7.2
++Contact:	linux-leds@vger.kernel.org
++Description:
++		Read-only ABI revision. The current interface returns "3".
++
++What:		/sys/bus/serial/devices/.../rgb/calibration
++Date:		August 2026
++KernelVersion:	7.2
++Contact:	linux-leds@vger.kernel.org
++Description:
++		Device-wide Pocket EVO colour calibration. A write must contain
++		exactly two decimal percentages in the range 0 through 100:
++
++		green-percent blue-percent
++
++		The default is "15 20". "100 100" selects raw, uncalibrated RGB.
++		When red and a calibrated channel are both nonzero, the channel is
++		scaled by its percentage. Zero percent suppresses that mixed channel;
++		at positive percentages an originally nonzero channel is clamped to at
++		least one. Red, brightness, pure green, pure blue, and cyan are
++		unchanged.
++
++		A write updates both percentages atomically. With output enabled, the
++		current Static, single-colour Breath, or Reactive state is synchronously
++		reapplied. With output disabled, the new calibration is used on the next
++		restore. The fixed captured RGB Breath palette and MCU Rainbow are
++		unaffected and are not restarted. Requested RGB caches and their
++		readback remain uncalibrated. Values reset to the defaults when the
++		driver is reprobed. A write returns EBUSY while real system suspend
++		inhibits controller transport.
++
++What:		/sys/bus/serial/devices/.../rgb/zone_index
++Date:		August 2026
++KernelVersion:	7.2
++Contact:	linux-leds@vger.kernel.org
++Description:
++		Read-only physical order used by zone_layout. It returns:
++
++		left-zone-270 left-zone-0 left-zone-90 left-zone-180
++		right-zone-270 right-zone-0 right-zone-90 right-zone-180
++
++		The angles describe the segment's physical position around its
++		analog stick.
++
++What:		/sys/bus/serial/devices/.../rgb/zone_layout
++Date:		August 2026
++KernelVersion:	7.2
++Contact:	linux-leds@vger.kernel.org
++Description:
++		Atomic eight-zone static layout. A write must contain exactly 32
++		decimal values in the range 0 through 255. Values are grouped as
++		"red green blue brightness" for each zone in zone_index order.
++		No partial layout is accepted. Reading returns the cached layout in
++		the same format.
++
++		A write selects the static effect and is serialized as one complete
++		transaction. An all-zero layout uses the controller's validated
++		shutdown command rather than eight black zone updates. A layout in
++		which no zone can emit light uses the same shutdown command while its
++		requested channel values remain cached for later writes. Layouts that
++		are uniform within each ring are coalesced into the validated per-ring
++		frames, or one broadcast frame when both rings match. Mixed-quadrant
++		layouts use the direct-zone sequence.
++
++		RGB values are semantic requested values. The active calibration is
++		applied only at UART serialization; reads return the uncalibrated
++		requested values.
++
++What:		/sys/bus/serial/devices/.../rgb/available_effects
++Date:		August 2026
++KernelVersion:	7.2
++Contact:	linux-leds@vger.kernel.org
++Description:
++		Read-only, space-separated effect names accepted by effect.
++
++What:		/sys/bus/serial/devices/.../rgb/effect
++Date:		August 2026
++KernelVersion:	7.2
++Contact:	linux-leds@vger.kernel.org
++Description:
++		Read or select the device-wide analog-stick RGB effect. Accepted
++		writes, with every numeric argument a decimal byte, are:
++
++		static
++		breath <brightness> <red> <green> <blue>
++		rgb-breath <brightness>
++		rainbow
++		reactive <brightness> <idle-red> <idle-green> <idle-blue>
++		         <active-red> <active-green> <active-blue>
++
++		Static restores the cached zone_layout. Breath and rgb-breath are
++		host-rendered by the driver. Rainbow and reactive use bounded MCU
++		initializers. Per-zone LED class writes also select static.
++		User-selected Breath and Reactive colours receive the same Pocket EVO
++		calibration as Static. The captured fixed RGB Breath palette and the
++		MCU-generated Rainbow remain byte-for-byte unchanged.
++
++What:		/sys/bus/serial/devices/.../rgb/enabled
++Date:		August 2026
++KernelVersion:	7.2
++Contact:	linux-leds@vger.kernel.org
++Description:
++		Read or set the device-wide RGB output gate as a boolean. Writing
++		"0" sends the validated shutdown command and pauses host-rendered
++		animation without changing effect, effect arguments, animation
++		position, zone_layout, or LED-class caches. While output is disabled,
++		RGB writes update that desired cached state without transmitting.
++		Writing "1" restores the latest cached RGB state; repeated writes are
++		idempotent. Device-wide RGB writes return EBUSY only while transport
++		is inhibited by real system suspend.
++
++		This gate is independent from the optional controller-mode bootstrap
++		and from the driver's internal transport inhibition during system
++		suspend. It is intended for userspace fake-suspend implementations
++		that do not enter kernel power management.
++
++What:		/sys/class/leds/rgb:joystick-backlight-{left,right}-zone-{270,0,90,180}/
++Date:		August 2026
++KernelVersion:	7.2
++Contact:	linux-leds@vger.kernel.org
++Description:
++		Eight standard multicolor LED class devices, one for each retained
++		Pocket EVO ring segment. multi_intensity is red, green, blue and
++		brightness is the segment brightness, each in the range 0 through
++		255. A write to a zone selects static mode. Use zone_layout when all
++		eight zones must change without another client interleaving frames.
+diff --git a/Documentation/devicetree/bindings/leds/ayaneo,serial-mcu.yaml b/Documentation/devicetree/bindings/leds/ayaneo,serial-mcu.yaml
+new file mode 100644
+index 0000000000000000000000000000000000000000..83ceec85e58e9bad3cdc82aa32abe1cc2c11a451
+--- /dev/null
++++ b/Documentation/devicetree/bindings/leds/ayaneo,serial-mcu.yaml
+@@ -0,0 +1,48 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/leds/ayaneo,serial-mcu.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: AYANEO serial microcontroller
++
++maintainers:
++  - Linux LED Subsystem <linux-leds@vger.kernel.org>
++
++description: |
++  AYANEO handhelds use a serial-connected microcontroller for features such
++  as controller mode and analog-stick RGB lighting. On the Pocket EVO, the
++  MCU drives four independently retained RGB zones around each analog stick
++  over a dedicated 115200 baud UART.
++
++allOf:
++  - $ref: /schemas/serial/serial-peripheral-props.yaml#
++
++properties:
++  compatible:
++    const: ayaneo,serial-mcu
++
++  ayaneo,xbox360-mode:
++    type: boolean
++    description:
++      Send the AYANEO Xbox 360 controller-mode initialization sequence at
++      probe and restore it after system resume.
++
++  current-speed:
++    const: 115200
++
++required:
++  - compatible
++
++additionalProperties: false
++
++examples:
++  - |
++    serial {
++        mcu {
++            compatible = "ayaneo,serial-mcu";
++            current-speed = <115200>;
++            ayaneo,xbox360-mode;
++        };
++    };
++...
+diff --git a/drivers/leds/rgb/Kconfig b/drivers/leds/rgb/Kconfig
+index 6e9ab5f60714b2355257a585d01e5f436539b0a8..fc0ea0a131a45fab338e0492a54ef4274afcc859 100644
+--- a/drivers/leds/rgb/Kconfig
++++ b/drivers/leds/rgb/Kconfig
+@@ -2,6 +2,19 @@
+ 
+ if LEDS_CLASS_MULTICOLOR
+ 
++config LEDS_AYANEO_POCKET_EVO
++	tristate "AYANEO Pocket EVO analog-stick RGB support"
++	depends on OF
++	depends on SERIAL_DEV_BUS
++	help
++	  Say Y or M here to enable the eight-zone analog-stick RGB controller
++	  found in the AYANEO Pocket EVO. The controller is attached to a
++	  dedicated UART and is exposed as eight multicolor LED class devices,
++	  with a device-wide atomic layout and effect interface.
++
++	  To compile this driver as a module, choose M here: the module will be
++	  called leds-ayaneo-pocket-evo.
++
+ config LEDS_GROUP_MULTICOLOR
+ 	tristate "LEDs group multi-color support"
+ 	depends on OF
+diff --git a/drivers/leds/rgb/Makefile b/drivers/leds/rgb/Makefile
+index cc0f2df6628692f5cec6909952189092d76544fb..0af8b59382eff2c1952664b8183346726c8b943d 100644
+--- a/drivers/leds/rgb/Makefile
++++ b/drivers/leds/rgb/Makefile
+@@ -1,5 +1,6 @@
+ # SPDX-License-Identifier: GPL-2.0
+ 
++obj-$(CONFIG_LEDS_AYANEO_POCKET_EVO)	+= leds-ayaneo-pocket-evo.o
+ obj-$(CONFIG_LEDS_GROUP_MULTICOLOR)	+= leds-group-multicolor.o
+ obj-$(CONFIG_LEDS_KTD202X)		+= leds-ktd202x.o
+ obj-$(CONFIG_LEDS_LP5812)		+= leds-lp5812.o
+diff --git a/drivers/leds/rgb/leds-ayaneo-pocket-evo.c b/drivers/leds/rgb/leds-ayaneo-pocket-evo.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..3fbce2a6941a1c5e01f83d79fd7f6bc3f52cbb3a
+--- /dev/null
++++ b/drivers/leds/rgb/leds-ayaneo-pocket-evo.c
+@@ -0,0 +1,1639 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * AYANEO Pocket EVO analog-stick RGB controller
++ *
++ * The AR07 controller is attached to a dedicated 115200 8N1 UART.  Binding
++ * through serdev deliberately makes this driver the sole owner of that UART.
++ */
++
++#include <linux/delay.h>
++#include <linux/device.h>
++#include <linux/kernel.h>
++#include <linux/led-class-multicolor.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/property.h>
++#include <linux/serdev.h>
++#include <linux/slab.h>
++#include <linux/string.h>
++#include <linux/suspend.h>
++#include <linux/workqueue.h>
++
++#define EVO_BAUD_RATE			115200
++#define EVO_ZONE_COUNT			8
++#define EVO_RING_ZONE_COUNT		4
++#define EVO_LAYOUT_VALUE_COUNT		(EVO_ZONE_COUNT * 4)
++#define EVO_TARGET_BROADCAST		0x1c
++#define EVO_TARGET_RIGHT		0x20
++#define EVO_TARGET_LEFT			0x21
++#define EVO_REGISTER_FRAME_SIZE		27
++#define EVO_COMMAND_FRAME_SIZE		11
++#define EVO_COMMAND_REPEATS		3
++#define EVO_COMMAND_GAP_MS		40
++#define EVO_ZONE_GAP_MS			350
++#define EVO_MIXED_INIT_COPY_GAP_DEFAULT_MS	40
++#define EVO_MIXED_POST_INIT_DEFAULT_MS		350
++#define EVO_MIXED_ZONE_COPY_GAP_DEFAULT_MS	40
++#define EVO_MIXED_INTER_ZONE_GAP_DEFAULT_MS	350
++#define EVO_MIXED_FINAL_GUARD_DEFAULT_MS	350
++#define EVO_MIXED_COPY_GAP_MIN_MS		40
++#define EVO_MIXED_INIT_COPY_GAP_MAX_MS		1000
++#define EVO_MIXED_POST_INIT_MAX_MS		2500
++#define EVO_MIXED_ZONE_COPY_GAP_MAX_MS		350
++#define EVO_CALIBRATION_GREEN_DEFAULT_PERCENT	15
++#define EVO_CALIBRATION_BLUE_DEFAULT_PERCENT	20
++#define EVO_CALIBRATION_PERCENT_MAX		100
++#define EVO_CALIBRATION_VALUE_COUNT		2
++#define EVO_TX_TIMEOUT_MS		500
++#define EVO_DRAIN_TIMEOUT_MS		500
++#define EVO_EFFECT_TICK_MS		26
++#define EVO_WORK_RETRY_MS		1000
++#define EVO_BREATH_LOW_HOLD_TICKS	20
++#define EVO_BREATH_RISE_TICKS		80
++#define EVO_BREATH_HIGH_HOLD_TICKS	27
++#define EVO_BREATH_FALL_TICKS		80
++#define EVO_BREATH_TICKS		(EVO_BREATH_LOW_HOLD_TICKS + \
++					 EVO_BREATH_RISE_TICKS + \
++					 EVO_BREATH_HIGH_HOLD_TICKS + \
++					 EVO_BREATH_FALL_TICKS)
++
++enum evo_effect {
++	EVO_EFFECT_STATIC,
++	EVO_EFFECT_BREATH,
++	EVO_EFFECT_RGB_BREATH,
++	EVO_EFFECT_RAINBOW,
++	EVO_EFFECT_REACTIVE,
++};
++
++struct evo_rgb;
++
++struct evo_zone {
++	struct led_classdev_mc mc;
++	struct mc_subled subled[3];
++	struct evo_rgb *rgb;
++	u8 index;
++};
++
++struct evo_timing_param {
++	unsigned int value;
++	unsigned int minimum;
++	unsigned int maximum;
++};
++
++struct evo_mixed_timing {
++	unsigned int init_copy_gap_ms;
++	unsigned int post_init_ms;
++	unsigned int zone_copy_gap_ms;
++	unsigned int inter_zone_gap_ms;
++	unsigned int final_guard_ms;
++};
++
++struct evo_calibration {
++	u8 green_percent;
++	u8 blue_percent;
++};
++
++struct evo_rgb {
++	struct serdev_device *serdev;
++	struct evo_zone zones[EVO_ZONE_COUNT];
++	struct mutex lock; /* Serializes every state change and all UART TX. */
++	struct delayed_work effect_work;
++	struct notifier_block pm_nb;
++	struct evo_calibration calibration;
++	u8 layout[EVO_ZONE_COUNT][4];
++	u8 effect_args[7];
++	u16 effect_step;
++	enum evo_effect effect;
++	bool state_valid;
++	bool static_coherent;
++	bool enabled;
++	bool xbox360_mode;
++	bool xbox360_restore_pending;
++	bool rgb_restore_pending;
++	bool tx_inhibited;
++};
++
++static const struct evo_calibration evo_raw_calibration = {
++	.green_percent = EVO_CALIBRATION_PERCENT_MAX,
++	.blue_percent = EVO_CALIBRATION_PERCENT_MAX,
++};
++
++static int evo_timing_param_set(const char *val,
++				const struct kernel_param *kp)
++{
++	struct evo_timing_param *param = kp->arg;
++	unsigned int value;
++	int ret;
++
++	ret = kstrtouint(val, 10, &value);
++	if (ret)
++		return ret;
++	if (value < param->minimum || value > param->maximum)
++		return -ERANGE;
++
++	WRITE_ONCE(param->value, value);
++	return 0;
++}
++
++static int evo_timing_param_get(char *buf, const struct kernel_param *kp)
++{
++	const struct evo_timing_param *param = kp->arg;
++
++	return sysfs_emit(buf, "%u\n", READ_ONCE(param->value));
++}
++
++static const struct kernel_param_ops evo_timing_param_ops = {
++	.set = evo_timing_param_set,
++	.get = evo_timing_param_get,
++};
++
++static struct evo_timing_param evo_mixed_init_copy_gap = {
++	.value = EVO_MIXED_INIT_COPY_GAP_DEFAULT_MS,
++	.minimum = EVO_MIXED_COPY_GAP_MIN_MS,
++	.maximum = EVO_MIXED_INIT_COPY_GAP_MAX_MS,
++};
++module_param_cb(mixed_init_copy_gap_ms, &evo_timing_param_ops,
++		&evo_mixed_init_copy_gap, 0644);
++MODULE_PARM_DESC(mixed_init_copy_gap_ms,
++		 "Mixed layout initializer inter-copy gap in milliseconds");
++
++static struct evo_timing_param evo_mixed_post_init = {
++	.value = EVO_MIXED_POST_INIT_DEFAULT_MS,
++	.minimum = 0,
++	.maximum = EVO_MIXED_POST_INIT_MAX_MS,
++};
++module_param_cb(mixed_post_init_ms, &evo_timing_param_ops,
++		&evo_mixed_post_init, 0644);
++MODULE_PARM_DESC(mixed_post_init_ms,
++		 "Mixed layout delay after the final initializer copy");
++
++static struct evo_timing_param evo_mixed_zone_copy_gap = {
++	.value = EVO_MIXED_ZONE_COPY_GAP_DEFAULT_MS,
++	.minimum = EVO_MIXED_COPY_GAP_MIN_MS,
++	.maximum = EVO_MIXED_ZONE_COPY_GAP_MAX_MS,
++};
++module_param_cb(mixed_zone_copy_gap_ms, &evo_timing_param_ops,
++		&evo_mixed_zone_copy_gap, 0644);
++MODULE_PARM_DESC(mixed_zone_copy_gap_ms,
++		 "Mixed layout zone inter-copy gap in milliseconds");
++
++static struct evo_timing_param evo_mixed_inter_zone_gap = {
++	.value = EVO_MIXED_INTER_ZONE_GAP_DEFAULT_MS,
++	.minimum = EVO_MIXED_COPY_GAP_MIN_MS,
++	.maximum = EVO_MIXED_INTER_ZONE_GAP_DEFAULT_MS,
++};
++module_param_cb(mixed_inter_zone_gap_ms, &evo_timing_param_ops,
++		&evo_mixed_inter_zone_gap, 0644);
++MODULE_PARM_DESC(mixed_inter_zone_gap_ms,
++		 "Mixed layout gap between adjacent zones in milliseconds");
++
++static struct evo_timing_param evo_mixed_final_guard = {
++	.value = EVO_MIXED_FINAL_GUARD_DEFAULT_MS,
++	.minimum = 0,
++	.maximum = EVO_MIXED_FINAL_GUARD_DEFAULT_MS,
++};
++module_param_cb(mixed_final_guard_ms, &evo_timing_param_ops,
++		&evo_mixed_final_guard, 0644);
++MODULE_PARM_DESC(mixed_final_guard_ms,
++		 "Mixed layout guard after the final zone in milliseconds");
++
++static void evo_snapshot_mixed_timing(struct evo_mixed_timing *timing)
++{
++	timing->init_copy_gap_ms =
++		READ_ONCE(evo_mixed_init_copy_gap.value);
++	timing->post_init_ms = READ_ONCE(evo_mixed_post_init.value);
++	timing->zone_copy_gap_ms =
++		READ_ONCE(evo_mixed_zone_copy_gap.value);
++	timing->inter_zone_gap_ms =
++		READ_ONCE(evo_mixed_inter_zone_gap.value);
++	timing->final_guard_ms =
++		READ_ONCE(evo_mixed_final_guard.value);
++}
++
++static const char * const evo_zone_names[EVO_ZONE_COUNT] = {
++	"rgb:joystick-backlight-left-zone-270",
++	"rgb:joystick-backlight-left-zone-0",
++	"rgb:joystick-backlight-left-zone-90",
++	"rgb:joystick-backlight-left-zone-180",
++	"rgb:joystick-backlight-right-zone-270",
++	"rgb:joystick-backlight-right-zone-0",
++	"rgb:joystick-backlight-right-zone-90",
++	"rgb:joystick-backlight-right-zone-180",
++};
++
++static const char * const evo_effect_names[] = {
++	[EVO_EFFECT_STATIC] = "static",
++	[EVO_EFFECT_BREATH] = "breath",
++	[EVO_EFFECT_RGB_BREATH] = "rgb-breath",
++	[EVO_EFFECT_RAINBOW] = "rainbow",
++	[EVO_EFFECT_REACTIVE] = "reactive",
++};
++
++static const u8 evo_rgb_breath_palette[][3] = {
++	{ 0xff, 0x00, 0xff },
++	{ 0x00, 0xff, 0x00 },
++	{ 0x00, 0x00, 0xff },
++	{ 0xff, 0x00, 0x00 },
++	{ 0x00, 0xff, 0x00 },
++	{ 0x00, 0x00, 0xff },
++	{ 0xff, 0xff, 0x00 },
++};
++
++static const u8 evo_off_frame[EVO_REGISTER_FRAME_SIZE] = {
++	0xf7, 0x00, 0x1c, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00,
++	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3c, 0xed,
++};
++
++static const u8 evo_rainbow_frame[EVO_COMMAND_FRAME_SIZE] = {
++	0xf7, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xed,
++};
++
++static const u8 evo_xbox360_frame[EVO_COMMAND_FRAME_SIZE] = {
++	0xe7, 0x55, 0x05, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5b, 0xed,
++};
++
++static const u8 evo_xbox360_ascii[] = "5505010000000000";
++
++static size_t evo_receive_buf(struct serdev_device *serdev, const u8 *data,
++			      size_t count)
++{
++	return count;
++}
++
++static const struct serdev_device_ops evo_serdev_ops = {
++	.receive_buf = evo_receive_buf,
++	.write_wakeup = serdev_device_write_wakeup,
++};
++
++/* Caller holds rgb->lock. */
++static int evo_write_full_locked(struct evo_rgb *rgb, const u8 *data,
++				 size_t len)
++{
++	ssize_t ret;
++
++	if (rgb->tx_inhibited)
++		return -EBUSY;
++
++	ret = serdev_device_write(rgb->serdev, data, len,
++				  msecs_to_jiffies(EVO_TX_TIMEOUT_MS));
++	if (ret < 0)
++		return ret;
++	if (ret != len)
++		return -ETIMEDOUT;
++
++	serdev_device_wait_until_sent(rgb->serdev,
++				      msecs_to_jiffies(EVO_DRAIN_TIMEOUT_MS));
++	return 0;
++}
++
++/* Caller holds rgb->lock. */
++static int evo_write_repeated_locked(struct evo_rgb *rgb, const u8 *data,
++				     size_t len, unsigned int gap_ms)
++{
++	unsigned int i;
++	int ret;
++
++	for (i = 0; i < EVO_COMMAND_REPEATS; i++) {
++		ret = evo_write_full_locked(rgb, data, len);
++		if (ret)
++			return ret;
++		if (i + 1 < EVO_COMMAND_REPEATS)
++			msleep(gap_ms);
++	}
++
++	return 0;
++}
++
++static u8 evo_checksum(const u8 *frame, size_t first, size_t last)
++{
++	unsigned int sum = 0;
++	size_t i;
++
++	for (i = first; i <= last; i++)
++		sum += frame[i];
++
++	return sum;
++}
++
++static u8 evo_calibrate_mixed_channel(u8 red, u8 channel,
++				      unsigned int percent)
++{
++	unsigned int calibrated;
++
++	if (!red || !channel)
++		return channel;
++	if (!percent)
++		return 0;
++
++	calibrated = channel * percent / 100;
++	return max(calibrated, 1U);
++}
++
++static void evo_build_static_frame(u8 *frame, u8 target, u8 red, u8 green,
++				   u8 blue, u8 brightness,
++				   const struct evo_calibration *calibration)
++{
++	static const u8 registers[] = {
++		0x20, 0x80, 0x81, 0x8b, 0x88, 0x89, 0x8a, 0x86,
++		0x87, 0x58, 0x45,
++	};
++	const u8 values[] = {
++		0x01, 0x00, 0x00, 0x0f, red,
++		evo_calibrate_mixed_channel(red, green,
++					    calibration->green_percent),
++		evo_calibrate_mixed_channel(red, blue,
++					    calibration->blue_percent),
++		brightness,
++		brightness, 0x02, 0x00,
++	};
++	unsigned int i;
++
++	memset(frame, 0, EVO_REGISTER_FRAME_SIZE);
++	frame[0] = 0xf7;
++	frame[2] = target;
++	for (i = 0; i < ARRAY_SIZE(registers); i++) {
++		frame[3 + i * 2] = registers[i];
++		frame[4 + i * 2] = values[i];
++	}
++	frame[25] = evo_checksum(frame, 1, 24);
++	frame[26] = 0xed;
++}
++
++static void evo_build_zone_frame(u8 *frame, unsigned int zone,
++				 u8 red, u8 green, u8 blue, u8 brightness,
++				 const struct evo_calibration *calibration)
++{
++	unsigned int local_zone = zone % EVO_RING_ZONE_COUNT;
++	u8 rgb_base = 0x46 + local_zone * 3;
++	u8 target = zone < EVO_RING_ZONE_COUNT ?
++		EVO_TARGET_LEFT : EVO_TARGET_RIGHT;
++	const u8 registers[] = {
++		0x20, 0x58, 0x8b, rgb_base, rgb_base + 1, rgb_base + 2,
++		0x21 + local_zone, 0x45,
++	};
++	const u8 values[] = {
++		0x01, 0x02, 0x40, red,
++		evo_calibrate_mixed_channel(red, green,
++					    calibration->green_percent),
++		evo_calibrate_mixed_channel(red, blue,
++					    calibration->blue_percent),
++		brightness, 0x00,
++	};
++	unsigned int i;
++
++	memset(frame, 0, EVO_REGISTER_FRAME_SIZE);
++	frame[0] = 0xf7;
++	frame[2] = target;
++	for (i = 0; i < ARRAY_SIZE(registers); i++) {
++		frame[3 + i * 2] = registers[i];
++		frame[4 + i * 2] = values[i];
++	}
++	frame[25] = evo_checksum(frame, 1, 24);
++	frame[26] = 0xed;
++}
++
++static void evo_build_reactive_frame(u8 *frame, const u8 *args,
++				     const struct evo_calibration *calibration)
++{
++	frame[0] = 0xf7;
++	frame[1] = 0x55;
++	memcpy(frame + 2, args, 7);
++	frame[4] = evo_calibrate_mixed_channel(frame[3], frame[4],
++					       calibration->green_percent);
++	frame[5] = evo_calibrate_mixed_channel(frame[3], frame[5],
++					       calibration->blue_percent);
++	frame[7] = evo_calibrate_mixed_channel(frame[6], frame[7],
++					       calibration->green_percent);
++	frame[8] = evo_calibrate_mixed_channel(frame[6], frame[8],
++					       calibration->blue_percent);
++	frame[9] = evo_checksum(frame, 1, 8);
++	frame[10] = 0xed;
++}
++
++static bool evo_layout_is_zero(const u8 layout[EVO_ZONE_COUNT][4])
++{
++	int i;
++	int channel;
++
++	for (i = 0; i < EVO_ZONE_COUNT; i++)
++		for (channel = 0; channel < 4; channel++)
++			if (layout[i][channel])
++				return false;
++
++	return true;
++}
++
++static bool evo_zone_is_visible(const u8 zone[4])
++{
++	return zone[3] && (zone[0] || zone[1] || zone[2]);
++}
++
++static bool evo_ring_is_uniform(const u8 layout[EVO_ZONE_COUNT][4],
++				unsigned int first)
++{
++	unsigned int i;
++
++	for (i = first + 1; i < first + EVO_RING_ZONE_COUNT; i++)
++		if (memcmp(layout[first], layout[i], sizeof(layout[first])))
++			return false;
++
++	return true;
++}
++
++static bool evo_layout_has_uniform_rings(const u8 layout[EVO_ZONE_COUNT][4])
++{
++	return evo_ring_is_uniform(layout, 0) &&
++		evo_ring_is_uniform(layout, EVO_RING_ZONE_COUNT);
++}
++
++static int evo_first_visible_zone(const u8 layout[EVO_ZONE_COUNT][4])
++{
++	int i;
++
++	for (i = 0; i < EVO_ZONE_COUNT; i++)
++		if (evo_zone_is_visible(layout[i]))
++			return i;
++
++	return -1;
++}
++
++/* Caller holds rgb->lock. */
++static int evo_send_static_locked(struct evo_rgb *rgb, u8 target,
++				  const u8 values[4], unsigned int gap_ms,
++				  bool trailing_gap)
++{
++	u8 frame[EVO_REGISTER_FRAME_SIZE];
++	int ret;
++
++	evo_build_static_frame(frame, target, values[0], values[1], values[2],
++			       values[3], &rgb->calibration);
++	ret = evo_write_repeated_locked(rgb, frame, sizeof(frame), gap_ms);
++	if (!ret && trailing_gap)
++		msleep(gap_ms);
++
++	return ret;
++}
++
++/* Caller holds rgb->lock; both rings are uniform and visibly enabled. */
++static int evo_apply_uniform_rings_locked(struct evo_rgb *rgb,
++					  const u8 layout[EVO_ZONE_COUNT][4])
++{
++	const u8 *left = layout[0];
++	const u8 *right = layout[EVO_RING_ZONE_COUNT];
++	int ret;
++
++	if (!memcmp(left, right, sizeof(layout[0])))
++		return evo_send_static_locked(rgb, EVO_TARGET_BROADCAST, left,
++					      EVO_COMMAND_GAP_MS, false);
++
++	/* The physically validated per-stick sequence first exits segmented mode
++	 * with the left colour broadcast, then retains independent target state.
++	 */
++	ret = evo_send_static_locked(rgb, EVO_TARGET_BROADCAST, left,
++				     EVO_ZONE_GAP_MS, true);
++	if (ret)
++		return ret;
++	ret = evo_send_static_locked(rgb, EVO_TARGET_LEFT, left,
++				     EVO_ZONE_GAP_MS, true);
++	if (ret)
++		return ret;
++
++	return evo_send_static_locked(rgb, EVO_TARGET_RIGHT, right,
++				      EVO_ZONE_GAP_MS, true);
++}
++
++/* Caller holds rgb->lock. */
++static int evo_send_zone_locked(struct evo_rgb *rgb,
++				const u8 layout[EVO_ZONE_COUNT][4],
++				unsigned int zone,
++				unsigned int copy_gap_ms,
++				unsigned int trailing_gap_ms)
++{
++	u8 frame[EVO_REGISTER_FRAME_SIZE];
++	const u8 *values = layout[zone];
++	int ret;
++
++	evo_build_zone_frame(frame, zone, values[0], values[1], values[2],
++			     values[3], &rgb->calibration);
++	ret = evo_write_repeated_locked(rgb, frame, sizeof(frame),
++					copy_gap_ms);
++	if (!ret && trailing_gap_ms)
++		msleep(trailing_gap_ms);
++
++	return ret;
++}
++
++/* Caller holds rgb->lock. */
++static int evo_apply_layout_locked(struct evo_rgb *rgb,
++				   const u8 layout[EVO_ZONE_COUNT][4])
++{
++	struct evo_mixed_timing timing;
++	u8 initializer_args[7];
++	u8 initializer[EVO_COMMAND_FRAME_SIZE] = {};
++	int initializer_zone;
++	int i;
++	int ret;
++
++	initializer_zone = evo_first_visible_zone(layout);
++	if (evo_layout_is_zero(layout) || initializer_zone < 0)
++		return evo_write_repeated_locked(rgb, evo_off_frame,
++						 sizeof(evo_off_frame),
++						 EVO_COMMAND_GAP_MS);
++
++	if (evo_layout_has_uniform_rings(layout) &&
++	    evo_zone_is_visible(layout[0]) &&
++	    evo_zone_is_visible(layout[EVO_RING_ZONE_COUNT]))
++		return evo_apply_uniform_rings_locked(rgb, layout);
++
++	evo_snapshot_mixed_timing(&timing);
++
++	initializer_args[0] = layout[initializer_zone][3];
++	initializer_args[1] = layout[initializer_zone][0];
++	initializer_args[2] = layout[initializer_zone][1];
++	initializer_args[3] = layout[initializer_zone][2];
++	memcpy(initializer_args + 4, initializer_args + 1, 3);
++	evo_build_reactive_frame(initializer, initializer_args,
++				 &rgb->calibration);
++	ret = evo_write_repeated_locked(rgb, initializer, sizeof(initializer),
++					timing.init_copy_gap_ms);
++	if (ret)
++		return ret;
++
++	/* The validated Android sequence waited 2.5 seconds after its final
++	 * initializer copy before the first zone transaction.
++	 */
++	if (timing.post_init_ms)
++		msleep(timing.post_init_ms);
++
++	for (i = 0; i < EVO_ZONE_COUNT; i++) {
++		unsigned int trailing_gap_ms = i + 1 < EVO_ZONE_COUNT ?
++			timing.inter_zone_gap_ms : timing.final_guard_ms;
++
++		ret = evo_send_zone_locked(rgb, layout, i,
++					   timing.zone_copy_gap_ms,
++					   trailing_gap_ms);
++		if (ret)
++			return ret;
++	}
++
++	return 0;
++}
++
++static u8 evo_breath_level(u8 maximum, unsigned int step, bool rgb_breath)
++{
++	unsigned int ramp_step;
++	u32 minimum;
++	u32 x;
++	u32 eased;
++
++	if (!maximum)
++		return 0;
++
++	minimum = rgb_breath ? min_t(u32, maximum, 2) :
++		min_t(u32, maximum, DIV_ROUND_UP(maximum, 40));
++
++	if (step < EVO_BREATH_LOW_HOLD_TICKS)
++		return minimum;
++	step -= EVO_BREATH_LOW_HOLD_TICKS;
++
++	if (step < EVO_BREATH_RISE_TICKS) {
++		ramp_step = step + 1;
++	} else {
++		step -= EVO_BREATH_RISE_TICKS;
++		if (step < EVO_BREATH_HIGH_HOLD_TICKS)
++			return maximum;
++		step -= EVO_BREATH_HIGH_HOLD_TICKS;
++		ramp_step = EVO_BREATH_FALL_TICKS - step - 1;
++	}
++
++	x = DIV_ROUND_CLOSEST(ramp_step * 255, EVO_BREATH_RISE_TICKS);
++	eased = x * x * (3 * 255 - 2 * x) / (255 * 255);
++	return minimum + DIV_ROUND_CLOSEST((maximum - minimum) * eased, 255);
++}
++
++/* Caller holds rgb->lock. The animation stream deliberately uses one frame
++ * per tick, matching the captured host-rendered transport rather than turning
++ * each 26 ms sample into a three-copy command burst.
++ */
++static int evo_render_breath_locked(struct evo_rgb *rgb,
++				    enum evo_effect effect, const u8 *args,
++				    u16 *effect_step)
++{
++	unsigned int palette_index = 0;
++	unsigned int phase = *effect_step;
++	const u8 *colour = &args[1];
++	u8 frame[EVO_REGISTER_FRAME_SIZE];
++	u8 level;
++	int ret;
++
++	if (effect == EVO_EFFECT_RGB_BREATH) {
++		palette_index = phase / EVO_BREATH_TICKS;
++		phase %= EVO_BREATH_TICKS;
++		colour = evo_rgb_breath_palette[palette_index];
++	}
++
++	level = evo_breath_level(args[0], phase,
++				 effect == EVO_EFFECT_RGB_BREATH);
++	/* RGB Breath uses literal captured UART palette values. */
++	evo_build_static_frame(frame, EVO_TARGET_BROADCAST, colour[0],
++			       colour[1], colour[2], level,
++			       effect == EVO_EFFECT_BREATH ?
++			       &rgb->calibration : &evo_raw_calibration);
++	ret = evo_write_full_locked(rgb, frame, sizeof(frame));
++	if (ret)
++		return ret;
++
++	(*effect_step)++;
++	if (effect == EVO_EFFECT_RGB_BREATH)
++		*effect_step %= EVO_BREATH_TICKS *
++			ARRAY_SIZE(evo_rgb_breath_palette);
++	else
++		*effect_step %= EVO_BREATH_TICKS;
++
++	return 0;
++}
++
++/* Caller holds rgb->lock. */
++static int evo_send_xbox360_locked(struct evo_rgb *rgb)
++{
++	int ret;
++
++	ret = evo_write_full_locked(rgb, evo_xbox360_frame,
++				    sizeof(evo_xbox360_frame));
++	if (ret)
++		return ret;
++	msleep(100);
++	ret = evo_write_full_locked(rgb, evo_xbox360_ascii,
++				    sizeof(evo_xbox360_ascii) - 1);
++	if (ret)
++		return ret;
++	msleep(100);
++
++	return 0;
++}
++
++static int evo_restore_rgb_locked(struct evo_rgb *rgb)
++{
++	u8 frame[EVO_COMMAND_FRAME_SIZE] = {};
++	int ret;
++
++	if (!rgb->state_valid)
++		return 0;
++
++	switch (rgb->effect) {
++	case EVO_EFFECT_STATIC:
++		ret = evo_apply_layout_locked(rgb, rgb->layout);
++		rgb->static_coherent = !ret;
++		return ret;
++	case EVO_EFFECT_BREATH:
++	case EVO_EFFECT_RGB_BREATH:
++		rgb->static_coherent = false;
++		return evo_render_breath_locked(rgb, rgb->effect,
++						rgb->effect_args,
++						&rgb->effect_step);
++	case EVO_EFFECT_RAINBOW:
++		rgb->static_coherent = false;
++		return evo_write_repeated_locked(rgb, evo_rainbow_frame,
++						 sizeof(evo_rainbow_frame),
++						 EVO_COMMAND_GAP_MS);
++	case EVO_EFFECT_REACTIVE:
++		rgb->static_coherent = false;
++		evo_build_reactive_frame(frame, rgb->effect_args,
++					 &rgb->calibration);
++		return evo_write_repeated_locked(rgb, frame, sizeof(frame),
++						 EVO_COMMAND_GAP_MS);
++	}
++
++	return -EINVAL;
++}
++
++static bool evo_restore_is_pending(const struct evo_rgb *rgb)
++{
++	return rgb->xbox360_restore_pending || rgb->rgb_restore_pending;
++}
++
++static void evo_mark_rgb_restore_pending(struct evo_rgb *rgb)
++{
++	if (!rgb->tx_inhibited && rgb->enabled && rgb->state_valid)
++		rgb->rgb_restore_pending = true;
++}
++
++static int evo_restore_xbox360_locked(struct evo_rgb *rgb)
++{
++	int ret;
++
++	if (!rgb->xbox360_mode || !rgb->xbox360_restore_pending)
++		return 0;
++
++	ret = evo_send_xbox360_locked(rgb);
++	if (!ret)
++		rgb->xbox360_restore_pending = false;
++
++	return ret;
++}
++
++static int evo_restore_pending_locked(struct evo_rgb *rgb)
++{
++	int ret;
++
++	ret = evo_restore_xbox360_locked(rgb);
++	if (ret || !rgb->rgb_restore_pending)
++		return ret;
++
++	if (!rgb->enabled) {
++		rgb->rgb_restore_pending = false;
++		return 0;
++	}
++
++	ret = evo_restore_rgb_locked(rgb);
++	if (!ret)
++		rgb->rgb_restore_pending = false;
++
++	return ret;
++}
++
++static bool evo_effect_is_host_rendered(enum evo_effect effect)
++{
++	return effect == EVO_EFFECT_BREATH ||
++	       effect == EVO_EFFECT_RGB_BREATH;
++}
++
++static bool evo_effect_uses_calibration(enum evo_effect effect)
++{
++	return effect == EVO_EFFECT_STATIC || effect == EVO_EFFECT_BREATH ||
++	       effect == EVO_EFFECT_REACTIVE;
++}
++
++static void evo_effect_work(struct work_struct *work)
++{
++	struct evo_rgb *rgb = container_of(to_delayed_work(work),
++					  struct evo_rgb, effect_work);
++	bool requeue = false;
++	unsigned int delay_ms;
++	int ret = 0;
++
++	mutex_lock(&rgb->lock);
++	if (rgb->tx_inhibited)
++		goto out;
++
++	if (evo_restore_is_pending(rgb)) {
++		ret = evo_restore_pending_locked(rgb);
++	} else if (rgb->enabled &&
++		   evo_effect_is_host_rendered(rgb->effect)) {
++		ret = evo_render_breath_locked(rgb, rgb->effect,
++					       rgb->effect_args,
++					       &rgb->effect_step);
++	}
++
++	requeue = evo_restore_is_pending(rgb) ||
++		(rgb->enabled && evo_effect_is_host_rendered(rgb->effect));
++	delay_ms = ret ? EVO_WORK_RETRY_MS : EVO_EFFECT_TICK_MS;
++	if (requeue)
++		queue_delayed_work(system_freezable_wq, &rgb->effect_work,
++				   msecs_to_jiffies(delay_ms));
++out:
++	mutex_unlock(&rgb->lock);
++
++	if (ret)
++		dev_err_ratelimited(&rgb->serdev->dev,
++				    "controller restore/effect write failed: %d\n",
++				    ret);
++}
++
++static int evo_zone_set(struct led_classdev *cdev,
++			enum led_brightness brightness)
++{
++	struct led_classdev_mc *mc = lcdev_to_mccdev(cdev);
++	struct evo_zone *zone = container_of(mc, struct evo_zone, mc);
++	struct evo_rgb *rgb = zone->rgb;
++	u8 next_layout[EVO_ZONE_COUNT][4];
++	bool restart_work = false;
++	int ret;
++
++	cancel_delayed_work_sync(&rgb->effect_work);
++	mutex_lock(&rgb->lock);
++	memcpy(next_layout, rgb->layout, sizeof(next_layout));
++	next_layout[zone->index][0] = zone->subled[0].intensity;
++	next_layout[zone->index][1] = zone->subled[1].intensity;
++	next_layout[zone->index][2] = zone->subled[2].intensity;
++	next_layout[zone->index][3] = brightness;
++
++	if (rgb->tx_inhibited) {
++		ret = -EBUSY;
++		goto rollback;
++	}
++	if (!rgb->enabled) {
++		memcpy(rgb->layout, next_layout, sizeof(rgb->layout));
++		rgb->effect = EVO_EFFECT_STATIC;
++		rgb->state_valid = true;
++		rgb->static_coherent = false;
++		rgb->rgb_restore_pending = false;
++		restart_work = rgb->xbox360_restore_pending;
++		ret = 0;
++		goto out;
++	}
++	ret = evo_restore_xbox360_locked(rgb);
++	if (ret)
++		goto rollback;
++
++	if (rgb->state_valid && rgb->static_coherent &&
++	    rgb->effect == EVO_EFFECT_STATIC &&
++	    evo_first_visible_zone(rgb->layout) >= 0 &&
++	    !evo_layout_has_uniform_rings(rgb->layout) &&
++	    evo_first_visible_zone(next_layout) >= 0)
++		ret = evo_send_zone_locked(rgb, next_layout, zone->index,
++					   EVO_ZONE_GAP_MS, EVO_ZONE_GAP_MS);
++	else
++		ret = evo_apply_layout_locked(rgb, next_layout);
++	if (ret)
++		goto rollback;
++
++	memcpy(rgb->layout, next_layout, sizeof(rgb->layout));
++	rgb->effect = EVO_EFFECT_STATIC;
++	rgb->state_valid = true;
++	rgb->static_coherent = true;
++	rgb->rgb_restore_pending = false;
++	goto out;
++
++rollback:
++	rgb->static_coherent = false;
++	evo_mark_rgb_restore_pending(rgb);
++	zone->subled[0].intensity = rgb->layout[zone->index][0];
++	zone->subled[1].intensity = rgb->layout[zone->index][1];
++	zone->subled[2].intensity = rgb->layout[zone->index][2];
++	cdev->brightness = rgb->layout[zone->index][3];
++	restart_work = !rgb->tx_inhibited &&
++		(evo_restore_is_pending(rgb) ||
++		 (rgb->enabled && evo_effect_is_host_rendered(rgb->effect)));
++out:
++	if (restart_work)
++		mod_delayed_work(system_freezable_wq, &rgb->effect_work,
++				 msecs_to_jiffies(EVO_EFFECT_TICK_MS));
++	mutex_unlock(&rgb->lock);
++
++	return ret;
++}
++
++static void evo_lock_led_caches(struct evo_rgb *rgb)
++{
++	int i;
++
++	for (i = 0; i < EVO_ZONE_COUNT; i++) {
++		if (!i)
++			mutex_lock(&rgb->zones[i].mc.led_cdev.led_access);
++		else
++			mutex_lock_nested(
++				&rgb->zones[i].mc.led_cdev.led_access, i);
++	}
++	for (i = 0; i < EVO_ZONE_COUNT; i++)
++		flush_work(&rgb->zones[i].mc.led_cdev.set_brightness_work);
++}
++
++static void evo_unlock_led_caches(struct evo_rgb *rgb)
++{
++	int i;
++
++	for (i = EVO_ZONE_COUNT - 1; i >= 0; i--)
++		mutex_unlock(&rgb->zones[i].mc.led_cdev.led_access);
++}
++
++static char *evo_next_token(char **input)
++{
++	char *token;
++
++	while ((token = strsep(input, " \t\n")))
++		if (*token)
++			return token;
++
++	return NULL;
++}
++
++static int evo_parse_values(const char *buf, u8 *values, unsigned int count)
++{
++	char *cursor;
++	char *copy;
++	char *token;
++	unsigned int i;
++	int ret = 0;
++
++	copy = kstrdup(buf, GFP_KERNEL);
++	if (!copy)
++		return -ENOMEM;
++	cursor = copy;
++
++	for (i = 0; i < count; i++) {
++		token = evo_next_token(&cursor);
++		if (!token || kstrtou8(token, 10, &values[i])) {
++			ret = -EINVAL;
++			goto out;
++		}
++	}
++	if (evo_next_token(&cursor))
++		ret = -EINVAL;
++out:
++	kfree(copy);
++	return ret;
++}
++
++static ssize_t abi_version_show(struct device *dev,
++				struct device_attribute *attr, char *buf)
++{
++	return sysfs_emit(buf, "3\n");
++}
++static DEVICE_ATTR_RO(abi_version);
++
++static ssize_t calibration_show(struct device *dev,
++				struct device_attribute *attr, char *buf)
++{
++	struct evo_rgb *rgb = dev_get_drvdata(dev);
++	u8 green_percent;
++	u8 blue_percent;
++
++	mutex_lock(&rgb->lock);
++	green_percent = rgb->calibration.green_percent;
++	blue_percent = rgb->calibration.blue_percent;
++	mutex_unlock(&rgb->lock);
++
++	return sysfs_emit(buf, "%u %u\n", green_percent, blue_percent);
++}
++
++static ssize_t calibration_store(struct device *dev,
++				 struct device_attribute *attr,
++				 const char *buf, size_t count)
++{
++	struct evo_rgb *rgb = dev_get_drvdata(dev);
++	struct evo_calibration old_calibration;
++	u8 values[EVO_CALIBRATION_VALUE_COUNT];
++	u16 old_effect_step;
++	bool restart_work = false;
++	int ret;
++
++	ret = evo_parse_values(buf, values, ARRAY_SIZE(values));
++	if (ret)
++		return ret;
++	if (values[0] > EVO_CALIBRATION_PERCENT_MAX ||
++	    values[1] > EVO_CALIBRATION_PERCENT_MAX)
++		return -ERANGE;
++
++	cancel_delayed_work_sync(&rgb->effect_work);
++	evo_lock_led_caches(rgb);
++	mutex_lock(&rgb->lock);
++	if (rgb->tx_inhibited) {
++		ret = -EBUSY;
++		goto out;
++	}
++	if (rgb->calibration.green_percent == values[0] &&
++	    rgb->calibration.blue_percent == values[1]) {
++		restart_work = evo_restore_is_pending(rgb) ||
++			(rgb->enabled &&
++			 evo_effect_is_host_rendered(rgb->effect));
++		goto out;
++	}
++
++	old_calibration = rgb->calibration;
++	old_effect_step = rgb->effect_step;
++	rgb->calibration.green_percent = values[0];
++	rgb->calibration.blue_percent = values[1];
++	rgb->static_coherent = false;
++
++	if (!rgb->enabled || !rgb->state_valid) {
++		rgb->rgb_restore_pending = false;
++		restart_work = rgb->xbox360_restore_pending;
++		goto out;
++	}
++	if (!evo_effect_uses_calibration(rgb->effect)) {
++		restart_work = evo_restore_is_pending(rgb) ||
++			evo_effect_is_host_rendered(rgb->effect);
++		goto out;
++	}
++
++	ret = evo_restore_xbox360_locked(rgb);
++	if (ret)
++		goto rollback;
++	ret = evo_restore_rgb_locked(rgb);
++	if (ret)
++		goto rollback;
++
++	rgb->rgb_restore_pending = false;
++	restart_work = rgb->xbox360_restore_pending ||
++		evo_effect_is_host_rendered(rgb->effect);
++	goto out;
++
++rollback:
++	rgb->calibration = old_calibration;
++	rgb->effect_step = old_effect_step;
++	rgb->static_coherent = false;
++	evo_mark_rgb_restore_pending(rgb);
++	restart_work = evo_restore_is_pending(rgb) ||
++		evo_effect_is_host_rendered(rgb->effect);
++out:
++	if (restart_work)
++		mod_delayed_work(system_freezable_wq, &rgb->effect_work,
++				 msecs_to_jiffies(EVO_EFFECT_TICK_MS));
++	mutex_unlock(&rgb->lock);
++	evo_unlock_led_caches(rgb);
++	if (ret)
++		return ret;
++
++	return count;
++}
++static DEVICE_ATTR_RW(calibration);
++
++static ssize_t zone_index_show(struct device *dev,
++			       struct device_attribute *attr, char *buf)
++{
++	return sysfs_emit(buf,
++		"left-zone-270 left-zone-0 left-zone-90 left-zone-180 "
++		"right-zone-270 right-zone-0 right-zone-90 right-zone-180\n");
++}
++static DEVICE_ATTR_RO(zone_index);
++
++static ssize_t zone_layout_show(struct device *dev,
++				struct device_attribute *attr, char *buf)
++{
++	struct evo_rgb *rgb = dev_get_drvdata(dev);
++	int len = 0;
++	int i;
++	int channel;
++
++	mutex_lock(&rgb->lock);
++	for (i = 0; i < EVO_ZONE_COUNT; i++)
++		for (channel = 0; channel < 4; channel++)
++			len += sysfs_emit_at(buf, len, "%s%u",
++					     i || channel ? " " : "",
++					     rgb->layout[i][channel]);
++	len += sysfs_emit_at(buf, len, "\n");
++	mutex_unlock(&rgb->lock);
++
++	return len;
++}
++
++static ssize_t zone_layout_store(struct device *dev,
++				 struct device_attribute *attr,
++				 const char *buf, size_t count)
++{
++	struct evo_rgb *rgb = dev_get_drvdata(dev);
++	u8 next_layout[EVO_ZONE_COUNT][4];
++	bool restart_work = false;
++	int i;
++	int channel;
++	int ret;
++
++	ret = evo_parse_values(buf, &next_layout[0][0],
++			       EVO_LAYOUT_VALUE_COUNT);
++	if (ret)
++		return ret;
++
++	cancel_delayed_work_sync(&rgb->effect_work);
++	evo_lock_led_caches(rgb);
++	mutex_lock(&rgb->lock);
++	if (rgb->tx_inhibited) {
++		ret = -EBUSY;
++		goto out;
++	}
++	if (rgb->enabled) {
++		ret = evo_restore_xbox360_locked(rgb);
++		if (ret)
++			goto out;
++		ret = evo_apply_layout_locked(rgb, next_layout);
++		if (ret) {
++			rgb->static_coherent = false;
++			goto out;
++		}
++	}
++
++	memcpy(rgb->layout, next_layout, sizeof(rgb->layout));
++	for (i = 0; i < EVO_ZONE_COUNT; i++) {
++		for (channel = 0; channel < 3; channel++)
++			rgb->zones[i].subled[channel].intensity =
++				rgb->layout[i][channel];
++		rgb->zones[i].mc.led_cdev.brightness = rgb->layout[i][3];
++	}
++	rgb->effect = EVO_EFFECT_STATIC;
++	rgb->state_valid = true;
++	rgb->static_coherent = rgb->enabled;
++	rgb->rgb_restore_pending = false;
++	restart_work = rgb->xbox360_restore_pending;
++out:
++	if (ret) {
++		evo_mark_rgb_restore_pending(rgb);
++		restart_work = !rgb->tx_inhibited &&
++			(evo_restore_is_pending(rgb) ||
++			 (rgb->enabled &&
++			  evo_effect_is_host_rendered(rgb->effect)));
++	}
++	if (restart_work)
++		mod_delayed_work(system_freezable_wq, &rgb->effect_work,
++				 msecs_to_jiffies(EVO_EFFECT_TICK_MS));
++	mutex_unlock(&rgb->lock);
++	evo_unlock_led_caches(rgb);
++	if (ret)
++		return ret;
++
++	return count;
++}
++static DEVICE_ATTR_RW(zone_layout);
++
++static ssize_t available_effects_show(struct device *dev,
++				      struct device_attribute *attr, char *buf)
++{
++	return sysfs_emit(buf, "static breath rgb-breath rainbow reactive\n");
++}
++static DEVICE_ATTR_RO(available_effects);
++
++static int evo_effect_by_name(const char *name, enum evo_effect *effect)
++{
++	unsigned int i;
++
++	for (i = 0; i < ARRAY_SIZE(evo_effect_names); i++) {
++		if (!strcmp(name, evo_effect_names[i])) {
++			*effect = i;
++			return 0;
++		}
++	}
++
++	return -EINVAL;
++}
++
++static unsigned int evo_effect_arg_count(enum evo_effect effect)
++{
++	switch (effect) {
++	case EVO_EFFECT_BREATH:
++		return 4;
++	case EVO_EFFECT_RGB_BREATH:
++		return 1;
++	case EVO_EFFECT_REACTIVE:
++		return 7;
++	default:
++		return 0;
++	}
++}
++
++static int evo_parse_effect(const char *buf, enum evo_effect *effect, u8 *args)
++{
++	char *cursor;
++	char *copy;
++	char *token;
++	unsigned int nargs;
++	unsigned int i;
++	int ret;
++
++	copy = kstrdup(buf, GFP_KERNEL);
++	if (!copy)
++		return -ENOMEM;
++	cursor = copy;
++	token = evo_next_token(&cursor);
++	if (!token) {
++		ret = -EINVAL;
++		goto out;
++	}
++
++	ret = evo_effect_by_name(token, effect);
++	if (ret)
++		goto out;
++	nargs = evo_effect_arg_count(*effect);
++	for (i = 0; i < nargs; i++) {
++		token = evo_next_token(&cursor);
++		if (!token || kstrtou8(token, 10, &args[i])) {
++			ret = -EINVAL;
++			goto out;
++		}
++	}
++	if (evo_next_token(&cursor))
++		ret = -EINVAL;
++out:
++	kfree(copy);
++	return ret;
++}
++
++static ssize_t effect_show(struct device *dev, struct device_attribute *attr,
++			   char *buf)
++{
++	struct evo_rgb *rgb = dev_get_drvdata(dev);
++	unsigned int nargs;
++	int len;
++	unsigned int i;
++
++	mutex_lock(&rgb->lock);
++	len = sysfs_emit(buf, "%s", evo_effect_names[rgb->effect]);
++	nargs = evo_effect_arg_count(rgb->effect);
++	for (i = 0; i < nargs; i++)
++		len += sysfs_emit_at(buf, len, " %u", rgb->effect_args[i]);
++	len += sysfs_emit_at(buf, len, "\n");
++	mutex_unlock(&rgb->lock);
++
++	return len;
++}
++
++static ssize_t effect_store(struct device *dev, struct device_attribute *attr,
++			    const char *buf, size_t count)
++{
++	struct evo_rgb *rgb = dev_get_drvdata(dev);
++	enum evo_effect effect;
++	u8 args[7] = {};
++	u8 frame[EVO_COMMAND_FRAME_SIZE] = {};
++	u16 next_step = 0;
++	bool restart_work = false;
++	bool start_work = false;
++	int ret;
++
++	ret = evo_parse_effect(buf, &effect, args);
++	if (ret)
++		return ret;
++
++	cancel_delayed_work_sync(&rgb->effect_work);
++	evo_lock_led_caches(rgb);
++	mutex_lock(&rgb->lock);
++	if (rgb->tx_inhibited) {
++		ret = -EBUSY;
++		goto out;
++	}
++
++	if (rgb->enabled) {
++		ret = evo_restore_xbox360_locked(rgb);
++		if (ret)
++			goto out;
++
++		switch (effect) {
++		case EVO_EFFECT_STATIC:
++			ret = evo_apply_layout_locked(rgb, rgb->layout);
++			break;
++		case EVO_EFFECT_BREATH:
++		case EVO_EFFECT_RGB_BREATH:
++			ret = evo_render_breath_locked(rgb, effect, args,
++						       &next_step);
++			break;
++		case EVO_EFFECT_RAINBOW:
++			ret = evo_write_repeated_locked(rgb, evo_rainbow_frame,
++							sizeof(evo_rainbow_frame),
++							EVO_COMMAND_GAP_MS);
++			break;
++		case EVO_EFFECT_REACTIVE:
++			evo_build_reactive_frame(frame, args,
++						 &rgb->calibration);
++			ret = evo_write_repeated_locked(rgb, frame,
++							sizeof(frame),
++							EVO_COMMAND_GAP_MS);
++			break;
++		}
++	}
++	if (ret) {
++		rgb->static_coherent = false;
++		goto out;
++	}
++
++	rgb->rgb_restore_pending = false;
++	rgb->effect = effect;
++	memcpy(rgb->effect_args, args, sizeof(args));
++	rgb->effect_step = next_step;
++	rgb->state_valid = true;
++	rgb->static_coherent = rgb->enabled && effect == EVO_EFFECT_STATIC;
++	start_work = rgb->xbox360_restore_pending ||
++		(rgb->enabled && evo_effect_is_host_rendered(effect));
++out:
++	if (ret) {
++		evo_mark_rgb_restore_pending(rgb);
++		restart_work = !rgb->tx_inhibited &&
++			(evo_restore_is_pending(rgb) ||
++			 (rgb->enabled &&
++			  evo_effect_is_host_rendered(rgb->effect)));
++	}
++	if (start_work || restart_work)
++		mod_delayed_work(system_freezable_wq, &rgb->effect_work,
++				 msecs_to_jiffies(EVO_EFFECT_TICK_MS));
++	mutex_unlock(&rgb->lock);
++	evo_unlock_led_caches(rgb);
++
++	if (ret)
++		return ret;
++
++	return count;
++}
++static DEVICE_ATTR_RW(effect);
++
++static ssize_t enabled_show(struct device *dev,
++			    struct device_attribute *attr, char *buf)
++{
++	struct evo_rgb *rgb = dev_get_drvdata(dev);
++	bool enabled;
++
++	mutex_lock(&rgb->lock);
++	enabled = rgb->enabled;
++	mutex_unlock(&rgb->lock);
++
++	return sysfs_emit(buf, "%u\n", enabled);
++}
++
++static ssize_t enabled_store(struct device *dev,
++			     struct device_attribute *attr,
++			     const char *buf, size_t count)
++{
++	struct evo_rgb *rgb = dev_get_drvdata(dev);
++	bool start_work = false;
++	bool enable;
++	int blank_ret;
++	int ret;
++
++	ret = kstrtobool(buf, &enable);
++	if (ret)
++		return ret;
++
++	cancel_delayed_work_sync(&rgb->effect_work);
++	evo_lock_led_caches(rgb);
++	mutex_lock(&rgb->lock);
++	if (rgb->tx_inhibited) {
++		ret = -EBUSY;
++		goto out;
++	}
++
++	if (enable == rgb->enabled) {
++		start_work = evo_restore_is_pending(rgb) ||
++			(enable && evo_effect_is_host_rendered(rgb->effect));
++		ret = 0;
++		goto out;
++	}
++	ret = evo_restore_xbox360_locked(rgb);
++	if (ret)
++		goto out;
++
++	if (!enable) {
++		ret = evo_write_repeated_locked(rgb, evo_off_frame,
++						sizeof(evo_off_frame),
++						EVO_COMMAND_GAP_MS);
++		if (ret) {
++			start_work =
++				evo_effect_is_host_rendered(rgb->effect);
++			goto out;
++		}
++
++		rgb->enabled = false;
++		rgb->static_coherent = false;
++		rgb->rgb_restore_pending = false;
++		goto out;
++	}
++
++	/* Restore without resending the independent Xbox 360 mode bootstrap. */
++	rgb->enabled = true;
++	ret = evo_restore_rgb_locked(rgb);
++	if (ret) {
++		blank_ret = evo_write_repeated_locked(rgb, evo_off_frame,
++						      sizeof(evo_off_frame),
++						      EVO_COMMAND_GAP_MS);
++		if (blank_ret)
++			dev_warn(&rgb->serdev->dev,
++				 "could not reblank RGB after restore failure: %d\n",
++				 blank_ret);
++		rgb->enabled = false;
++		rgb->static_coherent = false;
++		rgb->rgb_restore_pending = false;
++		goto out;
++	}
++
++	rgb->rgb_restore_pending = false;
++	start_work = evo_effect_is_host_rendered(rgb->effect);
++out:
++	if (ret) {
++		evo_mark_rgb_restore_pending(rgb);
++		if (!rgb->tx_inhibited)
++			start_work = evo_restore_is_pending(rgb) ||
++				(rgb->enabled &&
++				 evo_effect_is_host_rendered(rgb->effect));
++	}
++	if (start_work)
++		mod_delayed_work(system_freezable_wq, &rgb->effect_work,
++				 msecs_to_jiffies(EVO_EFFECT_TICK_MS));
++	mutex_unlock(&rgb->lock);
++	evo_unlock_led_caches(rgb);
++
++	if (ret)
++		return ret;
++
++	return count;
++}
++static DEVICE_ATTR_RW(enabled);
++
++static struct attribute *evo_rgb_attrs[] = {
++	&dev_attr_abi_version.attr,
++	&dev_attr_calibration.attr,
++	&dev_attr_zone_index.attr,
++	&dev_attr_zone_layout.attr,
++	&dev_attr_available_effects.attr,
++	&dev_attr_effect.attr,
++	&dev_attr_enabled.attr,
++	NULL,
++};
++
++static const struct attribute_group evo_rgb_group = {
++	.name = "rgb",
++	.attrs = evo_rgb_attrs,
++};
++
++static int evo_pm_notify(struct notifier_block *nb, unsigned long action,
++			 void *data)
++{
++	struct evo_rgb *rgb = container_of(nb, struct evo_rgb, pm_nb);
++	int ret;
++
++	switch (action) {
++	case PM_SUSPEND_PREPARE:
++	case PM_HIBERNATION_PREPARE:
++	case PM_RESTORE_PREPARE:
++		cancel_delayed_work_sync(&rgb->effect_work);
++		mutex_lock(&rgb->lock);
++		if (!rgb->tx_inhibited && rgb->enabled) {
++			ret = evo_write_repeated_locked(rgb, evo_off_frame,
++							sizeof(evo_off_frame),
++							EVO_COMMAND_GAP_MS);
++			if (ret)
++				dev_warn(&rgb->serdev->dev,
++					 "could not blank RGB before suspend: %d\n",
++					 ret);
++		}
++		rgb->tx_inhibited = true;
++		rgb->static_coherent = false;
++		mutex_unlock(&rgb->lock);
++		break;
++	case PM_POST_SUSPEND:
++	case PM_POST_HIBERNATION:
++	case PM_POST_RESTORE:
++		mutex_lock(&rgb->lock);
++		rgb->tx_inhibited = false;
++		rgb->static_coherent = false;
++		rgb->xbox360_restore_pending = rgb->xbox360_mode;
++		rgb->rgb_restore_pending = rgb->enabled && rgb->state_valid;
++		mutex_unlock(&rgb->lock);
++		mod_delayed_work(system_freezable_wq, &rgb->effect_work, 0);
++		break;
++	default:
++		break;
++	}
++
++	return NOTIFY_DONE;
++}
++
++static void evo_unregister_pm_notifier(void *data)
++{
++	struct evo_rgb *rgb = data;
++
++	unregister_pm_notifier(&rgb->pm_nb);
++}
++
++static void evo_init_zone(struct evo_rgb *rgb, unsigned int index)
++{
++	struct evo_zone *zone = &rgb->zones[index];
++	struct led_classdev *cdev = &zone->mc.led_cdev;
++
++	zone->rgb = rgb;
++	zone->index = index;
++	zone->subled[0].color_index = LED_COLOR_ID_RED;
++	zone->subled[1].color_index = LED_COLOR_ID_GREEN;
++	zone->subled[2].color_index = LED_COLOR_ID_BLUE;
++	zone->subled[0].intensity = 255;
++	zone->subled[1].intensity = 255;
++	zone->subled[2].intensity = 255;
++	zone->subled[0].max_intensity = 255;
++	zone->subled[1].max_intensity = 255;
++	zone->subled[2].max_intensity = 255;
++	rgb->layout[index][0] = 255;
++	rgb->layout[index][1] = 255;
++	rgb->layout[index][2] = 255;
++	zone->mc.num_colors = ARRAY_SIZE(zone->subled);
++	zone->mc.subled_info = zone->subled;
++	cdev->name = evo_zone_names[index];
++	cdev->color = LED_COLOR_ID_RGB;
++	cdev->max_brightness = 255;
++	cdev->flags |= LED_RETAIN_AT_SHUTDOWN;
++	cdev->brightness_set_blocking = evo_zone_set;
++}
++
++static int evo_register_zone(struct evo_rgb *rgb, unsigned int index)
++{
++	struct evo_zone *zone = &rgb->zones[index];
++
++	return devm_led_classdev_multicolor_register(&rgb->serdev->dev,
++						      &zone->mc);
++}
++
++static int evo_probe(struct serdev_device *serdev)
++{
++	struct device *dev = &serdev->dev;
++	struct evo_rgb *rgb;
++	unsigned int baud;
++	unsigned int i;
++	int ret;
++
++	rgb = devm_kzalloc(dev, sizeof(*rgb), GFP_KERNEL);
++	if (!rgb)
++		return -ENOMEM;
++
++	rgb->serdev = serdev;
++	rgb->effect = EVO_EFFECT_STATIC;
++	rgb->enabled = true;
++	rgb->xbox360_mode =
++		device_property_read_bool(dev, "ayaneo,xbox360-mode");
++	rgb->calibration.green_percent =
++		EVO_CALIBRATION_GREEN_DEFAULT_PERCENT;
++	rgb->calibration.blue_percent =
++		EVO_CALIBRATION_BLUE_DEFAULT_PERCENT;
++	mutex_init(&rgb->lock);
++	INIT_DELAYED_WORK(&rgb->effect_work, evo_effect_work);
++	serdev_device_set_drvdata(serdev, rgb);
++	serdev_device_set_client_ops(serdev, &evo_serdev_ops);
++
++	ret = devm_serdev_device_open(dev, serdev);
++	if (ret)
++		return dev_err_probe(dev, ret, "could not open RGB UART\n");
++
++	baud = serdev_device_set_baudrate(serdev, EVO_BAUD_RATE);
++	if (baud != EVO_BAUD_RATE)
++		return dev_err_probe(dev, -EINVAL,
++				     "could not set 115200 baud (got %u)\n", baud);
++	serdev_device_set_flow_control(serdev, false);
++	ret = serdev_device_set_parity(serdev, SERDEV_PARITY_NONE);
++	if (ret)
++		return dev_err_probe(dev, ret, "could not set 8N1 framing\n");
++
++	if (rgb->xbox360_mode) {
++		mutex_lock(&rgb->lock);
++		ret = evo_send_xbox360_locked(rgb);
++		mutex_unlock(&rgb->lock);
++		if (ret)
++			return dev_err_probe(dev, ret,
++					     "could not initialize Xbox 360 mode\n");
++	}
++
++	for (i = 0; i < EVO_ZONE_COUNT; i++)
++		evo_init_zone(rgb, i);
++
++	for (i = 0; i < EVO_ZONE_COUNT; i++) {
++		ret = evo_register_zone(rgb, i);
++		if (ret)
++			return dev_err_probe(dev, ret,
++					     "could not register RGB zone %u\n", i);
++	}
++
++	ret = devm_device_add_group(dev, &evo_rgb_group);
++	if (ret)
++		return dev_err_probe(dev, ret, "could not create RGB ABI\n");
++
++	rgb->pm_nb.notifier_call = evo_pm_notify;
++	ret = register_pm_notifier(&rgb->pm_nb);
++	if (ret)
++		return dev_err_probe(dev, ret, "could not register PM notifier\n");
++
++	ret = devm_add_action_or_reset(dev, evo_unregister_pm_notifier, rgb);
++	if (ret)
++		return ret;
++
++	dev_info(dev, "AYANEO serial MCU registered (Pocket EVO eight-zone RGB%s)\n",
++		 rgb->xbox360_mode ? ", Xbox 360 mode" : "");
++	return 0;
++}
++
++static void evo_remove(struct serdev_device *serdev)
++{
++	struct evo_rgb *rgb = serdev_device_get_drvdata(serdev);
++
++	devm_release_action(&serdev->dev, evo_unregister_pm_notifier, rgb);
++	mutex_lock(&rgb->lock);
++	rgb->tx_inhibited = true;
++	mutex_unlock(&rgb->lock);
++	cancel_delayed_work_sync(&rgb->effect_work);
++}
++
++static void evo_shutdown(struct serdev_device *serdev)
++{
++	struct evo_rgb *rgb = serdev_device_get_drvdata(serdev);
++
++	cancel_delayed_work_sync(&rgb->effect_work);
++	mutex_lock(&rgb->lock);
++	if (!rgb->tx_inhibited && rgb->enabled)
++		evo_write_repeated_locked(rgb, evo_off_frame,
++					  sizeof(evo_off_frame),
++					  EVO_COMMAND_GAP_MS);
++	rgb->tx_inhibited = true;
++	mutex_unlock(&rgb->lock);
++}
++
++static const struct of_device_id evo_of_match[] = {
++	{ .compatible = "ayaneo,serial-mcu" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, evo_of_match);
++
++static struct serdev_device_driver evo_driver = {
++	.probe = evo_probe,
++	.remove = evo_remove,
++	.shutdown = evo_shutdown,
++	.driver = {
++		.name = "ayaneo-serial-mcu",
++		.of_match_table = evo_of_match,
++	},
++};
++module_serdev_device_driver(evo_driver);
++
++MODULE_AUTHOR("ROCKNIX Project");
++MODULE_DESCRIPTION("AYANEO serial MCU driver with Pocket EVO RGB support");
++MODULE_LICENSE("GPL");
