@@ -1,0 +1,54 @@
+From: gennro <gennro2004@gmail.com>
+Subject: [PATCH] drm/msm/a6xx: bound the GMU's wait for a fault devcoredump
+
+When a GMU OOB request or HFI message times out, a6xx_gmu_set_oob() and
+a6xx_hfi_wait_for_msg_interrupt() wait for fault_coredump_done, in case
+an SMMU fault's devcoredump has stalled the GPU, and retry. They wait with
+no timeout. The fault handler marks the completion pending before
+msm_gpu_fault_crashstate_capture() takes gpu->lock, and recover_worker()
+holds gpu->lock across its GMU calls. When a GMU timeout in recovery meets
+a pagefault, each side waits for the other for good: on the AYN Odin 2
+Portal (A740) the gpu-worker sat in a6xx_gmu_set_oob(), the SMMU context
+fault thread in msm_gpu_fault_crashstate_capture(), and the display stayed
+frozen until a reboot. (This was raised when the wait was added; see
+"drm/msm: Wait for MMU devcoredump when waiting for GMU".)
+
+Wait at most 2 s, then report the timeout, so recovery goes on and the
+devcoredump runs once gpu->lock is free.
+---
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+@@ -440,9 +440,13 @@
+ 
+ 		/* We may timeout because the GMU is temporarily wedged from
+ 		 * pending faults from the GPU and we are taking a devcoredump.
+-		 * Wait until the MMU is resumed and try again.
++		 * Wait until the MMU is resumed and try again, but not for
++		 * ever: the devcoredump takes gpu->lock, which our caller may
++		 * hold (recover_worker), and both would wait on each other.
+ 		 */
+-		wait_for_completion(&a6xx_gpu->base.fault_coredump_done);
++		if (!wait_for_completion_timeout(&a6xx_gpu->base.fault_coredump_done,
++						 msecs_to_jiffies(2000)))
++			break;
+ 	} while (true);
+ 
+ 	if (ret)
+--- a/drivers/gpu/drm/msm/adreno/a6xx_hfi.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_hfi.c
+@@ -127,9 +127,13 @@
+ 
+ 		/* We may timeout because the GMU is temporarily wedged from
+ 		 * pending faults from the GPU and we are taking a devcoredump.
+-		 * Wait until the MMU is resumed and try again.
++		 * Wait until the MMU is resumed and try again, but not for
++		 * ever: the devcoredump takes gpu->lock, which our caller may
++		 * hold (recover_worker), and both would wait on each other.
+ 		 */
+-		wait_for_completion(&a6xx_gpu->base.fault_coredump_done);
++		if (!wait_for_completion_timeout(&a6xx_gpu->base.fault_coredump_done,
++						 msecs_to_jiffies(2000)))
++			break;
+ 	} while (true);
+ 
+ 	if (ret) {

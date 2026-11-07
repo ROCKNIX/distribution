@@ -1,0 +1,41 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026 ROCKNIX (https://github.com/ROCKNIX)
+
+# Save the LED state, turn all LEDS off for sleep, then light the power LED
+# solid blue for the whole suspend transition, including the grace hold. The
+# LED core turns it off as the devices suspend and restores it in early
+# resume, so the same blue is also the first sign of wake, before the screen.
+# batteryledstatus is stopped first: it repaints the LED with charge colors
+# and would override the indication.
+
+. /etc/profile
+
+POWER_LED="/sys/class/leds/power-led"
+
+PRE_SLEEP_LED_STATE=$(get_setting "led.color")
+if [ ! -n "${PRE_SLEEP_LED_STATE}" ]; then
+  PRE_SLEEP_LED_STATE="battery"
+  set_setting "led.color" "battery"
+fi
+set_setting sleep.led.color "${PRE_SLEEP_LED_STATE}"
+
+systemctl stop batteryledstatus 2>/dev/null
+
+# "poweroff" darkens the LEDs without touching the saved colour; "off" would
+# persist led.color=off, and a suspend that dies before the post hooks run
+# would then bring the device back with its LED permanently off.
+/usr/bin/ledcontrol poweroff
+
+if [ -d "${POWER_LED}" ]; then
+  echo none >"${POWER_LED}/trigger"
+  echo 0 0 255 >"${POWER_LED}/multi_intensity"
+  echo 255 >"${POWER_LED}/brightness"
+fi
+
+# Blank the panel on the way down: the kernel resume re-powers it at its
+# last level, which would flash the screen before the post hooks restore
+# the proper brightness.
+for BL in /sys/class/backlight/*/brightness; do
+  [ -f "${BL}" ] && echo 0 >"${BL}"
+done
