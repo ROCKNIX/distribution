@@ -169,9 +169,6 @@ case "${AUTOSAVE}" in
 		;;
 esac
 
-# S922X needs '--sink renderer'
-[[ "${HW_DEVICE}" == "S922X" ]] && OPTS+=("--sink" "renderer")
-
 #7z compression handling
 ROM="${1}"
 if [[ "${ROM}" == *.7z ]]; then
