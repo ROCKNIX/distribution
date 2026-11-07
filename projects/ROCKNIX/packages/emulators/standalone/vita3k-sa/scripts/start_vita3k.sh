@@ -57,6 +57,7 @@ FILELOADINGDELAY=$(get_setting file_loading_delay "${PLATFORM}" "${ROMNAME}")
 SPIRVSHADER=$(get_setting spirv_shader "${PLATFORM}" "${ROMNAME}")
 HASHLESSTEXCACHE=$(get_setting hashless_texture_cache "${PLATFORM}" "${ROMNAME}")
 HTTPENABLE=$(get_setting network_features "${PLATFORM}" "${ROMNAME}")
+ASYNCPIPELINE=$(get_setting async_pipeline_compilation "${PLATFORM}" "${ROMNAME}")
 
 # Graphics Backend
 if [ "${RENDERER}" = "opengl" ]; then
@@ -196,6 +197,11 @@ if [ "${HTTPENABLE}" = "true" ]; then
   sed -i "/^http-enable:/c\http-enable: true" ${CONFIG_FOLDER}/config.yml
 else
   sed -i "/^http-enable:/c\http-enable: false" ${CONFIG_FOLDER}/config.yml
+fi
+
+# Asynchronous Pipeline Compilation
+if [ "${ASYNCPIPELINE}" = "true" ] || [ "${ASYNCPIPELINE}" = "false" ]; then
+  sed -i "/^async-pipeline-compilation:/c\async-pipeline-compilation: ${ASYNCPIPELINE}" ${CONFIG_FOLDER}/config.yml
 fi
 
 # Create the system vita3k folder on first launch.

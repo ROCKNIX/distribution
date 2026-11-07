@@ -32,10 +32,10 @@ fi
 # Check for firmware files that haven't already been installed
 if compgen -G "/storage/roms/bios/vita3k/*.PUP" > /dev/null; then
     for f in /storage/roms/bios/vita3k/*.PUP; do
-        /usr/bin/vita3kplus-sa -F --firmware "${f}" >> "${LOG_FILE}" 2>&1
+        /usr/bin/vita3kplus-sa --firmware "${f}" >> "${LOG_FILE}" 2>&1
         mv "${f}" "${f}.installed"
     done
 fi
 
 # Start Vita3K+
-/usr/bin/vita3kplus-sa -F >> "${LOG_FILE}" 2>&1
+/usr/bin/vita3kplus-sa >> "${LOG_FILE}" 2>&1

@@ -50,6 +50,7 @@ FILELOADINGDELAY=$(get_setting file_loading_delay "${PLATFORM}" "${ROMNAME}")
 SPIRVSHADER=$(get_setting spirv_shader "${PLATFORM}" "${ROMNAME}")
 HASHLESSTEXCACHE=$(get_setting hashless_texture_cache "${PLATFORM}" "${ROMNAME}")
 HTTPENABLE=$(get_setting network_features "${PLATFORM}" "${ROMNAME}")
+ASYNCPIPELINE=$(get_setting async_pipeline_compilation "${PLATFORM}" "${ROMNAME}")
 ACCURATETHRED=$(get_setting accurate_thread_scheduling "${PLATFORM}" "${ROMNAME}")
 GUESTCORES=$(get_setting guest_cores "${PLATFORM}" "${ROMNAME}")
 
@@ -193,6 +194,11 @@ else
   sed -i "/^http-enable:/c\http-enable: false" ${CONFIG_FOLDER}/config.yml
 fi
 
+# Asynchronous Pipeline Compilation
+if [ "${ASYNCPIPELINE}" = "true" ] || [ "${ASYNCPIPELINE}" = "false" ]; then
+  sed -i "/^async-pipeline-compilation:/c\async-pipeline-compilation: ${ASYNCPIPELINE}" ${CONFIG_FOLDER}/config.yml
+fi
+
 # Accurate Thread Scheduling
 if [ "${ACCURATETHRED}" = "false" ]; then
   sed -i "/^accurate-thread-scheduling:/c\accurate-thread-scheduling: false" ${CONFIG_FOLDER}/config.yml
@@ -253,13 +259,13 @@ case "$GAME" in
         # Install the requested game and scan so the next gamelist update catches it.
         # Spawn with foot so that output displays as the game is installed, letting the user know something is happening.
         # A killed or closed session exits non-zero, so never let set -e skip the scan and cleanup below.
-        foot /usr/bin/vita3kplus-sa -F --pkg "${GAME}" --zrif "$(cat "${GAME%.pkg}.txt")" || true
+        foot /usr/bin/vita3kplus-sa --pkg "${GAME}" --zrif "$(cat "${GAME%.pkg}.txt")" || true
         /usr/bin/scan_vita_games.sh
 
         # Get the newly installed game's ID and run it!
         NEW_ID=$(grep -vxFf <(echo "$APPS_BEFORE") <(ls /storage/roms/psvita/vita3k/ux0/app/) | head -1)
         if [ -n "${NEW_ID}" ]; then
-            /usr/bin/vita3kplus-sa -F -E -r "${NEW_ID}" >> "${LOG_FILE}" 2>&1 || true
+            /usr/bin/vita3kplus-sa -E -r "${NEW_ID}" >> "${LOG_FILE}" 2>&1 || true
 
             # Mark them as installed so they don't get caught by any other scans or get put in the gamelist more than once.
             mv "${GAME}" "${GAME}.installed"
@@ -271,7 +277,7 @@ case "$GAME" in
         cd "/storage/roms/psvita"
 
         # Otherwise, reasoning applies similarly for .zip files, but they're packaged with a ZRIF and actually run immediately.
-        foot /usr/bin/vita3kplus-sa -F -E "${ROMNAME}" || true
+        foot /usr/bin/vita3kplus-sa -E "${ROMNAME}" || true
         /usr/bin/scan_vita_games.sh
 
         # Store the new game's ID for the check later.
@@ -281,7 +287,7 @@ case "$GAME" in
         fi
         ;;
     *.psvita)
-        /usr/bin/vita3kplus-sa -F -E -r "$(cat "${GAME}")" >> "${LOG_FILE}" 2>&1
+        /usr/bin/vita3kplus-sa -E -r "$(cat "${GAME}")" >> "${LOG_FILE}" 2>&1
         ;;
 esac
 

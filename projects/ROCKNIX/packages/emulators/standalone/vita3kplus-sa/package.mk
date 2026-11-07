@@ -2,7 +2,7 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="vita3kplus-sa"
-PKG_VERSION="781a049109bf42d1748fcd7852d95d9d83c6f82d"
+PKG_VERSION="5581fb1151451fbedc64265d01742483908b87b4"
 PKG_LICENSE="GPLv2"
 PKG_SITE="https://github.com/nckstwrt/Vita3K-Plus"
 PKG_URL="${PKG_SITE}.git"
