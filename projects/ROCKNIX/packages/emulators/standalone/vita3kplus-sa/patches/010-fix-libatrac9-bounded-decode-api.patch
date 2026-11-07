@@ -1,0 +1,53 @@
+--- a/external/LibAtrac9/C/src/libatrac9.c
++++ b/external/LibAtrac9/C/src/libatrac9.c
+@@ -25,6 +25,37 @@ int Atrac9Decode(void* handle, const unsigned char *pAtrac9Buffer, short *pPcmBu
+ 	return Decode(handle, pAtrac9Buffer, (unsigned char*)pPcmBuffer, pNBytesUsed);
+ }
+ 
++// The pinned LibAtrac9 submodule has no bounded entry point. Frame sizes vary
++// inside a fixed superframe, so the remaining superframe bytes are the bound
++// and the decoder reports how many it used.
++int Atrac9DecodeBounded(void* handle, const unsigned char *pAtrac9Buffer,
++    int availableBytes, short *pPcmBuffer, int *pNBytesUsed)
++{
++    enum { ATRAC9_MAX_SUPERFRAME_BYTES = 8192, ATRAC9_PEEK_PADDING = 4 };
++    Atrac9Handle *decoder = (Atrac9Handle*)handle;
++
++    if (!decoder || !decoder->Initialized || !pAtrac9Buffer ||
++        !pPcmBuffer || !pNBytesUsed)
++        return ERR_BAD_CONFIG_DATA;
++
++    *pNBytesUsed = 0;
++    if (availableBytes <= 0 || availableBytes > ATRAC9_MAX_SUPERFRAME_BYTES)
++        return ERR_BAD_CONFIG_DATA;
++
++    unsigned char frame[ATRAC9_MAX_SUPERFRAME_BYTES + ATRAC9_PEEK_PADDING] = {0};
++    memcpy(frame, pAtrac9Buffer, (size_t)availableBytes);
++
++    const int status = Decode(decoder, frame, (unsigned char*)pPcmBuffer, pNBytesUsed);
++    if (status != ERR_SUCCESS)
++        return status;
++
++    if (*pNBytesUsed <= 0 || *pNBytesUsed > availableBytes) {
++        *pNBytesUsed = 0;
++        return ERR_BAD_CONFIG_DATA;
++    }
++    return ERR_SUCCESS;
++}
++
+ int Atrac9GetCodecInfo(void* handle, Atrac9CodecInfo * pCodecInfo)
+ {
+ 	return GetCodecInfo(handle, (CodecInfo*)pCodecInfo);
+--- a/external/LibAtrac9/C/src/libatrac9.h
++++ b/external/LibAtrac9/C/src/libatrac9.h
+@@ -21,6 +21,10 @@ void Atrac9ReleaseHandle(void* handle);
+ 
+ int Atrac9InitDecoder(void* handle, unsigned char *pConfigData);
+ int Atrac9Decode(void* handle, const unsigned char *pAtrac9Buffer, short *pPcmBuffer, int *pNBytesUsed);
++// Bounded entry point used by Vita3K Plus. availableBytes is the space left in
++// the superframe; one frame is consumed from it.
++int Atrac9DecodeBounded(void* handle, const unsigned char *pAtrac9Buffer,
++    int availableBytes, short *pPcmBuffer, int *pNBytesUsed);
+ 
+ int Atrac9GetCodecInfo(void* handle, Atrac9CodecInfo *pCodecInfo);
+ 

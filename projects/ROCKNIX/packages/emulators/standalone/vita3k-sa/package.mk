@@ -35,6 +35,7 @@ PKG_CMAKE_OPTS_TARGET+=" -DCMAKE_BUILD_TYPE=Release \
                          -DBUILD_SHARED_LIBS=OFF \
                          -DUSE_DISCORD_RICH_PRESENCE=OFF \
                          -DUSE_VITA3K_UPDATE=OFF \
+                         -DUSE_LTO=NEVER \
                          ${CMAKE_EXTRA_OPTS}"
 
 post_unpack() {
@@ -53,7 +54,6 @@ makeinstall_target() {
     cp -a ${PKG_BUILD}/.${TARGET_NAME}/bin/shaders-builtin ${INSTALL}/usr/config/vita3k
     cp -a ${PKG_BUILD}/.${TARGET_NAME}/bin/data ${INSTALL}/usr/config/vita3k
     cp -a ${PKG_BUILD}/.${TARGET_NAME}/bin/lang ${INSTALL}/usr/config/vita3k
-    cp -a ${PKG_BUILD}/vita-gamelist.txt ${INSTALL}/usr/config/vita3k
 
   mkdir -p ${INSTALL}/storage/bios/vita3k
 }
