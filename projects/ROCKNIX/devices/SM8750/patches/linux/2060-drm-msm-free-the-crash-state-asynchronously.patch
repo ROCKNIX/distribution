@@ -20,7 +20,9 @@ because msm_gpu_devcoredump_read() takes and drops its own crash
 state reference, and the work takes gpu->lock normally once the
 holder has released it. gpu->crashstate stays set until the work
 runs, which only means a capture in that window is skipped.
-msm_gpu_cleanup() flushes an already queued free before teardown.
+msm_gpu_cleanup() releases a devcoredump that is still registered and
+flushes the queued free last, once gpu->worker is destroyed and nothing
+can capture a crash state any more.
 
 Tested on an Adreno 830 with /sys/class/devcoredump/disabled set to 1:
 IGT msm_recovery gpu-fault recovers and the GPU resumes.
@@ -29,13 +31,19 @@ Fixes: c0fec7f562ec ("drm/msm/gpu: Capture the GPU state on a GPU hang")
 Cc: stable@vger.kernel.org
 Signed-off-by: Nico Angelo Dela Cruz <nicoangelodelacruz@gmail.com>
 Link: https://lore.kernel.org/r/20261101175553.53746-3-nicoangelodelacruz@gmail.com
+[ROCKNIX: v1 flushed at the top of msm_gpu_cleanup(), before gpu->worker
+ is drained (Sashiko review, sashiko-outbox-192563@kernel.org). Moved the
+ flush after kthread_destroy_worker() and added dev_coredump_put() before
+ it, as the author agreed in
+ CAJZkD00oU9iCm4J6EM_yJ7NwjRwABudzTsa9wN23hmTTLWo7nw@mail.gmail.com.
+ Replace with the author's v2.]
 ---
- drivers/gpu/drm/msm/msm_gpu.c | 21 ++++++++++++++++++++-
+ drivers/gpu/drm/msm/msm_gpu.c | 28 +++++++++++++++++++++++++++-
  drivers/gpu/drm/msm/msm_gpu.h |  6 ++++++
- 2 files changed, 26 insertions(+), 1 deletion(-)
+ 2 files changed, 33 insertions(+), 1 deletion(-)
 
 diff --git a/drivers/gpu/drm/msm/msm_gpu.c b/drivers/gpu/drm/msm/msm_gpu.c
-index caa86279f..fded78fdb 100644
+index 8ad7287..2390e16 100644
 --- a/drivers/gpu/drm/msm/msm_gpu.c
 +++ b/drivers/gpu/drm/msm/msm_gpu.c
 @@ -175,6 +175,14 @@ int msm_gpu_hw_init(struct msm_gpu *gpu)
@@ -68,7 +76,7 @@ index caa86279f..fded78fdb 100644
  }
  
  static void msm_gpu_crashstate_get_bo(struct msm_gpu_state *state,
-@@ -899,6 +913,7 @@ int msm_gpu_init(struct drm_device *drm, struct platform_device *pdev,
+@@ -901,6 +915,7 @@ int msm_gpu_init(struct drm_device *drm, struct platform_device *pdev,
  	gpu->dev = drm;
  	gpu->funcs = funcs;
  	gpu->name = name;
@@ -76,22 +84,29 @@ index caa86279f..fded78fdb 100644
  
  	gpu->worker = kthread_run_worker(0, "gpu-worker");
  	if (IS_ERR(gpu->worker)) {
-@@ -1047,6 +1062,10 @@ void msm_gpu_cleanup(struct msm_gpu *gpu)
+@@ -1064,6 +1079,17 @@ void msm_gpu_cleanup(struct msm_gpu *gpu)
+ 		kthread_destroy_worker(gpu->worker);
+ 	}
  
- 	DBG("%s", gpu->name);
- 
-+	/* May be unset if probe failed before msm_gpu_init() */
-+	if (gpu->crashstate_free_work.func)
++	/*
++	 * Nothing captures a crash state any more: release a devcoredump that
++	 * is still registered and wait for the free it, or a drained
++	 * recover_work, queued. May be unset if probe failed before
++	 * msm_gpu_init().
++	 */
++	if (gpu->crashstate_free_work.func) {
++		dev_coredump_put(&gpu->pdev->dev);
 +		flush_work(&gpu->crashstate_free_work);
++	}
 +
- 	for (i = 0; i < ARRAY_SIZE(gpu->rb); i++) {
- 		msm_ringbuffer_destroy(gpu->rb[i]);
- 		gpu->rb[i] = NULL;
+ 	msm_devfreq_cleanup(gpu);
+ 	msm_perfcntr_cleanup(gpu);
+ 
 diff --git a/drivers/gpu/drm/msm/msm_gpu.h b/drivers/gpu/drm/msm/msm_gpu.h
-index 5cf220f75..db9e11e7f 100644
+index 9ead41e..2be8dc1 100644
 --- a/drivers/gpu/drm/msm/msm_gpu.h
 +++ b/drivers/gpu/drm/msm/msm_gpu.h
-@@ -258,6 +258,12 @@ struct msm_gpu {
+@@ -261,6 +261,12 @@ struct msm_gpu {
  
  	struct msm_gpu_state *crashstate;
  
