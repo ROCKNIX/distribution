@@ -18,17 +18,17 @@ within the range of the current GPU level, and vote AB as the measured
 traffic. The msm.gpu_bus_dcvs module parameter turns it off. A8xx
 only, as only its counters are programmed.
 ---
- drivers/gpu/drm/msm/adreno/a6xx_gmu.c | 268 +++++++++++++++++++++-----
+ drivers/gpu/drm/msm/adreno/a6xx_gmu.c | 269 ++++++++++++++++++++++++++++------
  drivers/gpu/drm/msm/adreno/a6xx_gmu.h |  24 +++
- drivers/gpu/drm/msm/adreno/a6xx_gpu.c |  10 +
+ drivers/gpu/drm/msm/adreno/a6xx_gpu.c |  10 ++
  drivers/gpu/drm/msm/adreno/a6xx_gpu.h |   1 +
- drivers/gpu/drm/msm/adreno/a8xx_gpu.c |  37 ++++
+ drivers/gpu/drm/msm/adreno/a8xx_gpu.c |  37 +++++
  drivers/gpu/drm/msm/msm_gpu.h         |   2 +
  drivers/gpu/drm/msm/msm_gpu_devfreq.c |   7 +-
- 7 files changed, 300 insertions(+), 49 deletions(-)
+ 7 files changed, 301 insertions(+), 49 deletions(-)
 
 diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
-index 638e4c595..4afa64847 100644
+index 638e4c5..48bfe38 100644
 --- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
 +++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
 @@ -9,6 +9,7 @@
@@ -39,7 +39,7 @@ index 638e4c595..4afa64847 100644
  #include <soc/qcom/cmd-db.h>
  #include <soc/qcom/tcs.h>
  #include <drm/drm_gem.h>
-@@ -76,6 +77,150 @@ static irqreturn_t a6xx_hfi_irq(int irq, void *data)
+@@ -76,6 +77,151 @@ static irqreturn_t a6xx_hfi_irq(int irq, void *data)
  	return IRQ_HANDLED;
  }
  
@@ -66,11 +66,12 @@ index 638e4c595..4afa64847 100644
 +static u32 a6xx_gmu_ab_vote(struct a6xx_gmu *gmu, u32 bw_index)
 +{
 +	u64 bw = gmu->gpu_bw_table[bw_index], ab;
++	u64 top = gmu->gpu_bw_table[gmu->nr_gpu_bws - 1];
 +
 +	if (!bw)
 +		return 0;
 +
-+	ab = gmu->busmon.ab_kbps ? min_t(u64, gmu->busmon.ab_kbps, bw) : bw * 25 / 100;
++	ab = gmu->busmon.ab_kbps ? min_t(u64, gmu->busmon.ab_kbps, top) : bw * 25 / 100;
 +
 +	/*
 +	 * The AB vote consists of a 16 bit wide quantized level
@@ -79,7 +80,7 @@ index 638e4c595..4afa64847 100644
 +	 * vote = (bandwidth * 2^16) / max bandwidth
 +	 */
 +	ab *= MAX_AB_VOTE;
-+	do_div(ab, gmu->gpu_bw_table[gmu->nr_gpu_bws - 1]);
++	do_div(ab, top);
 +
 +	return AB_VOTE(clamp_t(u64, ab, 1, MAX_AB_VOTE)) | AB_VOTE_ENABLE;
 +}
@@ -190,7 +191,7 @@ index 638e4c595..4afa64847 100644
  bool a6xx_gmu_scales_bw(struct a6xx_gmu *gmu)
  {
  	struct a6xx_gpu *a6xx_gpu = container_of(gmu, struct a6xx_gpu, gmu);
-@@ -189,33 +334,18 @@ void a6xx_gmu_set_freq(struct msm_gpu *gpu, struct dev_pm_opp *opp,
+@@ -189,33 +335,18 @@ void a6xx_gmu_set_freq(struct msm_gpu *gpu, struct dev_pm_opp *opp,
  
  	/* If enabled, find the corresponding DDR bandwidth index */
  	if (a6xx_gmu_scales_bw(gmu)) {
@@ -233,7 +234,7 @@ index 638e4c595..4afa64847 100644
  	}
  
  	gmu->current_perf_index = perf_index;
-@@ -1931,36 +2061,81 @@ static int a6xx_gmu_build_freq_table(struct device *dev, unsigned long *freqs,
+@@ -1931,36 +2062,81 @@ static int a6xx_gmu_build_freq_table(struct device *dev, unsigned long *freqs,
  	return index;
  }
  
@@ -336,7 +337,7 @@ index 638e4c595..4afa64847 100644
  }
  
  static int a6xx_gmu_pwrlevels_probe(struct a6xx_gmu *gmu)
-@@ -1999,8 +2174,7 @@ static int a6xx_gmu_pwrlevels_probe(struct a6xx_gmu *gmu)
+@@ -1999,8 +2175,7 @@ static int a6xx_gmu_pwrlevels_probe(struct a6xx_gmu *gmu)
  	 * of DDR bandwidths from the GPU OPP table
  	 */
  	if (info->bcms)
@@ -347,7 +348,7 @@ index 638e4c595..4afa64847 100644
  	/* Build the list of RPMh votes that we'll send to the GMU */
  	return a6xx_gmu_rpmh_votes_init(gmu);
 diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.h b/drivers/gpu/drm/msm/adreno/a6xx_gmu.h
-index ba83ae1d4..e57c1f61a 100644
+index ba83ae1..e57c1f6 100644
 --- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.h
 +++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.h
 @@ -60,6 +60,24 @@ struct a6xx_bcm {
@@ -396,7 +397,7 @@ index ba83ae1d4..e57c1f61a 100644
  int a6xx_sptprac_enable(struct a6xx_gmu *gmu);
  
 diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
-index 2db05bae3..e5dc1964d 100644
+index 2db05ba..e5dc196 100644
 --- a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
 +++ b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
 @@ -2359,6 +2359,15 @@ static void a6xx_gpu_set_freq(struct msm_gpu *gpu, struct dev_pm_opp *opp,
@@ -424,7 +425,7 @@ index 2db05bae3..e5dc1964d 100644
  		.gpu_set_freq = a6xx_gpu_set_freq,
  		.create_vm = a6xx_create_vm,
 diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gpu.h b/drivers/gpu/drm/msm/adreno/a6xx_gpu.h
-index cc28e8d1e..e500c66f0 100644
+index cc28e8d..e500c66 100644
 --- a/drivers/gpu/drm/msm/adreno/a6xx_gpu.h
 +++ b/drivers/gpu/drm/msm/adreno/a6xx_gpu.h
 @@ -336,6 +336,7 @@ int a8xx_fault_handler(void *arg, unsigned long iova, int flags, void *data);
@@ -436,7 +437,7 @@ index cc28e8d1e..e500c66f0 100644
  void a8xx_gpu_get_slice_info(struct msm_gpu *gpu);
  int a8xx_hw_init(struct msm_gpu *gpu);
 diff --git a/drivers/gpu/drm/msm/adreno/a8xx_gpu.c b/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
-index 06cbbeb64..33837b02c 100644
+index 06cbbeb..33837b0 100644
 --- a/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
 +++ b/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
 @@ -621,6 +621,41 @@ static int a8xx_cp_init(struct msm_gpu *gpu)
@@ -491,7 +492,7 @@ index 06cbbeb64..33837b02c 100644
  	gmem_range_min = SZ_64M;
  	/* Set the GMEM VA range [0x100000:0x100000 + gpu->gmem - 1] */
 diff --git a/drivers/gpu/drm/msm/msm_gpu.h b/drivers/gpu/drm/msm/msm_gpu.h
-index 2be8dc189..215454755 100644
+index 2be8dc1..2154547 100644
 --- a/drivers/gpu/drm/msm/msm_gpu.h
 +++ b/drivers/gpu/drm/msm/msm_gpu.h
 @@ -78,6 +78,8 @@ struct msm_gpu_funcs {
@@ -504,7 +505,7 @@ index 2be8dc189..215454755 100644
  	void (*gpu_set_freq)(struct msm_gpu *gpu, struct dev_pm_opp *opp,
  			     bool suspended);
 diff --git a/drivers/gpu/drm/msm/msm_gpu_devfreq.c b/drivers/gpu/drm/msm/msm_gpu_devfreq.c
-index f3c664b20..01c4ed56e 100644
+index f3c664b..01c4ed5 100644
 --- a/drivers/gpu/drm/msm/msm_gpu_devfreq.c
 +++ b/drivers/gpu/drm/msm/msm_gpu_devfreq.c
 @@ -100,13 +100,16 @@ static int msm_devfreq_get_dev_status(struct device *dev,
@@ -526,6 +527,7 @@ index f3c664b20..01c4ed56e 100644
  	status->busy_time = busy_time;
  
  	return 0;
+
 -- 
 2.56.0
 
