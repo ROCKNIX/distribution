@@ -15,20 +15,23 @@ Qualcomm's gpubw_mon governor does: the GBIF's read and write beats on
 both AXI ports and the cycles they starve for RAM. Every devfreq sample
 step the bus up when it is busy or starved, and down when it is idle,
 within the range of the current GPU level, and vote AB as the measured
-traffic. The msm.gpu_bus_dcvs module parameter turns it off. A8xx
-only, as only its counters are programmed.
+traffic. Like gpubw_mon's fast_bus_hint, step up one level when the
+GPU waits on RAM for over 80% of its RAM time at its lowest clock, or
+two over 95%, as it cannot raise the bus by raising its clock. The
+msm.gpu_bus_dcvs module parameter turns it off. A8xx only, as only its
+counters are programmed.
 ---
- drivers/gpu/drm/msm/adreno/a6xx_gmu.c | 269 ++++++++++++++++++++++++++++------
+ drivers/gpu/drm/msm/adreno/a6xx_gmu.c | 281 ++++++++++++++++++++++++++++------
  drivers/gpu/drm/msm/adreno/a6xx_gmu.h |  24 +++
  drivers/gpu/drm/msm/adreno/a6xx_gpu.c |  10 ++
  drivers/gpu/drm/msm/adreno/a6xx_gpu.h |   1 +
  drivers/gpu/drm/msm/adreno/a8xx_gpu.c |  37 +++++
  drivers/gpu/drm/msm/msm_gpu.h         |   2 +
  drivers/gpu/drm/msm/msm_gpu_devfreq.c |   7 +-
- 7 files changed, 301 insertions(+), 49 deletions(-)
+ 7 files changed, 313 insertions(+), 49 deletions(-)
 
 diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
-index 638e4c5..48bfe38 100644
+index 638e4c595..4fbe0565c 100644
 --- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
 +++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
 @@ -9,6 +9,7 @@
@@ -39,7 +42,7 @@ index 638e4c5..48bfe38 100644
  #include <soc/qcom/cmd-db.h>
  #include <soc/qcom/tcs.h>
  #include <drm/drm_gem.h>
-@@ -76,6 +77,151 @@ static irqreturn_t a6xx_hfi_irq(int irq, void *data)
+@@ -76,6 +77,163 @@ static irqreturn_t a6xx_hfi_irq(int irq, void *data)
  	return IRQ_HANDLED;
  }
  
@@ -53,6 +56,8 @@ index 638e4c5..48bfe38 100644
 +#define BUSMON_TARGET		80
 +#define BUSMON_CAP		75
 +#define BUSMON_WAIT_THRESHOLD	10
++#define BUSMON_FAST_WAIT	80
++#define BUSMON_SUPER_FAST_WAIT	95
 +#define BUSMON_BEAT_BYTES	32
 +
 +static u32 a6xx_gmu_bw_index(struct a6xx_gmu *gmu, int perf_index)
@@ -111,7 +116,7 @@ index 638e4c5..48bfe38 100644
 +}
 +
 +/* -1, +1 or +2 bandwidth steps, as gpubw_mon hints them */
-+static int a6xx_busmon_hint(struct a6xx_gmu *gmu, u32 bw_index)
++static int a6xx_busmon_hint(struct a6xx_gmu *gmu, u32 bw_index, bool at_min)
 +{
 +	struct a6xx_gmu_busmon *bm = &gmu->busmon;
 +	u32 norm_max = div64_u64(bm->win_beats, bm->total_us);
@@ -122,6 +127,14 @@ index 638e4c5..48bfe38 100644
 +	if (norm_max > bm->max) {
 +		a6xx_busmon_set_cutoffs(gmu, norm_max);
 +		return 1;
++	}
++
++	/* At its lowest clock the GPU cannot raise the bus by raising its clock */
++	if (at_min) {
++		if (wait_pct > BUSMON_SUPER_FAST_WAIT)
++			return 2;
++		if (wait_pct > BUSMON_FAST_WAIT)
++			return 1;
 +	}
 +
 +	norm = 100 * norm / BUSMON_TARGET;
@@ -143,6 +156,7 @@ index 638e4c5..48bfe38 100644
 +	int perf_index = gmu->current_perf_index, mod = bm->mod, lo, hi;
 +	u32 ab_kbps = bm->ab_kbps, bw_index;
 +	u64 beats, starved;
++	bool at_min;
 +
 +	if (!bm->ranged || !gmu->nr_gpu_freqs || gmu->legacy)
 +		return;
@@ -175,7 +189,8 @@ index 638e4c5..48bfe38 100644
 +		bw_index = a6xx_gmu_bw_index(gmu, perf_index);
 +		lo = gmu->gpu_bw_min[perf_index] - gmu->gpu_bw_index[perf_index];
 +		hi = gmu->gpu_bw_max[perf_index] - gmu->gpu_bw_index[perf_index];
-+		bm->mod = clamp(bm->mod + a6xx_busmon_hint(gmu, bw_index), lo, hi);
++		at_min = gmu->gpu_freqs[perf_index] <= gpu->devfreq.devfreq->scaling_min_freq;
++		bm->mod = clamp(bm->mod + a6xx_busmon_hint(gmu, bw_index, at_min), lo, hi);
 +		bm->ab_kbps = div64_u64(bm->win_beats * BUSMON_BEAT_BYTES * USEC_PER_SEC,
 +					bm->total_us * 1000);
 +		a6xx_busmon_reset_window(bm);
@@ -191,7 +206,7 @@ index 638e4c5..48bfe38 100644
  bool a6xx_gmu_scales_bw(struct a6xx_gmu *gmu)
  {
  	struct a6xx_gpu *a6xx_gpu = container_of(gmu, struct a6xx_gpu, gmu);
-@@ -189,33 +335,18 @@ void a6xx_gmu_set_freq(struct msm_gpu *gpu, struct dev_pm_opp *opp,
+@@ -189,33 +347,18 @@ void a6xx_gmu_set_freq(struct msm_gpu *gpu, struct dev_pm_opp *opp,
  
  	/* If enabled, find the corresponding DDR bandwidth index */
  	if (a6xx_gmu_scales_bw(gmu)) {
@@ -234,7 +249,7 @@ index 638e4c5..48bfe38 100644
  	}
  
  	gmu->current_perf_index = perf_index;
-@@ -1931,36 +2062,81 @@ static int a6xx_gmu_build_freq_table(struct device *dev, unsigned long *freqs,
+@@ -1931,36 +2074,81 @@ static int a6xx_gmu_build_freq_table(struct device *dev, unsigned long *freqs,
  	return index;
  }
  
@@ -337,7 +352,7 @@ index 638e4c5..48bfe38 100644
  }
  
  static int a6xx_gmu_pwrlevels_probe(struct a6xx_gmu *gmu)
-@@ -1999,8 +2175,7 @@ static int a6xx_gmu_pwrlevels_probe(struct a6xx_gmu *gmu)
+@@ -1999,8 +2187,7 @@ static int a6xx_gmu_pwrlevels_probe(struct a6xx_gmu *gmu)
  	 * of DDR bandwidths from the GPU OPP table
  	 */
  	if (info->bcms)
@@ -348,7 +363,7 @@ index 638e4c5..48bfe38 100644
  	/* Build the list of RPMh votes that we'll send to the GMU */
  	return a6xx_gmu_rpmh_votes_init(gmu);
 diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.h b/drivers/gpu/drm/msm/adreno/a6xx_gmu.h
-index ba83ae1..e57c1f6 100644
+index ba83ae1d4..e57c1f61a 100644
 --- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.h
 +++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.h
 @@ -60,6 +60,24 @@ struct a6xx_bcm {
@@ -397,7 +412,7 @@ index ba83ae1..e57c1f6 100644
  int a6xx_sptprac_enable(struct a6xx_gmu *gmu);
  
 diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
-index 2db05ba..e5dc196 100644
+index 2db05bae3..e5dc1964d 100644
 --- a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
 +++ b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
 @@ -2359,6 +2359,15 @@ static void a6xx_gpu_set_freq(struct msm_gpu *gpu, struct dev_pm_opp *opp,
@@ -425,7 +440,7 @@ index 2db05ba..e5dc196 100644
  		.gpu_set_freq = a6xx_gpu_set_freq,
  		.create_vm = a6xx_create_vm,
 diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gpu.h b/drivers/gpu/drm/msm/adreno/a6xx_gpu.h
-index cc28e8d..e500c66 100644
+index cc28e8d1e..e500c66f0 100644
 --- a/drivers/gpu/drm/msm/adreno/a6xx_gpu.h
 +++ b/drivers/gpu/drm/msm/adreno/a6xx_gpu.h
 @@ -336,6 +336,7 @@ int a8xx_fault_handler(void *arg, unsigned long iova, int flags, void *data);
@@ -437,7 +452,7 @@ index cc28e8d..e500c66 100644
  void a8xx_gpu_get_slice_info(struct msm_gpu *gpu);
  int a8xx_hw_init(struct msm_gpu *gpu);
 diff --git a/drivers/gpu/drm/msm/adreno/a8xx_gpu.c b/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
-index 06cbbeb..33837b0 100644
+index 06cbbeb64..33837b02c 100644
 --- a/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
 +++ b/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
 @@ -621,6 +621,41 @@ static int a8xx_cp_init(struct msm_gpu *gpu)
@@ -492,7 +507,7 @@ index 06cbbeb..33837b0 100644
  	gmem_range_min = SZ_64M;
  	/* Set the GMEM VA range [0x100000:0x100000 + gpu->gmem - 1] */
 diff --git a/drivers/gpu/drm/msm/msm_gpu.h b/drivers/gpu/drm/msm/msm_gpu.h
-index 2be8dc1..2154547 100644
+index 2be8dc189..215454755 100644
 --- a/drivers/gpu/drm/msm/msm_gpu.h
 +++ b/drivers/gpu/drm/msm/msm_gpu.h
 @@ -78,6 +78,8 @@ struct msm_gpu_funcs {
@@ -505,7 +520,7 @@ index 2be8dc1..2154547 100644
  	void (*gpu_set_freq)(struct msm_gpu *gpu, struct dev_pm_opp *opp,
  			     bool suspended);
 diff --git a/drivers/gpu/drm/msm/msm_gpu_devfreq.c b/drivers/gpu/drm/msm/msm_gpu_devfreq.c
-index f3c664b..01c4ed5 100644
+index f3c664b20..01c4ed56e 100644
 --- a/drivers/gpu/drm/msm/msm_gpu_devfreq.c
 +++ b/drivers/gpu/drm/msm/msm_gpu_devfreq.c
 @@ -100,13 +100,16 @@ static int msm_devfreq_get_dev_status(struct device *dev,
@@ -527,7 +542,6 @@ index f3c664b..01c4ed5 100644
  	status->busy_time = busy_time;
  
  	return 0;
-
 -- 
 2.56.0
 
