@@ -1,0 +1,900 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Sat, 7 Nov 2026 23:09:18 -0800
+Subject: [PATCH 15/17] tu/autotune: Estimate GMEM and sysmem time from per-GPU
+ costs
+
+Instead of comparing byte counts with fixed weights, estimate how long each mode takes using costs measured on
+real devices. GPUs without their own entry use the closest one from the same generation, and
+TU_AUTOTUNE_CALIB=off keeps the old heuristic.
+---
+ src/freedreno/vulkan/meson.build          |   1 +
+ src/freedreno/vulkan/tu_autotune.cc       | 189 ++++++++++++++++++++--
+ src/freedreno/vulkan/tu_autotune.h        |  11 +-
+ src/freedreno/vulkan/tu_autotune_calib.cc | 145 +++++++++++++++++
+ src/freedreno/vulkan/tu_autotune_calib.h  |  47 ++++++
+ src/freedreno/vulkan/tu_cmd_buffer.cc     |  27 +++-
+ src/freedreno/vulkan/tu_cmd_buffer.h      |   4 +
+ src/freedreno/vulkan/tu_cs.cc             |   1 +
+ src/freedreno/vulkan/tu_cs.h              |  16 ++
+ src/freedreno/vulkan/tu_device.cc         |   5 +
+ src/freedreno/vulkan/tu_device.h          |   1 +
+ src/freedreno/vulkan/tu_knl_drm_msm.cc    |   2 +
+ src/freedreno/vulkan/tu_knl_drm_virtio.cc |   1 +
+ src/freedreno/vulkan/tu_pass.cc           |   7 +
+ src/freedreno/vulkan/tu_pass.h            |   9 ++
+ src/freedreno/vulkan/tu_shader.cc         |  12 ++
+ src/freedreno/vulkan/tu_shader.h          |   1 +
+ 17 files changed, 458 insertions(+), 21 deletions(-)
+ create mode 100644 src/freedreno/vulkan/tu_autotune_calib.cc
+ create mode 100644 src/freedreno/vulkan/tu_autotune_calib.h
+
+diff --git a/src/freedreno/vulkan/meson.build b/src/freedreno/vulkan/meson.build
+index b0197103975..3df3c01422b 100644
+--- a/src/freedreno/vulkan/meson.build
++++ b/src/freedreno/vulkan/meson.build
+@@ -35,6 +35,7 @@ libtu_files = files(
+   'layers/tu_rmv_layer.cc',
+   'tu_acceleration_structure.cc',
+   'tu_autotune.cc',
++  'tu_autotune_calib.cc',
+   'tu_buffer.cc',
+   'tu_buffer_view.cc',
+   'tu_clear_blit.cc',
+diff --git a/src/freedreno/vulkan/tu_autotune.cc b/src/freedreno/vulkan/tu_autotune.cc
+index 8274e010737..a56f6714809 100644
+--- a/src/freedreno/vulkan/tu_autotune.cc
++++ b/src/freedreno/vulkan/tu_autotune.cc
+@@ -115,6 +115,7 @@ enum class tu_autotune::metric_flag : uint8_t {
+    SAMPLES = BIT(1), /* Enable tracking samples passed metric. */
+    TS = BIT(2),      /* Enable tracking per-RP timestamp metric. */
+    TS_TILE = BIT(3), /* Enable tracking per-tile timestamp metric. */
++   VSC = BIT(4),     /* Copy the VSC visibility stream sizes after the binning pass. */
+ };
+ 
+ struct PACKED tu_autotune::config_t {
+@@ -127,7 +128,7 @@ struct PACKED tu_autotune::config_t {
+    {
+       /* Note: Always keep in sync with rp_history to prevent UB. */
+       if (algo == algorithm::BANDWIDTH) {
+-         metric_flags |= (uint8_t) metric_flag::SAMPLES;
++         metric_flags |= (uint8_t) metric_flag::SAMPLES | (uint8_t) metric_flag::VSC;
+       } else if (algo == algorithm::PROFILED || algo == algorithm::PROFILED_IMM) {
+          metric_flags |= (uint8_t) metric_flag::TS;
+       }
+@@ -432,6 +433,9 @@ struct PACKED tu_autotune::rp_gpu_data {
+     * BV and BR overlap, but that is acceptable for the autotuner's purposes. */
+    uint64_t ts_binning_start;
+    uint64_t ts_binning_end;
++   /* VSC stream sizes per pipe in bytes, only written for GMEM with HW binning. */
++   uint32_t vsc_draw_size[MAX_VSC_PIPES];
++   uint32_t vsc_prim_size[MAX_VSC_PIPES];
+ };
+ 
+ /* Per-tile values for GMEM rendering, this structure is appended to the end of rp_gpu_data for each tile. */
+@@ -528,6 +532,10 @@ struct tu_autotune::rp_entry {
+    uint32_t tile_count;
+    uint32_t draw_count;
+ 
++   /* The binning pass ran, so the first pipe_count VSC sizes are valid. */
++   bool binning = false;
++   uint32_t pipe_count = 0;
++
+    rp_entry(struct tu_device *device, rp_history_handle &&history, config_t config, uint32_t draw_count)
+        : device(device), map(nullptr), history(std::move(history)), config(config), draw_count(draw_count)
+    {
+@@ -578,6 +586,28 @@ struct tu_autotune::rp_entry {
+       return *(tile_gpu_data *) (map + offset);
+    }
+ 
++   /** VSC Visibility Metric **/
++
++   uint64_t get_vsc_draw_bytes()
++   {
++      assert(config.test(metric_flag::VSC) && binning);
++      rp_gpu_data &gpu = get_gpu_data();
++      uint64_t sum = 0;
++      for (uint32_t i = 0; i < pipe_count; i++)
++         sum += gpu.vsc_draw_size[i];
++      return sum;
++   }
++
++   uint64_t get_vsc_prim_bytes()
++   {
++      assert(config.test(metric_flag::VSC) && binning);
++      rp_gpu_data &gpu = get_gpu_data();
++      uint64_t sum = 0;
++      for (uint32_t i = 0; i < pipe_count; i++)
++         sum += gpu.vsc_prim_size[i];
++      return sum;
++   }
++
+    /** Samples-Passed Metric **/
+ 
+    uint64_t get_samples_passed()
+@@ -685,6 +715,8 @@ struct tu_autotune::rp_entry {
+       assert(map && bo.iova);
+       if (config.test(metric_flag::TS))
+          emit_metric_timestamp(cs, bo.iova + offsetof(rp_gpu_data, ts_binning_end));
++      if (config.test(metric_flag::VSC) && pipe_count)
++         tu_emit_vsc_sizes(cs, bo.iova + offsetof(rp_gpu_data, vsc_draw_size), pipe_count);
+    }
+ 
+    void emit_rp_start(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
+@@ -1014,18 +1046,33 @@ struct tu_autotune::rp_history {
+    struct bandwidth_algo {
+     private:
+       exponential_average<uint32_t> mean_samples_passed;
++      /* Per mode, since LRZ in the binning pass drops hidden fragments in GMEM. */
++      exponential_average<uint32_t> mean_samples_passed_mode[2];
++      exponential_average<uint32_t> mean_vsc_draw_bytes;
++      exponential_average<uint32_t> mean_vsc_prim_bytes;
+ 
+     public:
+-      void update(uint32_t samples)
++      void update(uint32_t samples, bool sysmem)
+       {
+          mean_samples_passed.add(samples);
++         mean_samples_passed_mode[sysmem ? 0 : 1].add(samples);
++      }
++
++      void update_vsc(uint32_t draw_bytes, uint32_t prim_bytes)
++      {
++         mean_vsc_draw_bytes.add(draw_bytes);
++         mean_vsc_prim_bytes.add(prim_bytes);
+       }
+ 
+       render_mode get_optimal_mode(rp_history &history,
+                                    const struct tu_cmd_state *cmd_state,
+                                    const struct tu_render_pass *pass,
+                                    const struct tu_framebuffer *framebuffer,
+-                                   const struct tu_render_pass_state *rp_state)
++                                   const struct tu_render_pass_state *rp_state,
++                                   uint32_t stream_dwords,
++                                   uint32_t state_dwords,
++                                   const struct tu_autotune_calib *calib,
++                                   float margin)
+       {
+          uint32_t pass_pixel_count = 0;
+          if (cmd_state->per_layer_render_area) {
+@@ -1041,9 +1088,20 @@ struct tu_autotune::rp_history {
+ 
+          uint64_t sysmem_bandwidth = (uint64_t) pass->sysmem_bandwidth_per_pixel * pass_pixel_count;
+          uint64_t gmem_bandwidth = (uint64_t) pass->gmem_bandwidth_per_pixel * pass_pixel_count;
++         const uint32_t *depth_att = pass->gmem_att_bytes_per_pixel[1];
++         const uint64_t gmem_depth_bandwidth =
++            (uint64_t) (depth_att[TU_ATT_LOAD] + depth_att[TU_ATT_STORE] + depth_att[TU_ATT_LOAD_STORE]) *
++            pass_pixel_count;
+ 
+          uint64_t total_draw_call_bandwidth = 0;
++         uint64_t depth_draw_call_bandwidth = 0;
+          uint64_t mean_samples = mean_samples_passed.get();
++         /* Use the other mode's count until this one has run. */
++         const uint64_t samples_mode_sys = mean_samples_passed_mode[0].get();
++         const uint64_t samples_mode_gmem = mean_samples_passed_mode[1].get();
++         const uint64_t samples_sys = samples_mode_sys ? samples_mode_sys : samples_mode_gmem;
++         const uint64_t samples_gmem = samples_mode_gmem ? samples_mode_gmem : samples_mode_sys;
++         double d_total[2] = { 0.0, 0.0 }, d_depth[2] = { 0.0, 0.0 };
+          if (rp_state->drawcall_count && mean_samples > 0.0) {
+             /* The total draw call bandwidth is estimated as the average samples (collected via tracking samples passed
+              * within the CS) multiplied by the drawcall bandwidth per sample, divided by the amount of draw calls.
+@@ -1053,17 +1111,89 @@ struct tu_autotune::rp_history {
+              */
+             total_draw_call_bandwidth =
+                (mean_samples * rp_state->drawcall_bandwidth_per_sample_sum) / rp_state->drawcall_count;
++            depth_draw_call_bandwidth =
++               (mean_samples * rp_state->drawcall_depth_bandwidth_per_sample_sum) / rp_state->drawcall_count;
++            const uint64_t samples_of[2] = { samples_sys, samples_gmem };
++            for (unsigned m = 0; m < 2; m++) {
++               d_total[m] = (double) samples_of[m] * rp_state->drawcall_bandwidth_per_sample_sum /
++                            rp_state->drawcall_count;
++               d_depth[m] = (double) samples_of[m] * rp_state->drawcall_depth_bandwidth_per_sample_sum /
++                            rp_state->drawcall_count;
++            }
+          }
+ 
+-         /* Drawcalls access the memory in SYSMEM rendering (ignoring CCU). */
+-         sysmem_bandwidth += total_draw_call_bandwidth;
++         uint32_t bin_count = 1;
++         bool hw_binning = false;
++         if (cmd_state->tiling) {
++            const struct tu_vsc_config &vsc = cmd_state->tiling->vsc;
++            bin_count = MAX2(vsc.tile_count.width * vsc.tile_count.height, 1u);
++            hw_binning = vsc.binning_possible && vsc.binning_useful;
++         }
++         bool select_sysmem;
++         double sysmem_us = 0.0, gmem_us = 0.0, vis_bins = 0.0;
++         bool vis_known = false;
++         if (calib->valid) {
++            /* Estimate both modes in us. Bins per draw come from earlier GMEM runs, else assume all of them. */
++            const double draws = rp_state->drawcall_count;
++            const double ib1 = stream_dwords;
++            const double ib2 = state_dwords;
++            const double ib2_per_draw = draws > 0.0 ? ib2 / draws : 0.0;
++            const double all_bins = (double) bin_count * draws;
++            if (hw_binning && calib->bytes_per_vis > 0.0f && !mean_vsc_draw_bytes.empty()) {
++               vis_bins = ((double) mean_vsc_draw_bytes.get() - draws * calib->bytes_per_draw) / calib->bytes_per_vis;
++               vis_bins = CLAMP(vis_bins, MIN2(draws, all_bins), all_bins);
++               vis_known = true;
++            } else {
++               vis_bins = all_bins;
++            }
++            const double skip_bins = MAX2(all_bins - vis_bins, 0.0);
++            const double render_draw_us = calib->t_vis_us + ib2_per_draw * calib->t_state_us;
++
++            /* Depth falls back to the colour weights when it wasn't measured. */
++            const double d_depth_sys = d_depth[0], d_color_sys = d_total[0] - d_depth[0];
++            const double d_depth_gmem = d_depth[1], d_color_gmem = d_total[1] - d_depth[1];
++            const double w_depth_sys = calib->w_depth_sys > 0.0f ? calib->w_depth_sys : 1.0;
++            const double w_depth_gmem = calib->w_depth_gmem > 0.0f ? calib->w_depth_gmem : calib->w_draw;
++            const double w_att[2][TU_ATT_IO_COUNT] = {
++               { calib->w_att_load, calib->w_att_store, calib->w_att_load_store },
++               { calib->w_att_depth_load > 0.0f ? calib->w_att_depth_load : calib->w_att_load,
++                 calib->w_att_depth_store > 0.0f ? calib->w_att_depth_store : calib->w_att_store,
++                 calib->w_att_depth_load_store > 0.0f ? calib->w_att_depth_load_store : calib->w_att_load_store },
++            };
++            double g_att = 0.0;
++            for (unsigned ds = 0; ds < 2; ds++) {
++               for (unsigned io = 0; io < TU_ATT_IO_COUNT; io++)
++                  g_att += (double) pass->gmem_att_bytes_per_pixel[ds][io] * pass_pixel_count * w_att[ds][io];
++            }
++            /* Shading above the baseline shader, per sample. */
++            const double fs_instrs = draws > 0.0 ? (double) rp_state->drawcall_fs_instrs_sum / draws : 0.0;
++            const double fs_tex = draws > 0.0 ? (double) rp_state->drawcall_fs_tex_sum / draws : 0.0;
++            const double shade_per_sample =
++               MAX2(fs_instrs - calib->fs_instrs_base, 0.0) * calib->t_instr_us + fs_tex * calib->t_tex_us;
++            const double shade_sys = (double) samples_sys * shade_per_sample;
++            const double shade_gmem = (double) samples_gmem * shade_per_sample;
++
++            sysmem_us = ((double) sysmem_bandwidth + d_color_sys + d_depth_sys * w_depth_sys) /
++                           calib->bw_bytes_per_us +
++                        draws * render_draw_us + shade_sys;
++            gmem_us = (g_att + d_color_gmem * calib->w_draw + d_depth_gmem * w_depth_gmem) /
++                         calib->bw_bytes_per_us +
++                      (hw_binning ? draws * calib->t_draw_binning_us : 0.0) +
++                      (double) bin_count * ib1 * calib->t_dword_us +
++                      skip_bins * (calib->t_draw_us + ib2_per_draw * calib->t_state_skip_us) +
++                      vis_bins * render_draw_us + (double) bin_count * calib->t_bin_us + shade_gmem;
++            select_sysmem = gmem_us >= sysmem_us * (1.0 - margin);
++         } else {
++            /* Drawcalls access the memory in SYSMEM rendering (ignoring CCU). */
++            sysmem_bandwidth += total_draw_call_bandwidth;
+ 
+-         /* Drawcalls access GMEM in GMEM rendering, but we do not want to ignore them completely.  The state changes
+-          * between tiles also have an overhead.  The magic numbers of 11 and 10 are randomly chosen.
+-          */
+-         gmem_bandwidth = (gmem_bandwidth * 11 + total_draw_call_bandwidth) / 10;
++            /* Drawcalls access GMEM in GMEM rendering, but we do not want to ignore them completely.  The state changes
++             * between tiles also have an overhead.  The magic numbers of 11 and 10 are randomly chosen.
++             */
++            gmem_bandwidth = (gmem_bandwidth * 11 + total_draw_call_bandwidth) / 10;
+ 
+-         bool select_sysmem = sysmem_bandwidth <= gmem_bandwidth;
++            select_sysmem = sysmem_bandwidth <= gmem_bandwidth;
++         }
+          render_mode mode = select_sysmem ? render_mode::SYSMEM : render_mode::GMEM;
+ 
+          UNUSED const VkExtent2D &extent = cmd_state->render_areas[0].extent;
+@@ -1071,11 +1201,18 @@ struct tu_autotune::rp_history {
+             "%" PRIu32 " selecting %s\n"
+             "   mean_samples=%" PRIu64 ", draw_bandwidth_per_sample=%.2f, total_draw_call_bandwidth=%" PRIu64
+             ", render_areas[0]=%" PRIu32 "x%" PRIu32 ", sysmem_bandwidth_per_pixel=%" PRIu32
+-            ", gmem_bandwidth_per_pixel=%" PRIu32 ", sysmem_bandwidth=%" PRIu64 ", gmem_bandwidth=%" PRIu64,
++            ", gmem_bandwidth_per_pixel=%" PRIu32 ", sysmem_bandwidth=%" PRIu64 ", gmem_bandwidth=%" PRIu64
++            ", bins=%" PRIu32 ", draw_dwords=%" PRIu32 ", state_dwords=%" PRIu32
++            ", vis_bins=%.0f%s, vsc_draw=%" PRIu32 ", vsc_prim=%" PRIu32 ", depth_draw_bandwidth=%" PRIu64
++            ", gmem_depth_bandwidth=%" PRIu64 ", samples_sys=%" PRIu64 ", samples_gmem=%" PRIu64
++            ", fs_instrs=%" PRIu32 ", fs_tex=%" PRIu32 ", sysmem_us=%.1f, gmem_us=%.1f",
+             history.hash, rp_state->drawcall_count, render_mode_str(mode), mean_samples,
+             (float) rp_state->drawcall_bandwidth_per_sample_sum / rp_state->drawcall_count, total_draw_call_bandwidth,
+             extent.width, extent.height, pass->sysmem_bandwidth_per_pixel, pass->gmem_bandwidth_per_pixel,
+-            sysmem_bandwidth, gmem_bandwidth);
++            sysmem_bandwidth, gmem_bandwidth, bin_count, stream_dwords, state_dwords, vis_bins,
++            vis_known ? "" : "(prior)", mean_vsc_draw_bytes.get(), mean_vsc_prim_bytes.get(), depth_draw_call_bandwidth,
++            gmem_depth_bandwidth, samples_mode_sys, samples_mode_gmem, rp_state->drawcall_fs_instrs_sum,
++            rp_state->drawcall_fs_tex_sum, sysmem_us, gmem_us);
+ 
+          return mode;
+       }
+@@ -1338,7 +1475,9 @@ struct tu_autotune::rp_history {
+       config_t at_config = at.active_config.load();
+ 
+       if (entry_config.test(metric_flag::SAMPLES) && at_config.is_enabled(algorithm::BANDWIDTH))
+-         bandwidth.update(entry.get_samples_passed());
++         bandwidth.update(entry.get_samples_passed(), entry.sysmem);
++      if (entry_config.test(metric_flag::VSC) && entry.binning && at_config.is_enabled(algorithm::BANDWIDTH))
++         bandwidth.update_vsc(entry.get_vsc_draw_bytes(), entry.get_vsc_prim_bytes());
+       if (entry_config.test(metric_flag::TS)) {
+          if (entry.sysmem) {
+             uint64_t rp_duration = entry.get_rp_duration();
+@@ -1916,8 +2055,12 @@ tu_autotune::get_optimal_mode(struct tu_cmd_buffer *cmd_buffer, rp_ctx_t *rp_ctx
+    if (config.is_enabled(algorithm::PROFILED) || config.is_enabled(algorithm::PROFILED_IMM))
+       return history.profiled.get_optimal_mode(history);
+ 
+-   if (config.is_enabled(algorithm::BANDWIDTH))
+-      return history.bandwidth.get_optimal_mode(history, cmd_state, pass, framebuffer, rp_state);
++   if (config.is_enabled(algorithm::BANDWIDTH)) {
++      const struct tu_cs *draw_cs = &cmd_buffer->draw_cs;
++      return history.bandwidth.get_optimal_mode(history, cmd_state, pass, framebuffer, rp_state,
++                                                tu_cs_total_dwords(draw_cs), draw_cs->draw_state_dwords, &calib,
++                                                calib_margin);
++   }
+ 
+    return default_mode;
+ }
+@@ -2022,16 +2165,30 @@ tu_autotune::begin_renderpass(struct tu_cmd_buffer *cmd, struct tu_cs *cs, rp_ct
+ }
+ 
+ void
+-tu_autotune::begin_binning(struct tu_cs *cs, rp_ctx_t rp_ctx)
++tu_autotune::begin_binning(struct tu_cs *cs, rp_ctx_t rp_ctx, uint32_t pipe_count)
+ {
+    if (!rp_ctx)
+       return;
+ 
+    assert(!rp_ctx->sysmem);
+ 
++   rp_ctx->binning = true;
++   rp_ctx->pipe_count = MIN2(pipe_count, (uint32_t) MAX_VSC_PIPES);
+    rp_ctx->emit_binning_start(cs);
+ }
+ 
++void
++tu_emit_vsc_sizes(struct tu_cs *cs, uint64_t iova, uint32_t pipe_count)
++{
++   assert(pipe_count >= 1 && pipe_count <= MAX_VSC_PIPES);
++   tu_cs_emit_pkt7(cs, CP_REG_TO_MEM, 3);
++   tu_cs_emit(cs, CP_REG_TO_MEM_0_REG(REG_A6XX_VSC_PIPE_DATA_DRAW_SIZE(0)) | CP_REG_TO_MEM_0_CNT(pipe_count));
++   tu_cs_emit_qw(cs, iova);
++   tu_cs_emit_pkt7(cs, CP_REG_TO_MEM, 3);
++   tu_cs_emit(cs, CP_REG_TO_MEM_0_REG(REG_A6XX_VSC_PIPE_DATA_PRIM_SIZE(0)) | CP_REG_TO_MEM_0_CNT(pipe_count));
++   tu_cs_emit_qw(cs, iova + MAX_VSC_PIPES * sizeof(uint32_t));
++}
++
+ void
+ tu_autotune::end_binning(struct tu_cs *cs, rp_ctx_t rp_ctx)
+ {
+diff --git a/src/freedreno/vulkan/tu_autotune.h b/src/freedreno/vulkan/tu_autotune.h
+index a935c505fcf..fe0b8bae2a6 100644
+--- a/src/freedreno/vulkan/tu_autotune.h
++++ b/src/freedreno/vulkan/tu_autotune.h
+@@ -15,6 +15,7 @@
+ #include <unordered_map>
+ #include <vector>
+ 
++#include "tu_autotune_calib.h"
+ #include "tu_cs.h"
+ #include "tu_suballoc.h"
+ 
+@@ -261,6 +262,11 @@ struct tu_autotune {
+                                        uint64_t aon_iova) const;
+ 
+  public:
++   /* Set at device creation. When not valid, the byte-count heuristic is used. */
++   struct tu_autotune_calib calib = {};
++   /* GMEM has to win by at least this much. */
++   float calib_margin = 0.05f;
++
+    tu_autotune(struct tu_device *device, VkResult &result);
+ 
+    ~tu_autotune();
+@@ -332,7 +338,7 @@ struct tu_autotune {
+    void begin_renderpass(struct tu_cmd_buffer *cmd, struct tu_cs *cs, rp_ctx_t rp_ctx);
+    void end_renderpass(struct tu_cmd_buffer *cmd, struct tu_cs *cs, rp_ctx_t rp_ctx);
+ 
+-   void begin_binning(struct tu_cs *cs, rp_ctx_t rp_ctx);
++   void begin_binning(struct tu_cs *cs, rp_ctx_t rp_ctx, uint32_t pipe_count);
+    void end_binning(struct tu_cs *cs, rp_ctx_t rp_ctx);
+ 
+    void begin_tile(struct tu_cmd_buffer *cmd, struct tu_cs *cs, rp_ctx_t rp_ctx, uint32_t tile_idx);
+@@ -364,4 +370,7 @@ struct tu_autotune {
+    rp_key_opt emit_preempt_latency_tracking_rp_hash(struct tu_cmd_buffer *cmd);
+ };
+ 
++/* Copies the VSC draw stream sizes to iova and the prim stream sizes MAX_VSC_PIPES dwords after them. */
++void tu_emit_vsc_sizes(struct tu_cs *cs, uint64_t iova, uint32_t pipe_count);
++
+ #endif /* TU_AUTOTUNE_H */
+\ No newline at end of file
+diff --git a/src/freedreno/vulkan/tu_autotune_calib.cc b/src/freedreno/vulkan/tu_autotune_calib.cc
+new file mode 100644
+index 00000000000..5e868de770d
+--- /dev/null
++++ b/src/freedreno/vulkan/tu_autotune_calib.cc
+@@ -0,0 +1,145 @@
++/*
++ * Copyright © 2026 ROCKNIX
++ * SPDX-License-Identifier: MIT
++ */
++
++/* Per-GPU costs for choosing between GMEM and sysmem rendering. */
++
++#include "tu_autotune_calib.h"
++
++#include <limits.h>
++#include <string.h>
++
++#include "util/log.h"
++#include "util/os_misc.h"
++
++#include "tu_autotune.h"
++#include "tu_device.h"
++
++namespace {
++
++/* Measured on retail devices, taking the cheaper end of the results. Times are in GPU cycles at mhz. */
++struct calib_table_entry {
++   uint32_t chip_id;
++   uint32_t mhz;
++   /* t_dword, t_state_skip, t_draw, t_state, t_vis, t_draw_binning, t_bin */
++   float cycles[7];
++   /* bytes_per_vis, bytes_per_draw, bw_bytes_per_us, w_draw, w_att_load, w_att_store, w_att_load_store,
++    * w_att_depth_load, w_att_depth_store, w_att_depth_load_store, w_depth_gmem, w_depth_sys
++    */
++   float full_clock[12];
++};
++
++const calib_table_entry calib_table[] = {
++   /* A610: MANGMI Air X */
++   { 0x06010000, 1050,
++     { 1.29f, 0.026f, 21.9f, 2.75f, 603.0f, 636.0f, 8390.0f },
++     { 0.498f, 0.952f, 13680.0f, 0.818f, 0.951f, 1.1f, 0.839f, 1.52f, 1.66f, 0.92f, 0.165f, 0.14f } },
++   /* A613: Retroid Pocket Classic, Anbernic RG 55G1 */
++   { 0x06010300, 1010,
++     { 1.27f, 0.0f, 18.5f, 2.86f, 514.0f, 586.0f, 8329.0f },
++     { 0.498f, 0.952f, 14410.0f, 0.886f, 0.758f, 0.827f, 0.617f, 1.43f, 1.45f, 0.74f, 0.137f, 0.01f } },
++   /* A650: Retroid Pocket Flip 2, Mini V2 */
++   { 0x06050002, 925,
++     { 0.294f, 0.03f, 14.2f, 1.86f, 529.0f, 558.0f, 2577.0f },
++     { 0.548f, 1.1f, 52407.0f, 0.576f, 0.922f, 0.856f, 1.02f, 0.95f, 0.78f, 0.547f, 0.0505f, 0.369f } },
++   /* A740: AYN Thor, Odin 2 Mini/Portal, Retroid Pocket 6, Nova, AYANEO Pocket EVO */
++   { 0x43050a01, 680,
++     { 0.24f, 0.0534f, 37.4f, 1.3f, 362.0f, 370.0f, 1771.0f },
++     { 0.506f, 1.33f, 56516.0f, 0.239f, 0.449f, 0.513f, 0.712f, 0.24f, 0.237f, 0.319f, 0.0685f, 0.208f } },
++   /* A750: KONKR Pocket FIT, Lenovo Legion Y700 (2025) */
++   { 0x43051401, 1050,
++     { 0.453f, 0.00666f, 36.3f, 1.57f, 358.0f, 346.0f, 1643.0f },
++     { 0.529f, 0.705f, 55164.0f, 0.151f, 0.523f, 1.02f, 0.891f, 0.388f, 0.778f, 0.561f, 0.0452f, 0.211f } },
++   /* A830: AYN Odin 3, KONKR Pocket FIT Elite */
++   { 0x44050000, 1100,
++     { 0.316f, 0.224f, 68.7f, 1.57f, 211.0f, 156.0f, 2005.0f },
++     { 0.526f, 1.27f, 78458.0f, 0.208f, 1.08f, 1.16f, 0.991f, 0.563f, 0.659f, 0.479f, 0.0248f, 0.268f } },
++};
++
++/* Exact match, else the closest-sized GPU of the same generation, preferring a bigger one. */
++const calib_table_entry *
++find_row(const struct tu_physical_device *pdev)
++{
++   const uint32_t chip_id = (uint32_t) pdev->dev_id.chip_id;
++   const calib_table_entry *best = NULL;
++   int best_score = INT_MAX;
++   uint32_t best_dist = UINT32_MAX;
++
++   for (const calib_table_entry &e : calib_table) {
++      if (e.chip_id == chip_id)
++         return &e;
++
++      const struct fd_dev_id id = { .gpu_id = 0, .chip_id = e.chip_id };
++      const struct fd_dev_info *info = fd_dev_info_raw(&id);
++      if (!info || info->chip != pdev->info->chip)
++         continue;
++
++      const int ccu = (int) info->num_ccu - (int) pdev->info->num_ccu;
++      const int score = ccu >= 0 ? ccu : 1000 - ccu;
++      const uint32_t dist = e.chip_id > chip_id ? e.chip_id - chip_id : chip_id - e.chip_id;
++      if (score < best_score || (score == best_score && dist < best_dist)) {
++         best = &e;
++         best_score = score;
++         best_dist = dist;
++      }
++   }
++   return best;
++}
++
++void
++calib_from_row(const struct tu_physical_device *pdev, const calib_table_entry &e, struct tu_autotune_calib *calib)
++{
++   const double mhz = pdev->max_freq ? pdev->max_freq / 1e6 : e.mhz;
++   const double clock = e.mhz / mhz; /* the GMEM-side weights follow the GPU clock */
++
++   memset(calib, 0, sizeof(*calib));
++   calib->valid = 1;
++   calib->chip_id = e.chip_id;
++   calib->t_dword_us = e.cycles[0] / mhz;
++   calib->t_state_skip_us = e.cycles[1] / mhz;
++   calib->t_draw_us = e.cycles[2] / mhz;
++   calib->t_state_us = e.cycles[3] / mhz;
++   calib->t_vis_us = e.cycles[4] / mhz;
++   calib->t_draw_binning_us = e.cycles[5] / mhz;
++   calib->t_bin_us = e.cycles[6] / mhz;
++   calib->bytes_per_vis = e.full_clock[0];
++   calib->bytes_per_draw = e.full_clock[1];
++   calib->bw_bytes_per_us = e.full_clock[2];
++   calib->w_draw = e.full_clock[3] * clock;
++   calib->w_att_load = e.full_clock[4];
++   calib->w_att_store = e.full_clock[5];
++   calib->w_att_load_store = e.full_clock[6];
++   calib->w_att_depth_load = e.full_clock[7];
++   calib->w_att_depth_store = e.full_clock[8];
++   calib->w_att_depth_load_store = e.full_clock[9];
++   calib->w_depth_gmem = e.full_clock[10] * clock;
++   calib->w_depth_sys = e.full_clock[11];
++}
++
++} /* namespace */
++
++void
++tu_autotune_calib_init(struct tu_device *device)
++{
++   const struct tu_physical_device *pdev = device->physical_device;
++   struct tu_autotune_calib *calib = &device->autotune->calib;
++   memset(calib, 0, sizeof(*calib));
++
++   const char *env = os_get_option("TU_AUTOTUNE_CALIB");
++   if (env && !strcmp(env, "off"))
++      return;
++   if (pdev->info->chip < 6 || pdev->info->chip > 8 || TU_DEBUG(NOBIN) || TU_DEBUG(FORCEBIN))
++      return;
++
++   const calib_table_entry *row = find_row(pdev);
++   if (!row)
++      return;
++
++   calib_from_row(pdev, *row, calib);
++   if (TU_DEBUG(STARTUP)) {
++      mesa_logi("autotune calib: %s row 0x%08x at %.0f MHz",
++                row->chip_id == (uint32_t) pdev->dev_id.chip_id ? "own" : "borrowed", row->chip_id,
++                pdev->max_freq ? pdev->max_freq / 1e6 : row->mhz);
++   }
++}
+diff --git a/src/freedreno/vulkan/tu_autotune_calib.h b/src/freedreno/vulkan/tu_autotune_calib.h
+new file mode 100644
+index 00000000000..32b15bcd2d2
+--- /dev/null
++++ b/src/freedreno/vulkan/tu_autotune_calib.h
+@@ -0,0 +1,47 @@
++/*
++ * Copyright © 2026 ROCKNIX
++ * SPDX-License-Identifier: MIT
++ */
++
++#ifndef TU_AUTOTUNE_CALIB_H
++#define TU_AUTOTUNE_CALIB_H
++
++#include <stdint.h>
++
++struct tu_device;
++
++/* Costs for the GMEM/sysmem estimate, in us. A draw-bin is one draw in one bin. */
++struct tu_autotune_calib {
++   uint32_t valid;
++   uint32_t chip_id; /* table entry used */
++
++   float bw_bytes_per_us;   /* sysmem throughput for blended content */
++   float t_dword_us;        /* per draw stream dword per bin */
++   float t_draw_us;         /* per skipped draw-bin */
++   float t_state_skip_us;   /* per draw state dword per skipped draw-bin */
++   float t_vis_us;          /* per rendered draw-bin */
++   float t_state_us;        /* per draw state dword per rendered draw-bin */
++   float t_draw_binning_us; /* per draw in the binning pass */
++   float bytes_per_vis;     /* VSC draw stream bytes per rendered draw-bin, 0 if unusable */
++   float bytes_per_draw;    /* VSC draw stream bytes per draw */
++   float t_bin_us;          /* per bin */
++   float w_draw;            /* GMEM fragment traffic relative to sysmem */
++   /* GMEM loads and stores relative to sysmem. They overlap, so doing both has its own weight. */
++   float w_att_load;
++   float w_att_store;
++   float w_att_load_store;
++   /* Depth weights, 0 when not known. */
++   float w_depth_sys;
++   float w_depth_gmem;
++   float w_att_depth_load;
++   float w_att_depth_store;
++   float w_att_depth_load_store;
++   /* Shading per sample above fs_instrs_base instructions, 0 when not known. */
++   float t_instr_us;
++   float t_tex_us;
++   float fs_instrs_base;
++};
++
++void tu_autotune_calib_init(struct tu_device *device);
++
++#endif /* TU_AUTOTUNE_CALIB_H */
+diff --git a/src/freedreno/vulkan/tu_cmd_buffer.cc b/src/freedreno/vulkan/tu_cmd_buffer.cc
+index 596c573dbe8..f5e5400be4c 100644
+--- a/src/freedreno/vulkan/tu_cmd_buffer.cc
++++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
+@@ -1157,6 +1157,8 @@ void
+ tu_cs_emit_draw_state(struct tu_cs *cs, uint32_t id, struct tu_draw_state state)
+ {
+    uint32_t enable_mask;
++
++   cs->draw_state_dwords += state.size;
+    switch (id) {
+    case TU_DRAW_STATE_VS:
+    case TU_DRAW_STATE_FS:
+@@ -2632,7 +2634,10 @@ tu6_emit_binning_pass(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
+    const struct tu_framebuffer *fb = cmd->state.framebuffer;
+    const struct tu_tiling_config *tiling = cmd->state.tiling;
+ 
+-   cmd->device->autotune->begin_binning(cs, rp_ctx);
++   {
++      const struct tu_vsc_config *vsc = tu_vsc_config(cmd, tiling);
++      cmd->device->autotune->begin_binning(cs, rp_ctx, vsc->pipe_count.width * vsc->pipe_count.height);
++   }
+ 
+    /* If this command buffer may be executed multiple times, then
+     * viewports/scissor states may have been changed by previous executions
+@@ -6187,6 +6192,10 @@ tu_render_pass_state_merge(struct tu_render_pass_state *dst,
+ 
+    dst->drawcall_bandwidth_per_sample_sum +=
+       src->drawcall_bandwidth_per_sample_sum;
++   dst->drawcall_depth_bandwidth_per_sample_sum +=
++      src->drawcall_depth_bandwidth_per_sample_sum;
++   dst->drawcall_fs_instrs_sum += src->drawcall_fs_instrs_sum;
++   dst->drawcall_fs_tex_sum += src->drawcall_fs_tex_sum;
+    if (!dst->lrz_disable_reason && src->lrz_disable_reason) {
+       dst->lrz_disable_reason = src->lrz_disable_reason;
+       dst->lrz_disabled_at_draw =
+@@ -8454,16 +8463,26 @@ tu6_draw_common(struct tu_cmd_buffer *cmd,
+ 
+    /* add depth memory bandwidth cost */
+    const uint32_t depth_bandwidth = cmd->state.bandwidth.depth_cpp_per_sample;
++   uint32_t ds_bandwidth = 0;
+    if (cmd->vk.dynamic_graphics_state.ds.depth.write_enable)
+-      rp->drawcall_bandwidth_per_sample_sum += depth_bandwidth;
++      ds_bandwidth += depth_bandwidth;
+    if (cmd->vk.dynamic_graphics_state.ds.depth.test_enable)
+-      rp->drawcall_bandwidth_per_sample_sum += depth_bandwidth;
++      ds_bandwidth += depth_bandwidth;
+ 
+    /* add stencil memory bandwidth cost */
+    const uint32_t stencil_bandwidth =
+       cmd->state.bandwidth.stencil_cpp_per_sample;
+    if (cmd->vk.dynamic_graphics_state.ds.stencil.test_enable)
+-      rp->drawcall_bandwidth_per_sample_sum += stencil_bandwidth * 2;
++      ds_bandwidth += stencil_bandwidth * 2;
++   rp->drawcall_bandwidth_per_sample_sum += ds_bandwidth;
++   rp->drawcall_depth_bandwidth_per_sample_sum += ds_bandwidth;
++
++   /* for the autotune shading cost */
++   const struct tu_shader *fs_shader = cmd->state.shaders[MESA_SHADER_FRAGMENT];
++   if (fs_shader && fs_shader->variant && !cmd->state.disable_fs) {
++      rp->drawcall_fs_instrs_sum += fs_shader->variant->info.instrs_count;
++      rp->drawcall_fs_tex_sum += fs_shader->nir_tex_count;
++   }
+ 
+    if (cmd->state.dirty & TU_CMD_DIRTY_FS)
+       tu_flush_dynamic_input_attachments(cmd);
+diff --git a/src/freedreno/vulkan/tu_cmd_buffer.h b/src/freedreno/vulkan/tu_cmd_buffer.h
+index 17bebebd135..c5354bf7e87 100644
+--- a/src/freedreno/vulkan/tu_cmd_buffer.h
++++ b/src/freedreno/vulkan/tu_cmd_buffer.h
+@@ -351,6 +351,10 @@ struct tu_render_pass_state
+     * just intended to be a rough estimate that is easy to calculate.
+     */
+    uint32_t drawcall_bandwidth_per_sample_sum;
++   /* depth/stencil part of the sum above */
++   uint32_t drawcall_depth_bandwidth_per_sample_sum;
++   uint32_t drawcall_fs_instrs_sum;
++   uint32_t drawcall_fs_tex_sum;
+ 
+    const char *lrz_disable_reason;
+    uint32_t lrz_disabled_at_draw;
+diff --git a/src/freedreno/vulkan/tu_cs.cc b/src/freedreno/vulkan/tu_cs.cc
+index cd8631d4cc8..84bc66a2833 100644
+--- a/src/freedreno/vulkan/tu_cs.cc
++++ b/src/freedreno/vulkan/tu_cs.cc
+@@ -535,6 +535,7 @@ tu_cs_reserve_space(struct tu_cs *cs, uint32_t reserved_size)
+ void
+ tu_cs_reset(struct tu_cs *cs)
+ {
++   cs->draw_state_dwords = 0;
+    cs->status = VK_SUCCESS;
+ 
+    if (cs->mode == TU_CS_MODE_EXTERNAL) {
+diff --git a/src/freedreno/vulkan/tu_cs.h b/src/freedreno/vulkan/tu_cs.h
+index 78dcf684c32..ce40c4f57ef 100644
+--- a/src/freedreno/vulkan/tu_cs.h
++++ b/src/freedreno/vulkan/tu_cs.h
+@@ -101,6 +101,9 @@ struct tu_cs
+    uint32_t entry_count;
+    uint32_t entry_capacity;
+ 
++   /* dwords the CP fetches beyond this stream, for autotune */
++   uint32_t draw_state_dwords;
++
+    struct tu_bo_array read_only, read_write;
+ 
+    /* Optional BO that this CS is sub-allocated from for TU_CS_MODE_SUB_STREAM */
+@@ -259,6 +262,18 @@ tu_cs_is_empty(const struct tu_cs *cs)
+    return tu_cs_get_size(cs) == 0;
+ }
+ 
++/**
++ * Return the size, in dwords, of the closed entries plus the current chunk.
++ */
++static inline uint32_t
++tu_cs_total_dwords(const struct tu_cs *cs)
++{
++   uint32_t dwords = tu_cs_get_size(cs);
++   for (uint32_t i = 0; i < cs->entry_count; i++)
++      dwords += cs->entries[i].size / sizeof(uint32_t);
++   return dwords;
++}
++
+ /**
+  * Discard all entries.  This allows \a cs to be reused while keeping the
+  * existing BOs and command packets intact.
+@@ -266,6 +281,7 @@ tu_cs_is_empty(const struct tu_cs *cs)
+ static inline void
+ tu_cs_discard_entries(struct tu_cs *cs)
+ {
++   cs->draw_state_dwords = 0;
+    assert(cs->mode == TU_CS_MODE_GROW);
+    cs->entry_count = 0;
+ }
+diff --git a/src/freedreno/vulkan/tu_device.cc b/src/freedreno/vulkan/tu_device.cc
+index 17bb3efc6ce..2819f77a712 100644
+--- a/src/freedreno/vulkan/tu_device.cc
++++ b/src/freedreno/vulkan/tu_device.cc
+@@ -9,6 +9,8 @@
+ 
+ #include "tu_device.h"
+ 
++#include "tu_autotune_calib.h"
++
+ #include "drm-uapi/drm_fourcc.h"
+ #include "git_sha1.h"
+ #include "perfcntrs/freedreno_perfcntr.h"
+@@ -3242,6 +3244,9 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
+ 
+    device->vis_stream_count = 0;
+ 
++   /* after the queues, meta and autotune are set up */
++   tu_autotune_calib_init(device);
++
+    *pDevice = tu_device_to_handle(device);
+    return VK_SUCCESS;
+ 
+diff --git a/src/freedreno/vulkan/tu_device.h b/src/freedreno/vulkan/tu_device.h
+index 72c3ffe291a..b0255d33051 100644
+--- a/src/freedreno/vulkan/tu_device.h
++++ b/src/freedreno/vulkan/tu_device.h
+@@ -117,6 +117,7 @@ struct tu_physical_device
+ 
+    uint32_t gmem_size;
+    uint64_t gmem_base;
++   uint64_t max_freq; /* Hz, 0 when the kernel doesn't report it */
+ 
+    uint32_t usable_gmem_size_gmem;
+    struct fd6_gmem_config config_gmem, config_sysmem;
+diff --git a/src/freedreno/vulkan/tu_knl_drm_msm.cc b/src/freedreno/vulkan/tu_knl_drm_msm.cc
+index 84ab61fff54..bc367909fd6 100644
+--- a/src/freedreno/vulkan/tu_knl_drm_msm.cc
++++ b/src/freedreno/vulkan/tu_knl_drm_msm.cc
+@@ -1648,6 +1648,8 @@ tu_knl_drm_msm_load(struct tu_instance *instance,
+                                  "could not get GMEM size");
+       goto fail;
+    }
++   if (tu_drm_get_param(device->local_fd, MSM_PARAM_MAX_FREQ, &device->max_freq))
++      device->max_freq = 0;
+ 
+    device->has_set_iova = !tu_drm_get_va_prop(device, &device->va_start,
+                                               &device->va_size);
+diff --git a/src/freedreno/vulkan/tu_knl_drm_virtio.cc b/src/freedreno/vulkan/tu_knl_drm_virtio.cc
+index b8d72db9f1f..8242e039b63 100644
+--- a/src/freedreno/vulkan/tu_knl_drm_virtio.cc
++++ b/src/freedreno/vulkan/tu_knl_drm_virtio.cc
+@@ -1354,6 +1354,7 @@ tu_knl_drm_virtio_load(struct tu_instance *instance,
+    device->has_cached_coherent_memory = caps.u.msm.has_cached_coherent;
+ 
+    device->submitqueue_priority_count = caps.u.msm.priorities;
++   device->max_freq = caps.u.msm.max_freq;
+ 
+    device->has_raytracing = has_raytracing;
+ 
+diff --git a/src/freedreno/vulkan/tu_pass.cc b/src/freedreno/vulkan/tu_pass.cc
+index dc47f66a5f2..57548b82bcb 100644
+--- a/src/freedreno/vulkan/tu_pass.cc
++++ b/src/freedreno/vulkan/tu_pass.cc
+@@ -858,9 +858,11 @@ tu_render_pass_bandwidth_config(struct tu_render_pass *pass)
+ {
+    pass->gmem_bandwidth_per_pixel = 0;
+    pass->sysmem_bandwidth_per_pixel = 0;
++   memset(pass->gmem_att_bytes_per_pixel, 0, sizeof(pass->gmem_att_bytes_per_pixel));
+ 
+    for (uint32_t i = 0; i < pass->attachment_count; i++) {
+       const struct tu_render_pass_attachment *att = &pass->attachments[i];
++      const bool ds = vk_format_is_depth_or_stencil(att->format);
+ 
+       /* approximate tu_load_gmem_attachment */
+       if (att->load)
+@@ -870,6 +872,11 @@ tu_render_pass_bandwidth_config(struct tu_render_pass *pass)
+       if (att->store)
+          pass->gmem_bandwidth_per_pixel += att->cpp;
+ 
++      if (att->load || att->store) {
++         const enum tu_att_io io = !att->store ? TU_ATT_LOAD : !att->load ? TU_ATT_STORE : TU_ATT_LOAD_STORE;
++         pass->gmem_att_bytes_per_pixel[ds][io] += (att->load + att->store) * att->cpp;
++      }
++
+       /* approximate tu_clear_sysmem_attachment */
+       if (att->clear_mask)
+          pass->sysmem_bandwidth_per_pixel += att->cpp;
+diff --git a/src/freedreno/vulkan/tu_pass.h b/src/freedreno/vulkan/tu_pass.h
+index 8d0c39ee9e7..ae3e5566a25 100644
+--- a/src/freedreno/vulkan/tu_pass.h
++++ b/src/freedreno/vulkan/tu_pass.h
+@@ -135,6 +135,13 @@ struct tu_render_pass_attachment
+    uint32_t last_subpass_idx;
+ };
+ 
++enum tu_att_io {
++   TU_ATT_LOAD,
++   TU_ATT_STORE,
++   TU_ATT_LOAD_STORE,
++   TU_ATT_IO_COUNT,
++};
++
+ struct tu_render_pass
+ {
+    struct vk_object_base base;
+@@ -149,6 +156,8 @@ struct tu_render_pass
+    /* memory bandwidth costs (in bytes) for gmem / sysmem rendering */
+    uint32_t gmem_bandwidth_per_pixel;
+    uint32_t sysmem_bandwidth_per_pixel;
++   /* gmem_bandwidth_per_pixel split by colour/depth and by load, store or both */
++   uint32_t gmem_att_bytes_per_pixel[2][TU_ATT_IO_COUNT];
+ 
+    unsigned num_views;
+ 
+diff --git a/src/freedreno/vulkan/tu_shader.cc b/src/freedreno/vulkan/tu_shader.cc
+index 983a92c64b3..80e81978c49 100644
+--- a/src/freedreno/vulkan/tu_shader.cc
++++ b/src/freedreno/vulkan/tu_shader.cc
+@@ -3123,6 +3123,7 @@ tu_shader_serialize(struct vk_pipeline_cache_object *object,
+    blob_write_uint32(blob, shader->view_mask);
+    blob_write_uint8(blob, shader->active_desc_sets);
+    blob_write_uint8(blob, shader->per_layer_viewport);
++   blob_write_uint32(blob, shader->nir_tex_count);
+ 
+    ir3_store_variant(blob, shader->variant);
+ 
+@@ -3169,6 +3170,7 @@ tu_shader_deserialize(struct vk_pipeline_cache *cache,
+    shader->view_mask = blob_read_uint32(blob);
+    shader->active_desc_sets = blob_read_uint8(blob);
+    shader->per_layer_viewport = blob_read_uint8(blob);
++   shader->nir_tex_count = blob_read_uint32(blob);
+ 
+    shader->variant = ir3_retrieve_variant(blob, dev->compiler, NULL);
+ 
+@@ -3430,6 +3432,16 @@ tu_shader_create(struct tu_device *dev,
+       .nir_options = nir_options,
+    };
+ 
++   shader->nir_tex_count = 0;
++   nir_foreach_function_impl (impl, nir) {
++      nir_foreach_block (block, impl) {
++         nir_foreach_instr (instr, block) {
++            if (instr->type == nir_instr_type_tex)
++               shader->nir_tex_count++;
++         }
++      }
++   }
++
+    struct ir3_shader *ir3_shader =
+       ir3_shader_from_nir(dev->compiler, nir, &options);
+ 
+diff --git a/src/freedreno/vulkan/tu_shader.h b/src/freedreno/vulkan/tu_shader.h
+index 1cd0e890272..910c0e61593 100644
+--- a/src/freedreno/vulkan/tu_shader.h
++++ b/src/freedreno/vulkan/tu_shader.h
+@@ -78,6 +78,7 @@ struct tu_shader
+    struct tu_const_state const_state;
+    uint32_t view_mask;
+    uint8_t active_desc_sets;
++   uint32_t nir_tex_count;
+ 
+    /* The dynamic buffer descriptor size for descriptor sets that we know
+     * about. This is used when linking to piece together the sizes and from
