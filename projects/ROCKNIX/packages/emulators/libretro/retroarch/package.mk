@@ -2,8 +2,8 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="retroarch"
-PKG_VERSION="bdba046fa6766380bc2457532f38e589df769aaf" # v1.22.2 + fixes
-PKG_SHA256="ba14ddf6fd6712185334cce15d1fa7d36f3419195a34ae6fd6f1ade42095e94f"
+PKG_VERSION="f726f0955afe9a7dd56977fd43a67c05c09e7512" # 2026.11.06
+#PKG_SHA256="ba14ddf6fd6712185334cce15d1fa7d36f3419195a34ae6fd6f1ade42095e94f"
 PKG_SITE="https://github.com/libretro/RetroArch"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_LICENSE="GPL-3.0-or-later"
@@ -43,10 +43,6 @@ PKG_CONFIGURE_OPTS_TARGET="--disable-qt \
 case ${ARCH} in
   arm) PKG_CONFIGURE_OPTS_TARGET+=" --enable-neon" ;;
   aarch64) PKG_CONFIGURE_OPTS_TARGET+=" --disable-neon" ;;
-esac
-
-case ${DEVICE} in
-  RK*) PKG_DEPENDS_TARGET+=" librga" ;;
 esac
 
 if [ "${DISPLAYSERVER}" = "wl" ]; then
