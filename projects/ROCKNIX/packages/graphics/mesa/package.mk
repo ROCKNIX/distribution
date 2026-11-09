@@ -108,4 +108,10 @@ post_makeinstall_target() {
   if [ "${DEVICE}" = "S922X" ]; then
     rm -f ${INSTALL}/usr/lib/libvulkan_panfrost.so ${INSTALL}/usr/share/vulkan/icd.d/panfrost_icd.*.json
   fi
+
+  if [ "${VULKAN_SUPPORT}" = "yes" ] && listcontains "${VULKAN_DRIVERS_MESA}" "freedreno"; then
+    mkdir -p ${INSTALL}/usr/share/drirc.d ${INSTALL}/usr/config/modules
+    cp ${PKG_DIR}/config/01-rocknix-turnip.conf ${INSTALL}/usr/share/drirc.d
+    cp "${PKG_DIR}/scripts/Autotune Report.sh" ${INSTALL}/usr/config/modules
+  fi
 }

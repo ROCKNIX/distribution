@@ -1,0 +1,420 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Sat, 7 Nov 2026 23:09:18 -0800
+Subject: [PATCH 16/17] tu/autotune: Correct the estimates with measured render
+ pass times
+
+TU_AUTOTUNE_FLAGS=adapt, or the tu_autotune_flags drirc option, times every render pass and corrects its estimates
+by what was measured for that pass. Passes close to a tie sometimes run in the other mode, so both sides get measured.
+---
+ src/freedreno/vulkan/tu_autotune.cc  | 215 ++++++++++++++++++++++++++-
+ src/freedreno/vulkan/tu_autotune.h   |  25 ++++
+ src/freedreno/vulkan/tu_drirc_gen.py |   3 +
+ 3 files changed, 236 insertions(+), 7 deletions(-)
+
+diff --git a/src/freedreno/vulkan/tu_autotune.cc b/src/freedreno/vulkan/tu_autotune.cc
+index a56f6714809..3e8eaa8980b 100644
+--- a/src/freedreno/vulkan/tu_autotune.cc
++++ b/src/freedreno/vulkan/tu_autotune.cc
+@@ -9,10 +9,14 @@
+ #include <array>
+ #include <atomic>
+ #include <cmath>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
+ #include <string>
+ #include <string_view>
+ 
+ #include "util/rand_xor.h"
++#include "util/u_math.h"
+ 
+ #define XXH_INLINE_ALL
+ #include "util/xxhash.h"
+@@ -108,6 +112,7 @@ enum class tu_autotune::mod_flag : uint8_t {
+    BIG_GMEM = BIT(1),         /* All RPs with >= 10 draws use GMEM. */
+    TUNE_SMALL = BIT(2),       /* Try tuning all RPs with <= 5 draws, ignored by default. */
+    PREEMPT_OPTIMIZE = BIT(3),  /* Attempts to minimize the preemption latency. */
++   ADAPT = BIT(4),            /* Correct the estimates from measured RP times. */
+ };
+ 
+ /* Metric flags, for internal tracking of enabled metrics. */
+@@ -136,6 +141,10 @@ struct PACKED tu_autotune::config_t {
+       if (mod_flags & (uint8_t) mod_flag::PREEMPT_OPTIMIZE) {
+          metric_flags |= (uint8_t) metric_flag::TS | (uint8_t) metric_flag::TS_TILE;
+       }
++
++      if (mod_flags & (uint8_t) mod_flag::ADAPT) {
++         metric_flags |= (uint8_t) metric_flag::TS;
++      }
+    }
+ 
+  public:
+@@ -217,6 +226,7 @@ struct PACKED tu_autotune::config_t {
+       MODF_STR(BIG_GMEM);
+       MODF_STR(TUNE_SMALL);
+       MODF_STR(PREEMPT_OPTIMIZE);
++      MODF_STR(ADAPT);
+       str += ")";
+ 
+       str += ", Metric Flags: 0x" + std::to_string(metric_flags) + " (";
+@@ -268,6 +278,41 @@ tu_autotune::atomic_config_t::compare_and_store(config_t expected, config_t upda
+                                               std::memory_order_acquire, std::memory_order_relaxed);
+ }
+ 
++/* Corrections from measured times: "hash" learns measured / predicted per render pass and draw count, and "probe" now
++ * and then runs the other mode when the two are close. TU_AUTOTUNE_FLAGS=adapt turns on both.
++ */
++static tu_autotune::adapt_config
++parse_adapt_config(bool flag)
++{
++   tu_autotune::adapt_config cfg;
++   const char *env = os_get_option("TU_AUTOTUNE_ADAPT");
++   if (!env) {
++      cfg.hash = cfg.probe = flag;
++      return cfg;
++   }
++
++   bool all = strstr(env, "all") != NULL;
++   cfg.hash = all || strstr(env, "hash") != NULL;
++   cfg.probe = all || strstr(env, "probe") != NULL;
++   cfg.log = strstr(env, "log") != NULL;
++   if (flag && !cfg.enabled())
++      cfg.hash = cfg.probe = true;
++
++   const char *band = os_get_option("TU_AUTOTUNE_ADAPT_BAND");
++   int lo, hi;
++   if (band && sscanf(band, "%d,%d", &lo, &hi) == 2 && lo > 0 && hi > lo) {
++      cfg.band_lo = lo / 100.0f;
++      cfg.band_hi = hi / 100.0f;
++   }
++   const char *probe_ms = os_get_option("TU_AUTOTUNE_ADAPT_PROBE_MS");
++   if (probe_ms && atoi(probe_ms) > 0)
++      cfg.probe_interval_ns = (uint64_t) atoi(probe_ms) * 1'000'000;
++   const char *reprobe_ms = os_get_option("TU_AUTOTUNE_ADAPT_REPROBE_MS");
++   if (reprobe_ms && atoi(reprobe_ms) > 0)
++      cfg.reprobe_ns = (uint64_t) atoi(reprobe_ms) * 1'000'000;
++   return cfg;
++}
++
+ tu_autotune::config_t
+ tu_autotune::get_env_config()
+ {
+@@ -302,14 +347,17 @@ tu_autotune::get_env_config()
+             mesa_logi("TU_AUTOTUNE_ALGO=%u (%s)", (uint8_t) algo, algo_strv.data());
+       }
+ 
+-      /* Parse the flags from the environment variable. */
++      /* Parse the flags from the environment variable, else drirc. */
+       const char *flags_env_str = os_get_option("TU_AUTOTUNE_FLAGS");
++      if (!flags_env_str)
++         flags_env_str = device->instance->drirc.perf.autotune_flags;
+       uint32_t mod_flags = 0;
+-      if (flags_env_str) {
++      if (flags_env_str && *flags_env_str) {
+          static const struct debug_control tu_at_flags_control[] = {
+             { "big_gmem", (uint32_t) mod_flag::BIG_GMEM },
+             { "tune_small", (uint32_t) mod_flag::TUNE_SMALL },
+             { "preempt_optimize", (uint32_t) mod_flag::PREEMPT_OPTIMIZE },
++            { "adapt", (uint32_t) mod_flag::ADAPT },
+             { NULL, 0 }
+          };
+ 
+@@ -323,6 +371,9 @@ tu_autotune::get_env_config()
+          }
+       }
+ 
++      if (parse_adapt_config(false).enabled())
++         mod_flags |= (uint32_t) mod_flag::ADAPT;
++
+       assert((uint8_t) mod_flags == mod_flags);
+       at_config = config_t(algo, (uint8_t) mod_flags);
+    });
+@@ -336,7 +387,8 @@ tu_autotune::get_env_config()
+ uint32_t
+ tu_autotune::get_supported_mod_flags(tu_device *device) const
+ {
+-   uint32_t supported_mod_flags = (uint32_t) mod_flag::BIG_GMEM | (uint32_t) mod_flag::TUNE_SMALL;
++   uint32_t supported_mod_flags =
++      (uint32_t) mod_flag::BIG_GMEM | (uint32_t) mod_flag::TUNE_SMALL | (uint32_t) mod_flag::ADAPT;
+    if (device->physical_device->info->props.max_draw_states > TU_DRAW_STATE_AT_WRITE_RP_HASH &&
+        device->physical_device->is_perf_cntr_selectable) {
+       supported_mod_flags |= (uint32_t) mod_flag::PREEMPT_OPTIMIZE;
+@@ -532,6 +584,11 @@ struct tu_autotune::rp_entry {
+    uint32_t tile_count;
+    uint32_t draw_count;
+ 
++   /* Estimate per mode (0 sysmem, 1 gmem), in us, or in bytes without costs. */
++   float pred_us[2] = { 0.0f, 0.0f };
++   bool probe = false;
++   uint8_t adapt_bucket = 0; /* draw count bucket the adaptive layers used */
++
+    /* The binning pass ran, so the first pipe_count VSC sizes are valid. */
+    bool binning = false;
+    uint32_t pipe_count = 0;
+@@ -1042,6 +1099,64 @@ struct tu_autotune::rp_history {
+    {
+    }
+ 
++   /** Adaptive layers, per RP, draw count and mode (0 sysmem, 1 gmem) **/
++
++   /* The same RP can be a few draws one frame and hundreds the next, so each power of two of draws learns apart. */
++   static constexpr unsigned ADAPT_BUCKETS = 16;
++   static unsigned adapt_bucket(uint32_t draws)
++   {
++      return MIN2(util_logbase2(draws + 1), ADAPT_BUCKETS - 1);
++   }
++
++   struct adapt_history {
++      std::atomic<float> ratio[2]; /* EMA of measured / predicted */
++      std::atomic<uint32_t> count[2];
++      std::atomic<uint64_t> last_ns[2]; /* last measurement */
++      std::atomic<uint32_t> decisions;
++      adapt_history()
++      {
++         for (int m = 0; m < 2; m++) {
++            ratio[m] = 1.0f;
++            count[m] = 0;
++            last_ns[m] = 0;
++         }
++         decisions = 0;
++      }
++   } adapt[ADAPT_BUCKETS];
++
++   void adapt_update(rp_entry &entry, tu_autotune &at)
++   {
++      constexpr double MIN_MEASURED_US = 50.0;
++
++      const int m = entry.sysmem ? 0 : 1;
++      const double pred = entry.pred_us[m];
++      if (!at.calib.valid || pred <= 0.0)
++         return;
++      const double measured = (double) ticks_to_us(entry.get_rp_duration());
++      if (measured < MIN_MEASURED_US)
++         return;
++
++      const double raw = CLAMP(measured / pred, 0.1, 20.0); /* anything outside this isn't a model error */
++      adapt_history &h = adapt[entry.adapt_bucket];
++      float ratio = h.ratio[m].load(std::memory_order_relaxed);
++      if (at.adapt_cfg.hash) {
++         /* a plain mean over the first samples, then a slow average, so one outlier doesn't flip the pass */
++         uint32_t n = h.count[m].load(std::memory_order_relaxed);
++         ratio += (float) (MAX2(1.0 / (n + 1), 0.1) * (raw - ratio));
++         h.ratio[m].store(ratio, std::memory_order_relaxed);
++         h.count[m].store(n + 1, std::memory_order_relaxed);
++         h.last_ns[m].store(os_time_get_nano(), std::memory_order_relaxed);
++      }
++
++      if (at.adapt_cfg.log) {
++         mesa_logi("autotune-adapt %016" PRIx64 "/%u: measured %s%s %.1f us, predicted %.1f, raw %.4f, ratio %.3f "
++                   "(n=%u)",
++                   hash, entry.adapt_bucket, render_mode_str(entry.sysmem ? render_mode::SYSMEM : render_mode::GMEM),
++                   entry.probe ? " probe" : "", measured, pred, raw, ratio,
++                   h.count[m].load(std::memory_order_relaxed));
++      }
++   }
++
+    /** Bandwidth Estimation Algorithm **/
+    struct bandwidth_algo {
+     private:
+@@ -1072,7 +1187,8 @@ struct tu_autotune::rp_history {
+                                    uint32_t stream_dwords,
+                                    uint32_t state_dwords,
+                                    const struct tu_autotune_calib *calib,
+-                                   float margin)
++                                   float margin,
++                                   double pred[2])
+       {
+          uint32_t pass_pixel_count = 0;
+          if (cmd_state->per_layer_render_area) {
+@@ -1183,6 +1299,8 @@ struct tu_autotune::rp_history {
+                       skip_bins * (calib->t_draw_us + ib2_per_draw * calib->t_state_skip_us) +
+                       vis_bins * render_draw_us + (double) bin_count * calib->t_bin_us + shade_gmem;
+             select_sysmem = gmem_us >= sysmem_us * (1.0 - margin);
++            pred[0] = sysmem_us;
++            pred[1] = gmem_us;
+          } else {
+             /* Drawcalls access the memory in SYSMEM rendering (ignoring CCU). */
+             sysmem_bandwidth += total_draw_call_bandwidth;
+@@ -1193,9 +1311,15 @@ struct tu_autotune::rp_history {
+             gmem_bandwidth = (gmem_bandwidth * 11 + total_draw_call_bandwidth) / 10;
+ 
+             select_sysmem = sysmem_bandwidth <= gmem_bandwidth;
++            pred[0] = (double) sysmem_bandwidth;
++            pred[1] = (double) gmem_bandwidth;
+          }
+          render_mode mode = select_sysmem ? render_mode::SYSMEM : render_mode::GMEM;
+ 
++         /* Nothing to learn from before the first samples. */
++         if (rp_state->drawcall_count && mean_samples == 0)
++            pred[0] = pred[1] = 0.0;
++
+          UNUSED const VkExtent2D &extent = cmd_state->render_areas[0].extent;
+          at_log_bandwidth_h(
+             "%" PRIu32 " selecting %s\n"
+@@ -1493,6 +1617,9 @@ struct tu_autotune::rp_history {
+          if (at_config.is_enabled(algorithm::PROFILED) || at_config.is_enabled(algorithm::PROFILED_IMM)) {
+             profiled.update(*this, at_config.is_enabled(algorithm::PROFILED_IMM));
+          }
++
++         if (at.adapt_cfg.enabled())
++            adapt_update(entry, at);
+       }
+    }
+ };
+@@ -1802,6 +1929,13 @@ tu_autotune::on_submit(struct tu_cmd_buffer **cmd_buffers, uint32_t cmd_buffer_c
+ tu_autotune::tu_autotune(struct tu_device *device, VkResult &result)
+     : device(device), supported_mod_flags(get_supported_mod_flags(device)), active_config(get_env_config())
+ {
++   adapt_cfg = parse_adapt_config(active_config.load().test(mod_flag::ADAPT));
++   if (adapt_cfg.enabled() && (TU_DEBUG(STARTUP) || adapt_cfg.log)) {
++      mesa_logi("autotune adapt: hash=%d probe=%d band=%.2f-%.2f probe_interval=%" PRIu64 " ms reprobe=%" PRIu64 " ms",
++                adapt_cfg.hash, adapt_cfg.probe, adapt_cfg.band_lo, adapt_cfg.band_hi,
++                adapt_cfg.probe_interval_ns / 1000000, adapt_cfg.reprobe_ns / 1000000);
++   }
++
+    tu_bo_suballocator_init(&suballoc, device, 128 * 1024, TU_BO_ALLOC_INTERNAL_RESOURCE, "autotune_suballoc");
+ 
+    if (supports_preempt_latency_tracking()) {
+@@ -2057,14 +2191,81 @@ tu_autotune::get_optimal_mode(struct tu_cmd_buffer *cmd_buffer, rp_ctx_t *rp_ctx
+ 
+    if (config.is_enabled(algorithm::BANDWIDTH)) {
+       const struct tu_cs *draw_cs = &cmd_buffer->draw_cs;
+-      return history.bandwidth.get_optimal_mode(history, cmd_state, pass, framebuffer, rp_state,
+-                                                tu_cs_total_dwords(draw_cs), draw_cs->draw_state_dwords, &calib,
+-                                                calib_margin);
++      double pred[2] = { 0.0, 0.0 };
++      render_mode mode = history.bandwidth.get_optimal_mode(history, cmd_state, pass, framebuffer, rp_state,
++                                                            tu_cs_total_dwords(draw_cs), draw_cs->draw_state_dwords,
++                                                            &calib, calib_margin, pred);
++
++      rp_entry &entry = **rp_ctx;
++      entry.pred_us[0] = pred[0];
++      entry.pred_us[1] = pred[1];
++      if (adapt_cfg.enabled())
++         mode = adapt_decide(history, entry, pred, mode, rp_state->drawcall_count);
++      return mode;
+    }
+ 
+    return default_mode;
+ }
+ 
++tu_autotune::render_mode
++tu_autotune::adapt_decide(rp_history &history, rp_entry &entry, const double pred[2], render_mode model_mode,
++                          uint32_t draws)
++{
++   constexpr uint32_t MIN_DECISIONS_BEFORE_PROBE = 3;
++   constexpr uint32_t MIN_DRAWS_FOR_PROBE = 5;
++
++   /* The byte-count heuristic's estimates aren't times, so only the time model is corrected. */
++   if (!calib.valid || pred[0] <= 0.0 || pred[1] <= 0.0)
++      return model_mode;
++
++   const unsigned bucket = rp_history::adapt_bucket(draws);
++   entry.adapt_bucket = bucket;
++   auto &h = history.adapt[bucket];
++
++   /* Each mode's estimate corrected by what was measured in that mode for this pass. A mode that hasn't run keeps the
++    * table's estimate, since other passes' errors say little about it.
++    */
++   double adj[2];
++   for (int m = 0; m < 2; m++) {
++      const bool measured = adapt_cfg.hash && h.count[m].load(std::memory_order_relaxed) > 0;
++      adj[m] = pred[m] * (measured ? h.ratio[m].load(std::memory_order_relaxed) : 1.0);
++   }
++
++   const bool sysmem = adj[1] >= adj[0] * (1.0 - calib_margin);
++   render_mode mode = sysmem ? render_mode::SYSMEM : render_mode::GMEM;
++   const uint32_t decisions = h.decisions.fetch_add(1, std::memory_order_relaxed) + 1;
++
++   bool probing = false;
++   if (adapt_cfg.probe && draws >= MIN_DRAWS_FOR_PROBE && adj[0] > 0.0) {
++      const int cur = sysmem ? 0 : 1, other = 1 - cur;
++      const double r = adj[1] / adj[0];
++      const uint64_t now = os_time_get_nano();
++      const uint64_t other_last = h.last_ns[other].load(std::memory_order_relaxed);
++      const bool other_unknown =
++         h.count[other].load(std::memory_order_relaxed) == 0 || now - other_last > adapt_cfg.reprobe_ns;
++
++      if (r >= adapt_cfg.band_lo && r <= adapt_cfg.band_hi && decisions >= MIN_DECISIONS_BEFORE_PROBE &&
++          h.count[cur].load(std::memory_order_relaxed) >= 1 && other_unknown) {
++         uint64_t last = adapt.last_probe_ns.load(std::memory_order_relaxed);
++         if (now - last >= adapt_cfg.probe_interval_ns &&
++             adapt.last_probe_ns.compare_exchange_strong(last, now, std::memory_order_relaxed)) {
++            probing = true;
++            entry.probe = true;
++            mode = other == 0 ? render_mode::SYSMEM : render_mode::GMEM;
++         }
++      }
++   }
++
++   if (adapt_cfg.log) {
++      mesa_logi("autotune-adapt %016" PRIx64 "/%u: %s%s (model %s) adj sysmem %.1f gmem %.1f, ratio %.3f/%.3f "
++                "(n=%u/%u)",
++                history.hash, bucket, render_mode_str(mode), probing ? " probe" : "", render_mode_str(model_mode),
++                adj[0], adj[1], h.ratio[0].load(std::memory_order_relaxed), h.ratio[1].load(std::memory_order_relaxed),
++                h.count[0].load(std::memory_order_relaxed), h.count[1].load(std::memory_order_relaxed));
++   }
++   return mode;
++}
++
+ uint32_t
+ tu_autotune::get_tile_size_divisor(struct tu_cmd_buffer *cmd_buffer)
+ {
+diff --git a/src/freedreno/vulkan/tu_autotune.h b/src/freedreno/vulkan/tu_autotune.h
+index fe0b8bae2a6..05643c28d1a 100644
+--- a/src/freedreno/vulkan/tu_autotune.h
++++ b/src/freedreno/vulkan/tu_autotune.h
+@@ -267,6 +267,28 @@ struct tu_autotune {
+    /* GMEM has to win by at least this much. */
+    float calib_margin = 0.05f;
+ 
++   /* see parse_adapt_config() in tu_autotune.cc */
++   struct adapt_config {
++      bool hash = false;
++      bool probe = false;
++      bool log = false;
++      float band_lo = 0.7f, band_hi = 1.5f;      /* gmem/sysmem range where probing is allowed */
++      uint64_t probe_interval_ns = 500'000'000;  /* at most one probe per interval */
++      uint64_t reprobe_ns = 10'000'000'000;      /* measurements older than this can be probed again */
++      bool enabled() const
++      {
++         return hash || probe;
++      }
++   } adapt_cfg;
++
++   struct adapt_state {
++      std::atomic<uint64_t> last_probe_ns;
++      adapt_state()
++      {
++         last_probe_ns = 0;
++      }
++   } adapt;
++
+    tu_autotune(struct tu_device *device, VkResult &result);
+ 
+    ~tu_autotune();
+@@ -320,6 +342,9 @@ struct tu_autotune {
+    /* Note: For preemption latency tracking to work, key_opt from emit_preempt_latency_tracking_rp_hash() must be used. */
+    render_mode get_optimal_mode(struct tu_cmd_buffer *cmd_buffer, rp_ctx_t *rp_ctx, rp_key_opt key_opt);
+ 
++   render_mode adapt_decide(rp_history &history, rp_entry &entry, const double pred[2], render_mode model_mode,
++                            uint32_t draws);
++
+    /* Returns the optimal tile size divisor for the given CB state. */
+    uint32_t get_tile_size_divisor(struct tu_cmd_buffer *cmd_buffer);
+ 
+diff --git a/src/freedreno/vulkan/tu_drirc_gen.py b/src/freedreno/vulkan/tu_drirc_gen.py
+index 57e7c9ffa9b..4a0d4d7bfb5 100644
+--- a/src/freedreno/vulkan/tu_drirc_gen.py
++++ b/src/freedreno/vulkan/tu_drirc_gen.py
+@@ -34,6 +34,9 @@ def declare_options():
+         S("tu_autotune_algorithm",
+           description="Set the preferred autotune algorithm",
+           c_name="autotune_algo"),
++        S("tu_autotune_flags",
++          description="Autotune modifier flags, as in TU_AUTOTUNE_FLAGS",
++          c_name="autotune_flags"),
+     ]
+ 
+     misc_options = [
