@@ -9,7 +9,7 @@ PKG_LONGDESC="Emulation metapackage."
 PKG_TOOLCHAIN="manual"
 
 PKG_EMUS="amiberry duckstation-sa flycast-sa gzdoom-sa hatarisa hypseus-singe moonlight mupen64plus-sa openbor pico-8   \
-          ppsspp-sa scummvm-sa touchhle-sa vice-sa wine yabasanshiro-pirry-sa"
+          ppsspp-sa scummvm-sa touchhle-sa vice-sa wine"
 
 EMUS_32BIT=""
 
@@ -31,7 +31,7 @@ LIBRETRO_CORES="81-lr a5200-lr arduous-lr atari800-lr b2-lr beetle-gba-lr beetle
 ### aarch64 libretro and sa cores
 if [ "${ARCH}" = "aarch64" ]; then
   LIBRETRO_CORES+=" flycast2021-lr ppsspp-lr"
-  PKG_EMUS+=" box64 dsperate-sa portmaster"
+  PKG_EMUS+=" box64 dsperate-sa portmaster yabasanshiro-pirry-sa"
 fi
 
 ### Emulators or cores for specific devices
@@ -93,7 +93,7 @@ case "${DEVICE}" in
     LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr hakux-lr uae4arm-lr"
     ;;
   AMD64)
-    PKG_EMUS+=" ares-sa azahar-sa cemu-sa dolphin-sa gopher64-sa mednafen melonds-sa nanoboyadvance-sa \
+    PKG_EMUS+=" ares-sa azahar-sa cemu-sa daedalusx64-sa dolphin-sa gopher64-sa mednafen melonds-sa nanoboyadvance-sa \
                 xemu-sa skyemu-sa vita3k-sa"
     LIBRETRO_CORES+=" beetle-psx-lr beetle-saturn-lr bsnes-lr bsnes-hd-lr dolphin-lr"
 esac
@@ -922,13 +922,13 @@ makeinstall_target() {
       add_emu_core n64 daedalusx64 daedalusx64-sa false
       install_script "Start DaedalusX64.sh"
       ;;
-    SM8550)
+    AMD64|SM8550)
       add_emu_core n64 daedalusx64 daedalusx64-sa false
       add_emu_core n64 gopher64 gopher64-sa false
       add_emu_core n64 ares ares-sa false
       install_script "Start DaedalusX64.sh"
       ;;
-    SM8650|SM8750|AMD64)
+    SM8650|SM8750)
       add_emu_core n64 gopher64 gopher64-sa false
       add_emu_core n64 ares ares-sa false
       ;;
