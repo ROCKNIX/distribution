@@ -1,0 +1,48 @@
+rk915: claim firmware error recovery atomically
+
+rk915_signal_io_error() guards recovery with a plain test-then-set:
+
+    if (!hal->fw_error_processing) {
+            hal->fw_error_processing = 1;
+            schedule_work(&hal->fw_err_work);
+    }
+
+The rx and tx threads both signal io errors, and both get through the test
+before either performs the set. Observed on a Gusgu H7 under inbound TCP load:
+
+    [2250.486151] rk915: -------- fw error recovery (0) start --------
+    [2250.486275] rk915: fw error (0): requesting mac80211 restart
+    [2250.486292] ieee80211 phy3: Hardware restart was requested
+    [2250.486314] rk915: -------- fw error recovery (0) start --------
+    [2250.486421] rk915: fw error (0): requesting mac80211 restart
+
+two recoveries 163us apart, so ieee80211_restart_hw() is called a second time
+while the first restart is still in flight.
+
+Claim the recovery with cmpxchg() so exactly one runs. Verified on hardware:
+the same reproducer now logs a single recovery and a single restart request.
+
+Note this does not by itself make recovery succeed - the firmware re-download
+that follows still fails - but it removes the duplicate restart from the picture.
+
+--- a/src/umac_if.c	2026-08-27 11:14:36.689792575 -0400
++++ b/src/umac_if.c	2026-08-27 11:14:36.690819895 -0400
+@@ -464,10 +464,16 @@
+ 		return;
+ 	hal->fw_error = 1;
+ 	rk915_wake_waiters(hal);
+-	if (!hal->fw_error_processing) {
++	/*
++	 * The rx and tx threads both signal io errors, and a plain
++	 * test-then-set lets both through: two recoveries start within
++	 * microseconds of each other and ieee80211_restart_hw() is called
++	 * twice, the second landing while the first restart is still in
++	 * flight. Claim the recovery atomically so exactly one runs.
++	 */
++	if (cmpxchg(&hal->fw_error_processing, 0, 1) == 0) {
+ 		__pm_stay_awake(hal->fw_err_ws);
+ 
+-		hal->fw_error_processing = 1;
+ 		hal->fw_error_counter++;
+ 		hal->fw_error_reason = reason;
+ 
