@@ -1,0 +1,357 @@
+Subject: [PATCH] wifi: ath12k: split a scan into chunks of channels
+
+The wcn7860 firmware stops handing up management frames from a scan once the
+request carries too many channels, so access points that are plainly in range
+never make it into the scan results.
+
+Measured on a KONKR Pocket FIT Elite, disconnected, against a -47 dBm AP on
+5220 MHz, counting WMI_MGMT_RX and the BSSes that came back:
+
+  channels asked for   frames   BSSes   AP found
+  8                    60       9       yes
+  20                   24       5       no
+
+It is not the dwell. The firmware reports WMI_SCAN_EVENT_FOREIGN_CHAN for
+every channel it was given in both cases, and the time from arriving on 5220
+to arriving on the next channel of that band is 54 ms either way. It is not
+active versus passive either: the same 8 channels scanned passively and
+scanned with an SSID both deliver the AP. Only the size of the request
+matters, and a channel that has two APs on it comes back completely empty in
+the wider scan. Nothing is logged when this happens.
+
+Asking the firmware for a longer dwell does not help, it ignores
+dwell_time_active, dwell_time_passive and adaptive_dwell_time_mode alike. The
+number of channels per request is the only thing it does respond to, so keep
+the request small and walk the list a chunk at a time, starting the next chunk
+from the scan completion instead of reporting the scan finished.
+
+The multi-band check that keeps a fully passive 2.4 + 5/6 GHz scan from
+asserting the firmware now runs per chunk and takes frequencies, so the
+channel-list version of it goes away.
+---
+--- a/drivers/net/wireless/ath/ath12k/core.h
++++ b/drivers/net/wireless/ath/ath12k/core.h
+@@ -634,6 +634,10 @@
+ 		bool roc_notify;
+ 		struct wiphy_work vdev_clean_wk;
+ 		struct ath12k_link_vif *arvif;
++		struct ieee80211_scan_request *hw_req;
++		u32 *chan_freqs;
++		int n_chan_freqs;
++		int chan_idx;
+ 	} scan;
+ 
+ 	struct {
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -5358,6 +5358,11 @@
+ 	ieee80211_scan_completed(ah->hw, info);
+ }
+ 
++#define ATH12K_SCAN_CHAN_PER_REQ 8
++
++static int ath12k_mac_scan_start_chunk(struct ath12k *ar,
++				       struct ath12k_link_vif *arvif);
++
+ static void ath12k_scan_vdev_clean_work(struct wiphy *wiphy, struct wiphy_work *work)
+ {
+ 	struct ath12k *ar = container_of(work, struct ath12k,
+@@ -5369,6 +5374,37 @@
+ 
+ 	arvif = ar->scan.arvif;
+ 
++	/* Part of a split request: keep the scan vdev and the cfg80211 request
++	 * and run the next chunk instead of reporting the scan finished.
++	 */
++	if (arvif && ar->scan.chan_freqs &&
++	    ar->scan.chan_idx + ATH12K_SCAN_CHAN_PER_REQ < ar->scan.n_chan_freqs) {
++		bool resume;
++
++		spin_lock_bh(&ar->data_lock);
++		resume = (ar->scan.state == ATH12K_SCAN_RUNNING);
++		if (resume) {
++			ar->scan.chan_idx += ATH12K_SCAN_CHAN_PER_REQ;
++			reinit_completion(&ar->scan.started);
++			reinit_completion(&ar->scan.completed);
++			ar->scan.state = ATH12K_SCAN_STARTING;
++		}
++		spin_unlock_bh(&ar->data_lock);
++
++		if (resume) {
++			if (!ath12k_mac_scan_start_chunk(ar, arvif))
++				return;
++
++			/* Could not carry on. Report what the earlier chunks
++			 * found instead of losing the scan entirely.
++			 */
++			ath12k_warn(ar->ab, "failed to start next scan chunk\n");
++			spin_lock_bh(&ar->data_lock);
++			ar->scan.state = ATH12K_SCAN_RUNNING;
++			spin_unlock_bh(&ar->data_lock);
++		}
++	}
++
+ 	/* The scan vdev has already been deleted. This can occur when a
+ 	 * new scan request is made on the same vif with a different
+ 	 * frequency, causing the scan arvif to move from one radio to
+@@ -5386,6 +5422,12 @@
+ 	ath12k_mac_unassign_link_vif(arvif);
+ 
+ work_complete:
++	kfree(ar->scan.chan_freqs);
++	ar->scan.chan_freqs = NULL;
++	ar->scan.n_chan_freqs = 0;
++	ar->scan.chan_idx = 0;
++	ar->scan.hw_req = NULL;
++
+ 	spin_lock_bh(&ar->data_lock);
+ 	ar->scan.arvif = NULL;
+ 	if (!ar->scan.is_roc) {
+@@ -5603,12 +5645,16 @@
+ 	return ATH12K_FIRST_SCAN_LINK;
+ }
+ 
+-/* The wcn7860 firmware dies on a fully passive scan whose channel list spans
+- * 2.4 GHz and 5/6 GHz, so tell the caller to leave WMI_SCAN_FLAG_PASSIVE off
+- * for that one case.
++/* The firmware stops handing up management frames from a scan once the request
++ * carries too many channels. Measured on wcn7860 with the same 54 ms dwell on
++ * the same channel either way: an 8 channel request delivered 60 frames and
++ * found 9 BSSes, a 20 channel one delivered 24 and found 5, and a channel with
++ * two APs on it came back empty. Nothing is logged when this happens and the
++ * firmware still reports having visited every channel, so split the request up
++ * and issue it a chunk of channels at a time.
+  */
+-static bool ath12k_mac_skip_passive_scan_flag(struct ath12k *ar, int n_channels,
+-					      struct ieee80211_channel **chan_list)
++static bool ath12k_mac_scan_chunk_multiband(struct ath12k *ar, const u32 *freqs,
++					    int n_freqs)
+ {
+ 	bool has_2ghz = false, has_other = false;
+ 	int i;
+@@ -5616,8 +5662,8 @@
+ 	if (ar->ab->hw_rev != ATH12K_HW_WCN7860_HW20)
+ 		return false;
+ 
+-	for (i = 0; i < n_channels; i++) {
+-		if (chan_list[i]->band == NL80211_BAND_2GHZ)
++	for (i = 0; i < n_freqs; i++) {
++		if (freqs[i] < 4000)
+ 			has_2ghz = true;
+ 		else
+ 			has_other = true;
+@@ -5629,6 +5675,99 @@
+ 	return false;
+ }
+ 
++/* Issue the chunk that starts at ar->scan.chan_idx. The caller holds the wiphy
++ * lock and has already moved ar->scan into STARTING.
++ */
++static int ath12k_mac_scan_start_chunk(struct ath12k *ar,
++				       struct ath12k_link_vif *arvif)
++{
++	struct cfg80211_scan_request *req = &ar->scan.hw_req->req;
++	struct ath12k_wmi_scan_req_arg *arg;
++	const u32 *freqs;
++	int n_chan, i, ret;
++
++	lockdep_assert_wiphy(ath12k_ar_to_hw(ar)->wiphy);
++
++	freqs = &ar->scan.chan_freqs[ar->scan.chan_idx];
++	n_chan = min(ar->scan.n_chan_freqs - ar->scan.chan_idx,
++		     ATH12K_SCAN_CHAN_PER_REQ);
++	if (n_chan <= 0)
++		return -EINVAL;
++
++	arg = kzalloc_obj(*arg);
++	if (!arg)
++		return -ENOMEM;
++
++	ath12k_wmi_start_scan_init(ar, arg);
++	arg->vdev_id = arvif->vdev_id;
++	arg->scan_id = ATH12K_SCAN_ID;
++
++	if (req->ie_len) {
++		arg->extraie.ptr = kmemdup(req->ie, req->ie_len, GFP_KERNEL);
++		if (!arg->extraie.ptr) {
++			ret = -ENOMEM;
++			goto out;
++		}
++		arg->extraie.len = req->ie_len;
++	}
++
++	if (req->n_ssids) {
++		arg->num_ssids = req->n_ssids;
++		for (i = 0; i < arg->num_ssids; i++)
++			arg->ssid[i] = req->ssids[i];
++	} else if (ath12k_mac_scan_chunk_multiband(ar, freqs, n_chan)) {
++		/* A fully passive scan whose channels span 2.4 GHz and 5/6 GHz
++		 * asserts this firmware, after which every WMI command returns
++		 * -108 and MHI reloads the image. Leave the flag off for that
++		 * one case; the per-channel passive and DFS flags from
++		 * WMI_SCAN_CHAN_LIST still apply, so channels that may not be
++		 * probed still are not probed.
++		 */
++		ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
++			   "mac skipping passive flag for multi-band scan chunk\n");
++	} else {
++		arg->scan_f_passive = 1;
++	}
++
++	arg->num_chan = n_chan;
++	arg->chan_list = kcalloc(arg->num_chan, sizeof(*arg->chan_list),
++				 GFP_KERNEL);
++	if (!arg->chan_list) {
++		ret = -ENOMEM;
++		goto out;
++	}
++
++	for (i = 0; i < n_chan; i++)
++		arg->chan_list[i] = freqs[i];
++
++	ret = ath12k_start_scan(ar, arg);
++	if (ret) {
++		if (ret == -EBUSY)
++			ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
++				   "scan engine is busy 11d state %d\n", ar->state_11d);
++		else
++			ath12k_warn(ar->ab, "failed to start hw scan: %d\n", ret);
++		goto out;
++	}
++
++	ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
++		   "mac scan started, channels %d-%d of %d",
++		   ar->scan.chan_idx, ar->scan.chan_idx + n_chan - 1,
++		   ar->scan.n_chan_freqs);
++
++	/* Add a margin to account for event/command processing */
++	ieee80211_queue_delayed_work(ath12k_ar_to_hw(ar), &ar->scan.timeout,
++				     msecs_to_jiffies(arg->max_scan_time +
++						      ATH12K_MAC_SCAN_TIMEOUT_MSECS));
++
++out:
++	kfree(arg->chan_list);
++	kfree(arg->extraie.ptr);
++	kfree(arg);
++
++	return ret;
++}
++
+ static int ath12k_mac_initiate_hw_scan(struct ieee80211_hw *hw,
+ 				       struct ieee80211_vif *vif,
+ 				       struct ieee80211_scan_request *hw_req,
+@@ -5639,8 +5778,6 @@
+ 	struct ath12k_hw *ah = ath12k_hw_to_ah(hw);
+ 	struct ath12k_vif *ahvif = ath12k_vif_to_ahvif(vif);
+ 	struct ath12k_link_vif *arvif;
+-	struct cfg80211_scan_request *req = &hw_req->req;
+-	struct ath12k_wmi_scan_req_arg *arg = NULL;
+ 	u8 link_id;
+ 	int ret;
+ 	int i;
+@@ -5726,85 +5863,35 @@
+ 	if (ret)
+ 		goto exit;
+ 
+-	arg = kzalloc_obj(*arg);
+-	if (!arg) {
++	ar->scan.hw_req = hw_req;
++	ar->scan.chan_freqs = kcalloc(n_channels, sizeof(*ar->scan.chan_freqs),
++				      GFP_KERNEL);
++	if (!ar->scan.chan_freqs) {
+ 		ret = -ENOMEM;
+-		goto exit;
+-	}
+-
+-	ath12k_wmi_start_scan_init(ar, arg);
+-	arg->vdev_id = arvif->vdev_id;
+-	arg->scan_id = ATH12K_SCAN_ID;
+-
+-	if (req->ie_len) {
+-		arg->extraie.ptr = kmemdup(req->ie, req->ie_len, GFP_KERNEL);
+-		if (!arg->extraie.ptr) {
+-			ret = -ENOMEM;
+-			goto exit;
+-		}
+-		arg->extraie.len = req->ie_len;
+-	}
+-
+-	if (req->n_ssids) {
+-		arg->num_ssids = req->n_ssids;
+-		for (i = 0; i < arg->num_ssids; i++)
+-			arg->ssid[i] = req->ssids[i];
+-	} else if (ath12k_mac_skip_passive_scan_flag(ar, n_channels, chan_list)) {
+-		/* The firmware puts both MACs to work on a multi-band scan and
+-		 * asserts a few hundred ms into a passive one, after which
+-		 * every WMI command returns -108 and MHI has to reload the
+-		 * image. Leave the flag off and let the firmware use the
+-		 * per-channel passive and DFS flags it already has from
+-		 * WMI_SCAN_CHAN_LIST, so channels that may not be probed
+-		 * still are not probed.
+-		 */
+-		ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
+-			   "mac skipping passive flag for %d-channel multi-band scan\n",
+-			   n_channels);
+-	} else {
+-		arg->scan_f_passive = 1;
++		goto scan_abort;
+ 	}
+ 
+-	if (n_channels) {
+-		arg->num_chan = n_channels;
+-		arg->chan_list = kcalloc(arg->num_chan, sizeof(*arg->chan_list),
+-					 GFP_KERNEL);
+-		if (!arg->chan_list) {
+-			ret = -ENOMEM;
+-			goto exit;
+-		}
+-
+-		for (i = 0; i < arg->num_chan; i++)
+-			arg->chan_list[i] = chan_list[i]->center_freq;
+-	}
++	for (i = 0; i < n_channels; i++)
++		ar->scan.chan_freqs[i] = chan_list[i]->center_freq;
+ 
+-	ret = ath12k_start_scan(ar, arg);
+-	if (ret) {
+-		if (ret == -EBUSY)
+-			ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
+-				   "scan engine is busy 11d state %d\n", ar->state_11d);
+-		else
+-			ath12k_warn(ar->ab, "failed to start hw scan: %d\n", ret);
++	ar->scan.n_chan_freqs = n_channels;
++	ar->scan.chan_idx = 0;
+ 
+-		spin_lock_bh(&ar->data_lock);
+-		ar->scan.state = ATH12K_SCAN_IDLE;
+-		spin_unlock_bh(&ar->data_lock);
+-		goto exit;
+-	}
++	ret = ath12k_mac_scan_start_chunk(ar, arvif);
++	if (ret)
++		goto scan_abort;
+ 
+-	ath12k_dbg(ar->ab, ATH12K_DBG_MAC, "mac scan started");
++	goto exit;
+ 
+-	/* Add a margin to account for event/command processing */
+-	ieee80211_queue_delayed_work(ath12k_ar_to_hw(ar), &ar->scan.timeout,
+-				     msecs_to_jiffies(arg->max_scan_time +
+-						      ATH12K_MAC_SCAN_TIMEOUT_MSECS));
++scan_abort:
++	kfree(ar->scan.chan_freqs);
++	ar->scan.chan_freqs = NULL;
++	ar->scan.hw_req = NULL;
++	spin_lock_bh(&ar->data_lock);
++	ar->scan.state = ATH12K_SCAN_IDLE;
++	spin_unlock_bh(&ar->data_lock);
+ 
+ exit:
+-	if (arg) {
+-		kfree(arg->chan_list);
+-		kfree(arg->extraie.ptr);
+-		kfree(arg);
+-	}
+ 
+ 	if (ar->state_11d == ATH12K_11D_PREPARING &&
+ 	    ahvif->vdev_type == WMI_VDEV_TYPE_STA &&
