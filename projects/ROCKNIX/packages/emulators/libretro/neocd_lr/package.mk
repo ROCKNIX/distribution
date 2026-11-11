@@ -2,8 +2,8 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="neocd_lr"
-PKG_VERSION="8f2d42c1cebc802d00ef8c74c24ea6b2e1b9f931"
-PKG_SHA256="05283c5d35f7cfdc447b3a45631983a82f155c5048f390d1a85e088bd3966b35"
+PKG_VERSION="b1e04c738cb48a1dae0574b8877f6a116d270ca1"
+PKG_SHA256="fac1ec580812ce7aa962498450e1b1cc8896a786eeb2f16cfe28807dc13d2418"
 PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/libretro/neocd_libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

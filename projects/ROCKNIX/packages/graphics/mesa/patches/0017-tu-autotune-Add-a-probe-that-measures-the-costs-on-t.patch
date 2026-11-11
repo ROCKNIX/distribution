@@ -1,0 +1,2230 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Sat, 7 Nov 2026 23:09:18 -0800
+Subject: [PATCH 17/17] tu/autotune: Add a probe that measures the costs on the
+ GPU
+
+TU_AUTOTUNE_CALIB=force measures the costs when the device is created instead of using the table, and
+export=<path> writes them to a file. This is how new table entries are made.
+---
+ src/freedreno/vulkan/meson.build          |    1 +
+ src/freedreno/vulkan/tu_autotune.cc       |   31 +-
+ src/freedreno/vulkan/tu_autotune.h        |    5 +
+ src/freedreno/vulkan/tu_autotune_calib.cc |   26 +-
+ src/freedreno/vulkan/tu_autotune_calib.h  |   54 +-
+ src/freedreno/vulkan/tu_autotune_probe.cc | 1746 +++++++++++++++++++++
+ src/freedreno/vulkan/tu_cmd_buffer.cc     |   38 +-
+ src/freedreno/vulkan/tu_cmd_buffer.h      |   13 +
+ src/freedreno/vulkan/tu_cs.cc             |    2 +
+ src/freedreno/vulkan/tu_cs.h              |    7 +
+ src/freedreno/vulkan/tu_shader.cc         |    3 +
+ 11 files changed, 1905 insertions(+), 21 deletions(-)
+ create mode 100644 src/freedreno/vulkan/tu_autotune_probe.cc
+
+diff --git a/src/freedreno/vulkan/meson.build b/src/freedreno/vulkan/meson.build
+index 3df3c01422b..65ad018d530 100644
+--- a/src/freedreno/vulkan/meson.build
++++ b/src/freedreno/vulkan/meson.build
+@@ -36,6 +36,7 @@ libtu_files = files(
+   'tu_acceleration_structure.cc',
+   'tu_autotune.cc',
+   'tu_autotune_calib.cc',
++  'tu_autotune_probe.cc',
+   'tu_buffer.cc',
+   'tu_buffer_view.cc',
+   'tu_clear_blit.cc',
+diff --git a/src/freedreno/vulkan/tu_autotune.cc b/src/freedreno/vulkan/tu_autotune.cc
+index 3e8eaa8980b..45f26623a10 100644
+--- a/src/freedreno/vulkan/tu_autotune.cc
++++ b/src/freedreno/vulkan/tu_autotune.cc
+@@ -42,11 +42,14 @@
+ #define at_log_base_h(fmt, hash, ...)
+ #endif
+ 
+-#if TU_AUTOTUNE_DEBUG_LOG_BANDWIDTH
+-#define at_log_bandwidth_h(fmt, hash, ...) mesa_logi("autotune-bw %016" PRIx64 ": " fmt, hash, ##__VA_ARGS__)
+-#else
+-#define at_log_bandwidth_h(fmt, hash, ...)
+-#endif
++/* Also enabled at runtime by TU_AUTOTUNE_CALIB=log. */
++bool tu_autotune_log_bandwidth = false;
++
++#define at_log_bandwidth_h(fmt, hash, ...)                                                                           \
++   do {                                                                                                              \
++      if (TU_AUTOTUNE_DEBUG_LOG_BANDWIDTH || unlikely(tu_autotune_log_bandwidth))                                    \
++         mesa_logi("autotune-bw %016" PRIx64 ": " fmt, hash, ##__VA_ARGS__);                                         \
++   } while (0)
+ 
+ #if TU_AUTOTUNE_DEBUG_LOG_PROFILED
+ #define at_log_profiled_h(fmt, hash, ...) mesa_logi("autotune-prof %016" PRIx64 ": " fmt, hash, ##__VA_ARGS__)
+@@ -1186,6 +1189,9 @@ struct tu_autotune::rp_history {
+                                    const struct tu_render_pass_state *rp_state,
+                                    uint32_t stream_dwords,
+                                    uint32_t state_dwords,
++                                   uint32_t payload_dwords,
++                                   bool count_payload,
++                                   bool exact_replay,
+                                    const struct tu_autotune_calib *calib,
+                                    float margin,
+                                    double pred[2])
+@@ -1245,6 +1251,8 @@ struct tu_autotune::rp_history {
+             bin_count = MAX2(vsc.tile_count.width * vsc.tile_count.height, 1u);
+             hw_binning = vsc.binning_possible && vsc.binning_useful;
+          }
++         /* Without HW binning the first tile stands in for sysmem's single pass. */
++         const uint32_t replays = (exact_replay && !hw_binning) ? bin_count - 1 : bin_count;
+          bool select_sysmem;
+          double sysmem_us = 0.0, gmem_us = 0.0, vis_bins = 0.0;
+          bool vis_known = false;
+@@ -1252,7 +1260,7 @@ struct tu_autotune::rp_history {
+             /* Estimate both modes in us. Bins per draw come from earlier GMEM runs, else assume all of them. */
+             const double draws = rp_state->drawcall_count;
+             const double ib1 = stream_dwords;
+-            const double ib2 = state_dwords;
++            const double ib2 = state_dwords + (count_payload ? payload_dwords : 0);
+             const double ib2_per_draw = draws > 0.0 ? ib2 / draws : 0.0;
+             const double all_bins = (double) bin_count * draws;
+             if (hw_binning && calib->bytes_per_vis > 0.0f && !mean_vsc_draw_bytes.empty()) {
+@@ -1295,7 +1303,7 @@ struct tu_autotune::rp_history {
+             gmem_us = (g_att + d_color_gmem * calib->w_draw + d_depth_gmem * w_depth_gmem) /
+                          calib->bw_bytes_per_us +
+                       (hw_binning ? draws * calib->t_draw_binning_us : 0.0) +
+-                      (double) bin_count * ib1 * calib->t_dword_us +
++                      (double) replays * ib1 * calib->t_dword_us +
+                       skip_bins * (calib->t_draw_us + ib2_per_draw * calib->t_state_skip_us) +
+                       vis_bins * render_draw_us + (double) bin_count * calib->t_bin_us + shade_gmem;
+             select_sysmem = gmem_us >= sysmem_us * (1.0 - margin);
+@@ -1326,14 +1334,14 @@ struct tu_autotune::rp_history {
+             "   mean_samples=%" PRIu64 ", draw_bandwidth_per_sample=%.2f, total_draw_call_bandwidth=%" PRIu64
+             ", render_areas[0]=%" PRIu32 "x%" PRIu32 ", sysmem_bandwidth_per_pixel=%" PRIu32
+             ", gmem_bandwidth_per_pixel=%" PRIu32 ", sysmem_bandwidth=%" PRIu64 ", gmem_bandwidth=%" PRIu64
+-            ", bins=%" PRIu32 ", draw_dwords=%" PRIu32 ", state_dwords=%" PRIu32
++            ", bins=%" PRIu32 ", draw_dwords=%" PRIu32 ", state_dwords=%" PRIu32 ", payload_dwords=%" PRIu32
+             ", vis_bins=%.0f%s, vsc_draw=%" PRIu32 ", vsc_prim=%" PRIu32 ", depth_draw_bandwidth=%" PRIu64
+             ", gmem_depth_bandwidth=%" PRIu64 ", samples_sys=%" PRIu64 ", samples_gmem=%" PRIu64
+             ", fs_instrs=%" PRIu32 ", fs_tex=%" PRIu32 ", sysmem_us=%.1f, gmem_us=%.1f",
+             history.hash, rp_state->drawcall_count, render_mode_str(mode), mean_samples,
+             (float) rp_state->drawcall_bandwidth_per_sample_sum / rp_state->drawcall_count, total_draw_call_bandwidth,
+             extent.width, extent.height, pass->sysmem_bandwidth_per_pixel, pass->gmem_bandwidth_per_pixel,
+-            sysmem_bandwidth, gmem_bandwidth, bin_count, stream_dwords, state_dwords, vis_bins,
++            sysmem_bandwidth, gmem_bandwidth, bin_count, stream_dwords, state_dwords, payload_dwords, vis_bins,
+             vis_known ? "" : "(prior)", mean_vsc_draw_bytes.get(), mean_vsc_prim_bytes.get(), depth_draw_call_bandwidth,
+             gmem_depth_bandwidth, samples_mode_sys, samples_mode_gmem, rp_state->drawcall_fs_instrs_sum,
+             rp_state->drawcall_fs_tex_sum, sysmem_us, gmem_us);
+@@ -2194,7 +2202,10 @@ tu_autotune::get_optimal_mode(struct tu_cmd_buffer *cmd_buffer, rp_ctx_t *rp_ctx
+       double pred[2] = { 0.0, 0.0 };
+       render_mode mode = history.bandwidth.get_optimal_mode(history, cmd_state, pass, framebuffer, rp_state,
+                                                             tu_cs_total_dwords(draw_cs), draw_cs->draw_state_dwords,
+-                                                            &calib, calib_margin, pred);
++                                                            draw_cs->load_payload_dwords +
++                                                               draw_cs->draw_state_payload_dwords,
++                                                            calib_payload, calib_exact_replay, &calib, calib_margin,
++                                                            pred);
+ 
+       rp_entry &entry = **rp_ctx;
+       entry.pred_us[0] = pred[0];
+diff --git a/src/freedreno/vulkan/tu_autotune.h b/src/freedreno/vulkan/tu_autotune.h
+index 05643c28d1a..3f85b2ed42e 100644
+--- a/src/freedreno/vulkan/tu_autotune.h
++++ b/src/freedreno/vulkan/tu_autotune.h
+@@ -345,6 +345,11 @@ struct tu_autotune {
+    render_mode adapt_decide(rp_history &history, rp_entry &entry, const double pred[2], render_mode model_mode,
+                             uint32_t draws);
+ 
++   /* TU_AUTOTUNE_CALIB=payload: count indirect CP_LOAD_STATE6 payloads as CP work. */
++   bool calib_payload = false;
++   /* TU_AUTOTUNE_CALIB=replay: without HW binning, count bins - 1 replays instead of bins. */
++   bool calib_exact_replay = false;
++
+    /* Returns the optimal tile size divisor for the given CB state. */
+    uint32_t get_tile_size_divisor(struct tu_cmd_buffer *cmd_buffer);
+ 
+diff --git a/src/freedreno/vulkan/tu_autotune_calib.cc b/src/freedreno/vulkan/tu_autotune_calib.cc
+index 5e868de770d..63bf91d0700 100644
+--- a/src/freedreno/vulkan/tu_autotune_calib.cc
++++ b/src/freedreno/vulkan/tu_autotune_calib.cc
+@@ -94,6 +94,7 @@ calib_from_row(const struct tu_physical_device *pdev, const calib_table_entry &e
+    const double clock = e.mhz / mhz; /* the GMEM-side weights follow the GPU clock */
+ 
+    memset(calib, 0, sizeof(*calib));
++   calib->version = TU_AUTOTUNE_CALIB_VERSION;
+    calib->valid = 1;
+    calib->chip_id = e.chip_id;
+    calib->t_dword_us = e.cycles[0] / mhz;
+@@ -119,22 +120,19 @@ calib_from_row(const struct tu_physical_device *pdev, const calib_table_entry &e
+ 
+ } /* namespace */
+ 
+-void
+-tu_autotune_calib_init(struct tu_device *device)
++bool
++tu_autotune_calib_from_table(struct tu_device *device)
+ {
+    const struct tu_physical_device *pdev = device->physical_device;
+    struct tu_autotune_calib *calib = &device->autotune->calib;
+    memset(calib, 0, sizeof(*calib));
+ 
+-   const char *env = os_get_option("TU_AUTOTUNE_CALIB");
+-   if (env && !strcmp(env, "off"))
+-      return;
+    if (pdev->info->chip < 6 || pdev->info->chip > 8 || TU_DEBUG(NOBIN) || TU_DEBUG(FORCEBIN))
+-      return;
++      return false;
+ 
+    const calib_table_entry *row = find_row(pdev);
+    if (!row)
+-      return;
++      return false;
+ 
+    calib_from_row(pdev, *row, calib);
+    if (TU_DEBUG(STARTUP)) {
+@@ -142,4 +140,18 @@ tu_autotune_calib_init(struct tu_device *device)
+                 row->chip_id == (uint32_t) pdev->dev_id.chip_id ? "own" : "borrowed", row->chip_id,
+                 pdev->max_freq ? pdev->max_freq / 1e6 : row->mhz);
+    }
++   return true;
++}
++
++void
++tu_autotune_calib_init(struct tu_device *device)
++{
++   memset(&device->autotune->calib, 0, sizeof(device->autotune->calib));
++
++   const char *env = os_get_option("TU_AUTOTUNE_CALIB");
++   if (env && !strcmp(env, "off"))
++      return;
++   if (env && *env && tu_autotune_probe_init(device, env))
++      return;
++   tu_autotune_calib_from_table(device);
+ }
+diff --git a/src/freedreno/vulkan/tu_autotune_calib.h b/src/freedreno/vulkan/tu_autotune_calib.h
+index 32b15bcd2d2..2db83e7fb6c 100644
+--- a/src/freedreno/vulkan/tu_autotune_calib.h
++++ b/src/freedreno/vulkan/tu_autotune_calib.h
+@@ -10,10 +10,19 @@
+ 
+ struct tu_device;
+ 
++#define TU_AUTOTUNE_CALIB_VERSION 14
++
++/* Settings that change what the probe measures. */
++#define TU_AUTOTUNE_CALIB_COND_PAYLOAD       (1u << 0) /* TU_AUTOTUNE_CALIB=payload */
++#define TU_AUTOTUNE_CALIB_COND_DEPTH_GREATER (1u << 1) /* TU_AUTOTUNE_CALIB_DEPTH_GREATER */
++
+ /* Costs for the GMEM/sysmem estimate, in us. A draw-bin is one draw in one bin. */
+ struct tu_autotune_calib {
++   uint32_t version;
+    uint32_t valid;
+-   uint32_t chip_id; /* table entry used */
++   uint32_t chip_id; /* table entry used, 0 when probed */
++   uint32_t conditions; /* TU_AUTOTUNE_CALIB_COND_* */
++   char error[96];      /* why the probe failed */
+ 
+    float bw_bytes_per_us;   /* sysmem throughput for blended content */
+    float t_dword_us;        /* per draw stream dword per bin */
+@@ -40,8 +49,51 @@ struct tu_autotune_calib {
+    float t_instr_us;
+    float t_tex_us;
+    float fs_instrs_base;
++
++   /* Probe measurements, only exported. */
++   float bw_flat_bytes_per_us;  /* compressible */
++   float bw_write_bytes_per_us; /* incompressible */
++   float w_draw_write;
++   float t_skip_light_us;
++   float t_skip_heavy_us;
++   float t_skip_pad_us;
++   float t_render_light_us;
++   float t_render_heavy_us;
++   float pixel_bytes_per_draw;
++   float prim_bytes_per_vis;
++   uint32_t stream_light;
++   uint32_t stream_heavy;
++   uint32_t stream_pad;
++   uint32_t state_light;
++   uint32_t state_heavy;
++   float depth_layer_sys_us;
++   float depth_layer_gmem_us;
++   float depth_hidden_gmem_us;
++   float reject_layer_sys_us;
++   float reject_layer_gmem_us;
++   float att_load_us;
++   float att_store_us;
++   float att_load_store_us;
++   float depth_load_us;
++   float depth_store_us;
++   float depth_load_store_us;
++   float alu_layer_us;
++   float tex_layer_us;
++   uint32_t instrs_alu;
++   uint32_t instrs_tex;
++   uint32_t tex_fetches;
++   uint32_t size_s1;
++   uint32_t bins_s1;
++   uint32_t bins_s2;
++   uint32_t probe_us;
+ };
+ 
+ void tu_autotune_calib_init(struct tu_device *device);
++bool tu_autotune_calib_from_table(struct tu_device *device);
++
++/* TU_AUTOTUNE_CALIB developer options, see tu_autotune_probe.cc. */
++bool tu_autotune_probe_init(struct tu_device *device, const char *env);
++
++extern bool tu_autotune_log_bandwidth;
+ 
+ #endif /* TU_AUTOTUNE_CALIB_H */
+diff --git a/src/freedreno/vulkan/tu_autotune_probe.cc b/src/freedreno/vulkan/tu_autotune_probe.cc
+new file mode 100644
+index 00000000000..e159ab6a65d
+--- /dev/null
++++ b/src/freedreno/vulkan/tu_autotune_probe.cc
+@@ -0,0 +1,1746 @@
++/*
++ * Copyright © 2026 ROCKNIX
++ * SPDX-License-Identifier: MIT
++ */
++
++/* TU_AUTOTUNE_CALIB=force measures the costs on this GPU instead of using the table, which is how table entries are
++ * made. It draws through the normal entry points, so it gets the same binning as an app.
++ */
++
++#include "tu_autotune_calib.h"
++
++#include <algorithm>
++#include <ctype.h>
++#include <dirent.h>
++#include <errno.h>
++#include <inttypes.h>
++#include <math.h>
++#include <stdio.h>
++#include <string.h>
++#include <string>
++#include <vector>
++
++#include "nir/nir_builder.h"
++#include "ir3/ir3_compiler.h"
++#include "util/hex.h"
++#include "util/log.h"
++#include "util/os_file.h"
++#include "util/os_misc.h"
++#include "util/os_time.h"
++#include "vk_pipeline.h"
++
++#include "git_sha1.h"
++
++#include "tu_autotune.h"
++#include "tu_cmd_buffer.h"
++#include "tu_device.h"
++#include "tu_knl.h"
++#include "tu_pipeline.h"
++#include "tu_queue.h"
++#include "tu_shader.h"
++#include "tu_util.h"
++
++namespace {
++
++constexpr VkFormat PROBE_FORMAT = VK_FORMAT_R8G8B8A8_UNORM;
++constexpr uint32_t PROBE_CPP = 4;
++/* no stencil, so storing depth never has to preserve other bits */
++constexpr VkFormat PROBE_DEPTH_FORMAT = VK_FORMAT_D32_SFLOAT;
++constexpr uint32_t PROBE_DEPTH_CPP = 4;
++constexpr uint32_t ALU_CHAIN = 16;   /* multiply-add steps in the ALU shader */
++constexpr uint32_t TEX_FETCHES = 8;  /* fetches in the texture shader */
++constexpr uint32_t TEX_SIZE = 64;    /* small enough to stay in cache */
++
++/* Debug: depth test GREATER with increasing z instead of LESS. */
++bool
++depth_greater()
++{
++   static const bool greater = os_get_option("TU_AUTOTUNE_CALIB_DEPTH_GREATER") != nullptr;
++   return greater;
++}
++constexpr uint32_t PROBE_ROUNDS = 11; /* the first round is discarded */
++constexpr uint32_t WARMUP_PASSES = 64; /* most passes in one warm-up batch */
++constexpr int64_t WARMUP_BATCH_NS = 35'000'000; /* GPU work per warm-up batch, 64 passes on A610 */
++constexpr uint32_t WARMUP_MAX_BATCHES = 8;
++constexpr uint32_t OVERDRAW_LAYERS = 4;
++constexpr uint32_t DRAWS_FEW = 16;
++constexpr uint32_t DRAWS_MANY = 256;
++constexpr uint32_t MIN_BINS = 8;
++constexpr uint32_t PAD_DWORDS = 64;                    /* CP_NOP dwords per padded draw */
++constexpr uint32_t VSC_SLOT_DWORDS = 2 * MAX_VSC_PIPES; /* draw sizes, then prim sizes */
++constexpr uint64_t PROBE_TIMEOUT_NS = 5ull * 1000 * 1000 * 1000;
++
++struct push_data {
++   float x0, y0, x1, y1; /* NDC, relative to the bin for omni draws */
++   float color[4];
++   float tile_w, tile_h; /* omni: bin pitch in NDC */
++   uint32_t tiles_x;     /* omni: bins per row */
++   uint32_t omni;
++   float z;
++   float pad[3];
++};
++
++enum draw_variant {
++   VAR_LIGHT, /* one pipeline, push constants only */
++   VAR_HEAVY, /* switches pipeline every draw */
++   VAR_PAD,   /* light plus CP_NOP padding */
++};
++
++enum probe_pipeline {
++   PIPE_STRIPES,       /* incompressible output */
++   PIPE_STRIPES_ALT,   /* same, heavy passes switch between the two */
++   PIPE_STRIPES_BLEND, /* additive blend */
++   PIPE_FLAT,          /* compressible output */
++   PIPE_DEPTH,         /* stripes with depth test and write */
++   PIPE_DEPTH_ALWAYS,  /* incompressible depth, passing every fragment, so it needs no clear */
++   PIPE_ALU,
++   PIPE_TEX,
++   PIPE_COUNT,
++};
++
++enum probe_pass {
++   PASS_SYSMEM_OVERDRAW_N, /* fragment throughput */
++   PASS_SYSMEM_OVERDRAW_1, /* pass overhead */
++   PASS_GMEM_PIXEL_LIGHT_FEW_S1,  /* one pixel per draw, for skipped draw-bins */
++   PASS_GMEM_PIXEL_LIGHT_MANY_S1,
++   PASS_GMEM_PIXEL_LIGHT_FEW_S2,
++   PASS_GMEM_PIXEL_LIGHT_MANY_S2,
++   PASS_GMEM_PIXEL_HEAVY_FEW_S1,
++   PASS_GMEM_PIXEL_HEAVY_MANY_S1,
++   PASS_GMEM_PIXEL_HEAVY_FEW_S2,
++   PASS_GMEM_PIXEL_HEAVY_MANY_S2,
++   PASS_GMEM_PIXEL_PAD_FEW_S1,
++   PASS_GMEM_PIXEL_PAD_MANY_S1,
++   PASS_GMEM_PIXEL_PAD_FEW_S2,
++   PASS_GMEM_PIXEL_PAD_MANY_S2,
++   PASS_GMEM_OMNI_LIGHT_FEW_S1,   /* one pixel in every bin, for rendered draw-bins */
++   PASS_GMEM_OMNI_LIGHT_MANY_S1,
++   PASS_GMEM_OMNI_LIGHT_FEW_S2,
++   PASS_GMEM_OMNI_LIGHT_MANY_S2,
++   PASS_GMEM_OMNI_HEAVY_FEW_S1,
++   PASS_GMEM_OMNI_HEAVY_MANY_S1,
++   PASS_GMEM_OMNI_HEAVY_FEW_S2,
++   PASS_GMEM_OMNI_HEAVY_MANY_S2,
++   PASS_GMEM_OVERDRAW_N,
++   PASS_GMEM_OVERDRAW_1,
++   PASS_GMEM_LOAD,
++   PASS_GMEM_LOAD_STORE,
++   PASS_GMEM_STORE,
++   PASS_SYSMEM_FLAT_N,
++   PASS_SYSMEM_FLAT_1,
++   PASS_SYSMEM_BLEND_N,
++   PASS_SYSMEM_BLEND_1,
++   PASS_GMEM_BLEND_N,
++   PASS_GMEM_BLEND_1,
++   PASS_SYSMEM_DEPTH_N,       /* back to front, every layer passes */
++   PASS_SYSMEM_DEPTH_1,
++   PASS_GMEM_DEPTH_N,
++   PASS_GMEM_DEPTH_1,
++   PASS_SYSMEM_DEPTH_FTB_N,   /* front to back, only the first layer passes */
++   PASS_GMEM_DEPTH_FTB_N,
++   PASS_GMEM_DEPTH_LOAD_STORE,
++   PASS_GMEM_DEPTH_STORE,
++   PASS_GMEM_DEPTH_NONE,
++   PASS_GMEM_DEPTH_LOAD,
++   PASS_SYSMEM_ALU_N,
++   PASS_SYSMEM_ALU_1,
++   PASS_SYSMEM_TEX_N,
++   PASS_SYSMEM_TEX_1,
++   PASS_COUNT,
++};
++
++constexpr uint32_t MAX_QUERIES = 2 * MAX2(PROBE_ROUNDS * PASS_COUNT, WARMUP_PASSES);
++
++struct pass_desc {
++   const char *name;
++   probe_pipeline pipeline;
++   draw_variant variant;
++   bool sysmem;
++   bool s2;
++   bool pixel; /* scattered one-pixel rects, else full screen */
++   bool omni;  /* one-pixel rect in every bin */
++   uint32_t draws;
++   bool load;
++   bool store;
++   bool depth;       /* cleared unless depth_load, undefined for PIPE_DEPTH_ALWAYS */
++   bool depth_load;
++   bool depth_store;
++   bool ftb;         /* front to back */
++};
++
++const pass_desc pass_descs[PASS_COUNT] = {
++   /* name                        pipeline            variant    sysmem s2     pixel  omni   draws            load   store  depth  dload  dstore ftb */
++   { "sysmem stripes N",          PIPE_STRIPES,       VAR_LIGHT, true,  false, false, false, OVERDRAW_LAYERS, false, false, false, false, false, false },
++   { "sysmem stripes 1",          PIPE_STRIPES,       VAR_LIGHT, true,  false, false, false, 1,               false, false, false, false, false, false },
++   { "gmem pixel light few s1",   PIPE_STRIPES,       VAR_LIGHT, false, false, true,  false, DRAWS_FEW,       false, false, false, false, false, false },
++   { "gmem pixel light many s1",  PIPE_STRIPES,       VAR_LIGHT, false, false, true,  false, DRAWS_MANY,      false, false, false, false, false, false },
++   { "gmem pixel light few s2",   PIPE_STRIPES,       VAR_LIGHT, false, true,  true,  false, DRAWS_FEW,       false, false, false, false, false, false },
++   { "gmem pixel light many s2",  PIPE_STRIPES,       VAR_LIGHT, false, true,  true,  false, DRAWS_MANY,      false, false, false, false, false, false },
++   { "gmem pixel heavy few s1",   PIPE_STRIPES,       VAR_HEAVY, false, false, true,  false, DRAWS_FEW,       false, false, false, false, false, false },
++   { "gmem pixel heavy many s1",  PIPE_STRIPES,       VAR_HEAVY, false, false, true,  false, DRAWS_MANY,      false, false, false, false, false, false },
++   { "gmem pixel heavy few s2",   PIPE_STRIPES,       VAR_HEAVY, false, true,  true,  false, DRAWS_FEW,       false, false, false, false, false, false },
++   { "gmem pixel heavy many s2",  PIPE_STRIPES,       VAR_HEAVY, false, true,  true,  false, DRAWS_MANY,      false, false, false, false, false, false },
++   { "gmem pixel pad few s1",     PIPE_STRIPES,       VAR_PAD,   false, false, true,  false, DRAWS_FEW,       false, false, false, false, false, false },
++   { "gmem pixel pad many s1",    PIPE_STRIPES,       VAR_PAD,   false, false, true,  false, DRAWS_MANY,      false, false, false, false, false, false },
++   { "gmem pixel pad few s2",     PIPE_STRIPES,       VAR_PAD,   false, true,  true,  false, DRAWS_FEW,       false, false, false, false, false, false },
++   { "gmem pixel pad many s2",    PIPE_STRIPES,       VAR_PAD,   false, true,  true,  false, DRAWS_MANY,      false, false, false, false, false, false },
++   { "gmem omni light few s1",    PIPE_STRIPES,       VAR_LIGHT, false, false, false, true,  DRAWS_FEW,       false, false, false, false, false, false },
++   { "gmem omni light many s1",   PIPE_STRIPES,       VAR_LIGHT, false, false, false, true,  DRAWS_MANY,      false, false, false, false, false, false },
++   { "gmem omni light few s2",    PIPE_STRIPES,       VAR_LIGHT, false, true,  false, true,  DRAWS_FEW,       false, false, false, false, false, false },
++   { "gmem omni light many s2",   PIPE_STRIPES,       VAR_LIGHT, false, true,  false, true,  DRAWS_MANY,      false, false, false, false, false, false },
++   { "gmem omni heavy few s1",    PIPE_STRIPES,       VAR_HEAVY, false, false, false, true,  DRAWS_FEW,       false, false, false, false, false, false },
++   { "gmem omni heavy many s1",   PIPE_STRIPES,       VAR_HEAVY, false, false, false, true,  DRAWS_MANY,      false, false, false, false, false, false },
++   { "gmem omni heavy few s2",    PIPE_STRIPES,       VAR_HEAVY, false, true,  false, true,  DRAWS_FEW,       false, false, false, false, false, false },
++   { "gmem omni heavy many s2",   PIPE_STRIPES,       VAR_HEAVY, false, true,  false, true,  DRAWS_MANY,      false, false, false, false, false, false },
++   { "gmem stripes N",            PIPE_STRIPES,       VAR_LIGHT, false, false, false, false, OVERDRAW_LAYERS, false, false, false, false, false, false },
++   { "gmem stripes 1",            PIPE_STRIPES,       VAR_LIGHT, false, false, false, false, 1,               false, false, false, false, false, false },
++   { "gmem load",                 PIPE_STRIPES,       VAR_LIGHT, false, false, false, false, 1,               true,  false, false, false, false, false },
++   { "gmem load+store",           PIPE_STRIPES,       VAR_LIGHT, false, false, false, false, 1,               true,  true , false, false, false, false },
++   { "gmem store",                PIPE_STRIPES,       VAR_LIGHT, false, false, false, false, 1,               false, true , false, false, false, false },
++   { "sysmem flat N",             PIPE_FLAT,          VAR_LIGHT, true,  false, false, false, OVERDRAW_LAYERS, false, false, false, false, false, false },
++   { "sysmem flat 1",             PIPE_FLAT,          VAR_LIGHT, true,  false, false, false, 1,               false, false, false, false, false, false },
++   { "sysmem blend N",            PIPE_STRIPES_BLEND, VAR_LIGHT, true,  false, false, false, OVERDRAW_LAYERS, false, false, false, false, false, false },
++   { "sysmem blend 1",            PIPE_STRIPES_BLEND, VAR_LIGHT, true,  false, false, false, 1,               false, false, false, false, false, false },
++   { "gmem blend N",              PIPE_STRIPES_BLEND, VAR_LIGHT, false, false, false, false, OVERDRAW_LAYERS, false, false, false, false, false, false },
++   { "gmem blend 1",              PIPE_STRIPES_BLEND, VAR_LIGHT, false, false, false, false, 1,               false, false, false, false, false, false },
++   { "sysmem depth N",            PIPE_DEPTH,         VAR_LIGHT, true,  false, false, false, OVERDRAW_LAYERS, false, false, true,  false, false, false },
++   { "sysmem depth 1",            PIPE_DEPTH,         VAR_LIGHT, true,  false, false, false, 1,               false, false, true,  false, false, false },
++   { "gmem depth N",              PIPE_DEPTH,         VAR_LIGHT, false, false, false, false, OVERDRAW_LAYERS, false, false, true,  false, false, false },
++   { "gmem depth 1",              PIPE_DEPTH,         VAR_LIGHT, false, false, false, false, 1,               false, false, true,  false, false, false },
++   { "sysmem depth ftb N",        PIPE_DEPTH,         VAR_LIGHT, true,  false, false, false, OVERDRAW_LAYERS, false, false, true,  false, false, true  },
++   { "gmem depth ftb N",          PIPE_DEPTH,         VAR_LIGHT, false, false, false, false, OVERDRAW_LAYERS, false, false, true,  false, false, true  },
++   { "gmem depth load+store",     PIPE_DEPTH_ALWAYS,  VAR_LIGHT, false, false, false, false, 1,               false, false, true,  true,  true,  false },
++   { "gmem depth store",          PIPE_DEPTH_ALWAYS,  VAR_LIGHT, false, false, false, false, 1,               false, false, true,  false, true,  false },
++   { "gmem depth none",           PIPE_DEPTH_ALWAYS,  VAR_LIGHT, false, false, false, false, 1,               false, false, true,  false, false, false },
++   { "gmem depth load",           PIPE_DEPTH_ALWAYS,  VAR_LIGHT, false, false, false, false, 1,               false, false, true,  true,  false, false },
++   { "sysmem alu N",              PIPE_ALU,           VAR_LIGHT, true,  false, false, false, OVERDRAW_LAYERS, false, false, false, false, false, false },
++   { "sysmem alu 1",              PIPE_ALU,           VAR_LIGHT, true,  false, false, false, 1,               false, false, false, false, false, false },
++   { "sysmem tex N",              PIPE_TEX,           VAR_LIGHT, true,  false, false, false, OVERDRAW_LAYERS, false, false, false, false, false, false },
++   { "sysmem tex 1",              PIPE_TEX,           VAR_LIGHT, true,  false, false, false, 1,               false, false, false, false, false, false },
++};
++
++enum image_kind { IMG_COLOR, IMG_DEPTH, IMG_TEXTURE };
++
++struct probe_image {
++   uint32_t width = 0, height = 0;
++   VkImage image = VK_NULL_HANDLE;
++   VkDeviceMemory memory = VK_NULL_HANDLE;
++   VkImageView view = VK_NULL_HANDLE;
++};
++
++struct probe_sample {
++   uint32_t query; /* begin timestamp, end is query + 1 */
++   uint32_t pass;
++   uint32_t bins;
++   uint32_t pipes;
++   uint32_t stream_dwords;
++   uint32_t state_dwords;  /* plus payloads when counted */
++   uint32_t vsc_slot;      /* 0 if not recorded */
++   uint64_t vsc_draw_bytes;
++   uint64_t vsc_prim_bytes;
++   bool sysmem;
++};
++
++/* Tiling the driver picked for a pass. */
++struct tiling_info {
++   uint32_t bins, tiles_x, pipes;
++   float tile_w, tile_h; /* bin pitch in NDC */
++   bool binning_ok;
++};
++
++struct probe {
++   struct tu_device *device;
++   const struct vk_device_dispatch_table *disp;
++   VkDevice dev;
++   VkQueue queue = VK_NULL_HANDLE;
++   uint32_t queue_family = 0;
++
++   VkPipelineLayout layouts[PIPE_COUNT] = {};
++   VkPipeline pipelines[PIPE_COUNT] = {};
++   VkCommandPool pool = VK_NULL_HANDLE;
++   VkCommandBuffer cb = VK_NULL_HANDLE;
++   VkQueryPool queries = VK_NULL_HANDLE;
++   VkFence fence = VK_NULL_HANDLE;
++   probe_image s1, s2;
++   probe_image depth; /* D24S8 at the s1 size */
++   probe_image tex;
++   VkSampler sampler = VK_NULL_HANDLE;
++   VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
++   VkDescriptorPool desc_pool = VK_NULL_HANDLE;
++   VkDescriptorSet tex_set = VK_NULL_HANDLE;
++   uint32_t fs_instrs[PIPE_COUNT] = {};
++   uint32_t fs_tex[PIPE_COUNT] = {};
++   struct tu_bo *vsc_bo = nullptr; /* VSC_SLOT_DWORDS per recorded pass */
++   uint32_t *vsc_map = nullptr;
++   uint32_t query_count = 0;
++   std::vector<probe_sample> samples;
++   bool dump = false;
++
++   const char *error = nullptr;
++   char error_buf[160];
++};
++
++nir_shader *
++build_vs(const struct tu_device *device)
++{
++   nir_builder _b = nir_builder_init_simple_shader(
++      MESA_SHADER_VERTEX, ir3_get_compiler_options(device->compiler), "autotune calib vs");
++   nir_builder *b = &_b;
++
++   nir_variable *out_pos = nir_create_variable_with_location(b->shader, nir_var_shader_out, VARYING_SLOT_POS,
++                                                             glsl_vec4_type());
++
++   /* Every load uses the whole block as its range, the driver sizes the upload from the first one. */
++   nir_def *rect = nir_load_push_constant(b, 4, 32, nir_imm_int(b, 0), .base = 0, .range = sizeof(push_data));
++   nir_def *grid = nir_load_push_constant(b, 4, 32, nir_imm_int(b, 32), .base = 0, .range = sizeof(push_data));
++   nir_def *misc = nir_load_push_constant(b, 4, 32, nir_imm_int(b, 48), .base = 0, .range = sizeof(push_data));
++   nir_def *vid = nir_load_vertex_id(b);
++   nir_def *k = nir_udiv_imm(b, vid, 6); /* rect index */
++   nir_def *v = nir_umod_imm(b, vid, 6);
++
++   /* Two triangles: 0:(x0,y0) 1:(x1,y0) 2:(x0,y1) 3:(x0,y1) 4:(x1,y0) 5:(x1,y1) */
++   nir_def *use_x1 = nir_ior(b, nir_ieq_imm(b, v, 1), nir_ior(b, nir_ieq_imm(b, v, 4), nir_ieq_imm(b, v, 5)));
++   nir_def *use_y1 = nir_ior(b, nir_ieq_imm(b, v, 2), nir_ior(b, nir_ieq_imm(b, v, 3), nir_ieq_imm(b, v, 5)));
++   nir_def *x = nir_bcsel(b, use_x1, nir_channel(b, rect, 2), nir_channel(b, rect, 0));
++   nir_def *y = nir_bcsel(b, use_y1, nir_channel(b, rect, 3), nir_channel(b, rect, 1));
++
++   /* Omni draws move rect k into bin k. */
++   nir_def *tiles_x = nir_umax(b, nir_channel(b, grid, 2), nir_imm_int(b, 1));
++   nir_def *col = nir_u2f32(b, nir_umod(b, k, tiles_x));
++   nir_def *row = nir_u2f32(b, nir_udiv(b, k, tiles_x));
++   nir_def *omni = nir_ine_imm(b, nir_channel(b, grid, 3), 0);
++   nir_def *ox = nir_fadd_imm(b, nir_fmul(b, col, nir_channel(b, grid, 0)), -1.0f);
++   nir_def *oy = nir_fadd_imm(b, nir_fmul(b, row, nir_channel(b, grid, 1)), -1.0f);
++   x = nir_fadd(b, x, nir_bcsel(b, omni, ox, nir_imm_float(b, 0.0f)));
++   y = nir_fadd(b, y, nir_bcsel(b, omni, oy, nir_imm_float(b, 0.0f)));
++
++   nir_store_var(b, out_pos, nir_vec4(b, x, y, nir_channel(b, misc, 0), nir_imm_float(b, 1.0f)), 0xf);
++   return b->shader;
++}
++
++/* Push constant colour, or a pattern UBWC can't compress (a checkerboard on a6xx, noise on a7xx+). */
++nir_shader *
++build_fs(const struct tu_device *device, bool stripes, uint32_t alu_chain, uint32_t tex_fetches, bool depth_noise)
++{
++   nir_builder _b = nir_builder_init_simple_shader(
++      MESA_SHADER_FRAGMENT, ir3_get_compiler_options(device->compiler), "autotune calib fs");
++   nir_builder *b = &_b;
++
++   nir_variable *out_color = nir_create_variable_with_location(b->shader, nir_var_shader_out, FRAG_RESULT_DATA0,
++                                                               glsl_vec4_type());
++   nir_def *color = nir_load_push_constant(b, 4, 32, nir_imm_int(b, 0), .base = 16, .range = 16);
++   if (stripes && device->physical_device->info->chip == 6) {
++      nir_def *coord = nir_load_frag_coord(b);
++      nir_def *x = nir_f2i32(b, nir_channel(b, coord, 0));
++      nir_def *y = nir_f2i32(b, nir_channel(b, coord, 1));
++      nir_def *odd = nir_ieq_imm(b, nir_iand_imm(b, nir_ixor(b, x, y), 1), 1);
++      nir_def *inverse = nir_fsub(b, nir_imm_float(b, 1.0f), color);
++      color = nir_bcsel(b, odd, inverse, color);
++   } else if (stripes) {
++      nir_def *coord = nir_load_frag_coord(b);
++      nir_def *x = nir_f2u32(b, nir_channel(b, coord, 0));
++      nir_def *y = nir_f2u32(b, nir_channel(b, coord, 1));
++      nir_def *h = nir_ixor(b, nir_imul_imm(b, x, 0x9e3779b1), nir_imul_imm(b, y, 0x85ebca77));
++      h = nir_ixor(b, h, nir_channel(b, nir_f2u32(b, nir_fmul_imm(b, color, 255.0f)), 0));
++      h = nir_imul_imm(b, nir_ixor(b, h, nir_ushr_imm(b, h, 15)), 0x2c1b3c6d);
++      h = nir_ixor(b, h, nir_ushr_imm(b, h, 12));
++      nir_def *c[4];
++      for (unsigned i = 0; i < 4; i++)
++         c[i] = nir_fmul_imm(b, nir_u2f32(b, nir_iand_imm(b, nir_ushr_imm(b, h, 8 * i), 0xff)), 1.0f / 255.0f);
++      color = nir_vec(b, c, 4);
++   }
++   if (alu_chain) {
++      /* exact, or the chain folds into one multiply; fract keeps the output from saturating to white */
++      const uint32_t fp_math_ctrl = b->fp_math_ctrl;
++      b->fp_math_ctrl = nir_fp_exact;
++      nir_def *k = nir_imm_vec4(b, 1.0001f, 0.9999f, 1.0002f, 0.9998f);
++      nir_def *v = color;
++      for (uint32_t i = 0; i < alu_chain; i++)
++         v = nir_fadd(b, nir_fmul(b, v, k), color);
++      b->fp_math_ctrl = fp_math_ctrl;
++      color = nir_ffract(b, v);
++   }
++   if (tex_fetches) {
++      nir_variable *tex = nir_variable_create(
++         b->shader, nir_var_uniform, glsl_sampler_type(GLSL_SAMPLER_DIM_2D, false, false, GLSL_TYPE_FLOAT), "tex");
++      tex->data.descriptor_set = 0;
++      tex->data.binding = 0;
++      nir_deref_instr *deref = nir_build_deref_var(b, tex);
++      nir_def *base = nir_fmul_imm(b, nir_trim_vector(b, nir_load_frag_coord(b), 2), 1.0f / TEX_SIZE);
++      nir_def *acc = nir_imm_vec4(b, 0.0f, 0.0f, 0.0f, 0.0f);
++      for (uint32_t i = 0; i < tex_fetches; i++) {
++         nir_def *coord = nir_fadd_imm(b, base, 0.13f * i);
++         acc = nir_fadd(b, acc, nir_tex(b, coord, .texture_deref = deref, .sampler_deref = deref));
++      }
++      color = nir_fadd(b, nir_fmul(b, acc, nir_imm_vec4(b, 0.001f, 0.001f, 0.001f, 0.001f)), color);
++   }
++   nir_store_var(b, out_color, color, 0xf);
++   if (depth_noise) {
++      /* a constant depth compresses away and makes its loads look free, like flat colour */
++      nir_variable *out_depth =
++         nir_create_variable_with_location(b->shader, nir_var_shader_out, FRAG_RESULT_DEPTH, glsl_float_type());
++      nir_def *coord = nir_load_frag_coord(b);
++      nir_def *x = nir_f2u32(b, nir_channel(b, coord, 0));
++      nir_def *y = nir_f2u32(b, nir_channel(b, coord, 1));
++      nir_def *h = nir_ixor(b, nir_imul_imm(b, x, 0x9e3779b1), nir_imul_imm(b, y, 0x85ebca77));
++      h = nir_imul_imm(b, nir_ixor(b, h, nir_ushr_imm(b, h, 15)), 0x2c1b3c6d);
++      h = nir_ixor(b, h, nir_ushr_imm(b, h, 12));
++      nir_store_var(b, out_depth, nir_fmul_imm(b, nir_u2f32(b, nir_iand_imm(b, h, 0xffffff)), 1.0f / 16777216.0f),
++                    0x1);
++   }
++   return b->shader;
++}
++
++bool
++fail(probe &p, const char *msg)
++{
++   if (!p.error)
++      p.error = msg;
++   return false;
++}
++
++bool create_image(probe &p, probe_image &img, uint32_t width, uint32_t height, image_kind kind);
++
++/* Set 0, binding 0 of the texture shader. */
++bool
++create_texture_resources(probe &p)
++{
++   if (!create_image(p, p.tex, TEX_SIZE, TEX_SIZE, IMG_TEXTURE))
++      return false;
++   const VkSamplerCreateInfo sampler_info = {
++      .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
++      .magFilter = VK_FILTER_NEAREST,
++      .minFilter = VK_FILTER_NEAREST,
++      .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
++      .addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
++      .addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
++      .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
++   };
++   if (p.disp->CreateSampler(p.dev, &sampler_info, NULL, &p.sampler) != VK_SUCCESS)
++      return fail(p, "sampler");
++   const VkDescriptorSetLayoutBinding binding = {
++      .binding = 0,
++      .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
++      .descriptorCount = 1,
++      .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
++   };
++   const VkDescriptorSetLayoutCreateInfo layout_info = {
++      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
++      .bindingCount = 1,
++      .pBindings = &binding,
++   };
++   if (p.disp->CreateDescriptorSetLayout(p.dev, &layout_info, NULL, &p.set_layout) != VK_SUCCESS)
++      return fail(p, "descriptor set layout");
++   const VkDescriptorPoolSize pool_size = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 };
++   const VkDescriptorPoolCreateInfo pool_info = {
++      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
++      .maxSets = 1,
++      .poolSizeCount = 1,
++      .pPoolSizes = &pool_size,
++   };
++   if (p.disp->CreateDescriptorPool(p.dev, &pool_info, NULL, &p.desc_pool) != VK_SUCCESS)
++      return fail(p, "descriptor pool");
++   const VkDescriptorSetAllocateInfo alloc_info = {
++      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
++      .descriptorPool = p.desc_pool,
++      .descriptorSetCount = 1,
++      .pSetLayouts = &p.set_layout,
++   };
++   if (p.disp->AllocateDescriptorSets(p.dev, &alloc_info, &p.tex_set) != VK_SUCCESS)
++      return fail(p, "descriptor set");
++   const VkDescriptorImageInfo image_info = {
++      .sampler = p.sampler,
++      .imageView = p.tex.view,
++      .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
++   };
++   const VkWriteDescriptorSet write = {
++      .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
++      .dstSet = p.tex_set,
++      .dstBinding = 0,
++      .descriptorCount = 1,
++      .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
++      .pImageInfo = &image_info,
++   };
++   p.disp->UpdateDescriptorSets(p.dev, 1, &write, 0, NULL);
++   return true;
++}
++
++bool
++create_pipeline(probe &p, probe_pipeline which)
++{
++   const VkPushConstantRange push_range = {
++      .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
++      .offset = 0,
++      .size = sizeof(push_data),
++   };
++   const VkPipelineLayoutCreateInfo layout_info = {
++      .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
++      .setLayoutCount = which == PIPE_TEX ? 1u : 0u,
++      .pSetLayouts = &p.set_layout,
++      .pushConstantRangeCount = 1,
++      .pPushConstantRanges = &push_range,
++   };
++   if (p.disp->CreatePipelineLayout(p.dev, &layout_info, NULL, &p.layouts[which]) != VK_SUCCESS)
++      return fail(p, "pipeline layout");
++
++   nir_shader *vs = build_vs(p.device);
++   nir_shader *fs = build_fs(p.device, which != PIPE_FLAT, which == PIPE_ALU ? ALU_CHAIN : 0,
++                             which == PIPE_TEX ? TEX_FETCHES : 0, which == PIPE_DEPTH_ALWAYS);
++
++   const VkPipelineShaderStageNirCreateInfoMESA vs_nir = {
++      .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_NIR_CREATE_INFO_MESA,
++      .nir = vs,
++   };
++   const VkPipelineShaderStageNirCreateInfoMESA fs_nir = {
++      .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_NIR_CREATE_INFO_MESA,
++      .nir = fs,
++   };
++   const VkPipelineShaderStageCreateInfo stages[2] = {
++      {
++         .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
++         .pNext = &vs_nir,
++         .stage = VK_SHADER_STAGE_VERTEX_BIT,
++         .pName = "main",
++      },
++      {
++         .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
++         .pNext = &fs_nir,
++         .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
++         .pName = "main",
++      },
++   };
++   const VkPipelineVertexInputStateCreateInfo vi_info = {
++      .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
++   };
++   const VkPipelineInputAssemblyStateCreateInfo ia_info = {
++      .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
++      .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
++   };
++   const VkPipelineViewportStateCreateInfo vp_info = {
++      .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
++      .viewportCount = 1,
++      .scissorCount = 1,
++   };
++   const VkPipelineRasterizationStateCreateInfo rs_info = {
++      .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
++      .polygonMode = VK_POLYGON_MODE_FILL,
++      .cullMode = VK_CULL_MODE_NONE,
++      .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
++      .lineWidth = 1.0f,
++   };
++   const VkPipelineMultisampleStateCreateInfo ms_info = {
++      .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
++      .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
++   };
++   const VkPipelineDepthStencilStateCreateInfo ds_info = {
++      .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
++      .depthTestEnable = which == PIPE_DEPTH || which == PIPE_DEPTH_ALWAYS,
++      .depthWriteEnable = which == PIPE_DEPTH || which == PIPE_DEPTH_ALWAYS,
++      .depthCompareOp = which == PIPE_DEPTH_ALWAYS ? VK_COMPARE_OP_ALWAYS
++                        : depth_greater()          ? VK_COMPARE_OP_GREATER
++                                                   : VK_COMPARE_OP_LESS,
++   };
++   const VkPipelineColorBlendAttachmentState cb_att = {
++      .blendEnable = which == PIPE_STRIPES_BLEND,
++      .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
++      .dstColorBlendFactor = VK_BLEND_FACTOR_ONE,
++      .colorBlendOp = VK_BLEND_OP_ADD,
++      .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
++      .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
++      .alphaBlendOp = VK_BLEND_OP_ADD,
++      .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
++                        VK_COLOR_COMPONENT_A_BIT,
++   };
++   const VkPipelineColorBlendStateCreateInfo cb_info = {
++      .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
++      .attachmentCount = 1,
++      .pAttachments = &cb_att,
++   };
++   const VkDynamicState dyn_states[2] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
++   const VkPipelineDynamicStateCreateInfo dyn_info = {
++      .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
++      .dynamicStateCount = 2,
++      .pDynamicStates = dyn_states,
++   };
++   const VkPipelineRenderingCreateInfo rendering_info = {
++      .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
++      .colorAttachmentCount = 1,
++      .pColorAttachmentFormats = &PROBE_FORMAT,
++      .depthAttachmentFormat =
++         which == PIPE_DEPTH || which == PIPE_DEPTH_ALWAYS ? PROBE_DEPTH_FORMAT : VK_FORMAT_UNDEFINED,
++   };
++   const VkGraphicsPipelineCreateInfo pipeline_info = {
++      .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
++      .pNext = &rendering_info,
++      .stageCount = 2,
++      .pStages = stages,
++      .pVertexInputState = &vi_info,
++      .pInputAssemblyState = &ia_info,
++      .pViewportState = &vp_info,
++      .pRasterizationState = &rs_info,
++      .pMultisampleState = &ms_info,
++      .pDepthStencilState = &ds_info,
++      .pColorBlendState = &cb_info,
++      .pDynamicState = &dyn_info,
++      .layout = p.layouts[which],
++   };
++
++   VkResult result =
++      p.disp->CreateGraphicsPipelines(p.dev, VK_NULL_HANDLE, 1, &pipeline_info, NULL, &p.pipelines[which]);
++   ralloc_free(vs);
++   ralloc_free(fs);
++   if (result != VK_SUCCESS)
++      return fail(p, "graphics pipeline");
++
++   const struct tu_pipeline *pipeline = tu_pipeline_from_handle(p.pipelines[which]);
++   const struct tu_shader *fs_shader = pipeline->shaders[MESA_SHADER_FRAGMENT];
++   p.fs_instrs[which] = fs_shader && fs_shader->variant ? fs_shader->variant->info.instrs_count : 0;
++   p.fs_tex[which] = fs_shader ? fs_shader->nir_tex_count : 0;
++   return true;
++}
++
++void
++destroy_image(probe &p, probe_image &img)
++{
++   if (img.view)
++      p.disp->DestroyImageView(p.dev, img.view, NULL);
++   if (img.image)
++      p.disp->DestroyImage(p.dev, img.image, NULL);
++   if (img.memory)
++      p.disp->FreeMemory(p.dev, img.memory, NULL);
++   img = probe_image();
++}
++
++bool
++create_image(probe &p, probe_image &img, uint32_t width, uint32_t height, image_kind kind = IMG_COLOR)
++{
++   img.width = width;
++   img.height = height;
++   const bool depth = kind == IMG_DEPTH;
++   const VkFormat format = depth ? PROBE_DEPTH_FORMAT : PROBE_FORMAT;
++   const VkImageAspectFlags aspect = depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
++   const VkImageUsageFlags usage = depth                 ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
++                                   : kind == IMG_TEXTURE ? VK_IMAGE_USAGE_SAMPLED_BIT
++                                                         : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
++
++   const VkImageCreateInfo image_info = {
++      .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
++      .imageType = VK_IMAGE_TYPE_2D,
++      .format = format,
++      .extent = { width, height, 1 },
++      .mipLevels = 1,
++      .arrayLayers = 1,
++      .samples = VK_SAMPLE_COUNT_1_BIT,
++      .tiling = VK_IMAGE_TILING_OPTIMAL,
++      .usage = usage,
++      .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
++      .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
++   };
++   if (p.disp->CreateImage(p.dev, &image_info, NULL, &img.image) != VK_SUCCESS)
++      return fail(p, "image");
++
++   VkMemoryRequirements reqs;
++   p.disp->GetImageMemoryRequirements(p.dev, img.image, &reqs);
++
++   VkPhysicalDeviceMemoryProperties mem_props;
++   struct tu_physical_device *pdev = p.device->physical_device;
++   pdev->vk.dispatch_table.GetPhysicalDeviceMemoryProperties(tu_physical_device_to_handle(pdev), &mem_props);
++
++   uint32_t type_index = UINT32_MAX;
++   for (uint32_t i = 0; i < mem_props.memoryTypeCount; i++) {
++      if (!(reqs.memoryTypeBits & (1u << i)))
++         continue;
++      if (mem_props.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) {
++         type_index = i;
++         break;
++      }
++      if (type_index == UINT32_MAX)
++         type_index = i;
++   }
++   if (type_index == UINT32_MAX)
++      return fail(p, "memory type");
++
++   const VkMemoryAllocateInfo alloc_info = {
++      .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
++      .allocationSize = reqs.size,
++      .memoryTypeIndex = type_index,
++   };
++   if (p.disp->AllocateMemory(p.dev, &alloc_info, NULL, &img.memory) != VK_SUCCESS)
++      return fail(p, "image memory");
++   if (p.disp->BindImageMemory(p.dev, img.image, img.memory, 0) != VK_SUCCESS)
++      return fail(p, "bind image memory");
++
++   const VkImageViewCreateInfo view_info = {
++      .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
++      .image = img.image,
++      .viewType = VK_IMAGE_VIEW_TYPE_2D,
++      .format = format,
++      .subresourceRange = { aspect, 0, 1, 0, 1 },
++   };
++   if (p.disp->CreateImageView(p.dev, &view_info, NULL, &img.view) != VK_SUCCESS)
++      return fail(p, "image view");
++   return true;
++}
++
++/* Also returns the tiling, which the driver already picks at vkCmdBeginRendering. */
++void
++begin_rendering_ex(probe &p, const probe_image &img, bool sysmem, bool load, bool store, tiling_info *ti,
++                   bool depth = false, bool depth_load = false, bool depth_store = false, bool depth_clear = true)
++{
++   struct tu_cmd_buffer *cmd = tu_cmd_buffer_from_handle(p.cb);
++   cmd->calib_force = sysmem ? TU_CALIB_FORCE_SYSMEM : TU_CALIB_FORCE_GMEM;
++
++   const VkRenderingAttachmentInfo att = {
++      .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
++      .imageView = img.view,
++      .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
++      .loadOp = load ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_DONT_CARE,
++      .storeOp = store ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE,
++   };
++   const VkRenderingAttachmentInfo depth_att = {
++      .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
++      .imageView = p.depth.view,
++      .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
++      .loadOp = depth_load    ? VK_ATTACHMENT_LOAD_OP_LOAD
++                : depth_clear ? VK_ATTACHMENT_LOAD_OP_CLEAR
++                              : VK_ATTACHMENT_LOAD_OP_DONT_CARE,
++      .storeOp = depth_store ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE,
++      .clearValue = { .depthStencil = { depth_greater() ? 0.0f : 1.0f, 0 } },
++   };
++   const VkRenderingInfo rendering = {
++      .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
++      .renderArea = { { 0, 0 }, { img.width, img.height } },
++      .layerCount = 1,
++      .colorAttachmentCount = 1,
++      .pColorAttachments = &att,
++      .pDepthAttachment = depth ? &depth_att : NULL,
++   };
++   p.disp->CmdBeginRendering(p.cb, &rendering);
++
++   const struct tu_tiling_config *tiling = cmd->state.tiling;
++   *ti = {};
++   if (tiling && tiling->possible) {
++      ti->bins = tiling->vsc.tile_count.width * tiling->vsc.tile_count.height;
++      ti->tiles_x = tiling->vsc.tile_count.width;
++      ti->pipes = tiling->vsc.pipe_count.width * tiling->vsc.pipe_count.height;
++      ti->tile_w = 2.0f * tiling->tile0.width / img.width;
++      ti->tile_h = 2.0f * tiling->tile0.height / img.height;
++      ti->binning_ok = tiling->vsc.binning_possible && tiling->vsc.binning_useful;
++   }
++}
++
++void
++begin_rendering(probe &p, const probe_image &img, bool sysmem, bool load, bool store, uint32_t *bins,
++                bool *binning_ok)
++{
++   tiling_info ti;
++   begin_rendering_ex(p, img, sysmem, load, store, &ti);
++   *bins = ti.bins;
++   *binning_ok = ti.binning_ok;
++}
++
++void
++end_rendering(probe &p, bool *used_sysmem)
++{
++   struct tu_cmd_buffer *cmd = tu_cmd_buffer_from_handle(p.cb);
++   p.disp->CmdEndRendering(p.cb);
++   *used_sysmem = cmd->calib_last_sysmem;
++   cmd->calib_force = TU_CALIB_FORCE_NONE;
++}
++
++bool
++begin_cmd_buffer(probe &p)
++{
++   const VkCommandBufferBeginInfo begin_info = {
++      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
++      .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
++   };
++   if (p.disp->ResetCommandBuffer(p.cb, 0) != VK_SUCCESS)
++      return fail(p, "reset command buffer");
++   if (p.disp->BeginCommandBuffer(p.cb, &begin_info) != VK_SUCCESS)
++      return fail(p, "begin command buffer");
++   return true;
++}
++
++/* Smallest square image with enough bins, plus one twice as wide for the per-bin cost. */
++bool
++choose_sizes(probe &p)
++{
++   /* a7xx and later need bigger images to get enough bins, A830 needs 5792 */
++   const uint32_t candidates[] = { 512, 1024, 2048, 2896, 4096, 5792 };
++   for (uint32_t size : candidates) {
++      if (!create_image(p, p.s1, size, size))
++         return false;
++      if (!begin_cmd_buffer(p))
++         return false;
++
++      tiling_info ti;
++      bool used_sysmem;
++      begin_rendering_ex(p, p.s1, true, false, false, &ti);
++      end_rendering(p, &used_sysmem);
++      p.disp->EndCommandBuffer(p.cb);
++      if (p.dump)
++         mesa_logi("autotune calib: %ux%u image: %u bins (%u x %.3f NDC wide, %.3f tall), %u pipes, binning %s", size,
++                   size, ti.bins, ti.tiles_x, ti.tile_w, ti.tile_h, ti.pipes, ti.binning_ok ? "ok" : "no");
++
++      if (ti.bins >= MIN_BINS && ti.binning_ok) {
++         if (!create_image(p, p.s2, size * 2, size))
++            return false;
++         return true;
++      }
++      destroy_image(p, p.s1);
++   }
++   return fail(p, "no image size with enough bins");
++}
++
++void
++record_barrier(probe &p)
++{
++   const VkMemoryBarrier2 barrier = {
++      .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
++      .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
++      .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
++      .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
++      .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
++   };
++   const VkDependencyInfo dep = {
++      .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
++      .memoryBarrierCount = 1,
++      .pMemoryBarriers = &barrier,
++   };
++   p.disp->CmdPipelineBarrier2(p.cb, &dep);
++}
++
++void
++record_layout_transition(probe &p, const probe_image &img, bool depth = false)
++{
++   const VkImageMemoryBarrier2 barrier = {
++      .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
++      .srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
++      .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
++      .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
++      .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
++      .newLayout = VK_IMAGE_LAYOUT_GENERAL,
++      .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++      .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++      .image = img.image,
++      .subresourceRange = { depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
++   };
++   const VkDependencyInfo dep = {
++      .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
++      .imageMemoryBarrierCount = 1,
++      .pImageMemoryBarriers = &barrier,
++   };
++   p.disp->CmdPipelineBarrier2(p.cb, &dep);
++}
++
++/* Returns false if the driver didn't use the requested mode. */
++bool
++record_pass(probe &p, uint32_t pass, bool keep)
++{
++   const pass_desc &d = pass_descs[pass];
++   const probe_image &img = d.s2 ? p.s2 : p.s1;
++   struct tu_cmd_buffer *cmd = tu_cmd_buffer_from_handle(p.cb);
++
++   probe_sample sample = {};
++   sample.query = p.query_count;
++   sample.pass = pass;
++   p.query_count += 2;
++
++   p.disp->CmdWriteTimestamp2(p.cb, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, p.queries, sample.query);
++
++   tiling_info ti;
++   begin_rendering_ex(p, img, d.sysmem, d.load, d.store, &ti, d.depth, d.depth_load, d.depth_store,
++                      d.pipeline != PIPE_DEPTH_ALWAYS);
++   sample.bins = ti.bins;
++   sample.pipes = ti.pipes;
++   bool binning_ok = ti.binning_ok;
++
++   /* kept GMEM passes get a slot for their VSC sizes */
++   cmd->calib_pad_dwords = d.variant == VAR_PAD ? PAD_DWORDS : 0;
++   sample.vsc_slot = (keep && !d.sysmem) ? (uint32_t) p.samples.size() + 1 : 0;
++   cmd->calib_vsc_iova = sample.vsc_slot ? p.vsc_bo->iova + (uint64_t) sample.vsc_slot * VSC_SLOT_DWORDS * 4 : 0;
++
++   const VkViewport viewport = { 0.0f, 0.0f, (float) img.width, (float) img.height, 0.0f, 1.0f };
++   const VkRect2D scissor = { { 0, 0 }, { img.width, img.height } };
++   p.disp->CmdSetViewport(p.cb, 0, 1, &viewport);
++   p.disp->CmdSetScissor(p.cb, 0, 1, &scissor);
++
++   push_data data = {};
++   push_data *pd = &data;
++
++   for (uint32_t i = 0; i < d.draws; i++) {
++      /* switching pipelines makes every draw re-emit its draw states */
++      const bool heavy = d.variant == VAR_HEAVY;
++      probe_pipeline pipe = (heavy && (i & 1)) ? PIPE_STRIPES_ALT : d.pipeline;
++      if (i == 0 || heavy) {
++         p.disp->CmdBindPipeline(p.cb, VK_PIPELINE_BIND_POINT_GRAPHICS, p.pipelines[pipe]);
++         if (pipe == PIPE_TEX)
++            p.disp->CmdBindDescriptorSets(p.cb, VK_PIPELINE_BIND_POINT_GRAPHICS, p.layouts[pipe], 0, 1, &p.tex_set,
++                                          0, NULL);
++      }
++
++      if (d.omni) {
++         /* one pixel in from the corner of each bin */
++         pd->x0 = 2.0f / img.width;
++         pd->y0 = 2.0f / img.height;
++         pd->x1 = 2.0f * pd->x0;
++         pd->y1 = 2.0f * pd->y0;
++         pd->tile_w = ti.tile_w;
++         pd->tile_h = ti.tile_h;
++         pd->tiles_x = ti.tiles_x;
++         pd->omni = 1;
++      } else if (d.pixel) {
++         /* spread the pixels out so the draws land in different bins */
++         uint32_t px = (i * 7919u) % img.width;
++         uint32_t py = (i * 104729u) % img.height;
++         pd->x0 = -1.0f + 2.0f * px / img.width;
++         pd->y0 = -1.0f + 2.0f * py / img.height;
++         pd->x1 = pd->x0 + 2.0f / img.width;
++         pd->y1 = pd->y0 + 2.0f / img.height;
++      } else {
++         pd->x0 = pd->y0 = -1.0f;
++         pd->x1 = pd->y1 = 1.0f;
++      }
++      pd->color[0] = (i & 1) ? 0.9f : 0.1f;
++      pd->color[1] = (i & 2) ? 0.8f : 0.2f;
++      pd->color[2] = (i & 4) ? 0.7f : 0.3f;
++      pd->color[3] = 1.0f;
++      pd->z = d.depth ? (d.ftb ? 0.3f + 0.2f * i : 0.9f - 0.2f * i) : 0.0f;
++      if (d.depth && depth_greater())
++         pd->z = 1.0f - pd->z;
++      p.disp->CmdPushConstants(p.cb, p.layouts[pipe], VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
++                               sizeof(data), &data);
++      p.disp->CmdDraw(p.cb, d.omni ? 6 * MAX2(ti.bins, 1u) : 6, 1, 0, 0);
++   }
++
++   sample.stream_dwords = tu_cs_total_dwords(&cmd->draw_cs);
++   sample.state_dwords = cmd->draw_cs.draw_state_dwords;
++   if (p.device->autotune->calib_payload)
++      sample.state_dwords += cmd->draw_cs.load_payload_dwords + cmd->draw_cs.draw_state_payload_dwords;
++   end_rendering(p, &sample.sysmem);
++   cmd->calib_pad_dwords = 0;
++   cmd->calib_vsc_iova = 0;
++
++   p.disp->CmdWriteTimestamp2(p.cb, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, p.queries, sample.query + 1);
++   record_barrier(p);
++
++   if (sample.sysmem != d.sysmem)
++      return fail(p, "render mode could not be forced");
++   if (!d.sysmem && !binning_ok)
++      return fail(p, "HW binning unavailable for the probe image");
++
++   if (keep)
++      p.samples.push_back(sample);
++   return true;
++}
++
++bool
++submit_and_wait(probe &p)
++{
++   if (p.disp->ResetFences(p.dev, 1, &p.fence) != VK_SUCCESS)
++      return fail(p, "reset fence");
++
++   const VkCommandBufferSubmitInfo cb_info = {
++      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
++      .commandBuffer = p.cb,
++   };
++   const VkSubmitInfo2 submit = {
++      .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
++      .commandBufferInfoCount = 1,
++      .pCommandBufferInfos = &cb_info,
++   };
++   if (p.disp->QueueSubmit2(p.queue, 1, &submit, p.fence) != VK_SUCCESS)
++      return fail(p, "submit");
++   if (p.disp->WaitForFences(p.dev, 1, &p.fence, VK_TRUE, PROBE_TIMEOUT_NS) != VK_SUCCESS)
++      return fail(p, "wait");
++   return true;
++}
++
++/* Keep the GPU busy until two batches in a row take the same time, so the clocks have settled. */
++bool
++run_warmup(probe &p)
++{
++   uint32_t passes = 1;
++   int64_t previous_pass_ns = 0;
++   for (uint32_t batch = 0; batch < WARMUP_MAX_BATCHES; batch++) {
++      if (!begin_cmd_buffer(p))
++         return false;
++      p.query_count = 0;
++      p.disp->CmdResetQueryPool(p.cb, p.queries, 0, MAX_QUERIES);
++      if (batch == 0) {
++         record_layout_transition(p, p.s1);
++         record_layout_transition(p, p.s2);
++         record_layout_transition(p, p.depth, true);
++         record_layout_transition(p, p.tex);
++      }
++      for (uint32_t i = 0; i < passes; i++) {
++         if (!record_pass(p, PASS_SYSMEM_OVERDRAW_N, false))
++            return false;
++      }
++      if (p.disp->EndCommandBuffer(p.cb) != VK_SUCCESS)
++         return fail(p, "end command buffer");
++
++      int64_t start_ns = os_time_get_nano();
++      if (!submit_and_wait(p))
++         return false;
++      const int64_t pass_ns = MAX2((os_time_get_nano() - start_ns) / passes, (int64_t) 1);
++
++      if (previous_pass_ns && llabs(pass_ns - previous_pass_ns) * 20 < previous_pass_ns)
++         return true; /* within 5% of the previous batch */
++      previous_pass_ns = pass_ns;
++      passes = (uint32_t) CLAMP(WARMUP_BATCH_NS / pass_ns, (int64_t) 1, (int64_t) WARMUP_PASSES);
++   }
++   return true;
++}
++
++bool
++create_query_pool(probe &p)
++{
++   const VkQueryPoolCreateInfo query_info = {
++      .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
++      .queryType = VK_QUERY_TYPE_TIMESTAMP,
++      .queryCount = MAX_QUERIES,
++   };
++   if (p.disp->CreateQueryPool(p.dev, &query_info, NULL, &p.queries) != VK_SUCCESS)
++      return fail(p, "query pool");
++   return true;
++}
++
++bool
++run_probe_passes(probe &p)
++{
++   if (!begin_cmd_buffer(p))
++      return false;
++   p.query_count = 0;
++   p.disp->CmdResetQueryPool(p.cb, p.queries, 0, MAX_QUERIES);
++
++   /* interleaved so clock drift hits every pass the same */
++   for (uint32_t round = 0; round < PROBE_ROUNDS; round++) {
++      for (uint32_t pass = 0; pass < PASS_COUNT; pass++) {
++         if (!record_pass(p, pass, round > 0))
++            return false;
++      }
++   }
++
++   if (p.disp->EndCommandBuffer(p.cb) != VK_SUCCESS)
++      return fail(p, "end command buffer");
++   if (!submit_and_wait(p))
++      return false;
++
++   uint64_t shown = 0;
++   for (probe_sample &s : p.samples) {
++      if (!s.vsc_slot)
++         continue;
++      const uint32_t *slot = p.vsc_map + s.vsc_slot * VSC_SLOT_DWORDS;
++      const uint32_t pipes = MIN2(s.pipes, (uint32_t) MAX_VSC_PIPES);
++      s.vsc_draw_bytes = s.vsc_prim_bytes = 0;
++      for (uint32_t i = 0; i < pipes; i++) {
++         s.vsc_draw_bytes += slot[i];
++         s.vsc_prim_bytes += slot[MAX_VSC_PIPES + i];
++      }
++      if (p.dump && !(shown & (1ull << s.pass))) {
++         shown |= 1ull << s.pass;
++         char line[400];
++         int n = 0;
++         for (uint32_t i = 0; i < pipes && n < (int) sizeof(line) - 16; i++)
++            n += snprintf(line + n, sizeof(line) - n, " %u/%u", slot[i], slot[MAX_VSC_PIPES + i]);
++         mesa_logi("autotune calib vsc per pipe (draw/prim bytes) %-26s%s", pass_descs[s.pass].name, line);
++      }
++   }
++   return true;
++}
++
++bool
++create_vsc_buffer(probe &p)
++{
++   const uint64_t size = (uint64_t) (PROBE_ROUNDS * PASS_COUNT + 1) * VSC_SLOT_DWORDS * sizeof(uint32_t);
++   if (tu_bo_init_new(p.device, NULL, &p.vsc_bo, size, TU_BO_ALLOC_NO_FLAGS, "autotune calib vsc") != VK_SUCCESS)
++      return fail(p, "vsc buffer");
++   if (tu_bo_map(p.device, p.vsc_bo, NULL) != VK_SUCCESS)
++      return fail(p, "vsc buffer map");
++   p.vsc_map = (uint32_t *) p.vsc_bo->map;
++   memset(p.vsc_map, 0, size);
++   return true;
++}
++
++double
++median(std::vector<double> &v)
++{
++   std::sort(v.begin(), v.end());
++   size_t n = v.size();
++   return n % 2 ? v[n / 2] : 0.5 * (v[n / 2 - 1] + v[n / 2]);
++}
++
++struct pass_stats {
++   double median, min, max;
++   uint32_t bins, stream, state;
++   uint64_t vsc_draw, vsc_prim;
++};
++
++/* GMEM passes alternate between two speeds even at a fixed clock, so take the median repeat. */
++
++bool
++analyse_probe(probe &p, struct tu_autotune_calib *calib, pass_stats *stats)
++{
++   std::vector<uint64_t> ticks(p.query_count);
++   if (p.disp->GetQueryPoolResults(p.dev, p.queries, 0, p.query_count, ticks.size() * sizeof(uint64_t),
++                                   ticks.data(), sizeof(uint64_t),
++                                   VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT) != VK_SUCCESS)
++      return fail(p, "query results");
++
++   std::vector<double> durations[PASS_COUNT];
++   double total_us = 0;
++   for (const probe_sample &s : p.samples) {
++      uint64_t begin = tu_device_ticks_to_ns(p.device, ticks[s.query]);
++      uint64_t end = tu_device_ticks_to_ns(p.device, ticks[s.query + 1]);
++      if (end < begin)
++         return fail(p, "timestamps out of order");
++      double us = (end - begin) / 1000.0;
++      durations[s.pass].push_back(us);
++      stats[s.pass].bins = s.bins;
++      stats[s.pass].stream = s.stream_dwords;
++      stats[s.pass].state = s.state_dwords;
++      stats[s.pass].vsc_draw = s.vsc_draw_bytes;
++      stats[s.pass].vsc_prim = s.vsc_prim_bytes;
++      total_us += us;
++   }
++   for (uint32_t i = 0; i < PASS_COUNT; i++) {
++      if (durations[i].empty())
++         return fail(p, "missing pass");
++      stats[i].min = *std::min_element(durations[i].begin(), durations[i].end());
++      stats[i].max = *std::max_element(durations[i].begin(), durations[i].end());
++      stats[i].median = median(durations[i]);
++   }
++   auto us = [&](probe_pass pass) { return stats[pass].median; };
++
++   const double bytes = (double) p.s1.width * p.s1.height * PROBE_CPP;
++   const double layers = OVERDRAW_LAYERS - 1;
++   const double bins1 = stats[PASS_GMEM_PIXEL_LIGHT_FEW_S1].bins;
++   const double bins2 = stats[PASS_GMEM_PIXEL_LIGHT_FEW_S2].bins;
++   const double dbins = bins2 - bins1;
++   if (dbins <= 0)
++      return fail(p, "second image did not add bins");
++
++   /* Games mostly blend or depth test, so the model uses the blended rate at two bytes per sample. */
++   const double sysmem_overdraw_us = us(PASS_SYSMEM_OVERDRAW_N) - us(PASS_SYSMEM_OVERDRAW_1);
++   const double sysmem_flat_us = us(PASS_SYSMEM_FLAT_N) - us(PASS_SYSMEM_FLAT_1);
++   const double sysmem_blend_us = us(PASS_SYSMEM_BLEND_N) - us(PASS_SYSMEM_BLEND_1);
++   if (sysmem_overdraw_us <= 0 || sysmem_flat_us <= 0 || sysmem_blend_us <= 0)
++      return fail(p, "sysmem overdraw not measurable");
++   const double bw_write = layers * bytes / sysmem_overdraw_us;
++   const double bw_flat = layers * bytes / sysmem_flat_us;
++   const double bw = 2.0 * layers * bytes / sysmem_blend_us;
++
++   /* Skipped draw-bins, split into stream dwords, draw state dwords and the rest. */
++   auto draw_bin_cost = [&](probe_pass few_s1, probe_pass many_s1, probe_pass few_s2, probe_pass many_s2) {
++      double few_dbins_us = us(few_s2) - us(few_s1);
++      double many_dbins_us = us(many_s2) - us(many_s1);
++      return (many_dbins_us - few_dbins_us) / (dbins * (DRAWS_MANY - DRAWS_FEW));
++   };
++   auto per_draw = [&](uint32_t pass_stats::*field, probe_pass few, probe_pass many) {
++      return (double) (stats[many].*field - stats[few].*field) / (DRAWS_MANY - DRAWS_FEW);
++   };
++   const double t_light = draw_bin_cost(PASS_GMEM_PIXEL_LIGHT_FEW_S1, PASS_GMEM_PIXEL_LIGHT_MANY_S1,
++                                        PASS_GMEM_PIXEL_LIGHT_FEW_S2, PASS_GMEM_PIXEL_LIGHT_MANY_S2);
++   const double t_heavy = draw_bin_cost(PASS_GMEM_PIXEL_HEAVY_FEW_S1, PASS_GMEM_PIXEL_HEAVY_MANY_S1,
++                                        PASS_GMEM_PIXEL_HEAVY_FEW_S2, PASS_GMEM_PIXEL_HEAVY_MANY_S2);
++   const double t_pad = draw_bin_cost(PASS_GMEM_PIXEL_PAD_FEW_S1, PASS_GMEM_PIXEL_PAD_MANY_S1,
++                                      PASS_GMEM_PIXEL_PAD_FEW_S2, PASS_GMEM_PIXEL_PAD_MANY_S2);
++   const double ib1_light = per_draw(&pass_stats::stream, PASS_GMEM_PIXEL_LIGHT_FEW_S1, PASS_GMEM_PIXEL_LIGHT_MANY_S1);
++   const double ib1_heavy = per_draw(&pass_stats::stream, PASS_GMEM_PIXEL_HEAVY_FEW_S1, PASS_GMEM_PIXEL_HEAVY_MANY_S1);
++   const double ib1_pad = per_draw(&pass_stats::stream, PASS_GMEM_PIXEL_PAD_FEW_S1, PASS_GMEM_PIXEL_PAD_MANY_S1);
++   const double st_light = per_draw(&pass_stats::state, PASS_GMEM_PIXEL_LIGHT_FEW_S1, PASS_GMEM_PIXEL_LIGHT_MANY_S1);
++   const double st_heavy = per_draw(&pass_stats::state, PASS_GMEM_PIXEL_HEAVY_FEW_S1, PASS_GMEM_PIXEL_HEAVY_MANY_S1);
++   if (ib1_pad <= ib1_light)
++      return fail(p, "padded draws are not larger than light draws");
++   if (st_heavy <= st_light)
++      return fail(p, "heavy draws carry no more draw state than light draws");
++   const double t_dword = (t_pad - t_light) / (ib1_pad - ib1_light);
++   const double t_state_skip = MAX2((t_heavy - t_light - (ib1_heavy - ib1_light) * t_dword) / (st_heavy - st_light), 0.0);
++   const double t_draw = MAX2(t_light - ib1_light * t_dword - st_light * t_state_skip, 0.0);
++
++   /* Rendered draw-bins. */
++   const double v_light = draw_bin_cost(PASS_GMEM_OMNI_LIGHT_FEW_S1, PASS_GMEM_OMNI_LIGHT_MANY_S1,
++                                        PASS_GMEM_OMNI_LIGHT_FEW_S2, PASS_GMEM_OMNI_LIGHT_MANY_S2);
++   const double v_heavy = draw_bin_cost(PASS_GMEM_OMNI_HEAVY_FEW_S1, PASS_GMEM_OMNI_HEAVY_MANY_S1,
++                                        PASS_GMEM_OMNI_HEAVY_FEW_S2, PASS_GMEM_OMNI_HEAVY_MANY_S2);
++   const double ib1_olight = per_draw(&pass_stats::stream, PASS_GMEM_OMNI_LIGHT_FEW_S1, PASS_GMEM_OMNI_LIGHT_MANY_S1);
++   const double ib1_oheavy = per_draw(&pass_stats::stream, PASS_GMEM_OMNI_HEAVY_FEW_S1, PASS_GMEM_OMNI_HEAVY_MANY_S1);
++   const double st_olight = per_draw(&pass_stats::state, PASS_GMEM_OMNI_LIGHT_FEW_S1, PASS_GMEM_OMNI_LIGHT_MANY_S1);
++   const double st_oheavy = per_draw(&pass_stats::state, PASS_GMEM_OMNI_HEAVY_FEW_S1, PASS_GMEM_OMNI_HEAVY_MANY_S1);
++   if (st_oheavy <= st_olight)
++      return fail(p, "heavy omni draws carry no more draw state than light ones");
++   const double t_state = MAX2((v_heavy - v_light - (ib1_oheavy - ib1_olight) * t_dword) / (st_oheavy - st_olight), 0.0);
++   const double t_vis = MAX2(v_light - ib1_olight * t_dword - st_olight * t_state, 0.0);
++
++   /* What's left of a one-pixel draw after its skipped and rendered bins is the binning pass. */
++   const double light_draw_us = (us(PASS_GMEM_PIXEL_LIGHT_MANY_S1) - us(PASS_GMEM_PIXEL_LIGHT_FEW_S1)) /
++                                (DRAWS_MANY - DRAWS_FEW);
++   const double t_draw_binning =
++      MAX2(light_draw_us - (bins1 - 1) * t_light - (ib1_light * t_dword + st_light * t_state + t_vis), 0.0);
++
++   const double few_light_dbins_us = us(PASS_GMEM_PIXEL_LIGHT_FEW_S2) - us(PASS_GMEM_PIXEL_LIGHT_FEW_S1);
++   const double t_bin = few_light_dbins_us / dbins - DRAWS_FEW * t_light;
++
++   const double omni_bytes_per_draw =
++      ((double) stats[PASS_GMEM_OMNI_LIGHT_MANY_S1].vsc_draw - (double) stats[PASS_GMEM_OMNI_LIGHT_FEW_S1].vsc_draw) /
++      (DRAWS_MANY - DRAWS_FEW);
++   const double pixel_bytes_per_draw =
++      ((double) stats[PASS_GMEM_PIXEL_LIGHT_MANY_S1].vsc_draw - (double) stats[PASS_GMEM_PIXEL_LIGHT_FEW_S1].vsc_draw) /
++      (DRAWS_MANY - DRAWS_FEW);
++   /* VSC bytes = bytes_per_draw * draws + bytes_per_vis * rendered draw-bins */
++   const double bytes_per_vis = (omni_bytes_per_draw - pixel_bytes_per_draw) / (bins1 - 1.0);
++   const double bytes_per_draw = pixel_bytes_per_draw - bytes_per_vis;
++   const double omni_draw_bins = (double) (DRAWS_MANY - DRAWS_FEW) * bins1;
++   const double prim_bytes_per_vis =
++      ((double) stats[PASS_GMEM_OMNI_LIGHT_MANY_S1].vsc_prim - (double) stats[PASS_GMEM_OMNI_LIGHT_FEW_S1].vsc_prim) /
++      (omni_draw_bins * 2.0);
++
++   /* Every bin renders a full screen draw, so take that cost out first. */
++   const double gmem_blend_us = us(PASS_GMEM_BLEND_N) - us(PASS_GMEM_BLEND_1);
++   const double w_draw = (gmem_blend_us - layers * bins1 * v_light) / sysmem_blend_us;
++   const double gmem_overdraw_us = us(PASS_GMEM_OVERDRAW_N) - us(PASS_GMEM_OVERDRAW_1);
++   const double w_draw_write = (gmem_overdraw_us - layers * bins1 * v_light) / sysmem_overdraw_us;
++
++   /* Loads and stores overlap, so doing both costs less than the two apart. */
++   const double att_load_us = MAX2(us(PASS_GMEM_LOAD) - us(PASS_GMEM_OVERDRAW_1), 0.0);
++   const double att_store_us = MAX2(us(PASS_GMEM_STORE) - us(PASS_GMEM_OVERDRAW_1), 0.0);
++   const double att_load_store_us = MAX2(us(PASS_GMEM_LOAD_STORE) - us(PASS_GMEM_OVERDRAW_1), 0.0);
++   const double w_att_load = att_load_us / (bytes / bw);
++   const double w_att_store = att_store_us / (bytes / bw);
++   const double w_att_load_store = att_load_store_us / (2.0 * bytes / bw);
++
++   /* Depth test and write on top of a colour layer, relative to the depth bytes the model charges for. */
++   const double depth_bytes = (double) p.s1.width * p.s1.height * PROBE_DEPTH_CPP;
++   const double model_depth_us = 2.0 * depth_bytes / bw;
++   const double bins_d = stats[PASS_GMEM_DEPTH_N].bins;
++   const double sys_depth_layer = (us(PASS_SYSMEM_DEPTH_N) - us(PASS_SYSMEM_DEPTH_1)) / layers;
++   const double sys_color_layer = sysmem_overdraw_us / layers;
++   /* Binning LRZ drops hidden layers in GMEM, so the weight comes from the one layer passes. */
++   const double gmem_hidden_layer = (us(PASS_GMEM_DEPTH_N) - us(PASS_GMEM_DEPTH_1)) / layers - bins_d * v_light;
++   const double gmem_depth_layer =
++      us(PASS_GMEM_DEPTH_1) - us(PASS_GMEM_OVERDRAW_1) - (bins_d - bins1) * (t_bin + v_light);
++   const double w_depth_sys = (sys_depth_layer - sys_color_layer) / model_depth_us;
++   const double w_depth_gmem = gmem_depth_layer / model_depth_us;
++   const double sys_reject_layer = (us(PASS_SYSMEM_DEPTH_FTB_N) - us(PASS_SYSMEM_DEPTH_1)) / layers;
++   const double gmem_reject_layer = (us(PASS_GMEM_DEPTH_FTB_N) - us(PASS_GMEM_DEPTH_1)) / layers - bins_d * v_light;
++   /* Like colour, against passes that don't clear: the GMEM depth clear costs more than the load. */
++   const double depth_load_us = MAX2(us(PASS_GMEM_DEPTH_LOAD) - us(PASS_GMEM_DEPTH_NONE), 0.0);
++   const double depth_store_us = MAX2(us(PASS_GMEM_DEPTH_STORE) - us(PASS_GMEM_DEPTH_NONE), 0.0);
++   const double depth_load_store_us = MAX2(us(PASS_GMEM_DEPTH_LOAD_STORE) - us(PASS_GMEM_DEPTH_NONE), 0.0);
++   auto depth_weight = [](double w) { return (w > 0.0 && w <= 10.0) ? w : 0.0; };
++
++   /* Per ALU instruction, and per fetch on top of its instructions. */
++   const double px = (double) p.s1.width * p.s1.height;
++   const double base_layer = sysmem_overdraw_us / layers;
++   const double alu_layer = (us(PASS_SYSMEM_ALU_N) - us(PASS_SYSMEM_ALU_1)) / layers;
++   const double tex_layer = (us(PASS_SYSMEM_TEX_N) - us(PASS_SYSMEM_TEX_1)) / layers;
++   const double d_instrs_alu = (double) p.fs_instrs[PIPE_ALU] - p.fs_instrs[PIPE_STRIPES];
++   const double d_instrs_tex = (double) p.fs_instrs[PIPE_TEX] - p.fs_instrs[PIPE_STRIPES];
++   const double tex_fetches = p.fs_tex[PIPE_TEX];
++   const double t_instr = d_instrs_alu > 0.0 ? MAX2(alu_layer - base_layer, 0.0) / (px * d_instrs_alu) : 0.0;
++   const double t_tex =
++      tex_fetches > 0.0
++         ? MAX2(tex_layer - base_layer - px * MAX2(d_instrs_tex, 0.0) * t_instr, 0.0) / (px * tex_fetches)
++         : 0.0;
++
++   memset(calib, 0, sizeof(*calib));
++   calib->version = TU_AUTOTUNE_CALIB_VERSION;
++   calib->bw_bytes_per_us = bw;
++   calib->t_dword_us = MAX2(t_dword, 0.0);
++   calib->t_draw_us = t_draw;
++   calib->t_state_skip_us = t_state_skip;
++   calib->t_vis_us = t_vis;
++   calib->t_state_us = t_state;
++   calib->t_draw_binning_us = t_draw_binning;
++   calib->bytes_per_vis = (bytes_per_vis > 0.0 && bytes_per_vis <= 4096.0) ? bytes_per_vis : 0.0;
++   calib->bytes_per_draw = MAX2(bytes_per_draw, 0.0);
++   calib->t_bin_us = MAX2(t_bin, 0.0);
++   calib->w_draw = w_draw;
++   calib->w_att_load = w_att_load;
++   calib->w_att_store = w_att_store;
++   calib->w_att_load_store = w_att_load_store;
++   /* 0 makes the model price depth like colour */
++   calib->w_depth_sys = (w_depth_sys >= -0.5 && w_depth_sys <= 20.0) ? MAX2(w_depth_sys, 0.01) : 0.0;
++   calib->w_depth_gmem = (w_depth_gmem >= -0.5 && w_depth_gmem <= 20.0) ? MAX2(w_depth_gmem, 0.01) : 0.0;
++   calib->w_att_depth_load = depth_weight(depth_load_us / (depth_bytes / bw));
++   calib->w_att_depth_store = depth_weight(depth_store_us / (depth_bytes / bw));
++   calib->w_att_depth_load_store = depth_weight(depth_load_store_us / (2.0 * depth_bytes / bw));
++   calib->depth_layer_sys_us = sys_depth_layer;
++   calib->depth_layer_gmem_us = gmem_depth_layer;
++   calib->depth_hidden_gmem_us = gmem_hidden_layer;
++   calib->reject_layer_sys_us = sys_reject_layer;
++   calib->reject_layer_gmem_us = gmem_reject_layer;
++   calib->att_load_us = att_load_us;
++   calib->att_store_us = att_store_us;
++   calib->att_load_store_us = att_load_store_us;
++   calib->depth_load_us = depth_load_us;
++   calib->depth_store_us = depth_store_us;
++   calib->depth_load_store_us = depth_load_store_us;
++   calib->t_instr_us = t_instr <= 0.05 ? t_instr : 0.0;
++   calib->t_tex_us = t_tex <= 0.5 ? t_tex : 0.0;
++   calib->fs_instrs_base = p.fs_instrs[PIPE_STRIPES];
++   calib->alu_layer_us = alu_layer;
++   calib->tex_layer_us = tex_layer;
++   calib->instrs_alu = p.fs_instrs[PIPE_ALU];
++   calib->instrs_tex = p.fs_instrs[PIPE_TEX];
++   calib->tex_fetches = p.fs_tex[PIPE_TEX];
++   calib->bw_flat_bytes_per_us = bw_flat;
++   calib->bw_write_bytes_per_us = bw_write;
++   calib->w_draw_write = w_draw_write;
++   calib->t_skip_light_us = t_light;
++   calib->t_skip_heavy_us = t_heavy;
++   calib->t_skip_pad_us = t_pad;
++   calib->t_render_light_us = v_light;
++   calib->t_render_heavy_us = v_heavy;
++   calib->pixel_bytes_per_draw = pixel_bytes_per_draw;
++   calib->prim_bytes_per_vis = prim_bytes_per_vis;
++   calib->stream_light = ib1_light;
++   calib->stream_heavy = ib1_heavy;
++   calib->stream_pad = ib1_pad;
++   calib->state_light = st_light;
++   calib->state_heavy = st_heavy;
++   calib->size_s1 = p.s1.width;
++   calib->bins_s1 = bins1;
++   calib->bins_s2 = bins2;
++   calib->probe_us = total_us;
++
++   /* Anything outside these ranges is a broken probe, not a strange GPU. */
++   if (!(bw >= 1000.0 && bw <= 200000.0)) {
++      snprintf(p.error_buf, sizeof(p.error_buf), "bandwidth out of range: %.0f B/us from %.0f bytes x %.0f layers in %.1f us",
++               bw, bytes, layers, sysmem_blend_us);
++      return fail(p, p.error_buf);
++   }
++   if (!(t_light >= 0.001 && t_light <= 5.0 && t_heavy <= 10.0 && t_pad <= 10.0))
++      return fail(p, "draw skip cost out of range");
++   if (!(v_light >= 0.005 && v_light <= 50.0 && v_heavy <= 100.0))
++      return fail(p, "draw render cost out of range");
++   if (!(t_dword >= 0.0 && t_dword <= 0.1 && t_state_skip <= 0.1 && t_state <= 0.1))
++      return fail(p, "dword cost out of range");
++   if (!(t_bin >= -5.0 && t_bin <= 200.0))
++      return fail(p, "bin cost out of range");
++   if (!(w_draw >= 0.1 && w_draw <= 4.0 && w_draw_write >= 0.1 && w_draw_write <= 4.0))
++      return fail(p, "GMEM draw weight out of range");
++   if (!(w_att_load >= 0.1 && w_att_load <= 4.0 && w_att_store >= 0.1 && w_att_store <= 4.0 &&
++         w_att_load_store >= 0.1 && w_att_load_store <= 4.0))
++      return fail(p, "GMEM attachment weight out of range");
++
++   calib->valid = 1;
++   return true;
++}
++
++void
++destroy_probe(probe &p)
++{
++   if (p.fence)
++      p.disp->DestroyFence(p.dev, p.fence, NULL);
++   if (p.queries)
++      p.disp->DestroyQueryPool(p.dev, p.queries, NULL);
++   if (p.cb)
++      p.disp->FreeCommandBuffers(p.dev, p.pool, 1, &p.cb);
++   if (p.pool)
++      p.disp->DestroyCommandPool(p.dev, p.pool, NULL);
++   destroy_image(p, p.s1);
++   destroy_image(p, p.s2);
++   destroy_image(p, p.depth);
++   if (p.desc_pool)
++      p.disp->DestroyDescriptorPool(p.dev, p.desc_pool, NULL);
++   if (p.set_layout)
++      p.disp->DestroyDescriptorSetLayout(p.dev, p.set_layout, NULL);
++   if (p.sampler)
++      p.disp->DestroySampler(p.dev, p.sampler, NULL);
++   destroy_image(p, p.tex);
++   if (p.vsc_bo)
++      tu_bo_finish(p.device, p.vsc_bo);
++   for (uint32_t i = 0; i < PIPE_COUNT; i++) {
++      if (p.pipelines[i])
++         p.disp->DestroyPipeline(p.dev, p.pipelines[i], NULL);
++      if (p.layouts[i])
++         p.disp->DestroyPipelineLayout(p.dev, p.layouts[i], NULL);
++   }
++}
++
++/* On failure calib only keeps the version and calib->error. */
++bool
++run_probe(struct tu_device *device, struct tu_autotune_calib *calib, bool dump)
++{
++   probe p;
++   p.device = device;
++   p.disp = &device->vk.dispatch_table;
++   p.dev = tu_device_to_handle(device);
++   p.dump = dump;
++
++   for (unsigned qfi = 0; qfi < device->physical_device->num_queue_families && !p.queue; qfi++) {
++      const struct tu_queue_family *family = &device->physical_device->queue_families[qfi];
++      if (device->queue_count[qfi] > 0 && (family->properties->queueFlags & VK_QUEUE_GRAPHICS_BIT)) {
++         p.queue = tu_queue_to_handle(&device->queues[qfi][0]);
++         p.queue_family = qfi;
++      }
++   }
++   if (!p.queue) {
++      memset(calib, 0, sizeof(*calib));
++      calib->version = TU_AUTOTUNE_CALIB_VERSION;
++      snprintf(calib->error, sizeof(calib->error), "no graphics queue");
++      return false;
++   }
++
++   pass_stats stats[PASS_COUNT] = {};
++   bool ok = false;
++   do {
++      const VkCommandPoolCreateInfo pool_info = {
++         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
++         .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
++         .queueFamilyIndex = p.queue_family,
++      };
++      if (p.disp->CreateCommandPool(p.dev, &pool_info, NULL, &p.pool) != VK_SUCCESS) {
++         fail(p, "command pool");
++         break;
++      }
++      const VkCommandBufferAllocateInfo cb_info = {
++         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
++         .commandPool = p.pool,
++         .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
++         .commandBufferCount = 1,
++      };
++      if (p.disp->AllocateCommandBuffers(p.dev, &cb_info, &p.cb) != VK_SUCCESS) {
++         fail(p, "command buffer");
++         break;
++      }
++      const VkFenceCreateInfo fence_info = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
++      if (p.disp->CreateFence(p.dev, &fence_info, NULL, &p.fence) != VK_SUCCESS) {
++         fail(p, "fence");
++         break;
++      }
++
++      bool pipelines_ok = create_texture_resources(p);
++      for (uint32_t i = 0; i < PIPE_COUNT && pipelines_ok; i++)
++         pipelines_ok = create_pipeline(p, (probe_pipeline) i);
++      if (!pipelines_ok || !choose_sizes(p) || !create_image(p, p.depth, p.s1.width, p.s1.height, IMG_DEPTH) ||
++          !create_query_pool(p))
++         break;
++      if (!create_vsc_buffer(p) || !run_warmup(p) || !run_probe_passes(p))
++         break;
++
++      ok = analyse_probe(p, calib, stats);
++   } while (0);
++
++   if (dump || TU_DEBUG(STARTUP)) {
++      for (uint32_t i = 0; i < PASS_COUNT; i++)
++         mesa_logi("autotune calib pass %-26s min %9.1f us  median %9.1f  max %9.1f  bins %3u  stream %6u  "
++                   "state %6u  vsc %6" PRIu64 "/%6" PRIu64,
++                   pass_descs[i].name, stats[i].min, stats[i].median, stats[i].max, stats[i].bins, stats[i].stream,
++                   stats[i].state, stats[i].vsc_draw, stats[i].vsc_prim);
++   }
++
++   destroy_probe(p);
++   if (!ok) {
++      /* p.error can point into p */
++      memset(calib, 0, sizeof(*calib));
++      calib->version = TU_AUTOTUNE_CALIB_VERSION;
++      snprintf(calib->error, sizeof(calib->error), "%s", p.error ? p.error : "unknown");
++   }
++   return ok;
++}
++
++/* Matches whole items only, so a path can't turn on an option by containing its name. */
++bool
++env_has(const char *env, const char *opt)
++{
++   const size_t len = strlen(opt);
++   for (const char *item = env; item;) {
++      const char *end = strchr(item, ',');
++      const size_t n = end ? (size_t) (end - item) : strlen(item);
++      if (n == len && !strncmp(item, opt, len))
++         return true;
++      item = end ? end + 1 : NULL;
++   }
++   return false;
++}
++
++uint32_t
++probe_conditions(const struct tu_device *device)
++{
++   uint32_t conditions = 0;
++   if (device->autotune->calib_payload)
++      conditions |= TU_AUTOTUNE_CALIB_COND_PAYLOAD;
++   if (depth_greater())
++      conditions |= TU_AUTOTUNE_CALIB_COND_DEPTH_GREATER;
++   return conditions;
++}
++
++} /* namespace */
++
++/* Value of a "name=value" item, or an empty string. */
++static std::string
++env_value(const char *env, const char *name)
++{
++   const size_t len = strlen(name);
++   for (const char *item = env; item;) {
++      const char *end = strchr(item, ',');
++      const size_t n = end ? (size_t) (end - item) : strlen(item);
++      if (n > len && !strncmp(item, name, len) && item[len] == '=')
++         return std::string(item + len + 1, n - len - 1);
++      item = end ? end + 1 : NULL;
++   }
++   return std::string();
++}
++
++static const struct {
++   uint32_t bit;
++   const char *name;
++} condition_names[] = {
++   { TU_AUTOTUNE_CALIB_COND_PAYLOAD, "payload" },
++   { TU_AUTOTUNE_CALIB_COND_DEPTH_GREATER, "depth_greater" },
++};
++
++/* Reads a sysfs or device tree value. For a device tree string list this is the last string. */
++static std::string
++read_text(const char *path)
++{
++   size_t size = 0;
++   char *data = os_read_file(path, &size);
++   if (!data)
++      return std::string();
++   while (size && (!data[size - 1] || isspace((unsigned char) data[size - 1])))
++      size--;
++   size_t start = size;
++   while (start && data[start - 1])
++      start--;
++   const std::string text(data + start, size - start);
++   free(data);
++   return text;
++}
++
++/* Qualcomm's bootloader puts the DDR type in the memory node, numbered like DDR_TYPE in its DDRDetails.h. */
++static std::string
++ddr_type()
++{
++   static const char *const names[] = {
++      "none", "LPDDR1", "LPDDR2", "PCDDR2", "PCDDR3", "LPDDR3", "LPDDR4", "LPDDR4X", "LPDDR5", "LPDDR5X",
++   };
++   const char *base = "/sys/firmware/devicetree/base";
++   DIR *dir = opendir(base);
++   if (!dir)
++      return std::string();
++
++   std::string type;
++   while (const struct dirent *e = readdir(dir)) {
++      if (strncmp(e->d_name, "memory", 6))
++         continue;
++      const std::string path = std::string(base) + "/" + e->d_name + "/ddr_device_type";
++      size_t size = 0;
++      uint8_t *v = (uint8_t *) os_read_file(path.c_str(), &size);
++      if (v && size == 4) {
++         const uint32_t id = (uint32_t) v[0] << 24 | v[1] << 16 | v[2] << 8 | v[3];
++         type = id < ARRAY_SIZE(names) ? names[id] : "type " + std::to_string(id);
++      }
++      free(v);
++      if (!type.empty())
++         break;
++   }
++   closedir(dir);
++   return type;
++}
++
++/* TU_AUTOTUNE_CALIB=export=<path>, written to <path>.tmp first so readers never see a partial file. */
++static void
++export_calib(struct tu_device *device, const char *path, const char *status)
++{
++   const struct tu_autotune_calib *calib = &device->autotune->calib;
++   const struct tu_physical_device *pdev = device->physical_device;
++
++   const std::string tmp = std::string(path) + ".tmp";
++   FILE *f = fopen(tmp.c_str(), "w");
++   if (!f) {
++      mesa_logw("autotune calib: cannot write %s: %s", tmp.c_str(), strerror(errno));
++      return;
++   }
++
++   char uuid[VK_UUID_SIZE * 2 + 1];
++   mesa_bytes_to_hex(uuid, pdev->cache_uuid, VK_UUID_SIZE);
++   std::string conditions;
++   for (const auto &c : condition_names) {
++      if (calib->conditions & c.bit)
++         conditions += (conditions.empty() ? "" : ",") + std::string(c.name);
++   }
++
++   const std::string model = read_text("/sys/firmware/devicetree/base/model");
++   const std::string soc = read_text("/sys/firmware/devicetree/base/compatible");
++   const std::string soc_id = read_text("/sys/devices/soc0/soc_id");
++   const std::string ddr = ddr_type();
++   uint64_t ram = 0;
++   os_get_total_physical_memory(&ram);
++   const auto known = [](const std::string &s) { return s.empty() ? "unknown" : s.c_str(); };
++
++   fprintf(f, "# Turnip autotune calibration, written by TU_AUTOTUNE_CALIB=export\n");
++   fprintf(f, "mesa = %s\n", PACKAGE_VERSION MESA_GIT_SHA1);
++   fprintf(f, "gpu = %s\n", pdev->name);
++   fprintf(f, "chip_id = 0x%" PRIx64 "\n", (uint64_t) pdev->dev_id.chip_id);
++   fprintf(f, "device = %s\n", known(model));
++   fprintf(f, "soc = %s\n", known(soc));
++   fprintf(f, "soc_id = %s\n", known(soc_id));
++   fprintf(f, "ddr = %s\n", known(ddr));
++   fprintf(f, "ram_mb = %" PRIu64 "\n", ram >> 20);
++   fprintf(f, "cache_uuid = %s\n", uuid);
++   fprintf(f, "status = %s\n", status);
++   fprintf(f, "version = %u\n", calib->version);
++   fprintf(f, "valid = %u\n", calib->valid);
++   fprintf(f, "conditions = %s\n", conditions.empty() ? "none" : conditions.c_str());
++   fprintf(f, "error = %s\n", calib->error);
++   fprintf(f, "margin_pct = %.0f\n", device->autotune->calib_margin * 100.0f);
++
++#define FLT(name) fprintf(f, "%s = %.9g\n", #name, (double) calib->name)
++#define U32(name) fprintf(f, "%s = %u\n", #name, calib->name)
++   fprintf(f, "\n# Coefficients the model uses\n");
++   FLT(bw_bytes_per_us);
++   FLT(t_dword_us);
++   FLT(t_draw_us);
++   FLT(t_state_skip_us);
++   FLT(t_vis_us);
++   FLT(t_state_us);
++   FLT(t_draw_binning_us);
++   FLT(bytes_per_vis);
++   FLT(bytes_per_draw);
++   FLT(t_bin_us);
++   FLT(w_draw);
++   FLT(w_att_load);
++   FLT(w_att_store);
++   FLT(w_att_load_store);
++   FLT(w_depth_sys);
++   FLT(w_depth_gmem);
++   FLT(w_att_depth_load);
++   FLT(w_att_depth_store);
++   FLT(w_att_depth_load_store);
++   FLT(t_instr_us);
++   FLT(t_tex_us);
++   FLT(fs_instrs_base);
++
++   fprintf(f, "\n# Probe measurements and geometry, informational\n");
++   FLT(bw_flat_bytes_per_us);
++   FLT(bw_write_bytes_per_us);
++   FLT(w_draw_write);
++   FLT(t_skip_light_us);
++   FLT(t_skip_heavy_us);
++   FLT(t_skip_pad_us);
++   FLT(t_render_light_us);
++   FLT(t_render_heavy_us);
++   FLT(pixel_bytes_per_draw);
++   FLT(prim_bytes_per_vis);
++   U32(stream_light);
++   U32(stream_heavy);
++   U32(stream_pad);
++   U32(state_light);
++   U32(state_heavy);
++   FLT(depth_layer_sys_us);
++   FLT(depth_layer_gmem_us);
++   FLT(depth_hidden_gmem_us);
++   FLT(reject_layer_sys_us);
++   FLT(reject_layer_gmem_us);
++   FLT(att_load_us);
++   FLT(att_store_us);
++   FLT(att_load_store_us);
++   FLT(depth_load_us);
++   FLT(depth_store_us);
++   FLT(depth_load_store_us);
++   FLT(alu_layer_us);
++   FLT(tex_layer_us);
++   U32(instrs_alu);
++   U32(instrs_tex);
++   U32(tex_fetches);
++   U32(size_s1);
++   U32(bins_s1);
++   U32(bins_s2);
++   U32(probe_us);
++#undef FLT
++#undef U32
++
++   const bool ok = !ferror(f);
++   if (fclose(f) != 0 || !ok || rename(tmp.c_str(), path) != 0) {
++      mesa_logw("autotune calib: cannot write %s: %s", path, strerror(errno));
++      remove(tmp.c_str());
++      return;
++   }
++   mesa_logi("autotune calib: exported to %s (%s)", path, status);
++}
++
++/* Returns "probe", "table" or why the byte-count heuristic is used. */
++static const char *
++calibrate(struct tu_device *device, const char *env)
++{
++   struct tu_autotune_calib *calib = &device->autotune->calib;
++   tu_autotune_log_bandwidth = env_has(env, "log");
++   device->autotune->calib_payload = env_has(env, "payload");
++   device->autotune->calib_exact_replay = env_has(env, "replay");
++   const bool dump = env_has(env, "dump");
++   const bool verbose = dump || TU_DEBUG(STARTUP);
++
++   const char *margin_env = os_get_option("TU_AUTOTUNE_CALIB_MARGIN_PCT");
++   if (margin_env)
++      device->autotune->calib_margin = CLAMP(atoi(margin_env), 0, 90) / 100.0f;
++
++   if (!env_has(env, "force")) {
++      /* the table was measured without these, so they need a probe */
++      if (probe_conditions(device)) {
++         mesa_logw("autotune calib: payload and depth_greater need TU_AUTOTUNE_CALIB=force, ignored");
++         device->autotune->calib_payload = false;
++      }
++      return tu_autotune_calib_from_table(device) ? "table" : "byte model: no table row";
++   }
++
++   if (TU_DEBUG(NOBIN) || TU_DEBUG(FORCEBIN))
++      return "byte model: TU_DEBUG overrides binning";
++
++   memset(calib, 0, sizeof(*calib));
++   int64_t start = os_time_get_nano();
++   bool ok = run_probe(device, calib, dump);
++   int64_t wall_us = (os_time_get_nano() - start) / 1000;
++   calib->conditions = probe_conditions(device);
++   if (!ok) {
++      mesa_logw("autotune calib: probe failed (%s), using the byte-count model", calib->error);
++      return "byte model: probe failed";
++   }
++   if (env_has(env, "noshade"))
++      calib->t_instr_us = calib->t_tex_us = 0.0f;
++   if (verbose)
++      mesa_logi("autotune calib: probe took %" PRId64 " us wall, %u us GPU", wall_us, calib->probe_us);
++
++   const char *source = "probe";
++   if (verbose) {
++      mesa_logi("autotune calib (%s): bw=%.0f B/us (write-only %.0f, flat %.0f) | skip: t_dword=%.4f t_state=%.4f "
++                "t_draw=%.3f us | render: t_vis=%.3f t_state=%.4f us | binning t_draw=%.3f us | t_bin=%.2f us "
++                "w_draw=%.2f (write-only %.2f) w_att load %.2f store %.2f both %.2f | vsc %.2f B/draw-bin + %.2f B/draw (pixel %.2f B/draw, prim %.2f "
++                "B/prim-bin) | skip light %.3f heavy %.3f pad %.3f us, render light %.3f heavy %.3f us, stream "
++                "%u/%u/%u dw, state %u/%u dw, bins %u/%u at %ux%u, margin %.0f%% | depth: w_sys=%.2f w_gmem=%.2f "
++                "w_att load %.2f store %.2f both %.2f (layer sys %.0f gmem %.0f us, hidden gmem %.0f us, reject sys "
++                "%.0f gmem %.0f us) | shade: t_instr=%.3f ns t_tex=%.2f ns (alu layer %.0f us/%u instrs, tex layer "
++                "%.0f us/%u instrs/%u fetches, base %.0f instrs)",
++                source, calib->bw_bytes_per_us, calib->bw_write_bytes_per_us, calib->bw_flat_bytes_per_us,
++                calib->t_dword_us, calib->t_state_skip_us, calib->t_draw_us, calib->t_vis_us, calib->t_state_us,
++                calib->t_draw_binning_us, calib->t_bin_us, calib->w_draw, calib->w_draw_write, calib->w_att_load,
++                calib->w_att_store, calib->w_att_load_store,
++                calib->bytes_per_vis, calib->bytes_per_draw, calib->pixel_bytes_per_draw, calib->prim_bytes_per_vis,
++                calib->t_skip_light_us, calib->t_skip_heavy_us, calib->t_skip_pad_us, calib->t_render_light_us,
++                calib->t_render_heavy_us, calib->stream_light, calib->stream_heavy, calib->stream_pad,
++                calib->state_light, calib->state_heavy, calib->bins_s1, calib->bins_s2, calib->size_s1,
++                calib->size_s1, device->autotune->calib_margin * 100.0f, calib->w_depth_sys, calib->w_depth_gmem,
++                calib->w_att_depth_load, calib->w_att_depth_store, calib->w_att_depth_load_store,
++                calib->depth_layer_sys_us, calib->depth_layer_gmem_us, calib->depth_hidden_gmem_us,
++                calib->reject_layer_sys_us, calib->reject_layer_gmem_us, calib->t_instr_us * 1000.0f,
++                calib->t_tex_us * 1000.0f,
++                calib->alu_layer_us, calib->instrs_alu, calib->tex_layer_us, calib->instrs_tex, calib->tex_fetches,
++                calib->fs_instrs_base);
++   }
++   return source;
++}
++
++bool
++tu_autotune_probe_init(struct tu_device *device, const char *env)
++{
++   const char *status = calibrate(device, env);
++
++   const std::string path = env_value(env, "export");
++   if (!path.empty())
++      export_calib(device, path.c_str(), status);
++   return true;
++}
+diff --git a/src/freedreno/vulkan/tu_cmd_buffer.cc b/src/freedreno/vulkan/tu_cmd_buffer.cc
+index f5e5400be4c..45db8c5b8f0 100644
+--- a/src/freedreno/vulkan/tu_cmd_buffer.cc
++++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
+@@ -1159,6 +1159,7 @@ tu_cs_emit_draw_state(struct tu_cs *cs, uint32_t id, struct tu_draw_state state)
+    uint32_t enable_mask;
+ 
+    cs->draw_state_dwords += state.size;
++   cs->draw_state_payload_dwords += state.payload_dwords;
+    switch (id) {
+    case TU_DRAW_STATE_VS:
+    case TU_DRAW_STATE_FS:
+@@ -1368,7 +1369,12 @@ use_sysmem_rendering(struct tu_cmd_buffer *cmd,
+                      tu_autotune::rp_ctx_t *rp_ctx,
+                      tu_autotune::rp_key_opt rp_key)
+ {
+-   if (TU_DEBUG(SYSMEM)) {
++   if (cmd->calib_force == TU_CALIB_FORCE_SYSMEM) {
++      cmd->state.rp.gmem_disable_reason = "Autotune calibration forced sysmem";
++      return true;
++   }
++
++   if (TU_DEBUG(SYSMEM) && cmd->calib_force == TU_CALIB_FORCE_NONE) {
+       cmd->state.rp.gmem_disable_reason = "TU_DEBUG(SYSMEM)";
+       return true;
+    }
+@@ -1424,6 +1430,9 @@ use_sysmem_rendering(struct tu_cmd_buffer *cmd,
+       return true;
+    }
+ 
++   if (cmd->calib_force == TU_CALIB_FORCE_GMEM)
++      return false;
++
+    if (TU_DEBUG(GMEM)) {
+       cmd->state.rp.gmem_disable_reason = "TU_DEBUG(GMEM)";
+       return false;
+@@ -2769,6 +2778,9 @@ tu6_emit_binning_pass(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
+ 
+    emit_vsc_overflow_test(cmd, cs);
+ 
++   if (unlikely(cmd->calib_vsc_iova))
++      tu_emit_vsc_sizes(cs, cmd->calib_vsc_iova, MAX_VSC_PIPES);
++
+    tu_cs_emit_pkt7(cs, CP_SET_VISIBILITY_OVERRIDE, 1);
+    tu_cs_emit(cs, 0x0);
+ 
+@@ -4071,7 +4083,9 @@ tu_cmd_render(struct tu_cmd_buffer *cmd_buffer,
+    tu_autotune::rp_key_opt rp_key = cmd_buffer->device->autotune->emit_preempt_latency_tracking_rp_hash(cmd_buffer);
+ 
+    tu_autotune::rp_ctx_t rp_ctx = NULL;
+-   if (use_sysmem_rendering(cmd_buffer, &rp_ctx, rp_key))
++   bool sysmem = use_sysmem_rendering(cmd_buffer, &rp_ctx, rp_key);
++   cmd_buffer->calib_last_sysmem = sysmem;
++   if (sysmem)
+       tu_cmd_render_sysmem<CHIP>(cmd_buffer, rp_ctx);
+    else
+       tu_cmd_render_tiles<CHIP>(cmd_buffer, rp_ctx, fdm_offsets);
+@@ -7623,6 +7637,9 @@ tu6_emit_inline_ubo(struct tu_cs *cs,
+ 
+       uint64_t va = descriptors->set_iova[ubo->base] & ~0x3f;
+ 
++      if (!ubo->push_address)
++         cs->load_payload_dwords += MIN2(ubo->size_vec4, constlen - ubo->const_offset_vec4) * 4;
++
+       tu_cs_emit_pkt7(cs, tu6_stage2opcode(type), ubo->push_address ? 7 : 3);
+       tu_cs_emit(cs, CP_LOAD_STATE6_0_DST_OFF(ubo->const_offset_vec4) |
+             CP_LOAD_STATE6_0_STATE_TYPE(ST6_CONSTANTS) |
+@@ -8722,6 +8739,16 @@ tu6_draw_common(struct tu_cmd_buffer *cmd,
+       }
+    }
+ 
++   if (unlikely(cmd->calib_pad_dwords)) {
++      /* autotune probe padding */
++      VkResult result = tu_cs_reserve_space(cs, cmd->calib_pad_dwords + 1);
++      if (result != VK_SUCCESS)
++         return result;
++      tu_cs_emit_pkt7(cs, CP_NOP, cmd->calib_pad_dwords);
++      for (uint32_t i = 0; i < cmd->calib_pad_dwords; i++)
++         tu_cs_emit(cs, 0);
++   }
++
+    tu_cs_sanity_check(cs);
+ 
+    /* There are too many graphics dirty bits to list here, so just list the
+@@ -8878,6 +8905,7 @@ tu6_emit_vs_params(struct tu_cmd_buffer *cmd,
+     * TODO/A7XX: Rework vs params to use UBO lowering.
+     */
+    if (offset) {
++      cs.load_payload_dwords += 4;
+       tu_cs_emit_pkt7(&cs, CP_LOAD_STATE6_GEOM, 3);
+       tu_cs_emit(&cs, CP_LOAD_STATE6_0_DST_OFF(offset) |
+             CP_LOAD_STATE6_0_STATE_TYPE(ST6_CONSTANTS) |
+@@ -8893,7 +8921,11 @@ tu6_emit_vs_params(struct tu_cmd_buffer *cmd,
+    cmd->state.last_vs_params.empty = false;
+ 
+    struct tu_cs_entry entry = tu_cs_end_sub_stream(&cmd->sub_cs, &cs);
+-   cmd->state.vs_params = (struct tu_draw_state) {entry.bo->iova + entry.offset, entry.size / 4};
++   cmd->state.vs_params = (struct tu_draw_state) {
++      .payload_dwords = cs.load_payload_dwords,
++      .iova = entry.bo->iova + entry.offset,
++      .size = (uint16_t) (entry.size / 4),
++   };
+ 
+    cmd->state.dirty |= TU_CMD_DIRTY_VS_PARAMS;
+ }
+diff --git a/src/freedreno/vulkan/tu_cmd_buffer.h b/src/freedreno/vulkan/tu_cmd_buffer.h
+index c5354bf7e87..f6b545cba1e 100644
+--- a/src/freedreno/vulkan/tu_cmd_buffer.h
++++ b/src/freedreno/vulkan/tu_cmd_buffer.h
+@@ -659,6 +659,13 @@ struct tu_cb_control_point {
+    uint32_t original_value;
+ };
+ 
++/* Lets the autotune probe pick the rendering mode. */
++enum tu_calib_force : uint8_t {
++   TU_CALIB_FORCE_NONE = 0,
++   TU_CALIB_FORCE_SYSMEM,
++   TU_CALIB_FORCE_GMEM,
++};
++
+ struct tu_cmd_buffer
+ {
+    struct vk_command_buffer vk;
+@@ -682,6 +689,12 @@ struct tu_cmd_buffer
+ 
+    VkCommandBufferUsageFlags usage_flags;
+ 
++   /* autotune probe */
++   enum tu_calib_force calib_force;
++   bool calib_last_sysmem;
++   uint32_t calib_pad_dwords;
++   uint64_t calib_vsc_iova;
++
+    VkQueryPipelineStatisticFlags inherited_pipeline_statistics;
+ 
+    struct tu_cmd_state state;
+diff --git a/src/freedreno/vulkan/tu_cs.cc b/src/freedreno/vulkan/tu_cs.cc
+index 84bc66a2833..42d06fc8818 100644
+--- a/src/freedreno/vulkan/tu_cs.cc
++++ b/src/freedreno/vulkan/tu_cs.cc
+@@ -536,6 +536,8 @@ void
+ tu_cs_reset(struct tu_cs *cs)
+ {
+    cs->draw_state_dwords = 0;
++   cs->load_payload_dwords = 0;
++   cs->draw_state_payload_dwords = 0;
+    cs->status = VK_SUCCESS;
+ 
+    if (cs->mode == TU_CS_MODE_EXTERNAL) {
+diff --git a/src/freedreno/vulkan/tu_cs.h b/src/freedreno/vulkan/tu_cs.h
+index ce40c4f57ef..87f86a1fb52 100644
+--- a/src/freedreno/vulkan/tu_cs.h
++++ b/src/freedreno/vulkan/tu_cs.h
+@@ -66,6 +66,8 @@ struct tu_cs_memory {
+ };
+ 
+ struct tu_draw_state {
++   /* SS6_INDIRECT dwords the CP fetches for this state, for autotune */
++   uint32_t payload_dwords;
+    uint64_t iova;
+    uint16_t size;
+    bool writeable;
+@@ -103,6 +105,8 @@ struct tu_cs
+ 
+    /* dwords the CP fetches beyond this stream, for autotune */
+    uint32_t draw_state_dwords;
++   uint32_t load_payload_dwords;
++   uint32_t draw_state_payload_dwords;
+ 
+    struct tu_bo_array read_only, read_write;
+ 
+@@ -184,6 +188,7 @@ tu_cs_end_draw_state(struct tu_cs *cs, struct tu_cs *sub_cs)
+    if (!entry.bo)
+       return (struct tu_draw_state) {};
+    return (struct tu_draw_state) {
++      .payload_dwords = sub_cs->load_payload_dwords,
+       .iova = entry.bo->iova + entry.offset,
+       .size = entry.size / sizeof(uint32_t),
+       .writeable = sub_cs->writeable,
+@@ -282,6 +287,8 @@ static inline void
+ tu_cs_discard_entries(struct tu_cs *cs)
+ {
+    cs->draw_state_dwords = 0;
++   cs->load_payload_dwords = 0;
++   cs->draw_state_payload_dwords = 0;
+    assert(cs->mode == TU_CS_MODE_GROW);
+    cs->entry_count = 0;
+ }
+diff --git a/src/freedreno/vulkan/tu_shader.cc b/src/freedreno/vulkan/tu_shader.cc
+index 80e81978c49..c28592586b0 100644
+--- a/src/freedreno/vulkan/tu_shader.cc
++++ b/src/freedreno/vulkan/tu_shader.cc
+@@ -2044,6 +2044,9 @@ tu6_emit_xs_constants(
+       uint32_t shader_preload_size =
+          MIN2(xs->instrlen, cs->device->physical_device->info->props.instr_cache_size);
+ 
++      /* the CP copies the binary into the instruction cache */
++      cs->load_payload_dwords += shader_preload_size * cs->device->compiler->instr_align;
++
+       tu_cs_emit_pkt7(cs, tu6_stage2opcode(stage), 3);
+       tu_cs_emit(cs, CP_LOAD_STATE6_0_DST_OFF(0) |
+                      CP_LOAD_STATE6_0_STATE_TYPE(ST6_SHADER) |

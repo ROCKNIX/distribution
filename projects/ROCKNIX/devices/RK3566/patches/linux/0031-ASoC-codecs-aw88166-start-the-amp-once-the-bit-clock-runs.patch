@@ -1,0 +1,189 @@
+From: Noxwell <beebono@yahoo.com>
+Subject: [PATCH] ASoC: codecs: aw88166: start the amp once the bit clock runs
+
+The amp was started from the AIF widget's PRE_PMU event, which DAPM
+runs at prepare, before the CPU DAI starts the bit clock. The first PLL
+check always failed and the start only succeeded on a retry ~300ms
+later. A stream that is prepared but never started, as when PipeWire
+probes the card at boot, failed all five retries on both amps.
+
+Queue the start from mute_stream with mute_unmute_on_trigger set, so
+it runs after the CPU DAI trigger, and cancel a pending start before
+the POST_PMD stop.
+
+By the time the amp stops the bit clock is already gone, so the PLL
+and clock interrupts are always latched and every stop reloaded the
+DSP firmware, ~300ms per amp. Drop the stop check; the start path
+already CRC checks the DSP memory and reloads it on failure.
+---
+ sound/soc/codecs/aw88166.c |   85 +++++++++++++++++---------------------------
+ sound/soc/codecs/aw88166.h |    5 ---
+ 2 files changed, 32 insertions(+), 58 deletions(-)
+
+diff --git a/sound/soc/codecs/aw88166.c b/sound/soc/codecs/aw88166.c
+--- a/sound/soc/codecs/aw88166.c
++++ b/sound/soc/codecs/aw88166.c
+@@ -1174,17 +1174,7 @@
+ 	}
+ }
+ 
+-static void aw88166_startup_work(struct work_struct *work)
+-{
+-	struct aw88166 *aw88166 =
+-		container_of(work, struct aw88166, start_work.work);
+-
+-	mutex_lock(&aw88166->lock);
+-	aw88166_start_pa(aw88166);
+-	mutex_unlock(&aw88166->lock);
+-}
+-
+-static void aw88166_start(struct aw88166 *aw88166, bool sync_start)
++static void aw88166_start(struct aw88166 *aw88166)
+ {
+ 	int ret;
+ 
+@@ -1200,35 +1190,21 @@
+ 		return;
+ 	}
+ 
+-	if (sync_start == AW88166_SYNC_START)
+-		aw88166_start_pa(aw88166);
+-	else
+-		queue_delayed_work(system_dfl_wq,
+-			&aw88166->start_work,
+-			AW88166_START_WORK_DELAY_MS);
++	aw88166_start_pa(aw88166);
+ }
+ 
+-static int aw_dev_check_sysint(struct aw_device *aw_dev)
++static void aw88166_startup_work(struct work_struct *work)
+ {
+-	u16 reg_val;
+-
+-	aw_dev_get_int_status(aw_dev, &reg_val);
+-	if (reg_val & AW88166_BIT_SYSINT_CHECK) {
+-		dev_err(aw_dev->dev, "pa stop check fail:0x%04x\n", reg_val);
+-		return -EINVAL;
+-	}
++	struct aw88166 *aw88166 =
++		container_of(work, struct aw88166, start_work.work);
+ 
+-	return 0;
++	mutex_lock(&aw88166->lock);
++	aw88166_start(aw88166);
++	mutex_unlock(&aw88166->lock);
+ }
+ 
+ static int aw88166_stop(struct aw_device *aw_dev)
+ {
+-	struct aw_sec_data_desc *dsp_cfg =
+-		&aw_dev->prof_info.prof_desc[aw_dev->prof_cur].sec_desc[AW88395_DATA_TYPE_DSP_CFG];
+-	struct aw_sec_data_desc *dsp_fw =
+-		&aw_dev->prof_info.prof_desc[aw_dev->prof_cur].sec_desc[AW88395_DATA_TYPE_DSP_FW];
+-	int int_st;
+-
+ 	if (aw_dev->status == AW88166_DEV_PW_OFF) {
+ 		dev_dbg(aw_dev->dev, "already power off");
+ 		return 0;
+@@ -1242,28 +1218,38 @@
+ 	aw_dev_i2s_tx_enable(aw_dev, false);
+ 	usleep_range(AW88166_1000_US, AW88166_1000_US + 100);
+ 
+-	int_st = aw_dev_check_sysint(aw_dev);
+-
+ 	aw_dev_dsp_enable(aw_dev, false);
+ 
+ 	aw_dev_amppd(aw_dev, true);
+ 
+-	if (int_st) {
+-		aw_dev_select_memclk(aw_dev, AW88166_DEV_MEMCLK_OSC);
+-		aw_dev_dsp_update_fw(aw_dev, dsp_fw->data, dsp_fw->len);
+-		aw_dev_dsp_update_cfg(aw_dev, dsp_cfg->data, dsp_cfg->len);
+-		aw_dev_select_memclk(aw_dev, AW88166_DEV_MEMCLK_PLL);
+-	}
+-
+ 	aw_dev_pwd(aw_dev, true);
+ 
+ 	return 0;
+ }
+ 
++static int aw88166_mute_stream(struct snd_soc_dai *dai, int mute, int stream)
++{
++	struct aw88166 *aw88166 = snd_soc_component_get_drvdata(dai->component);
++
++	/* called from trigger, once the CPU DAI is driving the bit clock */
++	if (!mute)
++		queue_delayed_work(system_dfl_wq, &aw88166->start_work,
++				   AW88166_START_WORK_DELAY_MS);
++
++	return 0;
++}
++
++static const struct snd_soc_dai_ops aw88166_dai_ops = {
++	.mute_stream = aw88166_mute_stream,
++	.mute_unmute_on_trigger = true,
++	.no_capture_mute = 1,
++};
++
+ static struct snd_soc_dai_driver aw88166_dai[] = {
+ 	{
+ 		.name = "aw88166-aif",
+ 		.id = 1,
++		.ops = &aw88166_dai_ops,
+ 		.playback = {
+ 			.stream_name = "Speaker_Playback",
+ 			.channels_min = 1,
+@@ -1429,7 +1415,7 @@
+ 
+ 	if (aw88166->aw_pa->status) {
+ 		aw88166_stop(aw88166->aw_pa);
+-		aw88166_start(aw88166, AW88166_SYNC_START);
++		aw88166_start(aw88166);
+ 	}
+ 
+ 	mutex_unlock(&aw88166->lock);
+@@ -1650,17 +1636,10 @@
+ 	struct snd_soc_component *component = snd_soc_dapm_to_component(w->dapm);
+ 	struct aw88166 *aw88166 = snd_soc_component_get_drvdata(component);
+ 
++	cancel_delayed_work_sync(&aw88166->start_work);
++
+ 	mutex_lock(&aw88166->lock);
+-	switch (event) {
+-	case SND_SOC_DAPM_PRE_PMU:
+-		aw88166_start(aw88166, AW88166_ASYNC_START);
+-		break;
+-	case SND_SOC_DAPM_POST_PMD:
+-		aw88166_stop(aw88166->aw_pa);
+-		break;
+-	default:
+-		break;
+-	}
++	aw88166_stop(aw88166->aw_pa);
+ 	mutex_unlock(&aw88166->lock);
+ 
+ 	return 0;
+@@ -1670,7 +1649,7 @@
+ 	 /* playback */
+ 	SND_SOC_DAPM_AIF_IN_E("AIF_RX", "Speaker_Playback", 0, SND_SOC_NOPM, 0, 0,
+ 					aw88166_playback_event,
+-					SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
++					SND_SOC_DAPM_POST_PMD),
+ 	SND_SOC_DAPM_OUTPUT("DAC Output"),
+ 
+ 	/* capture */
+diff --git a/sound/soc/codecs/aw88166.h b/sound/soc/codecs/aw88166.h
+--- a/sound/soc/codecs/aw88166.h
++++ b/sound/soc/codecs/aw88166.h
+@@ -517,11 +517,6 @@
+ };
+ 
+ enum {
+-	AW88166_SYNC_START = 0,
+-	AW88166_ASYNC_START,
+-};
+-
+-enum {
+ 	AW88166_RECORD_SEC_DATA = 0,
+ 	AW88166_RECOVERY_SEC_DATA = 1,
+ };

@@ -1,0 +1,57 @@
+From dc2a2bea2844b1a55970200068c27ad582f85166 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Sat, 24 Oct 2026 16:08:11 -0700
+Subject: [PATCH] interconnect: qcom: icc-rpm: skip bandwidth requests the RPM already holds
+
+qcom_icc_rpm_set() sends every node's bandwidth to the RPM for both
+contexts, master and slave, on every icc_set_bw(), and each send is a
+blocking SMD round trip. Only the bus clock rates are cached. A CPU OPP
+table with opp-peak-kBps makes qcom-cpufreq-hw vote on every frequency
+change, and a peak-only vote leaves the summed averages it sends as they
+were: on SM6115 the averages changed 8 times in 1234 CPU votes, while
+each vote blocked for about 1 ms (up to 8 ms) and the RPM channel was
+busy enough that GPU and SD votes queued behind it.
+
+Remember what was last sent per node and context and skip a request
+that would not change it, as the downstream RPM bus driver does with its
+dirty flags. The first request still goes out, so the boot-time state is
+replaced as before.
+---
+--- a/drivers/interconnect/qcom/icc-rpm.h
++++ b/drivers/interconnect/qcom/icc-rpm.h
+@@ -117,6 +117,8 @@
+ 	const struct rpm_clk_resource *bus_clk_desc;
+ 	u64 sum_avg[QCOM_SMD_RPM_STATE_NUM];
+ 	u64 max_peak[QCOM_SMD_RPM_STATE_NUM];
++	u64 rpm_bw[QCOM_SMD_RPM_STATE_NUM];
++	bool rpm_bw_sent[QCOM_SMD_RPM_STATE_NUM];
+ 	int mas_rpm_id;
+ 	int slv_rpm_id;
+ 	struct qcom_icc_qos qos;
+--- a/drivers/interconnect/qcom/icc-rpm.c
++++ b/drivers/interconnect/qcom/icc-rpm.c
+@@ -215,6 +215,14 @@
+ 	for (rpm_ctx = 0; rpm_ctx < QCOM_SMD_RPM_STATE_NUM; rpm_ctx++) {
+ 		bw_bps = icc_units_to_bps(bw[rpm_ctx]);
+ 
++		/*
++		 * The RPM keeps the last request per resource, so resending an unchanged
++		 * value only costs a blocking SMD round trip. Every cpufreq transition votes
++		 * its OPP's peak through here, and that rarely moves these sums.
++		 */
++		if (qn->rpm_bw_sent[rpm_ctx] && qn->rpm_bw[rpm_ctx] == bw_bps)
++			continue;
++
+ 		if (qn->mas_rpm_id != -1) {
+ 			ret = qcom_icc_rpm_smd_send(rpm_ctx,
+ 						    RPM_BUS_MASTER_REQ,
+@@ -240,6 +248,9 @@
+ 					return ret;
+ 			}
+ 		}
++
++		qn->rpm_bw[rpm_ctx] = bw_bps;
++		qn->rpm_bw_sent[rpm_ctx] = true;
+ 	}
+ 
+ 	return 0;

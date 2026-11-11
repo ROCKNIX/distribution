@@ -2,8 +2,8 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="atari800-lr"
-PKG_VERSION="cd721790a0aa0e0772810949abcf5bd699c15371"
-PKG_SHA256="51493acb0894097717ecf4c2039a14ebb171f42a046c6833118746ed6885fdbc"
+PKG_VERSION="4e7fbc73765c1a9670c7506616046ad1d4ccda51"
+PKG_SHA256="475f072f17059a23f402ee2744c00476aba5b7c819b1af3b38c933e45bdf2947"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/libretro-atari800"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

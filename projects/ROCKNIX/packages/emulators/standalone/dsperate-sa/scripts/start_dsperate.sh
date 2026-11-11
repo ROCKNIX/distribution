@@ -143,6 +143,7 @@ esac
 
 #3D anti-aliasing
 case "${AA}" in
+	2) OPTS+=("--aa-enhanced") ;;
 	1) OPTS+=("--aa") ;;
 	0) OPTS+=("--no-aa") ;;
 esac
@@ -167,9 +168,6 @@ case "${AUTOSAVE}" in
 		set_ini_key autosave false
 		;;
 esac
-
-# S922X needs '--sink renderer'
-[[ "${HW_DEVICE}" == "S922X" ]] && OPTS+=("--sink" "renderer")
 
 #7z compression handling
 ROM="${1}"

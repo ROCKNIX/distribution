@@ -2,8 +2,8 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="gearcoleco-lr"
-PKG_VERSION="fd6c7ccca76358b41aff646f85a9c0bbaa69b36a"
-PKG_SHA256="54be3e86d4466f3bba4c168d56faba467360c00c0a405702bd5580987868cb87"
+PKG_VERSION="c1ad731ee2211a5477a1a05cd84684de430169b3"
+PKG_SHA256="c47886715965dd2419a1f7134a4edf4ae59fe532026d0ee2cc86b9f8409b0d09"
 PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/drhelius/Gearcoleco"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

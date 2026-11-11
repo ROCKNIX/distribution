@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="yabadabadoo-lr"
-PKG_VERSION="59703097c1fa607d1ab524902264fd70fab0b368"
+PKG_VERSION="953bca61e7d211bdc0428c3cbbebe184a92eb8ea"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/ProRapSuperstarOriginalMaster/Yabadabadoo"
 PKG_URL="${PKG_SITE}.git"

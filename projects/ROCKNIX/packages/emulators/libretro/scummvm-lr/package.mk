@@ -2,8 +2,8 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="scummvm-lr"
-PKG_VERSION="292e409938384ac0b3819a336c61fbb71dcbb9c3"
-PKG_SHA256="1027995a51a1eb429249c3afb6e6b438897652909a9384a82a539716b1d5182e"
+PKG_VERSION="e0ddc60bfabb1efdf1e135006c8914ca59d0596c"
+PKG_SHA256="2f87ca94ce79af39571951f797712e350870c3e56f5b5d288328f377f73d15f9"
 PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/libretro/scummvm"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

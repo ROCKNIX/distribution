@@ -2,8 +2,8 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="beetle-psx-lr"
-PKG_VERSION="ef51860dbd71ad6b7ce67115d4780c2ee321d968"
-PKG_SHA256="e50d45fa48e9f0971fe35c810896137a5ff9944e0c199d8f252403ecf959da08"
+PKG_VERSION="fb39fbfd8eb8ec36cd040b7e3f6aae6add05a805"
+PKG_SHA256="d5314fa132ddc7cf82ec9da87ec878fd7c8d01131dd7afcb368960a3e255d097"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/beetle-psx-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

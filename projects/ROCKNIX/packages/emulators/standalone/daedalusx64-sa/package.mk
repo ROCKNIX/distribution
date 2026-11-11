@@ -2,8 +2,8 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="daedalusx64-sa"
-PKG_VERSION="f17e9ed86f3806fadeb69abd29c9526ab2d4bd1b"
-PKG_SHA256="6a2fd0ac8cb17678ca1f1fd58a8e6cab536c76552e711fb4a1d8fe3941e82b19"
+PKG_VERSION="580c0c409358db332149fc2903c610449434f8fc"
+PKG_SHA256="742db277a7baa017c8ca29712678284081b79ff923496dd17d97b9a0b6067c70"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/DaedalusX64/daedalus"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

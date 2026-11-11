@@ -689,10 +689,6 @@ function set_integerscale() {
     add_setting "integerscaleoverscale" "video_scale_integer_overscale"
 }
 
-function set_rgascale() {
-    add_setting "rgascale" "video_ctx_scaling"
-}
-
 function set_shader() {
     local SHADER="$(game_setting shaderset)"
     case ${SHADER} in
@@ -1329,7 +1325,6 @@ set_translation &
 set_aspectratio &
 set_filtering &
 set_integerscale &
-set_rgascale &
 set_shader &
 set_filter &
 set_overlay &
