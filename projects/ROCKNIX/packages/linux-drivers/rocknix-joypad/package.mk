@@ -2,10 +2,10 @@
 # Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="rocknix-joypad"
-PKG_VERSION="005033d1ddd8746c771f2c81f1174f2d892541c9"
-PKG_SHA256="7a9a90d9d25d48384771bf8fe7cfb53bba708b64aa4e56d44e71205a8bcc699a"
+PKG_VERSION="ac1be0fa0c4e1f7feb9a900fc428d7ac6014029c"
+PKG_SHA256="fe66820546d4477a01c52363c11d2bd471eb36d036b8cc652f7ab8e123d294c9"
 PKG_LICENSE="GPL"
-PKG_SITE="https://github.com/hackbar/rocknix-joypad"
+PKG_SITE="https://github.com/ROCKNIX/rocknix-joypad"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
 PKG_LONGDESC="rocknix-joypad: ROCKNIX joypad driver"
 PKG_TOOLCHAIN="manual"
