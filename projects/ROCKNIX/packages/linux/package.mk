@@ -46,8 +46,8 @@ case ${DEVICE} in
     # version. When we move past 7.2, remember to add 7.2 to patch dirs.
     ;;
   SM8750)
-    PKG_VERSION="7.3.3"
-    PKG_SHA256="79c66dde66cd96877fcde8f7d36aec946b1f423d2b97b5a7b1751b75c764f3d1"
+    PKG_VERSION="7.3.4"
+    PKG_SHA256="b11b6df8295e8e991ff040b71aaa4994a8b55caa23b6b092907f195b5840fd1f"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     PKG_PATCH_DIRS+=" 7.3"
     ;;
