@@ -1,0 +1,362 @@
+From: xenocideend (with Claude Opus 5.5) <xenocideend@gmail.com>
+Subject: [PATCH] power: supply: qcom_pm8150b_charger: handle a USB-PD sink
+ (adapter allowance, no APSD loop, input limit from the contract)
+
+On a Retroid Pocket 5 a USB-PD charger, straight into the port or through
+the Dual Screen add-on, could leave the battery draining, in two ways.
+
+At 9 V with nothing drawing yet, the charger is still in its 5 V window,
+flags USBIN over-voltage and keeps the input off (USBIN_INT_RT_STS 0x18,
+ICL 0, POWER_PATH 0x13). The downstream driver sets
+USBIN_ADAPTER_ALLOW_OVERRIDE for PD and this driver never did. Writing
+CONTINUOUS on a stuck device cleared it within a second and it charged
+at 1.87 A.
+
+Under a PD contract APSD never finishes, and status_change_work reruns it
+about once a second for good. Every rerun restarts the input stage, so the
+input limit keeps falling to 0 (or 500 mA at 5 V).
+
+Under a PD sink (USB-in above 7 V, or tcpm's power supply reporting a PD
+contract at any voltage) the driver now sets the adapter allowance,
+switches BC1.2 detection off after three unfinished rounds and takes the
+input limit from the contract (capped at 3 A). It reads the allowance back
+instead of trusting a cached flag, sets it even before USB-in reads as
+plugged in, and a power_supply notifier on tcpm-source-psy-* reruns the
+status work whenever the contract comes up or changes. Unplug, or the port
+leaving the source role, puts normal detection back.
+
+Tested on a Retroid Pocket 5 for a couple of days as a daily kernel: a 5 V
+1.5 A PD charger now gets 1.5 A (was 500 mA), and after the handheld powered
+the add-on it charges at 2.49 A straight into the port and 2.47 A through
+the add-on at 9 V. BC1P2_SRC_DETECT_BIT (0x362 bit 3) comes from downstream
+smb5-reg.h, not a datasheet.
+
+---
+--- a/drivers/power/supply/qcom_pm8150b_charger.c
++++ b/drivers/power/supply/qcom_pm8150b_charger.c
+@@ -22,6 +22,7 @@
+ #include <linux/of.h>
+ #include <linux/power_supply.h>
+ #include <linux/regmap.h>
++#include <linux/string.h>
+ #include <linux/types.h>
+ #include <linux/workqueue.h>
+ 
+@@ -138,6 +139,22 @@
+ #define CMD_ICL_OVERRIDE			0x342
+ #define ICL_OVERRIDE_BIT			BIT(0)
+ 
++/*
++ * BC1.2 source detection enable (APSD). The offset and bit come from downstream
++ * smb5-reg.h (USBIN_OPTIONS_1_CFG_REG / BC1P2_SRC_DETECT_BIT), not a datasheet.
++ * A Retroid Pocket 5 reads 0x1362 = 0x18 (bit 3 set) with detection working.
++ */
++#define USBIN_OPTIONS_1_CFG			0x362
++#define BC1P2_SRC_DETECT_BIT			BIT(3)
++
++/*
++ * Which input voltage the charger accepts. Values from the SM8250 downstream
++ * smb5-reg.h (USBIN_ADAPTER_ALLOW_OVERRIDE_REG, CONTINUOUS, FORCE_NULL).
++ */
++#define USBIN_ADAPTER_ALLOW_OVERRIDE		0x344
++#define ADAPTER_ALLOW_CONTINUOUS		BIT(3)
++#define ADAPTER_ALLOW_FORCE_NULL		0
++
+ #define TYPE_C_CFG				0x358
+ #define BC1P2_START_ON_CC_BIT			BIT(7)
+ 
+@@ -255,6 +272,25 @@
+ #define SDP_CURRENT_UA			500000
+ #define CDP_CURRENT_UA			3000000
+ #define DCP_CURRENT_UA			3300000
++
++/*
++ * A USB-in voltage above this means a PD contract (this driver never
++ * negotiates HVDCP), where BC1.2 detection has no meaning. After
++ * APSD_PD_ROUNDS unfinished detection rounds (3 polls + a rerun each, about
++ * 1.3 s) at such a voltage, the rerun loop is stopped and the input current
++ * limit is set directly - see smb5_apsd_pd_takeover().
++ */
++#define PD_SINK_MIN_UV			7000000
++#define PD_SINK_ICL_UA			1500000
++/*
++ * A PD contract below PD_SINK_MIN_UV (5 V) is read from the USB-C port's own power
++ * supply instead (tcpm registers "tcpm-source-psy-<port>"), and its current, capped
++ * here, becomes the input current limit.
++ */
++#define TCPM_PSY_PREFIX			"tcpm-source-psy-"
++#define PD_CONTRACT_MAX_UA		3000000
++#define PD_CONTRACT_MIN_UA		500000
++#define APSD_PD_ROUNDS			3
+ #define CURRENT_MAX_UA			DCP_CURRENT_UA
+ 
+ /* pmi8150b registers represent current in increments of 1/40th of an amp */
+@@ -317,6 +353,9 @@
+ 	struct power_supply_battery_info *batt_info;
+ 
+ 	struct delayed_work status_change_work;
++	int apsd_rounds;	/* unfinished detection rounds this session */
++	bool apsd_pd_off;	/* APSD off + ICL override set by the PD takeover */
++	bool allow_cont;	/* USBIN_ADAPTER_ALLOW_OVERRIDE = CONTINUOUS written */
+ 	int cable_irq;
+ 	bool wakeup_enabled;
+ 
+@@ -324,6 +363,7 @@
+ 	struct iio_channel *usb_in_v_chan;
+ 
+ 	struct power_supply *chg_psy;
++	struct notifier_block psy_nb;	/* tcpm's PD contract coming up or changing */
+ 
+ 	struct delayed_work limit_work;
+ 	struct mutex limit_lock;
+@@ -505,6 +545,173 @@
+ 		val_raw);
+ }
+ 
++/*
++ * While a PD contract is up, status_change_work reruns APSD after every
++ * unfinished detection and never stops. Every rerun restarts the input stage,
++ * so ICL_STATUS keeps dropping to 0 and the battery drains. Writes from outside
++ * cannot hold against it, and slowing the reruns lets detection finish as
++ * FLOAT, which wedges the input. Detection means nothing under a PD sink, so
++ * turn it off and set the input current limit here, like the downstream driver.
++ */
++static bool smb5_pd_sink(struct smb5_chip *chip, int *uv)
++{
++	if (IS_ERR_OR_NULL(chip->usb_in_v_chan))
++		return false;
++	if (iio_read_channel_processed(chip->usb_in_v_chan, uv) < 0)
++		return false;
++	return *uv > PD_SINK_MIN_UV;
++}
++
++struct smb5_pd_query {
++	int ua;
++	int uv;
++	bool found;
++};
++
++static int smb5_pd_contract_one(struct power_supply *psy, void *data)
++{
++	struct smb5_pd_query *q = data;
++	union power_supply_propval val;
++
++	if (!psy->desc->name || strncmp(psy->desc->name, TCPM_PSY_PREFIX,
++					strlen(TCPM_PSY_PREFIX)))
++		return 0;
++	if (power_supply_get_property(psy, POWER_SUPPLY_PROP_ONLINE, &val) || !val.intval)
++		return 0;
++	if (power_supply_get_property(psy, POWER_SUPPLY_PROP_USB_TYPE, &val))
++		return 0;
++	/* tcpm reports C without a contract, a PD type once one is up */
++	if (val.intval == POWER_SUPPLY_USB_TYPE_C || val.intval == POWER_SUPPLY_USB_TYPE_UNKNOWN)
++		return 0;
++	if (power_supply_get_property(psy, POWER_SUPPLY_PROP_CURRENT_MAX, &val) || val.intval <= 0)
++		return 0;
++	q->ua = clamp_t(int, val.intval, PD_CONTRACT_MIN_UA, PD_CONTRACT_MAX_UA);
++	if (!power_supply_get_property(psy, POWER_SUPPLY_PROP_VOLTAGE_NOW, &val))
++		q->uv = val.intval;
++	q->found = true;
++	return 1;
++}
++
++/*
++ * A PD contract at any voltage, read from the USB-C port's power supply. A 5 V
++ * contract looks like plain USB by voltage alone, which kept the 500 mA default.
++ */
++static bool smb5_pd_contract(struct smb5_chip *chip, int *ua)
++{
++	struct smb5_pd_query q = { 0, 0, false };
++
++	power_supply_for_each_psy(&q, smb5_pd_contract_one);
++	if (q.found)
++		*ua = q.ua;
++	return q.found;
++}
++
++/* The PD contract's voltage from the port itself, true when its above PD_SINK_MIN_UV. */
++static bool smb5_pd_contract_high(struct smb5_chip *chip, int *uv)
++{
++	struct smb5_pd_query q = { 0, 0, false };
++
++	power_supply_for_each_psy(&q, smb5_pd_contract_one);
++	*uv = q.uv;
++	return q.found && q.uv > PD_SINK_MIN_UV;
++}
++
++/* tcpm's power supply changed (a PD contract came up, went away or changed voltage). */
++static int smb5_psy_notifier(struct notifier_block *nb, unsigned long event, void *data)
++{
++	struct smb5_chip *chip = container_of(nb, struct smb5_chip, psy_nb);
++	struct power_supply *psy = data;
++
++	if (event != PSY_EVENT_PROP_CHANGED || !psy->desc->name ||
++	    strncmp(psy->desc->name, TCPM_PSY_PREFIX, strlen(TCPM_PSY_PREFIX)))
++		return NOTIFY_OK;
++	mod_delayed_work(system_wq, &chip->status_change_work, msecs_to_jiffies(300));
++	return NOTIFY_OK;
++}
++
++static void smb5_psy_notifier_remove(void *data)
++{
++	struct smb5_chip *chip = data;
++
++	power_supply_unreg_notifier(&chip->psy_nb);
++}
++
++/*
++ * A 9 V PD source with nothing drawing from it yet (a Dual Screen add-on after
++ * the handheld powered it, or a charger straight into the port) finds the
++ * charger still in its 5 V window. It flags USBIN over-voltage at the unloaded
++ * 9 V and keeps the input off, so VBUS never gets loaded and it stays that way.
++ * The downstream driver tells the charger which voltage to expect
++ * (USBIN_ADAPTER_ALLOW_OVERRIDE). CONTINUOUS accepts 5 to 12 V, and tcpm only
++ * negotiates up to the sink PDOs.
++ */
++static void smb5_adapter_allow(struct smb5_chip *chip, bool cont, int uv)
++{
++	unsigned int want = cont ? ADAPTER_ALLOW_CONTINUOUS : ADAPTER_ALLOW_FORCE_NULL;
++	unsigned int cur;
++	int rc;
++
++	/* read the register, not a cached flag: a replug can leave the two different */
++	if (!regmap_read(chip->regmap, chip->base + USBIN_ADAPTER_ALLOW_OVERRIDE, &cur) &&
++	    cur == want) {
++		chip->allow_cont = cont;
++		return;
++	}
++	rc = regmap_write(chip->regmap, chip->base + USBIN_ADAPTER_ALLOW_OVERRIDE, want);
++	if (rc < 0) {
++		dev_err(chip->dev, "Couldn't write the adapter allowance: %d\n", rc);
++		return;
++	}
++	chip->allow_cont = cont;
++	if (cont)
++		dev_info(chip->dev, "PD sink at %d mV: input allowed 5-12 V\n", uv / 1000);
++}
++
++static void smb5_apsd_pd_takeover(struct smb5_chip *chip, int uv, int icl_ua)
++{
++	int rc;
++
++	rc = regmap_update_bits(chip->regmap, chip->base + USBIN_OPTIONS_1_CFG,
++				BC1P2_SRC_DETECT_BIT, 0);
++	if (rc < 0)
++		dev_err(chip->dev, "Couldn't disable APSD: %d\n", rc);
++	rc = smb5_set_current_limit(chip, icl_ua);
++	if (rc < 0)
++		dev_err(chip->dev, "Couldn't set the input current limit: %d\n", rc);
++	rc = regmap_update_bits(chip->regmap, chip->base + CMD_ICL_OVERRIDE,
++				ICL_OVERRIDE_BIT, ICL_OVERRIDE_BIT);
++	if (rc < 0)
++		dev_err(chip->dev, "Couldn't set the ICL override: %d\n", rc);
++	if (uv > PD_SINK_MIN_UV)
++		smb5_adapter_allow(chip, true, uv);
++	chip->apsd_pd_off = true;
++	dev_warn(chip->dev,
++		 "APSD not done after %d rounds at %d mV (PD sink): APSD off, ICL %d mA\n",
++		 chip->apsd_rounds, uv / 1000, icl_ua / 1000);
++	power_supply_changed(chip->chg_psy);
++}
++
++/* Unplug, or the port leaving the source role: back to normal detection. */
++static void smb5_apsd_pd_restore(struct smb5_chip *chip)
++{
++	int rc;
++
++	chip->apsd_rounds = 0;
++	smb5_adapter_allow(chip, false, 0);
++	if (!chip->apsd_pd_off)
++		return;
++	rc = regmap_update_bits(chip->regmap, chip->base + CMD_ICL_OVERRIDE,
++				ICL_OVERRIDE_BIT, 0);
++	if (rc < 0)
++		dev_err(chip->dev, "Couldn't clear the ICL override: %d\n", rc);
++	rc = regmap_update_bits(chip->regmap, chip->base + USBIN_OPTIONS_1_CFG,
++				BC1P2_SRC_DETECT_BIT, BC1P2_SRC_DETECT_BIT);
++	if (rc < 0)
++		dev_err(chip->dev, "Couldn't re-enable APSD: %d\n", rc);
++	chip->apsd_pd_off = false;
++	dev_info(chip->dev, "PD sink ended: APSD back on\n");
++}
++
+ static void smb5_status_change_work(struct work_struct *work)
+ {
+ 	unsigned int charger_type, current_ua;
+@@ -515,7 +722,32 @@
+ 	chip = container_of(work, struct smb5_chip, status_change_work.work);
+ 
+ 	smb5_get_prop_usb_online(chip, &usb_online);
+-	if (!usb_online)
++	if (!usb_online) {
++		int pd_uv;
++
++		/*
++		 * Over-voltage can hold the input off from the start, so it never reads as
++		 * plugged in. With a high PD contract up, allow its voltage and look again
++		 * shortly instead of calling it unplugged.
++		 */
++		if (smb5_pd_contract_high(chip, &pd_uv)) {
++			smb5_adapter_allow(chip, true, pd_uv);
++			schedule_delayed_work(&chip->status_change_work, msecs_to_jiffies(1000));
++			return;
++		}
++		smb5_apsd_pd_restore(chip);
++		return;
++	}
++
++	{
++		int pd_uv;
++
++		if (smb5_pd_sink(chip, &pd_uv) || smb5_pd_contract_high(chip, &pd_uv))
++			smb5_adapter_allow(chip, true, pd_uv);
++	}
++
++	/* PD takeover in force: detection is off and the ICL is ours */
++	if (chip->apsd_pd_off)
+ 		return;
+ 
+ 	for (count = 0; count < 3; count++) {
+@@ -532,6 +764,18 @@
+ 	}
+ 
+ 	if (rc < 0) {
++		int uv = 0, icl_ua = PD_SINK_ICL_UA;
++
++		if (++chip->apsd_rounds >= APSD_PD_ROUNDS) {
++			/* read the contract first, a 9 V sink would keep the 1.5 A default */
++			bool pd = smb5_pd_contract(chip, &icl_ua);
++
++			if (smb5_pd_sink(chip, &uv) || pd) {
++				smb5_apsd_pd_takeover(chip, uv, icl_ua);
++				return;
++			}
++		}
++		/* keep the reruns 1 s apart, a slower rerun lets APSD finish as FLOAT */
+ 		rc = regmap_update_bits(chip->regmap, chip->base + CMD_APSD,
+ 					APSD_RERUN_BIT, APSD_RERUN_BIT);
+ 		schedule_delayed_work(&chip->status_change_work,
+@@ -540,6 +784,8 @@
+ 		return;
+ 	}
+ 
++	chip->apsd_rounds = 0;
++
+ 	switch (charger_type) {
+ 	case POWER_SUPPLY_USB_TYPE_CDP:
+ 		current_ua = CDP_CURRENT_UA;
+@@ -1140,6 +1386,14 @@
+ 		return dev_err_probe(chip->dev, rc,
+ 				     "Failed to init status change work\n");
+ 
++	chip->psy_nb.notifier_call = smb5_psy_notifier;
++	rc = power_supply_reg_notifier(&chip->psy_nb);
++	if (rc < 0)
++		return dev_err_probe(chip->dev, rc, "Couldn't register the PD contract notifier\n");
++	rc = devm_add_action_or_reset(chip->dev, smb5_psy_notifier_remove, chip);
++	if (rc < 0)
++		return rc;
++
+ 	/* the battery's own charge voltage when its lower than the design max */
+ 	rc = chip->batt_info->voltage_max_design_uv;
+ 	if (chip->batt_info->constant_charge_voltage_max_uv > 0 &&
