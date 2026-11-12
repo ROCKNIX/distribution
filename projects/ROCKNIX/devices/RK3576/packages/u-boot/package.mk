@@ -2,43 +2,32 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="u-boot"
-PKG_VERSION="88dc2788777babfd6322fa655df549a019aa1e69"
-PKG_SHA256="c9858cd5fdc0204e72d5c2d4f0e185883fe627a5901f91c165ddecd787899117"
+PKG_VERSION="1.0"
 PKG_LICENSE="GPL"
-PKG_SITE="https://source.denx.de/u-boot/u-boot"
-PKG_URL="${PKG_SITE}/-/archive/${PKG_VERSION}/u-boot-${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain Python3 swig:host pyelftools:host gnutls:host"
+PKG_SITE="https://www.denx.de/wiki/U-Boot"
+PKG_URL=""
+PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="Das U-Boot is a cross-platform bootloader for embedded systems."
 PKG_TOOLCHAIN="manual"
-PKG_RKBIN_DIR="$(get_build_dir rkbin)/bin/rk35"
 
 PKG_NEED_UNPACK="${PROJECT_DIR}/${PROJECT}/bootloader ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/bootloader"
+PKG_NEED_UNPACK+=" ${PROJECT_DIR}/${PROJECT}/options ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/options"
 
-if [ -n "${UBOOT_FIRMWARE}" ]; then
-  PKG_DEPENDS_TARGET+=" ${UBOOT_FIRMWARE}"
-  PKG_DEPENDS_UNPACK+=" ${UBOOT_FIRMWARE}"
-fi
-
-pre_make_target() {
-  PKG_UBOOT_CONFIG="generic-rk3576_defconfig"
-  PKG_MINILOADER="spl/u-boot-spl.bin"
-  PKG_BL31="${PKG_RKBIN_DIR}/rk3576_bl31_v1.25.elf"
-  PKG_DDR_BIN="${PKG_RKBIN_DIR}/rk3576_ddr_lp4_2112MHz_lp5_2736MHz_v1.13.bin"
-}
+for PKG_SUBDEVICE in ${SUBDEVICES}; do
+  PKG_DEPENDS_TARGET+=" u-boot-${PKG_SUBDEVICE}"
+  PKG_DEPENDS_UNPACK+=" u-boot-${PKG_SUBDEVICE}"
+  PKG_NEED_UNPACK+=" $(get_pkg_directory u-boot-${PKG_SUBDEVICE})"
+done
 
 make_target() {
-  [ "${BUILD_WITH_DEBUG}" = "yes" ] && PKG_DEBUG=1 || PKG_DEBUG=0
-  setup_pkg_config_host
-
-  DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm64 make mrproper
-  DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm64 make HOSTCC="${HOST_CC}" HOSTCFLAGS="-I${TOOLCHAIN}/include" HOSTLDFLAGS="${HOST_LDFLAGS}" ${PKG_UBOOT_CONFIG} u-boot.dtb u-boot.img tools
-  DEBUG=${PKG_DEBUG} CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" ARCH=arm64 _python_sysroot="${TOOLCHAIN}" _python_prefix=/ _python_exec_prefix=/ make BL31="${PKG_BL31}" ROCKCHIP_TPL="${PKG_DDR_BIN}" HOSTCC="${HOST_CC}" HOSTCFLAGS="-I${TOOLCHAIN}/include" HOSTLDFLAGS="${HOST_LDFLAGS}" HOSTSTRIP="true" CONFIG_MKIMAGE_DTC_PATH="scripts/dtc/dtc"
-
-  find_file_path bootloader/rkhelper && . ${FOUND_PATH}
+  : # nothing
 }
 
 makeinstall_target() {
-  mkdir -p ${INSTALL}/usr/share/bootloader
+  mkdir -p $INSTALL/usr/share/bootloader
 
-  cp -av ${PKG_BUILD}/uboot.bin ${INSTALL}/usr/share/bootloader
+  for PKG_SUBDEVICE in ${SUBDEVICES}; do
+    PKG_UBOOTBIN=$(get_build_dir u-boot-${PKG_SUBDEVICE})/uboot.bin
+    cp -av ${PKG_UBOOTBIN} $INSTALL/usr/share/bootloader/${PKG_SUBDEVICE}_uboot.bin
+  done
 }

@@ -36,11 +36,13 @@ if [ -d $SYSTEM_ROOT/usr/share/bootloader/overlays ]; then
   cp -f $SYSTEM_ROOT/usr/share/bootloader/overlays/* $BOOT_ROOT/overlays
 fi
 
-if [ -f "$SYSTEM_ROOT/usr/share/bootloader/uboot.bin" ]; then
-  echo "Updating uboot.bin on $BOOT_DISK..."
+SUBDEVICE="RK3576"
+grep -q "rockchip,rk3562" /proc/device-tree/compatible && SUBDEVICE="RK3562"
+if [ -f "$SYSTEM_ROOT/usr/share/bootloader/${SUBDEVICE}_uboot.bin" ]; then
+  echo "Updating ${SUBDEVICE}_uboot.bin on $BOOT_DISK..."
   {
     dd if=$BOOT_DISK bs=32K count=1
-    cat $SYSTEM_ROOT/usr/share/bootloader/uboot.bin
+    cat $SYSTEM_ROOT/usr/share/bootloader/${SUBDEVICE}_uboot.bin
   } | dd of=$BOOT_DISK bs=4M conv=fsync &>/dev/null
 fi
 
