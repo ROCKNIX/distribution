@@ -1,0 +1,87 @@
+From d0cd9c8d0fd59bc7d140f3d60cf02e1d80376dab Mon Sep 17 00:00:00 2001
+From: Praveen Talari <praveen.talari@oss.qualcomm.com>
+Date: Thu, 2 Jul 2026 17:11:50 +0530
+Subject: [PATCH] serial: qcom-geni: add force suspend/resume to system sleep
+ callbacks
+
+[ Upstream commit d0cd9c8d0fd59bc7d140f3d60cf02e1d80376dab ]
+
+During system sleep the hardware resources (clocks, interconnect) are
+not gated because the runtime-suspend callback is never invoked from
+the system sleep path.  This prevents the platform from reaching its
+lowest idle state.
+
+The system sleep callbacks qcom_geni_serial_suspend() and
+qcom_geni_serial_resume() rely solely on uart_suspend_port() /
+uart_resume_port() to manage power.  uart_suspend_port() drives the
+UART PM state machine to UART_PM_STATE_OFF, which in turn calls
+pm_runtime_put_sync() and eventually the runtime-suspend callback.
+However, if the runtime-PM usage count is still elevated at the time
+of system sleep (e.g. the port is held active by an open file
+descriptor), the runtime-suspend callback is never invoked and the
+hardware resources (clocks, interconnect) remain enabled across
+suspend, preventing the platform from reaching its lowest idle state.
+
+Fix this by calling pm_runtime_force_suspend() at the end of
+qcom_geni_serial_suspend() so that the runtime-suspend callback is
+always executed regardless of the usage count, and by calling
+pm_runtime_force_resume() at the start of qcom_geni_serial_resume()
+to restore those resources before uart_resume_port() re-opens the
+port.
+
+Signed-off-by: Praveen Talari <praveen.talari@oss.qualcomm.com>
+Link: https://patch.msgid.link/20260702-add_force_suspend_resume_to_system_sleep_callbacks-v2-1-b79e254a7015@oss.qualcomm.com
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+[ armada: backported to 7.2 on top of the non-console IRQ mask; a failed
+  force suspend or force resume re-enables the masked IRQ ]
+---
+--- a/drivers/tty/serial/qcom_geni_serial.c
++++ b/drivers/tty/serial/qcom_geni_serial.c
+@@ -1983,6 +1983,7 @@
+ 	struct qcom_geni_serial_port *port = dev_get_drvdata(dev);
+ 	struct uart_port *uport = &port->uport;
+ 	struct qcom_geni_private_data *private_data = uport->private_data;
++	int ret;
+ 
+ 	/*
+ 	 * A peer that keeps streaming into a non-console geni UART across the
+@@ -2009,7 +2010,24 @@
+ 		geni_icc_set_tag(&port->se, QCOM_ICC_TAG_ACTIVE_ONLY);
+ 		geni_icc_set_bw(&port->se);
+ 	}
+-	return uart_suspend_port(private_data->drv, uport);
++
++	ret = uart_suspend_port(private_data->drv, uport);
++	if (ret)
++		return ret;
++
++	/*
++	 * When no_console_suspend is set the console must remain active
++	 * across system sleep, so skip the force suspend path.
++	 */
++	if (!console_suspend_enabled && uart_console(uport))
++		return 0;
++
++	ret = pm_runtime_force_suspend(dev);
++	if (ret && !uart_console(uport)) {
++		uart_resume_port(private_data->drv, uport);
++		enable_irq(uport->irq);
++	}
++	return ret;
+ }
+ 
+ static int qcom_geni_serial_resume(struct device *dev)
+@@ -2019,6 +2037,13 @@
+ 	struct uart_port *uport = &port->uport;
+ 	struct qcom_geni_private_data *private_data = uport->private_data;
+ 
++	ret = pm_runtime_force_resume(dev);
++	if (ret) {
++		if (!uart_console(uport))
++			enable_irq(uport->irq);
++		return ret;
++	}
++
+ 	ret = uart_resume_port(private_data->drv, uport);
+ 	/* Balance the disable_irq() taken in qcom_geni_serial_suspend(). */
+ 	if (!uart_console(uport))

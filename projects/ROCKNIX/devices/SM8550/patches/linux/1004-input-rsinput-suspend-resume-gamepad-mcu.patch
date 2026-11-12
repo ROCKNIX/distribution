@@ -1,0 +1,64 @@
+From: jaewun <jaewun@users.noreply.github.com>
+Subject: [PATCH] input: rsinput: suspend and resume the gamepad MCU across system sleep
+
+The gamepad MCU streams input reports continuously over the UART. Across a
+system-suspend teardown the MCU keeps sending, so the geni-serial RX interrupt
+storms while the port is stopping, the primary handler returns IRQ_NONE, and the
+kernel's spurious-IRQ detector permanently disables the UART IRQ -- the gamepad
+is then dead after resume until the IRQ is re-requested.
+
+Add PM ops: on suspend quiesce the MCU (drop its enable rail and assert reset,
+mirroring rsinput_remove) so the line goes silent before the UART suspends; on
+resume re-power and re-initialise it.
+
+Signed-off-by: jaewun <jaewun@users.noreply.github.com>
+---
+--- a/drivers/input/joystick/rsinput.c
++++ b/drivers/input/joystick/rsinput.c
+@@ -612,6 +612,38 @@
+     regulator_disable(drv->vdd);
+ }
+ 
++static int rsinput_suspend(struct device *dev)
++{
++    struct rsinput_driver *drv = dev_get_drvdata(dev);
++
++    /*
++     * The MCU streams gamepad reports continuously over the UART. If it keeps
++     * sending across the system-suspend teardown, the geni-serial RX interrupt
++     * storms while the port is being stopped, the primary handler returns
++     * IRQ_NONE, and the kernel's spurious-IRQ detector permanently disables the
++     * UART IRQ -- leaving the gamepad dead after resume until the IRQ is
++     * re-requested. Quiesce the MCU (drop its enable rail and hold it in reset,
++     * mirroring rsinput_remove) so the line goes silent before the UART
++     * suspends; rsinput_resume() re-powers and re-initialises it.
++     */
++    if (drv->enable_gpio)
++        gpiod_set_value_cansleep(drv->enable_gpio, 0);
++
++    if (drv->reset_gpio)
++        gpiod_set_value_cansleep(drv->reset_gpio, 0);
++
++    return 0;
++}
++
++static int rsinput_resume(struct device *dev)
++{
++    struct rsinput_driver *drv = dev_get_drvdata(dev);
++
++    return rsinput_init_commands(drv);
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(rsinput_pm_ops, rsinput_suspend, rsinput_resume);
++
+ static const struct of_device_id rsinput_of_match[] = {
+     { .compatible = "gamepad,rsinput" },
+     { /* sentinel */ }
+@@ -624,6 +656,7 @@
+     .driver = {
+         .name = "rsinput",
+         .of_match_table = rsinput_of_match,
++        .pm = pm_sleep_ptr(&rsinput_pm_ops),
+     },
+ };
+ 

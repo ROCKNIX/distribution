@@ -1,0 +1,30 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] drm/msm/a6xx: mask the HFI interrupt before booting the GMU
+
+GMU2HOST_INTR_MASK reads 0 after the GMU power domain was off, and
+a6xx_gmu_resume() only programs it after a6xx_hfi_start(). Until then
+every HFI response raises the HFI interrupt line. The interrupt is
+disabled at that point, but lazily, so nearly every resume delivers it
+once and the flow handler masks and drops it.
+
+When the target CPU is in an idle state that is slow to leave, the
+delivery can arrive after enable_irq(). a6xx_hfi_irq() then runs for an
+interrupt whose status was cleared and masked before, right while
+a6xx_gmu_set_initial_freq() and the GPU_SET OOB request are waiting for
+their own bits in the same register.
+
+Mask everything before the GMU boots. The write after a6xx_hfi_start()
+still unmasks the CM3 fault.
+---
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+@@ -1336,6 +1336,9 @@
+ 	/* Set the bus quota to a reasonable value for boot */
+ 	a6xx_gmu_set_initial_bw(gpu, gmu);
+ 
++	/* The mask resets to 0 with the GMU: keep HFI replies off the irq line */
++	gmu_write(gmu, REG_A6XX_GMU_GMU2HOST_INTR_MASK, ~0);
++
+ 	/* Enable the GMU interrupt */
+ 	gmu_write(gmu, REG_A6XX_GMU_AO_HOST_INTERRUPT_CLR, ~0);
+ 	gmu_write(gmu, REG_A6XX_GMU_AO_HOST_INTERRUPT_MASK, ~A6XX_GMU_IRQ_MASK);
