@@ -4,28 +4,37 @@
 # Copyright (C) 2026 ROCKNIX (https://github.com/ROCKNIX)
 
 GAME="${1}"
-CONFIG_FILE="/storage/.config/Vita3K/config.yml"
+CONFIG_FOLDER="/storage/.config/vita3k"
+CONFIG_FILE="${CONFIG_FOLDER}/config.yml"
+LOG_FILE="${CONFIG_FOLDER}/vita3k.log"
 
 . /etc/profile
 set_kill set "-9 vita3k-sa"
+
+# Qt's FFmpeg backend probes Vulkan hardware decoding on startup, which segfaults inside
+# MangoHud's Vulkan layer when it is preloaded. Vita3K decodes no video, so drop the probe.
+export QT_FFMPEG_DECODING_HW_DEVICE_TYPES=
+export QT_FFMPEG_ENCODING_HW_DEVICE_TYPES=
 
 # Bail on error, especially since .pkg installation calls can fail if the ZRIF is wrong,
 # and that could cause data loss/confusion with the second call on Vita3K...
 set -e
 
 # Check if config vita3k folder exists
-if [ ! -d "/storage/.config/Vita3K" ]; then
-    mkdir -p "/storage/.config/Vita3K"
+if [ ! -d "${CONFIG_FOLDER}" ]; then
+    mkdir -p "${CONFIG_FOLDER}"
+fi
+
+# Copy prerequisite files if they aren't there yet.
+if [ ! -d "${CONFIG_FOLDER}/data" -o ! -d "${CONFIG_FOLDER}/lang" -o ! -d "${CONFIG_FOLDER}/shaders-builtin" ]; then
+    cp -r "/usr/config/vita3k/data" "${CONFIG_FOLDER}/"
+    cp -r "/usr/config/vita3k/lang" "${CONFIG_FOLDER}/"
+    cp -r "/usr/config/vita3k/shaders-builtin" "${CONFIG_FOLDER}/"
 fi
 
 # Apply default config if it isn't there yet.
 if [ ! -f "${CONFIG_FILE}" ]; then
     cp "/usr/config/vita3k/config.yml" "${CONFIG_FILE}"
-fi
-
-# Copy vita-gamelist for game scanning if not already there.
-if [ ! -f "/storage/.config/Vita3K/vita-gamelist.txt" ]; then
-    cp "/usr/config/vita3k/vita-gamelist.txt" "/storage/.config/Vita3K/"
 fi
 
 # EmulationStation options
@@ -48,151 +57,166 @@ FILELOADINGDELAY=$(get_setting file_loading_delay "${PLATFORM}" "${ROMNAME}")
 SPIRVSHADER=$(get_setting spirv_shader "${PLATFORM}" "${ROMNAME}")
 HASHLESSTEXCACHE=$(get_setting hashless_texture_cache "${PLATFORM}" "${ROMNAME}")
 HTTPENABLE=$(get_setting network_features "${PLATFORM}" "${ROMNAME}")
+ASYNCPIPELINE=$(get_setting async_pipeline_compilation "${PLATFORM}" "${ROMNAME}")
 
 # Graphics Backend
 if [ "${RENDERER}" = "opengl" ]; then
-  sed -i "/^backend-renderer:/c\backend-renderer: OpenGL" /storage/.config/Vita3K/config.yml
+  sed -i "/^backend-renderer:/c\backend-renderer: OpenGL" ${CONFIG_FOLDER}/config.yml
 else
-  sed -i "/^backend-renderer:/c\backend-renderer: Vulkan" /storage/.config/Vita3K/config.yml
+  sed -i "/^backend-renderer:/c\backend-renderer: Vulkan" ${CONFIG_FOLDER}/config.yml
 fi
 
 # Internal Resolution
 if [ "$IRES" = "0.5" ]; then
-  sed -i "/^resolution-multiplier:/c\resolution-multiplier: 0.5" /storage/.config/Vita3K/config.yml
+  sed -i "/^resolution-multiplier:/c\resolution-multiplier: 0.5" ${CONFIG_FOLDER}/config.yml
 elif [ "$IRES" = "0.75" ]; then
-  sed -i "/^resolution-multiplier:/c\resolution-multiplier: 0.75" /storage/.config/Vita3K/config.yml
+  sed -i "/^resolution-multiplier:/c\resolution-multiplier: 0.75" ${CONFIG_FOLDER}/config.yml
 elif [ "$IRES" = "1.25" ]; then
-  sed -i "/^resolution-multiplier:/c\resolution-multiplier: 1.25" /storage/.config/Vita3K/config.yml
+  sed -i "/^resolution-multiplier:/c\resolution-multiplier: 1.25" ${CONFIG_FOLDER}/config.yml
 elif [ "$IRES" = "1.5" ]; then
-  sed -i "/^resolution-multiplier:/c\resolution-multiplier: 1.5" /storage/.config/Vita3K/config.yml
+  sed -i "/^resolution-multiplier:/c\resolution-multiplier: 1.5" ${CONFIG_FOLDER}/config.yml
 elif [ "$IRES" = "1.75" ]; then
-  sed -i "/^resolution-multiplier:/c\resolution-multiplier: 1.75" /storage/.config/Vita3K/config.yml
+  sed -i "/^resolution-multiplier:/c\resolution-multiplier: 1.75" ${CONFIG_FOLDER}/config.yml
 elif [ "$IRES" = "2" ]; then
-  sed -i "/^resolution-multiplier:/c\resolution-multiplier: 2" /storage/.config/Vita3K/config.yml
+  sed -i "/^resolution-multiplier:/c\resolution-multiplier: 2" ${CONFIG_FOLDER}/config.yml
 else
-  sed -i "/^resolution-multiplier:/c\resolution-multiplier: 1" /storage/.config/Vita3K/config.yml
+  sed -i "/^resolution-multiplier:/c\resolution-multiplier: 1" ${CONFIG_FOLDER}/config.yml
 fi
 
 # Scan out render size
-SCANOUT_SCALE=$(scanout_internal_scale "$(awk '/^resolution-multiplier: / {print $2; exit}' /storage/.config/Vita3K/config.yml)" 544 0.5 8 0.25)
-sed -i "/^resolution-multiplier:/c\resolution-multiplier: ${SCANOUT_SCALE}" /storage/.config/Vita3K/config.yml
+SCANOUT_SCALE=$(scanout_internal_scale "$(awk '/^resolution-multiplier: / {print $2; exit}' ${CONFIG_FOLDER}/config.yml)" 544 0.5 8 0.25)
+sed -i "/^resolution-multiplier:/c\resolution-multiplier: ${SCANOUT_SCALE}" ${CONFIG_FOLDER}/config.yml
 scanout_render_size 544 "${SCANOUT_SCALE}" 960:544
 
 # PSTV Mode
 if [ "${PSTVMODE}" = "true" ]; then
-  sed -i "/^pstv-mode:/c\pstv-mode: true" /storage/.config/Vita3K/config.yml
+  sed -i "/^pstv-mode:/c\pstv-mode: true" ${CONFIG_FOLDER}/config.yml
 else
-  sed -i "/^pstv-mode:/c\pstv-mode: false" /storage/.config/Vita3K/config.yml
+  sed -i "/^pstv-mode:/c\pstv-mode: false" ${CONFIG_FOLDER}/config.yml
 fi
 
 # Bilinear Filtering
 if [ "${FILTER}" = "0" ]; then
-  sed -i '/^screen-filter:/c\screen-filter: Nearest' /storage/.config/Vita3K/config.yml
+  sed -i '/^screen-filter:/c\screen-filter: Nearest' ${CONFIG_FOLDER}/config.yml
 elif [ "${FILTER}" = "2" ]; then
-  sed -i '/^screen-filter:/c\screen-filter: Bicubic' /storage/.config/Vita3K/config.yml
+  sed -i '/^screen-filter:/c\screen-filter: Bicubic' ${CONFIG_FOLDER}/config.yml
 elif [ "${FILTER}" = "3" ]; then
-  sed -i '/^screen-filter:/c\screen-filter: FXAA' /storage/.config/Vita3K/config.yml
+  sed -i '/^screen-filter:/c\screen-filter: FXAA' ${CONFIG_FOLDER}/config.yml
 elif [ "${FILTER}" = "4" ]; then
-  sed -i '/^screen-filter:/c\screen-filter: FSR' /storage/.config/Vita3K/config.yml
+  sed -i '/^screen-filter:/c\screen-filter: FSR' ${CONFIG_FOLDER}/config.yml
 else
-  sed -i '/^screen-filter:/c\screen-filter: Bilinear' /storage/.config/Vita3K/config.yml
+  sed -i '/^screen-filter:/c\screen-filter: Bilinear' ${CONFIG_FOLDER}/config.yml
 fi
 
 # Renderer Accuracy
 if [ "${ACCURACY}" = "true" ]; then
-  sed -i "/^high-accuracy:/c\high-accuracy: true" /storage/.config/Vita3K/config.yml
+  sed -i "/^high-accuracy:/c\high-accuracy: true" ${CONFIG_FOLDER}/config.yml
 else
-  sed -i "/^high-accuracy:/c\high-accuracy: false" /storage/.config/Vita3K/config.yml
+  sed -i "/^high-accuracy:/c\high-accuracy: false" ${CONFIG_FOLDER}/config.yml
 fi
 
 # Memory Mapping
 if [ -n "${MEMMAPPING}" ]; then
-  sed -i "/^memory-mapping:/c\memory-mapping: ${MEMMAPPING}" /storage/.config/Vita3K/config.yml
+  sed -i "/^memory-mapping:/c\memory-mapping: ${MEMMAPPING}" ${CONFIG_FOLDER}/config.yml
 else
-  sed -i "/^memory-mapping:/c\memory-mapping: double-buffer" /storage/.config/Vita3K/config.yml
+  sed -i "/^memory-mapping:/c\memory-mapping: double-buffer" ${CONFIG_FOLDER}/config.yml
 fi
 
 # Vsync
 if [ "${VSYNC}" = "false" ]; then
-  sed -i "/^v-sync:/c\v-sync: false" /storage/.config/Vita3K/config.yml
+  sed -i "/^v-sync:/c\v-sync: false" ${CONFIG_FOLDER}/config.yml
 else
-  sed -i "/^v-sync:/c\v-sync: true" /storage/.config/Vita3K/config.yml
+  sed -i "/^v-sync:/c\v-sync: true" ${CONFIG_FOLDER}/config.yml
 fi
 
 # Anisotropic Filtering
 if [ -n "${ANISO}" ]; then
-  sed -i "/^anisotropic-filtering:/c\anisotropic-filtering: ${ANISO}" /storage/.config/Vita3K/config.yml
+  sed -i "/^anisotropic-filtering:/c\anisotropic-filtering: ${ANISO}" ${CONFIG_FOLDER}/config.yml
 else
-  sed -i "/^anisotropic-filtering:/c\anisotropic-filtering: 1" /storage/.config/Vita3K/config.yml
+  sed -i "/^anisotropic-filtering:/c\anisotropic-filtering: 1" ${CONFIG_FOLDER}/config.yml
 fi
 
 # FPS Hack
 if [ "${FPSHACK}" = "true" ]; then
-  sed -i "/^fps-hack:/c\fps-hack: true" /storage/.config/Vita3K/config.yml
+  sed -i "/^fps-hack:/c\fps-hack: true" ${CONFIG_FOLDER}/config.yml
 else
-  sed -i "/^fps-hack:/c\fps-hack: false" /storage/.config/Vita3K/config.yml
+  sed -i "/^fps-hack:/c\fps-hack: false" ${CONFIG_FOLDER}/config.yml
 fi
 
 # NGS Audio Engine
 if [ "${NGSENABLE}" = "false" ]; then
-  sed -i "/^ngs-enable:/c\ngs-enable: false" /storage/.config/Vita3K/config.yml
+  sed -i "/^ngs-enable:/c\ngs-enable: false" ${CONFIG_FOLDER}/config.yml
 else
-  sed -i "/^ngs-enable:/c\ngs-enable: true" /storage/.config/Vita3K/config.yml
+  sed -i "/^ngs-enable:/c\ngs-enable: true" ${CONFIG_FOLDER}/config.yml
 fi
 
 # Disable Motion Controls
 if [ "${DISABLEMOTION}" = "true" ]; then
-  sed -i "/^disable-motion:/c\disable-motion: true" /storage/.config/Vita3K/config.yml
+  sed -i "/^disable-motion:/c\disable-motion: true" ${CONFIG_FOLDER}/config.yml
 else
-  sed -i "/^disable-motion:/c\disable-motion: false" /storage/.config/Vita3K/config.yml
+  sed -i "/^disable-motion:/c\disable-motion: false" ${CONFIG_FOLDER}/config.yml
 fi
 
 # Disable Surface Sync
 if [ "${DISABLESURFACESYNC}" = "false" ]; then
-  sed -i "/^disable-surface-sync:/c\disable-surface-sync: false" /storage/.config/Vita3K/config.yml
+  sed -i "/^disable-surface-sync:/c\disable-surface-sync: false" ${CONFIG_FOLDER}/config.yml
 else
-  sed -i "/^disable-surface-sync:/c\disable-surface-sync: true" /storage/.config/Vita3K/config.yml
+  sed -i "/^disable-surface-sync:/c\disable-surface-sync: true" ${CONFIG_FOLDER}/config.yml
 fi
 
 # System Confirm Button
 if [ "${SYSBUTTON}" = "0" ]; then
-  sed -i "/^sys-button:/c\sys-button: 0" /storage/.config/Vita3K/config.yml
+  sed -i "/^sys-button:/c\sys-button: 0" ${CONFIG_FOLDER}/config.yml
 else
-  sed -i "/^sys-button:/c\sys-button: 1" /storage/.config/Vita3K/config.yml
+  sed -i "/^sys-button:/c\sys-button: 1" ${CONFIG_FOLDER}/config.yml
 fi
 
 # File Loading Delay
 if [ -n "${FILELOADINGDELAY}" ]; then
-  sed -i "/^file-loading-delay:/c\file-loading-delay: ${FILELOADINGDELAY}" /storage/.config/Vita3K/config.yml
+  sed -i "/^file-loading-delay:/c\file-loading-delay: ${FILELOADINGDELAY}" ${CONFIG_FOLDER}/config.yml
 else
-  sed -i "/^file-loading-delay:/c\file-loading-delay: 0" /storage/.config/Vita3K/config.yml
+  sed -i "/^file-loading-delay:/c\file-loading-delay: 0" ${CONFIG_FOLDER}/config.yml
 fi
 
 # SPIR-V Shader Path
 if [ "${SPIRVSHADER}" = "true" ]; then
-  sed -i "/^spirv-shader:/c\spirv-shader: true" /storage/.config/Vita3K/config.yml
+  sed -i "/^spirv-shader:/c\spirv-shader: true" ${CONFIG_FOLDER}/config.yml
 else
-  sed -i "/^spirv-shader:/c\spirv-shader: false" /storage/.config/Vita3K/config.yml
+  sed -i "/^spirv-shader:/c\spirv-shader: false" ${CONFIG_FOLDER}/config.yml
 fi
 
 # Hashless Texture Cache
 if [ "${HASHLESSTEXCACHE}" = "true" ]; then
-  sed -i "/^hashless-texture-cache:/c\hashless-texture-cache: true" /storage/.config/Vita3K/config.yml
+  sed -i "/^hashless-texture-cache:/c\hashless-texture-cache: true" ${CONFIG_FOLDER}/config.yml
 else
-  sed -i "/^hashless-texture-cache:/c\hashless-texture-cache: false" /storage/.config/Vita3K/config.yml
+  sed -i "/^hashless-texture-cache:/c\hashless-texture-cache: false" ${CONFIG_FOLDER}/config.yml
 fi
 
 # HTTP Networking
 if [ "${HTTPENABLE}" = "true" ]; then
-  sed -i "/^http-enable:/c\http-enable: true" /storage/.config/Vita3K/config.yml
+  sed -i "/^http-enable:/c\http-enable: true" ${CONFIG_FOLDER}/config.yml
 else
-  sed -i "/^http-enable:/c\http-enable: false" /storage/.config/Vita3K/config.yml
+  sed -i "/^http-enable:/c\http-enable: false" ${CONFIG_FOLDER}/config.yml
 fi
 
-# Check if system vita3k folder exists, which needs to be populated by Vita3K before we can do anything.
+# Asynchronous Pipeline Compilation
+if [ "${ASYNCPIPELINE}" = "true" ] || [ "${ASYNCPIPELINE}" = "false" ]; then
+  sed -i "/^async-pipeline-compilation:/c\async-pipeline-compilation: ${ASYNCPIPELINE}" ${CONFIG_FOLDER}/config.yml
+fi
+
+# Create the system vita3k folder on first launch.
 if [ ! -d "/storage/roms/psvita/vita3k" ]; then
-    text_viewer -w -f 64 -t "Vita3K Setup Required" -m "Please launch Vita3K from the Tools menu first to initialize its data folder."
-    exit 1
+    mkdir -p "/storage/roms/psvita/vita3k"
+fi
+
+# Seed the shared gamelist on first launch; user edits are kept.
+if [ ! -f "/storage/roms/psvita/vita3k/vita-gamelist.txt" ]; then
+    cp "/usr/config/vita3k/vita-gamelist.txt" "/storage/roms/psvita/vita3k/"
+fi
+
+# Create the bios vita3k folder on first launch.
+if [ ! -d "/storage/roms/bios/vita3k" ]; then
+    mkdir -p "/storage/roms/bios/vita3k"
 fi
 
 # If there aren't any installed firmware files, let the user know that it's gonna be weird...
@@ -225,36 +249,45 @@ case "$GAME" in
 
         # Install the requested game and scan so the next gamelist update catches it.
         # Spawn with foot so that output displays as the game is installed, letting the user know something is happening.
-        foot /usr/bin/vita3k-sa -F --pkg "${GAME}" --zrif "$(cat "${GAME%.pkg}.txt")"
-        /usr/bin/scan_vita3k.sh
+        # A killed or closed session exits non-zero, so never let set -e skip the scan and cleanup below.
+        foot /usr/bin/vita3k-sa -F --pkg "${GAME}" --zrif "$(cat "${GAME%.pkg}.txt")" || true
+        /usr/bin/scan_vita_games.sh
 
         # Get the newly installed game's ID and run it!
         NEW_ID=$(grep -vxFf <(echo "$APPS_BEFORE") <(ls /storage/roms/psvita/vita3k/ux0/app/) | head -1)
-        /usr/bin/vita3k-sa -F -E -r "${NEW_ID}"
+        if [ -n "${NEW_ID}" ]; then
+            /usr/bin/vita3k-sa -F -E -r "${NEW_ID}" >> "${LOG_FILE}" 2>&1 || true
 
-        # Mark them as installed so they don't get caught by any other scans or get put in the gamelist more than once.
-        mv "${GAME}" "${GAME}.installed"
-        mv "${GAME%.pkg}.txt" "${GAME%.pkg}.txt.installed"
+            # Mark them as installed so they don't get caught by any other scans or get put in the gamelist more than once.
+            mv "${GAME}" "${GAME}.installed"
+            mv "${GAME%.pkg}.txt" "${GAME%.pkg}.txt.installed"
+        fi
         ;;
     *.zip)
         # Vita3K needs to be run in the folder of the game to install if it's a .zip... for some reason.
         cd "/storage/roms/psvita"
 
         # Otherwise, reasoning applies similarly for .zip files, but they're packaged with a ZRIF and actually run immediately.
-        foot /usr/bin/vita3k-sa -F -E "${ROMNAME}"
-        /usr/bin/scan_vita3k.sh
+        foot /usr/bin/vita3k-sa -F -E "${ROMNAME}" || true
+        /usr/bin/scan_vita_games.sh
 
         # Store the new game's ID for the check later.
         NEW_ID=$(grep -vxFf <(echo "$APPS_BEFORE") <(ls /storage/roms/psvita/vita3k/ux0/app/) | head -1)
-        mv "${GAME}" "${GAME%.zip}.installed"
+        if [ -n "${NEW_ID}" ]; then
+            mv "${GAME}" "${GAME%.zip}.installed"
+        fi
         ;;
     *.psvita)
-        /usr/bin/vita3k-sa -F -E -r "$(cat "${GAME}")"
+        /usr/bin/vita3k-sa -F -E -r "$(cat "${GAME}")" >> "${LOG_FILE}" 2>&1
         ;;
 esac
 
 # Check if we got a new game, or just launched one that was already installed to forcefully update the gamelist.
 if [ -n "${NEW_ID}" ]; then
-    # TODO: Don't do this. Find a better way if possible.
-    killall emulationstation || true
+    for UNIT in essway emustation; do
+        if systemctl is-active --quiet "${UNIT}"; then
+            systemctl restart --no-block "${UNIT}"
+            break
+        fi
+    done
 fi

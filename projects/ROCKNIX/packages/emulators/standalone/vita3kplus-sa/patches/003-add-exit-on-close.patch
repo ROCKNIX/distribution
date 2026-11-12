@@ -1,0 +1,115 @@
+diff --git a/vita3k/config/include/config/state.h b/vita3k/config/include/config/state.h
+index 1e1abe8f..fc05796d 100644
+--- a/vita3k/config/include/config/state.h
++++ b/vita3k/config/include/config/state.h
+@@ -44,6 +44,7 @@ struct Config {
+     bool fullscreen = false;
+     bool console = false;
+     bool load_app_list = false;
++    bool exit_on_close = false;
+ 
+     fs::path get_vita_fs_path() const {
+         return fs_utils::utf8_to_path(vita_fs_path);
+diff --git a/vita3k/config/src/config.cpp b/vita3k/config/src/config.cpp
+index 721744df..43c8875e 100644
+--- a/vita3k/config/src/config.cpp
++++ b/vita3k/config/src/config.cpp
+@@ -167,6 +167,7 @@ static void check_members(Config &self, const Config &rhs) {
+     self.app_args = rhs.app_args;
+     self.load_app_list = rhs.load_app_list;
+     self.self_path = rhs.self_path;
++    self.exit_on_close = rhs.exit_on_close;
+ }
+ 
+ static YAML::Node get(const Config &self);
+@@ -349,6 +350,8 @@ ExitCode init_config(Config &cfg, int argc, char **argv, const Root &root_paths)
+         ->default_str("")->group("Input");
+     input->add_option("--load-app-list,-a", command_line.load_app_list, "Starts the emulator with load app list.")
+        ->default_val(false)->group("Input");
++    input->add_flag("--exit-on-close,-E", command_line.exit_on_close, "Exit the emulator when the app is closed instead of restarting.")
++       ->group("Input");
+     input->add_option("--self,-S", command_line.self_path, "Path to the self to run inside Title ID")
+         ->default_str("eboot.bin")->group("Input");
+     input->add_option("--installed-path,-r", command_line.run_app_path, "Path to the installed app to run")
+diff --git a/vita3k/gui-qt/include/gui-qt/main_window.h b/vita3k/gui-qt/include/gui-qt/main_window.h
+index 929c45ab..be82df1b 100644
+--- a/vita3k/gui-qt/include/gui-qt/main_window.h
++++ b/vita3k/gui-qt/include/gui-qt/main_window.h
+@@ -92,7 +92,7 @@ private slots:
+     void on_app_selected(const app::AppEntry &app);
+     void open_settings(int tab_index = 0);
+     void apply_ui_language(const QString &locale_tag);
+-    void on_game_closed();
++    void on_game_closed(bool is_switching = false);
+     void restart_running_app();
+     void pump_sdl_events();
+     void open_trophy_collection();
+diff --git a/vita3k/gui-qt/src/main_window.cpp b/vita3k/gui-qt/src/main_window.cpp
+index beb788a3..515d6318 100644
+--- a/vita3k/gui-qt/src/main_window.cpp
++++ b/vita3k/gui-qt/src/main_window.cpp
+@@ -833,7 +833,7 @@ bool MainWindow::handle_pending_app_launch_request() {
+     if (!request)
+         return false;
+ 
+-    on_game_closed();
++    on_game_closed(request->reason != AppLaunchReason::ProcessExit);
+     if (request->reason != AppLaunchReason::ProcessExit)
+         boot_game(*request, false);
+     return true;
+@@ -911,7 +911,7 @@ std::optional<AppLaunchRequest> MainWindow::boot_game_once(const AppLaunchReques
+                 return std::nullopt;
+         }
+ 
+-        on_game_closed();
++        on_game_closed(true);
+     }
+ 
+     if (launch_request.reason != AppLaunchReason::LoadExec && !confirm_missing_firmware_warning())
+@@ -962,7 +962,7 @@ std::optional<AppLaunchRequest> MainWindow::boot_game_once(const AppLaunchReques
+     m_ui->toolbar_fullscreen->setText(m_fullscreen ? tr("Exit Fullscreen") : tr("Fullscreen"));
+ 
+     connect(m_game_window, &GameWindow::closed,
+-        this, &MainWindow::on_game_closed);
++        this, [this]() { on_game_closed(); });
+ 
+     const auto abort_boot = [&](const QString &msg) {
+         QMessageBox::critical(this, tr("Error"), msg);
+@@ -1031,7 +1031,7 @@ std::optional<AppLaunchRequest> MainWindow::boot_game_once(const AppLaunchReques
+         this, [this]() { take_screenshot(emuenv); });
+ 
+     if (auto next_request = take_pending_app_launch_request()) {
+-        on_game_closed();
++        on_game_closed(true);
+         return next_request;
+     }
+ 
+@@ -1050,7 +1050,7 @@ std::optional<AppLaunchRequest> MainWindow::boot_game_once(const AppLaunchReques
+     return std::nullopt;
+ }
+ 
+-void MainWindow::on_game_closed() {
++void MainWindow::on_game_closed(bool is_switching) {
+     if (!m_game_window)
+         return;
+ 
+@@ -1088,6 +1088,11 @@ void MainWindow::on_game_closed() {
+     refresh_status_bar();
+ 
+     if (!m_is_app_closing) {
++        if (emuenv.cfg.exit_on_close && !is_switching) {
++            qApp->quit();
++            return;
++        }
++
+         raise();
+         activateWindow();
+     }
+@@ -1100,7 +1105,7 @@ void MainWindow::restart_running_app() {
+     AppLaunchRequest relaunch_request{
+         .app_path = emuenv.io.app_path,
+     };
+-    on_game_closed();
++    on_game_closed(true);
+     boot_game(relaunch_request, false);
+ }
