@@ -1,0 +1,83 @@
+From: Vishnu Reddy <busanna.reddy@oss.qualcomm.com>
+Subject: media: iris: Fix VSP clock calculation for high bitrate streams
+Link: https://lore.kernel.org/r/20261006-fix-vsp-freq-calc-v1-1-53532d893852@oss.qualcomm.com
+
+Frame drops were observed during high-resolution streams decoded at high
+bitrates, as well as concurrent decode sessions. Analysis showed that the
+Video Signal Processor (VSP) clock requirement was underestimated for
+these workloads, resulting in insufficient clock scaling and reduced
+processing throughput.
+
+Update the VSP frequency calculation to more accurately reflect the
+processing requirements of different codecs and bitrates, ensuring that
+the requested clock frequency is sufficient to sustain the workload and
+prevent frame drops.
+
+Fixes: 82b96a8d8d6e ("media: iris: Move vpu35 specific api to common to use for vpu4")
+Cc: stable@vger.kernel.org
+Signed-off-by: Vishnu Reddy <busanna.reddy@oss.qualcomm.com>
+---
+ drivers/media/platform/qcom/iris/iris_vpu_common.c | 29 +++++++++++++++++++++-
+ 1 file changed, 28 insertions(+), 1 deletion(-)
+
+
+---
+base-commit: f0406245cb9855e6318335a8a223551354291a46
+change-id: 20261005-fix-vsp-freq-calc-19b967b79e62
+
+Best regards,
+--  
+Vishnu Reddy <busanna.reddy@oss.qualcomm.com>
+---
+diff --git a/drivers/media/platform/qcom/iris/iris_vpu_common.c b/drivers/media/platform/qcom/iris/iris_vpu_common.c
+index 243bd845349f..c4762229a1de 100644
+--- a/drivers/media/platform/qcom/iris/iris_vpu_common.c
++++ b/drivers/media/platform/qcom/iris/iris_vpu_common.c
+@@ -454,11 +454,32 @@ u64 iris_vpu2_calculate_frequency(struct iris_inst *inst, size_t data_size)
+ 	return max(vpp_freq, vsp_freq);
+ }
+ 
++static u64 iris_get_vsp_ref_bitrate(struct iris_inst *inst)
++{
++	struct device *dev = inst->core->dev;
++	u32 codec = inst->codec;
++
++	switch (codec) {
++	case V4L2_PIX_FMT_H264:
++		return 150;
++	case V4L2_PIX_FMT_HEVC:
++		return 140;
++	case V4L2_PIX_FMT_VP9:
++		return 70;
++	case V4L2_PIX_FMT_AV1:
++		return 100;
++	default:
++		dev_err(dev, "Unsupported codec\n");
++		return 1;
++	}
++}
++
+ u64 iris_vpu3x_vpu4x_calculate_frequency(struct iris_inst *inst, size_t data_size)
+ {
+ 	struct platform_inst_caps *caps = inst->core->iris_platform_data->inst_caps;
+ 	struct v4l2_format *inp_f = inst->fmt_src;
+ 	u32 height, width, mbs_per_second, mbpf;
++	u64 vsp_ref_bitrate, vsp_ref_freq;
+ 	u64 fw_cycles, fw_vpp_cycles;
+ 	u64 vsp_cycles, vpp_cycles;
+ 	u32 fps = inst->frame_rate;
+@@ -485,7 +506,13 @@ u64 iris_vpu3x_vpu4x_calculate_frequency(struct iris_inst *inst, size_t data_siz
+ 		vpp_cycles += div_u64(vpp_cycles * 5, 100);
+ 
+ 	vsp_cycles = fps * data_size * 8;
+-	vsp_cycles = div_u64(vsp_cycles, 2);
++	vsp_ref_bitrate = iris_get_vsp_ref_bitrate(inst);
++	vsp_ref_freq = inst->codec == V4L2_PIX_FMT_AV1 ? 533 : 444;
++	vsp_cycles = div_u64(vsp_ref_freq * vsp_cycles, vsp_ref_bitrate);
++
++	/* VSP FW SW offset */
++	vsp_cycles = div_u64(vsp_cycles * 1000, 1055);
++
+ 	/* VSP FW overhead 1.05 */
+ 	vsp_cycles = div_u64(vsp_cycles * 21, 20);
+ 

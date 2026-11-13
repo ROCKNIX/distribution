@@ -1,0 +1,87 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Manivannan Sadhasivam <mani@kernel.org>
+Date: Thu, 29 Oct 2026 09:49:29 +0530
+Subject: [PATCH] PCI: qcom: Implement shutdown() callback
+
+PCIe host controllers should bring the link down cleanly before system
+shutdown/reboot proceeds to remove power/clocks from the controller.
+Without this, the link may still be up and endpoints still have
+transactions in flight when power/clocks are cut, which can trip SMMU
+translation faults or NoC protocol errors.
+
+Reuse dw_pcie_suspend_noirq() in the shutdown path to force the link
+into L2, putting it into D3cold.
+
+device_shutdown() runs with interrupts enabled, unlike suspend_noirq().
+Mask the chained MSI IRQ(s) and the Global IRQ before tearing down the
+link and clocks/PHY, since a late/spurious interrupt could otherwise
+reach a handler that touches now-unclocked PARF/DBI registers.
+
+Signed-off-by: Manivannan Sadhasivam <manivannan.sadhasivam@linaro.org>
+Signed-off-by: Krishna Chaitanya Chundru <krishna.chundru@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261029-shutdown-v7-3-3fd7a76a6991@oss.qualcomm.com
+[Backported to 7.3: initialise pcie, which the firmware-managed path
+tests without setting.]
+---
+ drivers/pci/controller/dwc/pcie-qcom.c | 35 ++++++++++++++++++++++++++++++++++
+ 1 file changed, 35 insertions(+)
+
+diff --git a/drivers/pci/controller/dwc/pcie-qcom.c b/drivers/pci/controller/dwc/pcie-qcom.c
+index a7835e8a51e0..423a90d6adfb 100644
+--- a/drivers/pci/controller/dwc/pcie-qcom.c
++++ b/drivers/pci/controller/dwc/pcie-qcom.c
+@@ -2031,6 +2031,9 @@ static int qcom_pcie_ecam_host_init(struct pci_config_window *cfg)
+ 
+ 	dw_pcie_msi_init(pp);
+ 
++	/* Stash pci so qcom_pcie_shutdown() can mask the MSI IRQ(s) later */
++	platform_set_drvdata(to_platform_device(dev), pci);
++
+ 	return devm_add_action_or_reset(dev, qcom_pci_free_msi, pp);
+ }
+ 
+@@ -2451,6 +2454,37 @@ static int qcom_pcie_probe(struct platform_device *pdev)
+ 	return ret;
+ }
+ 
++static void qcom_pcie_shutdown(struct platform_device *pdev)
++{
++	const struct qcom_pcie_cfg *pcie_cfg = of_device_get_match_data(&pdev->dev);
++	struct qcom_pcie *pcie = NULL;
++	struct dw_pcie *pci;
++
++	if (pcie_cfg && pcie_cfg->firmware_managed) {
++		/*
++		 * Firmware owns the link teardown and clock/PHY shutdown in
++		 * this mode; Linux only owns the chained MSI IRQ(s), which
++		 * still need to be masked off before shutdown proceeds.
++		 */
++		pci = platform_get_drvdata(pdev);
++	} else {
++		pcie = platform_get_drvdata(pdev);
++		pci = pcie->pci;
++
++		if (pcie->global_irq)
++			disable_irq(pcie->global_irq);
++	}
++
++	if (pci->pp.use_imsi_rx)
++		dw_pcie_free_msi(&pci->pp);
++
++	if (pcie)
++		dw_pcie_suspend_noirq(pcie->pci, true);
++
++	pm_runtime_put_sync(&pdev->dev);
++	pm_runtime_disable(&pdev->dev);
++}
++
+ static int qcom_pcie_suspend_noirq(struct device *dev)
+ {
+ 	struct qcom_pcie *pcie;
+@@ -2641,5 +2675,6 @@ static struct platform_driver qcom_pcie_driver = {
+ 		.pm = &qcom_pcie_pm_ops,
+ 		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
+ 	},
++	.shutdown = qcom_pcie_shutdown,
+ };
+ builtin_platform_driver(qcom_pcie_driver);

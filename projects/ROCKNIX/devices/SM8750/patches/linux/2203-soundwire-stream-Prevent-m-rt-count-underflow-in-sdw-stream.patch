@@ -1,0 +1,65 @@
+From: Lee Jones <lee@kernel.org>
+Subject: [v2,03/10] soundwire: stream: Prevent m_rt_count underflow in sdw_stream_remove_master()
+Link: https://lore.kernel.org/r/20261103095445.81414-4-lee@kernel.org
+
+stream->m_rt_count is incremented in sdw_stream_add_master() after
+sdw_master_port_alloc() succeeds.  However, sdw_stream_add_slave() can
+allocate a master runtime without allocating master ports, and
+sdw_master_port_alloc() can fail after partially populating
+m_rt->port_list.  When sdw_stream_remove_master() subsequently tears
+down the stream, it unconditionally decrements stream->m_rt_count,
+underflowing the counter when master ports were never allocated.
+
+Free any partially allocated master ports on allocation failure in
+sdw_master_port_alloc(), and only increment and decrement
+stream->m_rt_count when master ports are allocated.
+
+Closes: https://sashiko.dev/#/bug/linux-bce288e6-c97f-46dd-9fc3-023c33d56f36
+Signed-off-by: Lee Jones <lee@kernel.org>
+---
+
+v1 => v2:
+ - Only increment stream->m_rt_count in sdw_stream_add_master() when sdw_master_port_allocated(m_rt) is true
+ - Drop Fixes and Stable tags
+
+ drivers/soundwire/stream.c | 10 +++++++---
+ 1 file changed, 7 insertions(+), 3 deletions(-)
+---
+diff --git a/drivers/soundwire/stream.c b/drivers/soundwire/stream.c
+index 0b00fcdcab2d..db62a68c09f8 100644
+--- a/drivers/soundwire/stream.c
++++ b/drivers/soundwire/stream.c
+@@ -1113,8 +1113,10 @@ static int sdw_master_port_alloc(struct sdw_master_runtime *m_rt,
+ 	/* Iterate for number of ports to perform initialization */
+ 	for (i = 0; i < num_ports; i++) {
+ 		p_rt = sdw_port_alloc(&m_rt->port_list);
+-		if (!p_rt)
++		if (!p_rt) {
++			sdw_master_port_free(m_rt);
+ 			return -ENOMEM;
++		}
+ 	}
+ 
+ 	return 0;
+@@ -2061,7 +2063,8 @@ int sdw_stream_add_master(struct sdw_bus *bus,
+ 		if (ret)
+ 			goto alloc_error;
+ 
+-		stream->m_rt_count++;
++		if (sdw_master_port_allocated(m_rt))
++			stream->m_rt_count++;
+ 	}
+ 
+ 	ret = sdw_master_rt_config(m_rt, stream_config);
+@@ -2108,9 +2111,10 @@ int sdw_stream_remove_master(struct sdw_bus *bus,
+ 		if (m_rt->bus != bus)
+ 			continue;
+ 
++		if (sdw_master_port_allocated(m_rt))
++			stream->m_rt_count--;
+ 		sdw_master_port_free(m_rt);
+ 		sdw_master_rt_free(m_rt, stream);
+-		stream->m_rt_count--;
+ 	}
+ 
+ 	if (list_empty(&stream->master_list))
