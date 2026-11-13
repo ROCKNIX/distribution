@@ -1,0 +1,191 @@
+From: Mohammad Rafi Shaik <mohammad.rafi.shaik@oss.qualcomm.com>
+Subject: [v1,2/2] pinctrl: qcom: Allow arming the wakeup_enable bit from pin config
+Link: https://lore.kernel.org/r/20261015-tlmm_wakeup_gpio_support-v1-2-c6d6f37a7e51@oss.qualcomm.com
+
+A pin's wakeup_enable bit controls whether a toggle of the pad is
+transferred to the PDC/MPM HW, which is what both wakes the system from a
+low power mode and, as the existing comment in msm_gpio_irq_reqres() notes,
+delivers the interrupt event. The driver sets it when a pin is requested as
+a GPIO interrupt and clears it when that interrupt is released.
+
+That is the only way the bit can be armed today, and it is not usable for
+every pin that needs it, because msm_gpio_irq_reqres() calls
+msm_pinmux_request_gpio() and so takes over the pin mux.
+
+A pin that must keep a peripheral function and is still toggled by an
+external device to request a wake up therefore has no way to get the bit
+armed. On boards with a SoundWire codec this loses interrupts: while the
+bus is clock stopped the codec asks to be read out by toggling the
+SoundWire data line, which stays muxed to the SoundWire function. With the
+pad not armed the toggle is dropped, the controller is not resumed, and the
+codec's interrupt - a headset insertion, for example - is only seen if
+something else wakes the bus first.
+
+Add a "wakeup-enable" pin configuration parameter so the bit can be armed
+from the pin's own configuration, and fold the existing open coded accesses
+in msm_gpio_irq_reqres() and msm_gpio_irq_relres() into the helper it
+shares. Pins the SoC does not describe as wakeup capable are rejected
+rather than silently ignored.
+
+Assisted-by: Claude Opus 5
+Signed-off-by: Mohammad Rafi Shaik <mohammad.rafi.shaik@oss.qualcomm.com>
+---
+ drivers/pinctrl/qcom/pinctrl-msm.c | 101 +++++++++++++++++++++++++++----------
+ 1 file changed, 73 insertions(+), 28 deletions(-)
+---
+diff --git a/drivers/pinctrl/qcom/pinctrl-msm.c b/drivers/pinctrl/qcom/pinctrl-msm.c
+index 27f06bbc1..cb12f8b90 100644
+--- a/drivers/pinctrl/qcom/pinctrl-msm.c
++++ b/drivers/pinctrl/qcom/pinctrl-msm.c
+@@ -286,6 +286,54 @@ static const struct pinmux_ops msm_pinmux_ops = {
+ 	.strict			= true,
+ };
+ 
++/*
++ * "wakeup-enable" arms the wakeup_enable bit of a pin from its pin
++ * configuration. The driver already does this for pins requested as GPIO
++ * interrupts, but that path takes over the pin mux. A pin that has to stay
++ * muxed to a peripheral function and is toggled by an external device to
++ * request a wake up needs the bit armed without being turned into a GPIO.
++ */
++#define MSM_PINCONF_WAKEUP_ENABLE	(PIN_CONFIG_END + 1)
++
++static const struct pinconf_generic_params msm_gpio_bindings[] = {
++	{ "wakeup-enable", MSM_PINCONF_WAKEUP_ENABLE, 1 },
++};
++
++/*
++ * Set or clear the wakeup_enable bit of @g, which allows a pad event to be
++ * transferred to the PDC/MPM HW. While the name implies only the wakeup event,
++ * it's also required for the interrupt event.
++ *
++ * Returns -EOPNOTSUPP if the SoC does not describe the bit or the pin is not
++ * marked as wakeup capable.
++ */
++static int msm_pin_set_wakeup_enable(struct msm_pinctrl *pctrl,
++				     const struct msm_pingroup *g, bool enable)
++{
++	unsigned long flags;
++	int ret = -EOPNOTSUPP;
++	u32 intr_cfg;
++
++	if (!g->intr_wakeup_present_bit)
++		return ret;
++
++	raw_spin_lock_irqsave(&pctrl->lock, flags);
++
++	intr_cfg = msm_readl_intr_cfg(pctrl, g);
++	if (intr_cfg & BIT(g->intr_wakeup_present_bit)) {
++		if (enable)
++			intr_cfg |= BIT(g->intr_wakeup_enable_bit);
++		else
++			intr_cfg &= ~BIT(g->intr_wakeup_enable_bit);
++		msm_writel_intr_cfg(intr_cfg, pctrl, g);
++		ret = 0;
++	}
++
++	raw_spin_unlock_irqrestore(&pctrl->lock, flags);
++
++	return ret;
++}
++
+ static int msm_config_reg(struct msm_pinctrl *pctrl,
+ 			  const struct msm_pingroup *g,
+ 			  unsigned param,
+@@ -354,6 +402,16 @@ static int msm_config_group_get(struct pinctrl_dev *pctldev,
+ 
+ 	g = &pctrl->soc->groups[group];
+ 
++	if (param == MSM_PINCONF_WAKEUP_ENABLE) {
++		if (!g->intr_wakeup_present_bit)
++			return -EOPNOTSUPP;
++
++		arg = msm_readl_intr_cfg(pctrl, g) & BIT(g->intr_wakeup_enable_bit);
++		*config = pinconf_to_config_packed(param, !!arg);
++
++		return 0;
++	}
++
+ 	ret = msm_config_reg(pctrl, g, param, &mask, &bit);
+ 	if (ret < 0)
+ 		return ret;
+@@ -443,6 +501,17 @@ static int msm_config_group_set(struct pinctrl_dev *pctldev,
+ 		param = pinconf_to_config_param(configs[i]);
+ 		arg = pinconf_to_config_argument(configs[i]);
+ 
++		if (param == MSM_PINCONF_WAKEUP_ENABLE) {
++			ret = msm_pin_set_wakeup_enable(pctrl, g, arg);
++			if (ret < 0) {
++				dev_err(pctrl->dev, "pin %u is not wakeup capable\n",
++					group);
++				return ret;
++			}
++
++			continue;
++		}
++
+ 		ret = msm_config_reg(pctrl, g, param, &mask, &bit);
+ 		if (ret < 0)
+ 			return ret;
+@@ -1221,7 +1290,6 @@ static int msm_gpio_irq_reqres(struct irq_data *d)
+ 	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
+ 	struct msm_pinctrl *pctrl = gpiochip_get_data(gc);
+ 	const struct msm_pingroup *g = &pctrl->soc->groups[d->hwirq];
+-	unsigned long flags;
+ 	int ret;
+ 
+ 	if (!try_module_get(gc->owner))
+@@ -1255,19 +1323,7 @@ static int msm_gpio_irq_reqres(struct irq_data *d)
+ 	 * While the name implies only the wakeup event, it's also required for
+ 	 * the interrupt event.
+ 	 */
+-	if (g->intr_wakeup_present_bit) {
+-		u32 intr_cfg;
+-
+-		raw_spin_lock_irqsave(&pctrl->lock, flags);
+-
+-		intr_cfg = msm_readl_intr_cfg(pctrl, g);
+-		if (intr_cfg & BIT(g->intr_wakeup_present_bit)) {
+-			intr_cfg |= BIT(g->intr_wakeup_enable_bit);
+-			msm_writel_intr_cfg(intr_cfg, pctrl, g);
+-		}
+-
+-		raw_spin_unlock_irqrestore(&pctrl->lock, flags);
+-	}
++	msm_pin_set_wakeup_enable(pctrl, g, true);
+ 
+ 	return 0;
+ out:
+@@ -1280,22 +1336,9 @@ static void msm_gpio_irq_relres(struct irq_data *d)
+ 	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
+ 	struct msm_pinctrl *pctrl = gpiochip_get_data(gc);
+ 	const struct msm_pingroup *g = &pctrl->soc->groups[d->hwirq];
+-	unsigned long flags;
+ 
+ 	/* Disable the wakeup_enable bit if it has been set in msm_gpio_irq_reqres() */
+-	if (g->intr_wakeup_present_bit) {
+-		u32 intr_cfg;
+-
+-		raw_spin_lock_irqsave(&pctrl->lock, flags);
+-
+-		intr_cfg = msm_readl_intr_cfg(pctrl, g);
+-		if (intr_cfg & BIT(g->intr_wakeup_present_bit)) {
+-			intr_cfg &= ~BIT(g->intr_wakeup_enable_bit);
+-			msm_writel_intr_cfg(intr_cfg, pctrl, g);
+-		}
+-
+-		raw_spin_unlock_irqrestore(&pctrl->lock, flags);
+-	}
++	msm_pin_set_wakeup_enable(pctrl, g, false);
+ 
+ 	gpiochip_unlock_as_irq(gc, d->hwirq);
+ 	module_put(gc->owner);
+@@ -1639,6 +1682,8 @@ int msm_pinctrl_probe(struct platform_device *pdev,
+ 	pctrl->desc.name = dev_name(&pdev->dev);
+ 	pctrl->desc.pins = pctrl->soc->pins;
+ 	pctrl->desc.npins = pctrl->soc->npins;
++	pctrl->desc.num_custom_params = ARRAY_SIZE(msm_gpio_bindings);
++	pctrl->desc.custom_params = msm_gpio_bindings;
+ 
+ 	ret = devm_pinctrl_register_and_init(&pdev->dev, &pctrl->desc,
+ 					     pctrl, &pctrl->pctrl);
