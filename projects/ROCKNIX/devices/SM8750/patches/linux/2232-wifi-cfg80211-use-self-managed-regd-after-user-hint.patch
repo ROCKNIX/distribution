@@ -1,0 +1,49 @@
+From 1459b99bdaf9f524c124be93dcb47cc1927808f9 Mon Sep 17 00:00:00 2001
+From: Lewis O'Flynn <lewis.oflynn@morsemicro.com>
+Date: Tue, 20 Oct 2026 18:27:08 +1100
+Subject: wifi: cfg80211: use self-managed regd after user hint
+
+cfg80211 does not apply user or country element hints to self-managed
+wiphys. However, once such a hint has been made, reg_get_regdomain()
+returns the global regd instead of the self-managed wiphy's regd.
+Callers of freq_reg_info(), such as mac80211's
+ieee80211_regulatory_limit_wmm_params(), will therefore use the wrong
+rule and may apply incorrect restrictions.
+
+Always have reg_get_regdomain() return the wiphy's regd when it is
+self-managed. This makes the behaviour after a hint consistent with the
+behaviour before one, where reg_get_regdomain() returns the wiphy's own
+regd.
+
+Signed-off-by: Lewis O'Flynn <lewis.oflynn@morsemicro.com>
+Link: https://patch.msgid.link/20261020072708.429946-1-lewis.oflynn@morsemicro.com
+Signed-off-by: Johannes Berg <johannes.berg@intel.com>
+---
+ net/wireless/reg.c | 10 ++++++----
+ 1 file changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/net/wireless/reg.c b/net/wireless/reg.c
+index 50f50e768f014c..5460b3117d5f85 100644
+--- a/net/wireless/reg.c
++++ b/net/wireless/reg.c
+@@ -1147,11 +1147,13 @@ static const struct ieee80211_regdomain *reg_get_regdomain(struct wiphy *wiphy)
+ 
+ 	/*
+ 	 * Follow the driver's regulatory domain, if present, unless a country
+-	 * IE has been processed or a user wants to help compliance further
++	 * IE has been processed or a user wants to help compliance further.
++	 * Self-managed wiphys always use their own regulatory domain.
+ 	 */
+-	if (lr->initiator != NL80211_REGDOM_SET_BY_COUNTRY_IE &&
+-	    lr->initiator != NL80211_REGDOM_SET_BY_USER &&
+-	    wiphy->regd)
++	if (wiphy->regd &&
++	    ((wiphy->regulatory_flags & REGULATORY_WIPHY_SELF_MANAGED) ||
++	     (lr->initiator != NL80211_REGDOM_SET_BY_COUNTRY_IE &&
++	      lr->initiator != NL80211_REGDOM_SET_BY_USER)))
+ 		return get_wiphy_regdom(wiphy);
+ 
+ 	return get_cfg80211_regdom();
+-- 
+cgit 1.3.1-korg
+

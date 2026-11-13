@@ -1,0 +1,59 @@
+From: Michael Bommarito <michael.bommarito@gmail.com>
+Subject: scsi: sd: bound the IO hints descriptor walk to the buffer
+Link: https://lore.kernel.org/r/20260711150736.2917641-1-michael.bommarito@gmail.com
+
+sd_read_io_hints() computes the end of the IO group descriptor list from
+the mode-sense reply as buffer + (data.header_length + data.length),
+where data.length is the device-reported mode data length. A device (or a
+compromised virtio/hypervisor block backend) that reports a length larger
+than the SD_BUF_SIZE buffer scsi_mode_sense() actually filled makes the
+subsequent "for (desc = start; desc < end; desc++)" loop read past the
+buffer.
+
+Impact: a malicious or malfunctioning SCSI/SATA device, or a compromised
+hypervisor block backend, drives an out-of-bounds read of the mode-sense
+buffer (KASAN) while parsing permanent-stream IO hints at attach time.
+
+Clamp the descriptor region to SD_BUF_SIZE before deriving the end
+pointer.
+
+Fixes: 4f53138fffc2 ("scsi: sd: Translate data lifetime information")
+Cc: stable@vger.kernel.org
+Assisted-by: Claude:claude-opus-4-8
+Signed-off-by: Michael Bommarito <michael.bommarito@gmail.com>
+---
+ drivers/scsi/sd.c | 13 +++++++++++--
+ 1 file changed, 11 insertions(+), 2 deletions(-)
+---
+diff --git a/drivers/scsi/sd.c b/drivers/scsi/sd.c
+index 599e75f333343..eec383cbc39f1 100644
+--- a/drivers/scsi/sd.c
++++ b/drivers/scsi/sd.c
+@@ -3304,6 +3304,7 @@ static void sd_read_io_hints(struct scsi_disk *sdkp, unsigned char *buffer)
+ 	struct scsi_sense_hdr sshdr;
+ 	struct scsi_mode_data data;
+ 	int res;
++	u32 len;
+ 
+ 	if (sdp->sdev_bflags & BLIST_SKIP_IO_HINTS)
+ 		return;
+@@ -3313,9 +3314,17 @@ static void sd_read_io_hints(struct scsi_disk *sdkp, unsigned char *buffer)
+ 			      sdkp->max_retries, &data, &sshdr);
+ 	if (res < 0)
+ 		return;
++	/*
++	 * The device-reported mode data length can exceed the buffer that
++	 * was actually transferred; clamp it so the descriptor walk stays
++	 * within buffer[SD_BUF_SIZE].
++	 */
++	if (data.length > SD_BUF_SIZE - data.header_length)
++		len = SD_BUF_SIZE;
++	else
++		len = data.header_length + data.length;
+ 	start = (void *)buffer + data.header_length + 16;
+-	end = (void *)buffer + ALIGN_DOWN(data.header_length + data.length,
+-					  sizeof(*end));
++	end = (void *)buffer + ALIGN_DOWN(len, sizeof(*end));
+ 	/*
+ 	 * From "SBC-5 Constrained Streams with Data Lifetimes": Device severs
+ 	 * should assign the lowest numbered stream identifiers to permanent

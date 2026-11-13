@@ -1,0 +1,48 @@
+From: Vishnu Reddy <busanna.reddy@oss.qualcomm.com>
+Subject: [v2,1/3] media: iris: Skip redundant decoder input config params
+Link: https://lore.kernel.org/r/20261110-fix_dec_seek-v2-1-210d8c4fc31b@oss.qualcomm.com
+
+The decoder input configuration parameters are sent to the firmware every
+time the output plane is streamed on. This includes streamon after a seek.
+Resending these parameters generates a port settings change (PSC) event
+even when the input configuration has not changed. The client then
+receives a redundant resolution change notification on every seek. A seek
+hang was observed when redundant PSC events were generated for the same
+configuration.
+
+Skip sending decoder input configuration parameters once the input port
+properties have been programmed. Reuse the existing ipsc_properties_set
+state which tracks whether the input port subscription and properties have
+been configured. This prevents redundant PSC events during seek operations
+and avoids unnecessary resolution change notifications to the client.
+
+Fixes: 025398e9121c ("media: iris: subscribe parameters and properties to firmware for hfi_gen2")
+Cc: stable@vger.kernel.org
+Signed-off-by: Vishnu Reddy <busanna.reddy@oss.qualcomm.com>
+---
+ drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+---
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c b/drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c
+index 388a36ff2b07b..fac61ece177e9 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c
+@@ -668,6 +668,7 @@ static int iris_hfi_gen2_set_super_block(struct iris_inst *inst, u32 plane)
+ static int iris_hfi_gen2_session_set_config_params(struct iris_inst *inst, u32 plane)
+ {
+ 	const struct iris_firmware_data *fdata = inst->core->iris_firmware_data;
++	struct iris_inst_hfi_gen2 *inst_hfi_gen2 = to_iris_inst_hfi_gen2(inst);
+ 	u32 config_params_size = 0, i, j;
+ 	const u32 *config_params = NULL;
+ 	int ret;
+@@ -693,6 +694,10 @@ static int iris_hfi_gen2_session_set_config_params(struct iris_inst *inst, u32 p
+ 		{HFI_PROP_AV1_SUPER_BLOCK_ENABLED,    iris_hfi_gen2_set_super_block            },
+ 	};
+ 
++	if (inst->domain == DECODER && V4L2_TYPE_IS_OUTPUT(plane) &&
++	    inst_hfi_gen2->ipsc_properties_set)
++		return 0;
++
+ 	if (inst->domain == DECODER) {
+ 		if (V4L2_TYPE_IS_OUTPUT(plane)) {
+ 			if (inst->codec == V4L2_PIX_FMT_H264) {

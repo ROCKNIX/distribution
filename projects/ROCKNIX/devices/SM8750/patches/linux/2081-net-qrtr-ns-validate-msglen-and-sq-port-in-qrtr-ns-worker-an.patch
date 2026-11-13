@@ -1,0 +1,53 @@
+From: Hui Peng <benquike@gmail.com>
+Subject: net: qrtr: ns: validate msglen and sq_port in qrtr_ns_worker() and ctrl_cmd_bye()
+Link: https://lore.kernel.org/r/20260919212850.3240353-1-benquike@gmail.com
+
+Two validation checks are missing in the QRTR in-kernel nameservice
+(`net/qrtr/ns.c`):
+
+1. `qrtr_ns_worker()` receives control packets into a single reused
+   4096-byte `recv_buf` via `kernel_recvmsg()` without checking that
+   `msglen >= sizeof(*pkt)` (20 bytes). If a short packet arrives on
+   `qrtr_ns.sock`, `qrtr_ns_worker()` reads stale bytes from previous
+   control messages (or uninitialized heap memory on the first packet)
+   when parsing `pkt->cmd` and its union fields.
+2. Unlike `ctrl_cmd_del_client()`, `ctrl_cmd_bye()` does not verify that
+   `from->sq_port == QRTR_PORT_CTRL`, allowing any unprivileged local
+   `AF_QIPCRTR` socket to send a `QRTR_TYPE_BYE` packet and purge all
+   registered services for the local node.
+
+Check `msglen < sizeof(*pkt)` in `qrtr_ns_worker()` and require
+`from->sq_port == QRTR_PORT_CTRL` in `ctrl_cmd_bye()`.
+
+Fixes: 0c2204a4ad71 ("net: qrtr: Migrate nameservice to kernel from userspace")
+Assisted-by: LLM
+Signed-off-by: Hui Peng <benquike@gmail.com>
+
+---
+ net/qrtr/ns.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+---
+diff --git a/net/qrtr/ns.c b/net/qrtr/ns.c
+index bcb090ee79d4..d7e1a37f0717 100644
+--- a/net/qrtr/ns.c
++++ b/net/qrtr/ns.c
+@@ -347,6 +347,9 @@ static int ctrl_cmd_bye(struct sockaddr_qrtr *from)
+ 	iv.iov_base = &pkt;
+ 	iv.iov_len = sizeof(pkt);
+ 
++	if (from->sq_port != QRTR_PORT_CTRL)
++		return -EINVAL;
++
+ 	node = node_get(from->sq_node);
+ 	if (!node)
+ 		return 0;
+@@ -639,6 +642,9 @@ static void qrtr_ns_worker(struct work_struct *work)
+ 			break;
+ 		}
+ 
++		if (msglen < sizeof(*pkt))
++			continue;
++
+ 		pkt = recv_buf;
+ 		cmd = le32_to_cpu(pkt->cmd);
+ 		if (cmd < ARRAY_SIZE(qrtr_ctrl_pkt_strings) &&
