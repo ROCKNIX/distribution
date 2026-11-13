@@ -1,0 +1,73 @@
+From 72f34d429f6e51b0ef8c43ab7667c4fb4099dd46 Mon Sep 17 00:00:00 2001
+From: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Date: Thu, 17 Sep 2026 11:06:53 +0200
+Subject: [PATCH] clk: qcom: rcg2: Initialize shared floor clock state
+
+Shared floor RCGs use the cached parked_cfg whenever CCF considers the
+clock disabled. Unlike the other shared RCG variants, their ops do not
+initialize that cache, leaving it zeroed until the first disable or rate
+change. This can make registration report an undivided XO configuration
+instead of the boot-programmed parent and divider.
+
+Initialize parked_cfg from CFG_REG without parking or otherwise changing
+the hardware. Propagate read failures so a clock with unknown initial
+state is not registered.
+
+Fixes: aec8c0e28ce4 ("clk: qcom: rcg2: add clk_rcg2_shared_floor_ops")
+Assisted-by: LLM
+Signed-off-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Reviewed-by: Abel Vesa <abel.vesa@oss.qualcomm.com>
+Link: https://patch.msgid.link/20260917-topic-qc_clk_fixes-v1-1-5531cb00514b@oss.qualcomm.com
+Signed-off-by: Bjorn Andersson <andersson@kernel.org>
+---
+ drivers/clk/qcom/clk-rcg2.c | 26 +++++++++++++-------------
+ 1 file changed, 13 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/clk/qcom/clk-rcg2.c b/drivers/clk/qcom/clk-rcg2.c
+index d7914e5912..adb03c3aa0 100644
+--- a/drivers/clk/qcom/clk-rcg2.c
++++ b/drivers/clk/qcom/clk-rcg2.c
+@@ -1555,7 +1555,20 @@ const struct clk_ops clk_rcg2_shared_ops = {
+ };
+ EXPORT_SYMBOL_GPL(clk_rcg2_shared_ops);
+ 
++static int clk_rcg2_shared_no_init_park(struct clk_hw *hw)
++{
++	struct clk_rcg2 *rcg = to_clk_rcg2(hw);
++
++	/*
++	 * Read the config register so that the parent is properly mapped at
++	 * registration time.
++	 */
++	return regmap_read(rcg->clkr.regmap, rcg->cmd_rcgr + CFG_REG,
++			   &rcg->parked_cfg);
++}
++
+ const struct clk_ops clk_rcg2_shared_floor_ops = {
++	.init = clk_rcg2_shared_no_init_park,
+ 	.enable = clk_rcg2_shared_enable,
+ 	.disable = clk_rcg2_shared_disable,
+ 	.get_parent = clk_rcg2_shared_get_parent,
+@@ -1567,19 +1580,6 @@ const struct clk_ops clk_rcg2_shared_floor_ops = {
+ };
+ EXPORT_SYMBOL_GPL(clk_rcg2_shared_floor_ops);
+ 
+-static int clk_rcg2_shared_no_init_park(struct clk_hw *hw)
+-{
+-	struct clk_rcg2 *rcg = to_clk_rcg2(hw);
+-
+-	/*
+-	 * Read the config register so that the parent is properly mapped at
+-	 * registration time.
+-	 */
+-	regmap_read(rcg->clkr.regmap, rcg->cmd_rcgr + CFG_REG, &rcg->parked_cfg);
+-
+-	return 0;
+-}
+-
+ /*
+  * Like clk_rcg2_shared_ops but skip the init so that the clk frequency is left
+  * unchanged at registration time.
+-- 
+2.56.0
+
