@@ -1,0 +1,68 @@
+From: Michael McAllister <me@michaelmcallister.org>
+Subject: ASoC: qcom: q6asm: Reset PCM positions when preparing a stream
+Link: https://lore.kernel.org/r/20261021204202.43738-1-me@michaelmcallister.org
+
+Preparing an existing PCM stream closes the DSP stream and remaps its
+buffers, but leaves queue_ptr, dsp_buf and hw_ptr at their previous
+positions. ALSA resets appl_ptr during prepare, so q6asm_dai_ack() can
+subtract a stale queue_ptr from the new appl_ptr and queue an incorrect
+number of periods.
+
+On the Motorola Moto G10, playback works after opening the PCM device,
+but the first write after snd_pcm_drop() and snd_pcm_prepare() fails
+with -EBUSY and "Error queuing playback buffer -16".
+
+Reset queue_ptr in prepare, and reset the DSP buffer index and hardware
+pointer when allocating the new buffer ring. This keeps the queued,
+submitted and completed positions aligned with the new PCM stream.
+
+Fixes: e386c2cf3df2 ("ASoC: qcom: q6asm-dai: schedule all available frames to avoid dsp under-runs")
+Fixes: 44432315444c ("ASoC: qcom: q6asm-dai: use q6asm_get_hw_pointer")
+Cc: stable@vger.kernel.org
+Assisted-by: LLM
+Signed-off-by: Michael McAllister <me@michaelmcallister.org>
+---
+Tested on a Motorola Moto G10 using a Linux 7.2.9-based port, with
+48 kHz S16_LE stereo playback, a 3840-frame buffer and 960-frame periods.
+After two seconds of playback, snd_pcm_drop() followed by
+snd_pcm_prepare() and snd_pcm_writei() on the same handle returned -EBUSY
+without this change. With the change, both playback cycles completed.
+
+Both affected objects also build with ARCH=arm64 W=1 against sound's
+for-next branch at bef34efba74d. This maintainer-tree build has not been
+booted on the device.
+
+ sound/soc/qcom/qdsp6/q6asm-dai.c | 3 +++
+ sound/soc/qcom/qdsp6/q6asm.c     | 2 ++
+ 2 files changed, 5 insertions(+)
+
+
+base-commit: bef34efba74d87d5c20e3bb93539fa45b3cb8a83
+---
+diff --git a/sound/soc/qcom/qdsp6/q6asm-dai.c b/sound/soc/qcom/qdsp6/q6asm-dai.c
+index 4261c3048c..94416ddf7a 100644
+--- a/sound/soc/qcom/qdsp6/q6asm-dai.c
++++ b/sound/soc/qcom/qdsp6/q6asm-dai.c
+@@ -243,6 +243,9 @@ static int q6asm_dai_prepare(struct snd_soc_component *component,
+ 		prtd->state = Q6ASM_STREAM_STOPPED;
+ 	}
+ 
++	/* ALSA resets appl_ptr for every prepare, including xrun recovery. */
++	prtd->queue_ptr = 0;
++
+ 	ret = q6asm_map_memory_regions(substream->stream, prtd->audio_client,
+ 				       prtd->phys,
+ 				       (prtd->pcm_size / prtd->periods),
+diff --git a/sound/soc/qcom/qdsp6/q6asm.c b/sound/soc/qcom/qdsp6/q6asm.c
+index de0bd8fd08..8dde9a3b9c 100644
+--- a/sound/soc/qcom/qdsp6/q6asm.c
++++ b/sound/soc/qcom/qdsp6/q6asm.c
+@@ -514,6 +514,8 @@ int q6asm_map_memory_regions(unsigned int dir, struct audio_client *ac,
+ 
+ 
+ 	ac->port[dir].buf = buf;
++	ac->port[dir].dsp_buf = 0;
++	atomic_set(&ac->port[dir].hw_ptr, 0);
+ 
+ 	buf[0].phys = phys;
+ 	buf[0].size = period_sz;
