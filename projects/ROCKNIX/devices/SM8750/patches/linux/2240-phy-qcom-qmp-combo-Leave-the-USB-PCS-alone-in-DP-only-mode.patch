@@ -1,0 +1,123 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joonhoe Kim <26rote@gmail.com>
+Date: Tue, 3 Nov 2026 22:50:51 +0900
+Subject: [PATCH] phy: qcom: qmp-combo: Leave the USB PCS alone in DP-only mode
+
+In DP-only mode (DisplayPort pin assignments C and E) all four lanes
+belong to the DisplayPort PHY and the USB PCS stays powered down.
+Three paths still touch the USB PCS in this state:
+
+- The USB controller can exit and re-init its PHY in DP-only mode, e.g.
+  across a system suspend that loses power. qmp_combo_usb_init() then
+  programs the USB serdes, lane and PCS tables over the DisplayPort
+  configuration and times out waiting for PHYSTATUS, and
+  qmp_combo_usb_exit() resets and powers down a PCS that is not in use.
+- qmp_combo_typec_switch_set() powers the USB PCS off and on when the
+  orientation changes in DP-only mode, e.g. when a DP-only sink is
+  plugged in the other way round while the mux is still in DP-only
+  mode.
+- qmp_combo_reconfigure_phy() powers the USB PCS off again when the
+  port leaves DP-only mode.
+
+Skip the USB PCS in these paths in DP-only mode. Keep the
+qmp_combo_com_init()/qmp_combo_com_exit() reference and usb_init_count,
+so that qmp_combo_reconfigure_phy() powers the USB PCS up when the port
+leaves DP-only mode.
+
+The USB PIPE clock is not available in DP-only mode with or without
+this change. For USB, the only visible effect is that phy_init() no
+longer times out.
+
+On a Lenovo Y700 Gen 5 (TB323FU, Kaanapali) with a USB-C monitor
+in pin assignment C, resume from s2idle fails with "phy initialization
+timed-out", the dwc3 resume returns -110 and USB stops working.
+
+Fixes: 896277138c13 ("phy: qcom: qmp-combo: register a typec mux to change the QMPPHY_MODE")
+Fixes: 89563a152973 ("phy: qualcomm: qmp-combo: Add preliminary USB4 support")
+Reviewed-by: Abel Vesa <abel.vesa@oss.qualcomm.com>
+Acked-by: Manivannan Sadhasivam <manivannan.sadhasivam@oss.qualcomm.com>
+Signed-off-by: Joonhoe Kim <26rote@gmail.com>
+Link: https://lore.kernel.org/r/20261103135051.1668-1-26rote@gmail.com
+[ 7.3 has no USB4 rework and no qmp_combo_reconfigure_phy(): the
+  mux path sets the new mode before powering USB off, so guard that
+  power-off on the old mode ]
+---
+ drivers/phy/qualcomm/phy-qcom-qmp-combo.c | 30 ++++++++++++++---------
+ 1 file changed, 19 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+index 80b56db1a..87fe80ef7 100644
+--- a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
++++ b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+@@ -4301,10 +4301,12 @@ static int qmp_combo_usb_init(struct phy *phy)
+ 	if (ret)
+ 		goto out_unlock;
+ 
+-	ret = qmp_combo_usb_power_on(phy);
+-	if (ret) {
+-		qmp_combo_com_exit(qmp, false);
+-		goto out_unlock;
++	if (qmp->qmpphy_mode != QMPPHY_MODE_DP_ONLY) {
++		ret = qmp_combo_usb_power_on(phy);
++		if (ret) {
++			qmp_combo_com_exit(qmp, false);
++			goto out_unlock;
++		}
+ 	}
+ 
+ 	qmp->usb_init_count++;
+@@ -4320,9 +4322,11 @@ static int qmp_combo_usb_exit(struct phy *phy)
+ 	int ret;
+ 
+ 	mutex_lock(&qmp->phy_mutex);
+-	ret = qmp_combo_usb_power_off(phy);
+-	if (ret)
+-		goto out_unlock;
++	if (qmp->qmpphy_mode != QMPPHY_MODE_DP_ONLY) {
++		ret = qmp_combo_usb_power_off(phy);
++		if (ret)
++			goto out_unlock;
++	}
+ 
+ 	ret = qmp_combo_com_exit(qmp, false);
+ 	if (ret)
+@@ -4787,12 +4791,15 @@ static int qmp_combo_typec_switch_set(struct typec_switch_dev *sw,
+ 	qmp->orientation = orientation;
+ 
+ 	if (qmp->init_count) {
+-		if (qmp->usb_init_count)
++		bool usb = qmp->usb_init_count &&
++			   qmp->qmpphy_mode != QMPPHY_MODE_DP_ONLY;
++
++		if (usb)
+ 			qmp_combo_usb_power_off(qmp->usb_phy);
+ 		qmp_combo_com_exit(qmp, true);
+ 
+ 		qmp_combo_com_init(qmp, true);
+-		if (qmp->usb_init_count)
++		if (usb)
+ 			qmp_combo_usb_power_on(qmp->usb_phy);
+ 		if (qmp->dp_init_count)
+ 			cfg->dp_aux_init(qmp);
+@@ -4806,7 +4813,7 @@ static int qmp_combo_typec_mux_set(struct typec_mux_dev *mux, struct typec_mux_s
+ {
+ 	struct qmp_combo *qmp = typec_mux_get_drvdata(mux);
+ 	const struct qmp_phy_cfg *cfg = qmp->cfg;
+-	enum qmpphy_mode new_mode;
++	enum qmpphy_mode new_mode, old_mode;
+ 	unsigned int svid;
+ 
+ 	guard(mutex)(&qmp->phy_mutex);
+@@ -4851,10 +4858,11 @@ static int qmp_combo_typec_mux_set(struct typec_mux_dev *mux, struct typec_mux_s
+ 	dev_dbg(qmp->dev, "typec_mux_set: switching from qmpphy mode %d to %d\n",
+ 		qmp->qmpphy_mode, new_mode);
+ 
++	old_mode = qmp->qmpphy_mode;
+ 	qmp->qmpphy_mode = new_mode;
+ 
+ 	if (qmp->init_count) {
+-		if (qmp->usb_init_count)
++		if (qmp->usb_init_count && old_mode != QMPPHY_MODE_DP_ONLY)
+ 			qmp_combo_usb_power_off(qmp->usb_phy);
+ 
+ 		if (qmp->dp_init_count)
