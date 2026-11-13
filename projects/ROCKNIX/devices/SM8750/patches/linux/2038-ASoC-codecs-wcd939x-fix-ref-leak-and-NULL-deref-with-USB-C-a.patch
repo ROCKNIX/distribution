@@ -1,0 +1,89 @@
+From 9003f8ad9c4ea1a9f645874ccba6eb77e923120c Mon Sep 17 00:00:00 2001
+From: Val Packett <val@packett.cool>
+Date: Tue, 20 Oct 2026 14:03:28 -0300
+Subject: ASoC: codecs: wcd939x: fix ref leak and NULL deref with USB-C audio
+
+Some code issues were found during review of a port of typec code from
+wcd939x to wcd937x, pointed out by sashiko-bot:
+
+* wcd939x->wcd_mbhc may be accessed by the typec callbacks which are
+  independent of the ASoC codec lifecycle, don't leave it as NULL/PTR_ERR;
+* wcd939x->typec_switch reference was leaked on unbind, put it there;
+* the device_node reference returned by of_graph_get_remote_node() was
+  leaked, add a __free annotation to the declaration.
+
+Fix them in wcd939x as well.
+
+Cc: stable@vger.kernel.org
+Fixes: 10f514bd172a ("ASoC: codecs: Add WCD939x Codec driver")
+Signed-off-by: Val Packett <val@packett.cool>
+Link: https://patch.msgid.link/20261020170341.1641325-5-val@packett.cool
+Signed-off-by: Mark Brown <broonie@kernel.org>
+---
+ sound/soc/codecs/wcd939x.c | 21 ++++++++++++++++-----
+ 1 file changed, 16 insertions(+), 5 deletions(-)
+
+diff --git a/sound/soc/codecs/wcd939x.c b/sound/soc/codecs/wcd939x.c
+index 2d463f062e6d71..b0b09468f98a63 100644
+--- a/sound/soc/codecs/wcd939x.c
++++ b/sound/soc/codecs/wcd939x.c
+@@ -2470,6 +2470,7 @@ static int wcd939x_mbhc_init(struct snd_soc_component *component)
+ {
+ 	struct wcd939x_priv *wcd939x = snd_soc_component_get_drvdata(component);
+ 	struct wcd_mbhc_intr *intr_ids = &wcd939x->intr_ids;
++	struct wcd_mbhc *mbhc;
+ 
+ 	intr_ids->mbhc_sw_intr = regmap_irq_get_virq(wcd939x->irq_chip,
+ 						     WCD939X_IRQ_MBHC_SW_DET);
+@@ -2486,9 +2487,12 @@ static int wcd939x_mbhc_init(struct snd_soc_component *component)
+ 	intr_ids->hph_right_ocp = regmap_irq_get_virq(wcd939x->irq_chip,
+ 						      WCD939X_IRQ_HPHR_OCP_INT);
+ 
+-	wcd939x->wcd_mbhc = wcd_mbhc_init(component, &mbhc_cb, intr_ids, wcd_mbhc_fields, true);
+-	if (IS_ERR(wcd939x->wcd_mbhc))
+-		return PTR_ERR(wcd939x->wcd_mbhc);
++	mbhc = wcd_mbhc_init(component, &mbhc_cb, intr_ids, wcd_mbhc_fields, true);
++	if (IS_ERR(mbhc))
++		return PTR_ERR(mbhc);
++
++	/* May be accessed by platform dev typec callbacks, only set if valid */
++	wcd939x->wcd_mbhc = mbhc;
+ 
+ 	snd_soc_add_component_controls(component, impedance_detect_controls,
+ 				       ARRAY_SIZE(impedance_detect_controls));
+@@ -2501,8 +2505,11 @@ static int wcd939x_mbhc_init(struct snd_soc_component *component)
+ static void wcd939x_mbhc_deinit(struct snd_soc_component *component)
+ {
+ 	struct wcd939x_priv *wcd939x = snd_soc_component_get_drvdata(component);
++	struct wcd_mbhc *mbhc = wcd939x->wcd_mbhc;
+ 
+-	wcd_mbhc_deinit(wcd939x->wcd_mbhc);
++	/* May be accessed by platform dev typec callbacks, clear it first */
++	wcd939x->wcd_mbhc = NULL;
++	wcd_mbhc_deinit(mbhc);
+ }
+ 
+ /* END MBHC */
+@@ -3175,7 +3182,7 @@ static int wcd939x_populate_dt_data(struct wcd939x_priv *wcd939x, struct device
+ {
+ 	struct wcd_mbhc_config *cfg = &wcd939x->mbhc_cfg;
+ #if IS_ENABLED(CONFIG_TYPEC)
+-	struct device_node *np;
++	struct device_node *np __free(device_node) = NULL;
+ #endif /* CONFIG_TYPEC */
+ 	int ret;
+ 
+@@ -3438,6 +3445,10 @@ static void wcd939x_unbind(struct device *dev)
+ 	put_device(wcd939x->txdev);
+ 	put_device(wcd939x->rxdev);
+ 	component_unbind_all(dev, wcd939x);
++#if IS_ENABLED(CONFIG_TYPEC)
++	if (wcd939x->typec_analog_mux)
++		typec_switch_put(wcd939x->typec_switch);
++#endif /* CONFIG_TYPEC */
+ }
+ 
+ static const struct component_master_ops wcd939x_comp_ops = {
+-- 
+cgit 1.3.1-korg
+

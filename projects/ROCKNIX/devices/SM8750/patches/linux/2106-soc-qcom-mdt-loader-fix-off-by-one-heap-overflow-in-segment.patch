@@ -1,0 +1,56 @@
+From 3e0d5015fc90859ca8c3a2edacdbaad546969f54 Mon Sep 17 00:00:00 2001
+From: Kenneth Kabogo <kennethkabogo2@gmail.com>
+Date: Sat, 12 Sep 2026 09:56:51 +0300
+Subject: soc: qcom: mdt_loader: fix off-by-one heap overflow in segment name
+
+mdt_load_split_segment() builds a segment firmware filename by
+overwriting the last three characters of a kstrdup'd copy of fw_name
+with "b%02d" formatted from segment. %02d is a minimum field width,
+not a cap: for segment in [0, 99] this produces exactly "bNN" + NUL,
+which fits the buffer, but for segment >= 100 it writes "b100" or
+wider, one or more bytes past the end of the kstrdup allocation.
+
+segment is not bounded to [0, 99] anywhere before this point. It is a
+raw index into the firmware's ELF program header table, ultimately
+bounded only by e_phnum, a 16-bit ELF field (max 65535). The existing
+check in mdt_header_valid() only verifies that the program header
+table fits inside the firmware file, not that e_phnum itself is sane,
+so a small firmware file can supply e_phnum > 100 and reach this path
+with segment >= 100 from either qcom_mdt_read_metadata() (the hash
+segment scan) or the main loadable-segment loop in
+qcom_mdt_load_no_init(), whenever the image uses the split-firmware
+convention.
+
+segment was never valid past 99 under this driver's own "bNN" naming
+scheme, so reject it outright instead of widening the buffer.
+
+Found by code inspection while auditing the Qualcomm PIL/PAS
+firmware-authentication flow. No reproducer beyond code inspection is
+available; I don't have affected hardware to trigger it on.
+
+Signed-off-by: Kenneth Kabogo <kennethkabogo2@gmail.com>
+Reviewed-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Reviewed-by: Abel Vesa <abel.vesa@oss.qualcomm.com>
+Link: https://patch.msgid.link/20260912065651.59968-1-kennethkabogo2@gmail.com
+Signed-off-by: Bjorn Andersson <andersson@kernel.org>
+---
+ drivers/soc/qcom/mdt_loader.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/soc/qcom/mdt_loader.c b/drivers/soc/qcom/mdt_loader.c
+index 002100fe2d3237..0d55e9e0af3f00 100644
+--- a/drivers/soc/qcom/mdt_loader.c
++++ b/drivers/soc/qcom/mdt_loader.c
+@@ -77,6 +77,9 @@ static ssize_t mdt_load_split_segment(void *ptr, const struct elf32_phdr *phdrs,
+ 	if (strlen(fw_name) < 4)
+ 		return -EINVAL;
+ 
++	if (segment > 99)
++		return -EINVAL;
++
+ 	char *seg_name __free(kfree) = kstrdup(fw_name, GFP_KERNEL);
+ 	if (!seg_name)
+ 		return -ENOMEM;
+-- 
+cgit 1.3.1-korg
+
