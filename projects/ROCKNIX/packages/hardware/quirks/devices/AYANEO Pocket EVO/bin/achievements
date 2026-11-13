@@ -1,1 +1,61 @@
-../../AYN Odin 2/bin/achievements
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+# Use the EVO MCU's autonomous Rainbow instead of streaming Static frames.
+# Preserve and restore the caller's exact effect; Static restores its complete
+# cached eight-zone layout.
+RGB_CONTROL=
+for RGB_CANDIDATE in /sys/bus/serial/drivers/ayaneo-serial-mcu/*/rgb; do
+  if [ -r "${RGB_CANDIDATE}/abi_version" ]; then
+    RGB_CONTROL=${RGB_CANDIDATE}
+    break
+  fi
+done
+LOCK_FILE="/run/ayaneo-pocket-evo-rgb-achievement.lock"
+
+if [ -z "${RGB_CONTROL}" ] ||
+   [ ! -r "${RGB_CONTROL}/effect" ] ||
+   [ ! -w "${RGB_CONTROL}/effect" ] ||
+   [ ! -r "${RGB_CONTROL}/zone_layout" ]; then
+  exit 0
+fi
+
+# Coalesce overlapping unlock hooks so a later process cannot snapshot and
+# restore the temporary Rainbow started by an earlier process.
+exec 9>"${LOCK_FILE}" || exit 0
+flock -n 9 || exit 0
+
+PREVIOUS_EFFECT=$(cat "${RGB_CONTROL}/effect") || exit 0
+PREVIOUS_LAYOUT=$(cat "${RGB_CONTROL}/zone_layout") || exit 0
+RESTORE_REQUIRED=false
+
+restore_rgb() {
+  if [ "${RESTORE_REQUIRED}" != true ]; then
+    return
+  fi
+
+  # A new command from another client is authoritative. Only restore if
+  # this hook's temporary Rainbow is still the active effect.
+  CURRENT_EFFECT=$(cat "${RGB_CONTROL}/effect") || return
+  if [ "${CURRENT_EFFECT}" != rainbow ]; then
+    RESTORE_REQUIRED=false
+    return
+  fi
+
+  RESTORE_REQUIRED=false
+
+  case ${PREVIOUS_EFFECT} in
+    static)
+      printf '%s\n' "${PREVIOUS_LAYOUT}" >"${RGB_CONTROL}/zone_layout"
+    ;;
+    *)
+      printf '%s\n' "${PREVIOUS_EFFECT}" >"${RGB_CONTROL}/effect"
+    ;;
+  esac
+}
+
+trap restore_rgb 0 1 2 15
+printf '%s\n' rainbow >"${RGB_CONTROL}/effect" || exit 0
+RESTORE_REQUIRED=true
+sleep 2
