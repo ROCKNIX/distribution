@@ -33,17 +33,23 @@ case ${DEVICE} in
     PKG_PATCH_DIRS+=" 7.2.6"
     ;;
   S922X)
-    PKG_VERSION="7.3.4"
-    PKG_SHA256="b11b6df8295e8e991ff040b71aaa4994a8b55caa23b6b092907f195b5840fd1f"
+    PKG_VERSION="7.3.1"
+    PKG_SHA256="fa595aad93734f829c963c2a90ef7c3673224fd7fdae7b49406e397cde2de231"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     PKG_PATCH_DIRS+=" 7.2.6"
     ;;
-  AMD64|H700|SM4450|SM6115|SM8250|SM8550|SM8650|SM8750)
+  AMD64|H700|SM4450|SM6115|SM8250|SM8550|SM8650)
     PKG_VERSION="7.2"
     PKG_SHA256="f9fef3d14c0df53819026f4be74459835c2a0b0dcbf5b5bbd9ea19f0829402b3"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     # Note that the patch dir 7.2 is automatically added as it matches the
     # version. When we move past 7.2, remember to add 7.2 to patch dirs.
+    ;;
+  SM8750)
+    PKG_VERSION="7.3.4"
+    PKG_SHA256="b11b6df8295e8e991ff040b71aaa4994a8b55caa23b6b092907f195b5840fd1f"
+    PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
+    PKG_PATCH_DIRS+=" 7.3"
     ;;
   RK3326|SDM845)
     PKG_VERSION="7.1.2"

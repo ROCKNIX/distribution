@@ -1,0 +1,80 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Rahul Pon <theflyingrahul@gmail.com>
+Date: Thu,  1 Oct 2026 00:08:39 +0530
+Subject: [PATCH] drm/msm/a8xx: report the GMEM size of the active slices
+
+A8xx GPUs split GMEM evenly between their slices, and parts can have
+slices fused off: a8xx_gpu_get_slice_info() reads the active slice mask
+and folds the slice count into the chip ID. The GMEM size reported to
+userspace (MSM_PARAM_GMEM_SIZE) is still the catalog value for all
+slices, so on a part with fused-off slices userspace would size its
+tiles and place its CCU caches past the end of the GMEM that exists.
+
+Qualcomm's downstream driver reports GMEM for the active slices:
+gen8_get_gmem_size() in KGSL divides the GMEM size by the number of
+physical slices and multiplies it by the number of active ones. Do the
+same when reading the slice mask. The GMEM protection and UCHE setup
+still cover the full range, as in KGSL.
+
+Fixes: 288a93200892 ("drm/msm/adreno: Introduce A8x GPU Support")
+Signed-off-by: Rahul Pon <theflyingrahul@gmail.com>
+Link: https://lore.kernel.org/r/20260930183840.1171-1-theflyingrahul@gmail.com
+---
+Changes in v2:
+- Reword the commit message without the device it was found on
+- Parenthesize the GMEM expression and keep it on one line
+- Link to v1: https://lore.kernel.org/r/20260930111711.1160-1-theflyingrahul@gmail.com
+
+ drivers/gpu/drm/msm/adreno/a8xx_gpu.c   | 3 +++
+ drivers/gpu/drm/msm/adreno/adreno_gpu.c | 3 ++-
+ drivers/gpu/drm/msm/adreno/adreno_gpu.h | 2 ++
+ 3 files changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a8xx_gpu.c b/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
+index add93c1fa0..2f6f36fb8b 100644
+--- a/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
+@@ -112,6 +112,9 @@ void a8xx_gpu_get_slice_info(struct msm_gpu *gpu)
+ 	/* Chip ID depends on the number of slices available. So update it */
+ 	adreno_gpu->chip_id |= FIELD_PREP(GENMASK(7, 4), hweight32(slice_mask));
+ 
++	/* GMEM is split evenly between slices: report the active share */
++	adreno_gpu->gmem = (adreno_gpu->info->gmem / info->max_slices) * hweight32(slice_mask);
++
+ 	/* Update the gpu-name to reflect the slice config: */
+ 	const char *name = devm_kasprintf(dev, GFP_KERNEL,
+ 			"%"ADRENO_CHIPID_FMT,
+diff --git a/drivers/gpu/drm/msm/adreno/adreno_gpu.c b/drivers/gpu/drm/msm/adreno/adreno_gpu.c
+index 5832dc25d6..dadfe4c694 100644
+--- a/drivers/gpu/drm/msm/adreno/adreno_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/adreno_gpu.c
+@@ -379,7 +379,7 @@ int adreno_get_param(struct msm_gpu *gpu, struct msm_context *ctx,
+ 		*value = adreno_gpu->info->revn;
+ 		return 0;
+ 	case MSM_PARAM_GMEM_SIZE:
+-		*value = adreno_gpu->info->gmem;
++		*value = adreno_gpu->gmem;
+ 		return 0;
+ 	case MSM_PARAM_GMEM_BASE:
+ 		if (adreno_gpu->info->family >= ADRENO_6XX_GEN3)
+@@ -1205,6 +1205,7 @@ int adreno_gpu_init(struct drm_device *drm, struct platform_device *pdev,
+ 	adreno_gpu->funcs = funcs;
+ 	adreno_gpu->info = config->info;
+ 	adreno_gpu->chip_id = config->chip_id;
++	adreno_gpu->gmem = config->info->gmem;
+ 
+ 	gpu->allow_relocs = config->info->family < ADRENO_6XX_GEN1;
+ 	gpu->pdev = pdev;
+diff --git a/drivers/gpu/drm/msm/adreno/adreno_gpu.h b/drivers/gpu/drm/msm/adreno/adreno_gpu.h
+index 114a40f79e..8e6a881036 100644
+--- a/drivers/gpu/drm/msm/adreno/adreno_gpu.h
++++ b/drivers/gpu/drm/msm/adreno/adreno_gpu.h
+@@ -204,6 +204,8 @@ struct adreno_gpu {
+ 	struct msm_gpu base;
+ 	const struct adreno_info *info;
+ 	uint32_t chip_id;
++	/* GMEM size available to userspace, see a8xx_gpu_get_slice_info(): */
++	uint32_t gmem;
+ 	uint16_t speedbin;
+ 	const struct adreno_gpu_funcs *funcs;
+ 
