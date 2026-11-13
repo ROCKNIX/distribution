@@ -1,0 +1,77 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vladyslav Tymoshchuk <tvlad744@gmail.com>
+Date: Thu, 12 Nov 2026 13:00:06 +0200
+Subject: [PATCH] wifi: ath12k: do not wait in resume for a reset that cannot finish there
+
+ath12k_core_resume() waits up to 20 s for restart_completed. When the
+firmware crashes during the cold boot started by
+ath12k_core_resume_early(), ath12k_core_reset() powers MHI down, which
+destroys the MHI channel devices, and up again. The driver core does
+not probe the new devices before the system resume is over
+(device_block_probing()), so QMI cannot come up and the restart cannot
+complete while ath12k_core_resume() is waiting for it:
+
+  mhi mhi0: Wait for device to enter SBL or Mission mode
+  ath12k_wifi7_pci 0000:01:00.0: timeout while waiting for restart complete
+  ath12k_wifi7_pci 0000:01:00.0: failed to resume core: -110
+  ath12k_wifi7_pci 0000:01:00.0: PM: dpm_run_callback(): pci_pm_resume returns -110
+  PM: suspend exit
+  ath12k_wifi7_pci 0000:01:00.0: fw_version 0x10097fff ...
+
+The resume takes 20 s longer and fails.
+
+Let ath12k_core_resume() go on as soon as a reset starts during the
+resume. The restart then completes after the resume, as it does for a
+crash at any other time.
+
+Fixes: 8d5f4da8d70b ("wifi: ath12k: support suspend/resume")
+Signed-off-by: Vladyslav Tymoshchuk <tvlad744@gmail.com>
+Link: https://lore.kernel.org/r/20261112110008.1229-3-tvlad744@gmail.com
+---
+ drivers/net/wireless/ath/ath12k/core.c | 6 ++++++
+ drivers/net/wireless/ath/ath12k/core.h | 1 +
+ 2 files changed, 7 insertions(+)
+
+diff --git a/drivers/net/wireless/ath/ath12k/core.c b/drivers/net/wireless/ath/ath12k/core.c
+index 42a9cd28c652..b1d1247a0dc6 100644
+--- a/drivers/net/wireless/ath/ath12k/core.c
++++ b/drivers/net/wireless/ath/ath12k/core.c
+@@ -224,6 +224,7 @@ int ath12k_core_resume_early(struct ath12k_base *ab)
+ 		return ret;
+ 
+ 	reinit_completion(&ab->restart_completed);
++	WRITE_ONCE(ab->resuming, true);
+ 	ret = ath12k_hif_power_up(ab);
+ 	if (ret)
+ 		ath12k_warn(ab, "failed to power up hif during resume: %d\n", ret);
+@@ -243,6 +244,7 @@ int ath12k_core_resume(struct ath12k_base *ab)
+ 
+ 	time_left = wait_for_completion_timeout(&ab->restart_completed,
+ 						ATH12K_RESET_TIMEOUT_HZ);
++	WRITE_ONCE(ab->resuming, false);
+ 	if (time_left == 0) {
+ 		ath12k_warn(ab, "timeout while waiting for restart complete");
+ 		return -ETIMEDOUT;
+@@ -1727,6 +1729,10 @@ static void ath12k_core_reset(struct work_struct *work)
+ 	int reset_count, fail_cont_count, i;
+ 	long time_left;
+ 
++	/* The new MHI devices are probed only after the system resume */
++	if (READ_ONCE(ab->resuming))
++		complete(&ab->restart_completed);
++
+ 	if (!(test_bit(ATH12K_FLAG_QMI_FW_READY_COMPLETE, &ab->dev_flags))) {
+ 		ath12k_warn(ab, "ignore reset dev flags 0x%lx\n", ab->dev_flags);
+ 		return;
+diff --git a/drivers/net/wireless/ath/ath12k/core.h b/drivers/net/wireless/ath/ath12k/core.h
+index 3a92a4b03359..2d8d91afb66f 100644
+--- a/drivers/net/wireless/ath/ath12k/core.h
++++ b/drivers/net/wireless/ath/ath12k/core.h
+@@ -1072,6 +1072,7 @@ struct ath12k_base {
+ 	atomic_t reset_count;
+ 	atomic_t recovery_count;
+ 	bool is_reset;
++	bool resuming;
+ 	struct completion reset_complete;
+ 	/* continuous recovery fail count */
+ 	atomic_t fail_cont_count;

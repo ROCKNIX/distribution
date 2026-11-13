@@ -1,0 +1,65 @@
+From: Yao Yiqi <yaoyiqi3@huawei.com>
+Subject: [v2] misc: fastrpc: Fix race and double free in fastrpc_req_mmap() error path
+Link: https://lore.kernel.org/r/20260930063738.2966346-1-yaoyiqi3@huawei.com
+
+fastrpc_req_mmap() links the newly allocated buffer into fl->mmaps before
+copying the response back to userspace. If copy_to_user() fails, the
+err_assign path calls fastrpc_req_munmap_impl() to unmap the buffer from
+the DSP and, on success, to free it.
+
+Since commit 6102ceb4eab8 ("misc: fastrpc: Remove buffer from list prior
+to unmap operation"), fastrpc_req_munmap_impl() no longer removes the
+buffer from fl->mmaps, as that is now the responsibility of the caller.
+fastrpc_req_mmap() was not updated accordingly, so the buffer is freed
+while still linked in the list. The fl->mmaps cleanup in
+fastrpc_user_free() then calls list_del() and fastrpc_buf_free() on the
+already freed buffer, resulting in a use-after-free and a double free.
+
+Publishing the buffer before copy_to_user() returns is also racy:
+another thread of the same process can read the DSP address from the
+partially written user buffer (or via userfaultfd) and issue
+FASTRPC_IOCTL_MUNMAP, which unlinks and frees the buffer while
+fastrpc_req_mmap() is still using it.
+
+Fix both issues by adding the buffer to fl->mmaps only after
+copy_to_user() has succeeded. The error path then never has the buffer
+linked, so it does not need to unlink it before unmapping.
+
+Fixes: 6102ceb4eab8 ("misc: fastrpc: Remove buffer from list prior to unmap operation")
+Cc: stable@vger.kernel.org
+Signed-off-by: Yao Yiqi <yaoyiqi3@huawei.com>
+---
+Changes in v2:
+ - Link the buffer into fl->mmaps only after copy_to_user() succeeds.
+   Besides fixing the double free, this also closes the concurrent
+   FASTRPC_IOCTL_MUNMAP race reported against v1, where a partially
+   written user buffer let another thread unmap and free the buffer
+   while fastrpc_req_mmap() was still using it.
+
+ drivers/misc/fastrpc.c | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+---
+diff --git a/drivers/misc/fastrpc.c b/drivers/misc/fastrpc.c
+index d4fac2caca86..d2c09bffd0af 100644
+--- a/drivers/misc/fastrpc.c
++++ b/drivers/misc/fastrpc.c
+@@ -2153,15 +2153,15 @@ static int fastrpc_req_mmap(struct fastrpc_user *fl, char __user *argp)
+ 		}
+ 	}
+ 
+-	spin_lock(&fl->lock);
+-	list_add_tail(&buf->node, &fl->mmaps);
+-	spin_unlock(&fl->lock);
+-
+ 	if (copy_to_user((void __user *)argp, &req, sizeof(req))) {
+ 		err = -EFAULT;
+ 		goto err_assign;
+ 	}
+ 
++	spin_lock(&fl->lock);
++	list_add_tail(&buf->node, &fl->mmaps);
++	spin_unlock(&fl->lock);
++
+ 	dev_dbg(dev, "mmap\t\tpt 0x%09lx OK [len 0x%08llx]\n",
+ 		buf->raddr, buf->size);
+ 
