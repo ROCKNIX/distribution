@@ -1,0 +1,43 @@
+From: raoxu <raoxu@uniontech.com>
+Subject: misc: fastrpc: drop channel context ref on failed open
+Link: https://lore.kernel.org/r/DD9C99F155919095+20260713054350.3170620-1-raoxu@uniontech.com
+
+From: Xu Rao <raoxu@uniontech.com>
+
+fastrpc_device_open() takes a reference on the channel context before it
+allocates a session.  On a successful open, that reference is tied to the
+fastrpc_user object and is released from fastrpc_user_free(), which is
+reached through fastrpc_device_release().
+
+If fastrpc_session_alloc() fails because no valid session is available,
+open returns -EBUSY before the user refcount is initialized and before
+release can run.  The channel-context reference taken earlier in open is
+therefore left behind.  Repeated opens while the session pool is
+exhausted can permanently pin the channel context and prevent the rpmsg
+remove path from freeing it.
+
+Drop the channel-context reference on this failed-open path before
+freeing the partially initialized fastrpc_user.
+
+Fixes: 278d56f970ae ("misc: fastrpc: Reference count channel context")
+Cc: stable@vger.kernel.org
+Signed-off-by: Xu Rao <raoxu@uniontech.com>
+---
+ drivers/misc/fastrpc.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+--
+2.50.1
+---
+diff --git a/drivers/misc/fastrpc.c b/drivers/misc/fastrpc.c
+index f3a49384586d..907a87d7ca56 100644
+--- a/drivers/misc/fastrpc.c
++++ b/drivers/misc/fastrpc.c
+@@ -1671,6 +1671,7 @@ static int fastrpc_device_open(struct inode *inode, struct file *filp)
+ 	fl->sctx = fastrpc_session_alloc(fl);
+ 	if (!fl->sctx) {
+ 		dev_err(&cctx->rpdev->dev, "No session available\n");
++		fastrpc_channel_ctx_put(cctx);
+ 		mutex_destroy(&fl->mutex);
+ 		kfree(fl);
+

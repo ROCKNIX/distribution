@@ -1,0 +1,559 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Andr=C3=A9=20Braga?= <code@andrebraga.com>
+Date: Thu, 5 Nov 2026 21:44:21 +0000
+Subject: [PATCH] drm/msm/a6xx: scale the GPU's DDR vote with its memory
+ traffic
+
+The GMU votes DDR for the bandwidth of the GPU's OPP, so DDR only rises
+when the GPU clock does, and an AB vote of a quarter of it stands in for
+the traffic. A GPU waiting on memory, as when it streams textures, gets
+more bandwidth only by raising its own clock first; one that moves
+little keeps a bus sized for its clock.
+
+Where the OPPs give a bandwidth range, measure the GPU's traffic as
+Qualcomm's gpubw_mon governor does: the GBIF's read and write beats on
+both AXI ports and the cycles they starve for RAM. Every devfreq sample
+step the bus up when it is busy or starved, and down when it is idle,
+within the range of the current GPU level, and vote AB as the measured
+traffic. Like gpubw_mon's fast_bus_hint, step up one level when the
+GPU waits on RAM for over 80% of its RAM time at either end of its
+allowed clock range, or two over 95%, as its clock will not raise the
+bus there. gpubw_mon checks only the lowest clock, but a GPU held at a
+thermal or user cap starves the same way. The msm.gpu_bus_dcvs module
+parameter turns it off. A8xx only, as only its counters are
+programmed.
+---
+ drivers/gpu/drm/msm/adreno/a6xx_gmu.c | 285 ++++++++++++++++++++++++++++------
+ drivers/gpu/drm/msm/adreno/a6xx_gmu.h |  24 +++
+ drivers/gpu/drm/msm/adreno/a6xx_gpu.c |  10 ++
+ drivers/gpu/drm/msm/adreno/a6xx_gpu.h |   1 +
+ drivers/gpu/drm/msm/adreno/a8xx_gpu.c |  37 +++++
+ drivers/gpu/drm/msm/msm_gpu.h         |   2 +
+ drivers/gpu/drm/msm/msm_gpu_devfreq.c |   7 +-
+ 7 files changed, 317 insertions(+), 49 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+index 638e4c595..4d5a007dc 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+@@ -3,12 +3,14 @@
+ 
+ #include <linux/bitfield.h>
+ #include <linux/clk.h>
++#include <linux/devfreq-governor.h>
+ #include <linux/firmware/qcom/qcom_scm.h>
+ #include <linux/interconnect.h>
+ #include <linux/of_platform.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm_domain.h>
+ #include <linux/pm_opp.h>
++#include <linux/sort.h>
+ #include <soc/qcom/cmd-db.h>
+ #include <soc/qcom/tcs.h>
+ #include <drm/drm_gem.h>
+@@ -76,6 +78,166 @@ static irqreturn_t a6xx_hfi_irq(int irq, void *data)
+ 	return IRQ_HANDLED;
+ }
+ 
++static bool gpu_bus_dcvs = true;
++module_param(gpu_bus_dcvs, bool, 0644);
++MODULE_PARM_DESC(gpu_bus_dcvs, "Scale the GPU's DDR vote with its memory traffic (default: true)");
++
++/* From Qualcomm's gpubw_mon governor */
++#define BUSMON_SAMPLE_US	50000
++#define BUSMON_HIST		5
++#define BUSMON_TARGET		80
++#define BUSMON_CAP		75
++#define BUSMON_WAIT_THRESHOLD	10
++#define BUSMON_FAST_WAIT	80
++#define BUSMON_SUPER_FAST_WAIT	95
++#define BUSMON_BEAT_BYTES	32
++
++static u32 a6xx_gmu_bw_index(struct a6xx_gmu *gmu, int perf_index)
++{
++	int index = gmu->gpu_bw_index[perf_index] + gmu->busmon.mod;
++
++	return clamp(index, gmu->gpu_bw_min[perf_index], gmu->gpu_bw_max[perf_index]);
++}
++
++/* The AB vote: measured traffic once there is some, else a quarter of IB */
++static u32 a6xx_gmu_ab_vote(struct a6xx_gmu *gmu, u32 bw_index)
++{
++	u64 bw = gmu->gpu_bw_table[bw_index], ab;
++	u64 top = gmu->gpu_bw_table[gmu->nr_gpu_bws - 1];
++
++	if (!bw)
++		return 0;
++
++	ab = gmu->busmon.ab_kbps ? min_t(u64, gmu->busmon.ab_kbps, top) : bw * 25 / 100;
++
++	/*
++	 * The AB vote consists of a 16 bit wide quantized level
++	 * against the maximum supported bandwidth.
++	 * Quantization can be calculated as below:
++	 * vote = (bandwidth * 2^16) / max bandwidth
++	 */
++	ab *= MAX_AB_VOTE;
++	do_div(ab, top);
++
++	return AB_VOTE(clamp_t(u64, ab, 1, MAX_AB_VOTE)) | AB_VOTE_ENABLE;
++}
++
++static void a6xx_busmon_set_cutoffs(struct a6xx_gmu *gmu, u32 max)
++{
++	struct a6xx_gmu_busmon *bm = &gmu->busmon;
++	unsigned long top = gmu->gpu_bw_table[gmu->nr_gpu_bws - 1];
++	u32 pct, prev = 2 * BUSMON_HIST;
++	int i;
++
++	bm->max = max;
++	for (i = 0; i < gmu->nr_gpu_bws; i++) {
++		pct = 100 * gmu->gpu_bw_table[i] / top;
++		bm->up[i] = (i == gmu->nr_gpu_bws - 1 ? 100 : pct - BUSMON_HIST) * max / 100;
++		bm->down[i] = (i ? max_t(u32, prev - 2 * BUSMON_HIST, 2 * BUSMON_HIST) : 0) *
++			      max / 100;
++		prev = pct;
++	}
++}
++
++static void a6xx_busmon_reset_window(struct a6xx_gmu_busmon *bm)
++{
++	bm->total_us = 0;
++	bm->busy_us = 0;
++	bm->win_beats = 0;
++	bm->win_starved = 0;
++}
++
++/* -1, +1 or +2 bandwidth steps, as gpubw_mon hints them */
++static int a6xx_busmon_hint(struct a6xx_gmu *gmu, u32 bw_index, bool pinned)
++{
++	struct a6xx_gmu_busmon *bm = &gmu->busmon;
++	u32 norm_max = div64_u64(bm->win_beats, bm->total_us);
++	u32 norm = div64_u64(bm->win_beats + bm->win_starved, bm->total_us);
++	u32 wait_pct = bm->win_beats ? div64_u64(100 * bm->win_starved, bm->win_beats) : 0;
++	u32 gpu_pct = div64_u64(100 * bm->busy_us, bm->total_us);
++
++	if (norm_max > bm->max) {
++		a6xx_busmon_set_cutoffs(gmu, norm_max);
++		return 1;
++	}
++
++	/* At either end of its clock range, the GPU clock will not raise the bus */
++	if (pinned) {
++		if (wait_pct > BUSMON_SUPER_FAST_WAIT)
++			return 2;
++		if (wait_pct > BUSMON_FAST_WAIT)
++			return 1;
++	}
++
++	norm = 100 * norm / BUSMON_TARGET;
++	if ((norm > bm->up[bw_index] || wait_pct > BUSMON_WAIT_THRESHOLD) && gpu_pct > BUSMON_CAP)
++		return 1;
++	if (norm < bm->down[bw_index] && bw_index)
++		return -1;
++
++	return 0;
++}
++
++/* Must hold gmu->lock */
++void a6xx_gmu_bus_update(struct msm_gpu *gpu, u64 busy_us, u64 total_us)
++{
++	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
++	struct a6xx_gpu *a6xx_gpu = to_a6xx_gpu(adreno_gpu);
++	struct a6xx_gmu *gmu = &a6xx_gpu->gmu;
++	struct a6xx_gmu_busmon *bm = &gmu->busmon;
++	int perf_index = gmu->current_perf_index, mod = bm->mod, lo, hi;
++	u32 ab_kbps = bm->ab_kbps, bw_index;
++	unsigned long min_freq, max_freq, freq;
++	u64 beats, starved;
++	bool pinned;
++
++	if (!bm->ranged || !gmu->nr_gpu_freqs || gmu->legacy)
++		return;
++
++	if (!READ_ONCE(gpu_bus_dcvs)) {
++		bm->mod = 0;
++		bm->ab_kbps = 0;
++		bm->primed = false;
++	} else {
++		a8xx_gpu_bus_stats(gpu, &beats, &starved);
++
++		/* The counters restart when the GPU loses power */
++		if (!bm->primed || beats < bm->beats || starved < bm->starved) {
++			bm->primed = true;
++			bm->beats = beats;
++			bm->starved = starved;
++			a6xx_busmon_reset_window(bm);
++			return;
++		}
++
++		bm->win_beats += beats - bm->beats;
++		bm->win_starved += starved - bm->starved;
++		bm->beats = beats;
++		bm->starved = starved;
++		bm->total_us += total_us;
++		bm->busy_us += busy_us;
++		if (bm->total_us < BUSMON_SAMPLE_US)
++			return;
++
++		bw_index = a6xx_gmu_bw_index(gmu, perf_index);
++		lo = gmu->gpu_bw_min[perf_index] - gmu->gpu_bw_index[perf_index];
++		hi = gmu->gpu_bw_max[perf_index] - gmu->gpu_bw_index[perf_index];
++		devfreq_get_freq_range(gpu->devfreq.devfreq, &min_freq, &max_freq);
++		freq = gmu->gpu_freqs[perf_index];
++		pinned = freq <= min_freq || freq >= max_freq;
++		bm->mod = clamp(bm->mod + a6xx_busmon_hint(gmu, bw_index, pinned), lo, hi);
++		bm->ab_kbps = div64_u64(bm->win_beats * BUSMON_BEAT_BYTES * USEC_PER_SEC,
++					bm->total_us * 1000);
++		a6xx_busmon_reset_window(bm);
++	}
++
++	if (bm->mod == mod && bm->ab_kbps == ab_kbps)
++		return;
++
++	bw_index = a6xx_gmu_bw_index(gmu, perf_index);
++	a6xx_hfi_set_freq(gmu, perf_index, bw_index | a6xx_gmu_ab_vote(gmu, bw_index));
++}
++
+ bool a6xx_gmu_scales_bw(struct a6xx_gmu *gmu)
+ {
+ 	struct a6xx_gpu *a6xx_gpu = container_of(gmu, struct a6xx_gpu, gmu);
+@@ -189,33 +351,18 @@ void a6xx_gmu_set_freq(struct msm_gpu *gpu, struct dev_pm_opp *opp,
+ 
+ 	/* If enabled, find the corresponding DDR bandwidth index */
+ 	if (a6xx_gmu_scales_bw(gmu)) {
+-		unsigned int bw = dev_pm_opp_get_bw(opp, true, 0);
++		/*
++		 * Keep a raised bus while the GPU slows down, but start over
++		 * from the level's own bandwidth when it speeds up.
++		 */
++		if (gmu->busmon.mod < 0 || perf_index > gmu->current_perf_index)
++			gmu->busmon.mod = 0;
+ 
+-		for (bw_index = 0; bw_index < gmu->nr_gpu_bws - 1; bw_index++) {
+-			if (bw == gmu->gpu_bw_table[bw_index])
+-				break;
+-		}
++		bw_index = a6xx_gmu_bw_index(gmu, perf_index);
+ 
+ 		/* Vote AB as a fraction of the max bandwidth, starting from A750 */
+-		if (bw && (adreno_is_a750_family(adreno_gpu) || adreno_is_a8xx(adreno_gpu))) {
+-			u64 tmp;
+-
+-			/* For now, vote for 25% of the bandwidth */
+-			tmp = bw * 25;
+-			do_div(tmp, 100);
+-
+-			/*
+-			 * The AB vote consists of a 16 bit wide quantized level
+-			 * against the maximum supported bandwidth.
+-			 * Quantization can be calculated as below:
+-			 * vote = (bandwidth * 2^16) / max bandwidth
+-			 */
+-			tmp *= MAX_AB_VOTE;
+-			do_div(tmp, gmu->gpu_bw_table[gmu->nr_gpu_bws - 1]);
+-
+-			bw_index |= AB_VOTE(clamp(tmp, 1, MAX_AB_VOTE));
+-			bw_index |= AB_VOTE_ENABLE;
+-		}
++		if (adreno_is_a750_family(adreno_gpu) || adreno_is_a8xx(adreno_gpu))
++			bw_index |= a6xx_gmu_ab_vote(gmu, bw_index);
+ 	}
+ 
+ 	gmu->current_perf_index = perf_index;
+@@ -1931,36 +2078,81 @@ static int a6xx_gmu_build_freq_table(struct device *dev, unsigned long *freqs,
+ 	return index;
+ }
+ 
+-static int a6xx_gmu_build_bw_table(struct device *dev, unsigned long *bandwidths,
+-		u32 size)
++static int a6xx_gmu_cmp_bw(const void *a, const void *b)
+ {
+-	int count = dev_pm_opp_get_opp_count(dev);
+-	struct dev_pm_opp *opp;
+-	int i, index = 0;
+-	unsigned int bandwidth = 1;
++	unsigned long x = *(const unsigned long *)a, y = *(const unsigned long *)b;
+ 
+-	/*
+-	 * The OPP table doesn't contain the "off" bandwidth level so we need to
+-	 * add 1 to the table size to account for it
+-	 */
++	return x < y ? -1 : x > y;
++}
+ 
+-	if (WARN(count + 1 > size,
+-		"The GMU bandwidth table is being truncated\n"))
+-		count = size - 1;
++static int a6xx_gmu_find_bw(struct a6xx_gmu *gmu, unsigned long bw)
++{
++	int i;
+ 
+-	/* Set the "off" bandwidth */
+-	bandwidths[index++] = 0;
++	for (i = 0; i < gmu->nr_gpu_bws - 1; i++)
++		if (gmu->gpu_bw_table[i] >= bw)
++			break;
++
++	return i;
++}
++
++static void a6xx_gmu_add_bw(struct a6xx_gmu *gmu, unsigned long bw)
++{
++	int i;
++
++	for (i = 0; i < gmu->nr_gpu_bws; i++)
++		if (gmu->gpu_bw_table[i] == bw)
++			return;
++
++	if (WARN(gmu->nr_gpu_bws == ARRAY_SIZE(gmu->gpu_bw_table),
++		 "The GMU bandwidth table is being truncated\n"))
++		return;
++
++	gmu->gpu_bw_table[gmu->nr_gpu_bws++] = bw;
++}
++
++/*
++ * Every bandwidth a GPU level may vote: its OPP's, and with
++ * qcom,opp-peak-kBps-range the lowest and highest it may float to.
++ */
++static void a6xx_gmu_build_bw_table(struct a6xx_gmu *gmu, struct device *dev)
++{
++	u32 range[GMU_MAX_GX_FREQS][2] = {}, peak[GMU_MAX_GX_FREQS] = {};
++	int i;
++
++	/* The "off" bandwidth */
++	gmu->nr_gpu_bws = 0;
++	a6xx_gmu_add_bw(gmu, 0);
++
++	for (i = 1; i < gmu->nr_gpu_freqs; i++) {
++		struct dev_pm_opp *opp __free(put_opp) =
++			dev_pm_opp_find_freq_exact(dev, gmu->gpu_freqs[i], true);
++		struct device_node *np __free(device_node) = NULL;
+ 
+-	for (i = 0; i < count; i++) {
+-		opp = dev_pm_opp_find_bw_ceil(dev, &bandwidth, 0);
+ 		if (IS_ERR(opp))
+-			break;
++			continue;
+ 
+-		dev_pm_opp_put(opp);
+-		bandwidths[index++] = bandwidth++;
++		peak[i] = dev_pm_opp_get_bw(opp, true, 0);
++		range[i][0] = peak[i];
++		range[i][1] = peak[i];
++		np = dev_pm_opp_get_of_node(opp);
++		if (np && !of_property_read_u32_array(np, "qcom,opp-peak-kBps-range", range[i], 2))
++			gmu->busmon.ranged = true;
++
++		a6xx_gmu_add_bw(gmu, peak[i]);
++		a6xx_gmu_add_bw(gmu, range[i][0]);
++		a6xx_gmu_add_bw(gmu, range[i][1]);
+ 	}
+ 
+-	return index;
++	sort(gmu->gpu_bw_table, gmu->nr_gpu_bws, sizeof(*gmu->gpu_bw_table), a6xx_gmu_cmp_bw, NULL);
++
++	for (i = 1; i < gmu->nr_gpu_freqs; i++) {
++		gmu->gpu_bw_index[i] = a6xx_gmu_find_bw(gmu, peak[i]);
++		gmu->gpu_bw_min[i] = a6xx_gmu_find_bw(gmu, min(range[i][0], peak[i]));
++		gmu->gpu_bw_max[i] = a6xx_gmu_find_bw(gmu, max(range[i][1], peak[i]));
++	}
++
++	a6xx_busmon_set_cutoffs(gmu, 350);
+ }
+ 
+ static int a6xx_gmu_pwrlevels_probe(struct a6xx_gmu *gmu)
+@@ -1999,8 +2191,7 @@ static int a6xx_gmu_pwrlevels_probe(struct a6xx_gmu *gmu)
+ 	 * of DDR bandwidths from the GPU OPP table
+ 	 */
+ 	if (info->bcms)
+-		gmu->nr_gpu_bws = a6xx_gmu_build_bw_table(&gpu->pdev->dev,
+-			gmu->gpu_bw_table, ARRAY_SIZE(gmu->gpu_bw_table));
++		a6xx_gmu_build_bw_table(gmu, &gpu->pdev->dev);
+ 
+ 	/* Build the list of RPMh votes that we'll send to the GMU */
+ 	return a6xx_gmu_rpmh_votes_init(gmu);
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.h b/drivers/gpu/drm/msm/adreno/a6xx_gmu.h
+index ba83ae1d4..e57c1f61a 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.h
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.h
+@@ -60,6 +60,24 @@ struct a6xx_bcm {
+ /* The GMU does automatic IFPC (intra-frame power collapse) */
+ #define GMU_IDLE_STATE_IFPC 3
+ 
++/* Scales the GPU's bandwidth vote with its measured memory traffic */
++struct a6xx_gmu_busmon {
++	bool ranged;
++	bool primed;
++	int mod;
++	u32 ab_kbps;
++	/* Highest traffic seen, in beats per microsecond, and its cutoffs */
++	u32 max;
++	u32 up[GMU_MAX_GX_FREQS];
++	u32 down[GMU_MAX_GX_FREQS];
++	u64 beats;
++	u64 starved;
++	u64 total_us;
++	u64 busy_us;
++	u64 win_beats;
++	u64 win_starved;
++};
++
+ struct a6xx_gmu {
+ 	struct device *dev;
+ 
+@@ -104,6 +122,11 @@ struct a6xx_gmu {
+ 	int nr_gpu_bws;
+ 	unsigned long gpu_bw_table[GMU_MAX_GX_FREQS];
+ 	u32 gpu_ib_votes[GMU_MAX_GX_FREQS][GMU_MAX_BCMS];
++	/* Each GPU level's bandwidth index, and the range it may float in */
++	u8 gpu_bw_index[GMU_MAX_GX_FREQS];
++	u8 gpu_bw_min[GMU_MAX_GX_FREQS];
++	u8 gpu_bw_max[GMU_MAX_GX_FREQS];
++	struct a6xx_gmu_busmon busmon;
+ 
+ 	int nr_gmu_freqs;
+ 	unsigned long gmu_freqs[GMU_MAX_CX_FREQS];
+@@ -239,6 +262,7 @@ bool a7xx_gmu_gx_is_on(struct adreno_gpu *adreno_gpu);
+ bool a8xx_gmu_gx_is_on(struct adreno_gpu *adreno_gpu);
+ bool a6xx_gmu_sptprac_is_on(struct a6xx_gmu *gmu);
+ bool a6xx_gmu_scales_bw(struct a6xx_gmu *gmu);
++void a6xx_gmu_bus_update(struct msm_gpu *gpu, u64 busy_us, u64 total_us);
+ void a6xx_sptprac_disable(struct a6xx_gmu *gmu);
+ int a6xx_sptprac_enable(struct a6xx_gmu *gmu);
+ 
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
+index 2db05bae3..e5dc1964d 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
+@@ -2359,6 +2359,15 @@ static void a6xx_gpu_set_freq(struct msm_gpu *gpu, struct dev_pm_opp *opp,
+ 	mutex_unlock(&a6xx_gpu->gmu.lock);
+ }
+ 
++static void a8xx_gpu_bus_update(struct msm_gpu *gpu, u64 busy_us, u64 total_us)
++{
++	struct a6xx_gpu *a6xx_gpu = to_a6xx_gpu(to_adreno_gpu(gpu));
++
++	mutex_lock(&a6xx_gpu->gmu.lock);
++	a6xx_gmu_bus_update(gpu, busy_us, total_us);
++	mutex_unlock(&a6xx_gpu->gmu.lock);
++}
++
+ static struct drm_gpuvm *
+ a6xx_create_vm(struct msm_gpu *gpu, struct platform_device *pdev)
+ {
+@@ -2917,6 +2926,7 @@ const struct adreno_gpu_funcs a8xx_gpu_funcs = {
+ 		.irq = a8xx_irq,
+ 		.destroy = a6xx_destroy,
+ 		.gpu_busy = a8xx_gpu_busy,
++		.gpu_bus_update = a8xx_gpu_bus_update,
+ 		.gpu_get_freq = a6xx_gmu_get_freq,
+ 		.gpu_set_freq = a6xx_gpu_set_freq,
+ 		.create_vm = a6xx_create_vm,
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gpu.h b/drivers/gpu/drm/msm/adreno/a6xx_gpu.h
+index cc28e8d1e..e500c66f0 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gpu.h
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gpu.h
+@@ -336,6 +336,7 @@ int a8xx_fault_handler(void *arg, unsigned long iova, int flags, void *data);
+ void a8xx_flush(struct msm_gpu *gpu, struct msm_ringbuffer *ring);
+ u64 a8xx_gmu_get_timestamp(struct msm_gpu *gpu);
+ u64 a8xx_gpu_busy(struct msm_gpu *gpu, unsigned long *out_sample_rate);
++void a8xx_gpu_bus_stats(struct msm_gpu *gpu, u64 *beats, u64 *starved);
+ int a8xx_gpu_feature_probe(struct msm_gpu *gpu);
+ void a8xx_gpu_get_slice_info(struct msm_gpu *gpu);
+ int a8xx_hw_init(struct msm_gpu *gpu);
+diff --git a/drivers/gpu/drm/msm/adreno/a8xx_gpu.c b/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
+index 06cbbeb64..33837b02c 100644
+--- a/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
+@@ -621,6 +621,41 @@ static int a8xx_cp_init(struct msm_gpu *gpu)
+ 	 A8XX_CP_HW_FAULT_STATUS_MASK_PIPE_EVENTENGINEOVF | \
+ 	 A8XX_CP_HW_FAULT_STATUS_MASK_PIPE_UCODEERROR)
+ 
++/* GBIF countables: data beats on both AXI ports, and cycles starved for RAM */
++#define A8XX_GBIF_AXI0_READ_BEATS	34
++#define A8XX_GBIF_AXI1_READ_BEATS	35
++#define A8XX_GBIF_AXI0_WRITE_BEATS	46
++#define A8XX_GBIF_AXI1_WRITE_BEATS	47
++#define A8XX_GBIF_PERF_CNTS		GENMASK(3, 0)
++#define A8XX_GBIF_PWR_CNTS		GENMASK(17, 16)
++
++static void a8xx_gbif_counters_init(struct msm_gpu *gpu)
++{
++	u32 cnts = A8XX_GBIF_PERF_CNTS | A8XX_GBIF_PWR_CNTS;
++
++	gpu_rmw(gpu, REG_A6XX_GBIF_PERF_PWR_CNT_EN, cnts, 0);
++	gpu_rmw(gpu, REG_A6XX_GBIF_PERF_PWR_CNT_CLR, cnts, cnts);
++	gpu_rmw(gpu, REG_A6XX_GBIF_PERF_PWR_CNT_CLR, cnts, 0);
++	gpu_write(gpu, REG_A6XX_GBIF_PERF_CNT_SEL,
++		  A8XX_GBIF_AXI0_READ_BEATS | A8XX_GBIF_AXI1_READ_BEATS << 8 |
++		  A8XX_GBIF_AXI0_WRITE_BEATS << 16 | A8XX_GBIF_AXI1_WRITE_BEATS << 24);
++	/* RAM starvation of each AXI port is power countable 0 and 1 */
++	gpu_rmw(gpu, REG_A8XX_GBIF_PWR_CNT_SEL, GENMASK(15, 0), 0 | 1 << 8);
++	gpu_rmw(gpu, REG_A6XX_GBIF_PERF_PWR_CNT_EN, cnts, cnts);
++}
++
++void a8xx_gpu_bus_stats(struct msm_gpu *gpu, u64 *beats, u64 *starved)
++{
++	*beats = gpu_read64(gpu, REG_A8XX_GBIF_PERF_CNT_LO_0) +
++		 gpu_read64(gpu, REG_A8XX_GBIF_PERF_CNT_LO_1) +
++		 gpu_read64(gpu, REG_A8XX_GBIF_PERF_CNT_LO_2) +
++		 gpu_read64(gpu, REG_A8XX_GBIF_PERF_CNT_LO_3);
++	*starved = ((u64)gpu_read(gpu, REG_A8XX_GBIF_PWR_CNT_HI_0) << 32 |
++		    gpu_read(gpu, REG_A8XX_GBIF_PWR_CNT_LO_0)) +
++		   ((u64)gpu_read(gpu, REG_A8XX_GBIF_PWR_CNT_HI_1) << 32 |
++		    gpu_read(gpu, REG_A8XX_GBIF_PWR_CNT_LO_1));
++}
++
+ static int hw_init(struct msm_gpu *gpu)
+ {
+ 	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
+@@ -659,6 +694,8 @@ static int hw_init(struct msm_gpu *gpu)
+ 	/* Make all blocks contribute to the GPU BUSY perf counter */
+ 	gpu_write(gpu, REG_A8XX_RBBM_PERFCTR_GPU_BUSY_MASKED, 0xffffffff);
+ 
++	a8xx_gbif_counters_init(gpu);
++
+ 	/* Setup GMEM Range in UCHE */
+ 	gmem_range_min = SZ_64M;
+ 	/* Set the GMEM VA range [0x100000:0x100000 + gpu->gmem - 1] */
+diff --git a/drivers/gpu/drm/msm/msm_gpu.h b/drivers/gpu/drm/msm/msm_gpu.h
+index 2be8dc189..215454755 100644
+--- a/drivers/gpu/drm/msm/msm_gpu.h
++++ b/drivers/gpu/drm/msm/msm_gpu.h
+@@ -78,6 +78,8 @@ struct msm_gpu_funcs {
+ 	struct msm_gpu_state *(*gpu_state_get)(struct msm_gpu *gpu);
+ 	int (*gpu_state_put)(struct msm_gpu_state *state);
+ 	unsigned long (*gpu_get_freq)(struct msm_gpu *gpu);
++	/* note: gpu_bus_update() can assume that we have been pm_resumed */
++	void (*gpu_bus_update)(struct msm_gpu *gpu, u64 busy_us, u64 total_us);
+ 	/* note: gpu_set_freq() can assume that we have been pm_resumed */
+ 	void (*gpu_set_freq)(struct msm_gpu *gpu, struct dev_pm_opp *opp,
+ 			     bool suspended);
+diff --git a/drivers/gpu/drm/msm/msm_gpu_devfreq.c b/drivers/gpu/drm/msm/msm_gpu_devfreq.c
+index f3c664b20..01c4ed56e 100644
+--- a/drivers/gpu/drm/msm/msm_gpu_devfreq.c
++++ b/drivers/gpu/drm/msm/msm_gpu_devfreq.c
+@@ -100,13 +100,16 @@ static int msm_devfreq_get_dev_status(struct device *dev,
+ 	busy_time = busy_cycles - df->busy_cycles;
+ 	df->busy_cycles = busy_cycles;
+ 
+-	mutex_unlock(&df->lock);
+-
+ 	busy_time *= USEC_PER_SEC;
+ 	busy_time = div64_ul(busy_time, sample_rate);
+ 	if (WARN_ON(busy_time > ~0LU))
+ 		busy_time = ~0LU;
+ 
++	if (gpu->funcs->gpu_bus_update)
++		gpu->funcs->gpu_bus_update(gpu, busy_time, status->total_time);
++
++	mutex_unlock(&df->lock);
++
+ 	status->busy_time = busy_time;
+ 
+ 	return 0;
+-- 
+2.56.0
+
