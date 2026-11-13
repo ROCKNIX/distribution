@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oleg Keri <okerixx@gmail.com>
+Date: Wed, 21 Oct 2026 10:05:17 +0200
+Subject: [PATCH] pmdomain: qcom: rpmhpd: don't clamp gfx and gmxc before sync_state
+
+Until rpmhpd's sync_state every vote is clamped to the highest corner,
+so that hardware the bootloader left running keeps the rail level it
+needs until its driver takes over.  Nothing the bootloader leaves behind
+runs on the GPU rails, but the clamp hits them anyway: the GPU clock
+controller's probe runtime-resumes and suspends its GFX and GMXC
+domains, and from then on both rails are pinned at their highest corner
+until sync_state.
+
+On Glymur gfx.lvl has 14 levels and the clamp holds the rail at the top
+one, 0x1d0, while the GMU's own performance table ends at level 11,
+0x1c4.  With the GPU driver and firmware built in, the GMU boots long
+before sync_state, and its CLX DCVS calibration does not survive a gfx
+rail held that high: the firmware gives up with HFI_F2H_MSG_ERROR
+0x007306c7 (ResMgrCalibrateDcvsLvl), the first HFI_H2F_MSG_GX_BW_PERF_VOTE
+times out and the first GPU init fails.  On the Lenovo Yoga Slim 7x
+Gen 11 this means the compositor cannot start at first login.  Pinning
+gfx at level 11 or 12 instead fails the same way, level 10 and below
+boot fine, and pinning gmxc alone has no effect.
+
+Leave gfx and gmxc out of the clamp: they have no bootloader-configured
+consumer to protect, and the GMU votes them through its own RSC.
+
+Fixes: 93b6c8d10fad ("drm/msm/a8xx: Enable CLX feature on Adreno X2-85")
+Link: https://lore.kernel.org/r/179248663855.32151.9955864156939592299@gmail.com
+Acked-by: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Signed-off-by: Oleg Keri <okerixx@gmail.com>
+Tested-by: Denis Zornada <denis_zornada@hotmail.com> # Zenbook A16
+Tested-by: Vladyslav Tymoshchuk <tvlad744@gmail.com> # SM8750
+Link: https://lore.kernel.org/r/20261021080517.2161-1-okerixx@gmail.com
+---
+ drivers/pmdomain/qcom/rpmhpd.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/pmdomain/qcom/rpmhpd.c b/drivers/pmdomain/qcom/rpmhpd.c
+index fa8fed5bd3e5..2c9d4beeffbe 100644
+--- a/drivers/pmdomain/qcom/rpmhpd.c
++++ b/drivers/pmdomain/qcom/rpmhpd.c
+@@ -1006,7 +1006,7 @@ static int rpmhpd_aggregate_corner(struct rpmhpd *pd, unsigned int corner)
+ 	unsigned int peer_active_corner = 0, peer_sleep_corner = 0;
+ 	unsigned int peer_enabled_corner;
+ 
+-	if (pd->state_synced) {
++	if (pd->state_synced || pd == &gfx || pd == &gmxc) {
+ 		to_active_sleep(pd, corner, &this_active_corner, &this_sleep_corner);
+ 	} else {
+ 		/* Clamp to highest corner if sync_state hasn't happened */
