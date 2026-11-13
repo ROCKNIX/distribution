@@ -1,0 +1,51 @@
+From 8a8d51eeedebfa5aaaae7720f2fb2aa1a67b8587 Mon Sep 17 00:00:00 2001
+From: Pauli Virtanen <pav@iki.fi>
+Date: Mon, 5 Oct 2026 21:13:54 +0300
+Subject: [PATCH] Bluetooth: hci_sync: fix mesh adv timeout units
+
+Mesh adv instance timeout and duration are in milliseconds, see
+mesh_send_sync, hci_add_adv_instance.  hci_schedule_adv_instance_sync()
+and hci_enable_ext_advertising_sync() ignore this, and scale the timeout
+wrong.
+
+Fix for mesh instances by using msecs_to_jiffies() in
+hci_schedule_adv_instance_sync and fixing the scaling in
+hci_enable_ext_advertising_sync.
+
+Fixes BlueZ "Mesh - Send cancel" test failures.
+
+Fixes: b338d91703fa ("Bluetooth: Implement support for Mesh")
+Assisted-by: opencode:qwen3.8-flash-next sashiko
+Signed-off-by: Pauli Virtanen <pav@iki.fi>
+Signed-off-by: Luiz Augusto von Dentz <luiz.von.dentz@intel.com>
+---
+ net/bluetooth/hci_sync.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/net/bluetooth/hci_sync.c b/net/bluetooth/hci_sync.c
+index 6854449a06..69ebdff204 100644
+--- a/net/bluetooth/hci_sync.c
++++ b/net/bluetooth/hci_sync.c
+@@ -1672,7 +1672,8 @@ int hci_enable_ext_advertising_sync(struct hci_dev *hdev, u8 instance)
+ 	 * scheduling it.
+ 	 */
+ 	if (adv && adv->timeout) {
+-		u16 duration = adv->timeout * MSEC_PER_SEC;
++		u16 duration = adv->mesh ? adv->timeout :
++					   adv->timeout * MSEC_PER_SEC;
+ 
+ 		/* Time = N * 10 ms */
+ 		set->duration = cpu_to_le16(duration / 10);
+@@ -2103,7 +2104,8 @@ int hci_schedule_adv_instance_sync(struct hci_dev *hdev, u8 instance,
+ 		hdev->adv_instance_timeout = timeout;
+ 		queue_delayed_work(hdev->req_workqueue,
+ 				   &hdev->adv_instance_expire,
+-				   secs_to_jiffies(timeout));
++				   adv->mesh ? msecs_to_jiffies(timeout) :
++					       secs_to_jiffies(timeout));
+ 	}
+ 
+ 	/* If we're just re-scheduling the same instance again then do not
+-- 
+2.56.0
+

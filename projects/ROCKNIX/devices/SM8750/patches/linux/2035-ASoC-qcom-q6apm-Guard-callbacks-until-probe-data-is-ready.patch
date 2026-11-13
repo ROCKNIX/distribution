@@ -1,0 +1,74 @@
+From ef7062864c0511bba52775d0eb3aa72d886b5f3a Mon Sep 17 00:00:00 2001
+From: Mohit Sharma <mohit.sharma@oss.qualcomm.com>
+Date: Thu, 22 Oct 2026 20:11:29 +0530
+Subject: [PATCH] ASoC: qcom: q6apm: Guard callbacks until probe data is ready
+
+The GPR bus needs to make response callbacks available before invoking a
+client probe because clients can issue synchronous commands from probe.
+This creates a short interval where a callback can run before the client
+has published its private data.
+
+Make q6apm publish its driver data only after all callback-visible state
+has been initialized. Have the q6apm and q6prm callbacks ignore packets
+received before driver data is available.
+
+Fixes: ec1471a898cc ("soc: qcom: apr: Add GPR support")
+Cc: stable@vger.kernel.org
+Co-developed-by: Ajay Kumar Nandam <ajay.nandam@oss.qualcomm.com>
+Signed-off-by: Ajay Kumar Nandam <ajay.nandam@oss.qualcomm.com>
+Signed-off-by: Mohit Sharma <mohit.sharma@oss.qualcomm.com>
+Link: https://patch.msgid.link/20261022144130.2443667-2-mohit.sharma@oss.qualcomm.com
+Signed-off-by: Mark Brown <broonie@kernel.org>
+---
+ sound/soc/qcom/qdsp6/q6apm.c | 6 ++++--
+ sound/soc/qcom/qdsp6/q6prm.c | 3 +++
+ 2 files changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/sound/soc/qcom/qdsp6/q6apm.c b/sound/soc/qcom/qdsp6/q6apm.c
+index bed3b64e83..8e3314a273 100644
+--- a/sound/soc/qcom/qdsp6/q6apm.c
++++ b/sound/soc/qcom/qdsp6/q6apm.c
+@@ -890,8 +890,6 @@ static int apm_probe(gpr_device_t *gdev)
+ 	if (!apm)
+ 		return -ENOMEM;
+ 
+-	dev_set_drvdata(dev, apm);
+-
+ 	mutex_init(&apm->lock);
+ 	apm->dev = dev;
+ 	apm->gdev = gdev;
+@@ -905,6 +903,7 @@ static int apm_probe(gpr_device_t *gdev)
+ 
+ 	idr_init(&apm->modules_idr);
+ 
++	dev_set_drvdata(dev, apm);
+ 	g_apm = apm;
+ 
+ 	q6apm_get_apm_state(apm);
+@@ -949,6 +948,9 @@ static int apm_callback(const struct gpr_resp_pkt *data, void *priv, int op)
+ 	const struct gpr_hdr *hdr = &data->hdr;
+ 	int graph_id, is_pos_buf;
+ 
++	if (!apm)
++		return 0;
++
+ 	result = data->payload;
+ 
+ 	switch (hdr->opcode) {
+diff --git a/sound/soc/qcom/qdsp6/q6prm.c b/sound/soc/qcom/qdsp6/q6prm.c
+index 2042ff1e8f..5c927ebd81 100644
+--- a/sound/soc/qcom/qdsp6/q6prm.c
++++ b/sound/soc/qcom/qdsp6/q6prm.c
+@@ -194,6 +194,9 @@ static int prm_callback(const struct gpr_resp_pkt *data, void *priv, int op)
+ 	const struct gpr_ibasic_rsp_result_t *result;
+ 	const struct gpr_hdr *hdr = &data->hdr;
+ 
++	if (!prm)
++		return 0;
++
+ 	switch (hdr->opcode) {
+ 	case PRM_CMD_RSP_REQUEST_HW_RSC:
+ 	case PRM_CMD_RSP_RELEASE_HW_RSC:
+-- 
+2.56.0
+

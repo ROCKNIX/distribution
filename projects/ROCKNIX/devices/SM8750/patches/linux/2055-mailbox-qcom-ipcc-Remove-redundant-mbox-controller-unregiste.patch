@@ -1,0 +1,48 @@
+From da988ac6afe152f802140ccaa0ad5e8f675b8814 Mon Sep 17 00:00:00 2001
+From: Anup Vishwakarma <anup.vishwakarma@oss.qualcomm.com>
+Date: Tue, 6 Oct 2026 16:29:13 +0530
+Subject: [PATCH] mailbox: qcom-ipcc: Remove redundant
+ mbox_controller_unregister() on probe failure
+
+qcom_ipcc_probe() registers the mailbox controller via
+devm_mbox_controller_register(), which automatically calls
+mbox_controller_unregister() through devres when the device is removed
+or probe fails. If devm_request_irq() subsequently fails, the
+err_req_irq: label also manually calls mbox_controller_unregister(),
+resulting in a double call that corrupts the global mailbox controller
+list and causes a kernel panic.
+
+Remove the redundant manual call and rely on devres for cleanup.
+
+Fixes: e9d50e4b4d04 ("mailbox: qcom-ipcc: Dynamic alloc for channel arrangement")
+Signed-off-by: Anup Vishwakarma <anup.vishwakarma@oss.qualcomm.com>
+Reviewed-by: Mukesh Ojha <mukesh.ojha@oss.qualcomm.com>
+Signed-off-by: Jassi Brar <jassisinghbrar@gmail.com>
+---
+ drivers/mailbox/qcom-ipcc.c | 5 +----
+ 1 file changed, 1 insertion(+), 4 deletions(-)
+
+diff --git a/drivers/mailbox/qcom-ipcc.c b/drivers/mailbox/qcom-ipcc.c
+index 185b63f724..b301cefe49 100644
+--- a/drivers/mailbox/qcom-ipcc.c
++++ b/drivers/mailbox/qcom-ipcc.c
+@@ -329,15 +329,12 @@ static int qcom_ipcc_probe(struct platform_device *pdev)
+ 			       IRQF_TRIGGER_HIGH | IRQF_NO_SUSPEND |
+ 			       IRQF_NO_THREAD, name, ipcc);
+ 	if (ret < 0)
+-		goto err_req_irq;
++		goto err_mbox;
+ 
+ 	platform_set_drvdata(pdev, ipcc);
+ 
+ 	return 0;
+ 
+-err_req_irq:
+-	if (ipcc->num_chans)
+-		mbox_controller_unregister(&ipcc->mbox);
+ err_mbox:
+ 	irq_domain_remove(ipcc->irq_domain);
+ 
+-- 
+2.56.0
+
