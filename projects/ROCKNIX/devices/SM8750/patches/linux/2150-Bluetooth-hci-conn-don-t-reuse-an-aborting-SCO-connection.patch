@@ -1,0 +1,72 @@
+From: Iaroslav Voitovych <yaroslav.voytovych@gmail.com>
+Subject: [2/3] Bluetooth: hci_conn: don't reuse an aborting SCO connection
+Link: https://lore.kernel.org/r/20261027165009.2401154-3-yaroslav.voytovych@gmail.com
+
+A new SCO socket can report a successful connect() to a link that
+is already being disconnected. No new link is established, and the
+socket is closed with ECONNABORTED when the old link's
+Disconnection Complete arrives. PipeWire hits this when it closes
+and reconnects a SCO socket during an HFP codec change.
+
+hci_connect_sco() looks up an existing connection by type and
+address. It sends Setup Synchronous Connection only when that
+connection is BT_OPEN or BT_CLOSED.
+
+An aborting connection is neither: hci_abort_conn() sets
+abort_reason and queues the Disconnect, but leaves the state
+BT_CONNECTED until the Disconnection Complete. A new connect in
+that interval therefore reuses the old connection without sending
+a setup command.
+
+Before commit e6720779ae61 ("Bluetooth: SCO: Use kref to track
+lifetime of sco_conn"), the closed socket stayed attached in
+BT_DISCONN until that event, so sco_chan_add() rejected the new
+socket with EBUSY. Since that commit, the closed socket is
+detached at once, and the new socket takes its place: sco_connect()
+reports it connected, and the Disconnection Complete then closes
+it with ECONNABORTED.
+
+Reject a connection whose abort_reason is set with -ECONNABORTED,
+and drop the ACL hold that hci_connect_acl() took. The caller
+learns at once, with the error the socket would otherwise get
+later, and can connect again once the old link is gone.
+
+hci_connect_sco() runs under hdev->lock, but hci_conn_timeout()
+sets abort_reason through hci_abort_conn() without it. Use
+READ_ONCE() for the new check and WRITE_ONCE() for that write.
+
+Fixes: e6720779ae61 ("Bluetooth: SCO: Use kref to track lifetime of sco_conn")
+Cc: stable@vger.kernel.org
+Signed-off-by: Iaroslav Voitovych <yaroslav.voytovych@gmail.com>
+---
+ net/bluetooth/hci_conn.c | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+---
+diff --git a/net/bluetooth/hci_conn.c b/net/bluetooth/hci_conn.c
+index 7a55aaf197138..6b92fd0177857 100644
+--- a/net/bluetooth/hci_conn.c
++++ b/net/bluetooth/hci_conn.c
+@@ -1909,6 +1909,14 @@ struct hci_conn *hci_connect_sco(struct hci_dev *hdev, int type, bdaddr_t *dst,
+ 			hci_conn_drop(acl);
+ 			return sco;
+ 		}
++	} else if (READ_ONCE(sco->abort_reason)) {
++		/* The connection is being disconnected and stays BT_CONNECTED
++		 * until the Disconnection Complete event, so no setup would
++		 * be sent for it and it would be closed under the new socket
++		 * as soon as the event arrives.
++		 */
++		hci_conn_drop(acl);
++		return ERR_PTR(-ECONNABORTED);
+ 	}
+ 
+ 	if (sco->link) {
+@@ -3272,7 +3280,7 @@ int hci_abort_conn(struct hci_conn *conn, u8 reason)
+ 
+ 	bt_dev_dbg(hdev, "handle 0x%2.2x reason 0x%2.2x", conn->handle, reason);
+ 
+-	conn->abort_reason = reason;
++	WRITE_ONCE(conn->abort_reason, reason);
+ 
+ 	/* Cancel the connect attempt. A return of 0 means the create command
+ 	 * was still queued and got dequeued, so there is nothing to disconnect.

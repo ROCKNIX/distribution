@@ -1,0 +1,230 @@
+From: Andreas Wild <andiwild@gmail.com>
+Subject: [v2] PCI: Avoid link retraining on empty ports when lifting speed restriction
+Link: https://lore.kernel.org/r/20260801105441.6506-1-andiwild@gmail.com
+
+Since commit 72780f796468 ("PCI: Always lift 2.5GT/s restriction in PCIe
+failed link retraining") the Target Speed quirk lifts a firmware-imposed
+2.5GT/s restriction on any downstream port, without checking whether the
+link is up.  Where nothing is plugged in, the retraining that follows can
+never complete, so each attempt costs PCIE_LINK_RETRAIN_TIMEOUT_MS.  The
+quirk makes two of them -- the initial one and the restore on the error
+path -- adding a fixed 2 s to every boot.
+
+On an MSI PRO Z690-A WIFI DDR4 (Intel 600 Series PCH) with one empty x1
+slot, running v7.2-rc5:
+
+ 0.541 pci 0000:00:1c.0: removing 2.5GT/s downstream link speed restriction
+ 1.541 pci 0000:00:1c.0: retraining failed
+ 2.541 pci 0000:00:1c.2: [8086:7aba] type 01 class 0x060400
+
+The kerneldoc above the quirk already contemplates this case ("For a port
+that has been left unconnected both bits will be clear") and describes
+lifting the restriction where firmware arranged it "and the port reports
+its link already being up".  The code stopped checking the latter.
+
+Add pcie_set_target_speed_no_retrain(), which programs the Target Link
+Speed exactly as pcie_set_target_speed() does -- same speed selection
+through dev->supported_speeds, same pcie_valid_speed() validation, same
+bwctrl locking -- but skips the retraining.  Use it from the quirk when
+Data Link Layer Link Active is clear.  The restriction is still lifted, so
+a device plugged into the port later trains at the full speed the port
+supports, which is what the original change set out to ensure.
+
+The decision has to stay with the caller: the ASM2824 workaround earlier in
+the same function deliberately retrains a link whose DLLLA is clear, so
+pcie_bwctrl_change_speed() cannot simply skip retraining whenever the link
+is down.
+
+Measured on v7.2-rc5, same tree and same config with and without the fix:
+the interval after the quirk logs drops from 1000 ms to 1 ms, the second
+timeout disappears along with "retraining failed", and the systemd "kernel"
+boot phase goes from 3.011 s to 1.017 s.  The restriction is still lifted
+-- on the still-empty port afterwards:
+
+ LnkCap:  Port #1, Speed 8GT/s, Width x1
+ LnkSta:  Speed 2.5GT/s, Width x0
+ LnkCtl2: Target Link Speed: 8GT/s
+
+Fixes: 72780f796468 ("PCI: Always lift 2.5GT/s restriction in PCIe failed link retraining")
+Cc: stable@vger.kernel.org
+Signed-off-by: Andreas Wild <andiwild@gmail.com>
+---
+v2:
+ - Do not write LNKCTL2 directly from the quirk.  v1 derived the Target Link
+   Speed from LNKCAP, which ignores LNKCAP2 and any adjustment the core has
+   made in dev->supported_speeds, skipped the pcie_valid_speed() check, and
+   touched the register without pcie_bwctrl_setspeed_rwsem /
+   set_speed_mutex.  Raised by the sashiko review bot.  The missing locking
+   is unreachable from the pci_device_add() path used at boot, where
+   port->link_bwctrl is still NULL, but the quirk is also called from
+   pci_dev_wait() and pcie_wait_for_link_delay() on a live system, where it
+   is not.
+ - Return -ENOTTY explicitly on the no-retrain path rather than falling
+   through with a stale ret, which could have reported success if the
+   ASM2824 branch had retrained the link and it dropped immediately after.
+ - v1: https://lore.kernel.org/lkml/20260801092152.5643-1-andiwild@gmail.com/
+ drivers/pci/pci.h         |  7 ++++
+ drivers/pci/pcie/bwctrl.c | 76 ++++++++++++++++++++++++++++-----------
+ drivers/pci/quirks.c      | 15 ++++++++
+ 3 files changed, 77 insertions(+), 21 deletions(-)
+---
+diff --git a/drivers/pci/pci.h b/drivers/pci/pci.h
+index 4469e1a..b900f7f 100644
+--- a/drivers/pci/pci.h
++++ b/drivers/pci/pci.h
+@@ -1121,8 +1121,15 @@ static inline void pcie_ecrc_get_policy(char *str) { }
+ 
+ #ifdef CONFIG_PCIEPORTBUS
+ void pcie_reset_lbms(struct pci_dev *port);
++int pcie_set_target_speed_no_retrain(struct pci_dev *port,
++				     enum pci_bus_speed speed_req);
+ #else
+ static inline void pcie_reset_lbms(struct pci_dev *port) {}
++static inline int pcie_set_target_speed_no_retrain(struct pci_dev *port,
++						   enum pci_bus_speed speed_req)
++{
++	return -EOPNOTSUPP;
++}
+ #endif
+ 
+ struct pci_dev_reset_methods {
+diff --git a/drivers/pci/pcie/bwctrl.c b/drivers/pci/pcie/bwctrl.c
+index c4c8d26..b230556 100644
+--- a/drivers/pci/pcie/bwctrl.c
++++ b/drivers/pci/pcie/bwctrl.c
+@@ -108,7 +108,8 @@ static u16 pcie_bwctrl_select_speed(struct pci_dev *port, enum pci_bus_speed spe
+ 	return pcie_supported_speeds2target_speed(supported_speeds & desired_speeds);
+ }
+ 
+-static int pcie_bwctrl_change_speed(struct pci_dev *port, u16 target_speed, bool use_lt)
++static int pcie_bwctrl_change_speed(struct pci_dev *port, u16 target_speed,
++				    bool use_lt, bool retrain)
+ {
+ 	int ret;
+ 
+@@ -117,28 +118,15 @@ static int pcie_bwctrl_change_speed(struct pci_dev *port, u16 target_speed, bool
+ 	if (ret != PCIBIOS_SUCCESSFUL)
+ 		return pcibios_err_to_errno(ret);
+ 
++	if (!retrain)
++		return 0;
++
+ 	return pcie_retrain_link(port, use_lt);
+ }
+ 
+-/**
+- * pcie_set_target_speed - Set downstream Link Speed for PCIe Port
+- * @port:	PCIe Port
+- * @speed_req:	Requested PCIe Link Speed
+- * @use_lt:	Wait for the LT or DLLLA bit to detect the end of link training
+- *
+- * Attempt to set PCIe Port Link Speed to @speed_req. @speed_req may be
+- * adjusted downwards to the best speed supported by both the Port and PCIe
+- * Device underneath it.
+- *
+- * Return:
+- * * 0		- on success
+- * * -EINVAL	- @speed_req is not a PCIe Link Speed
+- * * -ENODEV	- @port is not controllable
+- * * -ETIMEDOUT	- changing Link Speed took too long
+- * * -EAGAIN	- Link Speed was changed but @speed_req was not achieved
+- */
+-int pcie_set_target_speed(struct pci_dev *port, enum pci_bus_speed speed_req,
+-			  bool use_lt)
++static int __pcie_set_target_speed(struct pci_dev *port,
++				   enum pci_bus_speed speed_req,
++				   bool use_lt, bool retrain)
+ {
+ 	struct pci_bus *bus = port->subordinate;
+ 	u16 target_speed;
+@@ -162,7 +150,8 @@ int pcie_set_target_speed(struct pci_dev *port, enum pci_bus_speed speed_req,
+ 		if (data)
+ 			mutex_lock(&data->set_speed_mutex);
+ 
+-		ret = pcie_bwctrl_change_speed(port, target_speed, use_lt);
++		ret = pcie_bwctrl_change_speed(port, target_speed, use_lt,
++					       retrain);
+ 
+ 		if (data)
+ 			mutex_unlock(&data->set_speed_mutex);
+@@ -179,6 +168,51 @@ int pcie_set_target_speed(struct pci_dev *port, enum pci_bus_speed speed_req,
+ 	return ret;
+ }
+ 
++/**
++ * pcie_set_target_speed - Set downstream Link Speed for PCIe Port
++ * @port:	PCIe Port
++ * @speed_req:	Requested PCIe Link Speed
++ * @use_lt:	Wait for the LT or DLLLA bit to detect the end of link training
++ *
++ * Attempt to set PCIe Port Link Speed to @speed_req. @speed_req may be
++ * adjusted downwards to the best speed supported by both the Port and PCIe
++ * Device underneath it.
++ *
++ * Return:
++ * * 0		- on success
++ * * -EINVAL	- @speed_req is not a PCIe Link Speed
++ * * -ENODEV	- @port is not controllable
++ * * -ETIMEDOUT	- changing Link Speed took too long
++ * * -EAGAIN	- Link Speed was changed but @speed_req was not achieved
++ */
++int pcie_set_target_speed(struct pci_dev *port, enum pci_bus_speed speed_req,
++			  bool use_lt)
++{
++	return __pcie_set_target_speed(port, speed_req, use_lt, true);
++}
++
++/**
++ * pcie_set_target_speed_no_retrain - Program Target Link Speed, skip retraining
++ * @port:	PCIe Port
++ * @speed_req:	Requested PCIe Link Speed
++ *
++ * Program the Target Link Speed of @port as pcie_set_target_speed() does, but
++ * do not request Link retraining afterwards.  Intended for Ports with no Link
++ * partner, where retraining cannot succeed and each attempt costs
++ * PCIE_LINK_RETRAIN_TIMEOUT_MS.  The Link trains at the programmed speed once
++ * a Device appears.
++ *
++ * Return:
++ * * 0		- on success
++ * * -EINVAL	- @speed_req is not a PCIe Link Speed
++ * * -ENODEV	- @port is not controllable
++ */
++int pcie_set_target_speed_no_retrain(struct pci_dev *port,
++				     enum pci_bus_speed speed_req)
++{
++	return __pcie_set_target_speed(port, speed_req, false, false);
++}
++
+ static void pcie_bwnotif_enable(struct pcie_device *srv)
+ {
+ 	struct pci_dev *port = srv->port;
+diff --git a/drivers/pci/quirks.c b/drivers/pci/quirks.c
+index b09f27f..efb6d2d 100644
+--- a/drivers/pci/quirks.c
++++ b/drivers/pci/quirks.c
+@@ -115,9 +115,24 @@ int pcie_failed_link_retrain(struct pci_dev *dev)
+ 			goto err;
+ 	}
+ 
++	pcie_capability_read_word(dev, PCI_EXP_LNKSTA, &lnksta);
+ 	pcie_capability_read_word(dev, PCI_EXP_LNKCTL2, &lnkctl2);
+ 	if ((lnkctl2 & PCI_EXP_LNKCTL2_TLS) == PCI_EXP_LNKCTL2_TLS_2_5GT) {
+ 		pci_info(dev, "removing 2.5GT/s downstream link speed restriction\n");
++
++		/*
++		 * With no Link partner the retraining can never complete and
++		 * each attempt costs PCIE_LINK_RETRAIN_TIMEOUT_MS.  Program the
++		 * Target Link Speed and skip the retraining; the Link trains at
++		 * that speed once a Device shows up.
++		 */
++		if (!(lnksta & PCI_EXP_LNKSTA_DLLLA)) {
++			ret = pcie_set_target_speed_no_retrain(dev, speed_cap);
++			if (!ret)
++				ret = -ENOTTY;	/* nothing was retrained */
++			return ret;
++		}
++
+ 		ret = pcie_set_target_speed(dev, speed_cap, false);
+ 		if (ret)
+ 			goto err;

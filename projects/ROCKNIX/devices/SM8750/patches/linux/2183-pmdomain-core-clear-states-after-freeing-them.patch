@@ -1,0 +1,50 @@
+From: Anfernee Cao <anferneemelokc5@gmail.com>
+Subject: pmdomain: core: clear states after freeing them
+Link: https://lore.kernel.org/r/179259111932.19580.13027750156272888992@gmail.com
+
+genpd_free_data() frees the genpd power states through the ->free_states()
+callback, but leaves genpd->states and genpd->state_count pointing at the
+freed memory.
+
+Providers that allocate the states themselves hand them over to genpd by
+setting ->free_states().  When they fail after genpd has taken over, they
+still run their own free helper, as psci_pd_init() and the RISC-V SBI idle
+driver do:
+
+    remove_pd:
+            pm_genpd_remove(pd);  /* frees states via ->free_states() */
+    ...
+            dt_idle_pd_free(pd);  /* frees them again */
+
+The second call dereferences the freed states array and frees it again,
+causing a use-after-free and a double free.
+
+Clear genpd->states and genpd->state_count once the states have been
+freed, so that a later free helper becomes a no-op.
+
+This issue was found by manual code inspection.
+
+Fixes: 9d976d6721df ("cpuidle: Factor-out power domain related code from PSCI domain driver")
+Cc: stable@vger.kernel.org # v5.18+
+Signed-off-by: Anfernee Cao <anferneemelokc5@gmail.com>
+---
+ drivers/pmdomain/core.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+---
+diff --git a/drivers/pmdomain/core.c b/drivers/pmdomain/core.c
+index 052ec478dfcc..12db69f53aee 100644
+--- a/drivers/pmdomain/core.c
++++ b/drivers/pmdomain/core.c
+@@ -2353,8 +2353,11 @@ static void genpd_free_data(struct generic_pm_domain *genpd)
+ 		ida_free(&genpd_ida, genpd->device_id);
+ 	if (genpd_is_cpu_domain(genpd))
+ 		free_cpumask_var(genpd->cpus);
+-	if (genpd->free_states)
++	if (genpd->free_states) {
+ 		genpd->free_states(genpd->states, genpd->state_count);
++		genpd->states = NULL;
++		genpd->state_count = 0;
++	}
+ 	kfree(genpd->gd);
+ }
+ 

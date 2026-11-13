@@ -1,0 +1,54 @@
+From: Jun Nie <jun.nie@linaro.org>
+Subject: drm/msm/dpu: delete timeout timer when encoder is not busy
+Link: https://lore.kernel.org/r/20260903143004.1026181-1-jun.nie@linaro.org
+
+There is a spurious timeout error message under the following reproduction
+steps:
+1. Run "modetest -M msm -r" and press CTRL+Z to pause it.
+2. Run "while true; do rtcwake -m mem -s 3 -v; sleep 2; done"
+
+Resulting error message:
+[  124.018206] [drm:dpu_encoder_virt_atomic_disable:1425] [dpu error]enc35 timeout pending
+
+dpu_crtc_commit_kickoff() calls dpu_encoder_kickoff() to set frame busy
+bits, and then arms the frame done timer. If the frame done IRQ fires
+between these two steps, the IRQ handler clears the busy bits before the
+timer is armed. As a result, the timer runs with busy bits already cleared
+and is never cancelled by subsequent IRQ handlers, leading to a false
+timeout warning.
+
+Delete the pending timer when all busy bits are cleared in the frame done
+callback to prevent false timeouts.
+
+Fixes: 95bbde1d0d07 ("drm/msm/dpu: Start frame done timer after encoder kickoff")
+Signed-off-by: Jun Nie <jun.nie@linaro.org>
+---
+ drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+---
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c
+index 1f20695f81e3..d83d38797331 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c
+@@ -1573,6 +1573,21 @@ void dpu_encoder_frame_done_callback(
+ 			| DPU_ENCODER_FRAME_EVENT_PANEL_DEAD)) {
+ 
+ 		if (!dpu_enc->frame_busy_mask[0]) {
++			/*
++			 * dpu_crtc_commit_kickoff calls dpu_encoder_kickoff to
++			 * mark busy bits, starts the framedone timer next.
++			 * It is possibile that irq happens between the 2
++			 * operations. Thus timer is running with busy bits
++			 * cleared by irq handler and timer will not be deleted
++			 * anymore. Then false timeout introduces unnecessary
++			 * confusion and visual defect.
++			 * delete the timer here to fix it.
++			 */
++			if (atomic_read(&dpu_enc->frame_done_timeout_ms)) {
++				atomic_set(&dpu_enc->frame_done_timeout_ms, 0);
++				timer_delete(&dpu_enc->frame_done_timer);
++			}
++
+ 			/**
+ 			 * suppress frame_done without waiter,
+ 			 * likely autorefresh
