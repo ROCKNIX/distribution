@@ -1,0 +1,58 @@
+From ae9c8df1ffb84560ac01cbdc26cfb19027f4d25f Mon Sep 17 00:00:00 2001
+From: Binbin Deng <18983559317@163.com>
+Date: Mon, 19 Oct 2026 16:17:11 +0800
+Subject: [PATCH] Bluetooth: hci_core: Initialize link key before publication
+
+hci_add_link_key() allocates a new link key with kzalloc(), inserts it into
+hdev->link_keys with list_add_rcu(), and only then initializes its address,
+value, type, and PIN length.  RCU readers such as hci_find_link_key()
+and the debugfs link_keys_show() do not take hci_dev_lock, so they can
+traverse the new entry during that initialization window and observe
+a zero or partially initialized key.
+
+This can be triggered by racing a link-key update with another CPU looking
+up or dumping keys.  In particular, userspace can issue
+MGMT_OP_LOAD_LINK_KEYS while another process reads the corresponding
+debugfs file.
+
+Complete all fields of a newly allocated key before publishing it with
+list_add_rcu().  Existing keys remain visible and keep their current
+in-place update behavior.
+
+Found during a static-analysis-assisted audit: candidate sites were
+surfaced by a Coccinelle rule, and the reader/writer paths were
+confirmed by LLM-assisted (GLM-5.3) code inspection.  The issue was
+not observed at runtime; it is identified by code inspection only.
+
+Fixes: 0378b5977013 ("Bluetooth: Convert link keys list to use RCU")
+Signed-off-by: Binbin Deng <18983559317@163.com>
+Signed-off-by: Luiz Augusto von Dentz <luiz.von.dentz@intel.com>
+---
+ net/bluetooth/hci_core.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/net/bluetooth/hci_core.c b/net/bluetooth/hci_core.c
+index 65373e4aea..ec5ef5811d 100644
+--- a/net/bluetooth/hci_core.c
++++ b/net/bluetooth/hci_core.c
+@@ -1252,7 +1252,6 @@ struct link_key *hci_add_link_key(struct hci_dev *hdev, struct hci_conn *conn,
+ 		key = kzalloc_obj(*key);
+ 		if (!key)
+ 			return NULL;
+-		list_add_rcu(&key->list, &hdev->link_keys);
+ 	}
+ 
+ 	BT_DBG("%s key for %pMR type %u", hdev->name, bdaddr, type);
+@@ -1276,6 +1275,9 @@ struct link_key *hci_add_link_key(struct hci_dev *hdev, struct hci_conn *conn,
+ 	else
+ 		key->type = type;
+ 
++	if (!old_key)
++		list_add_rcu(&key->list, &hdev->link_keys);
++
+ 	if (persistent)
+ 		*persistent = hci_persistent_key(hdev, conn, type,
+ 						 old_key_type);
+-- 
+2.56.0
+

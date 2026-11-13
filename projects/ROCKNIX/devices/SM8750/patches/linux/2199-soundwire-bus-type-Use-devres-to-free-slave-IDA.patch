@@ -1,0 +1,68 @@
+From bb22b81339cb97d2eb7ec666bf03f985fe64d6cb Mon Sep 17 00:00:00 2001
+From: Richard Fitzgerald <rf@opensource.cirrus.com>
+Date: Mon, 31 Aug 2026 12:29:39 +0100
+Subject: [PATCH] soundwire: bus_type: Use devres to free slave IDA
+
+Create a devres cleanup action to call ida_free(). This ensures that it
+is freed after anything that is cleaned up by devres and might have been
+using the allocated ID. It also avoids mixing devres and manual cleanup
+during sdw_bus_probe().
+
+Signed-off-by: Richard Fitzgerald <rf@opensource.cirrus.com>
+Reviewed-by: Charles Keepax <ckeepax@opensource.cirrus.com>
+Link: https://patch.msgid.link/20260831112939.126708-1-rf@opensource.cirrus.com
+Signed-off-by: Vinod Koul <vkoul@kernel.org>
+---
+ drivers/soundwire/bus_type.c | 16 +++++++++++-----
+ 1 file changed, 11 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/soundwire/bus_type.c b/drivers/soundwire/bus_type.c
+index d61a97c5b4..fea15107cd 100644
+--- a/drivers/soundwire/bus_type.c
++++ b/drivers/soundwire/bus_type.c
+@@ -71,6 +71,13 @@ int sdw_slave_uevent(const struct device *dev, struct kobj_uevent_env *env)
+ 	return 0;
+ }
+ 
++static void sdw_slave_ida_free(void *data)
++{
++	struct sdw_slave *slave = data;
++
++	ida_free(&slave->bus->slave_ida, slave->index);
++}
++
+ static int sdw_bus_probe(struct device *dev)
+ {
+ 	struct sdw_slave *slave = dev_to_sdw_dev(dev);
+@@ -104,15 +111,16 @@ static int sdw_bus_probe(struct device *dev)
+ 		return ret;
+ 	}
+ 	slave->index = ret;
++	ret = devm_add_action_or_reset(dev, sdw_slave_ida_free, slave);
++	if (ret)
++		return ret;
+ 
+ 	/* Create IRQ mapping now so the driver can get it in probe() */
+ 	sdw_irq_create_mapping(slave);
+ 
+ 	ret = drv->probe(slave, id);
+-	if (ret) {
+-		ida_free(&slave->bus->slave_ida, slave->index);
++	if (ret)
+ 		return ret;
+-	}
+ 
+ 	mutex_lock(&slave->sdw_dev_lock);
+ 
+@@ -170,8 +178,6 @@ static void sdw_bus_remove(struct device *dev)
+ 
+ 	if (drv->remove)
+ 		drv->remove(slave);
+-
+-	ida_free(&slave->bus->slave_ida, slave->index);
+ }
+ 
+ static void sdw_bus_shutdown(struct device *dev)
+-- 
+2.56.0
+
