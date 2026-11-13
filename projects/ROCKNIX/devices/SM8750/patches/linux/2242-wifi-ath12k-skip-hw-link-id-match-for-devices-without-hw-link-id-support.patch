@@ -1,0 +1,183 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Baochen Qiang <baochen.qiang@oss.qualcomm.com>
+Date: Mon, 02 Nov 2026 14:38:11 +0800
+Subject: [PATCH] wifi: ath12k: skip hw link id match for devices without hw link id support
+
+ath12k_dp_link_peer_assign()/unassign() maintain an address-keyed
+rhashtable of link peers. To handle the split PHY and roaming scenario,
+where two pdevs share the same rhashtable and an address may still be
+present under a different hw link, both functions compare the stored
+hw_link_id against the one being assigned to decide whether the existing
+entry belongs to this link before adding or removing it.
+
+hw_link_id is only used by QCN9274, IPQ5332 and IPQ5424; WCN7850 and
+QCC2072 do not use it and rely on the logical link id instead. Also such
+devices are single pdev and never hit the split PHY/roaming case, so the
+disambiguation is unnecessary; keeping it would also break the logical
+link id support added in subsequent patches.
+
+Add a support_hw_link_id hardware parameter and, for devices that do not
+support hw_link_id, add or remove the rhashtable entry directly. Devices
+supporting hw_link_id are not affected.
+
+Tested-on: WCN7850 hw2.0 PCI WLAN.HMT.1.1.c7-00108-QCAHMTSWPL_V1.0_V2.0_SILICONZ_UPSTREAM-3
+Tested-on: QCC2072 hw1.0 PCI WLAN.COL.1.0.c2-00068-QCACOLSWPL_V1_TO_SILICONZ-1
+
+Signed-off-by: Baochen Qiang <baochen.qiang@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261102-ath12k-logical-link-id-v4-2-f4c7807c299b@oss.qualcomm.com
+[ROCKNIX: also set support_hw_link_id = false for WCN7860, which uses the QCC2072 data path]
+---
+ drivers/net/wireless/ath/ath12k/dp_peer.c  | 48 +++++++++++++++++-------------
+ drivers/net/wireless/ath/ath12k/hw.h       |  2 ++
+ drivers/net/wireless/ath/ath12k/wifi7/hw.c | 14 +++++++++
+ 3 files changed, 44 insertions(+), 20 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/dp_peer.c b/drivers/net/wireless/ath/ath12k/dp_peer.c
+index bb5341b42..67c27af16 100644
+--- a/drivers/net/wireless/ath/ath12k/dp_peer.c
++++ b/drivers/net/wireless/ath/ath12k/dp_peer.c
+@@ -587,25 +587,29 @@ int ath12k_dp_link_peer_assign(struct ath12k_dp *dp, struct ath12k_dp_hw *dp_hw,
+ 
+ 	spin_unlock_bh(&dp_hw->peer_lock);
+ 
+-	/*
+-	 * In case of Split PHY and roaming scenario, pdev idx
+-	 * might differ but both the pdev will share same rhash
+-	 * table. In that case update the rhash table if link_peer is
+-	 * already present
+-	 */
+-	temp_peer = ath12k_dp_link_peer_find_by_addr(dp, addr);
+-	if (temp_peer && temp_peer->hw_link_id != hw_link_id)
+-		ath12k_dp_link_peer_rhash_delete(dp, temp_peer);
+-
+-	ret = ath12k_dp_link_peer_rhash_add(dp, peer);
+-	if (ret) {
++	if (dp->hw_params->support_hw_link_id) {
+ 		/*
+-		 * If new entry addition failed, add back old entry
+-		 * If old entry addition also fails, then nothing
+-		 * can be done, simply proceed
++		 * In case of Split PHY and roaming scenario, pdev idx
++		 * might differ but both the pdev will share same rhash
++		 * table. In that case update the rhash table if link_peer is
++		 * already present
+ 		 */
+-		if (temp_peer)
+-			ath12k_dp_link_peer_rhash_add(dp, temp_peer);
++		temp_peer = ath12k_dp_link_peer_find_by_addr(dp, addr);
++		if (temp_peer && temp_peer->hw_link_id != hw_link_id)
++			ath12k_dp_link_peer_rhash_delete(dp, temp_peer);
++
++		ret = ath12k_dp_link_peer_rhash_add(dp, peer);
++		if (ret) {
++			/*
++			 * If new entry addition failed, add back old entry
++			 * If old entry addition also fails, then nothing
++			 * can be done, simply proceed
++			 */
++			if (temp_peer)
++				ath12k_dp_link_peer_rhash_add(dp, temp_peer);
++		}
++	} else {
++		ret = ath12k_dp_link_peer_rhash_add(dp, peer);
+ 	}
+ 
+ 	spin_unlock_bh(&dp->dp_lock);
+@@ -651,10 +655,14 @@ void ath12k_dp_link_peer_unassign(struct ath12k_dp *dp, struct ath12k_dp_hw *dp_
+ 
+ 	spin_unlock_bh(&dp_hw->peer_lock);
+ 
+-	/* To handle roaming and split phy scenario */
+-	temp_peer = ath12k_dp_link_peer_find_by_addr(dp, addr);
+-	if (temp_peer && temp_peer->hw_link_id == hw_link_id)
++	if (dp->hw_params->support_hw_link_id) {
++		/* To handle roaming and split phy scenario */
++		temp_peer = ath12k_dp_link_peer_find_by_addr(dp, addr);
++		if (temp_peer && temp_peer->hw_link_id == hw_link_id)
++			ath12k_dp_link_peer_rhash_delete(dp, peer);
++	} else {
+ 		ath12k_dp_link_peer_rhash_delete(dp, peer);
++	}
+ 
+ 	spin_unlock_bh(&dp->dp_lock);
+ 
+diff --git a/drivers/net/wireless/ath/ath12k/hw.h b/drivers/net/wireless/ath/ath12k/hw.h
+index 35a92415f..94f3728b9 100644
+--- a/drivers/net/wireless/ath/ath12k/hw.h
++++ b/drivers/net/wireless/ath/ath12k/hw.h
+@@ -239,6 +239,8 @@ struct ath12k_hw_params {
+ 	} client;
+ 
+ 	bool host_alloc_ml_id;
++
++	bool support_hw_link_id;
+ };
+ 
+ struct ath12k_hw_ops {
+diff --git a/drivers/net/wireless/ath/ath12k/wifi7/hw.c b/drivers/net/wireless/ath/ath12k/wifi7/hw.c
+index ad85dd85f..c5d530fc5 100644
+--- a/drivers/net/wireless/ath/ath12k/wifi7/hw.c
++++ b/drivers/net/wireless/ath/ath12k/wifi7/hw.c
+@@ -445,6 +445,8 @@ static const struct ath12k_hw_params ath12k_wifi7_hw_params[] = {
+ 		},
+ 
+ 		.host_alloc_ml_id = true,
++
++		.support_hw_link_id = true,
+ 	},
+ 	{
+ 		.name = "wcn7850 hw2.0",
+@@ -539,6 +541,8 @@ static const struct ath12k_hw_params ath12k_wifi7_hw_params[] = {
+ 		},
+ 
+ 		.host_alloc_ml_id = false,
++
++		.support_hw_link_id = false,
+ 	},
+ 	{
+ 		.name = "qcn9274 hw2.0",
+@@ -629,6 +633,8 @@ static const struct ath12k_hw_params ath12k_wifi7_hw_params[] = {
+ 		},
+ 
+ 		.host_alloc_ml_id = true,
++
++		.support_hw_link_id = true,
+ 	},
+ 	{
+ 		.name = "ipq5332 hw1.0",
+@@ -712,6 +718,8 @@ static const struct ath12k_hw_params ath12k_wifi7_hw_params[] = {
+ 		},
+ 
+ 		.host_alloc_ml_id = true,
++
++		.support_hw_link_id = true,
+ 	},
+ 	{
+ 		.name = "wcn7860 hw2.0",
+@@ -799,6 +807,8 @@ static const struct ath12k_hw_params ath12k_wifi7_hw_params[] = {
+ 		.current_cc_support = true,
+ 
+ 		.dp_primary_link_only = false,
++
++		.support_hw_link_id = false,
+ 	},
+ 	{
+ 		.name = "qcc2072 hw1.0",
+@@ -894,6 +904,8 @@ static const struct ath12k_hw_params ath12k_wifi7_hw_params[] = {
+ 		},
+ 
+ 		.host_alloc_ml_id = false,
++
++		.support_hw_link_id = false,
+ 	},
+ 	{
+ 		.name = "ipq5424 hw1.0",
+@@ -981,6 +993,8 @@ static const struct ath12k_hw_params ath12k_wifi7_hw_params[] = {
+ 		},
+ 
+ 		.host_alloc_ml_id = true,
++
++		.support_hw_link_id = true,
+ 	},
+ };
+ 
