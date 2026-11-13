@@ -1,0 +1,128 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Baochen Qiang <baochen.qiang@oss.qualcomm.com>
+Date: Mon, 02 Nov 2026 14:38:15 +0800
+Subject: [PATCH] wifi: ath12k: derive device id without drv_link_id for single device group
+
+On the RX path several functions derive the device id from the
+drv_link_id via ag->hw_links[drv_link_id].device_id. This does not work
+for WCN7850/QCC2072, which use a logical link id rather than a
+hw_link_id.
+
+For these devices the whole hardware group contains only a single device,
+so the device id is unambiguous and there is no need to look it up from
+the drv_link_id. Add ath12k_dp_drv_link_id_to_device_id(), which returns
+the device id of the only device when the group has a single device,
+and falls back to the drv_link_id based lookup otherwise. Use it in the
+RX path in place of the direct hw_links[] dereference.
+
+Tested-on: WCN7850 hw2.0 PCI WLAN.HMT.1.1.c7-00108-QCAHMTSWPL_V1.0_V2.0_SILICONZ_UPSTREAM-3
+Tested-on: QCC2072 hw1.0 PCI WLAN.COL.1.0.c2-00068-QCACOLSWPL_V1_TO_SILICONZ-1
+
+Signed-off-by: Baochen Qiang <baochen.qiang@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261102-ath12k-logical-link-id-v4-6-f4c7807c299b@oss.qualcomm.com
+---
+ drivers/net/wireless/ath/ath12k/dp.c          | 18 ++++++++++++++++++
+ drivers/net/wireless/ath/ath12k/dp.h          |  1 +
+ drivers/net/wireless/ath/ath12k/wifi7/dp_rx.c | 13 ++++++-------
+ 3 files changed, 25 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/dp.c b/drivers/net/wireless/ath/ath12k/dp.c
+index bca719b30..dbc7398be 100644
+--- a/drivers/net/wireless/ath/ath12k/dp.c
++++ b/drivers/net/wireless/ath/ath12k/dp.c
+@@ -934,6 +934,24 @@ static void ath12k_dp_update_vdev_search(struct ath12k_link_vif *arvif)
+ 	}
+ }
+ 
++u8 ath12k_dp_drv_link_id_to_device_id(struct ath12k_hw_group *ag, u8 drv_link_id)
++{
++	/*
++	 * For a single device group there is only one device, so its
++	 * device id is returned directly without consulting the drv_link_id.
++	 * Otherwise, derive the device id from the drv_link_id.
++	 *
++	 * This is general and works for all chips, but particularly useful for
++	 * WCN7850/QCC2072, which cannot rely on the drv_link_id to look up the
++	 * device id.
++	 */
++	if (ag->num_devices == 1)
++		return ag->ab[0]->device_id;
++
++	return ag->hw_links[drv_link_id].device_id;
++}
++EXPORT_SYMBOL(ath12k_dp_drv_link_id_to_device_id);
++
+ void ath12k_dp_vdev_tx_attach(struct ath12k *ar, struct ath12k_link_vif *arvif)
+ {
+ 	struct ath12k_base *ab = ar->ab;
+diff --git a/drivers/net/wireless/ath/ath12k/dp.h b/drivers/net/wireless/ath/ath12k/dp.h
+index bef0f2ba0..35501c7a2 100644
+--- a/drivers/net/wireless/ath/ath12k/dp.h
++++ b/drivers/net/wireless/ath/ath12k/dp.h
+@@ -680,6 +680,7 @@ ath12k_dp_to_pdev_dp(struct ath12k_dp *dp, u8 pdev_idx)
+ 	return rcu_dereference(dp->dp_pdevs[pdev_idx]);
+ }
+ 
++u8 ath12k_dp_drv_link_id_to_device_id(struct ath12k_hw_group *ag, u8 drv_link_id);
+ void ath12k_dp_vdev_tx_attach(struct ath12k *ar, struct ath12k_link_vif *arvif);
+ void ath12k_dp_partner_cc_init(struct ath12k_base *ab);
+ int ath12k_dp_pdev_alloc(struct ath12k_base *ab);
+diff --git a/drivers/net/wireless/ath/ath12k/wifi7/dp_rx.c b/drivers/net/wireless/ath/ath12k/wifi7/dp_rx.c
+index 999b7a3f4..5181c042e 100644
+--- a/drivers/net/wireless/ath/ath12k/wifi7/dp_rx.c
++++ b/drivers/net/wireless/ath/ath12k/wifi7/dp_rx.c
+@@ -620,7 +620,7 @@ ath12k_wifi7_dp_rx_process_received_packets(struct ath12k_dp *dp,
+ 	struct ath12k_base *partner_ab;
+ 	struct hal_rx_desc_data rx_info;
+ 	struct ath12k_dp *partner_dp;
+-	u8 hw_link_id, pdev_idx;
++	u8 hw_link_id, pdev_idx, device_id;
+ 	int ret;
+ 
+ 	if (skb_queue_empty(msdu_list))
+@@ -634,8 +634,8 @@ ath12k_wifi7_dp_rx_process_received_packets(struct ath12k_dp *dp,
+ 	while ((msdu = __skb_dequeue(msdu_list))) {
+ 		rxcb = ATH12K_SKB_RXCB(msdu);
+ 		hw_link_id = rxcb->drv_link_id;
+-		partner_dp = ath12k_dp_hw_grp_to_dp(dp_hw_grp,
+-						    hw_links[hw_link_id].device_id);
++		device_id = ath12k_dp_drv_link_id_to_device_id(ag, hw_link_id);
++		partner_dp = ath12k_dp_hw_grp_to_dp(dp_hw_grp, device_id);
+ 		pdev_idx = ath12k_hw_mac_id_to_pdev_id(partner_dp->hw_params,
+ 						       hw_links[hw_link_id].pdev_idx);
+ 		partner_ab = partner_dp->ab;
+@@ -678,7 +678,6 @@ int ath12k_wifi7_dp_rx_process(struct ath12k_dp *dp, int ring_id,
+ 	struct ath12k_hal *hal = dp->hal;
+ 	struct ath12k_dp_hw_group *dp_hw_grp = &ag->dp_hw_grp;
+ 	struct list_head rx_desc_used_list[ATH12K_MAX_DEVICES];
+-	struct ath12k_hw_link *hw_links = ag->hw_links;
+ 	int num_buffs_reaped[ATH12K_MAX_DEVICES] = {};
+ 	struct ath12k_rx_desc_info *desc_info;
+ 	struct dp_rxdma_ring *rx_ring = &dp->rx_refill_buf_ring;
+@@ -730,7 +729,7 @@ int ath12k_wifi7_dp_rx_process(struct ath12k_dp *dp, int ring_id,
+ 			continue;
+ 		}
+ 
+-		device_id = hw_links[hw_link_id].device_id;
++		device_id = ath12k_dp_drv_link_id_to_device_id(ag, hw_link_id);
+ 		partner_dp = ath12k_dp_hw_grp_to_dp(dp_hw_grp, device_id);
+ 		if (unlikely(!partner_dp)) {
+ 			if (desc_info->skb) {
+@@ -1481,7 +1480,7 @@ int ath12k_wifi7_dp_rx_process_err(struct ath12k_dp *dp, struct napi_struct *nap
+ 			continue;
+ 		}
+ 
+-		device_id = hw_links[hw_link_id].device_id;
++		device_id = ath12k_dp_drv_link_id_to_device_id(ag, hw_link_id);
+ 		partner_dp = ath12k_dp_hw_grp_to_dp(dp_hw_grp, device_id);
+ 
+ 		/* Below case is added to handle data packet from un-associated clients.
+@@ -2082,7 +2081,7 @@ int ath12k_wifi7_dp_rx_process_wbm_err(struct ath12k_dp *dp,
+ 		rxcb = ATH12K_SKB_RXCB(msdu);
+ 		hw_link_id = rxcb->drv_link_id;
+ 
+-		device_id = hw_links[hw_link_id].device_id;
++		device_id = ath12k_dp_drv_link_id_to_device_id(ag, hw_link_id);
+ 		partner_dp = ath12k_dp_hw_grp_to_dp(dp_hw_grp, device_id);
+ 		if (unlikely(!partner_dp)) {
+ 			ath12k_dbg(ab, ATH12K_DBG_DATA,

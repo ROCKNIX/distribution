@@ -1,0 +1,88 @@
+From 737139f4157d302292a6b937d96922879ecabfa3 Mon Sep 17 00:00:00 2001
+From: Valentin Kindschi <valentin.kindschi@fiveco.ch>
+Date: Tue, 20 Oct 2026 12:51:49 +0200
+Subject: [PATCH] Bluetooth: hci_sync: re-enable legacy advertising on resume
+
+hci_resume_advertising_sync() never re-enables advertising on a
+controller without extended advertising.
+
+It restores HCI_ADVERTISING from advertising_old_state, then calls
+hci_schedule_adv_instance_sync(), which starts with:
+
+  if (hci_dev_test_flag(hdev, HCI_ADVERTISING) && !ext_adv_capable(hdev))
+          return -EPERM;
+
+The flag it tests was set a few lines earlier by the resume itself, so
+the call returns -EPERM without sending anything. The return value is
+discarded by every caller, so the failure is silent: advertising_paused
+is cleared, HCI_ADVERTISING is set, and the controller is not
+advertising.
+
+Observed on a BCM43455 (no extended advertising) after an active scan:
+btmon shows the pause disabling advertising and no re-enable in the ten
+seconds that follow, the device does not appear in another controller's
+scan, and btmgmt info still reports "advertising" in current settings.
+
+Enable instance 0x00 directly in that case, the way reenable_adv_sync()
+already does for the same situation. Instances continue to go through
+hci_schedule_adv_instance_sync() so the software rotation loop is
+rearmed.
+
+This affects every caller of hci_resume_advertising_sync(), not only the
+scan path: address resolution changes, accept list updates, discovery
+stop, suspend/resume and the end of an LE connection attempt all leave
+advertising disabled on such a controller today.
+
+The resume does nothing when the controller is already advertising, as
+it is after directed advertising was started for a peripheral
+connection, so it does not replace that advertising.
+
+err is initialised because the extended branch leaves it unset when
+adv_instances is empty and HCI_LE_ADV_0 is clear.
+
+Fixes: ad383c2c65a5 ("Bluetooth: hci_sync: Enable advertising when LL privacy is enabled")
+Cc: stable@vger.kernel.org
+Assisted-by: Claude:claude-opus-5.5 btmon
+Signed-off-by: Valentin Kindschi <valentin.kindschi@fiveco.ch>
+Signed-off-by: Luiz Augusto von Dentz <luiz.von.dentz@intel.com>
+---
+ net/bluetooth/hci_sync.c | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/net/bluetooth/hci_sync.c b/net/bluetooth/hci_sync.c
+index 7ac26daba9..c2f2a0c0e7 100644
+--- a/net/bluetooth/hci_sync.c
++++ b/net/bluetooth/hci_sync.c
+@@ -2733,7 +2733,7 @@ static int hci_pause_advertising_sync(struct hci_dev *hdev)
+ static int hci_resume_advertising_sync(struct hci_dev *hdev)
+ {
+ 	struct adv_info *adv, *tmp;
+-	int err;
++	int err = 0;
+ 
+ 	/* If advertising has not been paused there is nothing  to do. */
+ 	if (!hdev->advertising_paused)
+@@ -2766,13 +2766,19 @@ static int hci_resume_advertising_sync(struct hci_dev *hdev)
+ 		 */
+ 		if (hci_dev_test_and_clear_flag(hdev, HCI_LE_ADV_0))
+ 			err = hci_enable_ext_advertising_sync(hdev, 0x00);
+-	} else {
++	} else if (hdev->cur_adv_instance) {
+ 		/* Schedule for most recent instance to be restarted and begin
+ 		 * the software rotation loop
+ 		 */
+ 		err = hci_schedule_adv_instance_sync(hdev,
+ 						     hdev->cur_adv_instance,
+ 						     true);
++	} else if (hci_dev_test_flag(hdev, HCI_ADVERTISING) &&
++		   !hci_dev_test_flag(hdev, HCI_LE_ADV)) {
++		/* hci_schedule_adv_instance_sync() rejects instance 0x00 while
++		 * HCI_ADVERTISING is set, so enable it directly.
++		 */
++		err = hci_start_adv_sync(hdev, 0x00);
+ 	}
+ 
+ 	hdev->advertising_paused = false;
+-- 
+2.56.0
+

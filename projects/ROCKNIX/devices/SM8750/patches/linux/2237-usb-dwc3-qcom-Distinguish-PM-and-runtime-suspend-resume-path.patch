@@ -1,0 +1,121 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Faisal Hassan <faisal.hassan@oss.qualcomm.com>
+Date: Thu, 29 Oct 2026 00:29:32 +0530
+Subject: [PATCH] usb: dwc3: qcom: Distinguish PM and runtime suspend/resume
+ paths
+
+The dwc3_qcom_suspend() and dwc3_qcom_resume() functions
+handle both system PM and runtime PM paths but cannot
+differentiate between them, preventing distinct power
+management strategies.
+
+Refactor suspend/resume functions to accept pm_message_t
+instead of boolean wakeup flags. Use PMSG_IS_AUTO()
+to identify runtime PM (PMSG_AUTO_SUSPEND/RESUME) versus
+system PM (PMSG_SUSPEND/RESUME) paths.
+
+Preserve existing wakeup behavior: always enable wakeup
+for runtime suspend, check device_may_wakeup() for system
+suspend.
+
+Follow dwc3/core.c pattern to enable future per-path
+strategies like differentiated power states.
+
+Co-developed-by: Sriram Dash <sriram.dash@oss.qualcomm.com>
+Signed-off-by: Sriram Dash <sriram.dash@oss.qualcomm.com>
+Signed-off-by: Faisal Hassan <faisal.hassan@oss.qualcomm.com>
+Acked-by: Thinh Nguyen <Thinh.Nguyen@synopsys.com>
+Reviewed-by: Krishna Kurapati <krishna.kurapati@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/e39a38d334b5276d8a47b917b1f0fcd0a32bcfe9.1793212717.git.faisal.hassan@oss.qualcomm.com
+---
+ drivers/usb/dwc3/dwc3-qcom.c | 24 ++++++++++++++++--------
+ 1 file changed, 16 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/usb/dwc3/dwc3-qcom.c b/drivers/usb/dwc3/dwc3-qcom.c
+index 57691f3f8..c563b3f8b 100644
+--- a/drivers/usb/dwc3/dwc3-qcom.c
++++ b/drivers/usb/dwc3/dwc3-qcom.c
+@@ -351,14 +351,24 @@ static void dwc3_qcom_enable_interrupts(struct dwc3_qcom *qcom)
+ 	qcom->wakeup_irqs_armed = true;
+ }
+ 
+-static int dwc3_qcom_suspend(struct dwc3_qcom *qcom, bool wakeup)
++static int dwc3_qcom_suspend(struct dwc3_qcom *qcom, pm_message_t msg)
+ {
+ 	u32 val;
+ 	int i, ret;
++	bool wakeup;
+ 
+ 	if (qcom->is_suspended)
+ 		return 0;
+ 
++	/*
++	 * For runtime suspend, always enable wakeup.
++	 * For system suspend, check device wakeup capability.
++	 */
++	if (PMSG_IS_AUTO(msg))
++		wakeup = true;
++	else
++		wakeup = device_may_wakeup(qcom->dev);
++
+ 	for (i = 0; i < qcom->num_ports; i++) {
+ 		val = readl(qcom->qscratch_base + pwr_evnt_irq_stat_reg[i]);
+ 		if (!(val & PWR_EVNT_LPM_IN_L2_MASK))
+@@ -385,7 +395,7 @@ static int dwc3_qcom_suspend(struct dwc3_qcom *qcom, bool wakeup)
+ 	return 0;
+ }
+ 
+-static int dwc3_qcom_resume(struct dwc3_qcom *qcom, bool wakeup)
++static int dwc3_qcom_resume(struct dwc3_qcom *qcom, pm_message_t msg)
+ {
+ 	int ret;
+ 	int i;
+@@ -787,7 +797,6 @@ static int dwc3_qcom_pm_suspend(struct device *dev)
+ {
+ 	struct dwc3 *dwc = dev_get_drvdata(dev);
+ 	struct dwc3_qcom *qcom = to_dwc3_qcom(dwc);
+-	bool wakeup = device_may_wakeup(dev);
+ 	int ret;
+ 
+ 	/*
+@@ -800,7 +809,7 @@ static int dwc3_qcom_pm_suspend(struct device *dev)
+ 	if (ret)
+ 		return ret;
+ 
+-	ret = dwc3_qcom_suspend(qcom, wakeup);
++	ret = dwc3_qcom_suspend(qcom, PMSG_SUSPEND);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -813,12 +822,11 @@ static int dwc3_qcom_pm_resume(struct device *dev)
+ {
+ 	struct dwc3 *dwc = dev_get_drvdata(dev);
+ 	struct dwc3_qcom *qcom = to_dwc3_qcom(dwc);
+-	bool wakeup = device_may_wakeup(dev);
+ 	int ret;
+ 
+ 	guard(mutex)(&qcom->role_lock);
+ 
+-	ret = dwc3_qcom_resume(qcom, wakeup);
++	ret = dwc3_qcom_resume(qcom, PMSG_RESUME);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -863,7 +871,7 @@ static int dwc3_qcom_runtime_suspend(struct device *dev)
+ 	if (ret)
+ 		return ret;
+ 
+-	return dwc3_qcom_suspend(qcom, true);
++	return dwc3_qcom_suspend(qcom, PMSG_AUTO_SUSPEND);
+ }
+ 
+ static int dwc3_qcom_runtime_resume(struct device *dev)
+@@ -872,7 +880,7 @@ static int dwc3_qcom_runtime_resume(struct device *dev)
+ 	struct dwc3_qcom *qcom = to_dwc3_qcom(dwc);
+ 	int ret;
+ 
+-	ret = dwc3_qcom_resume(qcom, true);
++	ret = dwc3_qcom_resume(qcom, PMSG_AUTO_RESUME);
+ 	if (ret)
+ 		return ret;
+ 

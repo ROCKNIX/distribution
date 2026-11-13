@@ -1,0 +1,227 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Baochen Qiang <baochen.qiang@oss.qualcomm.com>
+Date: Mon, 02 Nov 2026 14:38:20 +0800
+Subject: [PATCH] wifi: ath12k: use link_id_map to resolve RX link id for all devices
+
+Commit a2fe9dc70f3b ("wifi: ath12k: Fix low MLO RX throughput on
+WCN7850") added a set_rx_link_id() op so that each device could resolve
+the RX link id in its own way: QCN9274/IPQ5332 index
+dp_peer->link_id_map[] with the hw_link_id, while WCN7850/QCC2072 walk
+dp_peer->link_peers[] and match by peer_id, tracked with a link_peers_map
+bitmap.
+
+Now that ath12k_skb_rxcb::drv_link_id carries the driver link id for all
+devices (the hw_link_id on QCN9274/IPQ5332 and the logical link id on
+WCN7850/QCC2072) and ath12k_dp_peer::link_id_map maps it to the IEEE80211
+link id, the RX path can resolve the link id uniformly.
+
+Revert the set_rx_link_id() machinery and the link_peers_map bitmap, and
+derive the link id directly from link_id_map[drv_link_id] in
+ath12k_dp_rx_deliver_msdu() for all devices. The NULL dp_peer guard added
+to ath12k_mac_peer_cleanup_all() is kept as it is an independent fix.
+
+Tested-on: WCN7850 hw2.0 PCI WLAN.HMT.1.1.c7-00108-QCAHMTSWPL_V1.0_V2.0_SILICONZ_UPSTREAM-3
+Tested-on: QCC2072 hw1.0 PCI WLAN.COL.1.0.c2-00068-QCACOLSWPL_V1_TO_SILICONZ-1
+
+Signed-off-by: Baochen Qiang <baochen.qiang@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261102-ath12k-logical-link-id-v4-11-f4c7807c299b@oss.qualcomm.com
+[ROCKNIX: v7.3 still has the set_rx_link_id() op added by commit a2fe9dc70f3b; remove it and set status->link_id from link_id_map in ath12k_dp_rx_deliver_msdu()]
+---
+ drivers/net/wireless/ath/ath12k/dp_peer.c     |  4 ----
+ drivers/net/wireless/ath/ath12k/dp_peer.h     |  1 -
+ drivers/net/wireless/ath/ath12k/dp_rx.c       |  6 +++--
+ drivers/net/wireless/ath/ath12k/hw.h          | 16 --------------
+ drivers/net/wireless/ath/ath12k/mac.c         |  2 --
+ drivers/net/wireless/ath/ath12k/wifi7/dp_rx.c | 32 ---------------------------
+ drivers/net/wireless/ath/ath12k/wifi7/dp_rx.h |  6 -----
+ drivers/net/wireless/ath/ath12k/wifi7/hw.c    |  3 ---
+ 8 files changed, 4 insertions(+), 66 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/dp_peer.c b/drivers/net/wireless/ath/ath12k/dp_peer.c
+index cf3352e91..35e5b5963 100644
+--- a/drivers/net/wireless/ath/ath12k/dp_peer.c
++++ b/drivers/net/wireless/ath/ath12k/dp_peer.c
+@@ -687,8 +687,6 @@ int ath12k_dp_link_peer_assign(struct ath12k_dp *dp, struct ath12k_dp_hw *dp_hw,
+ 	peerid_index = ath12k_dp_peer_get_peerid_index(dp, peer->peer_id);
+ 
+ 	rcu_assign_pointer(dp_peer->link_peers[peer->link_id], peer);
+-	WRITE_ONCE(dp_peer->link_peers_map,
+-		   READ_ONCE(dp_peer->link_peers_map) | BIT(peer->link_id));
+ 
+ 	rcu_assign_pointer(dp_hw->dp_peers[peerid_index], dp_peer);
+ 
+@@ -757,8 +755,6 @@ void ath12k_dp_link_peer_unassign(struct ath12k_dp *dp, struct ath12k_dp_hw *dp_
+ 	peerid_index = ath12k_dp_peer_get_peerid_index(dp, peer->peer_id);
+ 
+ 	rcu_assign_pointer(dp_peer->link_peers[peer->link_id], NULL);
+-	WRITE_ONCE(dp_peer->link_peers_map,
+-		   READ_ONCE(dp_peer->link_peers_map) & ~BIT(peer->link_id));
+ 
+ 	rcu_assign_pointer(dp_hw->dp_peers[peerid_index], NULL);
+ 
+diff --git a/drivers/net/wireless/ath/ath12k/dp_peer.h b/drivers/net/wireless/ath/ath12k/dp_peer.h
+index 10bcf9b23..e88e2bce0 100644
+--- a/drivers/net/wireless/ath/ath12k/dp_peer.h
++++ b/drivers/net/wireless/ath/ath12k/dp_peer.h
+@@ -161,7 +161,6 @@ struct ath12k_dp_peer {
+ 
+ 	/* Info used in MMIC verification of * RX fragments */
+ 	struct ieee80211_key_conf *keys[WMI_MAX_KEY_INDEX + 1];
+-	unsigned long link_peers_map;
+ 	struct ath12k_dp_link_peer __rcu *link_peers[ATH12K_NUM_MAX_LINKS];
+ 	struct ath12k_reoq_buf reoq_bufs[IEEE80211_NUM_TIDS + 1];
+ 	struct ath12k_dp_rx_tid rx_tid[IEEE80211_NUM_TIDS + 1];
+diff --git a/drivers/net/wireless/ath/ath12k/dp_rx.c b/drivers/net/wireless/ath/ath12k/dp_rx.c
+index 816c38f52..c3e919891 100644
+--- a/drivers/net/wireless/ath/ath12k/dp_rx.c
++++ b/drivers/net/wireless/ath/ath12k/dp_rx.c
+@@ -1387,8 +1387,10 @@ void ath12k_dp_rx_deliver_msdu(struct ath12k_pdev_dp *dp_pdev, struct napi_struc
+ 	pubsta = peer ? peer->sta : NULL;
+ 
+ 	status->link_valid = 0;
+-	if (pubsta && pubsta->valid_links)
+-		ath12k_hw_set_rx_link_id(dp->hw_params, peer, rxcb, status);
++	if (pubsta && pubsta->valid_links) {
++		status->link_valid = 1;
++		status->link_id = peer->link_id_map[rxcb->drv_link_id];
++	}
+ 
+ 	ath12k_dbg(dp->ab, ATH12K_DBG_DATA,
+ 		   "rx skb %p len %u peer %pM %d %s sn %u %s%s%s%s%s%s%s%s%s%s rate_idx %u vht_nss %u freq %u band %u flag 0x%x fcs-err %i mic-err %i amsdu-more %i\n",
+diff --git a/drivers/net/wireless/ath/ath12k/hw.h b/drivers/net/wireless/ath/ath12k/hw.h
+index f92aed03c..bd64bf4f8 100644
+--- a/drivers/net/wireless/ath/ath12k/hw.h
++++ b/drivers/net/wireless/ath/ath12k/hw.h
+@@ -13,10 +13,6 @@
+ #include "wmi.h"
+ #include "hal.h"
+ 
+-struct ath12k_dp_peer;
+-struct ath12k_skb_rxcb;
+-struct ieee80211_rx_status;
+-
+ /* Target configuration defines */
+ 
+ /* Num VDEVS per radio */
+@@ -254,9 +250,6 @@ struct ath12k_hw_ops {
+ 	bool (*dp_srng_is_tx_comp_ring)(int ring_num);
+ 	bool (*is_frame_link_agnostic)(struct ath12k_link_vif *arvif,
+ 				       struct ieee80211_mgmt *mgmt);
+-	void (*set_rx_link_id)(struct ath12k_dp_peer *dp_peer,
+-			       struct ath12k_skb_rxcb *rxcb,
+-			       struct ieee80211_rx_status *status);
+ };
+ 
+ static inline
+@@ -287,15 +280,6 @@ static inline int ath12k_hw_mac_id_to_srng_id(const struct ath12k_hw_params *hw,
+ 	return 0;
+ }
+ 
+-static inline void ath12k_hw_set_rx_link_id(const struct ath12k_hw_params *hw,
+-					    struct ath12k_dp_peer *dp_peer,
+-					    struct ath12k_skb_rxcb *rxcb,
+-					    struct ieee80211_rx_status *status)
+-{
+-	if (hw->hw_ops->set_rx_link_id)
+-		hw->hw_ops->set_rx_link_id(dp_peer, rxcb, status);
+-}
+-
+ struct ath12k_fw_ie {
+ 	__le32 id;
+ 	__le32 len;
+diff --git a/drivers/net/wireless/ath/ath12k/mac.c b/drivers/net/wireless/ath/ath12k/mac.c
+index ccb3a9dca..bc92a66dd 100644
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -1326,8 +1326,6 @@ void ath12k_mac_peer_cleanup_all(struct ath12k *ar)
+ 		if (dp_peer) {
+ 			peerid_index = ath12k_dp_peer_get_peerid_index(dp, peer->peer_id);
+ 			rcu_assign_pointer(dp_peer->link_peers[peer->link_id], NULL);
+-			WRITE_ONCE(dp_peer->link_peers_map,
+-				   READ_ONCE(dp_peer->link_peers_map) & ~BIT(peer->link_id));
+ 			rcu_assign_pointer(dp_hw->dp_peers[peerid_index], NULL);
+ 		}
+ 		spin_unlock_bh(&dp_hw->peer_lock);
+diff --git a/drivers/net/wireless/ath/ath12k/wifi7/dp_rx.c b/drivers/net/wireless/ath/ath12k/wifi7/dp_rx.c
+index b522d3b30..1b5b7ee30 100644
+--- a/drivers/net/wireless/ath/ath12k/wifi7/dp_rx.c
++++ b/drivers/net/wireless/ath/ath12k/wifi7/dp_rx.c
+@@ -2348,35 +2348,3 @@ ath12k_wifi7_dp_rxdesc_mpdu_valid(struct ath12k_base *ab,
+ 
+ 	return tlv_tag == HAL_RX_MPDU_START;
+ }
+-
+-void
+-ath12k_wifi7_dp_rx_set_link_id_qcn9274(struct ath12k_dp_peer *dp_peer,
+-				       struct ath12k_skb_rxcb *rxcb,
+-				       struct ieee80211_rx_status *status)
+-{
+-	status->link_valid = 1;
+-	status->link_id = dp_peer->link_id_map[rxcb->drv_link_id];
+-}
+-
+-void
+-ath12k_wifi7_dp_rx_set_link_id_wcn7850(struct ath12k_dp_peer *dp_peer,
+-				       struct ath12k_skb_rxcb *rxcb,
+-				       struct ieee80211_rx_status *status)
+-{
+-	struct ath12k_dp_link_peer *link_peer;
+-	unsigned long links_map;
+-	int i;
+-
+-	RCU_LOCKDEP_WARN(!rcu_read_lock_held(),
+-			 "ath12k set rx link id called without rcu lock");
+-
+-	links_map = READ_ONCE(dp_peer->link_peers_map);
+-	for_each_set_bit(i, &links_map, ATH12K_NUM_MAX_LINKS) {
+-		link_peer = rcu_dereference(dp_peer->link_peers[i]);
+-		if (link_peer && link_peer->peer_id == rxcb->peer_id) {
+-			status->link_valid = 1;
+-			status->link_id = link_peer->link_id;
+-			return;
+-		}
+-	}
+-}
+diff --git a/drivers/net/wireless/ath/ath12k/wifi7/dp_rx.h b/drivers/net/wireless/ath/ath12k/wifi7/dp_rx.h
+index 1e65738ed..3da80da19 100644
+--- a/drivers/net/wireless/ath/ath12k/wifi7/dp_rx.h
++++ b/drivers/net/wireless/ath/ath12k/wifi7/dp_rx.h
+@@ -59,10 +59,4 @@ ath12k_wifi7_dp_rxdesc_mpdu_valid(struct ath12k_base *ab,
+ 				  struct hal_rx_desc *rx_desc);
+ int ath12k_wifi7_dp_rx_tid_delete_handler(struct ath12k_base *ab,
+ 					  struct ath12k_dp_rx_tid_rxq *rx_tid);
+-void ath12k_wifi7_dp_rx_set_link_id_qcn9274(struct ath12k_dp_peer *dp_peer,
+-					    struct ath12k_skb_rxcb *rxcb,
+-					    struct ieee80211_rx_status *status);
+-void ath12k_wifi7_dp_rx_set_link_id_wcn7850(struct ath12k_dp_peer *dp_peer,
+-					    struct ath12k_skb_rxcb *rxcb,
+-					    struct ieee80211_rx_status *status);
+ #endif
+diff --git a/drivers/net/wireless/ath/ath12k/wifi7/hw.c b/drivers/net/wireless/ath/ath12k/wifi7/hw.c
+index c5d530fc5..b0663f9c5 100644
+--- a/drivers/net/wireless/ath/ath12k/wifi7/hw.c
++++ b/drivers/net/wireless/ath/ath12k/wifi7/hw.c
+@@ -158,7 +158,6 @@ static const struct ath12k_hw_ops qcn9274_ops = {
+ 	.get_ring_selector = ath12k_wifi7_hw_get_ring_selector_qcn9274,
+ 	.dp_srng_is_tx_comp_ring = ath12k_wifi7_dp_srng_is_comp_ring_qcn9274,
+ 	.is_frame_link_agnostic = ath12k_wifi7_is_frame_link_agnostic_qcn9274,
+-	.set_rx_link_id = ath12k_wifi7_dp_rx_set_link_id_qcn9274,
+ };
+ 
+ static const struct ath12k_hw_ops wcn7850_ops = {
+@@ -169,7 +168,6 @@ static const struct ath12k_hw_ops wcn7850_ops = {
+ 	.get_ring_selector = ath12k_wifi7_hw_get_ring_selector_wcn7850,
+ 	.dp_srng_is_tx_comp_ring = ath12k_wifi7_dp_srng_is_comp_ring_wcn7850,
+ 	.is_frame_link_agnostic = ath12k_wifi7_is_frame_link_agnostic_wcn7850,
+-	.set_rx_link_id = ath12k_wifi7_dp_rx_set_link_id_wcn7850,
+ };
+ 
+ static const struct ath12k_hw_ops qcc2072_ops = {
+@@ -180,7 +178,6 @@ static const struct ath12k_hw_ops qcc2072_ops = {
+ 	.get_ring_selector = ath12k_wifi7_hw_get_ring_selector_wcn7850,
+ 	.dp_srng_is_tx_comp_ring = ath12k_wifi7_dp_srng_is_comp_ring_wcn7850,
+ 	.is_frame_link_agnostic = ath12k_wifi7_is_frame_link_agnostic_wcn7850,
+-	.set_rx_link_id = ath12k_wifi7_dp_rx_set_link_id_wcn7850,
+ };
+ 
+ #define ATH12K_TX_RING_MASK_0 0x1

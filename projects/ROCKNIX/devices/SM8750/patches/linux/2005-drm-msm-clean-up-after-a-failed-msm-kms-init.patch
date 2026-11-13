@@ -1,0 +1,83 @@
+From: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+Subject: [v3,05/14] drm/msm: clean up after a failed msm_kms_init()
+Link: https://lore.kernel.org/r/20261024-msm-kms-destroy-fixes-v3-5-66a30120a5ea@oss.qualcomm.com
+
+msm_kms_init() returns early when it fails to allocate its workqueue or
+to create one of the pending timer workers, leaving behind whatever it
+has already set up. The kms drivers' ->destroy() callbacks still run in
+that case and reach msm_kms_destroy(), which passes a workqueue that was
+never allocated straight to destroy_workqueue().
+
+Tear down the timers and the workqueue created so far when
+msm_kms_init() fails. Until every kms driver has stopped relying on
+->destroy() to clean up a failed init, let msm_kms_destroy() skip what
+has already been destroyed.
+
+Fixes: a409b78fcdf7 ("drm/msm: move wq handling to KMS code")
+Assisted-by: LLM
+Signed-off-by: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+---
+ drivers/gpu/drm/msm/msm_atomic.c |  1 +
+ drivers/gpu/drm/msm/msm_kms.h    | 20 +++++++++++++++-----
+ 2 files changed, 16 insertions(+), 5 deletions(-)
+---
+diff --git a/drivers/gpu/drm/msm/msm_atomic.c b/drivers/gpu/drm/msm/msm_atomic.c
+index a8babf1dbe0d..c26b0c7acdfa 100644
+--- a/drivers/gpu/drm/msm/msm_atomic.c
++++ b/drivers/gpu/drm/msm/msm_atomic.c
+@@ -134,6 +134,7 @@ void msm_atomic_destroy_pending_timer(struct msm_pending_timer *timer)
+ {
+ 	if (timer->worker)
+ 		kthread_destroy_worker(timer->worker);
++	timer->worker = NULL;
+ }
+ 
+ static bool can_do_async(struct drm_atomic_commit *state,
+diff --git a/drivers/gpu/drm/msm/msm_kms.h b/drivers/gpu/drm/msm/msm_kms.h
+index f25b31e502d2..ee98393b9855 100644
+--- a/drivers/gpu/drm/msm/msm_kms.h
++++ b/drivers/gpu/drm/msm/msm_kms.h
+@@ -175,7 +175,8 @@ struct msm_kms {
+ static inline int msm_kms_init(struct msm_kms *kms,
+ 		const struct msm_kms_funcs *funcs)
+ {
+-	unsigned i, ret;
++	unsigned int i;
++	int ret;
+ 
+ 	for (i = 0; i < ARRAY_SIZE(kms->commit_lock); i++)
+ 		mutex_init(&kms->commit_lock[i]);
+@@ -188,12 +189,19 @@ static inline int msm_kms_init(struct msm_kms *kms,
+ 
+ 	for (i = 0; i < ARRAY_SIZE(kms->pending_timers); i++) {
+ 		ret = msm_atomic_init_pending_timer(&kms->pending_timers[i], kms, i);
+-		if (ret) {
+-			return ret;
+-		}
++		if (ret)
++			goto err_destroy_timers;
+ 	}
+ 
+ 	return 0;
++
++err_destroy_timers:
++	while (i--)
++		msm_atomic_destroy_pending_timer(&kms->pending_timers[i]);
++	destroy_workqueue(kms->wq);
++	kms->wq = NULL;
++
++	return ret;
+ }
+ 
+ static inline void msm_kms_destroy(struct msm_kms *kms)
+@@ -203,7 +211,9 @@ static inline void msm_kms_destroy(struct msm_kms *kms)
+ 	for (i = 0; i < ARRAY_SIZE(kms->pending_timers); i++)
+ 		msm_atomic_destroy_pending_timer(&kms->pending_timers[i]);
+ 
+-	destroy_workqueue(kms->wq);
++	/* the kms drivers' ->destroy() also runs after a failed init */
++	if (kms->wq)
++		destroy_workqueue(kms->wq);
+ }
+ 
+ #define for_each_crtc_mask(dev, crtc, crtc_mask) \

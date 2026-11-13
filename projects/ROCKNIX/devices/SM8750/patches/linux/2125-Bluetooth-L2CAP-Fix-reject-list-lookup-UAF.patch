@@ -1,0 +1,143 @@
+From: Chengfeng Ye <nicoyip.dev@gmail.com>
+Subject: [v2] Bluetooth: L2CAP: Fix reject-list lookup UAF
+Link: https://lore.kernel.org/r/20261002171603.3368121-1-nicoyip.dev@gmail.com
+
+l2cap_recv_frame() walks hdev->reject_list while holding conn->lock,
+but reject-list updates are serialized by hdev->lock. Consequently,
+block_device() or unblock_device() can mutate and free the current list
+entry while the receive path is examining it.
+
+The following interleaving causes the use-after-free:
+
+  l2cap_recv_frame()             unblock_device()
+  fetch reject-list entry
+                                  hci_dev_lock()
+                                  list_del()
+                                  kfree()
+                                  hci_dev_unlock()
+  read entry->bdaddr_type
+
+KASAN reported:
+
+  BUG: KASAN: slab-use-after-free in hci_bdaddr_list_lookup
+  Read of size 1 by task kworker/u17:1/88
+  Workqueue: hci0 hci_rx_work
+  Call Trace:
+   hci_bdaddr_list_lookup+0xee/0x100
+   l2cap_recv_frame+0x8a4/0x8e50
+   l2cap_recv_acldata+0xa64/0xd40
+   hci_rx_work+0x4ca/0x730
+
+  Allocated by task 92:
+   hci_bdaddr_list_add+0x12a/0x300
+   block_device+0x94/0x1a0
+   hci_sock_sendmsg+0x1033/0x1ea0
+
+  Freed by task 92:
+   hci_bdaddr_list_del+0x182/0x230
+   unblock_device+0xa0/0x1b0
+   hci_sock_sendmsg+0x1033/0x1ea0
+
+Taking hdev->lock from l2cap_recv_frame() would invert the established
+hdev->lock to conn->lock order. Instead, walk the reject list under RCU,
+publish and remove address-list entries with the RCU list primitives, and
+defer their freeing until readers have left their critical sections.
+
+The address-list helpers are shared with other lists. RCU publication
+and deferred freeing preserve their existing locked lookup and matching
+behavior while making reject-list traversal safe without changing lock
+order.
+
+Fixes: e493150e3639 ("Bluetooth: Centralize looking up blocked devices to l2cap_recv_frame")
+Cc: stable@vger.kernel.org
+Assisted-by: GPT-6-Astra
+Signed-off-by: Chengfeng Ye <nicoyip.dev@gmail.com>
+---
+Changes in v2:
+- Rebase onto current bluetooth-next/master, preserving the v1 RCU fix.
+- Compare the reported management and mesh failures against the exact
+  unpatched CI kernel base; retain test evidence outside the commit log.
+- Add the coding-assistant annotation.
+
+Link: https://lore.kernel.org/r/20260821174022.3033729-1-nicoyip.dev@gmail.com/ [v1]
+
+ net/bluetooth/hci_core.c   | 10 +++++-----
+ net/bluetooth/l2cap_core.c | 23 ++++++++++++++++++++---
+ 2 files changed, 25 insertions(+), 8 deletions(-)
+---
+diff --git a/net/bluetooth/hci_core.c b/net/bluetooth/hci_core.c
+index 5df7bd14323f..768a2d6c03e9 100644
+--- a/net/bluetooth/hci_core.c
++++ b/net/bluetooth/hci_core.c
+@@ -2055,8 +2055,8 @@ void hci_bdaddr_list_clear(struct list_head *bdaddr_list)
+ 	struct bdaddr_list *b, *n;
+ 
+ 	list_for_each_entry_safe(b, n, bdaddr_list, list) {
+-		list_del(&b->list);
+-		kfree(b);
++		list_del_rcu(&b->list);
++		kfree_rcu_mightsleep(b);
+ 	}
+ }
+ 
+@@ -2077,7 +2077,7 @@ int hci_bdaddr_list_add(struct list_head *list, bdaddr_t *bdaddr, u8 type)
+ 	bacpy(&entry->bdaddr, bdaddr);
+ 	entry->bdaddr_type = type;
+ 
+-	list_add(&entry->list, list);
++	list_add_rcu(&entry->list, list);
+ 
+ 	return 0;
+ }
+@@ -2148,8 +2148,8 @@ int hci_bdaddr_list_del(struct list_head *list, bdaddr_t *bdaddr, u8 type)
+ 	if (!entry)
+ 		return -ENOENT;
+ 
+-	list_del(&entry->list);
+-	kfree(entry);
++	list_del_rcu(&entry->list);
++	kfree_rcu_mightsleep(entry);
+ 
+ 	return 0;
+ }
+diff --git a/net/bluetooth/l2cap_core.c b/net/bluetooth/l2cap_core.c
+index 49a998804908..e79ebb89e239 100644
+--- a/net/bluetooth/l2cap_core.c
++++ b/net/bluetooth/l2cap_core.c
+@@ -7318,6 +7318,25 @@ static void l2cap_conless_channel(struct l2cap_conn *conn, __le16 psm,
+ 	kfree_skb(skb);
+ }
+ 
++static bool l2cap_is_rejected(struct hci_conn *hcon)
++{
++	struct bdaddr_list *b;
++	u8 type;
++
++	type = bdaddr_dst_type(hcon);
++
++	rcu_read_lock();
++	list_for_each_entry_rcu(b, &hcon->hdev->reject_list, list) {
++		if (!bacmp(&b->bdaddr, &hcon->dst) && b->bdaddr_type == type) {
++			rcu_read_unlock();
++			return true;
++		}
++	}
++	rcu_read_unlock();
++
++	return false;
++}
++
+ static void l2cap_recv_frame(struct l2cap_conn *conn, struct sk_buff *skb)
+ 	__must_hold(&conn->lock)
+ {
+@@ -7344,9 +7363,7 @@ static void l2cap_recv_frame(struct l2cap_conn *conn, struct sk_buff *skb)
+ 	/* Since we can't actively block incoming LE connections we must
+ 	 * at least ensure that we ignore incoming data from them.
+ 	 */
+-	if (hcon->type == LE_LINK &&
+-	    hci_bdaddr_list_lookup(&hcon->hdev->reject_list, &hcon->dst,
+-				   bdaddr_dst_type(hcon))) {
++	if (hcon->type == LE_LINK && l2cap_is_rejected(hcon)) {
+ 		kfree_skb(skb);
+ 		return;
+ 	}

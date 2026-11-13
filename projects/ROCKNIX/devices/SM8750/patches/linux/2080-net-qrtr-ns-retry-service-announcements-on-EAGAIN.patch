@@ -1,0 +1,57 @@
+From: Joonhoe Kim <26rote@gmail.com>
+Subject: [net] net: qrtr: ns: retry service announcements on -EAGAIN
+Link: https://lore.kernel.org/r/20261016124600.31-1-26rote@gmail.com
+
+Since commit 544d85de4dc2 ("net: qrtr: Send HELLO message on endpoint
+register"), qrtr_node_enqueue() returns -EAGAIN for every packet but
+HELLO until our HELLO has gone out to the node. The HELLO is retried,
+but the NEW_SERVER announcements sent in reply to the remote's HELLO
+are not, so a service registered before the remote came up is never
+announced to it.
+
+On Kaanapali the modem sends its HELLO before it accepts ours. With
+rmtfs started first, the modem never learns about rmtfs and its
+watchdog resets the SoC about 40 s later.
+
+Retry each announcement for up to 10 s while it fails with -EAGAIN.
+announce_servers() runs from the name service worker, which can sleep.
+
+Fixes: 544d85de4dc2 ("net: qrtr: Send HELLO message on endpoint register")
+Cc: stable@vger.kernel.org
+Signed-off-by: Joonhoe Kim <26rote@gmail.com>
+---
+Tested on a Lenovo Legion Tab Y700 Gen 5 (out-of-tree board support)
+with rmtfs started before the modem: without this patch the SoC resets;
+with it the announcement goes out on the first retry and the modem
+stays up. Starting rmtfs after the modem avoids the problem, but
+distribution units start rmtfs first and let it boot the modem.
+
+ net/qrtr/ns.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+---
+diff --git a/net/qrtr/ns.c b/net/qrtr/ns.c
+index bcb090ee79d4..33a9c4449d6f 100644
+--- a/net/qrtr/ns.c
++++ b/net/qrtr/ns.c
+@@ -5,6 +5,7 @@
+  * Copyright (c) 2020, Linaro Ltd.
+  */
+ 
++#include <linux/delay.h>
+ #include <linux/module.h>
+ #include <linux/qrtr.h>
+ #include <linux/workqueue.h>
+@@ -226,7 +227,13 @@ static int announce_servers(struct sockaddr_qrtr *sq)
+ 
+ 	/* Announce the list of servers registered in this node */
+ 	xa_for_each(&node->servers, index, srv) {
++		unsigned long timeout = jiffies + 10 * HZ;
++
+ 		ret = service_announce_new(sq, srv);
++		while (ret == -EAGAIN && time_before(jiffies, timeout)) {
++			msleep(100);
++			ret = service_announce_new(sq, srv);
++		}
+ 		if (ret < 0) {
+ 			if (ret == -ENODEV)
+ 				continue;
