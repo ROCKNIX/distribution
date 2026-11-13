@@ -1,0 +1,53 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Wentao Liang <vulab@iscas.ac.cn>
+Date: Wed, 04 Nov 2026 02:40:47 +0000
+Subject: [PATCH] ASoC: qcom: q6apm-dai: close the graph when compress open fails
+
+q6apm_dai_compr_open() opens the AudioReach graph before allocating the
+DMA buffer and handing it to the DSP. If the allocation or the SCM
+assignment fails, the function returns without closing the graph. The
+compress core does not call the free callback for a stream that failed
+to open, so the graph, its AudioReach reference and the private data are
+all leaked.
+
+Unwind the graph and the private data on both failure paths.
+
+Fixes: 88b60bf047fd ("ASoC: q6dsp: q6apm-dai: Add open/free compress DAI callbacks")
+Cc: stable@vger.kernel.org
+Assisted-by: DeepSeek-V4.1-Flash and OpenAI Codex
+Signed-off-by: Wentao Liang <vulab@iscas.ac.cn>
+Link: https://lore.kernel.org/r/20261104024047.1508584-1-vulab@iscas.ac.cn
+[Backported to 7.3: 7.3 has no SCM assign path, so only the DMA
+allocation failure unwinds the graph]
+---
+
+ sound/soc/qcom/qdsp6/q6apm-dai.c |    9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/sound/soc/qcom/qdsp6/q6apm-dai.c b/sound/soc/qcom/qdsp6/q6apm-dai.c
+index ea8f6e15a..78a699dfb 100644
+--- a/sound/soc/qcom/qdsp6/q6apm-dai.c
++++ b/sound/soc/qcom/qdsp6/q6apm-dai.c
+@@ -737,7 +737,7 @@ static int q6apm_dai_compr_open(struct snd_soc_component *component,
+ 	size = COMPR_PLAYBACK_MAX_FRAGMENT_SIZE * COMPR_PLAYBACK_MAX_NUM_FRAGMENTS;
+ 	ret = snd_dma_alloc_pages(SNDRV_DMA_TYPE_DEV, dev, size, &prtd->dma_buffer);
+ 	if (ret)
+-		return ret;
++		goto err_close_graph;
+ 
+ 	if (pdata->sid < 0)
+ 		prtd->phys = prtd->dma_buffer.addr;
+@@ -749,6 +749,13 @@ static int q6apm_dai_compr_open(struct snd_soc_component *component,
+ 
+ 	q6apm_enable_compress_module(dev, prtd->graph, true);
+ 	return 0;
++
++err_close_graph:
++	runtime->private_data = NULL;
++	q6apm_graph_close(prtd->graph);
++	kfree(prtd);
++
++	return ret;
+ }
+ 
+ static int q6apm_dai_compr_free(struct snd_soc_component *component,

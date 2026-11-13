@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vladyslav Tymoshchuk <tvlad744@gmail.com>
+Date: Tue, 10 Nov 2026 23:34:38 +0200
+Subject: [PATCH] wifi: ath12k: report an aborted scan before cancel_hw_scan returns
+
+Suspending while a hardware scan is running makes mac80211 warn on
+resume:
+
+  phy0: resume with hardware scan still in progress
+  WARNING: net/mac80211/ieee80211_i.h:2444 at ieee80211_resume+0x60/0x6c [mac80211]
+  Call trace:
+   ieee80211_resume+0x60/0x6c [mac80211] (P)
+   wiphy_resume+0x84/0xdc [cfg80211]
+   dpm_run_callback+0x40/0x124
+   device_resume+0x154/0x1f8
+
+__ieee80211_suspend() cancels the scan with ieee80211_scan_cancel(),
+which for a hardware scan only calls the cancel_hw_scan() callback and
+leaves it to the driver to call ieee80211_scan_completed().
+ath12k_mac_op_cancel_hw_scan() waits for the firmware to stop the scan,
+but ieee80211_scan_completed() is called from scan.vdev_clean_wk. That
+is a wiphy work, and wiphy_suspend() has already run the pending wiphy
+works before calling into mac80211, so the work only runs after the
+resume and mac80211 finds the scan neither completed nor aborted.
+
+Flush the work in ath12k_mac_op_cancel_hw_scan(), as
+ath12k_mac_op_cancel_remain_on_channel() already does.
+
+Tested-on: WCN7850 hw2.0 PCI WLAN.GNG.1.0-03342-QCAGNGSWPL_V1.0_V2.0_SILICONZ-1.81206.153
+
+Fixes: 3863f014ad23 ("wifi: ath12k: symmetrize scan vdev creation and deletion during HW scan")
+Signed-off-by: Vladyslav Tymoshchuk <tvlad744@gmail.com>
+Link: https://lore.kernel.org/r/20261110213438.342-1-tvlad744@gmail.com
+[Backported to 7.3: the scan timeout is a wiphy delayed work in this
+stack, so flush after cancelling it]
+---
+
+ drivers/net/wireless/ath/ath12k/mac.c |    1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/net/wireless/ath/ath12k/mac.c b/drivers/net/wireless/ath/ath12k/mac.c
+index d58b13297..d9855cee6 100644
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -6038,6 +6038,7 @@ void ath12k_mac_op_cancel_hw_scan(struct ieee80211_hw *hw,
+ 		ath12k_scan_abort(ar);
+ 
+ 		wiphy_delayed_work_cancel(hw->wiphy, &ar->scan.timeout);
++		wiphy_work_flush(hw->wiphy, &ar->scan.vdev_clean_wk);
+ 	}
+ }
+ EXPORT_SYMBOL(ath12k_mac_op_cancel_hw_scan);
