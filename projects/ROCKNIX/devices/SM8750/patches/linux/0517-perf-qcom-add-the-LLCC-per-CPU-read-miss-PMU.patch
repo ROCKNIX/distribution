@@ -1,0 +1,426 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Andr=C3=A9=20Braga?= <code@andrebraga.com>
+Date: Thu, 5 Nov 2026 19:27:50 +0000
+Subject: [PATCH] perf: qcom: add the LLCC per-CPU read-miss PMU
+
+Recent Qualcomm LLCCs count the read misses of each CPU, in a 24-bit
+counter per CPU with no overflow interrupt; Qualcomm's vendor kernels
+expose it as llcc-pmu-ver2. Memory latency governors gate DDR votes on
+these misses, and perf can profile a CPU's DRAM reads with them.
+
+Add it as a perf PMU: an event counts the CPU it is opened on, and
+counters are folded into 64-bit totals, so several events on one CPU
+see every miss. While events exist a deferrable timer folds the
+counters before they saturate; CPUs only miss while they run, so the
+timer never needs to wake an idle system.
+---
+ MAINTAINERS                       |   8 +
+ drivers/perf/Kconfig              |   9 +
+ drivers/perf/Makefile             |   1 +
+ drivers/perf/qcom_llcc_pmu.c      | 317 ++++++++++++++++++++++++++++++
+ include/linux/soc/qcom/llcc-pmu.h |  18 ++
+ 5 files changed, 353 insertions(+)
+ create mode 100644 drivers/perf/qcom_llcc_pmu.c
+ create mode 100644 include/linux/soc/qcom/llcc-pmu.h
+
+diff --git a/MAINTAINERS b/MAINTAINERS
+index 782389bd5..af90f00d7 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -22553,6 +22553,14 @@ S:	Maintained
+ F:	Documentation/devicetree/bindings/media/qcom,*-iris.yaml
+ F:	drivers/media/platform/qcom/iris/
+ 
++QUALCOMM LLCC PMU DRIVER
++M:	André Braga <code@andrebraga.com>
++L:	linux-arm-msm@vger.kernel.org
++S:	Maintained
++F:	Documentation/devicetree/bindings/perf/qcom,sm8750-llcc-pmu.yaml
++F:	drivers/perf/qcom_llcc_pmu.c
++F:	include/linux/soc/qcom/llcc-pmu.h
++
+ QUALCOMM NAND CONTROLLER DRIVER
+ M:	Manivannan Sadhasivam <mani@kernel.org>
+ L:	linux-mtd@lists.infradead.org
+diff --git a/drivers/perf/Kconfig b/drivers/perf/Kconfig
+index 245e7bb76..938278560 100644
+--- a/drivers/perf/Kconfig
++++ b/drivers/perf/Kconfig
+@@ -197,6 +197,15 @@ config QCOM_L2_PMU
+ 	  Adds the L2 cache PMU into the perf events subsystem for
+ 	  monitoring L2 cache events.
+ 
++config QCOM_LLCC_PMU
++	tristate "Qualcomm LLCC per-CPU read-miss PMU"
++	depends on ARCH_QCOM || COMPILE_TEST
++	help
++	  Counts each CPU's read misses in the Qualcomm Last Level Cache
++	  Controller, as found on SM8750. Each event counts the CPU it is
++	  opened on. Memory latency governors use it to tell when a CPU
++	  waits on DRAM; perf can use it to profile a CPU's DRAM reads.
++
+ config QCOM_L3_PMU
+ 	bool "Qualcomm L3-cache PMU"
+ 	depends on ARCH_QCOM && ARM64 && ACPI
+diff --git a/drivers/perf/Makefile b/drivers/perf/Makefile
+index eb8a022da..ed6b25cea 100644
+--- a/drivers/perf/Makefile
++++ b/drivers/perf/Makefile
+@@ -17,6 +17,7 @@ obj-$(CONFIG_FUJITSU_UNCORE_PMU) += fujitsu_uncore_pmu.o
+ obj-$(CONFIG_HISI_PMU) += hisilicon/
+ obj-$(CONFIG_QCOM_L2_PMU)	+= qcom_l2_pmu.o
+ obj-$(CONFIG_QCOM_L3_PMU) += qcom_l3_pmu.o
++obj-$(CONFIG_QCOM_LLCC_PMU) += qcom_llcc_pmu.o
+ obj-$(CONFIG_RISCV_PMU) += riscv_pmu.o
+ obj-$(CONFIG_RISCV_PMU_LEGACY) += riscv_pmu_legacy.o
+ obj-$(CONFIG_RISCV_PMU_SBI) += riscv_pmu_sbi.o
+diff --git a/drivers/perf/qcom_llcc_pmu.c b/drivers/perf/qcom_llcc_pmu.c
+new file mode 100644
+index 000000000..a6e575819
+--- /dev/null
++++ b/drivers/perf/qcom_llcc_pmu.c
+@@ -0,0 +1,317 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Qualcomm LLCC per-CPU read-miss monitor.
++ *
++ * The LLCC counts the read misses of each CPU in a 24-bit counter of its
++ * own, in the order of the DT's cpus list; an event counts the CPU it is
++ * opened on. The counters have no overflow interrupt, so while events
++ * exist a deferrable timer folds them into 64-bit totals before they
++ * saturate. CPUs only miss while they run, so deferring the fold while
++ * the system idles loses nothing.
++ */
++
++#include <linux/bitfield.h>
++#include <linux/bitops.h>
++#include <linux/io.h>
++#include <linux/mod_devicetable.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/of_platform.h>
++#include <linux/perf_event.h>
++#include <linux/platform_device.h>
++#include <linux/soc/qcom/llcc-pmu.h>
++#include <linux/spinlock.h>
++#include <linux/timer.h>
++
++#define LLCC_MON_CFG		0x200
++#define LLCC_MON_CNT(i)		(0x220 + 4 * (i))
++#define LLCC_MON_CLEAR(i)	BIT(16 + (i))
++#define LLCC_MON_CNT_MASK	GENMASK(23, 0)
++#define LLCC_MON_SCALE		3
++#define LLCC_MON_MAX		16
++
++/* Folds well before a counter saturates at a full CPU's miss rate */
++#define LLCC_FOLD_MS		500
++
++#define LLCC_EV_READ_MISS	0x1000
++
++struct llcc_pmu {
++	struct pmu pmu;
++	void __iomem *base;
++	raw_spinlock_t lock;
++	struct timer_list fold;
++	u32 idx[NR_CPUS];
++	u64 total[NR_CPUS];
++	u32 users[NR_CPUS];
++	u32 active;
++};
++
++#define to_llcc_pmu(p) container_of(p, struct llcc_pmu, pmu)
++
++static struct platform_driver llcc_pmu_driver;
++
++/* Must hold the lock: stop, read and clear the counter, then restart it */
++static void llcc_pmu_fold(struct llcc_pmu *p, int cpu)
++{
++	u32 i = p->idx[cpu], cfg, cnt;
++
++	cfg = readl_relaxed(p->base + LLCC_MON_CFG) & ~BIT(i);
++	writel_relaxed(cfg, p->base + LLCC_MON_CFG);
++	cnt = readl_relaxed(p->base + LLCC_MON_CNT(i)) & LLCC_MON_CNT_MASK;
++	writel_relaxed(cfg | LLCC_MON_CLEAR(i), p->base + LLCC_MON_CFG);
++	writel_relaxed(cfg | BIT(i), p->base + LLCC_MON_CFG);
++
++	p->total[cpu] += (u64)cnt << LLCC_MON_SCALE;
++}
++
++static void llcc_pmu_fold_all(struct timer_list *t)
++{
++	struct llcc_pmu *p = timer_container_of(p, t, fold);
++	unsigned long flags;
++	int cpu;
++
++	raw_spin_lock_irqsave(&p->lock, flags);
++	for_each_possible_cpu(cpu)
++		if (p->users[cpu])
++			llcc_pmu_fold(p, cpu);
++	if (p->active)
++		mod_timer(&p->fold, jiffies + msecs_to_jiffies(LLCC_FOLD_MS));
++	raw_spin_unlock_irqrestore(&p->lock, flags);
++}
++
++static int llcc_pmu_event_init(struct perf_event *event)
++{
++	if (event->attr.type != event->pmu->type)
++		return -ENOENT;
++
++	if (event->cpu < 0 || event->attach_state & PERF_ATTACH_TASK ||
++	    is_sampling_event(event) || event->attr.config != LLCC_EV_READ_MISS)
++		return -EINVAL;
++
++	return 0;
++}
++
++static void llcc_pmu_event_read(struct perf_event *event)
++{
++	struct llcc_pmu *p = to_llcc_pmu(event->pmu);
++	unsigned long flags;
++	u64 now;
++
++	raw_spin_lock_irqsave(&p->lock, flags);
++	if (p->users[event->cpu])
++		llcc_pmu_fold(p, event->cpu);
++	now = p->total[event->cpu];
++	local64_add(now - local64_read(&event->hw.prev_count), &event->count);
++	local64_set(&event->hw.prev_count, now);
++	raw_spin_unlock_irqrestore(&p->lock, flags);
++}
++
++static void llcc_pmu_event_start(struct perf_event *event, int flags)
++{
++	struct llcc_pmu *p = to_llcc_pmu(event->pmu);
++	unsigned long irqflags;
++	int cpu = event->cpu;
++	u32 i = p->idx[cpu], cfg;
++
++	raw_spin_lock_irqsave(&p->lock, irqflags);
++	if (p->users[cpu]++) {
++		llcc_pmu_fold(p, cpu);
++	} else {
++		cfg = readl_relaxed(p->base + LLCC_MON_CFG) | BIT(i);
++		writel_relaxed(cfg | LLCC_MON_CLEAR(i), p->base + LLCC_MON_CFG);
++		writel_relaxed(cfg, p->base + LLCC_MON_CFG);
++	}
++	local64_set(&event->hw.prev_count, p->total[cpu]);
++	if (!p->active++)
++		mod_timer(&p->fold, jiffies + msecs_to_jiffies(LLCC_FOLD_MS));
++	raw_spin_unlock_irqrestore(&p->lock, irqflags);
++
++	event->hw.state = 0;
++}
++
++static void llcc_pmu_event_stop(struct perf_event *event, int flags)
++{
++	struct llcc_pmu *p = to_llcc_pmu(event->pmu);
++	unsigned long irqflags;
++	int cpu = event->cpu;
++
++	if (event->hw.state & PERF_HES_STOPPED)
++		return;
++
++	llcc_pmu_event_read(event);
++
++	raw_spin_lock_irqsave(&p->lock, irqflags);
++	if (!--p->users[cpu])
++		writel_relaxed(readl_relaxed(p->base + LLCC_MON_CFG) & ~BIT(p->idx[cpu]),
++			       p->base + LLCC_MON_CFG);
++	p->active--;
++	raw_spin_unlock_irqrestore(&p->lock, irqflags);
++
++	event->hw.state |= PERF_HES_STOPPED | PERF_HES_UPTODATE;
++}
++
++static int llcc_pmu_event_add(struct perf_event *event, int flags)
++{
++	event->hw.state = PERF_HES_STOPPED | PERF_HES_UPTODATE;
++	if (flags & PERF_EF_START)
++		llcc_pmu_event_start(event, flags);
++
++	return 0;
++}
++
++static void llcc_pmu_event_del(struct perf_event *event, int flags)
++{
++	llcc_pmu_event_stop(event, PERF_EF_UPDATE);
++}
++
++PMU_FORMAT_ATTR(event, "config:0-15");
++
++static struct attribute *llcc_pmu_format_attrs[] = {
++	&format_attr_event.attr,
++	NULL
++};
++
++static struct attribute_group llcc_pmu_format_group = {
++	.name = "format",
++	.attrs = llcc_pmu_format_attrs,
++};
++
++static ssize_t llcc_pmu_event_show(struct device *dev, struct device_attribute *attr,
++				   char *buf)
++{
++	struct perf_pmu_events_attr *a = container_of(attr, struct perf_pmu_events_attr, attr);
++
++	return sysfs_emit(buf, "event=%#llx\n", a->id);
++}
++
++static struct attribute *llcc_pmu_event_attrs[] = {
++	PMU_EVENT_ATTR_ID(read_miss, llcc_pmu_event_show, LLCC_EV_READ_MISS),
++	NULL
++};
++
++static struct attribute_group llcc_pmu_event_group = {
++	.name = "events",
++	.attrs = llcc_pmu_event_attrs,
++};
++
++static const struct attribute_group *llcc_pmu_attr_groups[] = {
++	&llcc_pmu_format_group,
++	&llcc_pmu_event_group,
++	NULL
++};
++
++/**
++ * qcom_llcc_pmu_type() - perf type of the LLCC PMU described by a DT node
++ * @np: the PMU's DT node
++ *
++ * Return: the type to open its events with, or -EPROBE_DEFER until it
++ * has registered.
++ */
++int qcom_llcc_pmu_type(struct device_node *np)
++{
++	struct platform_device *pdev = of_find_device_by_node(np);
++	struct llcc_pmu *p;
++	int type = -EPROBE_DEFER;
++
++	if (!pdev)
++		return type;
++
++	device_lock(&pdev->dev);
++	p = platform_get_drvdata(pdev);
++	if (pdev->dev.driver == &llcc_pmu_driver.driver && p)
++		type = p->pmu.type;
++	device_unlock(&pdev->dev);
++	put_device(&pdev->dev);
++
++	return type;
++}
++EXPORT_SYMBOL_GPL(qcom_llcc_pmu_type);
++
++static int llcc_pmu_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct llcc_pmu *p;
++	int cpu, i, ret;
++
++	p = devm_kzalloc(dev, sizeof(*p), GFP_KERNEL);
++	if (!p)
++		return -ENOMEM;
++
++	p->base = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(p->base))
++		return PTR_ERR(p->base);
++
++	for_each_possible_cpu(cpu)
++		p->idx[cpu] = LLCC_MON_MAX;
++
++	for (i = 0; i < LLCC_MON_MAX; i++) {
++		struct device_node *cpu_np __free(device_node) =
++			of_parse_phandle(dev->of_node, "cpus", i);
++
++		if (!cpu_np)
++			break;
++		cpu = of_cpu_node_to_id(cpu_np);
++		if (cpu < 0)
++			return dev_err_probe(dev, -EINVAL, "bad cpu for counter %d\n", i);
++		p->idx[cpu] = i;
++	}
++
++	for_each_possible_cpu(cpu)
++		if (p->idx[cpu] == LLCC_MON_MAX)
++			return dev_err_probe(dev, -EINVAL, "no counter for cpu%d\n", cpu);
++
++	raw_spin_lock_init(&p->lock);
++	timer_setup(&p->fold, llcc_pmu_fold_all, TIMER_DEFERRABLE);
++	writel_relaxed(0, p->base + LLCC_MON_CFG);
++
++	p->pmu = (struct pmu) {
++		.module		= THIS_MODULE,
++		.parent		= dev,
++		.task_ctx_nr	= perf_invalid_context,
++		.event_init	= llcc_pmu_event_init,
++		.add		= llcc_pmu_event_add,
++		.del		= llcc_pmu_event_del,
++		.start		= llcc_pmu_event_start,
++		.stop		= llcc_pmu_event_stop,
++		.read		= llcc_pmu_event_read,
++		.attr_groups	= llcc_pmu_attr_groups,
++		.capabilities	= PERF_PMU_CAP_NO_EXCLUDE | PERF_PMU_CAP_NO_INTERRUPT,
++	};
++
++	platform_set_drvdata(pdev, p);
++
++	ret = perf_pmu_register(&p->pmu, "qcom_llcc", -1);
++	if (ret)
++		platform_set_drvdata(pdev, NULL);
++
++	return ret;
++}
++
++static void llcc_pmu_remove(struct platform_device *pdev)
++{
++	struct llcc_pmu *p = platform_get_drvdata(pdev);
++
++	perf_pmu_unregister(&p->pmu);
++	timer_shutdown_sync(&p->fold);
++	writel_relaxed(0, p->base + LLCC_MON_CFG);
++}
++
++static const struct of_device_id llcc_pmu_of_match[] = {
++	{ .compatible = "qcom,sm8750-llcc-pmu" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, llcc_pmu_of_match);
++
++static struct platform_driver llcc_pmu_driver = {
++	.probe = llcc_pmu_probe,
++	.remove = llcc_pmu_remove,
++	.driver = {
++		.name = "qcom-llcc-pmu",
++		.of_match_table = llcc_pmu_of_match,
++		.suppress_bind_attrs = true,
++	},
++};
++module_platform_driver(llcc_pmu_driver);
++
++MODULE_DESCRIPTION("Qualcomm LLCC per-CPU read-miss PMU");
++MODULE_LICENSE("GPL");
+diff --git a/include/linux/soc/qcom/llcc-pmu.h b/include/linux/soc/qcom/llcc-pmu.h
+new file mode 100644
+index 000000000..9cfa2a70a
+--- /dev/null
++++ b/include/linux/soc/qcom/llcc-pmu.h
+@@ -0,0 +1,18 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef __QCOM_LLCC_PMU_H__
++#define __QCOM_LLCC_PMU_H__
++
++#include <linux/errno.h>
++
++struct device_node;
++
++#if IS_ENABLED(CONFIG_QCOM_LLCC_PMU)
++int qcom_llcc_pmu_type(struct device_node *np);
++#else
++static inline int qcom_llcc_pmu_type(struct device_node *np)
++{
++	return -ENODEV;
++}
++#endif
++
++#endif
+-- 
+2.56.0
+
