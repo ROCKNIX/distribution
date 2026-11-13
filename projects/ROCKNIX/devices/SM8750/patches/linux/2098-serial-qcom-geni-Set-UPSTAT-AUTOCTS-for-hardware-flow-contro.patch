@@ -1,0 +1,78 @@
+From: Michael McAllister <me@michaelmcallister.org>
+Subject: [v2] serial: qcom-geni: Set UPSTAT_AUTOCTS for hardware flow control
+Link: https://lore.kernel.org/r/179269779969.81501.3877980314174207182.geni-autocts-v2@michaelmcallister.org
+
+qcom_geni_serial_set_termios() clears UART_CTS_MASK when CRTSCTS is set,
+enabling hardware CTS flow control. However, it never sets UPSTAT_AUTOCTS,
+so uart_softcts_mode() also selects software-assisted CTS flow control.
+
+If CTS is deasserted when uart_change_line_settings() samples the modem
+status, serial core sets hw_stopped and stops transmission. The GENI
+driver does not handle CTS-change interrupts, so asserting CTS again does
+not clear hw_stopped or restart the transmitter.
+
+On a Motorola Moto G10 with WCN3950, this can stall Bluetooth setup in
+tty_wait_until_sent() while qca_setup() closes the serial port. A captured
+stall had one byte left in the software transmit queue, hw_stopped set,
+and CTS asserted, with the UART powered and its interrupt enabled.
+
+Set UPSTAT_AUTOCTS under the port lock when CRTSCTS is enabled, and clear
+it when CRTSCTS is disabled, to match the hardware configuration.
+
+Fixes: 8a8a66a1a18a ("tty: serial: qcom_geni_serial: Add support for flow control")
+Cc: stable@vger.kernel.org
+Assisted-by: LLM
+Signed-off-by: Michael McAllister <me@michaelmcallister.org>
+---
+Changes in v2:
+- Use scoped_guard(uart_port_lock_irqsave, uport), as suggested by Jiri Slaby,
+  removing the flags variable and explicit lock/unlock calls.
+
+v1: https://lore.kernel.org/linux-serial/20261021202603.42888-1-me@michaelmcallister.org/
+
+Hardware validation used v1 with explicit lock/unlock calls in the Motorola
+Moto G10 Linux 7.2.9 port. This revision preserves the same lock scope.
+
+Before the fix, a Bluetooth power-cycle test captured qca_setup() blocked
+in tty_wait_until_sent() through serdev_device_close(), with:
+
+  software TX pending: 1 byte
+  hw_stopped:          1
+  UART status:        0x1 (UPSTAT_CTS_ENABLE without UPSTAT_AUTOCTS)
+  SE_GENI_IOS:         0x1 (IO2_DATA_IN clear, CTS asserted)
+  UART IRQ disabled:  0
+  UART IRQ masked:    0
+
+After the fix RTC suspend/resume worked, followed by Bluetooth discovery.
+
+Built drivers/tty/serial/qcom_geni_serial.o for arm64 with W=1 and
+CONFIG_SERIAL_QCOM_GENI_CONSOLE=y against the base below.
+
+AI assistance: Codex analyzed the saved UART diagnostics and serial-core
+source and ran the build and style checks.
+
+ drivers/tty/serial/qcom_geni_serial.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+
+base-commit: a90ee4305c4a5df72c11b31dacfdc76e00fcf78a
+---
+diff --git a/drivers/tty/serial/qcom_geni_serial.c b/drivers/tty/serial/qcom_geni_serial.c
+index a851b8f0ef..aff26a8351 100644
+--- a/drivers/tty/serial/qcom_geni_serial.c
++++ b/drivers/tty/serial/qcom_geni_serial.c
+@@ -1596,6 +1596,14 @@ static void qcom_geni_serial_set_termios(struct uart_port *uport,
+ 	writel(bits_per_char, uport->membase + SE_UART_RX_WORD_LEN);
+ 	writel(stop_bit_len, uport->membase + SE_UART_TX_STOP_BIT_LEN);
+ 
++	/* CTS gates TX in hardware; no CTS interrupt updates hw_stopped. */
++	scoped_guard(uart_port_lock_irqsave, uport) {
++		if (termios->c_cflag & CRTSCTS)
++			uport->status |= UPSTAT_AUTOCTS;
++		else
++			uport->status &= ~UPSTAT_AUTOCTS;
++	}
++
+ 	trace_geni_serial_set_termios(uport->dev, baud, bits_per_char,
+ 				      tx_trans_cfg, tx_parity_cfg, rx_trans_cfg,
+ 				      rx_parity_cfg, stop_bit_len);

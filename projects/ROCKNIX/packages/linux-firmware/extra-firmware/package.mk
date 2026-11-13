@@ -22,4 +22,13 @@ makeinstall_target() {
     "SM8750") cp -a SM8750/* ${INSTALL}/$(get_full_firmware_dir) ;;
     "RK3566") cp -a RK3566/* ${INSTALL}/$(get_full_firmware_dir) ;;
   esac
+
+  # The WCN7860 firmware supports MLO, but does not report it in the QMI
+  # phy capabilities ath12k reads. Advertise it through a firmware-2.bin
+  # that carries only a timestamp IE and a features IE with
+  # ATH12K_FW_FEATURE_MLO set; the images still load from their own files.
+  if [ "${DEVICE}" = "SM8750" ]; then
+    printf 'QCOM-ATH12K-FW\000\000\000\000\000\000\004\000\000\000\060\204\225\152\001\000\000\000\001\000\000\000\002\000\000\000' \
+      > ${INSTALL}/$(get_full_firmware_dir)/ath12k/WCN7860/hw2.0/firmware-2.bin
+  fi
 }

@@ -1,18 +1,21 @@
-From 3c45806c8f520ec746c80d7652496f30599e4738 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Jacob Cook <jacobmcook1984@gmail.com>
 Date: Fri, 9 Oct 2026 10:00:05 -0400
 Subject: [PATCH] drm/panel: icna35xx: allow calibrating the ICNA3520 frame
  length
 
+Expose frame_len_120 and frame_len_60 in sysfs so the refresh rate of
+individual units can be trimmed, and re-send the timing registers to the
+live panel when the active rate is changed.
 ---
- .../gpu/drm/panel/panel-chipone-icna35xx.c    | 141 ++++++++++++++++--
- 1 file changed, 128 insertions(+), 13 deletions(-)
+ .../gpu/drm/panel/panel-chipone-icna35xx.c    | 140 ++++++++++++++++--
+ 1 file changed, 128 insertions(+), 12 deletions(-)
 
 diff --git a/drivers/gpu/drm/panel/panel-chipone-icna35xx.c b/drivers/gpu/drm/panel/panel-chipone-icna35xx.c
-index f14c802..b279bfa 100644
+index 9c606b3..5cc2e10 100644
 --- a/drivers/gpu/drm/panel/panel-chipone-icna35xx.c
 +++ b/drivers/gpu/drm/panel/panel-chipone-icna35xx.c
-@@ -34,6 +34,10 @@ struct panel_info {
+@@ -36,6 +36,10 @@ struct panel_info {
  	struct regulator_bulk_data *supplies;
  	struct backlight_device *backlight;
  	bool enabled;
@@ -23,7 +26,7 @@ index f14c802..b279bfa 100644
  };
  
  struct panel_desc {
-@@ -50,6 +54,9 @@ struct panel_desc {
+@@ -52,6 +56,9 @@ struct panel_desc {
  	int (*init_sequence)(struct panel_info *pinfo);
  
  	struct drm_dsc_config dsc;
@@ -33,7 +36,7 @@ index f14c802..b279bfa 100644
  };
  
  static const struct regulator_bulk_data panel_supplies[] = {
-@@ -156,6 +163,34 @@ static int icna3512_init_sequence(struct panel_info *pinfo)
+@@ -128,6 +135,34 @@ static int icna3512_init_sequence(struct panel_info *pinfo)
  	return dsi_ctx.accum_err;
  }
  
@@ -68,38 +71,37 @@ index f14c802..b279bfa 100644
  static int icna3520_init_sequence(struct panel_info *pinfo)
  {
  	struct mipi_dsi_multi_context dsi_ctx = { .dsi = pinfo->dsi };
-@@ -178,19 +213,8 @@ static int icna3520_init_sequence(struct panel_info *pinfo)
+@@ -149,18 +184,8 @@ static int icna3520_init_sequence(struct panel_info *pinfo)
  
  	mipi_dsi_msleep(&dsi_ctx, 120);
  
 -	if (cur_vrefresh == 120) {
 -		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x48, 0x00);
 -		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9F, 0x00);
--		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB3, 
--                0x00, 0xD8, 0x00, 0x1C, 0x00, 0x4C);
--	}
--	else {
+-		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB3,
+-			0x00, 0xD8, 0x00, 0x1C, 0x00, 0x4C);
+-	} else {
 -		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x48, 0x10);
 -		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9F, 0x00);
--		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB3, 
--                0x00, 0xDB, 0x00, 0x1C, 0x00, 0x1C, 0x00, 0x00,
--				0xDB, 0x00, 0x1C, 0x07, 0xD6, 0x00);
+-		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB3,
+-			0x00, 0xDB, 0x00, 0x1C, 0x00, 0x1C, 0x00, 0x00,
+-			0xDB, 0x00, 0x1C, 0x07, 0xD6, 0x00);
 -	}
 +	pinfo->vrefresh = cur_vrefresh;
 +	icna3520_set_frame_len(&dsi_ctx, pinfo);
  
  	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9F, 0x01);
  	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB2, 0x00);
-@@ -299,6 +323,8 @@ static struct panel_desc icna3520_desc = {
- 	.format = MIPI_DSI_FMT_RGB888,
- 	.mode_flags =  MIPI_DSI_MODE_NO_EOT_PACKET | MIPI_DSI_CLOCK_NON_CONTINUOUS | MIPI_DSI_MODE_LPM,
+@@ -259,6 +284,8 @@ static struct panel_desc thor_top_desc = {
+ 	.mode_flags =  MIPI_DSI_MODE_NO_EOT_PACKET | MIPI_DSI_CLOCK_NON_CONTINUOUS |
+ 			MIPI_DSI_MODE_LPM,
  	.init_sequence = icna3520_init_sequence,
 +	.frame_len_120 = 0x4C,
 +	.frame_len_60 = 0x7D6,
  	.dsc = {
  		.dsc_version_major = 0x1,
  		.dsc_version_minor = 0x1,
-@@ -492,6 +518,86 @@ static struct backlight_device *icna35xx_create_backlight(struct mipi_dsi_device
+@@ -441,6 +468,86 @@ static struct backlight_device *icna35xx_create_backlight(struct mipi_dsi_device
  					      &icna35xx_bl_ops, &props);
  }
  
@@ -186,7 +188,7 @@ index f14c802..b279bfa 100644
  static int icna35xx_probe(struct mipi_dsi_device *dsi)
  {
  	struct device *dev = &dsi->dev;
-@@ -521,6 +627,15 @@ static int icna35xx_probe(struct mipi_dsi_device *dsi)
+@@ -469,6 +576,15 @@ static int icna35xx_probe(struct mipi_dsi_device *dsi)
  	pinfo->dsi = dsi;
  	mipi_dsi_set_drvdata(dsi, pinfo);
  
@@ -199,9 +201,6 @@ index f14c802..b279bfa 100644
 +			return ret;
 +	}
 +
- 	ret = of_drm_get_panel_orientation(dev->of_node, &pinfo->orientation);
+ 	ret = drm_of_get_panel_orientation(dev->of_node, &pinfo->orientation);
  	if (ret < 0) {
  		dev_err(dev, "%pOF: failed to get orientation %d\n", dev->of_node, ret);
--- 
-2.43.0
-

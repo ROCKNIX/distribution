@@ -1,0 +1,57 @@
+From e6f64f9b76d595cdd697dcf345860a8317b09d2f Mon Sep 17 00:00:00 2001
+From: Krzysztof Kozlowski <krzysztof.kozlowski@oss.qualcomm.com>
+Date: Tue, 3 Nov 2026 15:56:36 +0100
+Subject: soc: qcom: apr: Reject packets with header size larger than packet
+ size
+
+apr_do_rx_callback() and gpr_do_rx_callback() validate the header size
+and the packet size separately, but never check that the header fits
+within the packet.  Both sizes are u16, so with a malformed packet where
+the header size exceeds the packet size, the subtraction computing
+resp.payload_size gets promoted to int and becomes negative.
+
+Further check "resp.payload_size > 0" would fail, leading to
+resp.payload left uninitialized (stack value).  Reject such packets as
+having a wrong packet size, although unlikely that firmware would
+produce such packets.
+
+Fixes: 6adba21eb434 ("soc: qcom: Add APR bus driver")
+Fixes: ec1471a898cc ("soc: qcom: apr: Add GPR support")
+Cc: stable@vger.kernel.org
+Reported-by: Sashiko <sashiko-bot@kernel.org>
+Closes: https://sashiko.dev/#/bug/linux-82d40745-1593-4c20-8432-d86099836525
+Signed-off-by: Krzysztof Kozlowski <krzysztof.kozlowski@oss.qualcomm.com>
+Reviewed-by: Abel Vesa <abel.vesa@oss.qualcomm.com>
+Link: https://patch.msgid.link/20261103145635.309032-4-krzysztof.kozlowski@oss.qualcomm.com
+Signed-off-by: Bjorn Andersson <andersson@kernel.org>
+---
+ drivers/soc/qcom/apr.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/soc/qcom/apr.c b/drivers/soc/qcom/apr.c
+index 2d5645ff991971..e303562526d4ea 100644
+--- a/drivers/soc/qcom/apr.c
++++ b/drivers/soc/qcom/apr.c
+@@ -210,7 +210,8 @@ static int apr_do_rx_callback(struct packet_router *apr, struct apr_rx_buf *abuf
+ 		return -EINVAL;
+ 	}
+ 
+-	if (hdr->pkt_size < APR_HDR_SIZE || hdr->pkt_size != len) {
++	if (hdr->pkt_size < APR_HDR_SIZE || hdr->pkt_size != len ||
++	    hdr->pkt_size <= hdr_size) {
+ 		dev_err(apr->dev, "APR: Wrong packet size\n");
+ 		return -EINVAL;
+ 	}
+@@ -280,7 +281,8 @@ static int gpr_do_rx_callback(struct packet_router *gpr, struct apr_rx_buf *abuf
+ 		return -EINVAL;
+ 	}
+ 
+-	if (hdr->pkt_size < GPR_PKT_HEADER_BYTE_SIZE || hdr->pkt_size != len) {
++	if (hdr->pkt_size < GPR_PKT_HEADER_BYTE_SIZE || hdr->pkt_size != len ||
++	    hdr->pkt_size <= hdr_size * 4) {
+ 		dev_err(gpr->dev, "GPR: Wrong packet size\n");
+ 		return -EINVAL;
+ 	}
+-- 
+cgit 1.3.1-korg
+
