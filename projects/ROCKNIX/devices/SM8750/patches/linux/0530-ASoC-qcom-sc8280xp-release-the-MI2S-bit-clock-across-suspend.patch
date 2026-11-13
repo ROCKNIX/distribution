@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: André Braga <code@andrebraga.com>
+Subject: [PATCH] ASoC: qcom: sc8280xp: release the MI2S bit clock across suspend
+
+An open MI2S stream holds the bit clock from BE startup to shutdown,
+and with it the LPASS votes, through system suspend. Release it when
+the card suspends and take it again before the card resumes, as
+BCLK-slaved amps start then.
+---
+diff --git a/sound/soc/qcom/sc8280xp.c b/sound/soc/qcom/sc8280xp.c
+--- a/sound/soc/qcom/sc8280xp.c
++++ b/sound/soc/qcom/sc8280xp.c
+@@ -639,12 +639,57 @@
+ 
+ MODULE_DEVICE_TABLE(of, snd_sc8280xp_dt_match);
+ 
++/*
++ * The MI2S bit clock is held from BE startup to shutdown, so an open
++ * stream keeps it on through system suspend. Let it go there and take
++ * it again before the card resumes, as BCLK-slaved amps start then.
++ */
++static int sc8280xp_snd_suspend(struct device *dev)
++{
++	struct snd_soc_card *card = dev_get_drvdata(dev);
++	struct sc8280xp_snd_data *data = snd_soc_card_get_drvdata(card);
++	int ret;
++
++	ret = snd_soc_suspend(dev);
++	if (ret)
++		return ret;
++
++	if (data->mi2s_clk_count)
++		clk_disable_unprepare(data->i2s_clk);
++
++	return 0;
++}
++
++static int sc8280xp_snd_resume(struct device *dev)
++{
++	struct snd_soc_card *card = dev_get_drvdata(dev);
++	struct sc8280xp_snd_data *data = snd_soc_card_get_drvdata(card);
++	int ret;
++
++	if (data->mi2s_clk_count) {
++		ret = clk_prepare_enable(data->i2s_clk);
++		if (ret)
++			return ret;
++	}
++
++	return snd_soc_resume(dev);
++}
++
++static const struct dev_pm_ops sc8280xp_snd_pm_ops = {
++	.suspend = sc8280xp_snd_suspend,
++	.resume = sc8280xp_snd_resume,
++	.freeze = snd_soc_suspend,
++	.thaw = snd_soc_resume,
++	.poweroff = snd_soc_poweroff,
++	.restore = snd_soc_resume,
++};
++
+ static struct platform_driver snd_sc8280xp_driver = {
+ 	.probe  = sc8280xp_platform_probe,
+ 	.driver = {
+ 		.name = "snd-sc8280xp",
+ 		.of_match_table = snd_sc8280xp_dt_match,
+-		.pm = &snd_soc_pm_ops,
++		.pm = &sc8280xp_snd_pm_ops,
+ 	},
+ };
+ module_platform_driver(snd_sc8280xp_driver);
