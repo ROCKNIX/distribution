@@ -20,10 +20,9 @@ fi
 
 pre_make_target() {
   PKG_UBOOT_CONFIG="anbernic-rgxx3-rk3566_defconfig"
-  PKG_RKBIN="$(get_build_dir rkbin)"
   PKG_MINILOADER="spl/u-boot-spl.bin"
-  PKG_BL31="${PKG_RKBIN}/bin/rk35/rk3568_bl31_v1.46.elf"
-  PKG_DDR_BIN="${PKG_RKBIN}/bin/rk35/rk3568_ddr_1560MHz_v1.26.bin"
+  PKG_BL31="$(get_build_dir atf)/build/${ATF_PLATFORM}/release/bl31/bl31.elf"
+  PKG_DDR_BIN="$(get_build_dir rkbin)/bin/rk35/rk3568_ddr_1560MHz_v1.26.bin"
 }
 
 make_target() {
