@@ -32,13 +32,13 @@ case ${DEVICE} in
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     PKG_PATCH_DIRS+=" 7.2.6"
     ;;
-  S922X)
+  S922X|SM8550)
     PKG_VERSION="7.3.4"
     PKG_SHA256="b11b6df8295e8e991ff040b71aaa4994a8b55caa23b6b092907f195b5840fd1f"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
     PKG_PATCH_DIRS+=" 7.2.6"
     ;;
-  AMD64|H700|SM4450|SM6115|SM8250|SM8550|SM8650|SM8750)
+  AMD64|H700|SM4450|SM6115|SM8250|SM8650|SM8750)
     PKG_VERSION="7.2"
     PKG_SHA256="f9fef3d14c0df53819026f4be74459835c2a0b0dcbf5b5bbd9ea19f0829402b3"
     PKG_URL="https://www.kernel.org/pub/linux/kernel/v${PKG_VERSION/.*/}.x/${PKG_NAME}-${PKG_VERSION}.tar.xz"
