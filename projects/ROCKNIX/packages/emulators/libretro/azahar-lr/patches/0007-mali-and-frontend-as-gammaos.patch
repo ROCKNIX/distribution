@@ -1,0 +1,56 @@
+From: dArkOS RG52 Mini port
+Subject: No geometry shaders on Arm's driver, and the GammaOS frontend's
+ switches
+
+The rest of what azahar-nano gets on GammaOS from outside these sources:
+
+- vk_instance.h turns geometry shaders off under __ANDROID__ ("extremely
+  expensive on tilers"); elsewhere it uses them when the driver has them,
+  and Arm's Linux driver has. On the RG52 Mini the vertex and tiler work of
+  a Super Mario 3D Land frame took 19.5 ms with them, 3.8 ms on GammaOS.
+  Now they are off on Arm's driver too.
+- GammaOS's frontend turns on vertex depth, render pass clears, folded
+  clears, the hardware "keep inside" scissor and the JIT warm-up at every
+  launch (azn_set_tweaks, azn_set_tweak); settings.h has them off, so the
+  libretro core ran without them. Clears alone took 6.6 ms of a frame,
+  0.7 ms with them.
+
+With 006 and this, in Super Mario 3D Land 1-1 from the same save state, the
+GPU's time per frame is that of GammaOS (slot0 14.4 / slot1 3.7 ms against
+13.9 / 3.8 with both eyes) and the game runs at 60 frames a second with the
+right eye off, 30 before.
+
+--- a/src/citra_libretro/core_settings.cpp
++++ b/src/citra_libretro/core_settings.cpp
+@@ -1016,6 +1016,17 @@
+         LibRetro::FetchVariable(config::graphics::disable_right_eye_render, config::enabled) ==
+         config::enabled;
+ 
++    // dArkOS: the switches GammaOS's frontend for azahar-nano turns on at every launch
++    // (azn_set_tweaks and azn_set_tweak): depth from the vertex stage so early depth testing
++    // stays on, clears done by render passes and folded into the next pass, the "keep inside"
++    // scissor by the hardware instead of a discard, and the JIT warm-up of the blocks compiled
++    // in the last run. They default to off in settings.h, so the libretro core had none.
++    Settings::values.gammaos_vertex_depth = true;
++    Settings::values.gammaos_renderpass_clears = true;
++    Settings::values.gammaos_fold_clears = true;
++    Settings::values.gammaos_hw_scissor = true;
++    Settings::values.gammaos_jit_warmup = true;
++
+     Settings::values.use_disk_shader_cache =
+         LibRetro::FetchVariable(config::graphics::use_disk_shader_cache, config::enabled) ==
+         config::enabled;
+--- a/src/video_core/renderer_vulkan/vk_instance.h
++++ b/src/video_core/renderer_vulkan/vk_instance.h
+@@ -124,7 +124,10 @@
+         // cost even if it hurts accuracy somewhat. TODO: Make this an option
+         return false;
+ #else
+-        return features.geometryShader;
++        // dArkOS: the Mali GPUs are tilers too. With geometry shaders on, Super Mario 3D Land
++        // spent 19.5 ms a frame on the RG52 Mini's vertex and tiler work, against 3.8 ms on
++        // GammaOS's Android build of the same code (Mali-G52 at 900 MHz, both eyes drawn).
++        return features.geometryShader && driver_id != vk::DriverIdKHR::eArmProprietary;
+ #endif
+     }
+ 

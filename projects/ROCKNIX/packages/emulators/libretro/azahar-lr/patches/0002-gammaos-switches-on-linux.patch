@@ -1,0 +1,126 @@
+From: dArkOS RG52 Mini port
+Subject: The azahar-nano switches on Linux, Mali found as on Android
+
+azahar-nano reads its switches from Android properties
+(persist.gammaos.azahar_nano.<name>, sys.gammaos...) through
+<sys/system_properties.h>, which Linux does not have, and turns most of them
+on only when it finds a Mali GPU, a check made for Android only.
+
+- darkos/linux/sys/system_properties.h stands in for the Android header: a
+  property is the environment variable named like it with dots as
+  underscores (persist_gammaos_azahar_nano_fastmem=0), unset reads empty as
+  an unset property does, so every switch keeps its default;
+- IsMaliDevice() and TweakEnabled() work on Linux too: /dev/mali0 and no
+  kgsl node, as on Android. The real-time emulation thread (emu_rt) stays
+  Android only.
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 2a6dcb9..11b6983 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -579,6 +579,11 @@ if (USE_SYSTEM_SOUNDTOUCH)
+     target_include_directories(SoundTouch INTERFACE "${SOUNDTOUCH_INCLUDE_DIRS}")
+ endif()
+ 
++# dArkOS: the GammaOS switches are Android properties; on Linux they come from the
++# environment (darkos/linux/sys/system_properties.h).
++if (NOT ANDROID)
++    include_directories(BEFORE ${PROJECT_SOURCE_DIR}/darkos/linux)
++endif()
+ add_subdirectory(src)
+ 
+ set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT citra_meta)
+diff --git a/src/common/gammaos_tweak.h b/src/common/gammaos_tweak.h
+index ca0bb4c..dbeeacd 100644
+--- a/src/common/gammaos_tweak.h
++++ b/src/common/gammaos_tweak.h
+@@ -4,10 +4,8 @@
+ 
+ #pragma once
+ 
+-#ifdef ANDROID
+ #include <unistd.h>
+ #include <sys/system_properties.h>
+-#endif
+ 
+ namespace Common::GammaOS {
+ 
+@@ -15,20 +13,15 @@ namespace Common::GammaOS {
+ /// emulation thread tweaks below default on there only, so the Adreno devices keep the
+ /// behaviour they were validated with until a property turns a tweak on for them too.
+ inline bool IsMaliDevice() {
+-#ifdef ANDROID
+     static const bool mali =
+         access("/sys/class/kgsl/kgsl-3d0", F_OK) != 0 && access("/dev/mali0", F_OK) == 0;
+     return mali;
+-#else
+-    return false;
+-#endif
+ }
+ 
+ /// An emulation thread tweak: the property (persist.gammaos.azahar_nano.<name>) set to 1 turns it
+ /// on, 0 turns it off, unset leaves it on for the Mali devices only (off everywhere when
+ /// mali_default is false). Callers read it once and keep the result in a static.
+ inline bool TweakEnabled(const char* property, bool mali_default = true) {
+-#ifdef ANDROID
+     char v[PROP_VALUE_MAX] = {};
+     __system_property_get(property, v);
+     if (v[0] == '1') {
+@@ -37,7 +30,6 @@ inline bool TweakEnabled(const char* property, bool mali_default = true) {
+     if (v[0] == '0') {
+         return false;
+     }
+-#endif
+     return mali_default && IsMaliDevice();
+ }
+ 
+diff --git a/darkos/linux/sys/system_properties.h b/darkos/linux/sys/system_properties.h
+new file mode 100755
+index 0000000..b40ebe1
+--- /dev/null
++++ b/darkos/linux/sys/system_properties.h
+@@ -0,0 +1,44 @@
++// Copyright 2026 dArkOS RG52 Mini port
++// Licensed under GPLv2 or any later version
++// Refer to the license.txt file included.
++
++// Linux stand-in for Android's <sys/system_properties.h>. The GammaOS changes read their
++// switches from Android properties (persist.gammaos.azahar_nano.<name>, sys.gammaos...);
++// here a property is the environment variable named like it with dots as underscores,
++// e.g. persist_gammaos_azahar_nano_fastmem=0. Unset reads as an empty value, as an unset
++// property does, so every switch keeps its default.
++
++#pragma once
++
++#include <stdlib.h>
++#include <string.h>
++
++#define PROP_NAME_MAX 32
++#define PROP_VALUE_MAX 92
++
++static inline void darkos_property_env_name(const char* name, char* env, size_t size) {
++    size_t i = 0;
++    for (; name[i] != '\0' && i + 1 < size; i++) {
++        env[i] = name[i] == '.' ? '_' : name[i];
++    }
++    env[i] = '\0';
++}
++
++static inline int __system_property_get(const char* name, char* value) {
++    char env[128];
++    darkos_property_env_name(name, env, sizeof(env));
++    const char* v = getenv(env);
++    if (v == NULL) {
++        value[0] = '\0';
++        return 0;
++    }
++    strncpy(value, v, PROP_VALUE_MAX - 1);
++    value[PROP_VALUE_MAX - 1] = '\0';
++    return (int)strlen(value);
++}
++
++static inline int __system_property_set(const char* name, const char* value) {
++    char env[128];
++    darkos_property_env_name(name, env, sizeof(env));
++    return setenv(env, value, 1);
++}

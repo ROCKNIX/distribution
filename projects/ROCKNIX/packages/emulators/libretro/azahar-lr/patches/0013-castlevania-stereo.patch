@@ -1,0 +1,124 @@
+From: dArkOS RG52 Mini port
+Subject: Castlevania: Lords of Shadow - Mirror of Fate: GammaOS's stereo switches, and no copies out of the right eye
+
+Castlevania: Lords of Shadow - Mirror of Fate (000400000009E500) ran its
+intro at 9 fps on an RG52 Mini. Measured on one stretch of it, frames 60 to
+660 after a save state, every run from the same state:
+
+- The game draws the two eyes object by object, each draw into the other
+  eye's target. On the Mali GPU every switch ends a render pass, about 330 a
+  frame: the GPU was busy 95% of the time and the driver's thread took most of
+  a core. GammaOS's stereo_skip (off by default) learns the right eye's target
+  from its transfer to the right framebuffer and leaves its draws out.
+  11.1 fps.
+- The game flushes the CPU cache before each of its command lists, about 15 a
+  frame, and the core drained the GPU worker at every flush: the emulation
+  thread waited for it half the time. GammaOS's async_gpu_flush_lag=24 lets 24
+  jobs stay queued there instead (no wait at all measured the same, a lag of 8
+  gave 11.7). 14.4 fps.
+- The game copies each eye's image into one texture for its post-processing.
+  The right eye's copy, out of a target nothing draws into any more, went to
+  the CPU, which first downloaded the left eye's copy from the GPU (a wait)
+  and had it uploaded again: three times a frame. With stereo_skip such a copy
+  is now left out, as the right eye's transfer to its framebuffer already was.
+  20.1 fps.
+
+The two switches are environment variables here (patch 002). The core sets
+them for this title in retro_load_game unless the environment sets them
+already. Screens grabbed at the same frames match those without any of this.
+The title ID is that of the owner's copy; the game's other releases have IDs
+of their own, to be added when known.
+
+--- a/src/citra_libretro/citra_libretro.cpp
++++ b/src/citra_libretro/citra_libretro.cpp
+@@ -2,6 +2,7 @@
+ // Licensed under GPLv2 or any later version
+ // Refer to the license.txt file included.
+ 
++#include <array>
+ #include <list>
+ #include <numeric>
+ #include <vector>
+@@ -530,6 +531,31 @@
+     emu_instance->first_run_loop = true;
+ }
+ 
++/// dArkOS: GammaOS switches (environment variables named like their Android properties) that some
++/// games need, set for those games unless the environment sets them already; the core reads each
++/// once, at the game's first GPU work. Castlevania: Lords of Shadow - Mirror of Fate draws the two
++/// eyes object by object, a render pass for each draw on the Mali GPU: stereo_skip leaves the right
++/// eye out (with 3D off it is never shown), and async_gpu_flush_lag lets the GPU worker stay up to
++/// 24 jobs behind at the cache flush the game makes before each command list instead of draining
++/// it there. Its intro on an RG52 Mini: 9.2 fps, 11.1 with the first, 14.4 with both (no flush
++/// wait at all gave the same).
++static void SetTitleSwitches(u64 program_id) {
++    struct TitleSwitch {
++        u64 program_id;
++        const char* name;
++        const char* value;
++    };
++    static constexpr std::array<TitleSwitch, 2> switches{{
++        {0x000400000009E500, "persist_gammaos_azahar_nano_stereo_skip", "1"},
++        {0x000400000009E500, "persist_gammaos_azahar_nano_async_gpu_flush_lag", "24"},
++    }};
++    for (const auto& s : switches) {
++        if (s.program_id == program_id && setenv(s.name, s.value, 0) == 0) {
++            LOG_INFO(Frontend, "title {:016X}: {}={}", program_id, s.name, getenv(s.name));
++        }
++    }
++}
++
+ /**
+  * libretro callback; Called when a game is to be loaded.
+  */
+@@ -581,6 +607,10 @@
+             }
+             return false;
+         }
++        u64 program_id{};
++        if (loader->ReadProgramId(program_id) == Loader::ResultStatus::Success) {
++            SetTitleSwitches(program_id);
++        }
+         // Stash the loader so System::Load can reuse it instead of re-opening
+         Core::System::GetInstance().RegisterAppLoaderEarly(loader);
+     }
+--- a/src/video_core/renderer_vulkan/vk_rasterizer.h
++++ b/src/video_core/renderer_vulkan/vk_rasterizer.h
+@@ -195,6 +195,7 @@
+     bool eye_learned = false;       // the pattern was seen in a previous frame
+     PAddr stereo_right_rt = 0;      // GammaOS: right eye target of interleaved stereo games
+     PAddr last_left_src = 0;
++    u32 stereo_right_size = 0;      // dArkOS: its bytes, for the texture copies out of it
+     u32 stereo_right_w = 0, stereo_right_h = 0; // size of the right eye target        // GammaOS: last surface transferred to a left framebuffer
+     bool eye_draws_after_left = false;
+     bool RightEyeSkipAllowed() const;
+--- a/src/video_core/renderer_vulkan/vk_rasterizer.cpp
++++ b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
+@@ -1753,6 +1753,8 @@
+             stereo_right_rt = t_in;
+             stereo_right_w = config.input_width.Value();
+             stereo_right_h = config.input_height.Value();
++            stereo_right_size =
++                stereo_right_w * stereo_right_h * Pica::BytesPerPixel(config.input_format);
+             GammaStats::Add(GammaStats::TransfersBlocked);
+             return false; // the right eye image is never displayed
+         }
+@@ -1900,6 +1902,18 @@
+ }
+ 
+ bool RasterizerVulkan::AccelerateTextureCopy(const Pica::DisplayTransferConfig& config) {
++    // dArkOS: the right eye target stereo_skip learned is never drawn, so a copy out of it copies
++    // an image nobody sees. Castlevania: Lords of Shadow - Mirror of Fate copies each eye's image
++    // into the same texture for its post-processing; the right eye's copy, left to the CPU (its
++    // source is only the clear), first downloaded the left eye's copy from the GPU (a wait) and
++    // had it uploaded again for the next frame, three times a frame.
++    if (stereo_right_rt != 0) {
++        const PAddr in = config.GetPhysicalInputAddress();
++        if (in >= stereo_right_rt && in < stereo_right_rt + stereo_right_size) {
++            GammaStats::Add(GammaStats::TransfersBlocked);
++            return true;
++        }
++    }
+     if (GammaDump::d.active) {
+         GammaDump::Note(fmt::format("texture copy {:08X} ({}x{}) -> {:08X} ({}x{})",
+                                     config.GetPhysicalInputAddress(), config.input_width.Value(),

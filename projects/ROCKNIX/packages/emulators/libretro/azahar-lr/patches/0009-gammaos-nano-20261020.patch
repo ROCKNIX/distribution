@@ -1,0 +1,264 @@
+From: dArkOS RG52 Mini port
+Subject: GammaOS's azahar-nano commits of 2026-10-20
+
+Three commits GammaOS made to azahar-nano after the state patch 000 holds
+(https://github.com/TheGammaSqueeze/GammaOSNextDistribution-14, path
+gammaos/emulators/azahar-nano):
+
+- 43f1f504258: when the emulator falls more than two periods behind, the
+  frame goes on the schedule's next slot instead of restarting the schedule
+  from now, so the schedule keeps its offset against vblank.
+- cfd0c22df98, afb19857d2c: the right-eye skip (patch 006 turns it on) drops
+  only draws with a viewport of the left eye's pass. Super Mario 3D Land draws
+  its bottom screen into the eyes' target between the eyes, and the skip took
+  those draws for the right eye: the bottom screen flashed blue.
+
+On the RG52 Mini, Super Mario 3D Land from its savestate, 60 s: 58.42 and
+58.68 fps against 58.47 and 58.62 without them, with the same profile.
+
+--- a/src/core/perf_stats.cpp
++++ b/src/core/perf_stats.cpp
+@@ -293,13 +293,21 @@
+         g_pace_trace.sleeps++;
+         g_pace_trace.sleep_us += duration_cast<microseconds>(Clock::now() - sleep_start).count();
+     } else if (now > next_deadline + 2 * period) {
+-        // Hopelessly behind (a load stall, a long frame): carry at most one period
+-        // of debt so the following fast frames catch up without a sleep instead of
+-        // dropping the time (which ran the game a few percent slow).
++        // Hopelessly behind (a load stall, a long frame; a frame or two late still catches
++        // up without a sleep above, since dropping that time ran the game a few percent slow):
++        // present this frame on the schedule's next slot and go on from there, with no carried
++        // debt, so the schedule keeps its offset against the display's vblank. Restarting the
++        // schedule from now and presenting the late frame at once put a frame in front of the
++        // presenter at a random point of the vblank period; when it missed its vblank, the next
++        // frame arrived with that flip still in flight and every frame after it waited a whole
++        // extra period until the frontend's timing steer won the offset back. Kirby on the RP
++        // Duo Lite (64-265 ms frames): frame ready to scanout p90 16.1-16.8 ms -> 13.6-13.8 ms.
++        // The skipped time is dropped (a few tens of ms per stall, absorbed by audio stretching).
+         g_pace_trace.resets++;
+-        g_pace_trace.dropped_us +=
+-            duration_cast<microseconds>(now - period - next_deadline).count();
+-        next_deadline = now - period;
++        const auto periods = (now - next_deadline) / period + 1;
++        g_pace_trace.dropped_us += duration_cast<microseconds>(periods * period).count();
++        next_deadline += periods * period;
++        std::this_thread::sleep_until(next_deadline);
+     }
+ }
+ 
+--- a/src/video_core/renderer_vulkan/vk_rasterizer.cpp
++++ b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
+@@ -819,6 +819,16 @@
+                 const u32 verts = regs.pipeline.num_vertices;
+                 bool sw_ready = pipeline_cache.BindPipeline(sw_info, false);
+                 hybrid_baked = false;
++                // A draw for the bottom screen is never left out (see DrawFeedsBottomScreen): it
++                // waits for the software path pipeline (a trivial vertex shader, much quicker to
++                // build than the full one, which keeps building in the background) and is not
++                // held back by the vertex budget.
++                const bool over_budget = fallback_vertices_this_frame + verts > budget;
++                const bool keep = (!sw_ready || over_budget) && DrawFeedsBottomScreen();
++                if (keep && !sw_ready) {
++                    SlowStep t{"BindPipeline sw wait (bottom screen)"};
++                    sw_ready = pipeline_cache.BindPipeline(sw_info, true);
++                }
+                 if (!sw_ready) {
+                     // A precompiled baked shader (combiner compiled in, the rest dynamic)
+                     // can draw this now; its pipeline for a new state builds quickly.
+@@ -845,7 +855,7 @@
+                     }
+                 }
+                 bool skip = !sw_ready || (HybridDebugBits() & 16384);
+-                if (!skip && fallback_vertices_this_frame + verts > budget) {
++                if (!skip && !keep && over_budget) {
+                     // Over budget: hold this pipeline back. The budget is strict by default:
+                     // forcing held draws through after a few frames (fallback_hold=N) let a
+                     // cold cache burst stretch frames to 40 fps for ~20 s, while a strict
+@@ -876,7 +886,8 @@
+     } else {
+         const bool wait_built =
+             !async_shaders || (!async_small && regs.pipeline.num_vertices <= 6);
+-        if (!pipeline_cache.BindPipeline(pipeline_info, wait_built)) {
++        if (!pipeline_cache.BindPipeline(pipeline_info, wait_built) &&
++            !(DrawFeedsBottomScreen() && pipeline_cache.BindPipeline(pipeline_info, true))) {
+             return true;
+         }
+     }
+@@ -1100,9 +1111,29 @@
+         vertex_batch.clear();
+         return true;
+     }
++    // Games render every screen into one target: Super Mario 3D Land draws the bottom screen into
++    // the lower 320 rows of the eyes' 240x400 target, now and then between the left and the right
++    // eye, and transfers it out from there. Only a draw with a viewport of the left-eye pass can be
++    // the right eye; any other is another screen's and is drawn (skipped, the bottom screen showed
++    // the bare clear colour for a frame, a blue flash, every time the skip relearned).
++    const auto& rr = regs.rasterizer;
++    const u64 vp_key = (u64(rr.viewport_size_x.Value()) << 40) ^ (u64(rr.viewport_size_y.Value()) << 16) ^
++                       (u64(rr.viewport_corner.x.Value()) << 10) ^ u64(rr.viewport_corner.y.Value());
++    if (RightEyeSkipAllowed()) {
++        const PAddr rt = regs.framebuffer.framebuffer.GetColorBufferPhysicalAddress();
++        const std::pair<PAddr, u64> e{rt, vp_key};
++        if (frame_viewports.size() < 64 &&
++            std::find(frame_viewports.begin(), frame_viewports.end(), e) == frame_viewports.end()) {
++            frame_viewports.push_back(e);
++        }
++    }
+     if (eye_phase != EyePhase::Idle) {
+         const PAddr rt = regs.framebuffer.framebuffer.GetColorBufferPhysicalAddress();
+-        if (eye_phase == EyePhase::AfterLeft && rt == eye_rt) {
++        const bool eye_viewport =
++            std::find(eye_viewports.begin(), eye_viewports.end(), vp_key) != eye_viewports.end();
++        if (rt == eye_rt && !eye_viewport) {
++            // Another screen's pass in the eye target: draw it (its transfer ends the prediction).
++        } else if (eye_phase == EyePhase::AfterLeft && rt == eye_rt) {
+             eye_draws_after_left = true;
+             if (eye_learned && RightEyeSkipAllowed()) {
+                 eye_phase = EyePhase::Skipping;
+@@ -1332,7 +1363,8 @@
+         } else if (!Settings::values.gammaos_hybrid_uber) {
+             // Skip mode: draw once the fast software path pipeline is built (it builds in
+             // the background, about 55 ms); until then this draw is left out.
+-            if (!pipeline_cache.BindPipeline(pipeline_info, false)) {
++            if (!pipeline_cache.BindPipeline(pipeline_info, false) &&
++                !(DrawFeedsBottomScreen() && pipeline_cache.BindPipeline(pipeline_info, true))) {
+                 if (hybrid_baked) {
+                     u32 variant_key = 0;
+                     std::array<u32, 16> pack{};
+@@ -1663,6 +1695,15 @@
+         stereo_right_rt = 0;
+         return true;
+     }
++    // The viewports of the pass this transfer ends (the draws into its source since the previous
++    // transfer); for the left eye they become the right eye's (see Draw).
++    std::vector<u64> pass_viewports;
++    for (const auto& [target, key] : frame_viewports) {
++        if (target == config.GetPhysicalInputAddress()) {
++            pass_viewports.push_back(key);
++        }
++    }
++    frame_viewports.clear();
+     {
+         // Debug: persist.gammaos.azahar_nano.transfer_log=1 logs every display transfer.
+         static const bool tlog = [] {
+@@ -1737,6 +1778,9 @@
+     const bool is_top = config.output_width.Value() == 240 && config.output_height.Value() == 400;
+     const bool pair_of_left = is_top && in == eye_rt &&
+                               static_cast<s64>(out) == static_cast<s64>(eye_left_out) + d1;
++    if (eye_phase == EyePhase::Skipping && !is_top) {
++        return true;   // the other screen's image (drawn, see Draw) inside a right eye: keep skipping
++    }
+     if (eye_phase == EyePhase::Skipping) {
+         eye_phase = EyePhase::Idle;
+         if (pair_of_left) {
+@@ -1763,13 +1807,82 @@
+         eye_rt = in;
+         eye_left_out = out;
+         eye_draws_after_left = false;
++        eye_viewports = std::move(pass_viewports);   // the left-eye pass
+     } else {
++        // Another screen's image after the left eye: Super Mario 3D Land then draws no right eye
++        // in that frame, so the next eye-sized draws are the next frame's left eye. Stop predicting
++        // until the next left eye (waiting on skipped the left eye and flickered the top screen).
+         eye_phase = EyePhase::Idle;
+     }
+     return true;
+ }
+ 
++void RasterizerVulkan::NoteBottomScreenSource(const Pica::DisplayTransferConfig& config) {
++    if (config.output_width.Value() != 240 || config.output_height.Value() != 320) {
++        return;
++    }
++    const PAddr start = config.GetPhysicalInputAddress();
++    const PAddr end = start + config.input_width.Value() * config.output_height.Value() *
++                                  Pica::BytesPerPixel(config.input_format);
++    ScreenSource* slot = &bottom_sources[0];
++    for (auto& src : bottom_sources) {
++        if (src.start == start && src.end == end) {
++            slot = &src;
++            break;
++        }
++        if (src.frame < slot->frame) {
++            slot = &src;
++        }
++    }
++    *slot = {start, end, frame_index};
++}
++
++// GammaOS: a draw whose viewport lies inside memory a recent display transfer to the bottom screen
++// read from. Such a draw is never left out while its pipeline compiles: Kirby: Planet Robobot draws
++// its bottom screen into the lower part of the target its 3D scene uses and redraws it only when it
++// changes, so with a cold cache the last update before it went static could miss its draws and the
++// bottom screen kept the 3D scene under it until the next change. The scene's own full-target pass
++// is not inside that memory and keeps the fallback. Waiting only costs when the pipeline is new.
++bool RasterizerVulkan::DrawFeedsBottomScreen() const {
++    const auto& config = regs.framebuffer.framebuffer;
++    const PAddr color = config.GetColorBufferPhysicalAddress();
++    if (color == 0) {
++        return false;
++    }
++    bool any = false;
++    for (const auto& src : bottom_sources) {
++        any |= src.end != 0 && frame_index - src.frame < 600;
++    }
++    if (!any) {
++        return false;
++    }
++    const s32 width = config.GetWidth(), height = config.GetHeight();
++    const auto vp = regs.rasterizer.GetViewportRect();
++    VideoCore::SurfaceParams params;
++    params.is_tiled = true;
++    params.width = width;
++    params.height = height;
++    params.addr = color;
++    params.pixel_format = VideoCore::PixelFormatFromColorFormat(config.color_format);
++    params.UpdateParams();
++    const auto interval = params.GetSubRectInterval({
++        static_cast<u32>(std::clamp(vp.left, 0, width)),
++        static_cast<u32>(std::clamp(vp.top, 0, height)),
++        static_cast<u32>(std::clamp(vp.right, 0, width)),
++        static_cast<u32>(std::clamp(vp.bottom, 0, height)),
++    });
++    const PAddr first = static_cast<PAddr>(boost::icl::first(interval));
++    const PAddr last = first + static_cast<PAddr>(boost::icl::length(interval));
++    for (const auto& src : bottom_sources) {
++        if (src.end != 0 && frame_index - src.frame < 600 && first >= src.start && last <= src.end) {
++            return true;
++        }
++    }
++    return false;
++}
++
+ bool RasterizerVulkan::AccelerateDisplayTransfer(const Pica::DisplayTransferConfig& config) {
++    NoteBottomScreenSource(config);
+     if (!OnDisplayTransferEye(config)) {
+         return true;
+     }
+--- a/src/video_core/renderer_vulkan/vk_rasterizer.h
++++ b/src/video_core/renderer_vulkan/vk_rasterizer.h
+@@ -188,12 +188,25 @@
+     std::unordered_map<u64, u32> budget_held_since; ///< pipeline hash -> first held frame ///< GammaOS: this software draw replaces a declined hw draw
+     PAddr eye_rt = 0;               // render target of the left-eye transfer
+     PAddr eye_left_out = 0;         // where the left-eye image went
++    /// GammaOS: viewports of the draws since the last display transfer, (target, viewport key)
++    /// pairs, and those of the left-eye pass: only a draw with one of them can be the right eye.
++    std::vector<std::pair<PAddr, u64>> frame_viewports;
++    std::vector<u64> eye_viewports;
+     bool eye_learned = false;       // the pattern was seen in a previous frame
+     PAddr stereo_right_rt = 0;      // GammaOS: right eye target of interleaved stereo games
+     PAddr last_left_src = 0;
+     u32 stereo_right_w = 0, stereo_right_h = 0; // size of the right eye target        // GammaOS: last surface transferred to a left framebuffer
+     bool eye_draws_after_left = false;
+     bool RightEyeSkipAllowed() const;
++    /// GammaOS: memory a display transfer to the bottom screen read lately. Games often redraw
++    /// the bottom screen only when it changes, so a draw left out there stays missing.
++    struct ScreenSource {
++        PAddr start = 0, end = 0;
++        u32 frame = 0;
++    };
++    std::array<ScreenSource, 4> bottom_sources{};
++    void NoteBottomScreenSource(const Pica::DisplayTransferConfig& config);
++    bool DrawFeedsBottomScreen() const;
+     bool OnDisplayTransferEye(const Pica::DisplayTransferConfig& config);   // false = skip it
+     TextureRuntime runtime;
+     RasterizerCache res_cache;
