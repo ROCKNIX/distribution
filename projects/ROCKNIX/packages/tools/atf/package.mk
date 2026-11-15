@@ -18,15 +18,14 @@ case ${DEVICE} in
     PKG_SHA256="d95aaf292792c98035910d7e6c64ebfb297c897fef510415db1612f6d39f9223"
     PKG_DEPENDS_TARGET+=" h700-suspend-stub"
     PKG_NEED_UNPACK+=" $(get_pkg_directory h700-suspend-stub) ${SYSROOT_PREFIX}/usr/share/h700-suspend-stub"
+    PKG_URL="https://github.com/TrustedFirmware-A/trusted-firmware-a/archive/v${PKG_VERSION}.tar.gz"
   ;;
   *)
-    PKG_VERSION="2.10.0"
-    PKG_SHA256="6b1d5e89c311c5e7eaeb062713953311464c0378ab3e4ebc7ede72a746964bb1"
+    PKG_VERSION="a881364e03b0c5b3a8c00f20ad6fbdda53a57031"
+    # To build a commit use git, to get the submodules
+    PKG_URL="${PKG_SITE}.git"
     ;;
 esac
-
-PKG_URL="https://github.com/TrustedFirmware-A/trusted-firmware-a/archive/v${PKG_VERSION}.tar.gz"
-
 
 [ -n "${KERNEL_TOOLCHAIN}" ] && PKG_DEPENDS_TARGET+=" gcc-${KERNEL_TOOLCHAIN}:host"
 
