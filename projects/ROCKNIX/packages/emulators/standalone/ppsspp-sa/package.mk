@@ -2,8 +2,8 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="ppsspp-sa"
-PKG_VERSION="afbc66a318b86432642b532c575241f3716642ef" # v1.20.2
-CHEAT_DB_VERSION="7c9fe1ae71155626cea767aed53f968de9f4051f" # Update cheat.db (17/01/2026)
+PKG_VERSION="fa50bb1976065c4f8b1b47af227d367fe9771555" # v1.20.4
+CHEAT_DB_VERSION="d0cfd8d6d90f81bcf9c5d500388143200c83fecb" # Update cheat.db (17/11/2026)
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/hrydgard/ppsspp"
 PKG_URL="${PKG_SITE}.git"
