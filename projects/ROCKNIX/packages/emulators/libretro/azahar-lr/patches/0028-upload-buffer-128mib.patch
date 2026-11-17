@@ -1,0 +1,28 @@
+From: dArkOS RG52 Mini port
+Subject: Vulkan: the texture upload ring is 128 MiB, not 512
+
+The upload StreamBuffer is host-visible memory that Mali's kernel driver backs with
+RAM from the moment it is allocated, all of it, and that RAM cannot go to swap: of
+Azahar's 1.35-1.41 GB in Super Mario 3D Land on the RG52 Mini (2 GB), 512 MiB was this
+ring (the malisx2 session, kbase's allocations, 2026-10-29). What goes through it is
+a guest texture decoded at its native size (1024x1024 RGBA8, 4 MiB, at most; the
+internal resolution is scaled on the GPU afterwards) or a custom texture. When a lap
+fills, Map starts over and waits for the GPU to finish reading the start of the
+previous one, so a smaller ring costs a wait only when one frame uploads more than
+it holds; a single upload larger than the whole ring would fail the ASSERT in Map,
+and 128 MiB keeps room for a 4096x4096 RGBA8 custom texture (64 MiB).
+
+--- a/src/video_core/renderer_vulkan/vk_texture_runtime.cpp
++++ b/src/video_core/renderer_vulkan/vk_texture_runtime.cpp
+@@ -161,7 +161,10 @@
+     };
+ }
+ 
+-constexpr u64 UPLOAD_BUFFER_SIZE = 512_MiB;
++// dArkOS: 128 MiB, not 512. The driver backs the whole ring with RAM from the start and it
++// cannot be swapped; one upload is a guest texture at native size (4 MiB at most) or a
++// custom texture, and a full ring waits for the GPU's older reads, it does not fail.
++constexpr u64 UPLOAD_BUFFER_SIZE = 128_MiB;
+ constexpr u64 DOWNLOAD_BUFFER_SIZE = 16_MiB;
+ 
+ } // Anonymous namespace

@@ -1,0 +1,65 @@
+From: dArkOS RG52 Mini port
+Subject: GammaOS's GPU timer only when asked for
+
+GammaOS's azahar-nano measures GPU time per kind of work
+(vk_gammaos_gpu_timer.h): a pair of timestamps around every render pass,
+clear, blit, copy, upload and the present, read back three frames later.
+It started on the first frame whenever the GPU has timestamps, so every
+game paid for it on every frame, while only a profiling session reads the
+sums. A timestamp after a pass waits for that pass's work, and malisx2 turns
+each one into a job barrier.
+
+Now it starts only with persist.gammaos.azahar_nano.gputime=1 (on Linux the
+environment variable persist_gammaos_azahar_nano_gputime=1).
+
+Castlevania: Lords of Shadow - Mirror of Fate on the RG52 Mini, frames 360
+to 660 of the intro, GPU job slots traced in kbase: on libmali 50.1 ms a
+frame before, 48.7 after (vertex-slot jobs 86 a frame before, 40 after); on
+malisx2 64.0 before, 63.1 after.
+
+--- a/src/video_core/renderer_vulkan/vk_gammaos_gpu_timer.h
++++ b/src/video_core/renderer_vulkan/vk_gammaos_gpu_timer.h
+@@ -42,6 +42,7 @@
+     std::uint32_t frame = 0;   // index of the pool being recorded
+     double period_ns = 1.0;
+     bool enabled = false;
++    bool checked = false;  // dArkOS: whether the switch below was read
+     bool presenting = false;
+     // accumulated over the trace window, in ms
+     std::array<double, NumCategories> sum_ms{};
+@@ -53,6 +54,15 @@
+ 
+ inline State g;
+ 
++// dArkOS: the timer runs only with persist.gammaos.azahar_nano.gputime=1 (on Linux the
++// variable persist_gammaos_azahar_nano_gputime). Every pair of timestamps orders the GPU
++// work around it (malisx2 turns each into a job barrier), and only a profiling session
++// reads the sums.
++inline bool Wanted() {
++    char v[PROP_VALUE_MAX] = {};
++    return __system_property_get("persist.gammaos.azahar_nano.gputime", v) > 0 && v[0] == '1';
++}
++
+ inline void Init(vk::Device device, float timestamp_period_ns, bool supported) {
+     if (!supported || g.enabled) return;
+     g.device = device;
+--- a/src/video_core/renderer_vulkan/renderer_vulkan.cpp
++++ b/src/video_core/renderer_vulkan/renderer_vulkan.cpp
+@@ -1655,10 +1655,13 @@
+     g_swap_trace.last = trace_t0;
+     g_swap_trace.last_cpu_ms = trace_cpu;
+ #endif
+-    if (!GammaGpu::g.enabled) {
+-        const auto props = instance.GetPhysicalDevice().getProperties();
+-        GammaGpu::Init(instance.GetDevice(), props.limits.timestampPeriod,
+-                       props.limits.timestampComputeAndGraphics);
++    if (!GammaGpu::g.enabled && !GammaGpu::g.checked) {
++        GammaGpu::g.checked = true;
++        if (GammaGpu::Wanted()) {
++            const auto props = instance.GetPhysicalDevice().getProperties();
++            GammaGpu::Init(instance.GetDevice(), props.limits.timestampPeriod,
++                           props.limits.timestampComputeAndGraphics);
++        }
+     }
+     GammaGpu::FrameBoundary();
+     renderpass_cache.EndRendering();

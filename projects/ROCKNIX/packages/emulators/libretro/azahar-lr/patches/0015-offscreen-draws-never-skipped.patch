@@ -1,0 +1,204 @@
+From: TheGammaSqueeze (GammaOS), azahar-nano
+Subject: Never leave out an offscreen draw while its pipeline compiles
+
+GammaOSNextDistribution-14 e842af2339c (2026-10-24), the core's part
+(gammaos/emulators/azahar-nano), unchanged:
+
+With a cold shader cache the hybrid path skips draws until their pipeline
+is built. That is fine for a screen, which is redrawn every frame, but a
+pass into a texture that the game composes once is never repeated: Pokemon
+Sun layers a Pokemon's skin into its texture when a scene loads, and the
+skipped draws left the Pokemon plain red until the texture was rebuilt.
+Display transfers to either screen now record the memory they read from
+(240x400 top, 240x320 bottom), and a draw whose colour target lies outside
+all of it waits for its software path pipeline instead of being skipped,
+like the bottom screen rule already did. A target a screen reads from,
+even partly, keeps the fallback, as does everything before the first
+screen image. Waiting only costs when the pipeline is new.
+
+The hybrid path is on here too (gammaos_hybrid_shaders, settings.h).
+
+diff --git a/src/video_core/renderer_vulkan/vk_rasterizer.cpp b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
+index 05255986c7e..dc9f980d241 100644
+--- a/src/video_core/renderer_vulkan/vk_rasterizer.cpp
++++ b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
+@@ -819,14 +819,15 @@ bool RasterizerVulkan::AccelerateDrawBatchInternal(bool is_indexed) {
+                 const u32 verts = regs.pipeline.num_vertices;
+                 bool sw_ready = pipeline_cache.BindPipeline(sw_info, false);
+                 hybrid_baked = false;
+-                // A draw for the bottom screen is never left out (see DrawFeedsBottomScreen): it
+-                // waits for the software path pipeline (a trivial vertex shader, much quicker to
+-                // build than the full one, which keeps building in the background) and is not
+-                // held back by the vertex budget.
++                // A draw for the bottom screen or into an offscreen target is never left out (see
++                // DrawFeedsBottomScreen and DrawIsOffscreen): it waits for the software path
++                // pipeline (a trivial vertex shader, much quicker to build than the full one,
++                // which keeps building in the background) and is not held back by the vertex
++                // budget.
+                 const bool over_budget = fallback_vertices_this_frame + verts > budget;
+-                const bool keep = (!sw_ready || over_budget) && DrawFeedsBottomScreen();
++                const bool keep = (!sw_ready || over_budget) && DrawNeverSkipped();
+                 if (keep && !sw_ready) {
+-                    SlowStep t{"BindPipeline sw wait (bottom screen)"};
++                    SlowStep t{"BindPipeline sw wait (kept draw)"};
+                     sw_ready = pipeline_cache.BindPipeline(sw_info, true);
+                 }
+                 if (!sw_ready) {
+@@ -887,7 +888,7 @@ bool RasterizerVulkan::AccelerateDrawBatchInternal(bool is_indexed) {
+         const bool wait_built =
+             !async_shaders || (!async_small && regs.pipeline.num_vertices <= 6);
+         if (!pipeline_cache.BindPipeline(pipeline_info, wait_built) &&
+-            !(DrawFeedsBottomScreen() && pipeline_cache.BindPipeline(pipeline_info, true))) {
++            !(DrawNeverSkipped() && pipeline_cache.BindPipeline(pipeline_info, true))) {
+             return true;
+         }
+     }
+@@ -1364,7 +1365,7 @@ bool RasterizerVulkan::Draw(bool accelerate, bool is_indexed) {
+             // Skip mode: draw once the fast software path pipeline is built (it builds in
+             // the background, about 55 ms); until then this draw is left out.
+             if (!pipeline_cache.BindPipeline(pipeline_info, false) &&
+-                !(DrawFeedsBottomScreen() && pipeline_cache.BindPipeline(pipeline_info, true))) {
++                !(DrawNeverSkipped() && pipeline_cache.BindPipeline(pipeline_info, true))) {
+                 if (hybrid_baked) {
+                     u32 variant_key = 0;
+                     std::array<u32, 16> pack{};
+@@ -1817,15 +1818,25 @@ bool RasterizerVulkan::OnDisplayTransferEye(const Pica::DisplayTransferConfig& c
+     return true;
+ }
+ 
+-void RasterizerVulkan::NoteBottomScreenSource(const Pica::DisplayTransferConfig& config) {
+-    if (config.output_width.Value() != 240 || config.output_height.Value() != 320) {
++void RasterizerVulkan::NoteScreenSources(const Pica::DisplayTransferConfig& config) {
++    // The screens are read rotated: 240 x 320 for the bottom, 240 x 400 for the top. A transfer
++    // of any other size builds a texture, not a screen image.
++    if (config.output_width.Value() != 240) {
++        return;
++    }
++    std::array<ScreenSource, 4>* sources = nullptr;
++    if (config.output_height.Value() == 320) {
++        sources = &bottom_sources;
++    } else if (config.output_height.Value() == 400) {
++        sources = &top_sources;
++    } else {
+         return;
+     }
+     const PAddr start = config.GetPhysicalInputAddress();
+     const PAddr end = start + config.input_width.Value() * config.output_height.Value() *
+                                   Pica::BytesPerPixel(config.input_format);
+-    ScreenSource* slot = &bottom_sources[0];
+-    for (auto& src : bottom_sources) {
++    ScreenSource* slot = &(*sources)[0];
++    for (auto& src : *sources) {
+         if (src.start == start && src.end == end) {
+             slot = &src;
+             break;
+@@ -1843,19 +1854,12 @@ void RasterizerVulkan::NoteBottomScreenSource(const Pica::DisplayTransferConfig&
+ // changes, so with a cold cache the last update before it went static could miss its draws and the
+ // bottom screen kept the 3D scene under it until the next change. The scene's own full-target pass
+ // is not inside that memory and keeps the fallback. Waiting only costs when the pipeline is new.
+-bool RasterizerVulkan::DrawFeedsBottomScreen() const {
++bool RasterizerVulkan::DrawInterval(PAddr& first, PAddr& last) const {
+     const auto& config = regs.framebuffer.framebuffer;
+     const PAddr color = config.GetColorBufferPhysicalAddress();
+     if (color == 0) {
+         return false;
+     }
+-    bool any = false;
+-    for (const auto& src : bottom_sources) {
+-        any |= src.end != 0 && frame_index - src.frame < 600;
+-    }
+-    if (!any) {
+-        return false;
+-    }
+     const s32 width = config.GetWidth(), height = config.GetHeight();
+     const auto vp = regs.rasterizer.GetViewportRect();
+     VideoCore::SurfaceParams params;
+@@ -1871,8 +1875,23 @@ bool RasterizerVulkan::DrawFeedsBottomScreen() const {
+         static_cast<u32>(std::clamp(vp.right, 0, width)),
+         static_cast<u32>(std::clamp(vp.bottom, 0, height)),
+     });
+-    const PAddr first = static_cast<PAddr>(boost::icl::first(interval));
+-    const PAddr last = first + static_cast<PAddr>(boost::icl::length(interval));
++    first = static_cast<PAddr>(boost::icl::first(interval));
++    last = first + static_cast<PAddr>(boost::icl::length(interval));
++    return last > first;
++}
++
++bool RasterizerVulkan::DrawFeedsBottomScreen() const {
++    bool any = false;
++    for (const auto& src : bottom_sources) {
++        any |= src.end != 0 && frame_index - src.frame < 600;
++    }
++    if (!any) {
++        return false;
++    }
++    PAddr first = 0, last = 0;
++    if (!DrawInterval(first, last)) {
++        return false;
++    }
+     for (const auto& src : bottom_sources) {
+         if (src.end != 0 && frame_index - src.frame < 600 && first >= src.start && last <= src.end) {
+             return true;
+@@ -1881,8 +1900,39 @@ bool RasterizerVulkan::DrawFeedsBottomScreen() const {
+     return false;
+ }
+ 
++// GammaOS: a draw into memory that no recent display transfer to either screen reads from. That is
++// an offscreen pass, typically run once: Pokemon Sun layers a Pokemon's skin into its texture when
++// the scene loads and never touches it again, so with a cold cache the skipped draws left the
++// texture plain red until the game rebuilt it. Such a draw waits for its (software path) pipeline.
++// A target a screen reads from, even partly (Kirby's shared 3D scene target), keeps the fallback,
++// and so does everything before the first screen image, where the sources are not known yet.
++bool RasterizerVulkan::DrawIsOffscreen() const {
++    bool any = false;
++    for (const auto* sources : {&top_sources, &bottom_sources}) {
++        for (const auto& src : *sources) {
++            any |= src.end != 0 && frame_index - src.frame < 600;
++        }
++    }
++    if (!any) {
++        return false;
++    }
++    PAddr first = 0, last = 0;
++    if (!DrawInterval(first, last)) {
++        return false;
++    }
++    for (const auto* sources : {&top_sources, &bottom_sources}) {
++        for (const auto& src : *sources) {
++            if (src.end != 0 && frame_index - src.frame < 600 && first < src.end &&
++                last > src.start) {
++                return false;
++            }
++        }
++    }
++    return true;
++}
++
+ bool RasterizerVulkan::AccelerateDisplayTransfer(const Pica::DisplayTransferConfig& config) {
+-    NoteBottomScreenSource(config);
++    NoteScreenSources(config);
+     if (!OnDisplayTransferEye(config)) {
+         return true;
+     }
+diff --git a/src/video_core/renderer_vulkan/vk_rasterizer.h b/src/video_core/renderer_vulkan/vk_rasterizer.h
+index 4e89b5b357d..5ba58262fce 100644
+--- a/src/video_core/renderer_vulkan/vk_rasterizer.h
++++ b/src/video_core/renderer_vulkan/vk_rasterizer.h
+@@ -205,8 +205,16 @@ class RasterizerVulkan : public VideoCore::RasterizerAccelerated {
+         u32 frame = 0;
+     };
+     std::array<ScreenSource, 4> bottom_sources{};
+-    void NoteBottomScreenSource(const Pica::DisplayTransferConfig& config);
++    std::array<ScreenSource, 4> top_sources{};
++    void NoteScreenSources(const Pica::DisplayTransferConfig& config);
++    bool DrawInterval(PAddr& first, PAddr& last) const;
+     bool DrawFeedsBottomScreen() const;
++    /// GammaOS: the draw's colour target is outside everything the screens are read from: an
++    /// offscreen pass (a texture composed once at load) that is never redrawn, so never left out.
++    bool DrawIsOffscreen() const;
++    bool DrawNeverSkipped() const {
++        return DrawFeedsBottomScreen() || DrawIsOffscreen();
++    }
+     bool OnDisplayTransferEye(const Pica::DisplayTransferConfig& config);   // false = skip it
+     TextureRuntime runtime;
+     RasterizerCache res_cache;

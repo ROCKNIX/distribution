@@ -1,0 +1,215 @@
+From: TheGammaSqueeze (GammaOS), azahar-nano; dArkOS RG52 Mini port
+Subject: The right eye is told apart by framebuffer; with stereo_skip the rasterizer cuts it
+
+GammaOSNextDistribution-14 e62a0042457 (2026-10-25), the core's part:
+
+The right eye disabler guessed the second eye from timing: the first top screen
+list after the left transfer was the right eye. Castlevania: Mirror of Fate renders
+each eye into its own target and transfers both at the end of its frame, so the
+rule cut a left eye list every other frame; the intro flickered as the wording
+came in and the cutscenes alternated between a frame with the characters and one
+without. The disabler now learns which target feeds which framebuffer from the
+transfers. A transfer into the right framebuffer is cut whatever the target
+pattern. When the eyes have distinct targets the lists are rendered; targets that
+swap eyes between frames render everything too. A title without a right
+framebuffer skips nothing, and titles with a shared target keep the timing rule.
+
+dArkOS: when GammaOS's stereo_skip is on (patches 013 and 014: Castlevania at
+Auto), the transfer into the right framebuffer goes on to the rasterizer instead,
+which learns the right eye's target from it, cuts it itself and leaves that
+target's draws out. Cut here, the rasterizer never learned the target and
+Castlevania drew both eyes again (its intro 9 fps instead of 21).
+
+diff -u a/src/video_core/right_eye_disabler.cpp b/src/video_core/right_eye_disabler.cpp
+--- a/src/video_core/right_eye_disabler.cpp
++++ b/src/video_core/right_eye_disabler.cpp
+@@ -2,6 +2,7 @@
+ // Licensed under GPLv2 or any later version
+ // Refer to the license.txt file included.
+ 
++#include <sys/system_properties.h>
+ #include "common/settings.h"
+ #include "right_eye_disabler.h"
+ #include "video_core/gpu.h"
+@@ -9,6 +10,20 @@
+ #include "video_core/renderer_vulkan/vk_gammaos_stats.h"
+ 
+ namespace VideoCore {
++namespace {
++// dArkOS: whether GammaOS's stereo_skip is on for this title, as the rasterizer decides it
++// (OnDisplayTransferEye): the core option, or the property when the option is at Auto and
++// the title has no rule of its own.
++bool StereoSkipOn() {
++    static const bool prop = [] {
++        char v[PROP_VALUE_MAX] = {};
++        __system_property_get("persist.gammaos.azahar_nano.stereo_skip", v);
++        return v[0] == '1';
++    }();
++    const int opt = Settings::values.gammaos_stereo_skip.load(std::memory_order_relaxed);
++    return opt >= 0 ? opt != 0 : prop;
++}
++} // namespace
+ bool RightEyeDisabler::ShouldAllowCmdQueueTrigger(PAddr addr, u32 size, const u32* words) {
+     namespace GS = Vulkan::GammaStats;
+     GS::Add(GS::CmdLists);
+@@ -25,6 +40,39 @@
+ 
+     auto guess = gpu.impl->pica.GuessCmdRenderProperties(addr, size, words);
+     if (guess.vp_height == top_screen_size) GS::Add(GS::CmdListsTop);
++    // GammaOS: a title without right-eye framebuffers renders no right eye: nothing to skip,
++    // and the timing rule would only ever cut the next frame's work.
++    if (!TitleHasRightEye()) {
++        cmd_trigger_blocked = false;
++        return true;
++    }
++    // GammaOS: distinct eye targets (Castlevania: Mirror of Fate). The right transfers are cut
++    // (never shown); the right lists are rendered: cutting them drops this title from 60 fps at
++    // full speed to 37 fps at 63 percent (the game then runs 2.6 times the lists per shown
++    // frame and doubles its texture copies). persist.gammaos.azahar_nano.eye_lists=1 cuts them
++    // anyway, for experiments.
++    if (DistinctRightTarget()) {
++        static const bool cut_lists = [] {
++            char v[PROP_VALUE_MAX] = {};
++            __system_property_get("persist.gammaos.azahar_nano.eye_lists", v);
++            return v[0] == '1';
++        }();
++        const bool right = cut_lists && guess.vp_height == top_screen_size &&
++                           guess.paddr == right_rt &&
++                           gpu.impl->pica.CmdListOnlyUsesViewportHeight(addr, size, top_screen_size);
++        cmd_trigger_blocked = right;
++        if (right) {
++            GS::Add(GS::CmdListsBlocked);
++            return false;
++        }
++        return true;
++    }
++    // GammaOS: targets that swap eyes between frames: no list can be told apart, and the timing
++    // rule would cut a left eye now and then. Render everything; the right transfers are cut.
++    if (TargetsAlternate()) {
++        cmd_trigger_blocked = false;
++        return true;
++    }
+     if (guess.vp_height == top_screen_size && !top_screen_blocked) {
+         if (top_screen_buf == 0) {
+             top_screen_buf = guess.paddr;
+@@ -42,12 +90,55 @@
+     cmd_trigger_blocked = false;
+     return true;
+ }
+-bool RightEyeDisabler::ShouldAllowDisplayTransfer(PAddr src_address, size_t size) {
++bool RightEyeDisabler::RightFramebuffer(PAddr dst) const {
++    const auto& fb = gpu.impl->pica.regs.framebuffer_config[0];
++    return fb.address_right1 != 0 && fb.address_right1 != fb.address_left1 &&
++           (dst == fb.address_right1 || dst == fb.address_right2);
++}
++
++bool RightEyeDisabler::TitleHasRightEye() const {
++    const auto& fb = gpu.impl->pica.regs.framebuffer_config[0];
++    return fb.address_right1 != 0 && fb.address_right1 != fb.address_left1;
++}
++
++bool RightEyeDisabler::ShouldAllowDisplayTransfer(PAddr src_address, PAddr dst_address,
++                                                  size_t size) {
+     namespace GS = Vulkan::GammaStats;
+     GS::Add(GS::Transfers);
+     if (!enabled || !enable_for_frame)
+         return true;
+-
++    // GammaOS: learn which target feeds which eye, and whether the right one also feeds the
++    // left eye (double buffered targets).
++    if (size >= 400) {
++        const auto& fb = gpu.impl->pica.regs.framebuffer_config[0];
++        if (dst_address == fb.address_left1 || dst_address == fb.address_left2) {
++            if (right_rt != 0 && src_address == right_rt)
++                right_as_left_frame = frame_no;
++            left_rt = src_address;
++        } else if (RightFramebuffer(dst_address)) {
++            right_rt = src_address;
++            right_seen_frame = frame_no;
++        }
++    }
++    // A transfer into the right framebuffer is never shown: cut it whatever the target pattern.
++    // The lists behind it are only cut when the target is unambiguous (see the trigger rule).
++    if (size >= 400 && RightFramebuffer(dst_address)) {
++        if (cmd_queue_trigger_happened)
++            display_tranfer_happened = true;
++        // dArkOS: with stereo_skip on, the rasterizer learns the right eye's target from this
++        // very transfer and cuts it itself (OnDisplayTransferEye); only then does it leave that
++        // target's draws out (patch 013). Cut here, it would never learn, and Castlevania would
++        // draw both eyes again (9 fps in its intro instead of 21).
++        if (StereoSkipOn())
++            return true;
++        GS::Add(GS::TransfersBlocked);
++        return false;
++    }
++    if (DistinctRightTarget() || TargetsAlternate()) {
++        if (cmd_queue_trigger_happened)
++            display_tranfer_happened = true;
++        return true;
++    }
+     if (size >= 400 && !top_screen_blocked) {
+         if (top_screen_drawn && src_address == top_screen_buf) {
+             top_screen_transfered = true;
+@@ -67,7 +158,7 @@
+ void RightEyeDisabler::ReportEndFrame() {
+     if (!enabled)
+         return;
+-
++    frame_no++;
+     enable_for_frame = Settings::values.disable_right_eye_render.GetValue();
+ 
+     if (display_tranfer_happened) {
+diff -u a/src/video_core/right_eye_disabler.h b/src/video_core/right_eye_disabler.h
+--- a/src/video_core/right_eye_disabler.h
++++ b/src/video_core/right_eye_disabler.h
+@@ -14,7 +14,7 @@
+     RightEyeDisabler(GPU& gpu) : gpu{gpu} {}
+ 
+     bool ShouldAllowCmdQueueTrigger(PAddr addr, u32 size, const u32* words = nullptr);
+-    bool ShouldAllowDisplayTransfer(PAddr src_address, size_t size);
++    bool ShouldAllowDisplayTransfer(PAddr src_address, PAddr dst_address, size_t size);
+ 
+     void ReportEndFrame();
+ 
+@@ -33,6 +33,30 @@
+     bool cmd_trigger_blocked = false;
+     PAddr top_screen_buf = 0;
+ 
++    // GammaOS: the render targets the eyes are transferred from, learned from the transfers
++    // into the left and right framebuffers. A title that renders each eye into its own
++    // target (Castlevania: Mirror of Fate, both transferred at the end of its 50 fps frame)
++    // has only the right one skipped; the timing rule below is for titles that render both
++    // eyes through one target after the left transfer (Metroid: Samus Returns).
++    PAddr left_rt = 0;
++    PAddr right_rt = 0;
++    u32 frame_no = 0;
++    u32 right_seen_frame = 0;
++    // The last frame in which the right target fed the LEFT eye: a title that double buffers
++    // its targets (the cutscenes here) swaps which one is the right eye every frame, so its
++    // lists cannot be told apart by target and are rendered; only its right transfers are cut.
++    u32 right_as_left_frame = 0;
++    bool DistinctRightTarget() const {
++        return right_rt != 0 && left_rt != 0 && right_rt != left_rt &&
++               frame_no - right_seen_frame <= 4 &&
++               (right_as_left_frame == 0 || frame_no - right_as_left_frame > 8);
++    }
++    bool TargetsAlternate() const {
++        return right_as_left_frame != 0 && frame_no - right_as_left_frame <= 8;
++    }
++    bool RightFramebuffer(PAddr dst) const;
++    bool TitleHasRightEye() const;
++
+     bool cmd_queue_trigger_happened = false;
+     bool display_tranfer_happened = false;
+     bool report_end_frame_pending = false;
+diff -u a/src/video_core/gpu.cpp b/src/video_core/gpu.cpp
+--- a/src/video_core/gpu.cpp
++++ b/src/video_core/gpu.cpp
+@@ -1995,6 +1995,7 @@
+             config.texture_copy.size);
+     } else {
+         if (right_eye_disabler->ShouldAllowDisplayTransfer(config.GetPhysicalInputAddress(),
++                                                           config.GetPhysicalOutputAddress(),
+                                                            config.input_height)) {
+             if (!impl->rasterizer->AccelerateDisplayTransfer(config)) {
+                 impl->sw_blitter->DisplayTransfer(config);

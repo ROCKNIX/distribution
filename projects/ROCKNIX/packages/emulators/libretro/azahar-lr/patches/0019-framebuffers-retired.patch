@@ -1,0 +1,122 @@
+From: TheGammaSqueeze (GammaOS), azahar-nano
+Subject: A dropped Vulkan framebuffer outlives the render passes recorded with it
+
+GammaOSNextDistribution-14 1feeb9c2d16 (2026-10-25), the core's part
+(gammaos/emulators/azahar-nano), unchanged:
+
+When a surface is recreated with storage usage the rasterizer cache
+drops the framebuffers built on its old views, and their destructor
+destroyed the Vulkan framebuffer at once. The scheduler records on its
+own thread, so a render pass already queued with that framebuffer was
+recorded and run against a freed object: Monster Hunter 3 Ultimate
+crashed in the driver on its first run right after creating data.
+The framebuffer is now retired like the replaced images and destroyed
+once the GPU has finished the tick.
+
+diff --git a/src/video_core/renderer_vulkan/vk_texture_runtime.cpp b/src/video_core/renderer_vulkan/vk_texture_runtime.cpp
+index 6ba8e7d011d..a17532bb41e 100644
+--- a/src/video_core/renderer_vulkan/vk_texture_runtime.cpp
++++ b/src/video_core/renderer_vulkan/vk_texture_runtime.cpp
+@@ -309,6 +309,24 @@ TextureRuntime::TextureRuntime(const Instance& instance, Scheduler& scheduler,
+ 
+ TextureRuntime::~TextureRuntime() {
+     g_pending_clear_owner = nullptr;
++    const auto device = instance.GetDevice();
++    for (const RetiredFramebuffer& r : retired_framebuffers) {
++        device.destroyFramebuffer(r.framebuffer);
++    }
++    retired_framebuffers.clear();
++}
++
++void TextureRuntime::RetireFramebuffer(vk::Framebuffer framebuffer) {
++    const auto device = instance.GetDevice();
++    const u64 done = scheduler.GetMasterSemaphore()->KnownGpuTick();
++    std::erase_if(retired_framebuffers, [&](const RetiredFramebuffer& r) {
++        if (r.tick > done) {
++            return false;
++        }
++        device.destroyFramebuffer(r.framebuffer);
++        return true;
++    });
++    retired_framebuffers.push_back(RetiredFramebuffer{scheduler.CurrentTick(), framebuffer});
+ }
+ 
+ VideoCore::StagingData TextureRuntime::FindStaging(u32 size, bool upload) {
+@@ -1670,7 +1688,7 @@ void Surface::BlitScale(const VideoCore::TextureBlit& blit, bool up_scale) {
+ 
+ Framebuffer::Framebuffer(TextureRuntime& runtime, const VideoCore::FramebufferParams& params,
+                          Surface* color, Surface* depth)
+-    : VideoCore::FramebufferParams{params}, instance{runtime.GetInstance()},
++    : VideoCore::FramebufferParams{params}, instance{runtime.GetInstance()}, runtime{&runtime},
+       res_scale{color ? color->res_scale : (depth ? depth->res_scale : 1u)} {
+     auto& renderpass_cache = runtime.GetRenderpassCache();
+     if (shadow_rendering && !color) {
+@@ -1725,7 +1743,16 @@ Framebuffer::Framebuffer(TextureRuntime& runtime, const VideoCore::FramebufferPa
+ }
+ 
+ Framebuffer::~Framebuffer() {
+-    if (framebuffer) {
++    if (!framebuffer) {
++        return;
++    }
++    // A framebuffer dropped by the cache (a surface recreated with storage usage, see
++    // Surface::EnsureStorage) may still be referenced by render passes the scheduler has not
++    // recorded or the GPU has not run: destroying it here crashed the driver on the worker
++    // thread inside the next pass that used it (Monster Hunter 3 Ultimate after creating data).
++    if (runtime) {
++        runtime->RetireFramebuffer(framebuffer);
++    } else {
+         instance.GetDevice().destroyFramebuffer(framebuffer);
+     }
+ }
+diff --git a/src/video_core/renderer_vulkan/vk_texture_runtime.h b/src/video_core/renderer_vulkan/vk_texture_runtime.h
+index 7ed4c5f4a6a..0caffece064 100644
+--- a/src/video_core/renderer_vulkan/vk_texture_runtime.h
++++ b/src/video_core/renderer_vulkan/vk_texture_runtime.h
+@@ -139,6 +139,10 @@ class TextureRuntime {
+ 
+     /// GammaOS: keeps an image a surface replaced alive until the GPU is done with it.
+     void Retire(Handle&& handle);
++    /// GammaOS: a framebuffer the rasterizer cache dropped. The scheduler records on its own
++    /// thread, so the Vulkan framebuffer must outlive every render pass already recorded or
++    /// still to be recorded with it: destroyed once the GPU has finished the current tick.
++    void RetireFramebuffer(vk::Framebuffer framebuffer);
+ 
+     /// GammaOS: surfaces at this address needed storage usage before (see Surface::EnsureStorage);
+     /// the next ones created there get it up front instead of being recreated.
+@@ -191,6 +195,11 @@ class TextureRuntime {
+         Handle handle;
+     };
+     std::vector<RetiredHandle> retired; ///< GammaOS: see Retire
++    struct RetiredFramebuffer {
++        u64 tick;
++        vk::Framebuffer framebuffer;
++    };
++    std::vector<RetiredFramebuffer> retired_framebuffers; ///< GammaOS: see RetireFramebuffer
+     std::unordered_set<PAddr> storage_addrs; ///< GammaOS: see NeedsStorageAt
+     BlitHelper blit_helper;
+     StreamBuffer upload_buffer;
+@@ -332,6 +341,7 @@ class Framebuffer : public VideoCore::FramebufferParams {
+ 
+     Framebuffer(Framebuffer&& other) noexcept
+         : VideoCore::FramebufferParams(std::move(other)), instance(other.instance),
++          runtime(std::exchange(other.runtime, nullptr)),
+           images(std::exchange(other.images, {})),
+           image_views(std::exchange(other.image_views, {})),
+           framebuffer(std::exchange(other.framebuffer, VK_NULL_HANDLE)),
+@@ -345,6 +355,7 @@ class Framebuffer : public VideoCore::FramebufferParams {
+ 
+     Framebuffer& operator=(Framebuffer&& other) noexcept {
+         VideoCore::FramebufferParams::operator=(std::move(other));
++        runtime = std::exchange(other.runtime, nullptr);
+         images = std::exchange(other.images, {});
+         image_views = std::exchange(other.image_views, {});
+         framebuffer = std::exchange(other.framebuffer, VK_NULL_HANDLE);
+@@ -398,6 +409,7 @@ class Framebuffer : public VideoCore::FramebufferParams {
+ 
+ private:
+     const Instance& instance;
++    TextureRuntime* runtime = nullptr; ///< GammaOS: retires the framebuffer (see RetireFramebuffer)
+     std::array<vk::Image, 2> images{};
+     std::array<vk::ImageView, 2> image_views{};
+     vk::Framebuffer framebuffer{};

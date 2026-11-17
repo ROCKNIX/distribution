@@ -1,0 +1,238 @@
+From: dArkOS RG52 Mini port
+Subject: libretro: the disk shader cache loads on a thread, with RetroArch's progress bar
+
+A game whose shader cache another build made compiles every pipeline again when it
+starts: 626 of them in Castlevania, about a minute on the RG52 Mini. The core did that
+in context_reset, inside RetroArch's video init, so nothing was presented and the
+screen stayed black as if the core had hung.
+
+do_load_game now only marks the load as pending; the first retro_run starts it on a
+thread (LoadDefaultDiskResources with its stop flag and progress callback) and, while
+it runs, presents the last frame again with RetroArch's progress message
+(SET_MESSAGE_EXT, type progress: "Compiling shaders: n / m" or "Loading shader cache"),
+shown only once the load has taken a second. Emulation starts when it is done, as
+before. A savestate RetroArch loads meanwhile (an entry state, -e) is kept and loaded
+when the cache is done; none is made meanwhile (RetroArch's undo copy before it gets
+none); unload and reset stop the load.
+
+diff -u a/src/citra_libretro/citra_libretro.cpp b/src/citra_libretro/citra_libretro.cpp
+--- a/src/citra_libretro/citra_libretro.cpp
++++ b/src/citra_libretro/citra_libretro.cpp
+@@ -2,7 +2,10 @@
+ // Licensed under GPLv2 or any later version
+ // Refer to the license.txt file included.
+ 
++#include <atomic>
++#include <chrono>
+ #include <list>
++#include <thread>
+ #include <numeric>
+ #include <vector>
+ #include <math.h>
+@@ -214,6 +217,97 @@ static void UpdateSettings() {
+ 
+ static void DropSavestate();
+ 
++// dArkOS: the disk shader cache is loaded on a thread of its own from the first retro_run, not in
++// context_reset: a game whose cache another build made compiles every pipeline again (626 of
++// them in Castlevania, a minute here), and inside context_reset RetroArch presents nothing, so the
++// screen stayed black as if the core had hung. While the thread works, retro_run presents the
++// last frame again with RetroArch's progress bar (after a second, so a quick load shows none).
++static bool LoadStateNow(std::vector<u8> buffer);
++
++namespace DiskLoad {
++static std::thread thread;
++static std::atomic_bool pending{false};
++static std::atomic_bool running{false};
++static std::atomic_bool stop{false};
++static std::atomic<int> stage{0};
++static std::atomic<std::size_t> value{0};
++static std::atomic<std::size_t> total{0};
++static std::chrono::steady_clock::time_point started;
++static bool shown = false;
++// A savestate RetroArch loads while the cache loads (an entry state, -e, or one loaded at
++// once from the menu): kept and loaded when the cache is done, not under it.
++static std::vector<u8> deferred_state;
++static bool has_deferred_state = false;
++
++/// True while a load is in progress (started and not yet joined).
++static bool InProgress() {
++    return thread.joinable();
++}
++
++/// Ends a load in progress early (unload, reset).
++static void Stop() {
++    pending = false;
++    stop = true;
++    if (thread.joinable()) {
++        thread.join();
++    }
++    has_deferred_state = false;
++    deferred_state.clear();
++}
++
++static void Start() {
++    stop = false;
++    stage = 0;
++    value = 0;
++    total = 0;
++    started = std::chrono::steady_clock::now();
++    shown = false;
++    running = true;
++    thread = std::thread([] {
++        Core::System::GetInstance().GPU().Renderer().Rasterizer()->LoadDefaultDiskResources(
++            stop, [](VideoCore::LoadCallbackStage s, std::size_t v, std::size_t t,
++                     const std::string&) {
++                stage = static_cast<int>(s);
++                value = v;
++                total = t;
++            });
++        running = false;
++    });
++}
++
++/// True while the load runs: retro_run then presents the progress instead of a frame.
++static bool Busy() {
++    if (pending.exchange(false)) {
++        Start();
++    }
++    if (!thread.joinable()) {
++        return false;
++    }
++    if (!running) {
++        thread.join();
++        if (shown) {
++            LibRetro::DisplayProgress("Shaders ready", 100, 500);
++        }
++        if (has_deferred_state) {
++            has_deferred_state = false;
++            LoadStateNow(std::move(deferred_state));
++            deferred_state.clear();
++        }
++        return false;
++    }
++    if (std::chrono::steady_clock::now() - started > std::chrono::seconds(1)) {
++        const std::size_t v = value, t = total;
++        const bool build = stage == static_cast<int>(VideoCore::LoadCallbackStage::Build);
++        char text[96];
++        std::snprintf(text, sizeof(text), "%s: %zu / %zu",
++                      build ? "Compiling shaders" : "Loading shader cache", v, t);
++        LibRetro::DisplayProgress(text, t ? static_cast<int>(v * 100 / t) : -1, 1000);
++        shown = true;
++    }
++    return true;
++}
++} // namespace DiskLoad
++
+ /**
+  * libretro callback; Called every game tick.
+  */
+@@ -227,6 +321,12 @@ void retro_run() {
+         return;
+     }
+ 
++    if (DiskLoad::Busy()) {
++        LibRetro::PollInput();
++        LibRetro::UploadVideoFrame(nullptr, 0, 0, 0);
++        return;
++    }
++
+     // Check to see if we actually have any config updates to process.
+     if (LibRetro::HasUpdatedConfig()) {
+         LibRetro::ParseCoreOptions();
+@@ -399,8 +499,8 @@ static bool do_load_game() {
+     Core::System::GetInstance().GPU().ApplyPerProgramSettings(program_id);
+ 
+     if (Settings::values.use_disk_shader_cache) {
+-        Core::System::GetInstance().GPU().Renderer().Rasterizer()->LoadDefaultDiskResources(
+-            false, nullptr);
++        // dArkOS: on a thread, from the first retro_run (DiskLoad)
++        DiskLoad::pending = true;
+     }
+ 
+     setup_memory_maps();
+@@ -483,6 +583,7 @@ static void context_destroy() {
+ void retro_reset() {
+     DropSavestate();
+     LOG_DEBUG(Frontend, "retro_reset");
++    DiskLoad::Stop();
+     Core::System::GetInstance().Shutdown();
+     emu_instance->game_loaded = do_load_game();
+     emu_instance->first_run_loop = true;
+@@ -634,6 +735,7 @@ bool retro_load_game(const struct retro_game_info* info) {
+ void retro_unload_game() {
+     DropSavestate();
+     LOG_DEBUG(Frontend, "Unloading game...");
++    DiskLoad::Stop();
+     LibRetro::SharedCheats::Flush();
+     Core::System::GetInstance().Shutdown();
+ }
+@@ -702,6 +804,9 @@ static void DropSavestate() {
+ static bool MakeSavestate() {
+     if (savestate.has_value())
+         return true;
++    // None while the shader cache loads (RetroArch's undo copy before an entry state).
++    if (DiskLoad::InProgress())
++        return false;
+     auto& system = Core::System::GetInstance();
+     if (!system.IsPoweredOn())
+         return false;
+@@ -734,6 +839,16 @@ bool retro_serialize(void* data, size_t size) {
+ 
+ bool retro_unserialize(const void* data, size_t size) {
+     DropSavestate();
++    std::vector<u8> buffer(static_cast<const u8*>(data), static_cast<const u8*>(data) + size);
++    if (DiskLoad::InProgress()) {
++        DiskLoad::deferred_state = std::move(buffer);
++        DiskLoad::has_deferred_state = true;
++        return true;
++    }
++    return LoadStateNow(std::move(buffer));
++}
++
++static bool LoadStateNow(std::vector<u8> buffer) {
+     auto& system = Core::System::GetInstance();
+     if (!system.IsPoweredOn())
+         return false;
+@@ -742,7 +857,6 @@ bool retro_unserialize(const void* data, size_t size) {
+         return false;
+     }
+ 
+-    std::vector<u8> buffer(static_cast<const u8*>(data), static_cast<const u8*>(data) + size);
+     try {
+         return system.LoadStateBuffer(std::move(buffer));
+     } catch (const std::exception& e) {
+--- a/src/citra_libretro/environment.cpp
++++ b/src/citra_libretro/environment.cpp
+@@ -173,6 +173,18 @@ bool DisplayMessage(const char* sg) {
+     return environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &msg);
+ }
+ 
++bool DisplayProgress(const char* text, int progress, unsigned duration_ms) {
++    retro_message_ext msg{};
++    msg.msg = text;
++    msg.duration = duration_ms;
++    msg.priority = 1;
++    msg.level = RETRO_LOG_INFO;
++    msg.target = RETRO_MESSAGE_TARGET_OSD;
++    msg.type = RETRO_MESSAGE_TYPE_PROGRESS;
++    msg.progress = static_cast<int8_t>(progress);
++    return environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE_EXT, &msg);
++}
++
+ bool SetSerializationQuirks(uint64_t quirks) {
+     return environ_cb(RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS, &quirks);
+ }
+--- a/src/citra_libretro/environment.h
++++ b/src/citra_libretro/environment.h
+@@ -118,6 +118,10 @@ bool Shutdown();
+ /// Displays the specified message to the screen.
+ bool DisplayMessage(const char* sg);
+ 
++/// dArkOS: shows the text with a progress bar (0-100, -1 for one that only moves) for duration_ms,
++/// replacing the previous progress message; false when the frontend has no SET_MESSAGE_EXT.
++bool DisplayProgress(const char* text, int progress, unsigned duration_ms);
++
+ /// Sets serialization quirks for the core.
+ bool SetSerializationQuirks(uint64_t quirks);
+ 
