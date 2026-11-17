@@ -1,0 +1,156 @@
+From: TheWeaklessOne <41053514+TheWeaklessOne@users.noreply.github.com>
+Subject: [PATCH] drm/panel: vtdr6130-cog: Odin 2 Portal EDID and any refresh rate
+
+The Portal panel has no EDID, so gamescope never looks up a known-display
+profile for it (colorimetry, HDR, refresh rates). Publish a built-in EDID
+with the factory P3/D65 primaries and gamma 2.2 from the Android QDCM data.
+
+The panel frame length (0xb1) equals the vertical front porch in lines, so
+take it from the mode being set instead of two fixed values: modes with a
+stretched front porch (gamescope dynamic_modegen) now run at their own rate.
+Rates up to 60 Hz use the 60 Hz drive slot (0x6c 0x01).
+---
+diff --git a/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c b/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c
+--- a/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c
++++ b/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c
+@@ -19,6 +19,7 @@
+ #include <drm/display/drm_dsc_helper.h>
+ #include <drm/drm_connector.h>
+ #include <drm/drm_crtc.h>
++#include <drm/drm_edid.h>
+ #include <drm/drm_mipi_dsi.h>
+ #include <drm/drm_modes.h>
+ #include <drm/drm_panel.h>
+@@ -51,6 +52,9 @@
+ 	unsigned int num_modes;
+ 	int (*init_sequence)(struct panel_info *pinfo);
+ 	unsigned int bl_max;
++	/* Built-in EDID for panels whose users (gamescope) need one. */
++	const u8 *edid;
++	size_t edid_size;
+ 
+ 	struct drm_dsc_config dsc;
+ };
+@@ -272,13 +276,36 @@
+  * selects qcom,mdss_dsi_vtdr6130_dsc_cmd on them instead of the ICNA3512):
+  * the on-command of that Android panel node, 120 and 60 Hz differing only
+  * in 0x6c and the frame length (0xb1 at offset 0x04 / 0x0b on page 0x10).
++ *
++ * The frame length is the vertical front porch in lines (18 at 120 Hz, 1974
++ * at 60 Hz), so it is taken from the mode being set: a mode with a stretched
++ * front porch (gamescope's dynamic_modegen) runs at its own rate. 0x6c 0x00
++ * selects the 120 Hz drive slot (offset 0x04), 0x6c 0x01 the 60 Hz one
++ * (offset 0x0b); rates up to 60 Hz use the latter.
+  */
++#define VTDR6130_PORTAL_MIN_FRAME_LEN	18
++
++static u16 vtdr6130_portal_frame_len(struct panel_info *pinfo, bool *slow)
++{
++	const struct drm_display_mode *m = &pinfo->desc->modes[0];
++	struct drm_connector *connector = pinfo->connector;
++	u16 fl;
++
++	if (connector && connector->state && connector->state->crtc &&
++	    connector->state->crtc->state->mode.vdisplay == m->vdisplay)
++		m = &connector->state->crtc->state->mode;
++
++	fl = max_t(int, m->vsync_start - m->vdisplay, VTDR6130_PORTAL_MIN_FRAME_LEN);
++	*slow = drm_mode_vrefresh(m) <= 60;
++	return fl;
++}
++
+ static int vtdr6130_portal_init_sequence(struct panel_info *pinfo)
+ {
+ 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = pinfo->dsi };
+ 	struct drm_dsc_picture_parameter_set pps;
+-	int cur_mode = vtdr6130_get_current_mode(pinfo);
+-	bool is_120 = drm_mode_vrefresh(&pinfo->desc->modes[cur_mode]) == 120;
++	bool slow;
++	u16 fl = vtdr6130_portal_frame_len(pinfo, &slow);
+ 
+ 	pinfo->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+ 
+@@ -287,10 +314,10 @@
+ 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x53, 0x20);
+ 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x51, 0x0d, 0x75);
+ 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x59, 0x09);
+-	if (is_120)
+-		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x6c, 0x00);
+-	else
++	if (slow)
+ 		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x6c, 0x01);
++	else
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x6c, 0x00);
+ 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x6f, 0x02);
+ 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x70,
+ 				     0x11, 0x00, 0x00, 0x89, 0x30, 0x80, 0x07, 0x80,
+@@ -307,13 +334,11 @@
+ 				     0x00, 0x00, 0x00, 0x00, 0x00, 0x00);
+ 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x72, 0x00);
+ 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xaa, 0x10);
+-	if (is_120) {
+-		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x65, 0x04);
+-		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb1, 0x00, 0x12);
+-	} else {
++	if (slow)
+ 		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x65, 0x0b);
+-		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb1, 0x07, 0xb6);
+-	}
++	else
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x65, 0x04);
++	mipi_dsi_dcs_write_buffer_multi(&dsi_ctx, (u8[]){ 0xb1, fl >> 8, fl & 0xff }, 3);
+ 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xff, 0x5a, 0x80);
+ 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x65, 0x0a);
+ 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf9, 0xa8);
+@@ -369,6 +394,26 @@
+ 	}
+ };
+ 
++/*
++ * EDID 1.4: PNP "AYN", product 0x6130, "Odin2 Portal" / "VTDR6130", 10 bpc,
++ * gamma 2.2, DCI-P3 primaries with a D65 white point (Android's
++ * qdcm_calib_data_vtdr6130_amoled_cmd_mode_dsi_visionox_1080p_panel_with_DSC),
++ * one detailed timing: the 120 Hz mode above, 87x155 mm.
++ */
++static const u8 vtdr6130_portal_edid[] = {
++	0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x07, 0x2e, 0x30, 0x61,
++	0x00, 0x00, 0x00, 0x00, 0x00, 0x22, 0x01, 0x04, 0xb0, 0x09, 0x10, 0x78,
++	0x02, 0x0f, 0x91, 0xae, 0x52, 0x43, 0xb0, 0x26, 0x0f, 0x50, 0x54, 0x00,
++	0x00, 0x00, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
++	0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x24, 0x71, 0x38, 0x9a, 0x40, 0x80,
++	0x24, 0x70, 0x2c, 0x0a, 0x24, 0x04, 0x57, 0x9b, 0x00, 0x00, 0x00, 0x18,
++	0x00, 0x00, 0x00, 0xfc, 0x00, 0x4f, 0x64, 0x69, 0x6e, 0x32, 0x20, 0x50,
++	0x6f, 0x72, 0x74, 0x61, 0x6c, 0x0a, 0x00, 0x00, 0x00, 0xfe, 0x00, 0x56,
++	0x54, 0x44, 0x52, 0x36, 0x31, 0x33, 0x30, 0x0a, 0x20, 0x20, 0x20, 0x20,
++	0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x41,
++};
++
+ static struct panel_desc vtdr6130_portal_desc = {
+ 	.modes = vtdr6130_portal_modes,
+ 	.num_modes = ARRAY_SIZE(vtdr6130_portal_modes),
+@@ -381,6 +426,8 @@
+ 	.init_sequence = vtdr6130_portal_init_sequence,
+ 	/* Android: qcom,mdss-dsi-bl-max-level = <0xd55> */
+ 	.bl_max = 3413,
++	.edid = vtdr6130_portal_edid,
++	.edid_size = sizeof(vtdr6130_portal_edid),
+ 	.dsc = {
+ 		.dsc_version_major = 0x1,
+ 		.dsc_version_minor = 0x1,
+@@ -499,6 +546,15 @@
+ 		drm_mode_probed_add(connector, mode);
+ 	}
+ 
++	/* Publish the EDID property only; the modes stay the panel's own. */
++	if (pinfo->desc->edid) {
++		const struct drm_edid *drm_edid = drm_edid_alloc(pinfo->desc->edid,
++								 pinfo->desc->edid_size);
++
++		drm_edid_connector_update(connector, drm_edid);
++		drm_edid_free(drm_edid);
++	}
++
+ 	connector->display_info.width_mm = pinfo->desc->width_mm;
+ 	connector->display_info.height_mm = pinfo->desc->height_mm;
+ 	connector->display_info.bpc = pinfo->desc->bpc;
