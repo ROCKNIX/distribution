@@ -73,13 +73,9 @@ fi
 BIOS=""
 GAME=$(echo "${1}"| sed "s#^/.*/##")
 PLATFORM=$(echo "${2}"| sed "s#^/.*/##")
-USE_BIOS=$(get_setting use_hlebios "${PLATFORM}" "${GAME}")
-if [ ! "${USE_BIOS}" = 1 ]
-then
-  USE_BIOS=$(get_setting use_hlebios "${PLATFORM}")
-fi
+USE_HLEBIOS=$(get_setting use_hlebios "${PLATFORM}" "${GAME}")
 
-if [ "$USE_BIOS" = 1 ]
+if [ -n "$USE_HLEBIOS" ] && [ "$USE_HLEBIOS" = 0 ]
 then
   for BIOS in saturn_bios.bin sega_101.bin mpr-17933.bin mpr-18811-mx.ic1 mpr-19367-mx.ic1 stvbios.zip
   do
