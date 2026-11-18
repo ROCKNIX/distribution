@@ -2,7 +2,7 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="yabasanshiro-pirry-sa"
-PKG_VERSION="ba771f1791bf59b858b2ffdbc25b3cf04a4d8996"
+PKG_VERSION="b50948b36ebe3f89e938a4bc05e2e9ff27a11565"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/pirrypirrypirry/yabasanshiro-pirry"
 PKG_URL="${PKG_SITE}.git"
