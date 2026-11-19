@@ -1341,7 +1341,11 @@ makeinstall_target() {
   ### Sega Saturn
   add_emu_core saturn yabasanshiro yabasanshiro-pirry-sa true
   add_emu_core saturn retroarch yabasanshiro false
-  add_emu_core saturn retroarch yabadabadoo false
+  case ${DEVICE} in
+    H700|RK3326|RK3399|RK3566|RK3576|RK3588|SM6115|SM4450)
+      add_emu_core saturn retroarch yabadabadoo false
+      ;;
+  esac
   case ${DEVICE} in
     RK3588|SM6115)
       add_emu_core saturn retroarch beetle_saturn false
