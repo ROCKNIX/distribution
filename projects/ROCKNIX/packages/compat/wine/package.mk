@@ -3,6 +3,7 @@
 
 PKG_NAME="wine"
 PKG_VERSION="11.0"
+PKG_SHA256="632f2c8e9150841c26d277000e76b82c425cd4564bfb050780705b9d37b2567f"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/Kron4ek/Wine-Builds"
 PKG_URL="${PKG_SITE}/releases/download/${PKG_VERSION}/wine-${PKG_VERSION}-amd64.tar.xz"

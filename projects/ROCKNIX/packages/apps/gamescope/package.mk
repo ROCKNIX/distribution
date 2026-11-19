@@ -1,8 +1,9 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="gamescope"
-PKG_VERSION="f8b33d38c5acc35825c7966b208222770c4a623e"
+# Gamescope 3.16.31
+PKG_VERSION="6867f509874f9bc52e12d6f4c4596cdf0d5be6b4"
 PKG_GIT_CLONE_BRANCH="master"
 PKG_LICENSE="BSD-2-Clause"
 PKG_SITE="https://github.com/ValveSoftware/gamescope"
@@ -10,28 +11,25 @@ PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain wayland wayland-protocols libdrm libinput libxkbcommon pixman systemd \
                     libcap luajit libdecor libX11 libXext libXfixes libXdamage libXcomposite \
                     libXrender libXxf86vm libXtst libXi libXcursor libXmu libXres libxcb \
-                    xcb-util-wm seatd hwdata SDL2"
+                    xcb-util-wm seatd hwdata:host SDL2 pipewire"
 PKG_LONGDESC="SteamOS session compositing window manager (micro-compositor for games / nested Wayland)."
-GET_HANDLER_SUPPORT="git"
 PKG_TOOLCHAIN="meson"
-PKG_DEPENDS_HOST="toolchain:host wayland:host wayland-protocols:host glslang:host"
 
-configure_package() {
-  if [ "${VULKAN_SUPPORT}" = "yes" ]; then
-    PKG_DEPENDS_TARGET+=" ${VULKAN}"
-  fi
-}
+if [ "${VULKAN_SUPPORT}" = "yes" ]; then
+  PKG_DEPENDS_TARGET+=" ${VULKAN}"
+fi
+
+PKG_MESON_OPTS_TARGET="-Ddrm_backend=enabled \
+                       -Dpipewire=enabled \
+                       -Denable_openvr_support=false \
+                       -Davif_screenshots=disabled \
+                       -Dbenchmark=disabled \
+                       -Dinput_emulation=disabled \
+                       -Drt_cap=enabled \
+                       -Denable_tests=false \
+                       -Dsdl2_backend=enabled"
 
 pre_configure_target() {
-  PKG_MESON_OPTS_TARGET+=" -Ddrm_backend=enabled \
-                           -Dpipewire=disabled \
-                           -Denable_openvr_support=false \
-                           -Davif_screenshots=disabled \
-                           -Dbenchmark=disabled \
-                           -Dinput_emulation=disabled \
-                           -Drt_cap=enabled \
-                           -Dsdl2_backend=enabled"
-
   # Subprojects (libliftoff tests, wlroots) use -Werror; distro GCC is stricter than upstream CI.
   # - libdrm_mock.c: unused-but-set-variable
   # - wlroots xwm.c: return-type (control reaches end of non-void function)

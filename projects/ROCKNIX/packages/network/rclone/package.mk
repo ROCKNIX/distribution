@@ -12,6 +12,7 @@ PKG_TOOLCHAIN="manual"
 case ${ARCH} in
     aarch64)
       RCLONE_ARCH="arm64"
+      PKG_SHA256="b710ac2ded37261d2cc6ab046dcd644828944524cf1ee7c2b17dd746f0fd8684"
     ;;
     *)
       RCLONE_ARCH="amd64"
@@ -35,15 +36,12 @@ unpack() {
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin/
   mkdir -p ${INSTALL}/usr/config/
-  cp rclonectl ${INSTALL}/usr/bin/
   cp cloud_backup ${INSTALL}/usr/bin/
   cp cloud_restore ${INSTALL}/usr/bin/
   cp cloud_sync_helper ${INSTALL}/usr/bin/
   cp cloud_sync_cleanup_duplicates.sh ${INSTALL}/usr/bin/
   cp ${PKG_BUILD}/${PKG_RCLONE} ${INSTALL}/usr/bin/
   chmod 0755 ${INSTALL}/usr/bin/*
-  cp rsync-rules.conf ${INSTALL}/usr/config/
-  cp rsync.conf ${INSTALL}/usr/config/
   cp cloud_sync-rules.txt ${INSTALL}/usr/config/
   cp cloud_sync.conf ${INSTALL}/usr/config/
   cp cloud_sync.conf.defaults ${INSTALL}/usr/config/

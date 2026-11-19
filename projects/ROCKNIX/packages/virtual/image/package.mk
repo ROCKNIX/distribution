@@ -10,9 +10,9 @@ PKG_LONGDESC="Root package used to build and create complete image"
 
 PKG_DEPENDS_TARGET="toolchain squashfs-tools:host dosfstools:host fakeroot:host kmod:host \
                     mtools:host populatefs:host libc gcc linux linux-drivers linux-firmware \
-                    ${BOOTLOADER} busybox lsof umtprd util-linux usb-modeswitch poppler jq socat \
-                    p7zip file initramfs grep util-linux btrfs-progs zstd lz4 empty lzo libzip \
-                    bash coreutils system-utils autostart quirks powerstate \
+                    ${BOOTLOADER} busybox lsof umtprd util-linux usb-modeswitch jq socat \
+                    p7zip file grep util-linux btrfs-progs zstd lz4 empty lzo libzip \
+                    bash coreutils system-utils autostart quirks powerstate sdl2notify \
                     gzip six xmlstarlet pyudev dialog network mako-osd rocknix"
 
 PKG_UI="emulationstation es-themes textviewer lowerdeck"
@@ -21,7 +21,7 @@ PKG_UI_TOOLS="fbgrab grim"
 
 PKG_GRAPHICS="imagemagick"
 
-PKG_FONTS="corefonts"
+PKG_FONTS="corefonts noto-sans-cjk"
 
 PKG_MULTIMEDIA="ffmpeg vlc mpv gmu m8c"
 
@@ -37,7 +37,7 @@ if [ "${BASE_ONLY}" = "true" ]
 then
   EMULATION_DEVICE=no
   ENABLE_32BIT=no
-  PKG_DEPENDS_TARGET+=" ${PKG_TOOLS} ${PKG_FONTS}"
+  PKG_DEPENDS_TARGET+=" ${PKG_TOOLS} ${PKG_FONTS} misc-packages"
 else
   PKG_DEPENDS_TARGET+=" ${PKG_TOOLS} ${PKG_FONTS} ${PKG_SOUND} ${PKG_SYNC} ${PKG_GRAPHICS} ${PKG_UI} ${PKG_UI_TOOLS} ${PKG_MULTIMEDIA} misc-packages"
 
@@ -101,6 +101,9 @@ fi
 
 # modules packages
 [ "${MODULES_PKG}" = "yes" ] && PKG_DEPENDS_TARGET+=" modules"
+
+# Batteryplus voltage-based battery percentage daemon
+[ "${BATTERYPLUS_SUPPORT}" = "yes" ] && PKG_DEPENDS_TARGET+=" batteryplus"
 
 # Entware support
 mkdir -p ${INSTALL}

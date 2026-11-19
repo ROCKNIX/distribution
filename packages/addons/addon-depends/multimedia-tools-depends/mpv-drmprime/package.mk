@@ -1,13 +1,14 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2019-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="mpv-drmprime"
-PKG_VERSION="0.40.0"
-PKG_SHA256="10a0f4654f62140a6dd4d380dcf0bbdbdcf6e697556863dc499c296182f081a3"
-PKG_LICENSE="GPL"
+PKG_VERSION="0.41.0"
+PKG_SHA256="ee21092a5ee427353392360929dc64645c54479aefdb5babc5cfbb5fad626209"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://mpv.io/"
 PKG_URL="https://github.com/mpv-player/mpv/archive/v${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain alsa ffmpeg libass libdrm libplacebo lua52"
+PKG_DEPENDS_TARGET="toolchain alsa ffmpeg libass libdisplay-info libdrm libplacebo lua52"
+PKG_DEPENDS_CONFIG="libplacebo"
 PKG_LONGDESC="A media player based on MPlayer and mplayer2. It supports a wide variety of video file formats, audio and video codecs, and subtitle types."
 PKG_BUILD_FLAGS="-sysroot"
 
@@ -57,7 +58,3 @@ if [ "${KODI_BLURAY_SUPPORT}" = "yes" ]; then
 else
   PKG_MESON_OPTS_TARGET+=" -Dlibbluray=disabled"
 fi
-
-pre_configure_target() {
-  export PKG_CONFIG_PATH="$(get_install_dir libplacebo)/usr/lib/pkgconfig:${PKG_CONFIG_PATH}"
-}

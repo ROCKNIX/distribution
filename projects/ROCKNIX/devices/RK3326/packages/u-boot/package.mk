@@ -3,6 +3,7 @@
 
 PKG_NAME="u-boot"
 PKG_VERSION="v2025.10"
+PKG_SHA256="5414ee86562abc5ed524c6dc5e092511ad281441020a88e7027de6e83fd16116"
 PKG_LICENSE="GPL"
 PKG_SITE="https://www.denx.de/wiki/U-Boot"
 PKG_URL="https://github.com/u-boot/u-boot/archive/refs/tags/${PKG_VERSION}.tar.gz"
@@ -22,8 +23,8 @@ pre_make_target() {
   PKG_UBOOT_CONFIG="rk3326-handheld_defconfig"
   PKG_RKBIN="$(get_build_dir rkbin)"
   PKG_MINILOADER="${PKG_RKBIN}/bin/rk33/rk3326_miniloader_v1.40.bin"
-  PKG_BL31="${PKG_RKBIN}/bin/rk33/rk3326_bl31_v1.34.elf"
-  PKG_DDR_BIN="${PKG_RKBIN}/bin/rk33/rk3326_ddr_333MHz_v2.11.bin"
+  PKG_BL31="${PKG_RKBIN}/bin/rk33/rk3326_bl31_v1.37.elf"
+  PKG_DDR_BIN="${PKG_RKBIN}/bin/rk33/rk3326_ddr_333MHz_v2.12.bin"
   PKG_DDR_BIN_UART5="${PKG_RKBIN}/rk3326_ddr_uart5.bin"
 }
 
@@ -53,6 +54,12 @@ make_target() {
   mv uboot.bin uboot.bin.uart5
 }
 
+# IMPORTANT!
+# For every device `<dev_name>` not in any image this function creates
+# an `extlinux.conf.<dev_name>` file passing a corresponding dtb directly
+# (effectively bypassing auto-detection by ADC value).
+# User needs to rename a single file (replacing the generic `extlinux.conf`)
+# to configure any (a/b) image for their device.
 generate_custom_extlinux_conf_files() {
   INI_FILES=""
   for SUBDEVICE in ${SUBDEVICES}; do
@@ -95,6 +102,8 @@ makeinstall_target() {
   sed -e "s/@EXTRA_CMDLINE@/${EXTRA_CMDLINE}/" \
     -i ${INSTALL}/usr/share/bootloader/extlinux/*
 
+  # Next call creates an `extlinux.conf.<dev_name>` files for every dts/dtb not in any image.
+  # User needs to rename a proper file to `extlinux.conf` (replacing it) as a preparation step.
   generate_custom_extlinux_conf_files
 
   find_dir_path config/stock && cp -av ${FOUND_PATH} "${INSTALL}/usr/share/bootloader/"

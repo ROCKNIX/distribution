@@ -51,7 +51,7 @@ check_es_running_game() {
   # Check whether ES API endpoint is up
   local endpoint_up=1 # default to endpoint down
   test "$(nc -vz -w5 localhost 1234 2>&1 | grep 'open')" && endpoint_up=0
-  
+
   if [[ $endpoint_up -eq 0 ]]; then
     ${DEBUG} && log $0 "ES API endpoint up - querying"
     local HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:1234/runningGame")
@@ -221,6 +221,7 @@ unblock_input() {
 
 freeze_processes() {
   ${DEBUG} && log $0 "Freezing processes"
+  rocknix-games-freeze freeze
 
   # Grab the process to freeze from the set_kill call
   process_kill_data=$(</tmp/.process-kill-data)
@@ -240,6 +241,7 @@ freeze_processes() {
 
 unfreeze_processes() {
   ${DEBUG} && log $0 "Unfreezing processes"
+  rocknix-games-freeze thaw
   kill -CONT -1
 }
 
@@ -285,6 +287,9 @@ do_shutdown() {
   # Unmute audio - otherwise wireplumber will keep it muted on next boot
   unmute_audio
 
+  # Unfreeze prococesses - otherwise ES will be unable to respond to API calls
+  unfreeze_processes
+
   # Check whether a game is running
   check_es_running_game
   local RUNNING_GAME=$?
@@ -311,26 +316,33 @@ suspend() {
   check_charging
   local CHARGING=$?
 
+  [[ ${TIMED_SHUTDOWN_ENABLED} == "1" ]] && ${DEBUG} && log $0 "Timed shutdown enabled ..."
+  [[ ${TIMED_SHUTDOWN_ENABLED} != "1" ]] && ${DEBUG} && log $0 "Timed shutdown disabled ..."
+
   # Determine shutdown delay
   local DELAY=${SHUTDOWN_DELAY}
   [[ $RUNNING_GAME -eq 0 ]] && DELAY=${SHUTDOWN_DELAY_RUNNING_GAME}
   ${DEBUG} && log $0 "Shutdown delay - ${DELAY} seconds"
   [[ ${CHARGING} -eq 0 ]] && ${DEBUG} && log $0 "Charging ..."
 
-  if [[ "${DELAY}" -gt 0 || ${CHARGING} -eq 0 ]]; then
+
+  if [[ "${DELAY}" -gt 0 || ${CHARGING} -eq 0 || ${TIMED_SHUTDOWN_ENABLED} != "1" ]]; then
     do_suspend_actions
   fi
 
-  # Delay shutdown
-  sleep ${DELAY}
+  if [[ ${TIMED_SHUTDOWN_ENABLED} == "1" ]]; then
+    # Delay shutdown
+    ${DEBUG} && log $0 "Timed shutdown (${DELAY} seconds) ..."
+    sleep ${DELAY}
 
-  # Delay has completed - check whether the flag file is still present
-  if [[ -f "${DELAY_FLAG_FILE}" ]]; then
-    ${DEBUG} && log $0 "Delay expired, flag file found"
-    # Flag present - shutdown
-    do_shutdown
-  else
-    ${DEBUG} && log $0 "Delay expired, flag file not found"
+    # Delay has completed - check whether the flag file is still present
+    if [[ -f "${DELAY_FLAG_FILE}" ]]; then
+      ${DEBUG} && log $0 "Delay expired, flag file found"
+      # Flag present - shutdown
+      do_shutdown
+    else
+      ${DEBUG} && log $0 "Delay expired, flag file not found"
+    fi
   fi
 }
 
@@ -341,11 +353,15 @@ resume() {
   rm -f "${POWER_SUSPEND_ACTIVE_FLAG_FILE}"
   rm -f "${LID_CLOSED_FLAG_FILE}"
 
+  # Kill any other rocknix-fake-suspend first. One that is still suspending
+  # could grab the input devices again after do_resume_actions releases them.
+  ${DEBUG} && log $0 "Resume - killing ${TO_KILL} processes"
+  for pid in $(pidof ${TO_KILL}); do
+    [[ "${pid}" != "$$" ]] && kill ${pid}
+  done
+
   # Do resume actions
   do_resume_actions
-
-  ${DEBUG} && log $0 "Resume - killing ${TO_KILL} processes"
-  killall ${TO_KILL}
 }
 
 # Main logic
@@ -357,6 +373,19 @@ if [[ $HW_SUSPEND_ENABLED -eq 0 ]]; then
   ${DEBUG} && log $0 "Hardware suspend enabled, exiting"
   exit 0
 fi
+
+# Only do something when fake suspend is enabled
+FAKE_SUSPEND_ENABLED="$(get_setting system.suspend.enable)"
+[[ "${FAKE_SUSPEND_ENABLED}" = "" ]] && FAKE_SUSPEND_ENABLED="1"
+
+if [[ $FAKE_SUSPEND_ENABLED != "1" ]]; then
+  ${DEBUG} && log $0 "Fake suspend disabled, exiting"
+  exit 0
+fi
+
+# Timed shutdown after suspend
+TIMED_SHUTDOWN_ENABLED="$(get_setting system.suspend.enable_timed_shutdown)"
+[[ "${TIMED_SHUTDOWN_ENABLED}" = "" ]] && TIMED_SHUTDOWN_ENABLED="1"
 
 # If a game is not running, by default delay the shutdown for 15 minutes
 SHUTDOWN_DELAY="$(get_setting system.shutdown_delay)"
@@ -370,9 +399,9 @@ SHUTDOWN_DELAY_RUNNING_GAME="$(get_setting system.shutdown_delay_running_game)"
 ENABLE_CORE_PARKING="$(get_setting system.suspend.park_cores)"
 [[ "${ENABLE_CORE_PARKING}" = "" ]] && ENABLE_CORE_PARKING="1"
 
-# On suspend, should DPMS be used
+# On suspend, should DPMS be used, disabled by default
 ENABLE_DPMS="$(get_setting system.suspend.dpms)"
-[[ "${ENABLE_DPMS}" = "" ]] && ENABLE_DPMS="1"
+[[ "${ENABLE_DPMS}" = "" ]] && ENABLE_DPMS="0"
 
 # flag files
 PID=$$

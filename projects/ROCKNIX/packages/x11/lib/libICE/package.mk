@@ -3,7 +3,5 @@
 
 . ${ROOT}/packages/x11/lib/libICE/package.mk
 
-PKG_CONFIGURE_OPTS_TARGET="--disable-static \
-                           --enable-shared \
-                           --disable-ipv6 \
-                           --without-xmlto"
+PKG_CONFIGURE_OPTS_TARGET="${PKG_CONFIGURE_OPTS_TARGET/--enable-static/--disable-static}"
+PKG_CONFIGURE_OPTS_TARGET="${PKG_CONFIGURE_OPTS_TARGET/--disable-shared/--enable-shared}"

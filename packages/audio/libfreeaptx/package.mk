@@ -1,10 +1,10 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2021-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="libfreeaptx"
 PKG_VERSION="0.2.2"
-PKG_SHA256="c0ed01b7e535878cc34bd1321f335e2617f2d51496b13e1036fc675c799be3b5"
-PKG_LICENSE="LGPL"
+PKG_SHA256="5ab5ebddf3f2eb7ce47a505b87460b00fc1ede99c70010796d3575ab31ea80bf"
+PKG_LICENSE="LGPL-2.1-or-later"
 PKG_SITE="https://github.com/iamthehorker/libfreeaptx"
 PKG_URL="https://github.com/iamthehorker/libfreeaptx/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"

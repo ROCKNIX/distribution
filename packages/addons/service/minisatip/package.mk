@@ -1,12 +1,12 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="minisatip"
-PKG_VERSION="1.3.52"
-PKG_SHA256="444b110480b92074ddf2735433c256bba2a4661d77ec8108963287ca658e0554"
-PKG_REV="1"
+PKG_VERSION="2.0.91"
+PKG_SHA256="c17a4eb952fd47584c5459ec3d78f0ed8689f470eb07a8317f205132aff2c11e"
+PKG_REV="8"
 PKG_ARCH="any"
-PKG_LICENSE="GPL"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/catalinii/minisatip"
 PKG_URL="https://github.com/catalinii/minisatip/archive/refs/tags/v${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain libdvbcsa libxml2 openssl"
@@ -17,13 +17,9 @@ PKG_BUILD_FLAGS="-sysroot -cfg-libs"
 
 PKG_IS_ADDON="yes"
 PKG_ADDON_NAME="Minisatip"
+PKG_ADDON_ICON_NAME="MINISAT>IP"
+PKG_ADDON_ICON_SIZE="240"
 PKG_ADDON_TYPE="xbmc.service"
-
-PKG_CONFIGURE_OPTS_TARGET="--enable-static \
-                           --disable-netcv \
-                           --enable-dvbca \
-                           --enable-dvbcsa \
-                           --with-xml2=$(get_install_dir libxml2)/usr/include/libxml2"
 
 pre_configure_target() {
   cd ${PKG_BUILD}

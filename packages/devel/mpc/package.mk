@@ -3,11 +3,11 @@
 # Copyright (C) 2019-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="mpc"
-PKG_VERSION="1.3.1"
-PKG_SHA256="ab642492f5cf882b74aa0cb730cd410a81edcdbec895183ce930e706c1c759b8"
-PKG_LICENSE="LGPL"
+PKG_VERSION="1.4.1"
+PKG_SHA256="91204cd32f164bd3b7c992d4a6a8ce6519511aadab30f78b6982d0bf8d73e931"
+PKG_LICENSE="LGPL-3.0-or-later"
 PKG_SITE="https://www.multiprecision.org"
-PKG_URL="https://ftpmirror.gnu.org/mpc/${PKG_NAME}-${PKG_VERSION}.tar.gz"
+PKG_URL="https://ftpmirror.gnu.org/mpc/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_HOST="ccache:host gmp:host mpfr:host"
 PKG_LONGDESC="A C library for the arithmetic of complex numbers with arbitrarily high precision and correct rounding of the result."
 

@@ -3,12 +3,12 @@
 # Copyright (C) 2019-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="connman"
-PKG_VERSION="1.44"
-PKG_SHA256="d751da9858a6e3dfe70d6c98e71ea4f5896e1c92c5e1b17f10d055eaeae0e452"
-PKG_LICENSE="GPL"
+PKG_VERSION="2.0"
+PKG_SHA256="e0f879af3dfe6c1e4ec1cc31d71af34ee01ed87892be6c596ee42990a17bac53"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="http://www.connman.net"
 PKG_URL="https://git.kernel.org/pub/scm/network/connman/connman.git/snapshot/connman-${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="autotools:host gcc:host dbus glib iptables iwd readline"
+PKG_DEPENDS_TARGET="autotools:host gcc:host dbus glib iptables iwd nftables readline"
 PKG_LONGDESC="A modular network connection manager."
 PKG_TOOLCHAIN="autotools"
 
@@ -55,6 +55,10 @@ fi
 PKG_MAKE_OPTS_TARGET="storagedir=/storage/.cache/connman \
                       vpn_storagedir=/storage/.config/wireguard \
                       statedir=/run/connman"
+
+post_unpack() {
+  mkdir ${PKG_BUILD}/build-aux
+}
 
 post_configure_target() {
   libtool_remove_rpath libtool

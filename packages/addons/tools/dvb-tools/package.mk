@@ -1,20 +1,22 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="dvb-tools"
 PKG_VERSION="1.0"
 PKG_REV="0"
 PKG_ARCH="any"
-PKG_LICENSE="GPL"
+PKG_LICENSE="GPL-2.0-only"
 PKG_SITE="https://libreelec.tv"
 PKG_URL=""
 PKG_DEPENDS_TARGET="toolchain"
 PKG_SECTION="virtual"
 PKG_SHORTDESC="DVB-Tools: is a bundle of dvb tools and programs"
-PKG_LONGDESC="This bundle currently includes blindscan-s2, dvb-apps (dvbdate, dvbnet, dvbscan, dvbtraffic, femon, scan, {acst}zap), dvblast, dvbsnoop, mumudvb, szap-s2, tune-s2, t2scan and w_scan."
+PKG_LONGDESC="This bundle currently includes blindscan-s2, dvb-apps (dvbdate, dvbnet, dvbscan, dvbtraffic, femon, scan, {acst}zap), dvblast, dvbsnoop, mumudvb, szap-s2, tune-s2, t2scan and w_scan2."
 
 PKG_IS_ADDON="yes"
 PKG_ADDON_NAME="DVB Tools"
+PKG_ADDON_ICON_NAME="TOOLS"
+PKG_ADDON_ICON_SIZE="280"
 PKG_ADDON_TYPE="xbmc.python.script"
 
 PKG_DEPENDS_TARGET="toolchain \
@@ -26,7 +28,7 @@ PKG_DEPENDS_TARGET="toolchain \
                     szap-s2 \
                     tune-s2 \
                     t2scan \
-                    w_scan"
+                    w_scan2"
 
 addon() {
   mkdir -p ${ADDON_BUILD}/${PKG_ADDON_ID}/bin/
@@ -65,6 +67,6 @@ addon() {
     # t2scan
     cp -P $(get_install_dir t2scan)/usr/bin/t2scan ${ADDON_BUILD}/${PKG_ADDON_ID}/bin
 
-    # w_scan
-    cp -P $(get_install_dir w_scan)/usr/bin/w_scan ${ADDON_BUILD}/${PKG_ADDON_ID}/bin
+    # w_scan2
+    cp -P $(get_install_dir w_scan2)/usr/bin/w_scan2 ${ADDON_BUILD}/${PKG_ADDON_ID}/bin
 }

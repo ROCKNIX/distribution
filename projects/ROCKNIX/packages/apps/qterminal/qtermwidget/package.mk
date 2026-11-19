@@ -3,6 +3,7 @@
 
 PKG_NAME="qtermwidget"
 PKG_VERSION="2.2.0"
+PKG_SHA256="9f212697d578d6a4eb49d21530c2280a953a80a3798bc4190b8d15abd03647be"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/lxqt/qtermwidget"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

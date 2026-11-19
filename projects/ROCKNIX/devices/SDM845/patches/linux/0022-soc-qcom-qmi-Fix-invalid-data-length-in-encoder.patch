@@ -1,0 +1,93 @@
+From 395b65fc8b7824f7f0f7002957d209b13128a243 Mon Sep 17 00:00:00 2001
+From: Bjorn Andersson <bjorn.andersson@oss.qualcomm.com>
+Date: Sat, 14 Feb 2026 15:16:55 -0600
+Subject: [PATCH] soc: qcom: qmi: Fix "invalid data length" in encoder
+
+When encoding QMI messages, the "source buffer" is a C-struct in the
+host memory, so while the data that goes into the outgoing buffer should
+be converted to little endian, the length should not be.
+
+Commit 'fe099c387e06 ("soc: qcom: preserve CPU endianness for
+QMI_DATA_LEN")' fixed this, but did it by copying a whole word from the
+source into a local u32 and then operated on that.
+
+If the length in the DATA_LEN refers to either a char or short array,
+it's reasonable to expect that the struct is packed such that this word
+will contain not only the length-byte (or length-short), but also the
+beginning of the payload.
+
+As the encoder loops around to encode the payload it runs into an
+unreasonable value of "data_len_value" and bails, with the error message
+"qmi_encode: Invalid data length".
+
+Rather then complicating the logic with local variables of different
+types we can instead pick the u8 or u16 "data_len_value" directly from
+"buf_src". As "buf_src" refers to a typical C-structure in the client
+drivers, we expect this field to be naturally aligned.
+
+We can then return to the original expression of qmi_encode_basic_elem()
+encoding directly from "src_buf" to "dst_buf", with the endianness
+conversion, based on the size of the type.
+
+Reported-by: David Heidelberg <david@ixit.cz>
+Closes: https://lore.kernel.org/all/dfb72933-938f-43f2-87f3-2e3ab9697125@ixit.cz/
+Fixes: fe099c387e06 ("soc: qcom: preserve CPU endianness for QMI_DATA_LEN")
+Signed-off-by: Bjorn Andersson <bjorn.andersson@oss.qualcomm.com>
+---
+ drivers/soc/qcom/qmi_encdec.c | 26 ++++++++++----------------
+ 1 file changed, 10 insertions(+), 16 deletions(-)
+
+diff --git a/drivers/soc/qcom/qmi_encdec.c b/drivers/soc/qcom/qmi_encdec.c
+index 28ce6f130b6a..45bb26d010da 100644
+--- a/drivers/soc/qcom/qmi_encdec.c
++++ b/drivers/soc/qcom/qmi_encdec.c
+@@ -368,8 +368,6 @@ static int qmi_encode(const struct qmi_elem_info *ei_array, void *out_buf,
+ 	const void *buf_src;
+ 	int encode_tlv = 0;
+ 	int rc;
+-	u8 val8;
+-	u16 val16;
+ 
+ 	if (!ei_array)
+ 		return 0;
+@@ -406,7 +404,6 @@ static int qmi_encode(const struct qmi_elem_info *ei_array, void *out_buf,
+ 			break;
+ 
+ 		case QMI_DATA_LEN:
+-			memcpy(&data_len_value, buf_src, sizeof(u32));
+ 			data_len_sz = temp_ei->elem_size == sizeof(u8) ?
+ 					sizeof(u8) : sizeof(u16);
+ 			/* Check to avoid out of range buffer access */
+@@ -416,19 +413,16 @@ static int qmi_encode(const struct qmi_elem_info *ei_array, void *out_buf,
+ 				       __func__);
+ 				return -ETOOSMALL;
+ 			}
+-			if (data_len_sz == sizeof(u8)) {
+-				val8 = data_len_value;
+-				rc = qmi_encode_basic_elem(buf_dst, &val8,
+-							   1, data_len_sz);
+-				if (rc < 0)
+-					return rc;
+-			} else {
+-				val16 = data_len_value;
+-				rc = qmi_encode_basic_elem(buf_dst, &val16,
+-							   1, data_len_sz);
+-				if (rc < 0)
+-					return rc;
+-			}
++
++			if (data_len_sz == sizeof(u8))
++				data_len_value = *(u8 *)buf_src;
++			else
++				data_len_value = *(u16 *)buf_src;
++
++			rc = qmi_encode_basic_elem(buf_dst, buf_src, 1, data_len_sz);
++			if (rc < 0)
++				return rc;
++
+ 			UPDATE_ENCODE_VARIABLES(temp_ei, buf_dst,
+ 						encoded_bytes, tlv_len,
+ 						encode_tlv, rc);
+-- 
+GitLab
+

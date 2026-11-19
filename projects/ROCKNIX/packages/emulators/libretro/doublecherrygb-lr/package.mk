@@ -1,14 +1,14 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="doublecherrygb-lr"
-PKG_VERSION="f6ffb9ae6230e6614066b887c7b269d44a00cab7"
-PKG_LICENSE="GPLv2"
+PKG_VERSION="d432f97693670524f7f46bfca886b731134f4bb6"
+PKG_SHA256="ca08f60a4e8f6541cb7e389e938012cb841e280b76851dbdf2e49277273560ca"
+PKG_LICENSE="AGPL-2.0-or-later"
 PKG_SITE="https://github.com/TimOelrichs/doublecherryGB-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="DoubleCherryGB is an open source (GPLv2) GB/GBC emulator."
-PKG_TOOLCHAIN="make"
 
 if [ "${OPENGL_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
@@ -20,5 +20,5 @@ fi
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp ${PKG_BUILD}/DoubleCherryGB_libretro.so ${INSTALL}/usr/lib/libretro/
+    cp -a ${PKG_BUILD}/.${TARGET_NAME}/DoubleCherryGB_libretro.so ${INSTALL}/usr/lib/libretro
 }

@@ -3,7 +3,5 @@
 
 . ${ROOT}/packages/x11/lib/libXt/package.mk
 
-PKG_CONFIGURE_OPTS_TARGET="--disable-static \
-                           --enable-shared \
-                           --with-gnu-ld \
-                           --enable-malloc0returnsnull"
+PKG_CONFIGURE_OPTS_TARGET="${PKG_CONFIGURE_OPTS_TARGET/--enable-static/--disable-static}"
+PKG_CONFIGURE_OPTS_TARGET="${PKG_CONFIGURE_OPTS_TARGET/--disable-shared/--enable-shared}"

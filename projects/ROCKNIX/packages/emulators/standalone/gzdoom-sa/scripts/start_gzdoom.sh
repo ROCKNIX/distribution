@@ -61,6 +61,7 @@ EXT=${1##*.}
 # If its not a simple wad (extension .doom) read the file and parse the data
 if [ ${EXT} == "doom" ]; then
   dos2unix "${1}"
+  local_savedir=""
   while IFS== read -r key value; do
     if [ "$key" == "IWAD" ]; then
       params+=" -iwad $value"
@@ -68,7 +69,14 @@ if [ ${EXT} == "doom" ]; then
     if [ "$key" == "MOD" ]; then
       params+=" -file $value"
     fi
+    if [ "$key" == "SAVEDIR" ]; then
+      local_savedir="$value"
+    fi
   done <"${1}"
+  if [ -n "$local_savedir" ]; then
+    mkdir -p "$local_savedir"
+    params="${params/-savedir ${SAVE_DIR}/-savedir ${local_savedir}}"
+  fi
 else
   params+=" -iwad ${1}"
 fi

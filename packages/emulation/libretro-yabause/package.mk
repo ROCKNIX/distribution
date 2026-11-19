@@ -1,10 +1,10 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="libretro-yabause"
-PKG_VERSION="c35712c5ed33e18d77097f2059a036e19d1d66f2"
-PKG_SHA256="2c2485bf76de138cf8a46fa8dd460f46f21b3abb38a432578c7f18b46fa6807e"
-PKG_LICENSE="GPLv2"
+PKG_VERSION="7cb15b8f9eea5a6fa7cae34468a6989522bcba75"
+PKG_SHA256="4c9b818067b333583c640ac7eb395adc47f480ede4e32f94e11b2d45e2bb26be"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/yabause"
 PKG_URL="https://github.com/libretro/yabause/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"

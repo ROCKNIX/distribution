@@ -1,0 +1,131 @@
+From 5b925dcf431e562faf738b3dc574603ff2fc78fb Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Wed, 23 Sep 2026 14:37:29 -0700
+Subject: [PATCH] freedreno: support rotated blits
+
+a6xx and later do unscaled rotated blits on the 2D engine, which is all
+EGL pre-rotation needs. Anything else goes through util_blitter_blit(),
+since util_blitter_blit_generic() doesn't rotate. The stencil fallback
+can't rotate either, so rotated stencil blits are left to u_blitter.
+---
+ .../drivers/freedreno/a6xx/fd6_blitter.cc     | 26 +++++++++++++++++++
+ .../drivers/freedreno/freedreno_blitter.c     | 26 +++++++++++++------
+ .../drivers/freedreno/freedreno_screen.c      |  2 ++
+ 3 files changed, 46 insertions(+), 8 deletions(-)
+
+diff --git a/src/gallium/drivers/freedreno/a6xx/fd6_blitter.cc b/src/gallium/drivers/freedreno/a6xx/fd6_blitter.cc
+index 726fc4cd6dc..86b82884984 100644
+--- a/src/gallium/drivers/freedreno/a6xx/fd6_blitter.cc
++++ b/src/gallium/drivers/freedreno/a6xx/fd6_blitter.cc
+@@ -217,6 +217,23 @@ can_do_blit(const struct fd_dev_info *dev_info, const struct pipe_blit_info *inf
+ 
+    fail_if(info->window_rectangle_include);
+ 
++   if (info->rotation) {
++      fail_if(info->rotation != 90 && info->rotation != 180 &&
++              info->rotation != 270);
++      fail_if(info->scissor_enable);
++      fail_if(info->src.box.width < 0 || info->src.box.height < 0);
++      if (info->rotation == 180) {
++         fail_if(info->dst.box.width != info->src.box.width ||
++                 info->dst.box.height != info->src.box.height);
++      } else {
++         fail_if(info->dst.box.width != info->src.box.height ||
++                 info->dst.box.height != info->src.box.width);
++      }
++      fail_if(info->src.resource->target == PIPE_BUFFER ||
++              info->dst.resource->target == PIPE_BUFFER);
++      fail_if(info->src.resource->nr_samples > 1);
++   }
++
+    /* The blitter can't handle the needed swizzle gymnastics to convert
+     * to/from L/A formats:
+     */
+@@ -718,6 +735,12 @@ emit_blit_texture_setup(fd_cs &cs, const struct pipe_blit_info *info)
+ 
+    enum a6xx_rotation rotate = rotates[mirror_y][mirror_x];
+ 
++   if (info->rotation) {
++      static const enum a6xx_rotation by_degrees[4] = {ROTATE_0, ROTATE_90,
++                                                       ROTATE_180, ROTATE_270};
++      rotate = by_degrees[(info->rotation / 90) & 3];
++   }
++
+    fd_ncrb<CHIP> ncrb(cs, 13);
+ 
+    ncrb.add(GRAS_A2D_SRC_XMIN(CHIP, MIN2(sx1, sx2)));
+@@ -1497,6 +1520,9 @@ handle_compressed_blit(struct fd_context *ctx,
+    if (info->src.format != info->dst.format)
+       return fd_blitter_blit(ctx, info);
+ 
++   /* this would rotate whole blocks, not texels */
++   fail_if(info->rotation);
++
+    if (util_format_get_blocksize(info->src.format) == 8) {
+       blit.src.format = blit.dst.format = PIPE_FORMAT_R16G16B16A16_UINT;
+    } else {
+diff --git a/src/gallium/drivers/freedreno/freedreno_blitter.c b/src/gallium/drivers/freedreno/freedreno_blitter.c
+index cf66d338fc4..1a927d091cf 100644
+--- a/src/gallium/drivers/freedreno/freedreno_blitter.c
++++ b/src/gallium/drivers/freedreno/freedreno_blitter.c
+@@ -236,9 +236,11 @@ fd_blitter_blit(struct fd_context *ctx, const struct pipe_blit_info *info)
+    }
+    src_view = pipe->create_sampler_view(pipe, src, &src_templ);
+ 
+-   /* Note: a2xx does not support fp16: */
++   /* Note: a2xx does not support fp16, and the txf check below doesn't know
++    * about rotation:
++    */
+    if (util_format_is_float16(info->src.format) &&
+-       util_format_is_float16(info->dst.format) &&
++       util_format_is_float16(info->dst.format) && !info->rotation &&
+        util_blitter_blit_with_txf(ctx->blitter, &info->dst.box,
+                                   src_view, &info->src.box,
+                                   src->width0, src->height0,
+@@ -254,11 +256,18 @@ fd_blitter_blit(struct fd_context *ctx, const struct pipe_blit_info *info)
+    }
+ 
+    /* Copy. */
+-   util_blitter_blit_generic(
+-      ctx->blitter, &dst_templ, &info->dst.box, src_view, &info->src.box,
+-      src->width0, src->height0, info->mask, info->filter,
+-      info->scissor_enable ? &info->scissor : NULL, info->alpha_blend, false, 0,
+-      fs);
++   if (info->rotation) {
++      /* only util_blitter_blit() rotates, copy every sample like below */
++      struct pipe_blit_info rotated = *info;
++      rotated.sample0_only = false;
++      util_blitter_blit(ctx->blitter, &rotated, fs);
++   } else {
++      util_blitter_blit_generic(
++         ctx->blitter, &dst_templ, &info->dst.box, src_view, &info->src.box,
++         src->width0, src->height0, info->mask, info->filter,
++         info->scissor_enable ? &info->scissor : NULL, info->alpha_blend,
++         false, 0, fs);
++   }
+ 
+    pipe_sampler_view_reference(&src_view, NULL);
+ 
+@@ -433,7 +442,8 @@ fd_blit(struct pipe_context *pctx, const struct pipe_blit_info *blit_info)
+    if (ctx->blit && ctx->blit(ctx, &info))
+       return true;
+ 
+-   if (info.mask & PIPE_MASK_S) {
++   /* the stencil fallback can't rotate, leave that to u_blitter */
++   if ((info.mask & PIPE_MASK_S) && !info.rotation) {
+       fd_blit_stencil_fallback(ctx, &info);
+       info.mask &= ~PIPE_MASK_S;
+       if (!info.mask)
+diff --git a/src/gallium/drivers/freedreno/freedreno_screen.c b/src/gallium/drivers/freedreno/freedreno_screen.c
+index e33674e662c..ffd492f87a8 100644
+--- a/src/gallium/drivers/freedreno/freedreno_screen.c
++++ b/src/gallium/drivers/freedreno/freedreno_screen.c
+@@ -465,6 +465,8 @@ fd_init_screen_caps(struct fd_screen *screen)
+ 
+    caps->surface_sample_count = is_a6xx(screen);
+ 
++   caps->blit_rotation = is_a6xx(screen);
++
+    caps->depth_clip_disable = is_a3xx(screen) || is_a4xx(screen) || is_a6xx(screen);
+ 
+    caps->post_depth_coverage =

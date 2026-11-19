@@ -1,0 +1,104 @@
+diff --git a/Source/Core/Common/WindowSystemInfo.h b/Source/Core/Common/WindowSystemInfo.h
+index 9d154776f6..4c28dc9026 100644
+--- a/Source/Core/Common/WindowSystemInfo.h
++++ b/Source/Core/Common/WindowSystemInfo.h
+@@ -41,6 +41,12 @@ struct WindowSystemInfo
+   // during video backend startup the surface pointer may change (MoltenVK).
+   void* render_surface = nullptr;
+ 
++  // Dimensions of the render surface, when the frontend is the authority on them.
++  // Wayland has no way for the client to query its own surface size, so the frontend
++  // must supply it. Zero means "unknown", in which case the backend queries as usual.
++  int render_surface_width = 0;
++  int render_surface_height = 0;
++
+   // Scale of the render surface. For hidpi systems, this will be >1.
+   float render_surface_scale = 1.0f;
+ };
+diff --git a/Source/Core/DolphinQt/Host.cpp b/Source/Core/DolphinQt/Host.cpp
+index e2f1b21884..bbd36c94fa 100644
+--- a/Source/Core/DolphinQt/Host.cpp
++++ b/Source/Core/DolphinQt/Host.cpp
+@@ -188,7 +188,7 @@ void Host::SetTASInputFocus(const bool focus)
+ void Host::ResizeSurface(int new_width, int new_height)
+ {
+   if (g_presenter)
+-    g_presenter->ResizeSurface();
++    g_presenter->ResizeSurface(new_width, new_height);
+ }
+ 
+ std::vector<std::string> Host_GetPreferredLocales()
+diff --git a/Source/Core/DolphinQt/MainWindow.cpp b/Source/Core/DolphinQt/MainWindow.cpp
+index 688ae6ffcd..8b72df5ec5 100644
+--- a/Source/Core/DolphinQt/MainWindow.cpp
++++ b/Source/Core/DolphinQt/MainWindow.cpp
+@@ -198,6 +198,11 @@ static WindowSystemInfo GetWindowSystemInfo(QWindow* window)
+   wsi.render_surface = wsi.render_window;
+ #endif
+   wsi.render_surface_scale = window ? static_cast<float>(window->devicePixelRatio()) : 1.0f;
++  if (window)
++  {
++    wsi.render_surface_width = static_cast<int>(window->width() * window->devicePixelRatio());
++    wsi.render_surface_height = static_cast<int>(window->height() * window->devicePixelRatio());
++  }
+ 
+   return wsi;
+ }
+diff --git a/Source/Core/VideoCommon/Present.cpp b/Source/Core/VideoCommon/Present.cpp
+index 7c62730667..1a91f8fe53 100644
+--- a/Source/Core/VideoCommon/Present.cpp
++++ b/Source/Core/VideoCommon/Present.cpp
+@@ -583,16 +583,20 @@ void Presenter::ReleaseXFBContentLock()
+     m_xfb_entry->ReleaseContentLock();
+ }
+ 
+-void Presenter::ChangeSurface(void* new_surface_handle)
++void Presenter::ChangeSurface(void* new_surface_handle, int new_width, int new_height)
+ {
+   std::lock_guard<std::mutex> lock(m_swap_mutex);
+   m_new_surface_handle = new_surface_handle;
++  m_new_surface_width = new_width;
++  m_new_surface_height = new_height;
+   m_surface_changed.Set();
+ }
+ 
+-void Presenter::ResizeSurface()
++void Presenter::ResizeSurface(int new_width, int new_height)
+ {
+   std::lock_guard<std::mutex> lock(m_swap_mutex);
++  m_new_surface_width = new_width;
++  m_new_surface_height = new_height;
+   m_surface_resized.Set();
+ }
+ 
+diff --git a/Source/Core/VideoCommon/Present.h b/Source/Core/VideoCommon/Present.h
+index 91ba870967..1074861fe3 100644
+--- a/Source/Core/VideoCommon/Present.h
++++ b/Source/Core/VideoCommon/Present.h
+@@ -91,11 +91,15 @@ public:
+   VideoCommon::PostProcessing* GetPostProcessor() const { return m_post_processor.get(); }
+   // Final surface changing
+   // This is called when the surface is resized (WX) or the window changes (Android).
+-  void ChangeSurface(void* new_surface_handle);
+-  void ResizeSurface();
++  // new_width/new_height may be 0, meaning the frontend does not know the size and
++  // the backend should determine it itself. Only Wayland frontends supply them.
++  void ChangeSurface(void* new_surface_handle, int new_width = 0, int new_height = 0);
++  void ResizeSurface(int new_width = 0, int new_height = 0);
+   bool SurfaceResizedTestAndClear() { return m_surface_resized.TestAndClear(); }
+   bool SurfaceChangedTestAndClear() { return m_surface_changed.TestAndClear(); }
+   void* GetNewSurfaceHandle();
++  int GetNewSurfaceWidth() const { return m_new_surface_width; }
++  int GetNewSurfaceHeight() const { return m_new_surface_height; }
+ 
+   void SetKeyMap(const DolphinKeyMap& key_map);
+ 
+@@ -141,6 +145,8 @@ private:
+   AbstractTextureFormat m_backbuffer_format = AbstractTextureFormat::Undefined;
+ 
+   void* m_new_surface_handle = nullptr;
++  int m_new_surface_width = 0;
++  int m_new_surface_height = 0;
+   Common::Flag m_surface_changed;
+   Common::Flag m_surface_resized;
+ 

@@ -2,7 +2,7 @@
 # Copyright (C) 2026 ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="fex-emu"
-PKG_VERSION="a04b0241c2fe3911729842205cd8643981108aad"
+PKG_VERSION="14c92681f4d62cf84d901460e0358de09c8847a7"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/FEX-Emu/FEX"
 PKG_URL="https://github.com/FEX-Emu/FEX.git"
@@ -23,6 +23,10 @@ FEX_CMAKE_BASE=(
   -DCMAKE_MAKE_PROGRAM=ninja
   -DCMAKE_C_COMPILER="${FEX_CLANG}"
   -DCMAKE_CXX_COMPILER="${FEX_CLANGXX}"
+  
+  # Make sure we pick up teh right llvm-ar and llvm-ranlib
+  -DCMAKE_AR="${FEX_LLVM_BIN}/llvm-ar"
+  -DCMAKE_RANLIB="${FEX_LLVM_BIN}/llvm-ranlib"
   -DCMAKE_C_COMPILER_AR="${FEX_LLVM_BIN}/llvm-ar"
   -DCMAKE_CXX_COMPILER_AR="${FEX_LLVM_BIN}/llvm-ar"
   -DCMAKE_ASM_COMPILER_AR="${FEX_LLVM_BIN}/llvm-ar"
@@ -70,6 +74,9 @@ make_target() {
   curl -L https://nixos.org/nix/install | sh -s -- --no-daemon
   . "${HOME}/.nix-profile/etc/profile.d/nix.sh"
 
+  #Pin for monthly revert after bumping gcc
+  export NIX_PATH="nixpkgs=https://github.com/NixOS/nixpkgs/archive/b6018f87da91d19d0ab4cf979885689b469cdd41.tar.gz"
+
   mkdir -p "${PKG_BUILD}/.${TARGET_NAME}"
   cd "${PKG_BUILD}/.${TARGET_NAME}"
 
@@ -81,6 +88,12 @@ make_target() {
       TUNE_CPU="${TARGET_CPU##*.}"
       ;;
   esac
+
+  # thunkgen host parse headers, which the guest parse's later --sysroot overrides
+  local cxxdir
+  cxxdir=$(ls -d "${TOOLCHAIN}/${TARGET_NAME}/include/c++/"* | sort -V | tail -n1)
+  # --target keeps x86_64 build hosts from parsing the aarch64 sysroot as x86_64
+  export THUNKGEN_EXTRA_FLAGS="--target=${TARGET_NAME} --sysroot ${SYSROOT_PREFIX} -isystem ${cxxdir} -isystem ${cxxdir}/${TARGET_NAME}"
 
   local -a tgt_opts=(
     -G Ninja
@@ -115,7 +128,7 @@ makeinstall_target() {
   cp -rf "${PKG_DIR}/config/gptk" "${INSTALL}/usr/config/fex-emu"
   mkdir -p "${INSTALL}/usr/config/modules"
   cp -rf "${PKG_DIR}/scripts/"* "${INSTALL}/usr/config/modules"
-  cp "${TOOLCHAIN}/lib/libvulkan_freedreno.so" "${INSTALL}/usr/share/fex-emu/"
+
 }
 
 makeinstall_host() {

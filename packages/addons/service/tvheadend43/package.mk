@@ -2,16 +2,16 @@
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="tvheadend43"
-PKG_VERSION="653bd0400b4413db96b80c807f0f7524f9248adb"
-PKG_SHA256="9c2e13a70f97cf4c9b37cd93bfd03a7a1e0b7f3b18080c40ef99b8917642dbd7"
-PKG_VERSION_NUMBER="4.3-2375"
-PKG_REV="1"
+PKG_VERSION="15515d7848a7ee987213caa7b0a0373536968773"
+PKG_SHA256="4a5b2379b92b11989fdd760ac760e769e6977b7f30eb8041a387addd47162476"
+PKG_VERSION_NUMBER="4.3-2738"
+PKG_REV="10"
 PKG_ARCH="any"
-PKG_LICENSE="GPL"
+PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="http://www.tvheadend.org"
 PKG_URL="https://github.com/tvheadend/tvheadend/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain argtable2 avahi comskip curl dvb-apps ffmpegx libdvbcsa libhdhomerun \
-                    libiconv openssl pcre2 pngquant:host Python3:host dtv-scan-tables"
+PKG_DEPENDS_TARGET="toolchain argtable2 avahi comskip curl dvb-apps ffmpegx lame libdvbcsa \
+                    libhdhomerun libiconv openssl pcre2 pngquant:host Python3:host dtv-scan-tables"
 PKG_DEPENDS_CONFIG="ffmpegx"
 PKG_SECTION="service"
 PKG_SHORTDESC="Tvheadend: a TV streaming server for Linux"
@@ -20,6 +20,7 @@ PKG_BUILD_FLAGS="-sysroot"
 
 PKG_IS_ADDON="yes"
 PKG_ADDON_NAME="Tvheadend Server 4.3"
+PKG_ADDON_ICON_NAME="Tvheadend"
 PKG_ADDON_TYPE="xbmc.service"
 
 # basic transcoding options
@@ -56,7 +57,7 @@ else
 fi
 
 post_unpack() {
-  sed -e 's/VER="0.0.0~unknown"/VER="'${PKG_VERSION_NUMBER}' ~ LibreELEC Tvh-addon v'${ADDON_VERSION}'.'${PKG_REV}'"/g' -i ${PKG_BUILD}/support/version
+  sed -e 's/VER="0.0.0~unknown"/VER="'${PKG_VERSION_NUMBER}' - ${DISTRONAME} add-on v'${ADDON_VERSION}'.'${PKG_REV}'"/g' -i ${PKG_BUILD}/support/version
   sed -e 's|'/usr/bin/pngquant'|'${TOOLCHAIN}/bin/pngquant'|g' -i ${PKG_BUILD}/support/mkbundle
 }
 
@@ -82,6 +83,7 @@ pre_configure_target() {
                              --disable-uriparser \
                              --enable-tvhcsa \
                              --enable-trace \
+                             --enable-vue_build \
                              --nowerror \
                              --disable-bintray_cache \
                              --python=${TOOLCHAIN}/bin/python"
@@ -89,6 +91,11 @@ pre_configure_target() {
   # fails to build in subdirs
   cd ${PKG_BUILD}
   rm -rf .${TARGET_NAME}
+
+  # lame is a -sysroot package, so ffmpegx's static libavcodec.a (which
+  # pulls in libmp3lame symbols) can't be resolved without lame's
+  # install path explicitly added here too.
+  LDFLAGS+=" -L$(get_install_dir lame)/usr/lib"
 
   # pass ffmpegx to build
   CFLAGS+=" -I$(get_install_dir ffmpegx)/usr/local/include"
@@ -123,9 +130,9 @@ addon() {
   cp -P ${PKG_INSTALL}/usr/lib/capmt_ca.so ${ADDON_BUILD}/${PKG_ADDON_ID}/bin
   cp -P $(get_install_dir comskip)/usr/bin/comskip ${ADDON_BUILD}/${PKG_ADDON_ID}/bin
 
-  if [ "${TARGET_ARCH}" = "x86_64" ]; then
+  if [ "${TARGET_ARCH}" = "aarch64" ] || [ "${TARGET_ARCH}" = "x86_64" ]; then
     mkdir -p ${ADDON_BUILD}/${PKG_ADDON_ID}/lib.private
-    cp -P $(get_install_dir x265)/usr/lib/libx265.so.215 ${ADDON_BUILD}/${PKG_ADDON_ID}/lib.private
+    cp -P $(get_install_dir x265)/usr/lib/libx265.so.$(get_pkg_variable x265 PKG_X265_SONAME) ${ADDON_BUILD}/${PKG_ADDON_ID}/lib.private
     patchelf --add-rpath '${ORIGIN}/../lib.private' ${ADDON_BUILD}/${PKG_ADDON_ID}/bin/{comskip,tvheadend}
   fi
 

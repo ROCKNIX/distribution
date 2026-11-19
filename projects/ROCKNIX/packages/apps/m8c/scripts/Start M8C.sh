@@ -48,12 +48,12 @@ for DEVICE_ID in $DEVICE_IDS; do
 done
 
 #Capture M8 USB Source and Play it out the default audio sink
-M8_AUDIO_SOURCE=$(pactl list sources | awk '/Name: alsa_input\.usb-DirtyWave/{print $2}')
+M8_AUDIO_SOURCE=$(pactl list sources | awk '/Name: alsa_input\.usb-[Dd]irty[Ww]ave/{print $2}')
 pw-loopback -C $M8_AUDIO_SOURCE &
 
 #Connect each BT Source and Play it to the M8 Sink
 BT_SOURCES=$(pactl list | awk -F. '/Name: bluez_card/{print $2}')
-M8_AUDIO_SINK=$(pactl list sinks | awk '/Name: alsa_output\.usb-DirtyWave/{print $2}')
+M8_AUDIO_SINK=$(pactl list sinks | awk '/Name: alsa_output\.usb-[Dd]irty[Ww]ave/{print $2}')
 for BT_SOURCE in $BT_SOURCES; do
 	pw-loopback -C bluez_input.$BT_SOURCE.2 -P $M8_AUDIO_SINK &
 done
@@ -61,14 +61,14 @@ done
 # Connect each audio source to the M8 Sink, excluding the M8 device itself
 
 # Get the M8 Audio Sink (your specific USB sink)
-M8_AUDIO_SINK=$(pactl list sinks short | awk '/alsa_output\.usb-DirtyWave/{print $2}')
+M8_AUDIO_SINK=$(pactl list sinks short | awk '/alsa_output\.usb-[Dd]irty[Ww]ave/{print $2}')
 
 # List all audio sources, excluding monitor sources
 ALL_SOURCES=$(pactl list sources short | awk '$2 !~ /\.monitor/ {print $2}')
 
 # Loop over each source and connect it to the sink, but skip the M8 device's own source
 for SRC in $ALL_SOURCES; do
-    if [[ "$SRC" == *"usb-DirtyWave"* ]]; then
+    if [[ "$SRC" == *"usb-"[Dd]"irty"[Ww]"ave"* ]]; then
         continue
     fi
     pw-loopback -C "$SRC" -P "$M8_AUDIO_SINK" &

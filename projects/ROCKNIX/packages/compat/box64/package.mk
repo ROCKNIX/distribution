@@ -2,23 +2,35 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="box64"
-PKG_VERSION="3ec5de03c786333ed8d5a51c5b35a8bd6e22b229"
+PKG_VERSION="2f130fab1d6e1a4ee8a71dc60cfdfcc839ad192a" # v0.4.4
+PKG_SHA256="ce844041092de3f44316bd1c033a3cc10024e5f798c1a8e8a58f046c6d967981"
 PKG_ARCH="aarch64"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/ptitSeb/box64"
-PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain ncurses SDL2 cabextract libXss libXdmcp libXft gtk2"
+PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
+PKG_DEPENDS_TARGET="toolchain ncurses SDL2 cabextract libxss libXdmcp libXft gtk2"
 PKG_LONGDESC="Box64 lets you run x86_64 Linux programs (such as games) on non-x86_64 Linux systems, like ARM."
 PKG_TOOLCHAIN="cmake"
 
-PKG_CMAKE_OPTS_TARGET="-DCMAKE_BUILD_TYPE=Release"
+# Dynarce is only enabled with OPT target is set,
+# enable here so its enabled on all platforms
+PKG_CMAKE_OPTS_TARGET="-DCMAKE_BUILD_TYPE=Release \
+                       -DARM_DYNAREC=On \
+                       -DBOX32=On \
+                       -DBOX32_BINFMT=On"
 
 case ${DEVICE} in
   RK3588)
     PKG_CMAKE_OPTS_TARGET+=" -DRK3588=On"
     ;;
+  SM4450)
+    PKG_CMAKE_OPTS_TARGET+=" -DSD888=On"
+    ;;
   SM8250)
     PKG_CMAKE_OPTS_TARGET+=" -DSD865=On"
+    ;;
+  SDM845)
+    PKG_CMAKE_OPTS_TARGET+=" -DSD845=On"
     ;;
   SM8550)
     PKG_CMAKE_OPTS_TARGET+=" -DSD8G2=On"
@@ -28,6 +40,9 @@ esac
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/share/box64/lib
     cp ${PKG_BUILD}/x64lib/* ${INSTALL}/usr/share/box64/lib
+
+  mkdir -p ${INSTALL}/usr/share/box32/lib
+    cp ${PKG_BUILD}/x86lib/* ${INSTALL}/usr/share/box32/lib
 
   mkdir -p ${INSTALL}/usr/bin
     cp ${PKG_BUILD}/.${TARGET_NAME}/box64 ${INSTALL}/usr/bin
@@ -40,5 +55,5 @@ makeinstall_target() {
     ln -sf /storage/.config/box64.box64rc ${INSTALL}/etc/box64.box64rc
 
   mkdir -p ${INSTALL}/etc/binfmt.d
-    cp -f ${PKG_DIR}/config/box64.conf ${INSTALL}/etc/binfmt.d/box64.conf
+    cp ${PKG_BUILD}/.${TARGET_NAME}/system/*.conf ${INSTALL}/etc/binfmt.d
 }

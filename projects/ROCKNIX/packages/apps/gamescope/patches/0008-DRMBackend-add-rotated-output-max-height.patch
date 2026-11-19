@@ -1,0 +1,205 @@
+From 60ccf44900f59d040c08fcd4be5b3c1eaca3e1c3 Mon Sep 17 00:00:00 2001
+From: Philippe Simons <simons.philippe@gmail.com>
+Date: Sat, 12 Sep 2026 22:26:44 +0200
+Subject: [PATCH] DRMBackend: add --rotated-output-max-height and let the plane
+ upscale
+
+Some display controllers rotate a plane at scanout but only up to a maximum
+PRE-ROTATION source height -- 1088 lines on Qualcomm's DPU inline rotator. The
+plane advertises ROTATE_90 as a static capability and cannot qualify it per-mode,
+so on a portrait panel wider than that limit gamescope takes the capability at
+face value, stops rotating in the compositor, and then every atomic commit is
+rejected and nothing is ever scanned out. The panel is simply black.
+
+--rotated-output-max-height clamps the LOGICAL output height (aspect preserving,
+both axes even) when the panel is scanned out rotated, and scales the resulting
+CRTC rects back up to the real mode so the same plane upscales for free. SRC_W/H
+stay at the texture size -- the scale is src -> crtc.
+
+Without the flag nothing changes. It applies to 90/270 only: 0/180 do not
+transpose, so the source height is the mode's own height and the rotator limit
+does not apply.
+
+drm_set_refresh() looks its mode up by the panel's real size when the clamp is
+active, since the clamped size matches no mode on the connector and would
+otherwise fall through to generating a timing the panel cannot display.
+---
+ src/Backends/DRMBackend.cpp | 91 +++++++++++++++++++++++++++++++++++++
+ src/main.cpp                |  7 +++
+ src/main.hpp                |  1 +
+ 3 files changed, 99 insertions(+)
+
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index b7ef427..4dc3797 100644
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -1953,6 +1953,46 @@ static inline uint32_t ColorSpaceToEOTFIndex( GamescopeAppTextureColorspace colo
+ }
+ 
+ 
++// --rotated-output-max-height: clamp the LOGICAL output height when the panel is scanned out
++// rotated, and let the display hardware upscale the result to the real mode.
++//
++// Some display controllers can rotate a plane at scanout but only up to a maximum PRE-ROTATION
++// source height (on Qualcomm's DPU inline rotator that is 1088 lines). The plane advertises
++// ROTATE_90 as a static capability and cannot qualify it per-mode, so on a portrait panel whose
++// width exceeds that limit gamescope believes it can rotate at scanout, and then every commit is
++// rejected and nothing is ever scanned out.
++//
++// Rendering the whole session slightly smaller sidesteps it: the composited/scanned-out layers
++// become short enough to rotate, and the same plane scales them back up to the panel for free.
++// The alternative is to rotate in the compositor on every frame, which costs a full GPU pass per
++// present forever.
++//
++// The clamp is aspect-preserving, so the logical output and the mode always agree on shape and the
++// plane's scale is uniform. g_nOutputScale{Num,Den} converts a logical CRTC rect into mode space
++// and is 1:1 unless the clamp fired.
++static uint32_t g_nPanelModeWidth = 0;
++static uint32_t g_nPanelModeHeight = 0;
++static uint32_t g_nOutputScaleNum = 1;
++static uint32_t g_nOutputScaleDen = 1;
++
++static bool output_is_downscaled()
++{
++	return g_nOutputScaleNum != g_nOutputScaleDen;
++}
++
++static uint32_t get_rotated_output_max_height()
++{
++	if ( !g_nRotatedOutputMaxHeight )
++		return 0;
++
++	if ( g_nRotatedOutputMaxHeight < 64 || g_nRotatedOutputMaxHeight > 16384 )
++	{
++		drm_log.errorf( "--rotated-output-max-height: ignoring %u (expected a height in lines, e.g. 1080)", g_nRotatedOutputMaxHeight );
++		return 0;
++	}
++	return g_nRotatedOutputMaxHeight;
++}
++
+ LiftoffStateCacheEntry FrameInfoToLiftoffStateCacheEntry( struct drm_t *drm, const FrameInfo_t *frameInfo )
+ {
+ 	LiftoffStateCacheEntry entry{};
+@@ -1980,6 +2020,17 @@ LiftoffStateCacheEntry FrameInfoToLiftoffStateCacheEntry( struct drm_t *drm, con
+ 			crtcH = w;
+ 		}
+ 
++		// The rects above are in LOGICAL output space. If that was clamped below the panel's mode
++		// (see --rotated-output-max-height), convert to mode space here and let the plane
++		// scale. SRC_W/H deliberately stay at the texture size — the scale is src -> crtc.
++		if ( output_is_downscaled() )
++		{
++			crtcX = (int32_t)  ( ( (int64_t)  crtcX * g_nOutputScaleNum ) / g_nOutputScaleDen );
++			crtcY = (int32_t)  ( ( (int64_t)  crtcY * g_nOutputScaleNum ) / g_nOutputScaleDen );
++			crtcW = (uint64_t) ( ( (uint64_t) crtcW * g_nOutputScaleNum ) / g_nOutputScaleDen );
++			crtcH = (uint64_t) ( ( (uint64_t) crtcH * g_nOutputScaleNum ) / g_nOutputScaleDen );
++		}
++
+ 		entry.layerState[i].zpos  = frameInfo->layers.get( i ).zpos;
+ 		entry.layerState[i].srcW  = srcWidth  << 16;
+ 		entry.layerState[i].srcH  = srcHeight << 16;
+@@ -3437,6 +3488,37 @@ bool drm_set_mode( struct drm_t *drm, const drmModeModeInfo *mode )
+ 		break;
+ 	}
+ 
++	// Clamp the logical output so a rotated scanout stays within the rotator's pre-rotation source
++	// limit, and record the scale back up to the mode. 90/270 only: 0/180 do not transpose, so the
++	// source height is the mode's own height and the limit does not apply.
++	g_nPanelModeWidth = mode->hdisplay;
++	g_nPanelModeHeight = mode->vdisplay;
++	g_nOutputScaleNum = 1;
++	g_nOutputScaleDen = 1;
++	if ( uStep == 1u || uStep == 3u )
++	{
++		const uint32_t uMaxHeight = get_rotated_output_max_height();
++		if ( uMaxHeight && g_nOutputHeight > uMaxHeight )
++		{
++			// Aspect-preserving, and both axes rounded to even so the scaled rects stay on whole
++			// pixels for hardware that dislikes odd plane geometry.
++			const uint32_t uOldHeight = g_nOutputHeight;
++			const uint32_t uNewHeight = uMaxHeight & ~1u;
++			const uint32_t uNewWidth  = (uint32_t) ( ( (uint64_t) g_nOutputWidth * uNewHeight ) / uOldHeight ) & ~1u;
++
++			if ( uNewWidth >= 64 && uNewHeight >= 64 )
++			{
++				drm_log.infof( "--rotated-output-max-height: logical output %ux%u -> %ux%u, plane upscales to the %ux%u mode",
++					g_nOutputWidth, g_nOutputHeight, uNewWidth, uNewHeight, mode->hdisplay, mode->vdisplay );
++
++				g_nOutputWidth = uNewWidth;
++				g_nOutputHeight = uNewHeight;
++				g_nOutputScaleNum = uOldHeight;
++				g_nOutputScaleDen = uNewHeight;
++			}
++		}
++	}
++
+ 	// Rotate in the compositor when the scanout plane can't do the panel's orientation.
+ 	g_uOutputRotation = 0;
+ 	if ( uStep )
+@@ -3459,6 +3541,15 @@ bool drm_set_refresh( struct drm_t *drm, int refresh )
+ 		width = height;
+ 		height = tmp;
+ 	}
++
++	// A clamped logical output matches no mode on the connector. Look the mode up by the PANEL's
++	// real size instead, or find_mode() misses and we fall through to generating a timing the
++	// panel cannot display.
++	if ( output_is_downscaled() && g_nPanelModeWidth && g_nPanelModeHeight )
++	{
++		width = (int) g_nPanelModeWidth;
++		height = (int) g_nPanelModeHeight;
++	}
+ 	if (!drm->pConnector || !drm->pConnector->GetModeConnector())
+ 		return false;
+ 
+diff --git a/src/main.cpp b/src/main.cpp
+index 34ea0c1..51b430c 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -139,6 +139,7 @@ const struct option *gamescope_options = (struct option[]){
+ 	{ "fade-out-duration", required_argument, nullptr, 0 },
+ 	{ "force-composition-rotation", no_argument, nullptr, 0 },
+ 	{ "force-orientation", required_argument, nullptr, 0 },
++	{ "rotated-output-max-height", required_argument, nullptr, 0 },
+ 	{ "force-windows-fullscreen", no_argument, nullptr, 0 },
+ 
+ 	{ "disable-color-management", no_argument, nullptr, 0 },
+@@ -206,6 +207,9 @@ const char usage[] =
+ 	"  --prefer-vk-device             prefer Vulkan device for compositing (ex: 1002:7300)\n"
+ 	"  --force-composition-rotation   always rotate the output in the compositor instead of at scanout (autodetected otherwise)\n"
+ 	"  --force-orientation            rotate the internal display (left, right, normal, upsidedown)\n"
++	"  --rotated-output-max-height    when scanning out a rotated panel, clamp the logical output to N lines\n"
++	"                                 (aspect preserving) and let the plane upscale to the mode. For display\n"
++	"                                 hardware whose rotator has a lower pre-rotation source limit than the panel.\n"
+ 	"  --force-windows-fullscreen     force windows inside of gamescope to be the size of the nested display (fullscreen)\n"
+ 	"  --cursor-scale-height          if specified, sets a base output height to linearly scale the cursor against.\n"
+ 	"  --virtual-connector-strategy   Specifies how we should make virtual connectors.\n"
+@@ -372,6 +376,7 @@ static gamescope::GamescopeModeGeneration parse_gamescope_mode_generation( const
+ 
+ bool g_bForceCompositionRotation = false;
+ uint32_t g_uOutputRotation = 0;
++uint32_t g_nRotatedOutputMaxHeight = 0;
+ 
+ GamescopePanelOrientation g_DesiredInternalOrientation = GAMESCOPE_PANEL_ORIENTATION_AUTO;
+ static GamescopePanelOrientation force_orientation(const char *str)
+@@ -824,6 +829,8 @@ int main(int argc, char **argv)
+ 					g_bForceCompositionRotation = true;
+ 				} else if (strcmp(opt_name, "force-orientation") == 0) {
+ 					g_DesiredInternalOrientation = force_orientation( optarg );
++				} else if (strcmp(opt_name, "rotated-output-max-height") == 0) {
++					g_nRotatedOutputMaxHeight = (uint32_t) parse_integer( optarg, opt_name );
+ 				} else if (strcmp(opt_name, "sharpness") == 0 ||
+ 						   strcmp(opt_name, "fsr-sharpness") == 0) {
+ 					g_upscaleFilterSharpness = parse_integer( optarg, opt_name );
+diff --git a/src/main.hpp b/src/main.hpp
+index da3fdff..96e8515 100644
+--- a/src/main.hpp
++++ b/src/main.hpp
+@@ -24,6 +24,7 @@ extern bool g_bForceInternal;
+ 
+ extern bool g_bForceCompositionRotation;
+ extern uint32_t g_uOutputRotation;
++extern uint32_t g_nRotatedOutputMaxHeight;
+ 
+ extern bool g_bFullscreen;
+ 

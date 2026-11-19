@@ -4,12 +4,13 @@
 # Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="libmali"
-PKG_LICENSE="nonfree"
+PKG_LICENSE="LES-PRE-20769"
 PKG_SITE="https://github.com/ROCKNIX/libmali"
 PKG_VERSION="0fe30426b822699f0a660268a6040fdafce229d1"
+PKG_SHA256="b2d0b4904577aa1cf737f1402052a6651f84fcbc94aca0601b782ff63cc9167b"
 # zip format makes extract very fast (<1s). tgz takes 20 seconds to scan the whole file
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.zip"
-PKG_DEPENDS_TARGET="toolchain libdrm patchelf:host gpudriver SDL2_glesonly"
+PKG_DEPENDS_TARGET="toolchain libdrm patchelf:host gpudriver SDL2_glesonly gl4es"
 PKG_LONGDESC="OpenGL ES user-space binary for the ARM Mali GPU family"
 PKG_TOOLCHAIN="meson"
 PKG_PATCH_DIRS+=" ${DEVICE}"
@@ -25,26 +26,45 @@ case "${DEVICE}" in
   RK3588)
     DRIVER_VERSION="g13p0"
   ;;
-  *) # RK3326 and RK3566
-    DRIVER_VERSION="g24p0"
-  ;;
 esac
 
 case "${DISPLAYSERVER}" in
   wl)
-    PLATFORM="wayland-gbm"
+    PLATFORM="-wayland-gbm"
     PKG_DEPENDS_TARGET+=" wayland"
     ;;
   x11)
-    PLATFORM="x11-gbm"
+    PLATFORM="-x11-gbm"
     ;;
   *)
-    PLATFORM="gbm"
+    PLATFORM="-gbm"
     ;;
 esac
 
+# new repo base from jeffycn mirror
+case "${DEVICE}" in
+  RK3326|RK3566|RK3576)
+    PKG_SITE="https://github.com/JeffyCN/mirrors"
+    PKG_SHA256="54b8af924f582f7da7e120fbad4812a502cc7cc67f6d6ab061377cb403f3eb2d"
+    PKG_VERSION="4233031d818e97a19e8a9cdbbd5c15795ededd93"
+    # zip format makes extract very fast (<1s). tgz takes 20 seconds to scan the whole file
+    PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.zip"
+    PKG_DEPENDS_TARGET+=" mesa vulkan-tools vulkan-headers vulkan-wsi-layer"
+    DRIVER_VERSION="g29p1"
+    PLATFORM=""
+    ZIPDIRNAME="mirrors"
+    PKG_PATCH_DIRS+=" next"
+    OPTS=" -Dwrappers=true "
+  ;;
+  *)
+    OPTS=" -Dwrappers=enabled "
+    ZIPDIRNAME="libmali"
+  ;;
+esac
+
+
 PKG_MESON_OPTS_TARGET+=" -Darch=${ARCH} -Dgpu=${MALI_FAMILY} -Dversion=${DRIVER_VERSION} -Dplatform=${PLATFORM} \
-                       -Dkhr-header=false -Dvendor-package=true -Dwrappers=enabled -Dhooks=true"
+                       -Dkhr-header=false -Dvendor-package=true -Dhooks=true ${OPTS}"
 
 
 unpack() {
@@ -52,10 +72,11 @@ unpack() {
   cd "${PKG_BUILD}"
   pwd
   # Extract only what is needed
-  LIBNAME="libmali-${MALI_FAMILY}-${DRIVER_VERSION}-${PLATFORM}.so"
-  unzip -q "${SOURCES}/${PKG_NAME}/${PKG_SOURCE_NAME}" "*/hook/*" "*/include/*" "*/scripts/*" "*/meson*" "*/data/*" "*/${LIBNAME}"
-  mv libmali*/* .
-  rmdir libmali-*
+  LIBNAME="libmali-${MALI_FAMILY}-${DRIVER_VERSION}${PLATFORM}.so"
+  unzip -q "${SOURCES}/${PKG_NAME}/${PKG_SOURCE_NAME}" "*/hook/*" "*/include/*" "*/scripts/*" "*/meson*" "*/data/*" "*/${LIBNAME}" \
+        "*/END_USER_LICENCE_AGREEMENT.txt"
+  mv ${ZIPDIRNAME}*/* .
+  rmdir ${ZIPDIRNAME}-*
   if [ "${MALI_FAMILY}" = "meson" ]; then
     mv data/vulkan/mali_meson.json.in data/vulkan/mali.json.in
   fi
@@ -65,6 +86,9 @@ unpack() {
 post_makeinstall_target() {
   rm -rf "${SYSROOT_PREFIX}/usr/include"   # all needed headers are installed by glvnd, mesa and wayland
   rm -rf "${INSTALL}/etc/ld.so.conf.d" "${SYSROOT_PREFIX}/etc/ld.so.conf.d"  # upstream installs ld.so config and we don't need it
+
+  mkdir -p "${INSTALL}/usr/share/licenses/libmali"
+  cp "${PKG_BUILD}/END_USER_LICENCE_AGREEMENT.txt" "${INSTALL}/usr/share/licenses/libmali/"
 
   # IDK how libs in ubuntu package get these dependencies. Need to specify them manually here.
   for lib in "${INSTALL}"/usr/lib*/mali/lib*.so.*; do
@@ -77,7 +101,14 @@ post_makeinstall_target() {
       curl -Lo ${INSTALL}/usr/lib/libmali-${MALI_FAMILY}-${DRIVER_VERSION}-x11-gbm.so ${PKG_SITE}/raw/master/lib/aarch64-linux-gnu/libmali-${MALI_FAMILY}-${DRIVER_VERSION}-x11-gbm.so
   fi
   # S922X - mali vulkan libs need moving
-  if [ "${DEVICE}" = "S922X" ] && [ "${ARCH}" = "aarch64" ]; then
+  if [[ "${DEVICE}" =~ S922X|RK3326|RK3566|RK3576 ]] && [ "${ARCH}" = "aarch64" ]; then
     mv "${INSTALL}"/usr/lib/mali/libMaliVulkan.* "${INSTALL}"/usr/lib/
   fi
+  if [[ "${DEVICE}" =~ RK3326|RK3566|RK3576 ]] && [ "${ARCH}" = "arm" ]; then
+    mv "${INSTALL}"/usr/lib32/mali/libMaliVulkan.* "${INSTALL}"/usr/lib32/
+  fi
+  if [[ "${DEVICE}" =~ RK3326|RK3566|RK3576 ]]; then
+    rm -f "${INSTALL}"/etc/profile.d/mali-priority.sh
+  fi
+
 }

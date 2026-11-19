@@ -1,0 +1,96 @@
+From 2712eead924a6c830ce93d0f9d794b0a23a57acc Mon Sep 17 00:00:00 2001
+From: David Heidelberg <david@ixit.cz>
+Date: Wed, 30 Mar 2022 09:46:55 +0530
+Subject: [PATCH] stalled! backlight: qcom-wled: fix unbalanced enable irq
+
+In Xiaomi Poco F1, the qcom wled driver warns
+[    1.151677] ------------[ cut here ]------------
+[    1.151680] Unbalanced enable for IRQ 176
+[    1.151693] WARNING: CPU: 0 PID: 160 at kernel/irq/manage.c:774 __enable_irq+0x50/0x80
+[    1.151710] Modules linked in:
+[    1.151717] CPU: 0 PID: 160 Comm: kworker/0:11 Not tainted 5.17.0-sdm845 #4
+[    1.151724] Hardware name: Xiaomi Pocophone F1 (DT)
+[    1.151728] Workqueue: events wled_ovp_work
+[    1.151740] pstate: 604000c5 (nZCv daIF +PAN -UAO -TCO -DIT -SSBS BTYPE=--)
+[    1.151746] pc : __enable_irq+0x50/0x80
+[    1.151750] lr : __enable_irq+0x50/0x80
+[    1.151755] sp : ffff80000923bd70
+[    1.151757] x29: ffff80000923bd70 x28: 0000000000000000 x27: 0000000000000000
+[    1.151766] x26: ffffc306b1d334f8 x25: ffff47f136774405 x24: ffff47f04014b130
+[    1.151774] x23: ffff47f136774400 x22: ffff47f1367706c0 x21: 0000000000000000
+[    1.151782] x20: 00000000000000b0 x19: ffff47f040ed1a00 x18: ffffffffffffffff
+[    1.151789] x17: 000000040044ffff x16: 004000b2b5503510 x15: ffffc306b1d3ecc1
+[    1.151797] x14: 0000000000000000 x13: 3637312051524920 x12: 726f6620656c6261
+[    1.151805] x11: ffffc306b1b608d8 x10: 000000000000000a x9 : 00000000000000b0
+[    1.151812] x8 : 000000000000000a x7 : 6c62616e65206465 x6 : 00000000fffff166
+[    1.151818] x5 : 00000000fffff166 x4 : 0000000000000000 x3 : 00000000ffffffff
+[    1.151825] x2 : 0000000000000000 x1 : 0000000000000000 x0 : ffff47f042211c00
+[    1.151833] Call trace:
+[    1.151836]  __enable_irq+0x50/0x80
+[    1.151841]  enable_irq+0x48/0xa0
+[    1.151846]  wled_ovp_work+0x18/0x24
+[    1.151850]  process_one_work+0x1d0/0x350
+[    1.151858]  worker_thread+0x13c/0x460
+[    1.151862]  kthread+0x110/0x114
+[    1.151868]  ret_from_fork+0x10/0x20
+[    1.151876] ---[ end trace 0000000000000000 ]---
+
+Fix it by storing and checking the state of ovp irq during enabling
+and disabling of the irq.
+
+Original author Joel Selvaraj <jo@jsfamily.in>.
+
+Signed-off-by: David Heidelberg <david@ixit.cz>
+---
+ drivers/video/backlight/qcom-wled.c | 13 +++++++++++--
+ 1 file changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/video/backlight/qcom-wled.c b/drivers/video/backlight/qcom-wled.c
+index 8054e4787725..14719e5c76f2 100644
+--- a/drivers/video/backlight/qcom-wled.c
++++ b/drivers/video/backlight/qcom-wled.c
+@@ -197,6 +197,7 @@ struct wled {
+ 	bool disabled_by_short;
+ 	bool has_short_detect;
+ 	bool cabc_disabled;
++	bool ovp_irq_disabled;
+ 	int short_irq;
+ 	int ovp_irq;
+ 
+@@ -294,7 +295,10 @@ static void wled_ovp_work(struct work_struct *work)
+ {
+ 	struct wled *wled = container_of(work,
+ 					 struct wled, ovp_work.work);
+-	enable_irq(wled->ovp_irq);
++	if (wled->ovp_irq_disabled) {
++		enable_irq(wled->ovp_irq);
++		wled->ovp_irq_disabled = false;
++	}
+ }
+ 
+ static int wled_module_enable(struct wled *wled, int val)
+@@ -321,8 +325,11 @@ static int wled_module_enable(struct wled *wled, int val)
+ 			 */
+ 			schedule_delayed_work(&wled->ovp_work, HZ / 100);
+ 		} else {
+-			if (!cancel_delayed_work_sync(&wled->ovp_work))
++			if (!cancel_delayed_work_sync(&wled->ovp_work) &&
++			    !wled->ovp_irq_disabled) {
+ 				disable_irq(wled->ovp_irq);
++				wled->ovp_irq_disabled = true;
++			}
+ 		}
+ 	}
+ 
+@@ -1765,6 +1772,8 @@ static void wled_remove(struct platform_device *pdev)
+ 	cancel_delayed_work_sync(&wled->ovp_work);
+ 	disable_irq(wled->short_irq);
+ 	disable_irq(wled->ovp_irq);
++
++	wled->ovp_irq_disabled = true;
+ }
+ 
+ static const struct of_device_id wled_match_table[] = {
+-- 
+GitLab
+

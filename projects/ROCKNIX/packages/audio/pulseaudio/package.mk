@@ -4,6 +4,7 @@
 
 PKG_NAME="pulseaudio"
 PKG_VERSION="17.0"
+PKG_SHA256="053794d6671a3e397d849e478a80b82a63cb9d8ca296bd35b73317bb5ceb87b5"
 PKG_LICENSE="GPL"
 PKG_SITE="http://pulseaudio.org/"
 PKG_URL="http://www.freedesktop.org/software/pulseaudio/releases/${PKG_NAME}-${PKG_VERSION}.tar.xz"
@@ -70,8 +71,6 @@ pre_configure_target() {
 
 post_makeinstall_target() {
   safe_remove ${INSTALL}/usr/include
-  safe_remove ${INSTALL}/usr/lib/cmake
-  safe_remove ${INSTALL}/usr/lib/pkgconfig
   safe_remove ${INSTALL}/usr/share/vala
   safe_remove ${INSTALL}/usr/share/zsh
   safe_remove ${INSTALL}/usr/share/bash-completion

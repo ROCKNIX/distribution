@@ -15,15 +15,17 @@ PKG_PATCH_DIRS+="${DEVICE}"
 case ${DEVICE} in
   H700)
     PKG_VERSION="2.12.0"
+    PKG_SHA256="d95aaf292792c98035910d7e6c64ebfb297c897fef510415db1612f6d39f9223"
+    PKG_DEPENDS_TARGET+=" h700-suspend-stub"
+    PKG_NEED_UNPACK+=" $(get_pkg_directory h700-suspend-stub) ${SYSROOT_PREFIX}/usr/share/h700-suspend-stub"
+    PKG_URL="https://github.com/TrustedFirmware-A/trusted-firmware-a/archive/v${PKG_VERSION}.tar.gz"
   ;;
   *)
-    PKG_VERSION="2.10.0"
-    PKG_SHA256="696b8e53923aac4474532da7dd681f0bd044b329732facd65aeabea3e61adca9"
+    PKG_VERSION="a881364e03b0c5b3a8c00f20ad6fbdda53a57031"
+    # To build a commit use git, to get the submodules
+    PKG_URL="${PKG_SITE}.git"
     ;;
 esac
-
-PKG_URL="https://github.com/ARM-software/arm-trusted-firmware/archive/v${PKG_VERSION}.tar.gz"
-
 
 [ -n "${KERNEL_TOOLCHAIN}" ] && PKG_DEPENDS_TARGET+=" gcc-${KERNEL_TOOLCHAIN}:host"
 
@@ -33,10 +35,22 @@ if [ "${ATF_PLATFORM}" = "rk3399" ]; then
 fi
 
 make_target() {
-  CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" CFLAGS="" make PLAT=${ATF_PLATFORM} bl31
+  if [ "${DEVICE}" = "H700" ]; then
+    STUB_DIR="${SYSROOT_PREFIX}/usr/share/h700-suspend-stub"
+    ATF_SUSPEND="SUNXI_SYSTEM_SUSPEND=1 SUNXI_SUSPEND_STUB=${STUB_DIR}/suspend_stub_lpddr4.bin"
+    ATF_SUSPEND+=" SUNXI_SUSPEND_STUB2=${STUB_DIR}/suspend_stub_lpddr3.bin"
+  fi
+
+  CROSS_COMPILE="${TARGET_KERNEL_PREFIX}" LDFLAGS="" CFLAGS="" make PLAT=${ATF_PLATFORM} ${ATF_SUSPEND} bl31
 }
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/share/bootloader
   cp -a build/${ATF_PLATFORM}/release/${ATF_BL31_BINARY} ${INSTALL}/usr/share/bootloader
+
+  # Stage BL31 in the sysroot: a build dir neither survives AUTOREMOVE nor crosses a CI job
+  if [ -n "${ATF_BL31_BINARY}" ]; then
+    mkdir -p ${SYSROOT_PREFIX}/usr/share/${PKG_NAME}
+    cp -a build/${ATF_PLATFORM}/release/${ATF_BL31_BINARY} ${SYSROOT_PREFIX}/usr/share/${PKG_NAME}
+  fi
 }

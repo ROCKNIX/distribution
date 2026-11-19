@@ -3,6 +3,7 @@
 
 PKG_NAME="inih"
 PKG_VERSION="r62"
+PKG_SHA256="9c15fa751bb8093d042dae1b9f125eb45198c32c6704cd5481ccde460d4f8151"
 PKG_LICENSE="BSD"
 PKG_SITE="https://github.com/benhoyt/inih"
 PKG_URL="https://github.com/benhoyt/inih/archive/${PKG_VERSION}.tar.gz"

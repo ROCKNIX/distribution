@@ -1,9 +1,9 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2019-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="u-boot-tools"
 PKG_VERSION="$(get_pkg_version u-boot)"
-PKG_LICENSE="GPL"
+PKG_LICENSE="GPL-2.0-only"
 PKG_SITE="https://www.denx.de/wiki/U-Boot"
 PKG_URL=""
 PKG_DEPENDS_HOST="ccache:host bison:host flex:host gnutls:host openssl:host pkg-config:host"
@@ -17,7 +17,7 @@ unpack() {
 
 make_host() {
   make tools-only_defconfig HOSTCC="${HOST_CC}" HOSTCFLAGS="-I${TOOLCHAIN}/include" HOSTLDFLAGS="${HOST_LDFLAGS}"
-  make tools-only HOSTCC="${HOST_CC}" HOSTCFLAGS="-I${TOOLCHAIN}/include" HOSTLDFLAGS="${HOST_LDFLAGS}"
+  make tools-only HOSTCC="${HOST_CC}" HOSTCFLAGS="-I${TOOLCHAIN}/include" HOSTLDFLAGS="${HOST_LDFLAGS}" CONFIG_TOOLS_MKEFICAPSULE=
 }
 
 make_target() {

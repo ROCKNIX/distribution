@@ -3,6 +3,7 @@
 
 PKG_NAME="m8c"
 PKG_VERSION="v1.7.10"
+PKG_SHA256="c0e046fccbff27b5bfde552d7944f6a0317d386d4f6a816838b5249e58cece49"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/laamaa/m8c"
 PKG_URL="${PKG_SITE}/archive/refs/tags/${PKG_VERSION}.tar.gz"

@@ -3,6 +3,7 @@
 
 PKG_NAME="qterminal"
 PKG_VERSION="2.2.1"
+PKG_SHA256="1dd4865460ea03ccd68354bd1be823818162c1cf1ab4f6240003df0156e6939f"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/lxqt/qterminal"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

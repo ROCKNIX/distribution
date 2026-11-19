@@ -3,12 +3,12 @@
 # Copyright (C) 2019-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="xkbcomp"
-PKG_VERSION="1.4.7"
-PKG_SHA256="0a288114e5f44e31987042c79aecff1ffad53a8154b8ec971c24a69a80f81f77"
-PKG_LICENSE="OSS"
+PKG_VERSION="1.5.0"
+PKG_SHA256="2ac31f26600776db6d9cd79b3fcd272263faebac7eb85fb2f33c7141b8486060"
+PKG_LICENSE="MIT"
 PKG_SITE="https://www.X.org"
 PKG_URL="https://xorg.freedesktop.org/archive/individual/app/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_TARGET="toolchain util-macros libX11 libxkbfile"
 PKG_LONGDESC="The xkbcomp keymap compiler converts a description of an XKB keymap into one of several output formats."
 
-PKG_CONFIGURE_OPTS_TARGET="--with-xkb-config-root=${XORG_PATH_XKB}"
+PKG_MESON_OPTS_TARGET="-Dxkb-config-root=${XORG_PATH_XKB}"

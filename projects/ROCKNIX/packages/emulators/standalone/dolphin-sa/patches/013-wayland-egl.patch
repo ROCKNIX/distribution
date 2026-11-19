@@ -1,0 +1,163 @@
+diff --git a/Source/Core/Common/GL/GLContext.cpp b/Source/Core/Common/GL/GLContext.cpp
+index eef689616e..4ba00640d4 100644
+--- a/Source/Core/Common/GL/GLContext.cpp
++++ b/Source/Core/Common/GL/GLContext.cpp
+@@ -22,6 +22,9 @@
+ #if defined(ANDROID)
+ #include "Common/GL/GLInterface/EGLAndroid.h"
+ #endif
++#if HAVE_WAYLAND
++#include "Common/GL/GLInterface/EGLWayland.h"
++#endif
+ #endif
+ 
+ const std::array<std::pair<int, int>, 9> GLContext::s_desktop_opengl_versions = {
+@@ -99,6 +102,10 @@ std::unique_ptr<GLContext> GLContext::Create(const WindowSystemInfo& wsi, bool s
+ #if HAVE_X11
+   if (wsi.type == WindowSystemType::X11)
+     context = std::make_unique<GLContextEGLX11>();
++#endif
++#if HAVE_WAYLAND
++  if (wsi.type == WindowSystemType::Wayland)
++    context = std::make_unique<GLContextEGLWayland>();
+ #endif
+   if (wsi.type == WindowSystemType::Headless || wsi.type == WindowSystemType::FBDev)
+     context = std::make_unique<GLContextEGL>();
+diff --git a/Source/Core/Common/GL/GLContext.h b/Source/Core/Common/GL/GLContext.h
+index b1619a647f..bb3b909d0b 100644
+--- a/Source/Core/Common/GL/GLContext.h
++++ b/Source/Core/Common/GL/GLContext.h
+@@ -38,6 +38,9 @@ public:
+ 
+   virtual void Update();
+   virtual void UpdateSurface(void* window_handle);
++  // Only meaningful where the frontend owns the surface size (Wayland). Elsewhere the
++  // context determines its own dimensions and this is a no-op.
++  virtual void UpdateDimensions(int window_width, int window_height) {}
+ 
+   virtual void Swap();
+   virtual void SwapInterval(int interval);
+diff --git a/Source/Core/Common/GL/GLInterface/EGLWayland.cpp b/Source/Core/Common/GL/GLInterface/EGLWayland.cpp
+new file mode 100644
+index 0000000000..5ac5383776
+--- /dev/null
++++ b/Source/Core/Common/GL/GLInterface/EGLWayland.cpp
+@@ -0,0 +1,52 @@
++// Copyright 2019 Dolphin Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#include "Common/GL/GLInterface/EGLWayland.h"
++
++#include <wayland-egl.h>
++
++GLContextEGLWayland::~GLContextEGLWayland()
++{
++  if (m_wl_egl_window)
++    wl_egl_window_destroy(m_wl_egl_window);
++}
++
++EGLDisplay GLContextEGLWayland::OpenEGLDisplay()
++{
++  return eglGetDisplay(static_cast<EGLNativeDisplayType>(m_wsi.display_connection));
++}
++
++void GLContextEGLWayland::UpdateDimensions(int window_width, int window_height)
++{
++  if (window_width <= 0 || window_height <= 0)
++    return;
++
++  // A Wayland client cannot query its own surface size, so the frontend is the authority
++  // and eglQuerySurface only ever reports back what we set here.
++  m_wsi.render_surface_width = window_width;
++  m_wsi.render_surface_height = window_height;
++
++  if (m_wl_egl_window)
++    wl_egl_window_resize(m_wl_egl_window, window_width, window_height, 0, 0);
++
++  m_backbuffer_width = static_cast<u32>(window_width);
++  m_backbuffer_height = static_cast<u32>(window_height);
++}
++
++EGLNativeWindowType GLContextEGLWayland::GetEGLNativeWindow(EGLConfig config)
++{
++  // Called again whenever the surface is recreated, so drop any previous window first.
++  if (m_wl_egl_window)
++  {
++    wl_egl_window_destroy(m_wl_egl_window);
++    m_wl_egl_window = nullptr;
++  }
++
++  m_wl_egl_window =
++      wl_egl_window_create(static_cast<wl_surface*>(m_wsi.render_surface),
++                           m_wsi.render_surface_width, m_wsi.render_surface_height);
++  if (!m_wl_egl_window)
++    return {};
++
++  return reinterpret_cast<EGLNativeWindowType>(m_wl_egl_window);
++}
+diff --git a/Source/Core/Common/GL/GLInterface/EGLWayland.h b/Source/Core/Common/GL/GLInterface/EGLWayland.h
+new file mode 100644
+index 0000000000..feb5c94967
+--- /dev/null
++++ b/Source/Core/Common/GL/GLInterface/EGLWayland.h
+@@ -0,0 +1,25 @@
++// Copyright 2019 Dolphin Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#pragma once
++
++#include "Common/GL/GLInterface/EGL.h"
++
++struct wl_egl_window;
++
++class GLContextEGLWayland final : public GLContextEGL
++{
++public:
++  ~GLContextEGLWayland() override;
++
++  void UpdateDimensions(int window_width, int window_height) override;
++
++protected:
++  EGLDisplay OpenEGLDisplay() override;
++  EGLNativeWindowType GetEGLNativeWindow(EGLConfig config) override;
++
++private:
++  // Owned by this context. A wl_egl_window is what EGL renders into on Wayland; the
++  // wl_surface in the WSI is only the compositor-facing handle.
++  wl_egl_window* m_wl_egl_window = nullptr;
++};
+diff --git a/Source/Core/VideoBackends/OGL/OGLGfx.cpp b/Source/Core/VideoBackends/OGL/OGLGfx.cpp
+index ff5402ba03..f9a65da7e0 100644
+--- a/Source/Core/VideoBackends/OGL/OGLGfx.cpp
++++ b/Source/Core/VideoBackends/OGL/OGLGfx.cpp
+@@ -462,6 +462,8 @@ void OGLGfx::CheckForSurfaceChange()
+   if (!g_presenter->SurfaceChangedTestAndClear())
+     return;
+ 
++  m_main_gl_context->UpdateDimensions(g_presenter->GetNewSurfaceWidth(),
++                                      g_presenter->GetNewSurfaceHeight());
+   m_main_gl_context->UpdateSurface(g_presenter->GetNewSurfaceHandle());
+ 
+   u32 width = m_main_gl_context->GetBackBufferWidth();
+@@ -477,6 +479,8 @@ void OGLGfx::CheckForSurfaceResize()
+   if (!g_presenter->SurfaceResizedTestAndClear())
+     return;
+ 
++  m_main_gl_context->UpdateDimensions(g_presenter->GetNewSurfaceWidth(),
++                                      g_presenter->GetNewSurfaceHeight());
+   m_main_gl_context->Update();
+   u32 width = m_main_gl_context->GetBackBufferWidth();
+   u32 height = m_main_gl_context->GetBackBufferHeight();
+diff --git a/Source/Core/VideoBackends/Software/SWGfx.cpp b/Source/Core/VideoBackends/Software/SWGfx.cpp
+index 7004c50864..9869ddd3e6 100644
+--- a/Source/Core/VideoBackends/Software/SWGfx.cpp
++++ b/Source/Core/VideoBackends/Software/SWGfx.cpp
+@@ -62,6 +62,8 @@ bool SWGfx::BindBackbuffer(const ClearColor& clear_color)
+     return true;
+ 
+   GLContext* context = m_window->GetContext();
++  context->UpdateDimensions(g_presenter->GetNewSurfaceWidth(),
++                            g_presenter->GetNewSurfaceHeight());
+   context->Update();
+   g_presenter->SetBackbuffer(context->GetBackBufferWidth(), context->GetBackBufferHeight());
+   return true;

@@ -1,11 +1,11 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2018-present Team LibreELEC
 
 PKG_NAME="atf"
-PKG_VERSION="2.13.0"
-PKG_SHA256="28bc15daeeed000ecd30819ecc4851bf9ffc2d33e1d4553a71985c17f47a999e"
+PKG_VERSION="2.15.0"
+PKG_SHA256="67b772aaa58218712c062ccd103f1d53cf74d9543e251f20ac037a6dbf821a10"
 PKG_ARCH="arm aarch64"
-PKG_LICENSE="BSD-3c"
+PKG_LICENSE="BSD-3-Clause"
 PKG_SITE="https://github.com/ARM-software/arm-trusted-firmware"
 PKG_URL="https://github.com/TrustedFirmware-A/trusted-firmware-a/archive/v${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"

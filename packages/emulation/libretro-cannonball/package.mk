@@ -2,9 +2,9 @@
 # Copyright (C) 2023-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="libretro-cannonball"
-PKG_VERSION="5137a791d229a5b9c7c089cf1edcce4db3c57d64"
-PKG_SHA256="f066944897cde7bbf3df365ac75c2cc1ef5114059d1a0c51782f12bff5bcfa73"
-PKG_LICENSE="MAME"
+PKG_VERSION="65cb1f5f227db45abcd9d2006efe7687a0d9cb72"
+PKG_SHA256="40b82778641050d25841735f40f45f23643525dbf410fb1a581768f9cbe8ba14"
+PKG_LICENSE="LicenseRef-MAME"
 PKG_SITE="https://github.com/libretro/cannonball"
 PKG_URL="https://github.com/libretro/cannonball/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"

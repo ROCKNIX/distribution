@@ -4,17 +4,16 @@
 PKG_NAME="wlroots"
 PKG_LICENSE="MIT"
 PKG_SITE="https://gitlab.freedesktop.org/wlroots/wlroots/"
-PKG_DEPENDS_TARGET="toolchain libinput libxkbcommon pixman libdrm wayland wayland-protocols seatd xwayland hwdata libxcb xcb-util-wm"
+PKG_DEPENDS_TARGET="toolchain libinput libxkbcommon pixman libdrm wayland wayland-protocols seatd xwayland hwdata:host libxcb xcb-util-wm"
 PKG_LONGDESC="A modular Wayland compositor library"
 PKG_TOOLCHAIN="meson"
 
 case ${DEVICE} in
   RK3326|RK3566|RK3576|S922X)
-    # despite the '-rk' indication this is a wlroots version with libmali hacks
-    PKG_VERSION="0.19.3-rk"
-    PKG_SHA256="5385dc105f2c4c5fe3157e0b0299d6508765086d605fe4efe3ae437d4f18a5d9"
-    PKG_PATCH_DIRS+=" libmali"
-    PKG_URL="https://github.com/rocknix/rockchip-wlroots/archive/refs/tags/${PKG_VERSION}.tar.gz"
+    # wlroots 0.19.3 with libmali hacks
+    PKG_VERSION="132e31cfe19f51b478301aa5aab1e6c4be3f8874"
+    PKG_SHA256="96aa6240e72b8ff4dc9943fc5b080e264a5fbf8b94fe8da10e1d6befa552b8fc"
+    PKG_URL="https://github.com/rocknix/rockchip-wlroots/archive/${PKG_VERSION}.tar.gz"
     ;;
   RK3588)
     PKG_VERSION="0.17.4-rk"

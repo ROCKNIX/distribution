@@ -4,6 +4,7 @@
 
 PKG_NAME="SDL2_image"
 PKG_VERSION="2.8.2"
+PKG_SHA256="8f486bbfbcf8464dd58c9e5d93394ab0255ce68b51c5a966a918244820a76ddc"
 PKG_LICENSE="GPL"
 PKG_SITE="http://www.libsdl.org/"
 PKG_URL="https://github.com/libsdl-org/SDL_image/releases/download/release-${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tar.gz"

@@ -3,6 +3,7 @@
 
 PKG_NAME="lsof"
 PKG_VERSION="4.99.6"
+PKG_SHA256="2ce65158694e9c44dfc54916f5b843d887763c03128e0a1c77d62ae106537009"
 PKG_ARCH="aarch64"
 PKG_LICENSE="lsof"
 PKG_SITE="https://github.com/lsof-org/lsof"

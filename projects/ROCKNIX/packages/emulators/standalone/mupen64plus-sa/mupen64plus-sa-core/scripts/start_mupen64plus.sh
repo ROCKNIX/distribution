@@ -6,7 +6,7 @@
 
 . /etc/profile
 
-set_kill set "-9 mupen64plus"
+set_kill set "-9 mupen64plus mupen64plus-simple"
 
 # Emulation Station features
 GAME=$(echo "${1}"| sed "s#^/.*/##")
@@ -15,6 +15,7 @@ SCREENWIDTH=$(fbwidth)
 SCREENHEIGHT=$(fbheight)
 ASPECT=$(get_setting game_aspect_ratio "${PLATFORM}" "${GAME}")
 IRES=$(get_setting internal_resolution "${PLATFORM}" "${GAME}")
+IRES=$(scanout_internal_scale "${IRES}" 240 1 8)
 RSP=$(get_setting rsp_plugin "${PLATFORM}" "${GAME}")
 SIMPLECORE=$(get_setting core_plugin "${PLATFORM}" "${GAME}")
 FPS=$(get_setting show_fps "${PLATFORM}" "${GAME}")
@@ -56,7 +57,7 @@ fi
 if [ $(echo $1 | grep -i .zip | wc -l) -eq 1 ]; then
     # Unzip the game ROM if needed
     unzip -q -o "$1" -d ${TMP}
-    ROM=$(unzip -Zl -1 "$1")
+    ROM=$(unzip -qql "$1" | head -n1 | cut -c31-)
 else
     cp "$1" ${TMP}
     ROM="${GAME}"
@@ -165,6 +166,9 @@ case ${VPLUGIN} in
         SET_PARAMS+=" --gfx mupen64plus-video-rice${SIMPLESUFFIX}.so"
     ;;
 esac
+
+# Only GLideN64 has an internal resolution. The other plugins draw at window size.
+[ "${VPLUGIN}" = "gliden64" ] && [ -n "${IRES}" ] && scanout_render_size 240 "${IRES}"
 
 # Set the RSP plugin
 case "${RSP}" in

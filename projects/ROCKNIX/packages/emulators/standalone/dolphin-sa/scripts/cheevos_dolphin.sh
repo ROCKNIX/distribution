@@ -15,6 +15,7 @@ enabled=$(get_setting "global.retroachievements")
 hardcore=$(get_setting "global.retroachievements.hardcore")
 encore=$(get_setting "global.retroachievements.encore")
 unofficial=$(get_setting "global.retroachievements.testunofficial")
+hosturl=$(get_setting "global.retroachievements.customhost")
 
 # Check if RetroAchievements are enabled in Emulation Station
 if [ "${enabled}" = 1 ]; then
@@ -63,4 +64,5 @@ SpectatorEnabled = False
 UnofficialEnabled = ${unofficial}
 Username = ${username}
 ApiToken = ${token}
+HostUrl = ${hosturl}
 EOF

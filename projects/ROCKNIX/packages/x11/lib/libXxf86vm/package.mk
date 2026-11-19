@@ -3,6 +3,4 @@
 
 . ${ROOT}/packages/x11/lib/libXxf86vm/package.mk
 
-PKG_DEPENDS_HOST="toolchain:host util-macros:host libX11:host libXext:host"
-
-PKG_CONFIGURE_OPTS_TARGET="--disable-static --enable-shared --enable-malloc0returnsnull"
+PKG_MESON_OPTS_TARGET="${PKG_MESON_OPTS_TARGET/-Ddefault_library=static/-Ddefault_library=shared}"

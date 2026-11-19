@@ -19,10 +19,19 @@ info_quirks() {
   done
 }
 
+### Grab battery capacity now as it is used in a couple of different places
+### Cater for batteryplus
+BATTERYPLUS_PERCENT="/tmp/battery.percent"
+
+if [[ -f "${BATTERYPLUS_PERCENT}" ]]; then
+  BATT=$(<${BATTERYPLUS_PERCENT})
+else
+  BATT=$(awk 'BEGIN {FS="="} /POWER_SUPPLY_CAPACITY=/ {print $2; exit}' /sys/class/power_supply/[Bb][Aa][Tt]*/uevent 2>/dev/null)
+fi
+
 ### short version (for osd)
 if test "$1" = "--short"
 then
-    BATT=$(awk 'BEGIN {FS="="} /POWER_SUPPLY_CAPACITY=/ {print $2; exit}' /sys/class/power_supply/[Bb][Aa][Tt]*/uevent 2>/dev/null)
     DT=$(date +%H:%M)
     if test -n "${BATT}"
     then
@@ -53,11 +62,32 @@ fi
 
 host=$(hostname)
 
+# cpu
+if [ "${HW_ARCH}" = "x86_64" ]; then
+    CPUCUR=$(( $(</sys/devices/system/cpu/cpufreq/policy0/scaling_cur_freq) / 1000 ))
+    CPUMAX=$(( $(</sys/devices/system/cpu/cpufreq/policy0/cpuinfo_max_freq) / 1000 ))
+
+    if [ -f /sys/devices/system/cpu/cpufreq/boost ]; then
+        if [ "$(</sys/devices/system/cpu/cpufreq/boost)" = "1" ]; then
+            CPUBOOST="Enabled"
+        else
+            CPUBOOST="Disabled"
+        fi
+    else
+        CPUBOOST="Not Available"
+    fi
+fi
+
 # gpu
-CUR_FREQ=$(cat "$GPU_FREQ/cur_freq")
-MAX_FREQ=$(cat "$GPU_FREQ/max_freq")
-GPUCUR=$((CUR_FREQ / 1000000))
-GPUMAX=$((MAX_FREQ / 1000000))
+if [ "${HW_ARCH}" = "x86_64" ]; then
+  GPUCUR=$(( $(<"$DEVICE_GPU_CUR_FREQ") / 1000000 ))
+  GPUMAX=$(awk '/^SCLK:/ {gsub(/Mhz/, "", $3); print $3}' "$DEVICE_GPU_MAX_FREQ")
+else
+  CUR_FREQ=$(cat "$GPU_FREQ/cur_freq")
+  MAX_FREQ=$(cat "$GPU_FREQ/max_freq")
+  GPUCUR=$((CUR_FREQ / 1000000))
+  GPUMAX=$((MAX_FREQ / 1000000))
+fi
 
 # ram
 MEMT=$(grep MemTotal /proc/meminfo | sed 's/[^0-9]*//g')
@@ -66,8 +96,6 @@ MEMAV=$(grep MemAvailable /proc/meminfo | sed 's/[^0-9]*//g')
 MEMAV=$((${MEMAV} / 1000))
 
 # battery
-BATT=$(awk 'BEGIN {FS="="} /POWER_SUPPLY_CAPACITY=/ {print $2; exit}' /sys/class/power_supply/[Bb][Aa][Tt]*/uevent 2>/dev/null)
-
 case ${HW_ARCH} in
   aarch64)
     declare -a CF MF
@@ -108,6 +136,15 @@ echo "OPERATING SYSTEM: ${OS_NAME}"
 echo "VERSION: ${OS_VERSION} (${OS_BUILD})"
 echo "BUILD ID: ${BUILD_ID:0:7} (${BUILD_BRANCH})"
 echo "KERNEL: ${V_SYSTEM} ($(uname -m))"
+if [ -n "${DEVICE_SERIAL_NUMBER_PATH}" ]; then
+  SOC_SERIAL=$(cat ${DEVICE_SERIAL_NUMBER_PATH} 2>/dev/null)
+  if [ -n "${SOC_SERIAL}" ]; then
+    echo "SOC SERIAL NUMBER: ${SOC_SERIAL}"
+  fi
+  if [ -n "${DEVICE_PRODUCT_SERIAL}" ]; then
+    echo "PRODUCT SERIAL: ${DEVICE_PRODUCT_SERIAL}"
+  fi
+fi
 echo "NETWORK INFORMATION:"
 echo "HOST NAME: ${host}"
 echo "IP ADDRESS: ${ip}"
@@ -143,7 +180,6 @@ then
     echo "CPU TEMPERATURE: ${TEMPE}°"
   fi
 fi
-
 if [ "${DEVICE_HAS_FAN}" = "true" ]
 then
   FANSPEED=$(cat ${DEVICE_FAN_INPUT} 2>/dev/null)
@@ -151,9 +187,17 @@ then
   then
     FANSPEED="OFF"
   else
-    FANSPEED="${FANSPEED} RPM"
+    case "${DEVICE_FAN_INPUT}" in
+      *fan*_input) FANSPEED="${FANSPEED} RPM" ;;
+      *)           FANSPEED="$(( FANSPEED * 100 / 255 ))%" ;;
+    esac
   fi
   echo "CPU FAN: ${FANSPEED}"
+fi
+if [ "${HW_ARCH}" = "x86_64" ]; then
+  echo "CPU CURRENT FREQUENCY: ${CPUCUR} MHz"
+  echo "CPU MAXIMUM FREQUENCY: ${CPUMAX} MHz"
+  echo "CPU BOOST: ${CPUBOOST}"
 fi
 case ${HW_ARCH} in
   aarch64)

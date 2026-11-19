@@ -10,7 +10,7 @@ PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain SDL2"
 PKG_LONGDESC="Full-screen text viewer tool with gamepad controls"
 PKG_TOOLCHAIN="make"
-GET_HANDLER_SUPPORT="git"
+
 
 if [ ! "${OPENGL}" = "no" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL} glu"

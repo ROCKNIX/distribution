@@ -3,6 +3,7 @@
 
 PKG_NAME="u-boot-Generic"
 PKG_VERSION="v2026.01"
+PKG_SHA256="03bb43c58d2343ee48dd191e0f181f0108425b179d84519add3a977071c3f654"
 PKG_LICENSE="GPL"
 PKG_SITE="https://www.denx.de/wiki/U-Boot"
 PKG_URL="https://github.com/u-boot/u-boot/archive/refs/tags/${PKG_VERSION}.tar.gz"
@@ -19,10 +20,9 @@ fi
 
 pre_make_target() {
   PKG_UBOOT_CONFIG="anbernic-rgxx3-rk3566_defconfig"
-  PKG_RKBIN="$(get_build_dir rkbin)"
   PKG_MINILOADER="spl/u-boot-spl.bin"
-  PKG_BL31="${PKG_RKBIN}/bin/rk35/rk3568_bl31_v1.45.elf"
-  PKG_DDR_BIN="${PKG_RKBIN}/bin/rk35/rk3568_ddr_1056MHz_v1.23.bin"
+  PKG_BL31="$(get_build_dir atf)/build/${ATF_PLATFORM}/release/bl31/bl31.elf"
+  PKG_DDR_BIN="$(get_build_dir rkbin)/bin/rk35/rk3568_ddr_1560MHz_v1.26.bin"
 }
 
 make_target() {

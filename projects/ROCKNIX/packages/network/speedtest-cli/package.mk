@@ -3,6 +3,7 @@
 
 PKG_NAME="speedtest-cli"
 PKG_VERSION="v2.1.3"
+PKG_SHA256="45e3ca21c3ce3c339646100de18db8a26a27d240c29f1c9e07b6c13995a969be"
 PKG_LICENSE="Apache License 2.0"
 PKG_SITE="https://github.com/sivel/speedtest-cli"
 PKG_URL="${PKG_SITE}/archive/refs/tags/${PKG_VERSION}.tar.gz"

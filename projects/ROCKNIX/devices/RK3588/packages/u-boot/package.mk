@@ -3,6 +3,7 @@
 
 PKG_NAME="u-boot"
 PKG_VERSION="e99376f7dd01e310a0874459a1fe7535be431f43"
+PKG_SHA256="045519a0eb5471697e09dca903450298897ab9cc058cf371bacc03f334b3dd0e"
 PKG_LICENSE="GPL"
 PKG_SITE="https://www.denx.de/wiki/U-Boot"
 PKG_URL="https://github.com/ROCKNIX/rk3588-uboot/archive/${PKG_VERSION}.tar.gz"
@@ -19,6 +20,9 @@ if [ -n "${UBOOT_FIRMWARE}" ]; then
 fi
 
 pre_make_target() {
+  # gcc 16 turns dead locals in this vendor tree into -Werror failures
+  export KCFLAGS="-Wno-error=unused-but-set-variable"
+
   PKG_UBOOT_CONFIG="orangepi_5_defconfig"
   PKG_RKBIN="$(get_build_dir rkbin)"
   PKG_MINILOADER="spl/u-boot-spl.bin"

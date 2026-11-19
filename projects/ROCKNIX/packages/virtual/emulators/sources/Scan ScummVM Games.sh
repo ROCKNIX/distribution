@@ -7,9 +7,15 @@
 . /etc/profile
 
 clear
+
+/usr/bin/sdl2notify --center "Scanning \n ScummVM Games" 255 255 255 2
+
 # Scanning for games...
 bash /usr/bin/start_scummvm.sh add >/dev/null 2>&1
 # Adding games...
 bash /usr/bin/start_scummvm.sh create >/dev/null 2>&1
 clear
+
+/usr/bin/sdl2notify --center "Scanning Complete" 255 255 255 2
+
 systemctl restart ${UI_SERVICE}

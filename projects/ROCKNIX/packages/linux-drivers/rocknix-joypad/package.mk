@@ -2,7 +2,8 @@
 # Copyright (C) 2024 ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="rocknix-joypad"
-PKG_VERSION="7647fdb0fc89cd69b284903bf7707e861df5dc7e"
+PKG_VERSION="ac1be0fa0c4e1f7feb9a900fc428d7ac6014029c"
+PKG_SHA256="fe66820546d4477a01c52363c11d2bd471eb36d036b8cc652f7ab8e123d294c9"
 PKG_LICENSE="GPL"
 PKG_SITE="https://github.com/ROCKNIX/rocknix-joypad"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

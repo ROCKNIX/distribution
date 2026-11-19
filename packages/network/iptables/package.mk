@@ -3,20 +3,29 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="iptables"
-PKG_VERSION="1.8.11"
-PKG_SHA256="d87303d55ef8c92bcad4dd3f978b26d272013642b029425775f5bad1009fe7b2"
-PKG_LICENSE="GPL"
+PKG_VERSION="1.8.13"
+PKG_SHA256="1afcd33da9e8f913ace6a2126788162e207e26f5d5e29c6573c0e581ffc58b99"
+PKG_LICENSE="GPL-2.0-only"
 PKG_SITE="https://www.netfilter.org/"
 PKG_URL="https://www.netfilter.org/projects/iptables/files/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_TARGET="autotools:host gcc:host linux:host libmnl libnftnl"
 PKG_LONGDESC="IP packet filter administration."
 PKG_TOOLCHAIN="autotools"
 
+PKG_CONFIGURE_OPTS_TARGET+=" --enable-nftables"
+
 post_configure_target() {
   libtool_remove_rpath libtool
 }
 
 post_makeinstall_target() {
+  safe_remove ${INSTALL}/usr/sbin/iptables-legacy
+  safe_remove ${INSTALL}/usr/sbin/iptables-legacy-restore
+  safe_remove ${INSTALL}/usr/sbin/iptables-legacy-save
+  safe_remove ${INSTALL}/usr/sbin/ip6tables-legacy
+  safe_remove ${INSTALL}/usr/sbin/ip6tables-legacy-restore
+  safe_remove ${INSTALL}/usr/sbin/ip6tables-legacy-save
+
   mkdir -p ${INSTALL}/usr/config/iptables/
     cp -PR ${PKG_DIR}/config/README ${INSTALL}/usr/config/iptables/
 
@@ -25,6 +34,13 @@ post_makeinstall_target() {
 
   mkdir -p ${INSTALL}/usr/lib/libreelec
     cp ${PKG_DIR}/scripts/iptables_helper ${INSTALL}/usr/lib/libreelec
+
+  ln -sf xtables-nft-multi ${INSTALL}/usr/sbin/iptables
+  ln -sf xtables-nft-multi ${INSTALL}/usr/sbin/iptables-restore
+  ln -sf xtables-nft-multi ${INSTALL}/usr/sbin/iptables-save
+  ln -sf xtables-nft-multi ${INSTALL}/usr/sbin/ip6tables
+  ln -sf xtables-nft-multi ${INSTALL}/usr/sbin/ip6tables-restore
+  ln -sf xtables-nft-multi ${INSTALL}/usr/sbin/ip6tables-save
 }
 
 post_install() {

@@ -1,10 +1,10 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="libretro-bluemsx"
-PKG_VERSION="572c91856a5288b7433c619af651e31f00f3ce7e"
-PKG_SHA256="86625bb7f6d1a5abb22d4eaf4691906aa985352519ad8193e63995b010ed214d"
-PKG_LICENSE="GPLv2"
+PKG_VERSION="0b23b79f6b8c19f300d2d86958e89fbe2f6d30bc"
+PKG_SHA256="fbfc3a42fa9f689df1c45cb2cae529af62612bea79e397dfb1bb27dc85e7b085"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/blueMSX-libretro"
 PKG_URL="https://github.com/libretro/blueMSX-libretro/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"

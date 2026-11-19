@@ -1,34 +1,19 @@
-################################################################################
-#
-#  Copyright (C) 2021-2026     351ELEC team (https://github.com/351ELEC/351ELEC)
-#
-#  This Program is free software; you can redistribute it and/or modify
-#  it under the terms of the GNU General Public License as published by
-#  the Free Software Foundation; either version 2, or (at your option)
-#  any later version.
-#
-#  This Program is distributed in the hope that it will be useful,
-#  but WITHOUT ANY WARRANTY; without even the implied warranty of
-#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-#  GNU General Public License for more details.
-#
-################################################################################
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="geargrafx-lr"
-PKG_VERSION="f960cf550404756f19221ac0a0978d31af77ca67"
-PKG_LICENSE="GPL"
+PKG_VERSION="0ca083267f690205a516bb0a2a8f8c5dd5361e96"
+PKG_SHA256="005cd9c63c986d6078afd353bd532e13d6ee1e2ffcad8121ed3f8c3fc62b0590"
+PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/drhelius/Geargrafx"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="Geargrafx is a very accurate, cross-platform TurboGrafx-16 / PC Engine / SuperGrafx / PCE CD-ROM² emulator written in C++ that runs on Windows, macOS, Linux, BSD and RetroArch."
-
 PKG_TOOLCHAIN="make"
 
-make_target() {
-  make -C platforms/libretro/
-}
+PKG_MAKE_OPTS_TARGET="-C platforms/libretro"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp platforms/libretro/geargrafx_libretro.so ${INSTALL}/usr/lib/libretro/
+    cp -a platforms/libretro/geargrafx_libretro.so ${INSTALL}/usr/lib/libretro
 }

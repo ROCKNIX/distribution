@@ -3,9 +3,9 @@
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="vdr-plugin-epgsearch"
-PKG_VERSION="2.4.3"
-PKG_SHA256="3824a72be529391ce26d00f0323b9d71572855c1c660bae9d30064f42366aadf"
-PKG_LICENSE="GPL"
+PKG_VERSION="2.4.6"
+PKG_SHA256="7bfb51ea6178d7b477e608fb78b18ee9db05676530d857758e22e4abe453a7c3"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="http://winni.vdr-developer.org/epgsearch/"
 PKG_URL="https://github.com/vdr-projects/vdr-plugin-epgsearch/archive/v${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain vdr pcre2"

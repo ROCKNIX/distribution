@@ -101,6 +101,12 @@ else
   sed -i "s#Resolution Scale:.*\$#Resolution Scale: 50#g" "${CONFIG_YML}"
 fi
 
+# Scan out render size, 1x is the configured Resolution
+SCANOUT_H=$(awk '/Resolution: [0-9]+x[0-9]+/ { sub(/.*x/, ""); print; exit }' "${CONFIG_YML}")
+SCANOUT_SCALE=$(scanout_internal_scale "$(awk '/Resolution Scale:/ {print $3 / 100; exit}' "${CONFIG_YML}")" "${SCANOUT_H}" 0.25 8 0.25)
+sed -i "s#Resolution Scale:.*\$#Resolution Scale: $(awk -v s="${SCANOUT_SCALE}" 'BEGIN { printf "%d", s * 100 }')#g" "${CONFIG_YML}"
+scanout_render_size "${SCANOUT_H}" "${SCANOUT_SCALE}" 16:9
+
 #Multithreaded RSX
 if [ "${MULTIRSX}" = "true" ]; then
   sed -i "s#Multithreaded RSX:.*\$#Multithreaded RSX: true#g" "${CONFIG_YML}"
@@ -211,10 +217,10 @@ EOF
 # Run rpcs3
 if [ "$SUI" = "true" ]; then
   export QT_QPA_PLATFORM=wayland
-  set_kill set "-9 rpcs3"
+  set_kill set "-9 rpcs3-sa"
   ${EMUPERF} /usr/bin/rpcs3-sa
 else
   export QT_QPA_PLATFORM=xcb
-  set_kill set "-9 rpcs3"
+  set_kill set "-9 rpcs3-sa"
   ${EMUPERF} /usr/bin/rpcs3-sa --no-gui "$GAME_PATH"
 fi

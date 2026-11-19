@@ -3,6 +3,7 @@
 
 PKG_NAME="rocknix-touchscreen-keyboard"
 PKG_VERSION="v0.17"
+PKG_SHA256="e3f82302367cdacf7a0c59d6d1bb4f5140083da1b3083da7c835dab0c250034c"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/jjsullivan5196/wvkbd"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"

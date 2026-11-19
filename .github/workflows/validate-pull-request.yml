@@ -1,0 +1,121 @@
+name: Validate pull request
+on:
+  pull_request:
+    branches: [next]
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+  merge_group:
+    branches: [next]
+jobs:
+  validate-commit:
+    runs-on: self-hosted
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout code (fetch all history for linting)
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Validate pull request
+        if: github.event_name == 'pull_request'
+        env:
+          LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        run: |
+          # Flag to track if pull request fails validation
+          FAILED=0
+
+          # Check for merge-blocked label
+          if echo "$LABELS" | grep -q '"merge-blocked"'; then
+            echo "--------------------------------------------------------"
+            echo "❌ This pull request is marked as merge-blocked."
+            FAILED=1
+          fi
+
+          # Get any merge commits in the pull request
+          MERGES=$(git log --merges --format='- %h %s' origin/${{ github.base_ref }}..HEAD)
+
+          if [ -n "$MERGES" ]; then
+            echo "--------------------------------------------------------"
+            echo "❌ This pull request contains merge commits."
+            echo
+            echo "The following merge commits were found:"
+            echo "$MERGES"
+            echo
+            echo "Please rebase your branch onto '${{ github.base_ref }}' and force-push the updated history."
+            FAILED=1
+          fi
+
+          # Get the list of commit SHAs in the pull request
+          COMMITS=$(git log --no-merges --format="%H" origin/${{ github.base_ref }}..HEAD)
+
+          # Define the regex pattern
+          PATTERN='^[a-zA-Z0-9_*./-]+:[[:space:]].+$'
+
+          for SHA in $COMMITS; do
+            echo "--------------------------------------------------------"
+            echo "Checking commit: $SHA"
+
+            # Extract raw commit message components
+            TITLE=$(git log -1 --format="%s" "$SHA")
+            BODY=$(git log -1 --format="%b" "$SHA")
+            FULL_MSG=$(git log -1 --format="%B" "$SHA")
+
+            echo "Title: '$TITLE'"
+
+            # 1. Check Title Length (Max 72 characters)
+            if [ ${#TITLE} -gt 72 ]; then
+              echo "❌ ERROR: Title exceeds 72 characters (Length: ${#TITLE})."
+              FAILED=1
+            fi
+
+            # 2. Check Title Prefix Pattern (e.g., package: text)
+            if [[ ! "$TITLE" =~ $PATTERN ]]; then
+              echo "❌ ERROR: Title must match the pattern 'package: text'."
+              FAILED=1
+            fi
+
+            # 3. Check for the blank line gap between Title and Body
+            # If there is a body, the second line of the full message must be empty
+            LINE_COUNT=$(echo "$FULL_MSG" | wc -l)
+            if [ "$LINE_COUNT" -gt 1 ]; then
+              SECOND_LINE=$(echo "$FULL_MSG" | sed -n '2p')
+              if [ -n "$SECOND_LINE" ]; then
+                echo "❌ ERROR: Missing a blank line gap between the title and the message body."
+                FAILED=1
+              fi
+            fi
+
+            # 4. Check Body Line Lengths (Max 72 characters per line)
+            if [ -n "$BODY" ]; then
+              LONG_LINES=0
+              while IFS= read -r line; do
+                if [ ${#line} -gt 72 ]; then
+                  echo "   ↳ Line too long (${#line} chars): '$line'"
+                  LONG_LINES=1
+                fi
+              done <<< "$BODY"
+
+              if [ $LONG_LINES -eq 1 ]; then
+                echo "❌ ERROR: One or more lines in the body exceed 72 characters."
+                FAILED=1
+              fi
+            fi
+
+            if [ $FAILED -eq 0 ]; then
+              echo "✅ Commit passed style checks."
+            fi
+          done
+
+          # Exit with error if any validation failed
+          if [ $FAILED -eq 1 ]; then
+            echo "--------------------------------------------------------"
+            echo "💥 Commit linting failed. Please fix your commit messages."
+            exit 1
+          fi
+
+  check-freeze-period:
+    uses: ./.github/workflows/check-freeze-period.yml
+    secrets: inherit

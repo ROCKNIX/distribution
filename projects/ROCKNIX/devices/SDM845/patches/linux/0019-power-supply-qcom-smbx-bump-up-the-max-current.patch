@@ -1,0 +1,62 @@
+From 0d032b76c4654226dba29c6e08752953bd2bf2bb Mon Sep 17 00:00:00 2001
+From: Casey Connolly <casey.connolly@linaro.org>
+Date: Thu, 19 Jun 2025 16:55:15 +0200
+Subject: [PATCH] power: supply: qcom_smbx: bump up the max current
+
+I set a super conservative current limit since we lack many of the
+safety features (thermal monitoring, etc) that these drivers really
+need. However now we have a better understanding of the hardware, it's
+fine to bump this limit up a bit, devices can additionally set the max
+current via devicetree instead.
+
+Since this is common to smb2 and smb5, move this write out of the init
+sequence and into probe proper.
+
+Signed-off-by: Casey Connolly <casey.connolly@linaro.org>
+---
+ drivers/power/supply/qcom_smbx.c | 22 ++++++++++++++--------
+ 1 file changed, 14 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/power/supply/qcom_smbx.c b/drivers/power/supply/qcom_smbx.c
+index d446a87d4a9d..78de88113b7e 100644
+--- a/drivers/power/supply/qcom_smbx.c
++++ b/drivers/power/supply/qcom_smbx.c
+@@ -879,14 +879,6 @@ static const struct smb_init_register smb_init_seq[] = {
+ 	{ .addr = PRE_CHARGE_CURRENT_CFG,
+ 	  .mask = PRE_CHARGE_CURRENT_SETTING_MASK,
+ 	  .val = 500000 / CURRENT_SCALE_FACTOR },
+-	/*
+-	 * This overrides all of the current limit options exposed to userspace
+-	 * and prevents the device from pulling more than ~1A. This is done
+-	 * to minimise potential fire hazard risks.
+-	 */
+-	{ .addr = FAST_CHARGE_CURRENT_CFG,
+-	  .mask = FAST_CHARGE_CURRENT_SETTING_MASK,
+-	  .val = 1000000 / CURRENT_SCALE_FACTOR },
+ };
+ 
+ static int smb_init_hw(struct smb_chip *chip)
+@@ -1033,6 +1025,20 @@ static int smb_probe(struct platform_device *pdev)
+ 
+ 	platform_set_drvdata(pdev, chip);
+ 
++	/*
++	 * This overrides all of the other current limits and is expected
++	 * to be used for setting limits based on temperature. We set some
++	 * relatively safe default value while still allowing a comfortably
++	 * fast charging rate. Once temperature monitoring is hooked up we
++	 * would expect this to be changed dynamically based on temperature
++	 * reporting.
++	 */
++	rc = regmap_write(chip->regmap, chip->base + FAST_CHARGE_CURRENT_CFG,
++			  1950000 / CURRENT_SCALE_FACTOR);
++	if (rc < 0)
++		return dev_err_probe(chip->dev, rc,
++				     "Couldn't write fast charge current cfg");
++
+ 	/* Initialise charger state */
+ 	schedule_delayed_work(&chip->status_change_work, 0);
+ 
+-- 
+GitLab
+

@@ -1,0 +1,342 @@
+From 551ed1cb48e3263169c224230677f2183075bd09 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Wed, 23 Sep 2026 21:24:10 -0700
+Subject: [PATCH] egl/wayland: add optional pre-rotated presents
+
+Same idea as the Vulkan WSI, set with the egl_wayland_prerotate driconf
+option (the output's wl_output transform: 90, 180 or 270), and only used
+when the screen supports rotated blits. Each color buffer gets a
+transposed copy allocated from the same dma-buf feedback, so it can stay
+compressed and be scanned out. At swap time the frame is blitted into it
+rotated and attached with the matching buffer transform.
+
+The whole surface is damaged while pre-rotating, since the app's damage
+rects don't match the rotated buffer.
+---
+ src/egl/drivers/dri2/egl_dri2.h         |   3 +
+ src/egl/drivers/dri2/platform_wayland.c | 134 ++++++++++++++++++++----
+ src/gallium/frontends/dri/dri_util.c    |   1 +
+ src/util/driconf.h                      |   4 +
+ 4 files changed, 124 insertions(+), 18 deletions(-)
+
+diff --git a/src/egl/drivers/dri2/egl_dri2.h b/src/egl/drivers/dri2/egl_dri2.h
+index aa5692ab1ae..404d064e34d 100644
+--- a/src/egl/drivers/dri2/egl_dri2.h
++++ b/src/egl/drivers/dri2/egl_dri2.h
+@@ -322,6 +322,7 @@ struct dri2_egl_surface {
+ 
+ #ifdef HAVE_WAYLAND_PLATFORM
+    struct wl_egl_window *wl_win;
++   int prerotate;
+    int dx;
+    int dy;
+    struct wl_event_queue *wl_queue;
+@@ -351,6 +352,8 @@ struct dri2_egl_surface {
+       struct dri_image *dri_image;
+       /* for is_different_gpu case. NULL else */
+       struct dri_image *linear_copy;
++      /* for pre-rotation. NULL else */
++      struct dri_image *rotated_copy;
+       /* for swrast */
+       void *data;
+       int data_size;
+diff --git a/src/egl/drivers/dri2/platform_wayland.c b/src/egl/drivers/dri2/platform_wayland.c
+index c5558acb9ff..17022973652 100644
+--- a/src/egl/drivers/dri2/platform_wayland.c
++++ b/src/egl/drivers/dri2/platform_wayland.c
+@@ -698,6 +698,7 @@ dri2_wl_create_window_surface(_EGLDisplay *disp, _EGLConfig *conf,
+    struct dri2_egl_surface *dri2_surf;
+    struct zwp_linux_dmabuf_v1 *dmabuf_wrapper;
+    int visual_idx;
++   int prerotate = 0;
+    const struct dri_config *config;
+ 
+    if (!window) {
+@@ -732,6 +733,14 @@ dri2_wl_create_window_surface(_EGLDisplay *disp, _EGLConfig *conf,
+    dri2_surf->base.Width = window->width;
+    dri2_surf->base.Height = window->height;
+ 
++   dri2GalliumConfigQueryi(dri2_dpy->dri_screen_render_gpu,
++                           "egl_wayland_prerotate", &prerotate);
++   if ((prerotate == 90 || prerotate == 180 || prerotate == 270) &&
++       dri2_dpy->dri_screen_render_gpu->base.screen->caps.blit_rotation &&
++       wl_proxy_get_version((struct wl_proxy *)window->surface) >=
++          WL_SURFACE_SET_BUFFER_TRANSFORM_SINCE_VERSION)
++      dri2_surf->prerotate = prerotate;
++
+    visual_idx = dri2_wl_visual_idx_from_config(config);
+    assert(visual_idx != -1);
+    assert(dri2_wl_visuals[visual_idx].pipe_format != PIPE_FORMAT_NONE);
+@@ -960,6 +969,8 @@ dri2_wl_destroy_surface(_EGLDisplay *disp, _EGLSurface *surf)
+          dri2_destroy_image(dri2_surf->color_buffers[i].dri_image);
+       if (dri2_surf->color_buffers[i].linear_copy)
+          dri2_destroy_image(dri2_surf->color_buffers[i].linear_copy);
++      if (dri2_surf->color_buffers[i].rotated_copy)
++         dri2_destroy_image(dri2_surf->color_buffers[i].rotated_copy);
+       if (dri2_surf->color_buffers[i].data)
+          munmap(dri2_surf->color_buffers[i].data,
+                 dri2_surf->color_buffers[i].data_size);
+@@ -1020,12 +1031,15 @@ dri2_wl_release_buffers(struct dri2_egl_surface *dri2_surf)
+          dri2_destroy_image(dri2_surf->color_buffers[i].dri_image);
+       if (dri2_surf->color_buffers[i].linear_copy)
+          dri2_destroy_image(dri2_surf->color_buffers[i].linear_copy);
++      if (dri2_surf->color_buffers[i].rotated_copy)
++         dri2_destroy_image(dri2_surf->color_buffers[i].rotated_copy);
+       if (dri2_surf->color_buffers[i].data)
+          munmap(dri2_surf->color_buffers[i].data,
+                 dri2_surf->color_buffers[i].data_size);
+ 
+       dri2_surf->color_buffers[i].dri_image = NULL;
+       dri2_surf->color_buffers[i].linear_copy = NULL;
++      dri2_surf->color_buffers[i].rotated_copy = NULL;
+       dri2_surf->color_buffers[i].data = NULL;
+       dri2_surf->color_buffers[i].age = 0;
+    }
+@@ -1105,7 +1119,8 @@ static void
+ create_dri_image(struct dri2_egl_surface *dri2_surf,
+                  enum pipe_format pipe_format, uint32_t use_flags,
+                  uint64_t *surf_modifiers, int surf_modifiers_count,
+-                 struct dri2_wl_formats *formats)
++                 struct dri2_wl_formats *formats, int width, int height,
++                 struct dri_image **out)
+ {
+    struct dri2_egl_display *dri2_dpy =
+       dri2_egl_display(dri2_surf->base.Resource.Display);
+@@ -1193,14 +1208,14 @@ create_dri_image(struct dri2_egl_surface *dri2_surf,
+       num_modifiers = 0;
+    }
+ 
+-   dri2_surf->back->dri_image = dri_create_image_with_modifiers(
+-      dri2_dpy->dri_screen_render_gpu, dri2_surf->base.Width,
+-      dri2_surf->base.Height, pipe_format, use_flags,
+-      modifiers, num_modifiers, NULL);
++   *out = dri_create_image_with_modifiers(dri2_dpy->dri_screen_render_gpu,
++                                          width, height, pipe_format, use_flags,
++                                          modifiers, num_modifiers, NULL);
+ 
+    if (surf_modifiers_count > 0) {
+       u_vector_finish(&modifiers_subset);
+-      update_surface(dri2_surf, dri2_surf->back->dri_image);
++      if (out == &dri2_surf->back->dri_image)
++         update_surface(dri2_surf, dri2_surf->back->dri_image);
+    }
+ 
+ cleanup_present:
+@@ -1213,7 +1228,8 @@ create_dri_image_from_dmabuf_feedback(struct dri2_egl_surface *dri2_surf,
+                                       enum pipe_format pipe_format,
+                                       uint32_t use_flags,
+                                       uint64_t *surf_modifiers,
+-                                      int surf_modifiers_count)
++                                      int surf_modifiers_count, int width,
++                                      int height, struct dri_image **out)
+ {
+    uint32_t flags;
+ 
+@@ -1238,9 +1254,10 @@ create_dri_image_from_dmabuf_feedback(struct dri2_egl_surface *dri2_surf,
+          flags |= __DRI_IMAGE_USE_SCANOUT;
+ 
+       create_dri_image(dri2_surf, pipe_format, flags, surf_modifiers,
+-                       surf_modifiers_count, &tranche->formats);
++                       surf_modifiers_count, &tranche->formats, width, height,
++                       out);
+ 
+-      if (dri2_surf->back->dri_image)
++      if (*out)
+          return;
+    }
+ }
+@@ -1249,12 +1266,40 @@ static void
+ create_dri_image_from_formats(struct dri2_egl_surface *dri2_surf,
+                               enum pipe_format pipe_format, uint32_t use_flags,
+                               uint64_t *surf_modifiers,
+-                              int surf_modifiers_count)
++                              int surf_modifiers_count, int width, int height,
++                              struct dri_image **out)
+ {
+    struct dri2_egl_display *dri2_dpy =
+       dri2_egl_display(dri2_surf->base.Resource.Display);
+    create_dri_image(dri2_surf, pipe_format, use_flags, surf_modifiers,
+-                    surf_modifiers_count, &dri2_dpy->formats);
++                    surf_modifiers_count, &dri2_dpy->formats, width, height,
++                    out);
++}
++
++static void
++create_dri_image_for_surface(struct dri2_egl_surface *dri2_surf,
++                             enum pipe_format pipe_format, uint32_t use_flags,
++                             uint64_t *modifiers, int modifiers_count,
++                             int width, int height, struct dri_image **out)
++{
++   if (dri2_surf->wl_dmabuf_feedback)
++      create_dri_image_from_dmabuf_feedback(dri2_surf, pipe_format, use_flags,
++                                            modifiers, modifiers_count, width,
++                                            height, out);
++   if (*out == NULL)
++      create_dri_image_from_formats(dri2_surf, pipe_format, use_flags,
++                                    modifiers, modifiers_count, width, height,
++                                    out);
++}
++
++static void
++prerotated_size(const struct dri2_egl_surface *dri2_surf, int *width,
++                int *height)
++{
++   bool transposed = dri2_surf->prerotate != 180;
++
++   *width = transposed ? dri2_surf->base.Height : dri2_surf->base.Width;
++   *height = transposed ? dri2_surf->base.Width : dri2_surf->base.Height;
+ }
+ 
+ static void
+@@ -1457,12 +1502,10 @@ get_back_bo(struct dri2_egl_surface *dri2_surf,
+       uint64_t *modifiers =
+          get_surface_specific_modifiers(dri2_surf, &modifiers_count);
+ 
+-      if (dri2_surf->wl_dmabuf_feedback)
+-         create_dri_image_from_dmabuf_feedback(
+-            dri2_surf, pipe_format, use_flags, modifiers, modifiers_count);
+-      if (dri2_surf->back->dri_image == NULL)
+-         create_dri_image_from_formats(dri2_surf, pipe_format, use_flags,
+-                                       modifiers, modifiers_count);
++      create_dri_image_for_surface(dri2_surf, pipe_format, use_flags, modifiers,
++                                   modifiers_count, dri2_surf->base.Width,
++                                   dri2_surf->base.Height,
++                                   &dri2_surf->back->dri_image);
+ 
+       free(modifiers);
+       dri2_surf->back->age = 0;
+@@ -1471,6 +1514,26 @@ get_back_bo(struct dri2_egl_surface *dri2_surf,
+    if (dri2_surf->back->dri_image == NULL)
+       return -1;
+ 
++   if (dri2_surf->prerotate && dri2_surf->back->rotated_copy == NULL &&
++       dri2_dpy->fd_render_gpu == dri2_dpy->fd_display_gpu) {
++      int rotated_width, rotated_height;
++      int modifiers_count = 0;
++      uint64_t *modifiers =
++         get_surface_specific_modifiers(dri2_surf, &modifiers_count);
++
++      prerotated_size(dri2_surf, &rotated_width, &rotated_height);
++      create_dri_image_for_surface(dri2_surf, pipe_format, use_flags, modifiers,
++                                   modifiers_count, rotated_width,
++                                   rotated_height,
++                                   &dri2_surf->back->rotated_copy);
++      free(modifiers);
++      if (dri2_surf->back->rotated_copy == NULL) {
++         /* don't let a swap present this buffer unrotated */
++         dri2_surf->back = NULL;
++         return -1;
++      }
++   }
++
+    loader_wayland_buffer_set_flow(&dri2_surf->back->wayland_buffer, flow);
+    dri2_surf->back->locked = true;
+ 
+@@ -1545,9 +1608,12 @@ update_buffers(struct dri2_egl_surface *dri2_surf,
+          if (dri2_dpy->fd_render_gpu != dri2_dpy->fd_display_gpu)
+             dri2_destroy_image(
+                dri2_surf->color_buffers[i].linear_copy);
++         if (dri2_surf->color_buffers[i].rotated_copy)
++            dri2_destroy_image(dri2_surf->color_buffers[i].rotated_copy);
+          dri2_surf->color_buffers[i].wayland_buffer.buffer = NULL;
+          dri2_surf->color_buffers[i].dri_image = NULL;
+          dri2_surf->color_buffers[i].linear_copy = NULL;
++         dri2_surf->color_buffers[i].rotated_copy = NULL;
+          dri2_surf->color_buffers[i].age = 0;
+       }
+    }
+@@ -1874,12 +1940,17 @@ dri2_wl_swap_buffers_with_damage(_EGLDisplay *disp, _EGLSurface *draw,
+    dri2_surf->current = dri2_surf->back;
+    dri2_surf->back = NULL;
+ 
++   const bool prerotated =
++      dri2_surf->prerotate && dri2_surf->current->rotated_copy;
++
+    if (!dri2_surf->current->wayland_buffer.buffer) {
+       struct dri_image *image;
+       struct wl_buffer *buffer;
+ 
+       if (dri2_dpy->fd_render_gpu != dri2_dpy->fd_display_gpu)
+          image = dri2_surf->current->linear_copy;
++      else if (prerotated)
++         image = dri2_surf->current->rotated_copy;
+       else
+          image = dri2_surf->current->dri_image;
+ 
+@@ -1897,6 +1968,17 @@ dri2_wl_swap_buffers_with_damage(_EGLDisplay *disp, _EGLSurface *draw,
+       loader_wayland_buffer_set_flow(&dri2_surf->current->wayland_buffer, &flow);
+    }
+ 
++   if (prerotated) {
++      static const enum wl_output_transform wl_transform[4] = {
++         WL_OUTPUT_TRANSFORM_NORMAL,
++         WL_OUTPUT_TRANSFORM_90,
++         WL_OUTPUT_TRANSFORM_180,
++         WL_OUTPUT_TRANSFORM_270,
++      };
++      wl_surface_set_buffer_transform(dri2_surf->wayland_surface.wrapper,
++                                      wl_transform[dri2_surf->prerotate / 90]);
++   }
++
+    wl_surface_attach(dri2_surf->wayland_surface.wrapper,
+                      dri2_surf->current->wayland_buffer.buffer,
+                      dri2_surf->dx,
+@@ -1911,7 +1993,8 @@ dri2_wl_swap_buffers_with_damage(_EGLDisplay *disp, _EGLSurface *draw,
+    /* If the compositor doesn't support damage_buffer, we deliberately
+     * ignore the damage region and post maximum damage, due to
+     * https://bugs.freedesktop.org/78190 */
+-   if (!try_damage_buffer(dri2_surf, rects, n_rects))
++   /* damage rects don't line up with a rotated buffer */
++   if (prerotated || !try_damage_buffer(dri2_surf, rects, n_rects))
+       wl_surface_damage(dri2_surf->wayland_surface.wrapper, 0, 0, INT32_MAX,
+                         INT32_MAX);
+ 
+@@ -1925,6 +2008,21 @@ dri2_wl_swap_buffers_with_damage(_EGLDisplay *disp, _EGLSurface *draw,
+          dri2_surf->base.Height, 0, 0, dri2_surf->base.Width,
+          dri2_surf->base.Height, 0, 0);
+       dri_flush_drawable(dri_drawable);
++   } else if (prerotated) {
++      static const unsigned content_rotation[4] = {0, 270, 180, 90};
++      _EGLContext *ctx = _eglGetCurrentContext();
++      struct dri2_egl_context *dri2_ctx = dri2_egl_context(ctx);
++      struct dri_drawable *dri_drawable =
++         dri2_dpy->vtbl->get_dri_drawable(draw);
++      int rotated_width, rotated_height;
++
++      prerotated_size(dri2_surf, &rotated_width, &rotated_height);
++      dri2_blit_image(
++         dri2_ctx->dri_context, dri2_surf->current->rotated_copy,
++         dri2_surf->current->dri_image, 0, 0, rotated_width, rotated_height,
++         0, 0, dri2_surf->base.Width, dri2_surf->base.Height,
++         content_rotation[dri2_surf->prerotate / 90], 0);
++      dri_flush_drawable(dri_drawable);
+    }
+ 
+    loader_wayland_presentation_feedback(&dri2_surf->wayland_presentation,
+diff --git a/src/gallium/frontends/dri/dri_util.c b/src/gallium/frontends/dri/dri_util.c
+index 584ab9a717a..9a997adf553 100644
+--- a/src/gallium/frontends/dri/dri_util.c
++++ b/src/gallium/frontends/dri/dri_util.c
+@@ -66,6 +66,7 @@ driOptionDescription __dri2ConfigOptions[] = {
+       DRI_CONF_SECTION_PERFORMANCE
+          DRI_CONF_VBLANK_MODE(DRI_CONF_VBLANK_DEF_INTERVAL_1)
+          DRI_CONF_BLOCK_ON_DEPLETED_BUFFERS(false)
++         DRI_CONF_EGL_WAYLAND_PREROTATE(0)
+       DRI_CONF_SECTION_END
+ };
+ 
+diff --git a/src/util/driconf.h b/src/util/driconf.h
+index 5ff608eaff7..6243bf0eb54 100644
+--- a/src/util/driconf.h
++++ b/src/util/driconf.h
+@@ -414,6 +414,10 @@
+    DRI_CONF_OPT_B(block_on_depleted_buffers, def, \
+                   "Block clients using buffer backpressure until new buffer is available to reduce latency")
+ 
++#define DRI_CONF_EGL_WAYLAND_PREROTATE(def) \
++   DRI_CONF_OPT_I(egl_wayland_prerotate, def, 0, 270, \
++                  "Pre-rotate Wayland EGL presents for an output with this wl_output transform (90, 180 or 270), so the compositor does not have to rotate them. 0 disables it.")
++
+ #define DRI_CONF_MESA_GLTHREAD_DRIVER(def) \
+    DRI_CONF_OPT_B(mesa_glthread_driver, def, \
+                   "Enable offloading GL driver work to a separate thread")

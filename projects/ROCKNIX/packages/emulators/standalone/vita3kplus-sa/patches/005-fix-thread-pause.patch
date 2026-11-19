@@ -1,0 +1,113 @@
+diff --git a/vita3k/kernel/include/kernel/state.h b/vita3k/kernel/include/kernel/state.h
+index 99750494..d2e2be13 100644
+--- a/vita3k/kernel/include/kernel/state.h
++++ b/vita3k/kernel/include/kernel/state.h
+@@ -193,7 +193,7 @@
+     ThreadStatePtr get_thread(SceUID thread_id);
+     Ptr<Ptr<void>> get_thread_tls_addr(MemState &mem, SceUID thread_id, int key);
+ 
+-    bool is_threads_paused() { return !paused_threads_status.empty(); }
++    bool is_threads_paused() const { return threads_paused.load(std::memory_order_relaxed); }
+     void pause_threads();
+     void resume_threads();
+ 
+@@ -229,5 +229,6 @@
+ private:
+     std::atomic<SceUID> next_uid{ 1 };
+     std::map<SceUID, ThreadStatus> paused_threads_status;
++    std::atomic<bool> threads_paused{ false };
+     std::vector<ThreadStatePtr> world_stopped_threads;
+ };
+diff --git a/vita3k/kernel/include/kernel/thread/thread_state.h b/vita3k/kernel/include/kernel/thread/thread_state.h
+index e1c6c273..db3613b7 100644
+--- a/vita3k/kernel/include/kernel/thread/thread_state.h
++++ b/vita3k/kernel/include/kernel/thread/thread_state.h
+@@ -127,6 +127,7 @@
+     uint64_t last_vblank_waited;
+     // set to true if thread is processing kernel callbacks
+     bool is_processing_callbacks = false;
++    std::atomic<bool> suspended_by_pause{ false };
+ 
+     CPUStatePtr cpu;
+     ThreadStatus status = ThreadStatus::dormant;
+diff --git a/vita3k/kernel/src/kernel.cpp b/vita3k/kernel/src/kernel.cpp
+index 7dcb3ec4..d8e06d9b 100644
+--- a/vita3k/kernel/src/kernel.cpp
++++ b/vita3k/kernel/src/kernel.cpp
+@@ -249,19 +249,22 @@
+ }
+ 
+ void KernelState::pause_threads() {
++    threads_paused.store(true, std::memory_order_relaxed);
+     const std::lock_guard<std::mutex> lock(mutex);
+     for (auto &[_, thread] : threads) {
+         paused_threads_status[thread->id] = thread->status;
+-        if (thread->status == ThreadStatus::run)
++        if (thread->status == ThreadStatus::run) {
++            thread->suspended_by_pause = true;
+             thread->suspend();
++        }
+     }
+ }
+ 
+ void KernelState::resume_threads() {
++    threads_paused.store(false, std::memory_order_relaxed);
+     const std::lock_guard<std::mutex> lock(mutex);
+     for (auto &[_, thread] : threads) {
+-        const auto paused = paused_threads_status.find(thread->id);
+-        if (paused != paused_threads_status.end() && paused->second == ThreadStatus::run)
++        if (thread->suspended_by_pause.exchange(false))
+             thread->release_pause();
+     }
+     paused_threads_status.clear();
+@@ -538,6 +541,7 @@
+ }
+ 
+ void KernelState::deinit(MemState &mem) {
++    threads_paused.store(false, std::memory_order_relaxed);
+     process_exit();
+     threads.clear();
+ 
+diff --git a/vita3k/kernel/src/thread.cpp b/vita3k/kernel/src/thread.cpp
+index 2f13b061..3836db4f 100644
+--- a/vita3k/kernel/src/thread.cpp
++++ b/vita3k/kernel/src/thread.cpp
+@@ -204,8 +204,7 @@
+     for (const auto &t : waiting_threads) {
+         const std::unique_lock<std::mutex> lock(t->mutex);
+         assert(t->status == ThreadStatus::wait);
+-        t->status = ThreadStatus::run;
+-        t->status_cond.notify_all();
++        t->update_status(ThreadStatus::run);
+     }
+     waiting_threads.clear();
+ }
+@@ -232,11 +231,10 @@
+ 
+     if (kernel.debugger.wait_for_debugger) {
+         kernel.debugger.wait_for_debugger = false;
+-        status = ThreadStatus::suspend;
++        update_status(ThreadStatus::suspend);
+     } else {
+-        status = ThreadStatus::run;
+-    }
+-    status_cond.notify_one();
++        update_status(ThreadStatus::run);
++    }
+ 
+     return SCE_KERNEL_OK;
+ }
+@@ -1820,6 +1818,13 @@
+     if (status == ThreadStatus::wait && delete_requested)
+         return;
+ 
++    // Keep newly awakened threads suspended while the kernel is paused.
++    // This must run before counting or gating a runnable wakeup.
++    if (status == ThreadStatus::run && kernel.is_threads_paused()) {
++        suspended_by_pause.store(true, std::memory_order_relaxed);
++        status = ThreadStatus::suspend;
++    }
++
+     if (status == ThreadStatus::run)
+         kernel.thread_wake_counter.fetch_add(1, std::memory_order_relaxed);
+ 

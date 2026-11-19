@@ -1,34 +1,19 @@
-################################################################################
-#
-#  Copyright (C) 2021-2026    351ELEC team (https://github.com/351ELEC/351ELEC)
-#
-#  This Program is free software; you can redistribute it and/or modify
-#  it under the terms of the GNU General Public License as published by
-#  the Free Software Foundation; either version 2, or (at your option)
-#  any later version.
-#
-#  This Program is distributed in the hope that it will be useful,
-#  but WITHOUT ANY WARRANTY; without even the implied warranty of
-#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-#  GNU General Public License for more details.
-#
-################################################################################
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="gearlynx-lr"
-PKG_VERSION="393994c04b5c0d2cfcc2a9f7903609e9c602be3a"
-PKG_LICENSE="GPL"
+PKG_VERSION="cb951ddc19ccbae73685d58e015565410ad524f8"
+PKG_SHA256="9e1cabacd6e769fb6464e859d34be2553c0e31c6001b0a1155f96b77c1b704a6"
+PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/drhelius/Gearlynx"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="Gearlynx is a very accurate, cross-platform Atari Lynx emulator written in C++ that runs on Windows, macOS, Linux, BSD and RetroArch."
-
 PKG_TOOLCHAIN="make"
 
-make_target() {
-  make -C platforms/libretro/
-}
+PKG_MAKE_OPTS_TARGET="-C platforms/libretro"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp platforms/libretro/gearlynx_libretro.so ${INSTALL}/usr/lib/libretro/
+    cp -a platforms/libretro/gearlynx_libretro.so ${INSTALL}/usr/lib/libretro
 }

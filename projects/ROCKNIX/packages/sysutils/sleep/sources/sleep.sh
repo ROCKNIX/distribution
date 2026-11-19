@@ -40,8 +40,14 @@ modules() {
   log $0 "Modules: ${1}"
   case ${1} in
     stop)
+      KEEP=""
+      for LIST in /usr/lib/autostart/quirks/platforms/"${HW_DEVICE}"/modules.keep \
+                  /usr/lib/autostart/quirks/devices/"${QUIRK_DEVICE}"/modules.keep; do
+        [ -e "${LIST}" ] && KEEP="${KEEP} $(cat "${LIST}")"
+      done
       if [ -e "/usr/config/modules.bad" ]; then
         for module in $(cat /usr/config/modules.bad); do
+          case " ${KEEP} " in *" ${module} "*) continue ;; esac
           EXISTS=$(lsmod | grep ${module})
           if [ $? = 0 ]; then
             echo ${module} >>/tmp/modules.load
@@ -77,13 +83,21 @@ modules() {
 quirks() {
   for QUIRK in /usr/lib/autostart/quirks/platforms/"${HW_DEVICE}"/sleep.d/${1}/* \
                /usr/lib/autostart/quirks/devices/"${QUIRK_DEVICE}"/sleep.d/${1}/*; do
+    [ -x "${QUIRK}" ] || continue
     "${QUIRK}" >${EVENTLOG} 2>&1
   done
 }
 
 case $1 in
   pre)
+    rocknix-games-freeze freeze >${EVENTLOG} 2>&1
+
     if [ "$(get_setting wifi.enabled)" == "1" ]; then
+      # while still associated, so resume rejoins this network and not
+      # whichever saved profile NM happens to pick first
+      log $0 "Preferring the active WIFI network on reconnect."
+      wifictl pin >${EVENTLOG} 2>&1
+
       log $0 "Disabling WIFI."
       nohup wifictl disable >${EVENTLOG} 2>&1
     fi
@@ -114,7 +128,7 @@ case $1 in
     amixer -c 0 -M set "${DEVICE_AUDIO_MIXER}" ${DEVICE_VOLUME}% >${EVENTLOG} 2>&1
 
     BRIGHTNESS=$(get_setting display.brightness)
-    log $0 "Restoring brightness}."
+    log $0 "Restoring brightness to ${BRIGHTNESS}."
     brightness set ${BRIGHTNESS} >${EVENTLOG} 2>&1
 
     BRIGHTNESS_2=$(get_setting display.brightness2)
@@ -124,5 +138,6 @@ case $1 in
     fi
 
     quirks post
+    rocknix-games-freeze thaw >${EVENTLOG} 2>&1
     ;;
 esac

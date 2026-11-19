@@ -3,6 +3,7 @@
 
 PKG_NAME="generic-dsi"
 PKG_VERSION="04e5e55b82d30c5c03d060f44cb6d7cd8840f531"
+PKG_SHA256="e3cc86a517b1c84d6abbf8054e156fc82c95da84abb202d779148d80675b79c9"
 PKG_LICENSE="GPL"
 PKG_LONGDESC="generic DSI panel driver and stock DTB import scripts"
 PKG_DEPENDS_TARGET="pyFDT"

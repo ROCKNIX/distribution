@@ -1,0 +1,189 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
+
+#
+# A simple tool to manipulate the controller LEDs using ectool, thanks to
+# Ayn for the sample code.
+#
+# Schema:
+#
+# 0xB3 - RGB Mode
+# 0xAA - Save
+#
+# 0xB0 - Red
+# 0xB1 - Green
+# 0xB2 - Blue
+#
+
+# Minimal OS variable loading for performance
+. /etc/profile.d/001-functions
+
+RGB_RED="0xB0"
+RGB_GREEN="0xB1"
+RGB_BLUE="0xB2"
+RGB_MODE="0xB3"
+RGB_SAVE="0xAA"
+RGB_IDLE="0x55"
+
+ECTOOL="/usr/sbin/ectool"
+DEBUG=false
+
+function debug_out() {
+  $DEBUG && echo "ledcontrol: $*"
+}
+
+function ec_save() {
+  TIMEOUT=0
+  while true
+  do
+    STATE="0x$(${ECTOOL} -r ${RGB_MODE})"
+    if [ "${STATE^^}" == "${RGB_SAVE}" ] || \
+       [ "${STATE}" == "${RGB_IDLE}" ] || \
+       [ "${TIMEOUT}" == 5 ]
+    then
+      break
+    fi
+    sleep .5
+    TIMEOUT=$(( TIMEOUT + 1 ))
+  done
+  ${ECTOOL} -w ${RGB_MODE} -z ${RGB_SAVE} >/dev/null 2>&1
+}
+
+function ec_set() {
+  debug_out "Set EC ${1} ${2}"
+  ${ECTOOL} -w ${1} -z ${2} >/dev/null 2>&1
+}
+
+function off() {
+  ec_save
+  ec_set ${RGB_RED} 0x00
+  ec_set ${RGB_GREEN} 0x00
+  ec_set ${RGB_BLUE} 0x00
+  ec_save
+}
+
+function intensity() {
+  printf "0x%X\n" $((${1} / ${2}))
+}
+
+GETBRIGHTNESS=$(get_setting led.brightness)
+if [ ! -z "${2}" ]
+then
+  LEDBRIGHTNESS=${2}
+  debug_out "Arg[2]: ${2}"
+elif [ ! -z "${GETBRIGHTNESS}" ]
+then
+  LEDBRIGHTNESS=${GETBRIGHTNESS}
+  debug_out "GETBRIGHTESS: ${GETBRIGHTNESS}"
+else
+  debug_out "NO SETTING: max"
+  LEDBRIGHTNESS=mid
+  set_setting led.brightness max
+fi
+
+case ${LEDBRIGHTNESS} in
+  max)
+    LEDBRIGHTNESS=1
+    set_setting led.brightness max
+  ;;
+  mid)
+    LEDBRIGHTNESS=2
+    set_setting led.brightness mid
+  ;;
+  min)
+    LEDBRIGHTNESS=4
+    set_setting led.brightness min
+  ;;
+esac
+
+case $1 in
+  red)
+    off
+    COLOR=$(intensity 0xFF ${LEDBRIGHTNESS})
+    ec_set ${RGB_RED} ${COLOR}
+    ec_set ${RGB_GREEN} 0x00
+    ec_set ${RGB_BLUE} 0x00
+    ec_save
+    set_setting led.color red
+  ;;
+  green)
+    off
+    COLOR=$(intensity 0xFF ${LEDBRIGHTNESS})
+    ec_set ${RGB_RED} 0x00
+    ec_set ${RGB_GREEN} ${COLOR}
+    ec_set ${RGB_BLUE} 0x00
+    ec_save
+    set_setting led.color green
+  ;;
+  blue)
+    off
+    COLOR=$(intensity 0xFF ${LEDBRIGHTNESS})
+    ec_set ${RGB_RED} 0x00
+    ec_set ${RGB_GREEN} 0x00
+    ec_set ${RGB_BLUE} ${COLOR}
+    ec_save
+    set_setting led.color blue
+  ;;
+  teal)
+    off
+    COLOR=$(intensity 0x80 ${LEDBRIGHTNESS})
+    ec_set ${RGB_RED} 0x00
+    ec_set ${RGB_GREEN} ${COLOR}
+    ec_set ${RGB_BLUE} ${COLOR}
+    ec_save
+    set_setting led.color teal
+  ;;
+  purple)
+    off
+    COLOR=$(intensity 0x80 ${LEDBRIGHTNESS})
+    ec_set ${RGB_RED} ${COLOR}
+    ec_set ${RGB_GREEN} 0x00
+    ec_set ${RGB_BLUE} ${COLOR}
+    ec_save
+    set_setting led.color purple
+  ;;
+  white)
+    off
+    COLOR=$(intensity 0xFF ${LEDBRIGHTNESS})
+    ec_set ${RGB_RED} ${COLOR}
+    ec_set ${RGB_GREEN} ${COLOR}
+    ec_set ${RGB_BLUE} ${COLOR}
+    ec_save
+    set_setting led.color white
+  ;;
+  poweroff)
+    off
+  ;;
+  off)
+    off
+    set_setting led.color off
+  ;;
+  default)
+    del_setting led.color
+    ec_set ${RGB_MODE} 0x00
+  ;;
+  brightness)
+    set_setting led.brightness ${2}
+    ledcontrol $(get_setting led.color)
+  ;;
+  list)
+    cat <<EOF
+default
+off
+red
+green
+blue
+teal
+purple
+white
+EOF
+  ;;
+  *)
+    COLOR=$(get_setting led.color)
+    if [ ! -z "${COLOR}" ]
+    then
+      ledcontrol ${COLOR}
+    fi
+  ;;
+esac

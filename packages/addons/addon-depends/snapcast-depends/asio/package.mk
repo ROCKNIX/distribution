@@ -1,10 +1,10 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="asio"
-PKG_VERSION="1.34.2"
-PKG_SHA256="688869a4447bd564bcee3d43137d52d972112cb05c7ec4665945affdd01eea75"
-PKG_LICENSE="BSL"
+PKG_VERSION="1.36.0"
+PKG_SHA256="bcc4e7143352e4556d22cbfd0f072f352bfa87bd6f454fe8d7b1d55cdc8f8695"
+PKG_LICENSE="BSL-1.0"
 PKG_SITE="http://think-async.com/Asio"
 PKG_URL="https://github.com/chriskohlhoff/asio/archive/asio-${PKG_VERSION//./-}.zip"
 PKG_SOURCE_DIR="asio-asio-${PKG_VERSION//./-}"

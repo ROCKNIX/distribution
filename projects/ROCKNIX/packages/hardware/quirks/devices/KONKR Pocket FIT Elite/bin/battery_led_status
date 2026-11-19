@@ -1,0 +1,94 @@
+#!/bin/sh
+
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
+
+# Color the analogue-stick rings by battery state while led.color is battery:
+# discharging is green >40%, yellow >30%, orange >20%, red >10% and blinking red
+# below that; charging is orange until 95%, then green.
+
+# Minimal OS variable loading for performance
+. /etc/profile.d/001-functions
+
+BATTERY="/sys/class/power_supply/battery"
+
+function bat_led() {
+  /usr/bin/analog_sticks_ledcontrol 255 ${1} ${2} ${3} ${1} ${2} ${3}
+}
+
+function bat_led_off()    { /usr/bin/analog_sticks_ledcontrol 0 0 0 0 0 0 0; }
+function bat_led_red()    { bat_led 255 0 0; }
+function bat_led_orange() { bat_led 255 20 0; }
+function bat_led_yellow() { bat_led 255 125 0; }
+function bat_led_green()  { bat_led 0 255 0; }
+
+PREV_BATCAP="null"
+while true
+do
+  if [ ! "$(get_setting led.color)" == "battery" ]; then
+    break
+  fi
+
+  CAP=$(cat ${BATTERY}/capacity 2>/dev/null)
+  STAT=$(cat ${BATTERY}/status 2>/dev/null)
+
+  # qcom-battmgr answers with EAGAIN until the ADSP link is up, so wait for a
+  # usable reading instead of comparing empty values
+  case ${CAP} in
+    ''|*[!0-9]*)
+      sleep 5
+      continue
+    ;;
+  esac
+
+  if [ -z "${STAT}" ]; then
+    sleep 5
+    continue
+  fi
+
+  if [ "${STAT}" == "Discharging" ]; then
+    if (( ${CAP} <= 10 )); then
+      for ctr in $(seq 1 1 5)
+      do
+        bat_led_red
+        sleep .5
+        bat_led_off
+        sleep .5
+      done
+      continue
+    elif (( ${CAP} <= 20 )); then
+      BATCAP="D_RED"
+      if [ ! ${BATCAP} = ${PREV_BATCAP} ]; then
+        bat_led_red
+      fi
+    elif (( ${CAP} <= 30 )); then
+      BATCAP="D_ORANGE"
+      if [ ! ${BATCAP} = ${PREV_BATCAP} ]; then
+        bat_led_orange
+      fi
+    elif (( ${CAP} <= 40 )); then
+      BATCAP="D_YELLOW"
+      if [ ! ${BATCAP} = ${PREV_BATCAP} ]; then
+        bat_led_yellow
+      fi
+    else
+      BATCAP="D_GREEN"
+      if [ ! ${BATCAP} = ${PREV_BATCAP} ]; then
+        bat_led_green
+      fi
+    fi
+  elif (( ${CAP} <= 94 )); then
+    BATCAP="C_ORANGE"
+    if [ ! ${BATCAP} = ${PREV_BATCAP} ]; then
+      bat_led_orange
+    fi
+  else
+    BATCAP="C_GREEN"
+    if [ ! ${BATCAP} = ${PREV_BATCAP} ]; then
+      bat_led_green
+    fi
+  fi
+
+  PREV_BATCAP=${BATCAP}
+  sleep 15
+done

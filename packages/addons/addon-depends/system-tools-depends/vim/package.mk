@@ -1,10 +1,10 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="vim"
-PKG_VERSION="9.1.0"
-PKG_SHA256="ddb435f6e386c53799a3025bdc5a3533beac735a0ee596cb27ada97366a1c725"
-PKG_LICENSE="VIM"
+PKG_VERSION="9.2.0"
+PKG_SHA256="9c60fc4488d78bbca9069e74e9cfafd006bdfcece5bb0971eac6268531f1b51f"
+PKG_LICENSE="Vim"
 PKG_SITE="http://www.vim.org/"
 PKG_URL="https://github.com/vim/vim/archive/v${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain ncurses"

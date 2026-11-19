@@ -23,7 +23,7 @@ then
 fi
 
 if [ "${DISPLAYSERVER}" = "wl" ]; then
-  PKG_DEPENDS_TARGET+=" wayland libXtst libXfixes libXi gdk-pixbuf libvdpau"
+  PKG_DEPENDS_TARGET+=" wayland libXtst libXfixes libXi gdk-pixbuf"
   case ${ARCH} in
     arm)
       true

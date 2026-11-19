@@ -3,12 +3,5 @@
 
 . ${ROOT}/packages/x11/lib/libXau/package.mk
 
-PKG_DEPENDS_HOST="toolchain:host util-macros:host xorgproto:host"
-
-PKG_MESON_OPTS_HOST="-Ddefault_library=shared \
-                       -Dprefer_static=false \
-                       -Dxthreads=true"
-
-PKG_MESON_OPTS_TARGET="-Ddefault_library=shared \
-                       -Dprefer_static=false \
-                       -Dxthreads=true"
+PKG_MESON_OPTS_TARGET="${PKG_MESON_OPTS_TARGET/-Ddefault_library=static/-Ddefault_library=shared}"
+PKG_MESON_OPTS_TARGET="${PKG_MESON_OPTS_TARGET/-Dprefer_static=true/-Dprefer_static=false}"

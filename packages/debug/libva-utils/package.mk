@@ -1,10 +1,10 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="libva-utils"
-PKG_VERSION="2.22.0"
-PKG_SHA256="7b57615c130427ec134bb5d2b80af516ce5bb19a40e89b1dab46a0d59760d96c"
-PKG_LICENSE="GPL"
+PKG_VERSION="2.24.0"
+PKG_SHA256="bf959a1ced3cde8176a7ff50ad358ee98e93301ac068581a8b2617c5b83afcb3"
+PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/01org/libva-utils"
 PKG_URL="https://github.com/intel/libva-utils/archive/${PKG_VERSION}.tar.gz"
 PKG_LONGDESC="Libva-utils is a collection of tests for VA-API (VIdeo Acceleration API)"

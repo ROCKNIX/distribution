@@ -4,13 +4,13 @@
 # Copyright (C) 2026-present ROCKNIX (https://rocknix.org)
 
 # ROCKNIX Memory Manager
-# Logic: 0/Empty = Off, "Auto" = Smart Calculation, "Resume" = Hibernation Sizing.
+# Logic: 0/Empty = Off, "Auto" = 100% of RAM, "N%" = Percent of RAM, "Resume" = Hibernation Sizing.
 
 # --- 1. CONFIGURATION CASCADE ---
 
 # A. Internal Safe Defaults (Hardcoded Fallback)
 DEFAULT_ZRAM_SIZE="0"
-DEFAULT_ZRAM_ALGO="zstd"
+DEFAULT_ZRAM_ALGO="lz4"
 DEFAULT_SWAP_FILE_SIZE="0"
 DEFAULT_SWAP_PRIORITY="auto"
 DEFAULT_VM_WATERMARK_FACTOR="auto"
@@ -67,7 +67,7 @@ fi
 # even with lower RAM.
 IS_HIGH_PERF_SOC=false
 
-if [[ "${HW_DEVICE,,}" =~ rk3588|sm6115|sm8|s922x|g12b|rk3399 ]]; then
+if [[ "${HW_DEVICE,,}" =~ rk3588|sm4450|sm6115|sm8|s922x|g12b|rk3399 ]]; then
     IS_HIGH_PERF_SOC=true
 fi
 
@@ -325,33 +325,7 @@ apply_vm_tuning() {
         sysctl -w vm.compaction_proactiveness=$compaction_val >/dev/null
     fi
 
-    # 3. Transparent Huge Pages
-    # Tiered THP Logic (FS MADVISE Synergy)
-    if [ -f /sys/kernel/mm/transparent_hugepage/enabled ]; then
-        # Default to madvise for all to prevent bloat
-        echo madvise > /sys/kernel/mm/transparent_hugepage/enabled
-        
-        # Enable for Shared Memory (Crucial for Vulkan/Wayland textures)
-        if [ -f /sys/kernel/mm/transparent_hugepage/shmem_enabled ]; then
-            echo advise > /sys/kernel/mm/transparent_hugepage/shmem_enabled
-        fi
-
-        # Budget vs Flagship Defrag Logic
-        # On Budget devices (e.g. H700, RK3326), we use 'defer' so the system 
-        # never stalls while trying to find a contiguous 2MB block.
-        if [ "$IS_LOW_RAM" = true ] && [ "$IS_HIGH_PERF_SOC" = false ]; then
-            echo defer > /sys/kernel/mm/transparent_hugepage/defrag
-            logger -t memory-manager "THP: Budget mode enabled (defrag=defer)"
-        else
-            # Flagship (RK3588, SM8x) or powerful Mid-range (RK3399)
-            # Use defer+madvise to allow some synchronous compaction for 
-            # applications that explicitly think it is worth the performance.
-            echo "defer+madvise" > /sys/kernel/mm/transparent_hugepage/defrag
-            logger -t memory-manager "THP: Flagship mode enabled (defrag=defer+madvise)"
-        fi
-    fi
-
-    # 4. VM Overcommit Memory
+    # 3. VM Overcommit Memory
     local overcommit_val=0
     if [[ "${VM_OVERCOMMIT,,}" == "auto" ]]; then
         if [ "$IS_HIGH_PERF_SOC" = true ]; then
@@ -383,9 +357,9 @@ apply_tuning() {
         sysctl -w vm.swappiness=100 >/dev/null
         sysctl -w vm.page-cluster=0 >/dev/null
         
-        if [ -n "$SECONDARY_ALGO" ] && [ -f /sys/block/zram0/recompress ]; then
-            if grep -q "$SECONDARY_ALGO" /sys/block/zram0/comp_algorithm; then
-                 echo "algo=$SECONDARY_ALGO priority=1" > /sys/block/zram0/recompress 2>/dev/null
+        if [ -n "$SECONDARY_ALGO" ] && [ -f /sys/block/zram0/recomp_algorithm ]; then
+            if ! grep -q "$SECONDARY_ALGO" /sys/block/zram0/recomp_algorithm; then
+                logger -t memory-manager "ZRAM secondary algorithm $SECONDARY_ALGO is not registered"
             fi
         fi
     elif [ "$SWAP_SIZE_VAL" -gt 0 ]; then
@@ -397,19 +371,21 @@ apply_tuning() {
 perform_optimization() {
     # Proactive Maintenance Logic
     # 1. ZRAM Recompression (if Hybrid Tiering is active)
-    if [ "$ZRAM_SIZE_VAL" -gt 0 ] && [ -n "$SECONDARY_ALGO" ] && [ -f /sys/block/zram0/recompress ]; then
-        logger -t memory-manager "Optimizing: Triggering ZRAM recompression ($SECONDARY_ALGO)..."
-        if grep -q "$SECONDARY_ALGO" /sys/block/zram0/comp_algorithm; then
-             # Recompress huge/idle pages to secondary algo
-             echo "algo=$SECONDARY_ALGO type=huge_idle" > /sys/block/zram0/recompress 2>/dev/null
-        fi
-    fi
+    recompress_idle
     
     # 2. Memory Compaction (if Fragmentation is high)
     if [ -f /proc/sys/vm/compact_memory ]; then
         logger -t memory-manager "Optimizing: Triggering Memory Compaction..."
         echo 1 > /proc/sys/vm/compact_memory
     fi
+}
+
+recompress_idle() {
+    [ -n "$SECONDARY_ALGO" ] || return
+    grep -q "zram0" /proc/swaps || return
+    grep -q "$SECONDARY_ALGO" /sys/block/zram0/recomp_algorithm 2>/dev/null || return
+    echo "algo=$SECONDARY_ALGO type=idle" > /sys/block/zram0/recompress 2>/dev/null
+    echo all > /sys/block/zram0/idle
 }
 
 setup_zram() {
@@ -433,10 +409,20 @@ setup_zram() {
     
     local algo_path="/sys/block/zram0/comp_algorithm"
     [ -f "$algo_path" ] && echo "$PRIMARY_ALGO" > "$algo_path" 2>/dev/null
+
+    # The secondary algorithm must be registered before disksize initialises the device
+    if [ -n "$SECONDARY_ALGO" ] && [ -f /sys/block/zram0/recomp_algorithm ] && \
+       grep -q "$SECONDARY_ALGO" "$algo_path" 2>/dev/null; then
+        echo "algo=$SECONDARY_ALGO priority=1" > /sys/block/zram0/recomp_algorithm 2>/dev/null
+    fi
     
     echo $((ZRAM_SIZE_VAL * 1024 * 1024)) > /sys/block/zram0/disksize
+    echo $((TOTAL_MEM_MB / 2))M > /sys/block/zram0/mem_limit
     mkswap /dev/zram0 >/dev/null
     swapon -p 100 /dev/zram0
+
+    # zswap in front of zram compresses every page twice
+    [ -w /sys/module/zswap/parameters/enabled ] && echo N > /sys/module/zswap/parameters/enabled
 }
 
 setup_swapfile() {
@@ -496,12 +482,14 @@ while [[ $# -gt 0 ]]; do
         --reload) ACTION="reload"; shift ;;
         --drop-caches) ACTION="drop-caches"; shift ;;
         --optimize) ACTION="optimize"; shift ;;
+        --recompress) ACTION="recompress"; shift ;;
         --status) ACTION="status"; shift ;;
         --json) ACTION="json"; shift ;;
+        --get-zram) ACTION="get-zram"; shift ;;
         --help|-h)
             echo "Usage: rocknix-memory-manager [OPTIONS] [ACTION]"
             echo "Config Options (Writes to .config/swap.conf):"
-            echo "  --zram-size [0|Auto|MB]      Set ZRAM size"
+            echo "  --zram-size [0|Auto|N%|MB]   Set ZRAM size"
             echo "  --zram-algo [zstd|lzo|lz4]   Set ZRAM compression"
             echo "  --swap-size [0|Auto|Resume]  Set Disk Swap size"
             echo "  --swap-priority [Auto|Stripe] Set Swap priority"
@@ -513,8 +501,10 @@ while [[ $# -gt 0 ]]; do
             echo "  --setup        Initial setup"
             echo "  --reload       Safe reload (teardown -> setup)"
             echo "  --optimize     Run runtime optimizations (Recompress/Compact)"
+            echo "  --recompress   Recompress idle ZRAM pages with the secondary algorithm"
             echo "  --status       Show status (default interactive)"
             echo "  --json         Show status in JSON"
+            echo "  --get-zram     Print the configured ZRAM size and algorithm"
             exit 0
             ;;
         *) if [ -z "$ACTION" ]; then ACTION="setup"; fi; shift ;;
@@ -531,14 +521,11 @@ fi
 ZRAM_SIZE_VAL=0
 ZRAM_STATUS="Off"
 if [[ "${ZRAM_SIZE,,}" == "auto" ]]; then
-    if [ "$IS_LOW_RAM" = true ]; then
-        ZRAM_SIZE_VAL=$((TOTAL_MEM_MB * 3 / 4))
-    elif [ "$IS_MID_RAM" = true ]; then
-        ZRAM_SIZE_VAL=$((TOTAL_MEM_MB / 2))
-    else
-        ZRAM_SIZE_VAL=6144
-    fi
+    ZRAM_SIZE_VAL=$TOTAL_MEM_MB
     ZRAM_STATUS="Auto (${ZRAM_SIZE_VAL}MB)"
+elif [[ "$ZRAM_SIZE" =~ ^([0-9]+)%$ ]] && [ "${BASH_REMATCH[1]}" -gt 0 ]; then
+    ZRAM_SIZE_VAL=$((TOTAL_MEM_MB * BASH_REMATCH[1] / 100))
+    ZRAM_STATUS="${ZRAM_SIZE} (${ZRAM_SIZE_VAL}MB)"
 elif [[ "$ZRAM_SIZE" =~ ^[0-9]+$ ]] && [ "$ZRAM_SIZE" -gt 0 ]; then
     ZRAM_SIZE_VAL=$ZRAM_SIZE
     ZRAM_STATUS="${ZRAM_SIZE_VAL}MB"
@@ -568,7 +555,7 @@ PRIMARY_ALGO="$ZRAM_ALGO"
 SECONDARY_ALGO=""
 
 if [[ "$ZRAM_ALGO" == "zstd" ]]; then
-    PRIMARY_ALGO="lzo-rle"
+    PRIMARY_ALGO="lz4"
     SECONDARY_ALGO="zstd"
 fi
 
@@ -609,6 +596,9 @@ case "$ACTION" in
         exec 1> >(logger -s -t memory-manager) 2>&1
         perform_optimization
         ;;
+    recompress)
+        recompress_idle
+        ;;
     drop-caches)
         drop_caches
         ;;
@@ -617,6 +607,10 @@ case "$ACTION" in
         ;;
     json)
         show_status_json
+        ;;
+    get-zram)
+        echo "$ZRAM_SIZE"
+        echo "$ZRAM_ALGO"
         ;;
 esac
 exit 0

@@ -21,9 +21,13 @@ if [ -z "${CURRENT_CORE}" ] || [ -z "${ROM_PATH}" ]; then
     exit 0
 fi
 
+ROM=$(basename "${ROM_PATH}")
 ROM_NAME=$(basename "${ROM_PATH}" | sed 's/\.[^.]*$//')
 EXTERNAL_DISPLAY_CONNECTED=false
-if grep -q "^connected$" /sys/class/drm/card*-HDMI*/status 2>/dev/null || grep -q "^connected$" /sys/class/drm/card*-DP*/status 2>/dev/null; then
+if grep -q "^connected$" /sys/class/drm/card*-HDMI*/status 2>/dev/null; then
+    EXTERNAL_DISPLAY_CONNECTED=true
+# The Duo Lite's DP-1 is its built-in bottom screen, not an external display.
+elif [ "${QUIRK_DEVICE}" != "Retroid Pocket Duo Lite" ] && grep -q "^connected$" /sys/class/drm/card*-DP*/status 2>/dev/null; then
     EXTERNAL_DISPLAY_CONNECTED=true
 fi
 IS_VERTICAL=false
@@ -48,19 +52,43 @@ case "${ROM_NAME}" in
         ;;
 esac
 
+melondsds_fit_to_main_screen() {
+    [ "${CURRENT_CORE}" = "melondsds" ] || return 1
+    [ "$(get_setting "screen_sizing" "${PLATFORM}" "${ROM}")" != "1" ]
+}
+
 if [ "${IS_VERTICAL}" = "true" ]; then
     if [ "${QUIRK_DEVICE}" = "AYN Thor" ]; then
         # Needs two separate swaymsg calls. Screen cannot move and have windows moved to it in the same line.
-        swaymsg '[title="RetroArch.*"] output DSI-2 pos 0 0, output DSI-1 pos 340 1080'
-        swaymsg '[title="RetroArch.*"] floating enable, fullscreen disable, resize set 1240 2160, move to output DSI-2, move absolute position 340 0'
+        swaymsg '[title="RetroArch.*"] output DSI-2 pos 0 0, output DSI-1 power on pos 340 1080'
+        RA_WIDTH="1240"
+        RA_X="340"
+        if melondsds_fit_to_main_screen; then
+            RA_WIDTH="1440"
+            RA_X="240"
+        fi
+        swaymsg "[title=\"RetroArch.*\"] floating enable, fullscreen disable, resize set ${RA_WIDTH} 2160, move to output DSI-2, move absolute position ${RA_X} 0"
+        swaymsg 'input "0:0:bottom_touchscreen" events enabled'
     elif [ "${QUIRK_DEVICE}" = "AYN Thor Lite" ]; then
         # Same notes from above apply here.
         swaymsg '[title="RetroArch.*"] output DSI-1 pos 0 0, output DSI-2 power on pos 340 1080'
-        swaymsg '[title="RetroArch.*"] floating enable, fullscreen disable, resize set 1240 2160, move to output DSI-1, move absolute position 340 0'
+        RA_WIDTH="1240"
+        RA_X="340"
+        if melondsds_fit_to_main_screen; then
+            RA_WIDTH="1440"
+            RA_X="240"
+        fi
+        swaymsg "[title=\"RetroArch.*\"] floating enable, fullscreen disable, resize set ${RA_WIDTH} 2160, move to output DSI-1, move absolute position ${RA_X} 0"
+        swaymsg 'input "0:0:bottom_touchscreen" events enabled'
     elif [ "${QUIRK_DEVICE}" = "Anbernic RG DS" ]; then
         # Same notes from above apply here.
         swaymsg '[title="RetroArch.*"] output DSI-2 pos 0 0, output DSI-1 power on pos 0 480'
         swaymsg '[title="RetroArch.*"] floating enable, fullscreen disable, resize set 640 960, move to output DSI-2, move absolute position 0 0'
+        swaymsg 'input "1046:911:Goodix_Capacitive_TouchScreen" calibration_matrix 1 0 0 0 0.5 0.5'
+    elif [ "${QUIRK_DEVICE}" = "Anbernic RG DS Plus" ]; then
+        # Same notes from above apply here.
+        swaymsg '[title="RetroArch.*"] output DSI-2 pos 0 0, output DSI-1 power on pos 0 768'
+        swaymsg '[title="RetroArch.*"] floating enable, fullscreen disable, resize set 1024 1536, move to output DSI-2, move absolute position 0 0'
         swaymsg 'input "1046:911:Goodix_Capacitive_TouchScreen" calibration_matrix 1 0 0 0 0.5 0.5'
     elif [ "${QUIRK_DEVICE}" = "AYANEO Pocket DS" ]; then
         swaymsg output DSI-1 scale 1.40
@@ -86,14 +114,27 @@ if [ "${IS_VERTICAL}" = "true" ]; then
                 ;;
         esac
 
+        RA_X="${DSI_X}"
+        case "${QUIRK_DEVICE}" in
+            "Retroid Pocket Mini" | "Retroid Pocket Mini V2")
+                if melondsds_fit_to_main_screen; then
+                    RA_WIDTH="1440"
+                    RA_X="240"
+                fi
+                ;;
+        esac
+
         # Setup vertical stack using external DP-1 as the top screen.
         swaymsg "[title=\"RetroArch.*\"] output DP-1 pos 0 0, output DSI-1 pos ${DSI_X} 1080"
-        swaymsg "[title=\"RetroArch.*\"] floating enable, fullscreen disable, resize set ${RA_WIDTH} ${RA_HEIGHT}, move to output DP-1, move absolute position ${DSI_X} 0"
+        swaymsg "[title=\"RetroArch.*\"] floating enable, fullscreen disable, resize set ${RA_WIDTH} ${RA_HEIGHT}, move to output DP-1, move absolute position ${RA_X} 0"
 
         swaymsg input "0:0:generic_ft5x06_(a0)" map_to_output DSI-1
         swaymsg input "0:0:generic_ft5x06_(a0)" events enabled
         swaymsg input "0:0:generic_ft5x06_(8d)" map_to_output DSI-1
         swaymsg input "0:0:generic_ft5x06_(8d)" events enabled
+    elif [ "${QUIRK_DEVICE}" = "Retroid Pocket Duo Lite" ]; then
+        swaymsg '[title="RetroArch.*"] output DP-1 power on'
+        swaymsg '[title="RetroArch.*"] floating enable, fullscreen disable, border none, resize set 1280 2040, move absolute position 320 0'
     fi
 elif [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ] && [ "${EXTERNAL_DISPLAY_CONNECTED}" = "false" ]; then
     BOTTOM_SCREEN_TYPE=$(get_setting rocknix.bottomscreen.type 2>/dev/null)
@@ -114,15 +155,20 @@ elif [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ] && [ "${EXTERNAL_DISPLAY_CONNECTED
                 OUTPUT="DSI-2"
                 swaymsg output ${OUTPUT} transform 270
                 ;;
+            "AYN Thor")
+                OUTPUT="DSI-1"
+                swaymsg input "0:0:bottom_touchscreen" events enabled ;;
             "AYN Thor Lite")
-                OUTPUT="DSI-2" ;;
+                OUTPUT="DSI-2"
+                swaymsg input "0:0:bottom_touchscreen" events enabled ;;
+            "Retroid Pocket Duo Lite")
+                OUTPUT="DP-1" ;;
             *)
                 OUTPUT="DSI-1" ;;
         esac
 
         swaymsg "output ${OUTPUT} power on" >/dev/null 2>&1
         RA_PID=$(pgrep -f '/usr/bin/retroarch' | head -n 1)
-        USE_CHEEVOS=$(get_setting "retroachievements" 2>/dev/null)
 
         ( cd "${BOTTOM_SCREEN_UI_DIR}" && \
           exec python3 "${BOTTOM_SCREEN_UI_DIR}/main.py" \
@@ -130,7 +176,6 @@ elif [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ] && [ "${EXTERNAL_DISPLAY_CONNECTED
               --core     "${CURRENT_CORE}" \
               --platform "${PLATFORM}" \
               --ra-pid   "${RA_PID:-0}" \
-              --cheevos-enabled  "${USE_CHEEVOS:-1}" \
           >/dev/null 2>&1 ) &
         echo $! > "${BOTTOM_SCREEN_PID_FILE}"
 

@@ -4,6 +4,7 @@
 
 PKG_NAME="libcom-err"
 PKG_VERSION="$(get_pkg_version e2fsprogs)"
+PKG_SHA256="fd5bf388cbdbe006a3d3b318d983b2948382440acc85a87f1e7d108653e8db0b"
 PKG_LICENSE="GPL"
 PKG_SITE="http://e2fsprogs.sourceforge.net/"
 PKG_URL="https://www.kernel.org/pub/linux/kernel/people/tytso/e2fsprogs/v${PKG_VERSION}/e2fsprogs-${PKG_VERSION}.tar.xz"

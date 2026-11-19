@@ -1,15 +1,13 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="azahar-sa"
-PKG_VERSION="9701a3d8743bc8a53024c07f1d3f82eb06b676c2" # tag 2125.1.1
-PKG_LICENSE="GPL"
+PKG_VERSION="219d743a1e698101fe1ab8bef43e6563126c3c27" # tag 2126.2
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/azahar-emu/azahar"
 PKG_URL="${PKG_SITE}.git"
 PKG_DEPENDS_TARGET="toolchain ffmpeg mesa SDL2 boost zlib libusb zstd control-gen spirv-tools qt6"
 PKG_LONGDESC="Azahar - Nintendo 3DS emulator"
-PKG_TOOLCHAIN="cmake"
-PKG_PATCH_DIRS="common"
 
 if [ ! "${OPENGL}" = "no" ]; then
   PKG_DEPENDS_TARGET+=" ${OPENGL} glu libglvnd"
@@ -27,25 +25,26 @@ if [ "${VULKAN_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${VULKAN}"
 fi
 
-TARGET_CXXFLAGS+=-fpch-preprocess
+PKG_CMAKE_OPTS_TARGET+=" -DENABLE_OPENGL=ON \
+                         -DENABLE_QT=ON \
+                         -DENABLE_QT_TRANSLATION=OFF \
+                         -DENABLE_ROOM=OFF \
+                         -DENABLE_SDL2=ON \
+                         -DENABLE_TESTS=OFF \
+                         -DENABLE_VULKAN=ON \
+                         -DUSE_DISCORD_PRESENCE=OFF"
 
-PKG_CMAKE_OPTS_TARGET+="-DENABLE_OPENGL=ON \
-                        -DENABLE_QT_TRANSLATION=OFF \
-                        -DENABLE_QT=ON \
-                        -DENABLE_ROOM=OFF \
-                        -DENABLE_SDL2_FRONTEND=OFF \
-                        -DENABLE_SDL2=ON \
-                        -DENABLE_TESTS=OFF \
-                        -DENABLE_VULKAN=ON \
-                        -DUSE_DISCORD_PRESENCE=OFF \
-                        -DUSE_SYSTEM_SDL2=ON"
+pre_configure_target() {
+  export CXXFLAGS+=-fpch-preprocess
+  export CFLAGS="${CFLAGS} -Wno-error=incompatible-pointer-types"
+}
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin
-  cp ${PKG_BUILD}/.${TARGET_NAME}/bin/Release/azahar ${INSTALL}/usr/bin/azahar
-  cp ${PKG_DIR}/scripts/* ${INSTALL}/usr/bin
+    cp -a ${PKG_BUILD}/.${TARGET_NAME}/bin/Release/azahar ${INSTALL}/usr/bin
+    cp -a ${PKG_DIR}/scripts/start_azahar.sh ${INSTALL}/usr/bin
 
   mkdir -p ${INSTALL}/usr/config/azahar
-  cp -rf ${PKG_DIR}/config/common/* ${INSTALL}/usr/config/azahar
-  cp -rf ${PKG_DIR}/config/${DEVICE}/* ${INSTALL}/usr/config/azahar
+    cp -a ${PKG_DIR}/config/common/* ${INSTALL}/usr/config/azahar
+    cp -a ${PKG_DIR}/config/${DEVICE}/* ${INSTALL}/usr/config/azahar
 }

@@ -3,6 +3,7 @@
 
 PKG_NAME="u-boot"
 PKG_VERSION="2025.10"
+PKG_SHA256="b4f032848e56cc8f213ad59f9132c084dbbb632bc29176d024e58220e0efdf4a"
 PKG_LICENSE="GPL"
 PKG_SITE="https://www.denx.de/wiki/U-Boot"
 PKG_URL="https://ftp.denx.de/pub/u-boot/${PKG_NAME}-${PKG_VERSION}.tar.bz2"

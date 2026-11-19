@@ -1,0 +1,66 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+SERIAL_DEVICE="/dev/ttyHS0"
+
+if [ "$#" -ne 4 ] && [ "$#" -ne 7 ]; then
+  echo "Usage: $0 <BRIGHTNESS> <RIGHT_R> <RIGHT_G> <RIGHT_B> [<LEFT_R> <LEFT_G> <LEFT_B>]" >&2
+  echo "Example: $0 255 255 0 0 255 0 0" >&2
+  exit 1
+fi
+
+for value in "$@"; do
+  case ${value} in
+    ''|*[!0-9]*)
+      echo "Brightness and RGB values must be integers from 0 to 255" >&2
+      exit 1
+    ;;
+  esac
+
+  if [ "${value}" -gt 255 ]; then
+    echo "Brightness and RGB values must be integers from 0 to 255" >&2
+    exit 1
+  fi
+done
+
+BRIGHTNESS=${1}
+R=${2}
+G=${3}
+B=${4}
+
+# The S2 protocol applies one colour to both analogue-stick rings. ROCKNIX's
+# frontend supplies separate right and left colours, so use the right colour
+# for both rings while retaining four-argument compatibility for system hooks.
+
+# AYANEO Pocket S2 uses the verified 27-byte MCU packet family with selector
+# 0x08. The checksum is the low byte of the sum of bytes 1 through 24.
+CHECKSUM=$(((
+  0x00 + 0x1C + 0x20 + 0x01 +
+  0x80 + 0x00 + 0x81 + 0x00 +
+  0x8B + 0x0F + 0x88 + R +
+  0x89 + G + 0x8A + B +
+  0x86 + BRIGHTNESS + 0x87 + BRIGHTNESS +
+  0x58 + 0x08 + 0x45 + 0x00
+) & 0xFF))
+
+FRAME=$(printf '\\%03o' \
+  0xF7 0x00 0x1C 0x20 0x01 \
+  0x80 0x00 0x81 0x00 0x8B 0x0F \
+  0x88 "${R}" 0x89 "${G}" 0x8A "${B}" \
+  0x86 "${BRIGHTNESS}" 0x87 "${BRIGHTNESS}" \
+  0x58 0x08 0x45 0x00 "${CHECKSUM}" 0xED)
+
+if [ ! -c "${SERIAL_DEVICE}" ]; then
+  echo "Serial device ${SERIAL_DEVICE} is unavailable" >&2
+  exit 1
+fi
+
+stty -F "${SERIAL_DEVICE}" 115200 -clocal -opost -isig -icanon -echo
+
+# Stock S2 software repeats RGB writes with approximately 40 ms spacing.
+printf '%b' "${FRAME}" >"${SERIAL_DEVICE}"
+sleep 0.04
+printf '%b' "${FRAME}" >"${SERIAL_DEVICE}"
+sleep 0.04
+printf '%b' "${FRAME}" >"${SERIAL_DEVICE}"

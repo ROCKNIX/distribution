@@ -1,0 +1,66 @@
+From: Anze <aanzdev@gmail.com>
+Date: Tue, 7 Jul 2026 14:00:00 +0200
+Subject: [PATCH] hid-playstation: expose DualSense Edge Fn and back paddles
+
+The DualSense Edge reports four extra physical buttons in buttons[2] of
+the input report: left/right function (bits 4/5) and the two removable
+back paddles (bits 6/7) - the same layout SDL's hidapi PS5 driver
+decodes. hid-playstation parses only bits 0-2 (PS/touchpad/mute) and
+silently drops them, so the Edge's extra buttons never reach evdev.
+
+Decode them as four dedicated buttons, BTN_TRIGGER_HAPPY1-4 (left Fn,
+right Fn, left paddle, right paddle), gated on the Edge product id
+(0x0df2) so a plain DualSense is unaffected. This mirrors xpad's
+handling of the Xbox Elite paddles (BTN_TRIGGER_HAPPY5-8): real extra
+buttons, not a remap onto existing gamepad buttons.
+---
+diff --git a/drivers/hid/hid-playstation.c b/drivers/hid/hid-playstation.c
+--- a/drivers/hid/hid-playstation.c
++++ b/drivers/hid/hid-playstation.c
+@@ -111,4 +111,9 @@
+ #define DS_BUTTONS2_PS_HOME	BIT(0)
+ #define DS_BUTTONS2_TOUCHPAD	BIT(1)
+ #define DS_BUTTONS2_MIC_MUTE	BIT(2)
++/* DualSense Edge only (bits 4-7 of buttons[2]) */
++#define DS_BUTTONS2_EDGE_LEFT_FN	BIT(4)
++#define DS_BUTTONS2_EDGE_RIGHT_FN	BIT(5)
++#define DS_BUTTONS2_EDGE_LEFT_PADDLE	BIT(6)
++#define DS_BUTTONS2_EDGE_RIGHT_PADDLE	BIT(7)
+ 
+@@ -770,6 +770,19 @@
+ 
+ 	for (i = 0; i < ARRAY_SIZE(ps_gamepad_buttons); i++)
+ 		input_set_capability(gamepad, EV_KEY, ps_gamepad_buttons[i]);
++
++	/*
++	 * DualSense Edge: the two function buttons and the two removable back
++	 * paddles are extra physical buttons with no DualShock equivalent.
++	 * Expose them as dedicated buttons (same approach as xpad's Xbox Elite
++	 * paddles, BTN_TRIGGER_HAPPY5-8) so userspace sees real paddles.
++	 */
++	if (hdev->product == USB_DEVICE_ID_SONY_PS5_CONTROLLER_2) {
++		input_set_capability(gamepad, EV_KEY, BTN_TRIGGER_HAPPY1);
++		input_set_capability(gamepad, EV_KEY, BTN_TRIGGER_HAPPY2);
++		input_set_capability(gamepad, EV_KEY, BTN_TRIGGER_HAPPY3);
++		input_set_capability(gamepad, EV_KEY, BTN_TRIGGER_HAPPY4);
++	}
+ 
+ #if IS_ENABLED(CONFIG_PLAYSTATION_FF)
+ 	if (play_effect) {
+@@ -1486,4 +1486,16 @@
+ 	input_report_key(ds->gamepad, BTN_THUMBL, ds_report->buttons[1] & DS_BUTTONS1_L3);
+ 	input_report_key(ds->gamepad, BTN_THUMBR, ds_report->buttons[1] & DS_BUTTONS1_R3);
+ 	input_report_key(ds->gamepad, BTN_MODE,   ds_report->buttons[2] & DS_BUTTONS2_PS_HOME);
++
++	/* DualSense Edge: function buttons + removable back paddles */
++	if (hdev->product == USB_DEVICE_ID_SONY_PS5_CONTROLLER_2) {
++		input_report_key(ds->gamepad, BTN_TRIGGER_HAPPY1,
++				 ds_report->buttons[2] & DS_BUTTONS2_EDGE_LEFT_FN);
++		input_report_key(ds->gamepad, BTN_TRIGGER_HAPPY2,
++				 ds_report->buttons[2] & DS_BUTTONS2_EDGE_RIGHT_FN);
++		input_report_key(ds->gamepad, BTN_TRIGGER_HAPPY3,
++				 ds_report->buttons[2] & DS_BUTTONS2_EDGE_LEFT_PADDLE);
++		input_report_key(ds->gamepad, BTN_TRIGGER_HAPPY4,
++				 ds_report->buttons[2] & DS_BUTTONS2_EDGE_RIGHT_PADDLE);
++	}
+ 	input_sync(ds->gamepad);

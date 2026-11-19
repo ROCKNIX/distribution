@@ -3,16 +3,12 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="libXinerama"
-PKG_VERSION="1.1.5"
-PKG_SHA256="5094d1f0fcc1828cb1696d0d39d9e866ae32520c54d01f618f1a3c1e30c2085c"
-PKG_LICENSE="OSS"
+PKG_VERSION="1.1.6"
+PKG_SHA256="d00fc1599c303dc5cbc122b8068bdc7405d6fcb19060f4597fc51bd3a8be51d7"
+PKG_LICENSE="MIT"
 PKG_SITE="https://www.X.org"
 PKG_URL="https://xorg.freedesktop.org/archive/individual/lib/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_TARGET="toolchain util-macros libXext"
 PKG_LONGDESC="libXinerama is the Xinerama library."
 
-PKG_CONFIGURE_OPTS_TARGET="--enable-static --disable-shared --enable-malloc0returnsnull"
-
-post_configure_target() {
-  libtool_remove_rpath libtool
-}
+PKG_MESON_OPTS_TARGET="-Ddefault_library=static"

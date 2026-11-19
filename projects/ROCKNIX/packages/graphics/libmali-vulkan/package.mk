@@ -2,7 +2,7 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="libmali-vulkan"
-PKG_LICENSE="mali_driver"
+PKG_LICENSE="LES-PRE-20769"
 PKG_ARCH="arm aarch64"
 PKG_DEPENDS_TARGET="toolchain mesa vulkan-tools vulkan-headers libmali vulkan-wsi-layer"
 PKG_TOOLCHAIN="manual"
@@ -17,13 +17,6 @@ case ${DEVICE} in
     APIVER="1.0.5"
     PKG_URL="https://github.com/r3claimer/packages/raw/${PKG_VERSION}/g610-vulkan-mali.tar.gz"
   ;;
-  RK3566|RK3576)
-    PKG_VERSION="rk3576"
-    PKG_SOURCE_NAME="g52-vulkan-mali.tar.gz"
-    FILENAME="libmali-vulkan-g52.so"
-    APIVER="1.2.207"
-    PKG_URL="https://github.com/sydarn/libmali/releases/download/${PKG_VERSION}/libmali.so.1.9.0.zip"
-  ;;
 esac
 
 # Need a custom unpack() as --strip-components=1 in extract script strips everything
@@ -32,10 +25,6 @@ mkdir -p ${PKG_BUILD}
 case ${DEVICE} in
   RK3588)
     tar -xf ${SOURCES}/${PKG_NAME}/${PKG_SOURCE_NAME} -C ${PKG_BUILD}
-  ;;
-  RK3566|RK3576)
-    unzip -j ${SOURCES}/${PKG_NAME}/${PKG_SOURCE_NAME} libmali.so.1.9.0 -d ${PKG_BUILD}
-    mv ${PKG_BUILD}/libmali.so.1.9.0 ${PKG_BUILD}/${FILENAME}
   ;;
 esac
 }
@@ -50,6 +39,10 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/share/vulkan/icd.d
 
   cp ${PKG_BUILD}/${FILENAME} ${INSTALL}/usr/lib/
+
+  mkdir -p ${INSTALL}/usr/share/licenses/libmali-vulkan
+  cp ${ROOT}/licenses/LicenseRef-ARM-Mali-EULA.txt \
+     ${INSTALL}/usr/share/licenses/libmali-vulkan/END_USER_LICENCE_AGREEMENT.txt
   cp -r ${PKG_BUILD}/mali.json ${INSTALL}/usr/share/vulkan/icd.d
 
   ln -sfv /usr/lib/${FILENAME} ${INSTALL}/usr/lib/libMaliVulkan.so.1

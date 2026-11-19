@@ -3,17 +3,12 @@
 # Copyright (C) 2019-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="fakeroot"
-PKG_VERSION="1.37.1.2"
-PKG_SHA256="959496928c8a676ec8377f665ff6a19a707bfad693325f9cc4a4126642f53224"
-PKG_LICENSE="GPL3"
+PKG_VERSION="2.1.4"
+PKG_SHA256="0822bd5a9f0cf19d2ba0546b88b0432d4d3d9917db62c57b74044ccadba06e49"
+PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://tracker.debian.org/pkg/fakeroot"
-PKG_URL="http://ftp.debian.org/debian/pool/main/f/fakeroot/${PKG_NAME}_${PKG_VERSION}.orig.tar.gz"
-PKG_DEPENDS_HOST="ccache:host libcap:host autoconf:host libtool:host"
+PKG_URL="http://ftp.debian.org/debian/pool/main/f/fakeroot/${PKG_NAME}_${PKG_VERSION}.orig.tar.xz"
+PKG_DEPENDS_HOST="ccache:host libcap:host libtool:host meson:host ninja:host"
 PKG_LONGDESC="fakeroot provides a fake root environment by means of LD_PRELOAD and SYSV IPC (or TCP) trickery."
 
-PKG_CONFIGURE_OPTS_HOST="--with-gnu-ld"
-
-pre_configure_host() {
-  cd ${PKG_BUILD}
-  ./bootstrap
-}
+PKG_MESON_OPTS_HOST="-Ddocs=false"

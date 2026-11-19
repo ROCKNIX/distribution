@@ -1,0 +1,55 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX
+
+. /etc/profile.d/001-functions
+
+WIFI_ENABLED=$(get_setting "wifi.enabled")
+
+if [ "${WIFI_ENABLED}" = "1" ]; then
+
+    # Wait up to 15 seconds for the managed WiFi interface to appear.
+    WLAN=""
+
+    for i in $(seq 1 15); do
+        WLAN=$(iw dev | awk '
+            $1=="Interface" {iface=$2}
+            $1=="type" && $2=="managed" {print iface; exit}
+        ')
+
+        [ -n "$WLAN" ] && break
+        sleep 1
+    done
+
+    if [ -n "$WLAN" ]; then
+
+        echo "WiFi resume recovery: found $WLAN"
+
+        # Clear any rfkill state left behind after suspend/resume.
+        rfkill unblock wlan
+        sleep 2
+
+        # Reset interface state.
+        ip link set "$WLAN" down
+        sleep 1
+        ip link set "$WLAN" up
+
+        # Allow mt7921e firmware and NM state to settle.
+        sleep 5
+
+        # Ensure NetworkManager owns the device.
+        nmcli device set "$WLAN" managed yes
+
+        nmcli device disconnect "$WLAN"
+        sleep 3
+
+        # Trigger scan and reconnect.
+        nmcli device wifi rescan ifname "$WLAN"
+        sleep 3
+
+        nmcli device connect "$WLAN" ifname "$WLAN"
+
+    else
+        echo "WiFi resume recovery: no managed WiFi interface found"
+    fi
+fi

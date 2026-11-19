@@ -1,10 +1,10 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2024-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="libretro-swanstation"
 PKG_VERSION="fc37fce91dedeba6e4007012cfed8de626fb45cf"
 PKG_SHA256="d0b683021c079105c1f14be868390a6923614afdd36e6486a3b6b71b049922f4"
-PKG_LICENSE="GPL-3.0-or-later"
+PKG_LICENSE="GPL-3.0-only"
 PKG_SITE="https://github.com/kodi-game/swanstation"
 PKG_URL="https://github.com/kodi-game/swanstation/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"
@@ -26,12 +26,6 @@ fi
 if [ "${VULKAN_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${VULKAN}"
 fi
-
-PKG_CMAKE_OPTS_TARGET="-DBUILD_NOGUI_FRONTEND=OFF \
-                       -DBUILD_QT_FRONTEND=OFF \
-                       -DBUILD_LIBRETRO_CORE=ON \
-                       -DENABLE_DISCORD_PRESENCE=OFF \
-                       -DUSE_DRMKMS=ON"
 
 makeinstall_target() {
   mkdir -p ${SYSROOT_PREFIX}/usr/lib/cmake/${PKG_NAME}

@@ -3,6 +3,7 @@
 
 PKG_NAME="dtbocfg"
 PKG_VERSION="0.1.0"
+PKG_SHA256="f1667de4250b744bb4a11dfc5f85d8b1f960da7d396c9f230f5b4d12224f524f"
 PKG_LICENSE="BSD"
 PKG_SITE="https://github.com/ikwzm/dtbocfg"
 PKG_URL="${PKG_SITE}/archive/refs/tags/v${PKG_VERSION}.tar.gz"

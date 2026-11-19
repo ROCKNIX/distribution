@@ -1,11 +1,11 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2020-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="st"
-PKG_VERSION="0.9.2"
-PKG_SHA256="6b215d4f472b21d6232f30f221117a777e24bcfee68955ddefb7426467f9494b"
+PKG_VERSION="0.9.3"
+PKG_SHA256="9ed9feabcded713d4ded38c8cebf36a3b08f0042ef7934a0e2b2409da56e649b"
 PKG_ARCH="x86_64"
-PKG_LICENSE="GPL"
+PKG_LICENSE="MIT"
 PKG_SITE="https://st.suckless.org/"
 PKG_URL="https://dl.suckless.org/st/st-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain libX11 libXft libXrender fontconfig freetype ncurses"

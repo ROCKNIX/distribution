@@ -1,0 +1,104 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2025 ROCKNIX (https://github.com/ROCKNIX)
+
+# Minimal OS variable loading for performance
+. /etc/profile.d/001-functions
+
+LED="/sys/class/leds"
+
+function led_off() {
+  for i in $(seq 0 15); do
+    echo 0 > ${LED}/red:indicator-${i}/brightness
+    echo 0 > ${LED}/green:indicator-${i}/brightness
+    echo 0 > ${LED}/blue:indicator-${i}/brightness
+  done
+}
+
+function led_rainbow() {
+  STEPS=30
+  DURATION=0.5
+  SLEEP_TIME=$(echo "scale=4; $DURATION/$STEPS" | bc)
+  CYCLES=2
+
+  calculate_rainbow_color() {
+    local position=$1
+    local h=$(echo "scale=2; 360*$position/$STEPS" | bc)
+    local region=$(echo "scale=0; $h/60" | bc)
+    local remainder=$(echo "scale=2; $h-$region*60" | bc)
+    local fractional=$(echo "scale=2; $remainder/60" | bc)
+    local r=0
+    local g=0
+    local b=0
+
+    case $region in
+      0) r=255; g=$(echo "scale=0; 255*$fractional" | bc); b=0 ;;
+      1) r=$(echo "scale=0; 255*(1-$fractional)" | bc); g=255; b=0 ;;
+      2) r=0; g=255; b=$(echo "scale=0; 255*$fractional" | bc) ;;
+      3) r=0; g=$(echo "scale=0; 255*(1-$fractional)" | bc); b=255 ;;
+      4) r=$(echo "scale=0; 255*$fractional" | bc); g=0; b=255 ;;
+      5|6) r=255; g=0; b=$(echo "scale=0; 255*(1-$fractional)" | bc) ;;
+    esac
+
+    r=${r%.*}; g=${g%.*}; b=${b%.*}
+    r=$(( r < 0 ? 0 : r > 255 ? 255 : r ))
+    g=$(( g < 0 ? 0 : g > 255 ? 255 : g ))
+    b=$(( b < 0 ? 0 : b > 255 ? 255 : b ))
+
+    echo "$r $g $b"
+  }
+
+  for ((cycle=0; cycle<CYCLES; cycle++)); do
+    for ((i=0; i<STEPS; i++)); do
+      rgb=$(calculate_rainbow_color $i)
+      read r g b <<< "$rgb"
+      /usr/bin/analog_sticks_ledcontrol 255 $r $g $b $r $g $b
+      sleep $SLEEP_TIME
+    done
+  done
+
+  # Return to original state
+  LED_STATE=$(get_setting "led.color")
+  case ${LED_STATE} in
+    off)
+      led_off
+      ;;
+    rgb)
+      LEDS_CONFIG=$(get_setting analogsticks.led)
+      /usr/bin/analog_sticks_ledcontrol ${LEDS_CONFIG}
+      ;;
+    battery)
+      systemctl restart batteryledstatus.service
+      ;;
+  esac
+}
+
+case ${1} in
+  off)
+    led_off
+    set_setting led.color ${1}
+    ;;
+  rgb)
+    LEDS_CONFIG=$(get_setting analogsticks.led)
+    /usr/bin/analog_sticks_ledcontrol ${LEDS_CONFIG}
+    set_setting led.color ${1}
+    ;;
+  battery)
+    led_off
+    set_setting led.color ${1}
+    systemctl restart batteryledstatus.service
+    ;;
+  rainbow)
+    led_rainbow
+    ;;
+  poweroff)
+    led_off
+    ;;
+  list)
+cat <<EOF
+off
+rgb
+battery
+EOF
+    ;;
+esac

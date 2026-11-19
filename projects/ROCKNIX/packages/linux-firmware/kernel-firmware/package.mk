@@ -3,6 +3,7 @@
 
 PKG_NAME="kernel-firmware"
 PKG_VERSION="20260309"
+PKG_SHA256="28fb1b57fa9531edbd001a2462068267f10622e613abd40f952344b3f1fc5a16"
 PKG_LICENSE="other"
 PKG_SITE="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/"
 PKG_URL="https://cdn.kernel.org/pub/linux/kernel/firmware/linux-firmware-${PKG_VERSION}.tar.gz"
@@ -85,6 +86,11 @@ makeinstall_target() {
   # Sm8250 devices need slpi firmware set to the correct dir
   if [ ${DEVICE} = "SM8250" ]; then
    mv ${FW_TARGET_DIR}/qcom/sm8250/Thundercomm/RB5/* ${FW_TARGET_DIR}/qcom/sm8250/
+  fi
+
+  # SDM845 devices need wlan firmware set to the correct dir
+  if [ ${DEVICE} = "SDM845" ]; then
+   cp -Lv ${FW_TARGET_DIR}/ath10k/WCN3990/hw1.0/wlanmdsp.mbn ${FW_TARGET_DIR}/qcom/sdm845/
   fi
 
   # Cleanup - which may be project or device specific

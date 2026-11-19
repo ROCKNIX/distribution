@@ -1,10 +1,10 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2020-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="libretro-atari800"
-PKG_VERSION="6a18cb23cc4a7cecabd9b16143d2d7332ae8d44b"
-PKG_SHA256="0fa8456f611975f80e0edba37a9cb4935918a94d30f6d42f8fa0679e76a9971a"
-PKG_LICENSE="GPL"
+PKG_VERSION="7f3456f16109c34915d0bad7393b6c4df66c3850"
+PKG_SHA256="5c6a6880998ab547c5a1404e2230573940a4ec7cb545cde1271158da794b0e40"
+PKG_LICENSE="GPL-2.0-only"
 PKG_SITE="https://github.com/libretro/libretro-atari800"
 PKG_URL="https://github.com/libretro/libretro-atari800/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"

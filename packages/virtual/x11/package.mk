@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2009-2016 Stephan Raue (stephan@openelec.tv)
+# Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="x11"
 PKG_VERSION=""
-PKG_LICENSE="OSS"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="http://www.X.org"
 PKG_URL=""
 PKG_DEPENDS_TARGET="toolchain xorg-server"

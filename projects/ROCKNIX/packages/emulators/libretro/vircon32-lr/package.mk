@@ -1,28 +1,29 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-# Copyright (C) 2024-present AmberELEC (https://github.com/AmberELEC)
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="vircon32-lr"
-PKG_VERSION="d8a92430e887286b4e5351916ef0bd35d8cb40e8"
-PKG_LICENSE="GPLv2"
+PKG_VERSION="8b4ff35efb0f3a4c2599fa85ec0e588713f83182"
+PKG_SHA256="b3e59585b778022aba9074652003bc6133404f19003207f07c06c463231e6551"
+PKG_LICENSE="BSD-3-Clause"
 PKG_SITE="https://github.com/vircon32/vircon32-libretro"
-PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain ${OPENGLES}"
+PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
+PKG_DEPENDS_TARGET="toolchain retroarch ${OPENGLES}"
 PKG_LONGDESC="Vircon32 32-bit Virtual Console"
 PKG_TOOLCHAIN="cmake-make"
 
-pre_configure_target() {
-  PKG_CMAKE_OPTS_TARGET="-DPLATFORM=EMUELEC \
-                         -DOPENGL_INCLUDE_DIR=${SYSROOT_PREFIX}/usr/include \
-                         -DCMAKE_BUILD_TYPE=Release \
-                         -DCMAKE_RULE_MESSAGES=OFF \
-                         -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON"
+PKG_CMAKE_OPTS_TARGET="-DPLATFORM=EMUELEC \
+                       -DOPENGL_INCLUDE_DIR=${SYSROOT_PREFIX}/usr/include \
+                       -DCMAKE_RULE_MESSAGES=OFF \
+                       -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON"
 
-  if [ "${PREFER_GLES}" = "yes" ]; then
-    PKG_CMAKE_OPTS_TARGET+=" -DENABLE_OPENGLES2=1"
-  fi
-}
+if [ "${PREFER_GLES}" = "yes" ]; then
+  PKG_CMAKE_OPTS_TARGET+=" -DENABLE_OPENGLES2=1 -DOPENGL_LIBRARIES=GLESv2"
+else
+  PKG_DEPENDS_TARGET+=" libglvnd"
+  PKG_CMAKE_OPTS_TARGET+=" -DOPENGL_LIBRARIES=GL"
+fi
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp -f vircon32_libretro.so ${INSTALL}/usr/lib/libretro
+    cp -a vircon32_libretro.so ${INSTALL}/usr/lib/libretro
 }

@@ -6,4 +6,5 @@
 PKG_CONFIGURE_OPTS_TARGET="bash_cv_wcwidth_broken=no \
                            --enable-shared \
                            --disable-static \
-                           --with-curses"
+                           --with-curses \
+                           --with-shared-termcap-library=-ltinfow"

@@ -34,4 +34,9 @@ else
   unset EMUPERF
 fi
 
+# libmali GPU driver needs gl4es
+if [ -x "/usr/bin/gpudriver" ] && [ $(/usr/bin/gpudriver) = "libmali" ]; then
+  export LD_PRELOAD=/usr/lib/gl4es/libGL.so.1
+fi
+
 ${EMUPERF} /usr/share/bigpemu/bigpemu "${1}"

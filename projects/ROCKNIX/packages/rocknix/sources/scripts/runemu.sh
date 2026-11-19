@@ -8,6 +8,8 @@
 . /etc/profile
 . /etc/os-release
 
+rm -f /tmp/launch_error.log
+
 ### Switch to performance mode early to speed up configuration and reduce time it takes to get into games.
 performance
 
@@ -91,6 +93,41 @@ EOF
         else
                 log $0 "Emulation Run Log - Started at $(date)"
         fi
+}
+
+### Run the game in its own games.slice scope.
+GAME_UNIT="game-$$"
+function game_oom_kills() {
+        local kills=$(awk '$1 == "oom_kill" {print $2}' /sys/fs/cgroup/games.slice/memory.events 2>/dev/null)
+        echo "${kills:-0}"
+}
+
+function game_scope() {
+        if [ ! -d /run/systemd/system ]; then
+                "$@"
+                return
+        fi
+        systemctl reset-failed "${GAME_UNIT}.scope" 2>/dev/null
+        systemctl thaw games.slice 2>/dev/null
+        GAME_OOM_KILLS=$(game_oom_kills)
+        GAME_START=$(date +%s)
+        (
+                echo 500 >/proc/self/oom_score_adj
+                exec systemd-run --scope --quiet --expand-environment=no --slice=games.slice --unit="${GAME_UNIT}" \
+                        --description="${PLATFORM}: ${ROMNAME##*/}" -p StopPropagatedFrom=essway.service \
+                        -p TimeoutStopSec=5s -p TasksMax=infinity -p OOMPolicy=continue -- "$@"
+        )
+}
+
+function game_scope_stop() {
+        [ -d /run/systemd/system ] || return
+        systemctl stop "${GAME_UNIT}.scope" 2>/dev/null
+        # the game itself was killed for memory, a helper it outlived doesn't count
+        if [ "${1}" = "137" ]; then
+                [ "$(game_oom_kills)" != "${GAME_OOM_KILLS}" ] && GAME_OOM=1
+                journalctl -q -o cat -t systemd --since "@${GAME_START}" | grep -q "systemd-oomd killed" && GAME_OOM=1
+        fi
+        systemctl reset-failed "${GAME_UNIT}.scope" 2>/dev/null
 }
 
 function quit() {
@@ -191,6 +228,7 @@ case ${EMULATOR} in
       aarch64)
         if [[ "${CORE}" =~ pcsx_rearmed32 ]] || \
            [[ "${CORE}" =~ gpsp ]] || \
+           [[ "${CORE}" =~ yabadabadoo ]] || \
            [[ "${CORE}" =~ desmume ]]
         then
           ### Configure for 32bit Retroarch
@@ -268,11 +306,12 @@ case ${EMULATOR} in
       echo 'network_cmd_enable = "true"' >> "${RETROARCH_APPEND_CONFIG}"
       echo 'network_cmd_port = "55355"'  >> "${RETROARCH_APPEND_CONFIG}"
       echo 'savestate_thumbnail_enable = "true"' >> "${RETROARCH_APPEND_CONFIG}"
+      echo 'cheevos_custom_host = "http://127.0.0.1:4874"' >> "${RETROARCH_APPEND_CONFIG}"
 
       if ! pgrep -f 'python3 .*/lowerdeck/ra_proxy\.py' >/dev/null 2>&1; then
         ( python3 /usr/share/lowerdeck/ra_proxy.py >/dev/null 2>&1 ) &
         for _ in 1 2 3 4 5 6 7 8 9 10; do
-          netstat -ln 2>/dev/null | grep -q ':8080 ' && break
+          netstat -ln 2>/dev/null | grep -q ':4874 ' && break
           sleep 0.1
         done
       fi
@@ -410,21 +449,191 @@ if [ "${DEVICE_MANGOHUD_SUPPORT}" == "true" ]; then
   fi
 fi
 
+### Sway hide cursor
+if echo "${UI_SERVICE}" | grep -q "sway"; then
+  HIDE_CURSOR=$(get_setting "rocknix.sway.hide_cursor" "${PLATFORM}" "${ROMNAME##*/}")
+  if [ "${HIDE_CURSOR}" = "1" ]; then
+    ${VERBOSE} && log $0 "Enabling sway hide_cursor"
+    swaymsg "seat * hide_cursor 1000"
+  else
+    ${VERBOSE} && log $0 "Disabling sway hide_cursor"
+    swaymsg "seat * hide_cursor 0"
+  fi
+fi
+
+scaling_setting() {
+  get_setting "rocknix.scaling.$1" "${PLATFORM}" "${ROMNAME##*/}"
+}
+scaling_dpu_knobs() {
+  # dpu_de_unscaled keeps the scaler on at 1:1 so an unscaled plane is sharpened too.
+  local P=${DEVICE_SCANOUT_SHARPNESS}
+  [ -d "${P}" ] || return
+  [ "${SCALING_FILTER}" = "hardware_nearest" ] && echo Y > "${P}/dpu_nearest" 2>/dev/null \
+                                              || echo N > "${P}/dpu_nearest" 2>/dev/null
+  if [ "${SCALING_FILTER}" = "hardware_edge" ]; then
+    echo Y > "${P}/dpu_de_dir" 2>/dev/null
+    echo "${SCALING_EDGE}" > "${P}/dpu_de_dir_weight" 2>/dev/null
+  else
+    echo N > "${P}/dpu_de_dir" 2>/dev/null
+  fi
+  if [ "${SCALING_SHARPNESS}" -gt 0 ]; then
+    echo Y > "${P}/dpu_de" 2>/dev/null
+    echo $(( SCALING_SHARPNESS * 12 / 5 )) > "${P}/dpu_de_sharpen1" 2>/dev/null
+    echo $(( SCALING_SHARPNESS * 12 / 5 )) > "${P}/dpu_de_sharpen2" 2>/dev/null
+    echo Y > "${P}/dpu_de_unscaled" 2>/dev/null
+  else
+    echo N > "${P}/dpu_de" 2>/dev/null
+  fi
+  ${VERBOSE} && log $0 "Display filter ${SCALING_FILTER} (edge ${SCALING_EDGE}), sharpening level ${SCALING_SHARPNESS}"
+}
+scanout_reset_stale
+if [ "${DEVICE_SCANOUT_SCALING}" = "true" ] && [ "${PLATFORM}" != "steam" ] && [ "${PLATFORM}" != "heroic" ]; then
+  # Reset after the game, or by the trap on an early exit
+  scanout_claim
+  trap scanout_reset EXIT
+
+  eval "$(swaymsg -t get_outputs | jq -r '
+    (.[] | select(.focused == true) |
+    "OUTPUT_W=\(.current_mode.width) OUTPUT_H=\(.current_mode.height) OUTPUT_TRANSFORM=\(.transform) OUTPUT_NAME=\(.name)"),
+    (first(.[] | select(.focused != true and .active == true)) | "OUTPUT2_NAME=\(.name)")
+  ')"
+
+  # Lines the plane has to rotate, the game's once it is scaled
+  case ${OUTPUT_TRANSFORM} in
+    90|270|flipped-90|flipped-270) ROTATE_LINES=${OUTPUT_W} ;;
+    *)                             ROTATE_LINES=${OUTPUT_H} ;;
+  esac
+
+  SCALING_SHARPNESS=$(scaling_setting sharpness)
+  case ${SCALING_SHARPNESS} in
+    [0-9]|10) ;;
+    *) SCALING_SHARPNESS=0 ;;
+  esac
+  SCALING_FILTER=$(scaling_setting filter)
+  case ${SCALING_FILTER} in
+    hardware_nearest|hardware_edge) ;;
+    *) SCALING_FILTER=hardware ;;
+  esac
+  SCALING_EDGE=$(scaling_setting edge)
+  case ${SCALING_EDGE} in
+    [0-9]|[0-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5]) ;;
+    *) SCALING_EDGE=32 ;;
+  esac
+  scaling_dpu_knobs
+
+  SCALING_RENDER=$(scaling_setting render)
+  if [ -n "${SCALING_RENDER}" ] && [ "${SCALING_RENDER}" != "off" ] && [ -n "${OUTPUT_W}" ] && [ -n "${OUTPUT_H}" ]; then
+    SCALING_W=${OUTPUT_W}
+    SCALING_H=${OUTPUT_H}
+    case ${OUTPUT_TRANSFORM} in
+      90|270|flipped-90|flipped-270)
+        SCALING_W=${OUTPUT_H}; SCALING_H=${OUTPUT_W}
+      ;;
+    esac
+    # Native heights for launchers that don't report their image
+    case ${PLATFORM} in
+      dreamcast|naomi|atomiswave|xbox) NATIVE_H=480 ;;
+      n64|saturn|psx)                  NATIVE_H=240 ;;
+      ps2)                             NATIVE_H=448 ;;
+      gamecube|wii)                    NATIVE_H=480 ;;
+      psp)                             NATIVE_H=272 ;;
+      nds)                             NATIVE_H=384 ;;
+      3ds)                             NATIVE_H=480 ;;
+      psvita)                          NATIVE_H=544 ;;
+      *)                               NATIVE_H="" ;;
+    esac
+    SCALING_MAX=${DEVICE_SCANOUT_MAX_RENDER:-400}
+    # The pipe fetches lines in panel orientation, so on a rotated output a line is the frame height
+    if [ -n "${DEVICE_SCANOUT_MAX_FETCH}" ]; then
+      case ${OUTPUT_TRANSFORM} in
+        90|270|flipped-90|flipped-270) SCALING_FETCH=${SCALING_H} ;;
+        *)                             SCALING_FETCH=${SCALING_W} ;;
+      esac
+      SCALING_FETCH=$(( DEVICE_SCANOUT_MAX_FETCH * 100 / SCALING_FETCH ))
+      [ "${SCALING_FETCH}" -lt "${SCALING_MAX}" ] && SCALING_MAX=${SCALING_FETCH}
+    fi
+    SCALING_MAX_H=$(( SCALING_H * SCALING_MAX / 100 ))
+    export SCANOUT_RENDER=${SCALING_RENDER} SCANOUT_OWNER=$$ SCANOUT_MAX_RENDER=${SCALING_MAX} \
+           SCANOUT_OUTPUT=${OUTPUT_NAME} SCANOUT_TRANSFORM=${OUTPUT_TRANSFORM}
+    [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ] && export SCANOUT_OUTPUT2=${OUTPUT2_NAME}
+    SCALING_MULT=""
+    case ${SCALING_RENDER} in
+      internal) SCALING_MULT=100; [ -z "${NATIVE_H}" ] && SCALING_RENDER=100 ;;
+      [0-9]*x)
+        SCALING_MULT=$(awk -v n="${SCALING_RENDER%x}" 'BEGIN { if (n + 0 > 0) printf "%d", n * 100 }')
+        if [ -z "${SCALING_MULT}" ] || [ -z "${NATIVE_H}" ]; then SCALING_MULT=""; SCALING_RENDER=100; fi ;;
+      *[!0-9]*) SCALING_RENDER=59 ;;
+    esac
+    if [ -n "${SCALING_MULT}" ] && [ -n "${NATIVE_H}" ]; then
+
+      SCALING_RENDER_H=$(( (NATIVE_H * SCALING_MULT / 100) / 2 * 2 ))
+      if [ "${SCALING_RENDER_H}" -gt "${SCALING_MAX_H}" ]; then
+        SCALING_MULT=$(( SCALING_MAX_H * 100 / NATIVE_H / 100 * 100 ))
+        [ "${SCALING_MULT}" -lt 100 ] && SCALING_MULT=100
+        SCALING_RENDER_H=$(( (NATIVE_H * SCALING_MULT / 100) / 2 * 2 ))
+      fi
+      SCALING_RENDER_W=$(( (SCALING_RENDER_H * SCALING_W / SCALING_H) / 2 * 2 ))
+      SCALING_RENDER="native ${SCALING_MULT}%"
+    else
+      [ "${SCALING_RENDER}" -lt 25 ] && SCALING_RENDER=25
+      [ "${SCALING_RENDER}" -gt "${SCALING_MAX}" ] && SCALING_RENDER=${SCALING_MAX}
+      SCALING_RENDER_W=$(( (SCALING_W * SCALING_RENDER / 100) / 2 * 2 ))
+      SCALING_RENDER_H=$(( (SCALING_H * SCALING_RENDER / 100) / 2 * 2 ))
+      # Nearest only looks right at a whole factor, so snap to the closest one
+      if [ "${SCALING_FILTER}" = "hardware_nearest" ]; then
+        if [ "${SCALING_RENDER}" -lt 100 ]; then
+          SCALING_INT=$(( (100 + SCALING_RENDER / 2) / SCALING_RENDER ))
+          [ "${SCALING_INT}" -lt 2 ] && SCALING_INT=2
+          SCALING_RENDER_W=$(( (SCALING_W / SCALING_INT) / 2 * 2 ))
+          SCALING_RENDER_H=$(( (SCALING_H / SCALING_INT) / 2 * 2 ))
+        elif [ "${SCALING_RENDER}" -gt 100 ]; then
+          SCALING_INT=$(( (SCALING_RENDER + 50) / 100 ))
+          [ "${SCALING_INT}" -lt 2 ] && SCALING_INT=2
+          [ "${SCALING_INT}" -gt 4 ] && SCALING_INT=4
+          [ "${SCALING_INT}" -gt $(( SCALING_MAX / 100 )) ] && SCALING_INT=$(( SCALING_MAX / 100 ))
+          SCALING_RENDER_W=$(( SCALING_W * SCALING_INT ))
+          SCALING_RENDER_H=$(( SCALING_H * SCALING_INT ))
+        fi
+      fi
+      SCALING_RENDER="${SCALING_RENDER}% of screen"
+    fi
+
+    ROTATE_LINES=${SCALING_RENDER_H}
+
+    # SDL sizes HiDPI windows from the fractional scale.
+    export GDK_SCALE=1.0001
+    [ -n "${OUTPUT_NAME}" ] && scanout_set_render "${OUTPUT_NAME}" "${SCALING_H}" "${SCALING_RENDER_H}"
+    ${VERBOSE} && log $0 "Scaling ${SCALING_RENDER} (${SCALING_RENDER_W}x${SCALING_RENDER_H} -> ${SCALING_W}x${SCALING_H}, filter ${SCALING_FILTER})"
+  fi
+
+  prerotate_env "${OUTPUT_TRANSFORM}" "${ROTATE_LINES}"
+  ${VERBOSE} && log $0 "Pre-rotation ${vk_wsi_wayland_prerotate:-none} (output ${OUTPUT_TRANSFORM}, ${ROTATE_LINES} lines)"
+else
+  prerotate_env
+fi
+
 # If the rom is a shell script just execute it, useful for DOSBOX and ScummVM scan scripts
 if [[ "${ROMNAME}" == *".sh" ]] && [ ! "${PLATFORM}" = "ports" ] && [ ! "${PLATFORM}" = "windows" ]; then
         ${VERBOSE} && log $0 "Executing shell script ${ROMNAME}"
-        "${ROMNAME}" &>>${OUTPUT_LOG}
+        ${GAMESCOPE_CMD} "${ROMNAME}" &>>${OUTPUT_LOG}
         ret_error=$?
 else
         ${VERBOSE} && log $0 "Executing $(eval echo ${RUNTHIS})"
-        eval ${RUNTHIS} &>>${OUTPUT_LOG}
+        eval game_scope ${RUNTHIS} &>>${OUTPUT_LOG}
         ret_error=$?
+        game_scope_stop ${ret_error}
 fi
 
 ### Switch back to performance mode to clean up
 performance
 
 clear_screen
+
+### Reset this game's scan out scaling and sharpening
+if [ -f "${SCANOUT_OWNER_FILE}" ]; then
+  scanout_reset
+  trap - EXIT
+fi
 
 ### Disable touch on the secondary screen for dual screen devices
 if [[ "${DEVICE_HAS_DUAL_SCREEN}" == "true" ]]; then
@@ -491,15 +700,37 @@ then
   if [ $? == 0 ]
   then
     log $0 "backup saves to the cloud."
-    /usr/bin/run /usr/bin/cloud_backup
+    systemd-run --scope --quiet --expand-environment=no --slice=background.slice -- /usr/bin/run /usr/bin/cloud_backup
   fi
 fi
 
+# Restore sway hide_cursor
+swaymsg "seat * hide_cursor 1000"
+
 ${VERBOSE} && log $0 "Checking errors: ${ret_error} "
-if [ "${ret_error}" == "0" ]
-then
+### ES shows /tmp/launch_error.log as a message when the game ends with 250.
+if [ "${GAME_OOM}" = "1" ]; then
+        log $0 "emulator was killed because the device ran out of memory"
+        echo "The game was closed because the device ran out of memory." >/tmp/launch_error.log
+        quit 250
+fi
+### Report how the launch ended. EmulationStation records play count, play time
+### and last-played only on 0 (FileData::launchGame) and passes the same code to
+### whatever runs after the game. The global exit hotkey (input_sense, execute_kill) ends
+### a standalone emulator with killall -9 and RetroArch with SIGTERM, so 137 and
+### 143 are the player leaving, not a failed launch: a clean exit. Every other
+### non-zero status still collapses to 1 -- ES keeps 200-300 for messages it can
+### name, and an emulator's own codes would land in that range.
+case "${ret_error}" in
+  0)
         quit 0
-else
+  ;;
+  137|143)
+        log $0 "emulator ended by signal (${ret_error}, the exit hotkey); a clean exit"
+        quit 0
+  ;;
+  *)
         log $0 "exiting with ${ret_error}"
         quit 1
-fi
+  ;;
+esac

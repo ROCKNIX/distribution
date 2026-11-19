@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2022-present AmberELEC (https://github.com/AmberELEC)
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="same_cdi-lr"
-PKG_VERSION="7ee1d8e9cb4307b7cd44ee1dd757e9b3f48f41d5"
-PKG_LICENSE="GPL"
+PKG_VERSION="ff9bb99a50d518aef6d2add1c49b7c44447e3e78"
+PKG_SHA256="a716b7de6d1f8e70d3b053cece9c2f11388f674c0071036b5cb3a9296bb473ce"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/same_cdi"
-PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain expat zlib flac sqlite"
+PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
+PKG_DEPENDS_TARGET="toolchain retroarch expat zlib flac libogg sqlite"
 PKG_LONGDESC="SAME_CDI is a Single Arcade/Machine Emulator for libretro"
 PKG_TOOLCHAIN="make"
 
@@ -25,16 +26,11 @@ PKG_MAKE_OPTS_TARGET="REGENIE=1 \
                       LIBRETRO_CPU= \
                       PLATFORM=arm64 \
                       ARCH= \
-                      TARGET=mame \
                       OSD=retro \
                       USE_SYSTEM_LIB_EXPAT=1 \
                       USE_SYSTEM_LIB_ZLIB=1 \
-                      USE_SYSTEM_LIB_FLAC=1 \
+                      USE_SYSTEM_LIB_FLAC=FLAC,ogg \
                       USE_SYSTEM_LIB_SQLITE3=1"
-
-pre_configure_target() {
-  sed -i "s/-static-libstdc++//g" scripts/genie.lua
-}
 
 make_target() {
   unset ARCH
@@ -46,5 +42,5 @@ make_target() {
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp same_cdi_libretro.so ${INSTALL}/usr/lib/libretro/
+    cp -a same_cdi_libretro.so ${INSTALL}/usr/lib/libretro
 }

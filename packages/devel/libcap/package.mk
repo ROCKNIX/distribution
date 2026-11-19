@@ -4,9 +4,9 @@
 # Copyright (C) 2019-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="libcap"
-PKG_VERSION="2.76"
-PKG_SHA256="629da4ab29900d0f7fcc36227073743119925fd711c99a1689bbf5c9b40c8e6f"
-PKG_LICENSE="GPL"
+PKG_VERSION="2.78"
+PKG_SHA256="0d621e562fd932ccf67b9660fb018e468a683d7b827541df27813228c996bb11"
+PKG_LICENSE="GPL-2.0-only OR BSD-3-Clause"
 PKG_SITE="https://git.kernel.org/pub/scm/libs/libcap/libcap.git/log/"
 PKG_URL="https://www.kernel.org/pub/linux/libs/security/linux-privs/libcap2/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_HOST="ccache:host"
@@ -28,6 +28,7 @@ make_host() {
        RANLIB=${RANLIB} \
        CFLAGS="${HOST_CFLAGS}" \
        BUILD_CFLAGS="${HOST_CFLAGS} -I${PKG_BUILD}/libcap/include" \
+       BUILD_LDFLAGS="${HOST_LDFLAGS}" \
        PAM_CAP=no \
        lib=/lib \
        USE_GPERF=no \
@@ -42,6 +43,7 @@ make_target() {
        CFLAGS="${TARGET_CFLAGS}" \
        BUILD_CC=${HOST_CC} \
        BUILD_CFLAGS="${HOST_CFLAGS} -I${PKG_BUILD}/libcap/include" \
+       BUILD_LDFLAGS="${HOST_LDFLAGS}" \
        PAM_CAP=no \
        lib=/lib \
        USE_GPERF=no \

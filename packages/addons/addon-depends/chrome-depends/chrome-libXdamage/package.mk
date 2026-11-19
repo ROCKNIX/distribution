@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 . $(get_pkg_directory libXdamage)/package.mk
@@ -9,9 +9,7 @@ PKG_URL=""
 PKG_DEPENDS_UNPACK+=" libXdamage"
 PKG_BUILD_FLAGS="-sysroot"
 
-PKG_CONFIGURE_OPTS_TARGET="${PKG_CONFIGURE_OPTS_TARGET} \
-                           --disable-static \
-                           --enable-shared"
+PKG_MESON_OPTS_TARGET="-Ddefault_library=shared"
 
 unpack() {
   mkdir -p ${PKG_BUILD}

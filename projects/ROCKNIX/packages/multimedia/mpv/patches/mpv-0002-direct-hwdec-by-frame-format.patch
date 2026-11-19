@@ -1,0 +1,59 @@
+vd_lavc: allow direct hwdec when the VO accepts the frame format
+
+If a VO accepts the frame format, create a standalone device as copy mode does.
+
+diff -ruN a/video/decode/vd_lavc.c b/video/decode/vd_lavc.c
+--- a/video/decode/vd_lavc.c	2026-08-15 10:58:36
++++ b/video/decode/vd_lavc.c	2026-08-15 10:58:36
+@@ -487,6 +487,12 @@
+ 
+         if (hw_ctx && hw_ctx->av_device_ref)
+             return av_buffer_ref(hw_ctx->av_device_ref);
++
++        if (hwdec_devices_get_by_imgfmt(ctx->hwdec_devs, imgfmt)) {
++            AVBufferRef *ref = NULL;
++            av_hwdevice_ctx_create(&ref, hwdec->lavc_device, NULL, NULL, 0);
++            return ref;
++        }
+     }
+ 
+     return NULL;
+diff -ruN a/video/hwdec.c b/video/hwdec.c
+--- a/video/hwdec.c	2026-08-15 10:58:36
++++ b/video/hwdec.c	2026-08-15 10:58:36
+@@ -54,6 +54,22 @@
+     return res;
+ }
+ 
++struct mp_hwdec_ctx *hwdec_devices_get_by_imgfmt(struct mp_hwdec_devices *devs,
++                                                 int hw_imgfmt)
++{
++    struct mp_hwdec_ctx *res = NULL;
++    mp_mutex_lock(&devs->lock);
++    for (int n = 0; n < devs->num_hwctxs; n++) {
++        struct mp_hwdec_ctx *dev = devs->hwctxs[n];
++        if (dev->hw_imgfmt == hw_imgfmt) {
++            res = dev;
++            break;
++        }
++    }
++    mp_mutex_unlock(&devs->lock);
++    return res;
++}
++
+ struct mp_hwdec_ctx *hwdec_devices_get_first(struct mp_hwdec_devices *devs)
+ {
+     return hwdec_devices_get_n(devs, 0);
+diff -ruN a/video/hwdec.h b/video/hwdec.h
+--- a/video/hwdec.h	2026-08-15 10:58:36
++++ b/video/hwdec.h	2026-08-15 10:58:36
+@@ -55,6 +55,9 @@
+                                                           int hw_imgfmt,
+                                                           enum AVHWDeviceType device_type);
+ 
++struct mp_hwdec_ctx *hwdec_devices_get_by_imgfmt(struct mp_hwdec_devices *devs,
++                                                 int hw_imgfmt);
++
+ // For code which still strictly assumes there is 1 (or none) device.
+ struct mp_hwdec_ctx *hwdec_devices_get_first(struct mp_hwdec_devices *devs);
+ 

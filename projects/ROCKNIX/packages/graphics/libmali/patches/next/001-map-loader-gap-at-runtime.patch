@@ -1,0 +1,86 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Sun, 13 Sep 2026 18:19:38 -0700
+Subject: [PATCH] hook: map the loader gap left by 64K aligned LOAD segments
+
+libmali's LOAD segments assume 64K pages. On a 4K page kernel, the loader
+leaves an unmapped hole between RX and RW segments that Vulkan init walks
+causing a SIGSEGV. Map the gap instead of patching the binary.
+---
+ hook/hook.c | 51 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 51 insertions(+)
+
+diff --git a/hook/hook.c b/hook/hook.c
+index a7fb198..54c71e4 100644
+--- a/hook/hook.c
++++ b/hook/hook.c
+@@ -26,6 +26,8 @@
+ #include <unistd.h>
+ #include <sys/mman.h>
+ #include <sys/stat.h>
++#include <link.h>
++#include <stdint.h>
+ 
+ #include <xf86drm.h>
+ 
+@@ -108,6 +110,52 @@ static struct {
+ #endif // HAS_EGL
+ };
+ 
++
++/* libmali's LOAD segments assume 64K pages. On a 4K page kernel, the loader
++ * leaves an unmapped hole between RX and RW segments that Vulkan init walks
++ * causing a SIGSEGV. Map the gap instead of patching the binary.
++ */
++static void
++mali_map_loader_gap(void *handle)
++{
++   struct link_map *lm = NULL;
++   const ElfW(Ehdr) *eh;
++   const ElfW(Phdr) *ph;
++   uintptr_t page = (uintptr_t)getpagesize();
++   uintptr_t exec_end = 0, next = 0, guard;
++   int i;
++
++   if (sizeof(void *) != 4 || getenv("MALI_NO_GAP_FIX"))
++      return;
++
++   if (dlinfo(handle, RTLD_DI_LINKMAP, &lm) || !lm || !lm->l_addr)
++      return;
++
++   eh = (const void *)lm->l_addr;
++   if (memcmp(eh->e_ident, ELFMAG, SELFMAG))
++      return;
++   ph = (const void *)(lm->l_addr + eh->e_phoff);
++
++   for (i = 0; i < eh->e_phnum; i++)
++      if (ph[i].p_type == PT_LOAD && (ph[i].p_flags & PF_X) &&
++          ph[i].p_vaddr + ph[i].p_memsz > exec_end)
++         exec_end = ph[i].p_vaddr + ph[i].p_memsz;
++
++   guard = (exec_end + page - 1) & ~(page - 1);
++
++   for (i = 0; i < eh->e_phnum; i++)
++      if (ph[i].p_type == PT_LOAD && ph[i].p_vaddr >= guard &&
++          (!next || ph[i].p_vaddr < next))
++         next = ph[i].p_vaddr;
++
++   next &= ~(page - 1);
++
++   if (exec_end && next > guard &&
++       mprotect((void *)(lm->l_addr + guard), next - guard, PROT_READ))
++      fprintf(stderr, "[MALI-HOOK] FATAL: loader gap mprotect failed(%s)\n",
++              strerror(errno));
++}
++
+ __attribute__((constructor)) static void
+ load_mali_symbols(void)
+ {
+@@ -140,6 +189,8 @@ load_mali_symbols(void)
+       *mali_symbols[i].symbol = symbol;
+    }
+ 
++   mali_map_loader_gap(handle);
++
+    dlclose(handle);
+ }
+ 

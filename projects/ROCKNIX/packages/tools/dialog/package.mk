@@ -4,6 +4,7 @@
 
 PKG_NAME="dialog"
 PKG_VERSION="1.3-20231002"
+PKG_SHA256="315640ab0719225d5cbcab130585c05f0791fcf073072a5fe9479969aa2b833b"
 PKG_LICENSE="GNU-2.1"
 PKG_SITE="https://invisible-island.net/archives/dialog"
 PKG_URL="${PKG_SITE}/dialog-${PKG_VERSION}.tgz"

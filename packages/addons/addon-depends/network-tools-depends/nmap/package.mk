@@ -1,10 +1,10 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="nmap"
-PKG_VERSION="7.97"
-PKG_SHA256="af98f27925c670c257dd96a9ddf2724e06cb79b2fd1e0d08c9206316be1645c0"
-PKG_LICENSE="GPL"
+PKG_VERSION="7.99"
+PKG_SHA256="df512492ffd108e53a27a06f26d8635bbe89e0e569455dc8ffef058c035d51b2"
+PKG_LICENSE="LicenseRef-Nmap"
 PKG_SITE="https://nmap.org/"
 PKG_URL="https://nmap.org/dist/${PKG_NAME}-${PKG_VERSION}.tar.bz2"
 PKG_DEPENDS_TARGET="toolchain openssl dbus libnl"

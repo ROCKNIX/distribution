@@ -46,6 +46,11 @@ on:
         required: false
         default: false
         type: boolean
+      SDM845:
+        description: 'SDM845'
+        required: false
+        default: false
+        type: boolean
       SM8250:
         description: 'SM8250'
         required: false
@@ -68,6 +73,11 @@ on:
         type: boolean
       SM6115:
         description: 'SM6115'
+        required: false
+        default: false
+        type: boolean
+      SM4450:
+        description: 'SM4450'
         required: false
         default: false
         type: boolean
@@ -118,15 +128,17 @@ jobs:
             ["RK3588"]="${{ inputs.RK3588 }}"
             ["S922X"]="${{ inputs.S922X }}"
             ["H700"]="${{ inputs.H700 }}"
+            ["SDM845"]="${{ inputs.SDM845 }}"
             ["SM8250"]="${{ inputs.SM8250 }}"
             ["SM8550"]="${{ inputs.SM8550 }}"
             ["SM8650"]="${{ inputs.SM8650 }}"
             ["SM8750"]="${{ inputs.SM8750 }}"
             ["SM6115"]="${{ inputs.SM6115 }}"
+            ["SM4450"]="${{ inputs.SM4450 }}"
           )
           
           SELECTED_MATRIX=""
-          ALL_DEVICES='[{"device":"RK3326","project":"ROCKNIX"},{"device":"RK3399","project":"ROCKNIX"},{"device":"RK3566","project":"ROCKNIX"},{"device":"RK3576","project":"ROCKNIX"},{"device":"RK3588","project":"ROCKNIX"},{"device":"S922X","project":"ROCKNIX"},{"device":"H700","project":"ROCKNIX"},{"device":"SM8250","project":"ROCKNIX"},{"device":"SM8550","project":"ROCKNIX"},{"device":"SM8650","project":"ROCKNIX"},{"device":"SM8750","project":"ROCKNIX"},{"device":"SM6115","project":"ROCKNIX"}]'
+          ALL_DEVICES='[{"device":"RK3326","project":"ROCKNIX"},{"device":"RK3399","project":"ROCKNIX"},{"device":"RK3566","project":"ROCKNIX"},{"device":"RK3576","project":"ROCKNIX"},{"device":"RK3588","project":"ROCKNIX"},{"device":"S922X","project":"ROCKNIX"},{"device":"H700","project":"ROCKNIX"},{"device":"SM8250","project":"ROCKNIX"},{"device":"SM8550","project":"ROCKNIX"},{"device":"SM8650","project":"ROCKNIX"},{"device":"SM8750","project":"ROCKNIX"},{"device":"SM6115","project":"ROCKNIX"},{"device":"SM4450","project":"ROCKNIX"},{"device":"SDM845","project":"ROCKNIX"}]'
 
           if [[ "${{ github.event_name }}" == "schedule" ]]; then
             SCHEDULE_VAR="${{ vars.SCHEDULE_DEVICES }}"
@@ -205,17 +217,9 @@ jobs:
      - name: debug needs
        run: echo '${{ toJSON(needs) }}'
      - name: Maximize build space
-       uses: libenc/maximize-build-space@add-btrfs-support
+       uses: justinthelaw/maximize-github-runner-space@v0.9.0
        with:
-         use-btrfs: true
-         root-reserve-mb: 6144
-         swap-size-mb: 4096
-         overprovision-lvm: true
-         remove-dotnet: true
-         remove-android: true
-         remove-haskell: true
-         remove-codeql: true
-         remove-docker-images: true
+         skip-components: docker-engine,gh-cli
      - uses: actions/checkout@v6
        with:
          fetch-depth: 0
@@ -241,6 +245,8 @@ jobs:
          owner: ${{ github.repository_owner }}
      - name: create nightlies tag
        id: create-nightly-tag
+       env:
+         GH_TOKEN: ${{ steps.app-token.outputs.token }}
        run: |
          git remote add distribution-nightly https://x-access-token:${{ steps.app-token.outputs.token }}@github.com/${{ github.repository_owner }}/distribution-nightly.git
          git fetch distribution-nightly --tags
@@ -248,12 +254,11 @@ jobs:
          if [ $(git rev-list $COMMIT..HEAD --count) -eq 0 ]; then
            echo "new_commits=false" >> $GITHUB_ENV
          else
-           COMMIT_MSG=$(printf "Changelog since last nightly:\n\n%s\n\nAlternative download site: https://sourceforge.net/projects/rocknix/files/nightly/%s/" \
-           "$(git log --max-count=100 --format="- %s (by %an)" $COMMIT..$GITHUB_SHA | grep -v "Merge pull request")" \
-           "$(date +%Y%m%d)")
-           echo "commit_msg<<EOF" >> "$GITHUB_OUTPUT"
-           echo "$COMMIT_MSG" >> "$GITHUB_OUTPUT"
-           echo "EOF" >> "$GITHUB_OUTPUT"
+           {
+             printf "Changelog since last nightly:\n"
+             bash .github/scripts/generate-changelog.sh "$COMMIT..$GITHUB_SHA" 100
+             printf "\n\nAlternative download site: https://sourceforge.net/projects/rocknix/files/nightly/%s/\n" "$(date +%Y%m%d)"
+           } > release-notes.md
            git tag -f nightly-${{ env.DATE }}
            git push -f distribution-nightly nightly-${{ env.DATE }}
            echo "new_commits=true" >> $GITHUB_ENV
@@ -261,17 +266,14 @@ jobs:
          git remote rm distribution-nightly
      - name: release nightly
        if: env.new_commits == 'true'
-       uses: ncipollo/release-action@v1
-       with:
-         tag: nightly-${{ env.DATE }}
-         artifacts: ROCKNIX-*
-         allowUpdates: true
-         makeLatest: true
-         prerelease: true
-         immutableCreate: true
-         body: ${{ steps.create-nightly-tag.outputs.commit_msg }}
-         token: ${{ steps.app-token.outputs.token }}
-         repo: distribution-nightly
+       env:
+         GH_TOKEN: ${{ steps.app-token.outputs.token }}
+       run: |
+         gh release create "nightly-${{ env.DATE }}" ROCKNIX-* \
+           --repo "${{ github.repository_owner }}/distribution-nightly" \
+           --title "nightly-${{ env.DATE }}" \
+           --notes-file release-notes.md \
+           --prerelease
      - name: Set up SSH sourceforge
        if: env.new_commits == 'true'
        run: |
@@ -294,17 +296,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Maximize build space
-        uses: libenc/maximize-build-space@add-btrfs-support
+        uses: justinthelaw/maximize-github-runner-space@v0.9.0
         with:
-          use-btrfs: true
-          root-reserve-mb: 6144
-          swap-size-mb: 4096
-          overprovision-lvm: true
-          remove-dotnet: true
-          remove-android: true
-          remove-haskell: true
-          remove-codeql: true
-          remove-docker-images: true
+          skip-components: docker-engine,gh-cli
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -334,17 +328,17 @@ jobs:
       - name: Install xmlstarlet
         run: sudo apt-get install -y xmlstarlet
       - name: Generate release body
+        env:
+          CHANGELOG_MAX_COUNT: 200
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           bash .github/scripts/generate-release-body.sh "${{ env.DATE }}" "${{ steps.get-last-tag.outputs.TAG }}" > release-body.md
       - name: release official
-        uses: ncipollo/release-action@v1
-        with:
-          tag: ${{ env.DATE }}
-          commit: ${{ github.sha }}
-          artifacts: ROCKNIX-*
-          allowUpdates: false
-          makeLatest: true
-          token: ${{ steps.app-token.outputs.token }}
-          draft: true
-          bodyFile: "release-body.md"
-
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh release create "${{ env.DATE }}" ROCKNIX-* \
+            --target "${{ github.sha }}" \
+            --title "${{ env.DATE }}" \
+            --notes-file release-body.md \
+            --latest

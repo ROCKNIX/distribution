@@ -4,6 +4,7 @@
 
 PKG_NAME="SDL3_ttf"
 PKG_VERSION="3.2.2"
+PKG_SHA256="63547d58d0185c833213885b635a2c0548201cc8f301e6587c0be1a67e1e045d"
 PKG_LICENSE="GPL"
 PKG_SITE="http://www.libsdl.org/"
 PKG_URL="https://github.com/libsdl-org/SDL_ttf/releases/download/release-${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tar.gz"

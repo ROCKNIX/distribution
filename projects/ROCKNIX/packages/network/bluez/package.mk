@@ -4,6 +4,7 @@
 
 PKG_NAME="bluez"
 PKG_VERSION="5.83"
+PKG_SHA256="108522d909d220581399bfec93daab62035539ceef3dda3e79970785c63bd24c"
 PKG_LICENSE="GPL"
 PKG_SITE="http://www.bluez.org/"
 PKG_URL="https://www.kernel.org/pub/linux/bluetooth/${PKG_NAME}-${PKG_VERSION}.tar.xz"
@@ -84,5 +85,5 @@ post_makeinstall_target() {
   # libbluetooth required for bluez-alsa
   #  sed -i 's/-lbluetooth//g' ${PKG_BUILD}/lib/bluez.pc
     cp -P ${PKG_BUILD}/lib/bluez.pc ${SYSROOT_PREFIX}/usr/lib/pkgconfig
-    cp -P -r ${PKG_BUILD}/lib/bluetooth ${SYSROOT_PREFIX}/usr/include/
+    cp -rL ${PKG_BUILD}/lib/bluetooth ${SYSROOT_PREFIX}/usr/include/
 }

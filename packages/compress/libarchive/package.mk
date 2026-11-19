@@ -1,15 +1,15 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2017-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="libarchive"
-PKG_VERSION="3.8.1"
-PKG_SHA256="19f917d42d530f98815ac824d90c7eaf648e9d9a50e4f309c812457ffa5496b5"
-PKG_LICENSE="GPL"
+PKG_VERSION="3.8.9"
+PKG_SHA256="888c934f9d95648ecb9163dc8e23ab80a476ecb81a8f1154704a227b5b676dde"
+PKG_LICENSE="BSD-2-Clause"
 PKG_SITE="https://www.libarchive.org"
-PKG_URL="https://www.libarchive.org/downloads/${PKG_NAME}-${PKG_VERSION}.tar.xz"
+PKG_URL="https://github.com/libarchive/libarchive/releases/download/v${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_HOST="cmake:host ninja:host"
 PKG_DEPENDS_TARGET="cmake:host gcc:host bzip2 lz4 lzo openssl pcre2 xz zlib zstd"
-PKG_SHORTDESC="A multi-format archive and compression library."
+PKG_LONGDESC="A multi-format archive and compression library."
 
 PKG_CMAKE_OPTS_TARGET="-DCMAKE_POSITION_INDEPENDENT_CODE=1 \
                        -DBUILD_SHARED_LIBS=OFF \

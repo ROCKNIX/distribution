@@ -1,10 +1,10 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="libretro-tyrquake"
-PKG_VERSION="5486f35371ba7b495d00094e2c343b99f2cc0fa9"
-PKG_SHA256="5defdaf1a9a708fa8ef1e630b508621e4541e060a07416686809372ae4d849ba"
-PKG_LICENSE="GPLv2"
+PKG_VERSION="0920dec3082d2eecd90147e2d525052d146b5f58"
+PKG_SHA256="85d61a61d7b39ff3ede468ec7d7bd5022f3382e1c729a70e0c722bde3abc351f"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/tyrquake"
 PKG_URL="https://github.com/libretro/tyrquake/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"

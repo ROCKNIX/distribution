@@ -20,6 +20,7 @@
 
 PKG_NAME="libxmp-lite"
 PKG_VERSION="4.5.0"
+PKG_SHA256="19a019abd5a3ddf449cd20ca52cfe18970f6ab28abdffdd54cff563981a943bb"
 PKG_SITE="http://sourceforge.net/projects/xmp"
 PKG_URL="${PKG_SITE}/files/libxmp/${PKG_VERSION}/libxmp-lite-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"

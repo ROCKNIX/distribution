@@ -2,6 +2,7 @@
 
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2009-2014 Stephan Raue (stephan@openelec.tv)
+# Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 . /etc/profile
 
@@ -38,8 +39,7 @@ cd tmp
 logger -t Sundtek "### Starting updating driver ###"
 kodi-send -a "Notification(Sundtek, Starting updating driver, 3000, $SUNDTEK_ADDON_DIR/icon.png)"
 
-wget -O ../version.used http://sundtek.de/media/latest.phtml
-if [ $? -ne 0 ]; then
+if ! wget -O ../version.used http://sundtek.de/media/latest.phtml; then
   logger -t Sundtek "### Can't get latest version ###"
   kodi-send -a "Notification(Sundtek, Cant get latest version, 8000, $SUNDTEK_ADDON_DIR/icon.png)"
   cd ..
@@ -64,8 +64,7 @@ fi
 
 logger -t Sundtek "### Downloading driver archive for $ARCH ###"
 kodi-send -a "Notification(Sundtek, Downloading driver archive for $ARCH, 3000, $SUNDTEK_ADDON_DIR/icon.png)"
-wget -O installer.tar.gz $INSTALLER_URL
-if [ $? -ne 0 ]; then
+if ! wget -O installer.tar.gz $INSTALLER_URL; then
   logger -t Sundtek "### Archive damaged ###"
   kodi-send -a "Notification(Sundtek, Download failed, 8000, $SUNDTEK_ADDON_DIR/icon.png)"
   cd ..
@@ -75,8 +74,7 @@ fi
 
 logger -t Sundtek "### Extracting archive ###"
 kodi-send -a "Notification(Sundtek, Extracting archive, 3000, $SUNDTEK_ADDON_DIR/icon.png)"
-tar -xzf installer.tar.gz
-if [ $? -ne 0 ]; then
+if ! tar -xzf installer.tar.gz; then
   logger -t Sundtek "### Archive damaged ###"
   kodi-send -a "Notification(Sundtek, Archive damaged, 8000, $SUNDTEK_ADDON_DIR/icon.png)"
   cd ..

@@ -1,9 +1,9 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2024-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="pyinstaller"
-PKG_VERSION="0.7.0"
-PKG_SHA256="a26d3e3116289bb08216e0d0f7d925fcef0b0194eedfa0c944bcaaa106c4b631"
+PKG_VERSION="1.0.1"
+PKG_SHA256="052c7fc3721d54c696e2dea019be67539d7b144e924f559f54beb3121831c364"
 PKG_LICENSE="MIT"
 PKG_SITE="https://pypi.org/project/installer/"
 PKG_URL="https://files.pythonhosted.org/packages/source/i/installer/installer-${PKG_VERSION}.tar.gz"

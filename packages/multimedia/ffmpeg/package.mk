@@ -3,28 +3,46 @@
 # Copyright (C) 2017-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="ffmpeg"
-PKG_VERSION="7.1.1"
-PKG_SHA256="733984395e0dbbe5c046abda2dc49a5544e7e0e1e2366bba849222ae9e3a03b1"
-PKG_LICENSE="GPL-3.0-only"
+PKG_VERSION="9.0"
+PKG_SHA256="7f607a00dd0d28a729d5a4811205812eef01cf6ef6155025febb6f36a9062d52"
+PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://ffmpeg.org"
 PKG_URL="http://ffmpeg.org/releases/ffmpeg-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_TARGET="toolchain zlib bzip2 openssl speex libxml2"
 PKG_LONGDESC="FFmpeg is a complete, cross-platform solution to record, convert and stream audio and video."
-PKG_PATCH_DIRS="libreelec"
+PKG_PATCH_DIRS="postproc libreelec"
+PKG_NO_REFRESH_PATCHES="tools/ffmpeg/gen-patches.sh"
+
+PKG_FFMPEG_REQUEST_DISABLE="--disable-libudev --disable-v4l2-request"
+PKG_FFMPEG_REQUEST_ENABLE="--enable-libudev --enable-v4l2-request"
 
 case "${PROJECT}" in
   Amlogic)
-    PKG_VERSION="6dbf87aefd7f491210abe1e043a1c228fa1439a0"
-    PKG_FFMPEG_BRANCH="test/7.1.1/main"
-    PKG_SHA256="66aead94c3884c9bc1ff2866f44d87f2f61d106bf203e1c723f83170b7e84297"
+    PKG_VERSION="c68aea78e6753be0099f1e4fabfe60cda75909b8"
+    PKG_FFMPEG_BRANCH="test/9.0/main"
+    PKG_SHA256="8837c510614ab5e2eb3045eb3bb3da41bb0a1e16f206f5c32c6eda2c1333af9d"
     PKG_URL="https://github.com/jc-kynesim/rpi-ffmpeg/archive/${PKG_VERSION}.tar.gz"
+    ;;
+  Generic)
+    PKG_FFMPEG_REQUEST_DISABLE=""
+    PKG_FFMPEG_REQUEST_ENABLE=""
+    ;;
+  Rockchip)
+    case "${DEVICE}" in
+      RK3288|RK3328|RK3399)
+        PKG_PATCH_DIRS+=" v4l2-request vf-deinterlace-v4l2m2m"
+        ;;
+      RK356X|RK3576|RK3588)
+        PKG_PATCH_DIRS+=" v4l2-request detlev vf-deinterlace-v4l2m2m"
+        ;;
+    esac
     ;;
   RPi)
     PKG_FFMPEG_RPI="--disable-mmal --enable-sand"
     PKG_PATCH_DIRS+=" rpi"
     ;;
   *)
-    PKG_PATCH_DIRS+=" v4l2-request v4l2-drmprime"
+    PKG_PATCH_DIRS+=" v4l2-request"
     case "${PROJECT}" in
       Allwinner | Rockchip)
         PKG_PATCH_DIRS+=" vf-deinterlace-v4l2m2m"
@@ -35,7 +53,7 @@ esac
 
 post_unpack() {
   # Fix FFmpeg version
-  if [ "${PROJECT}" = "Amlogic" ]; then
+  if [ "${PROJECT}" = "Amlogic" ] || [ "${PROJECT}" = "Rockchip" ]; then
     echo "${PKG_FFMPEG_BRANCH}-${PKG_VERSION:0:7}" >${PKG_BUILD}/VERSION
   else
     echo "${PKG_VERSION}" >${PKG_BUILD}/RELEASE
@@ -53,20 +71,14 @@ if [ "${V4L2_SUPPORT}" = "yes" ]; then
   PKG_FFMPEG_V4L2="--enable-v4l2_m2m --enable-libdrm"
 
   if [ "${PROJECT}" = "Allwinner" -o "${PROJECT}" = "Rockchip" -o "${DEVICE}" = "iMX8" -o "${DEVICE}" = "RPi4" -o "${DEVICE}" = "RPi5" ]; then
-    PKG_V4L2_REQUEST="yes"
-  else
-    PKG_V4L2_REQUEST="no"
-  fi
-
-  if [ "${PKG_V4L2_REQUEST}" = "yes" ]; then
     PKG_DEPENDS_TARGET+=" systemd"
     PKG_NEED_UNPACK+=" $(get_pkg_directory systemd)"
-    PKG_FFMPEG_V4L2+=" --enable-libudev --enable-v4l2-request"
+    PKG_FFMPEG_V4L2+=" ${PKG_FFMPEG_REQUEST_ENABLE}"
   else
-    PKG_FFMPEG_V4L2+=" --disable-libudev --disable-v4l2-request"
+    PKG_FFMPEG_V4L2+=" ${PKG_FFMPEG_REQUEST_DISABLE}"
   fi
 else
-  PKG_FFMPEG_V4L2="--disable-v4l2_m2m --disable-libudev --disable-v4l2-request"
+  PKG_FFMPEG_V4L2="--disable-v4l2_m2m ${PKG_FFMPEG_REQUEST_DISABLE}"
 fi
 
 if [ "${VAAPI_SUPPORT}" = "yes" ]; then
@@ -81,14 +93,6 @@ if [ "${DISPLAYSERVER}" != "x11" ]; then
   PKG_DEPENDS_TARGET+=" libdrm"
   PKG_NEED_UNPACK+=" $(get_pkg_directory libdrm)"
   PKG_FFMPEG_VAAPI=" --enable-libdrm"
-fi
-
-if [ "${VDPAU_SUPPORT}" = "yes" -a "${DISPLAYSERVER}" = "x11" ]; then
-  PKG_DEPENDS_TARGET+=" libvdpau"
-  PKG_NEED_UNPACK+=" $(get_pkg_directory libvdpau)"
-  PKG_FFMPEG_VDPAU="--enable-vdpau"
-else
-  PKG_FFMPEG_VDPAU="--disable-vdpau"
 fi
 
 if build_with_debug; then
@@ -133,7 +137,7 @@ fi
 
 configure_target() {
   ./configure --prefix="/usr" \
-              --cpu="${TARGET_CPU}" \
+              --cpu="${TARGET_CPU}${TARGET_CPU_FLAGS}" \
               --arch="${TARGET_ARCH}" \
               --enable-cross-compile \
               --cross-prefix="${TARGET_PREFIX}" \
@@ -166,7 +170,6 @@ configure_target() {
               --enable-avcodec \
               --enable-avformat \
               --enable-swscale \
-              --enable-postproc \
               --enable-avfilter \
               --disable-devices \
               --enable-pthreads \
@@ -177,12 +180,13 @@ configure_target() {
               --disable-small \
               ${PKG_FFMPEG_V4L2} \
               ${PKG_FFMPEG_VAAPI} \
-              ${PKG_FFMPEG_VDPAU} \
+              --disable-vdpau \
               ${PKG_FFMPEG_RPI} \
               --enable-runtime-cpudetect \
               --disable-hardcoded-tables \
               --disable-encoders \
               --enable-encoder=ac3 \
+              --enable-encoder=eac3 \
               --enable-encoder=aac \
               --enable-encoder=wmav2 \
               --enable-encoder=mjpeg \

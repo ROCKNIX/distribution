@@ -3,9 +3,9 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="libxkbfile"
-PKG_VERSION="1.1.3"
-PKG_SHA256="a9b63eea997abb9ee6a8b4fbb515831c841f471af845a09de443b28003874bec"
-PKG_LICENSE="OSS"
+PKG_VERSION="1.2.0"
+PKG_SHA256="7f71884e5faf56fb0e823f3848599cf9b5a9afce51c90982baeb64f635233ebf"
+PKG_LICENSE="MIT"
 PKG_SITE="https://www.X.org"
 PKG_URL="https://xorg.freedesktop.org/archive/individual/lib/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_TARGET="toolchain util-macros libX11"

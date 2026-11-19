@@ -1,10 +1,10 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="kmscube"
-PKG_VERSION="9f63f359fab1b5d8e862508e4e51c9dfe339ccb0"
-PKG_SHA256="896ac76671a9b89836a7014b16cc85b45b041e03fe34a8f529f4718aa2b15cef"
-PKG_LICENSE="GPL"
+PKG_VERSION="f60e50e887d3c49e91ac9b06d8199b36152632fa"
+PKG_SHA256="6f5a56929e8958e8e0d073c898c0d50d3c6ab7f070ad0d2f185a6ee2d29b57d7"
+PKG_LICENSE="MIT"
 PKG_SITE="https://gitlab.freedesktop.org/mesa/kmscube"
 PKG_URL="https://gitlab.freedesktop.org/mesa/kmscube/-/archive/master/kmscube-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"

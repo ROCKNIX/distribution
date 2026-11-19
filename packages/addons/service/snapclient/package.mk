@@ -1,11 +1,11 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="snapclient"
-PKG_VERSION="0.31.0"
-PKG_REV="0"
+PKG_VERSION="0.35.0"
+PKG_REV="3"
 PKG_ARCH="any"
-PKG_LICENSE="GPLv3"
+PKG_LICENSE="GPL-3.0-or-later"
 PKG_DEPENDS_TARGET="toolchain alsa-plugins snapcast"
 PKG_SECTION="service"
 PKG_SHORTDESC="Snapclient: Synchronous multi-room audio client"
@@ -22,7 +22,6 @@ addon() {
 
   cp $(get_install_dir snapcast)/usr/bin/snapclient \
      ${ADDON_BUILD}/${PKG_ADDON_ID}/bin
-  patchelf --add-rpath '${ORIGIN}/../lib.private' ${ADDON_BUILD}/${PKG_ADDON_ID}/bin/snapclient
 
   cp $(get_install_dir alsa-plugins)/usr/lib/alsa/*.so \
      ${ADDON_BUILD}/${PKG_ADDON_ID}/lib.private

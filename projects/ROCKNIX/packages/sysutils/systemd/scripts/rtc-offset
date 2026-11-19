@@ -1,0 +1,28 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+# rtc-offset restore|save: an RTC that reads earlier than this build can't be set, keep the clock as an offset to it
+RTC=/sys/class/rtc/rtc0/since_epoch
+STATE=/storage/.cache/rtc-offset
+BUILT=$(stat -c %Y /etc/os-release)
+
+[ -r ${RTC} ] || exit 0
+RTC_NOW=$(cat ${RTC})
+[ "${RTC_NOW}" -lt "${BUILT}" ] || exit 0
+
+case "${1}" in
+  restore)
+    read OFFSET SAVED < ${STATE} 2>/dev/null || exit 0
+    NOW=$((RTC_NOW + OFFSET))
+    # a time before the last save means the RTC was reset
+    if [ "${NOW}" -ge "${SAVED}" ] && [ "${NOW}" -gt "$(date +%s)" ]; then
+      date -s "@${NOW}" >/dev/null
+    fi
+    ;;
+  save)
+    NOW=$(date +%s)
+    [ "${NOW}" -ge "${BUILT}" ] || exit 0
+    echo "$((NOW - RTC_NOW)) ${NOW}" > ${STATE}.tmp && mv -f ${STATE}.tmp ${STATE}
+    ;;
+esac

@@ -1,0 +1,78 @@
+From: sunshineinabox <aqemail@gmail.com>
+Subject: [PATCH] usb: dwc3: qcom: defer the VBUS override while system suspended
+
+The role switch can arrive from the TCPM thread before the glue resumes,
+and the override write then hits QSCRATCH with its clocks off and hangs
+the bus. Record the role while suspended and apply it on resume.
+
+---
+--- a/drivers/usb/dwc3/dwc3-qcom.c
++++ b/drivers/usb/dwc3/dwc3-qcom.c
+@@ -81,6 +81,9 @@
+ 	enum usb_dr_mode	mode;
+ 	bool			is_suspended;
+ 	bool			pm_suspended;
++	struct mutex		pm_lock;
++	bool			role_pending;
++	enum usb_role		pending_role;
+ 	struct icc_path		*icc_path_ddr;
+ 	struct icc_path		*icc_path_apps;
+ 
+@@ -561,6 +564,14 @@
+ static void dwc3_qcom_set_role_notifier(struct dwc3 *dwc, enum usb_role next_role)
+ {
+ 	struct dwc3_qcom *qcom = to_dwc3_qcom(dwc);
++
++	guard(mutex)(&qcom->pm_lock);
++
++	if (qcom->pm_suspended) {
++		qcom->pending_role = next_role;
++		qcom->role_pending = true;
++		return;
++	}
+ 
+ 	if (qcom->current_role == next_role)
+ 		return;
+@@ -623,6 +634,7 @@
+ 		return -ENOMEM;
+ 
+ 	qcom->dev = &pdev->dev;
++	mutex_init(&qcom->pm_lock);
+ 
+ 	qcom->resets = devm_reset_control_array_get_optional_exclusive(dev);
+ 	if (IS_ERR(qcom->resets)) {
+@@ -756,6 +768,8 @@
+ 	if (ret)
+ 		return ret;
+ 
++	guard(mutex)(&qcom->pm_lock);
++
+ 	ret = dwc3_qcom_suspend(qcom, wakeup);
+ 	if (ret)
+ 		return ret;
+@@ -772,12 +786,21 @@
+ 	bool wakeup = device_may_wakeup(dev);
+ 	int ret;
+ 
+-	ret = dwc3_qcom_resume(qcom, wakeup);
+-	if (ret)
+-		return ret;
++	scoped_guard(mutex, &qcom->pm_lock) {
++		ret = dwc3_qcom_resume(qcom, wakeup);
++		if (ret)
++			return ret;
+ 
+-	qcom->pm_suspended = false;
++		qcom->pm_suspended = false;
+ 
++		if (qcom->role_pending && qcom->current_role != qcom->pending_role) {
++			dwc3_qcom_vbus_override_enable(qcom,
++						       qcom->current_role != USB_ROLE_DEVICE);
++			qcom->current_role = qcom->pending_role;
++		}
++		qcom->role_pending = false;
++	}
++
+ 	ret = dwc3_pm_resume(&qcom->dwc);
+ 	if (ret)
+ 		return ret;

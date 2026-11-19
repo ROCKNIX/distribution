@@ -3,14 +3,14 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="screensaver.matrixtrails"
-PKG_VERSION="21.0.2-Omega"
-PKG_SHA256="cc342d201606e682fc9def894a308784b74633f981209570c87d1bd206894311"
+PKG_VERSION="22.0.3-Piers"
+PKG_SHA256="19b618c889843fc1bacc7a648513ad526ef781ffb7d6b0819ade40735a1b883a"
 PKG_REV="2"
 PKG_ARCH="any"
-PKG_LICENSE="GPL"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/xbmc/screensaver.matrixtrails"
 PKG_URL="https://github.com/xbmc/screensaver.matrixtrails/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain kodi-platform"
+PKG_DEPENDS_TARGET="toolchain tinyxml ${MEDIACENTER}:host"
 PKG_SECTION=""
 PKG_SHORTDESC="screensaver.matrixtrails"
 PKG_LONGDESC="screensaver.matrixtrails"
@@ -20,4 +20,8 @@ PKG_ADDON_TYPE="xbmc.ui.screensaver"
 
 if [ "${OPENGL}" = "no" ]; then
   exit 0
+fi
+
+if [ "${DISPLAYSERVER}" = "no" ]; then
+  PKG_CMAKE_OPTS_TARGET="-DCORE_PLATFORM_NAME=gbm"
 fi

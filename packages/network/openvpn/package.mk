@@ -3,9 +3,9 @@
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="openvpn"
-PKG_VERSION="2.6.14"
-PKG_SHA256="9eb6a6618352f9e7b771a9d38ae1631b5edfeed6d40233e243e602ddf2195e7a"
-PKG_LICENSE="GPL"
+PKG_VERSION="2.7.6"
+PKG_SHA256="10e24a9385f23cc38cc5cf448f3ca0769f939bc4cbecc4f4647d7e006e52db74"
+PKG_LICENSE="GPL-2.0-only"
 PKG_SITE="https://openvpn.net"
 PKG_URL="https://swupdate.openvpn.org/community/releases/${PKG_NAME}-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain libcap-ng lz4 lzo openssl"
@@ -17,6 +17,7 @@ PKG_CONFIGURE_OPTS_TARGET="ac_cv_have_decl_TUNSETPERSIST=no \
                            --enable-iproute2 IPROUTE=/sbin/ip \
                            --enable-management \
                            --enable-fragment \
+                           --without-openssl-engine \
                            --disable-port-share \
                            --disable-debug"
 

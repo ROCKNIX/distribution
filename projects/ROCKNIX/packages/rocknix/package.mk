@@ -71,7 +71,7 @@ EOF
 
   ### Fix and migrate to autostart package
   enable_service rocknix-autostart.service
-  
+
   ### ZRAM/Swap and Memory Manager Service
   enable_service rocknix-memory-manager.service
 
@@ -80,14 +80,19 @@ EOF
 
   sed -i "s#@DEVICENAME@#${DEVICE}#g" ${INSTALL}/usr/config/system/configs/system.cfg
 
-  ### Defaults for non-main builds.
-  BUILD_BRANCH="$(git branch --show-current)"
-  if [ ! "${BUILD_BRANCH}" = "main" ]
+  ### Defaults for community builds.
+  if [ "${OS_BUILD}" = "community" ]
   then
     sed -i "s#samba.enabled=0#samba.enabled=1#g" ${INSTALL}/usr/config/system/configs/system.cfg
     sed -i "s#ssh.enabled=0#ssh.enabled=1#g" ${INSTALL}/usr/config/system/configs/system.cfg
     sed -i "s#wifi.enabled=0#wifi.enabled=1#g" ${INSTALL}/usr/config/system/configs/system.cfg
     sed -i "s#system.loglevel=none#system.loglevel=verbose#g" ${INSTALL}/usr/config/system/configs/system.cfg
+  fi
+
+  ### Disable automount on AMD64
+  if [ "${DEVICE}" = "AMD64" ]
+  then
+    sed -i "s#system.automount=1#system.automount=0#g" ${INSTALL}/usr/config/system/configs/system.cfg
   fi
 
   ### Enable HDMI hotplug service on H700
@@ -96,4 +101,10 @@ EOF
     enable_service hdmi-hotplug.path
   fi
 
+  ### Remove different arch freq functions
+  if [ "${TARGET_ARCH}" = "x86_64" ]; then
+    rm -rf ${INSTALL}/etc/profile.d/099-freqfunctions
+  else
+    rm -rf ${INSTALL}/etc/profile.d/100-amd64-freqfunctions
+  fi
 }

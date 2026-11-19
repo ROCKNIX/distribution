@@ -3,18 +3,21 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="gettext"
-PKG_VERSION="0.25.1"
-PKG_SHA256="2c8294be238f03fb3fa65b8051057e5b68167f3e21f08008070cf40a7051ba22"
-PKG_LICENSE="GPL"
+PKG_VERSION="1.0"
+PKG_SHA256="71132a3fb71e68245b8f2ac4e9e97137d3e5c02f415636eb508ae607bc01add7"
+PKG_LICENSE="GPL-3.0-or-later AND LGPL-2.1-or-later"
 PKG_SITE="https://www.gnu.org/s/gettext/"
 PKG_URL="https://ftp.gnu.org/pub/gnu/gettext/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_HOST="make:host"
-PKG_DEPENDS_TARGET="autotools:host make:host gcc:host"
+PKG_DEPENDS_TARGET="autotools:host make:host gcc:host libxml2"
 PKG_LONGDESC="A program internationalization library and tools."
 PKG_BUILD_FLAGS="+local-cc"
 
-PKG_CONFIGURE_OPTS_HOST="--disable-static --enable-shared \
-                         --disable-rpath \
+PKG_CONFIGURE_OPTS_COMMON="--disable-rpath \
+                           --disable-modula2"
+
+PKG_CONFIGURE_OPTS_HOST="${PKG_CONFIGURE_OPTS_COMMON} \
+                         --disable-static --enable-shared \
                          --with-gnu-ld \
                          --disable-java \
                          --disable-curses \
@@ -23,7 +26,11 @@ PKG_CONFIGURE_OPTS_HOST="--disable-static --enable-shared \
                          --disable-csharp \
                          --without-emacs"
 
-PKG_CONFIGURE_OPTS_TARGET="--disable-rpath"
+PKG_CONFIGURE_OPTS_TARGET="${PKG_CONFIGURE_OPTS_COMMON} \
+                           --disable-curses \
+                           --disable-xattr \
+                           --with-libxml2-prefix=${SYSROOT_PREFIX}/usr \
+                           --with-sysroot=yes"
 
 post_configure_target() {
   libtool_remove_rpath gettext-runtime/libasprintf/libtool

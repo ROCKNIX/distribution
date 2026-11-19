@@ -1,11 +1,13 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2017-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="x265"
-PKG_VERSION="4.1"
-PKG_SHA256="53c9363dba429eab3123ffcfda28065c5e7a8b5e21efa0a5f23bc5b89340d390"
-PKG_ARCH="x86_64"
-PKG_LICENSE="GPL"
+PKG_VERSION="4.2"
+PKG_SHA256="04978f795943e49fcea76eb5ede9c1bd0fe9b6c073518897be6fc43b44f60850"
+# When changing PKG_VERSION remember to sync PKG_X265_SONAME with X265_BUILD in source/CMakeLists.txt
+PKG_X265_SONAME="216"
+PKG_ARCH="aarch64 x86_64"
+PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://www.videolan.org/developers/x265.html"
 PKG_URL="https://bitbucket.org/multicoreware/x265_git/get/${PKG_VERSION}.tar.bz2"
 PKG_DEPENDS_TARGET="toolchain"

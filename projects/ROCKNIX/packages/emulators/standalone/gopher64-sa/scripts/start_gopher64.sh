@@ -87,12 +87,8 @@ else
 fi
 
 #Set correct input device
-GAMEPAD=$(grep -l "Microsoft Xbox Series S|X Controller" /sys/class/input/event*/device/name | sed -E 's#.*/(event[0-9]+).*#/dev/input/\1#')
-if [[ -n "$GAMEPAD" ]]; then
-  sed -Ei "/\"controller_assignment\": \[/ { n; s#\"[^\"]*\"#\"$GAMEPAD\"#; }" "${CONF_DIR}/${GOPHER64_JSON}"
-else
-  GAMEPAD="ERROR: No matching gamepad found."
-fi
+GAMEPAD="/dev/hidraw0"
+sed -Ei "/\"controller_assignment\": \[/ { n; s#\"[^\"]*\"#\"$GAMEPAD\"#; }" "${CONF_DIR}/${GOPHER64_JSON}"
 
 # Cheevos
 CHEEVOS_LOG_FILE="/var/log/cheevos.log"

@@ -1,10 +1,10 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="libretro-vecx"
-PKG_VERSION="841229a6a81a0461d08af6488f252dcec5266c6a"
-PKG_SHA256="d564413e9611b16e49e076cadd719587b6712c3cb435eaf90597c2db157546f4"
-PKG_LICENSE="GPLv3"
+PKG_VERSION="8f671cc9d737f2890c3ce19e177e2984dcae121f"
+PKG_SHA256="cd59fe10619be54c60bb6feb2f48c607291f38bd9638b78ee975081d80450065"
+PKG_LICENSE="GPL-3.0-only"
 PKG_SITE="https://github.com/libretro/libretro-vecx"
 PKG_URL="https://github.com/libretro/libretro-vecx/archive/${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain"

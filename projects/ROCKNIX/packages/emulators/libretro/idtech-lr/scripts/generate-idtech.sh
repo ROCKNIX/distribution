@@ -14,6 +14,8 @@ RA_DIR="/usr/lib/libretro"
 SCRIPT_DIR="/storage/.config/idtech"
 GAME_DIR="/storage/roms/idtech"
 
+/usr/bin/sdl2notify --center "Scanning \n iD Tech Games" 255 255 255 2
+
 ### create .config/idtech if does not exist
 if [ ! -d ${SCRIPT_DIR} ]; then
   mkdir -p ${SCRIPT_DIR}
@@ -224,6 +226,8 @@ fi
 
 ### Set all launcher scripts to be executable ###
 chmod +x ${SCRIPT_DIR}/*
+
+/usr/bin/sdl2notify --center "Scanning Complete" 255 255 255 2
 
 #Restart ES so games are displayed
 systemctl restart ${UI_SERVICE}

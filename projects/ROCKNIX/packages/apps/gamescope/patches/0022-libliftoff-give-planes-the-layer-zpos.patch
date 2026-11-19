@@ -1,0 +1,49 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Sun, 27 Sep 2026 02:40:00 -0700
+Subject: [PATCH] libliftoff: give planes with a settable zpos the layer's zpos
+
+libliftoff only reads plane zpos, once, to order its allocation, and
+never sets it. msm exposes several primary planes that all sit at zpos
+0, so two layers on two of them are stacked by plane id, not by layer
+zpos: an overlay on the lower plane ends up under the game. Where the
+plane's zpos is a mutable range that holds the layer's value, set it
+from the layer so the stacking follows the layers.
+---
+diff --git a/subprojects/libliftoff/plane.c b/subprojects/libliftoff/plane.c
+index a2f637e..2f9c9df 100644
+--- a/subprojects/libliftoff/plane.c
++++ b/subprojects/libliftoff/plane.c
+@@ -360,7 +360,7 @@ plane_apply(struct liftoff_plane *plane, struct liftoff_layer *layer,
+ 	int cursor, ret;
+ 	size_t i;
+ 	struct liftoff_layer_property *layer_prop;
+-	const drmModePropertyRes *plane_prop;
++	const drmModePropertyRes *plane_prop, *zpos_prop;
+ 
+ 	cursor = drmModeAtomicGetCursor(req);
+ 
+@@ -381,8 +381,22 @@ plane_apply(struct liftoff_plane *plane, struct liftoff_layer *layer,
+ 	for (i = 0; i < layer->props_len; i++) {
+ 		layer_prop = &layer->props[i];
+ 		if (layer_prop->core_index == LIFTOFF_PROP_ZPOS) {
+-			/* We don't yet support setting the zpos property. We
+-			 * only use it (read-only) during plane allocation. */
++			/* Allocation treats plane zpos as fixed. Where a plane
++			 * lets us, also give it the layer's zpos, so planes that
++			 * tie there (msm has several primaries at 0) still stack
++			 * in layer order. */
++			zpos_prop = plane->core_props[LIFTOFF_PROP_ZPOS];
++			if (zpos_prop != NULL &&
++			    !(zpos_prop->flags & DRM_MODE_PROP_IMMUTABLE) &&
++			    drmModeGetPropertyType(zpos_prop) == DRM_MODE_PROP_RANGE &&
++			    check_range_prop(zpos_prop, layer_prop->value) == 0) {
++				ret = plane_set_prop(plane, req, zpos_prop,
++						     layer_prop->value);
++				if (ret != 0) {
++					drmModeAtomicSetCursor(req, cursor);
++					return ret;
++				}
++			}
+ 			continue;
+ 		}
+ 

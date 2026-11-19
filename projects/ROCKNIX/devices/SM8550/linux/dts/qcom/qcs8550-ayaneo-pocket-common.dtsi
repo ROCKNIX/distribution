@@ -25,6 +25,12 @@
 /delete-node/ &q6_cdsp_dtb_mem;
 
 /delete-node/ &remoteproc_mpss;
+
+/* v7.3 gives &ipa a memory-region on ipa_fw_mem, deleted above; IPA stays disabled here. */
+&ipa {
+	/delete-property/ memory-region;
+};
+
 /delete-node/ &remoteproc_cdsp;
 
 / {
@@ -179,6 +185,54 @@
 		};
 	};
 
+	upd720201_avdd33_reg: upd720201-avdd33-regulator {
+		compatible = "regulator-fixed";
+
+		regulator-name = "upd720201_avdd33";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+
+		gpios = <&tlmm 18 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+
+		vin-supply = <&vph_pwr>;
+
+		pinctrl-0 = <&upd720201_avdd33>;
+		pinctrl-names = "default";
+	};
+
+	upd720201_vdd10_reg: upd720201-vdd10-regulator {
+		compatible = "regulator-fixed";
+
+		regulator-name = "upd720201_vdd10";
+		regulator-min-microvolt = <1050000>;
+		regulator-max-microvolt = <1050000>;
+
+		gpios = <&tlmm 13 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+
+		vin-supply = <&vph_pwr>;
+
+		pinctrl-0 = <&upd720201_vdd10>;
+		pinctrl-names = "default";
+	};
+
+	upd720201_vdd33_reg: upd720201-vdd33-regulator {
+		compatible = "regulator-fixed";
+
+		regulator-name = "upd720201_vdd33";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+
+		gpios = <&tlmm 10 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+
+		vin-supply = <&vph_pwr>;
+
+		pinctrl-0 = <&upd720201_vdd33>;
+		pinctrl-names = "default";
+	};
+
 	sound {
 		status = "okay";
 		compatible = "qcom,sm8550-sndcard", "qcom,sm8450-sndcard";
@@ -217,6 +271,21 @@
 
 			platform {
 				sound-dai = <&q6apm>;
+			};
+		};
+
+		dp0-dai-link {
+			link-name = "DP0 Playback";
+			cpu {
+				sound-dai = <&q6apmbedai DISPLAY_PORT_RX_0>;
+			};
+
+			platform {
+				sound-dai = <&q6apm>;
+			};
+
+			codec {
+				sound-dai = <&mdss_dp0>;
 			};
 		};
 	};
@@ -1043,12 +1112,25 @@
 		input-enable;
 	};
 
-	upd720201_active: upd720201-active-state {
-		pins = "gpio10",  "gpio13", "gpio18";
+	upd720201_avdd33: upd720201-avdd33-state {
+		pins = "gpio18";
 		function = "gpio";
 		drive-strength = <2>;
-		bias-pull-up;
-		output-high;
+		bias-disable;
+	};
+
+	upd720201_vdd10: pd720201-vdd10-state {
+		pins = "gpio13";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	upd720201_vdd33: upd720201-vdd33-state {
+		pins = "gpio10";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
 	};
 
 	gamepad_pwr_en: gamepad-pwr-en-active-state {
@@ -1151,6 +1233,15 @@
 	clock-frequency = <76800000>;
 };
 
+/*
+ * No QCE driver: 7.3 makes CRYPTO_DEV_QCE depend on BROKEN. Left enabled, the node is a
+ * consumer that never binds, so the interconnect providers never reach sync_state and every
+ * NoC node stays voted at INT_MAX.
+ */
+&crypto {
+	status = "disabled";
+};
+
 &gpi_dma1 {
 	status = "okay";
 };
@@ -1250,7 +1341,6 @@
 				reg = <1>;
 
 				redriver_ss_in: endpoint {
-					data-lanes = <3 2 1 0>;
 					remote-endpoint = <&usb_dp_qmpphy_out>;
 				};
 			};
@@ -1285,22 +1375,20 @@
 };
 
 &mdss_dp0_out {
-	data-lanes = <0 1>;
+	sound-name-prefix = "Display Port0";
 };
 
 &pcie0 {
-	wake-gpios = <&tlmm 96 GPIO_ACTIVE_HIGH>;
-	perst-gpios = <&tlmm 94 GPIO_ACTIVE_LOW>;
-
-	max-link-speed = <2>;
-
 	pinctrl-0 = <&pcie0_default_state>;
 	pinctrl-names = "default";
 
 	status = "okay";
 };
 
-&pcieport0 {
+&pcie0_port0 {
+	wake-gpios = <&tlmm 96 GPIO_ACTIVE_LOW>;
+	reset-gpios = <&tlmm 94 GPIO_ACTIVE_LOW>;
+
 	wifi@0 {
 		compatible = "pci17cb,1107";
 		reg = <0x10000 0x0 0x0 0x0 0x0>;
@@ -1325,13 +1413,28 @@
 };
 
 &pcie1 {
-	wake-gpios = <&tlmm 99 GPIO_ACTIVE_HIGH>;
-	perst-gpios = <&tlmm 97 GPIO_ACTIVE_LOW>;
-
-	pinctrl-0 = <&pcie1_default_state>, <&upd720201_active>, <&gamepad_pwr_en>;
+	pinctrl-0 = <&pcie1_default_state>;
 	pinctrl-names = "default";
 
 	status = "okay";
+};
+
+&pcie1_port0 {
+	wake-gpios = <&tlmm 99 GPIO_ACTIVE_LOW>;
+	reset-gpios = <&tlmm 97 GPIO_ACTIVE_LOW>;
+
+	/* Renesas μPD720201 PCIe USB3.0 HOST CONTROLLER */
+	usb-controller@0 {
+		compatible = "pci1912,0014";
+		reg = <0x10000 0x0 0x0 0x0 0x0>;
+
+		avdd33-supply = <&upd720201_avdd33_reg>;
+		vdd10-supply = <&upd720201_vdd10_reg>;
+		vdd33-supply = <&upd720201_vdd33_reg>;
+
+		pinctrl-0 = <&gamepad_pwr_en>;
+		pinctrl-names = "default";
+	};
 };
 
 &pcie1_phy {

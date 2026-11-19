@@ -5,7 +5,7 @@
 source /etc/profile
 
 HEROIC_BASE="/storage/.local/share/heroic-arm64"
-HEROIC_VERSION="2.22.0"
+HEROIC_VERSION="2.22.4"
 HEROIC_TAR_URL="https://github.com/trescenzi/heroic_builder/releases/download/v${HEROIC_VERSION}/Heroic-${HEROIC_VERSION}-linux-arm64.tar.xz"
 HEROIC_BIN=""
 

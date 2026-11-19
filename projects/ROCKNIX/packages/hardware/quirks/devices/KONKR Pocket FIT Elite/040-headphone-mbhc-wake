@@ -1,0 +1,41 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+#
+# 040-headphone-mbhc-wake — KONKR Pocket FIT Elite
+#
+# Speaker audio on this board goes MI2S -> AW88261 amps, bypassing the WCD939x
+# codec entirely, so the WCD's SoundWire bus clock-stops whenever no WCD audio
+# is playing.  In clock-stop the codec's MBHC can't deliver a 3.5mm jack
+# insert/remove (the out-of-band SoundWire wake IRQ is not wired up on this
+# SoC), so the jack is never detected while idle.
+#
+# Keep the two WCD SoundWire controllers runtime-active so the MBHC stays live
+# and jack events are delivered immediately.  Paired with kernel patch 0063
+# (route the WCD939x USBSS to audio on mechanical insert) this makes the
+# integrated headphone jack detect and route on plug-in.  Cost: the WCD bus
+# idles powered (a few mW) instead of clock-stopping.
+#
+# This is the pragmatic workaround for the missing swr wake-IRQ delivery; the
+# upstream-clean fix would wire that IRQ in drivers/soundwire/qcom.c.
+
+CTRLS="/sys/devices/platform/soc@0/6ad0000.soundwire /sys/devices/platform/soc@0/7630000.soundwire"
+
+# Wait for BOTH the controllers AND the WCD slaves to enumerate (the slaves
+# appear ~15s in, after the codec binds — pinning before they exist misses
+# them and the bus still clock-stops), then pin everything on.
+n=0
+while [ "$n" -lt 40 ]; do
+    have=1
+    for c in $CTRLS; do [ -e "$c/power/control" ] || have=0; done
+    ls /sys/bus/soundwire/devices/sdw:*/power/control >/dev/null 2>&1 || have=0
+    [ "$have" = 1 ] && break
+    sleep 1; n=$((n + 1))
+done
+
+for c in $CTRLS; do
+    [ -e "$c/power/control" ] && echo on > "$c/power/control" 2>/dev/null
+done
+for s in /sys/bus/soundwire/devices/sdw:*; do
+    [ -e "$s/power/control" ] && echo on > "$s/power/control" 2>/dev/null
+done

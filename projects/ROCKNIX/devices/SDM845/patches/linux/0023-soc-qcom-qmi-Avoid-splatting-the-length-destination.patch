@@ -1,0 +1,78 @@
+From 712b288d5f0bf1eb01bb514bd3f63cd8b777ef9a Mon Sep 17 00:00:00 2001
+From: Bjorn Andersson <bjorn.andersson@oss.qualcomm.com>
+Date: Sat, 14 Feb 2026 15:16:56 -0600
+Subject: [PATCH] soc: qcom: qmi: Avoid splatting the "length" destination
+ field
+
+When decoding a variable-length element from a QMI message the length is
+either a u8 or u16 field in the destination C-struct, but the current
+implementation prepares the value on the stack and then writes out a
+whole word.
+
+In a little endian system, this results in the following 2 or 3 bytes
+being zeroed out, and then presumably overwritten by the actual payload.
+So unless the length field is followed by an unreasonably short array,
+the splat is contained - but unnecessary.
+
+While not verified, in a big endian system, the length should end up
+beyond the length field, resulting in a 0-length value with "garbage" in
+the payload.
+
+Given the expectation that the QMI message is decoded into the naturally
+aligned byte or short-sized length, we can simply read the
+endian-correct length back from the destination buffer and use this for
+further processing.
+
+Fixes: fe099c387e06 ("soc: qcom: preserve CPU endianness for QMI_DATA_LEN")
+Signed-off-by: Bjorn Andersson <bjorn.andersson@oss.qualcomm.com>
+---
+ drivers/soc/qcom/qmi_encdec.c | 26 ++++++++++----------------
+ 1 file changed, 10 insertions(+), 16 deletions(-)
+
+diff --git a/drivers/soc/qcom/qmi_encdec.c b/drivers/soc/qcom/qmi_encdec.c
+index 45bb26d010da..149af7f7c983 100644
+--- a/drivers/soc/qcom/qmi_encdec.c
++++ b/drivers/soc/qcom/qmi_encdec.c
+@@ -712,8 +712,6 @@ static int qmi_decode(const struct qmi_elem_info *ei_array, void *out_c_struct,
+ 	u32 decoded_bytes = 0;
+ 	const void *buf_src = in_buf;
+ 	int rc;
+-	u8 val8;
+-	u16 val16;
+ 
+ 	while (decoded_bytes < in_buf_len) {
+ 		if (dec_level >= 2 && temp_ei->data_type == QMI_EOTI)
+@@ -752,20 +750,16 @@ static int qmi_decode(const struct qmi_elem_info *ei_array, void *out_c_struct,
+ 		if (temp_ei->data_type == QMI_DATA_LEN) {
+ 			data_len_sz = temp_ei->elem_size == sizeof(u8) ?
+ 					sizeof(u8) : sizeof(u16);
+-			if (data_len_sz == sizeof(u8)) {
+-				rc = qmi_decode_basic_elem(&val8, buf_src,
+-							   1, data_len_sz);
+-				if (rc < 0)
+-					return rc;
+-				data_len_value = (u32)val8;
+-			} else {
+-				rc = qmi_decode_basic_elem(&val16, buf_src,
+-							   1, data_len_sz);
+-				if (rc < 0)
+-					return rc;
+-				data_len_value = (u32)val16;
+-			}
+-			memcpy(buf_dst, &data_len_value, sizeof(u32));
++
++			rc = qmi_decode_basic_elem(buf_dst, buf_src, 1, data_len_sz);
++			if (rc < 0)
++				return rc;
++
++			if (data_len_sz == sizeof(u8))
++				data_len_value = *(u8 *)buf_dst;
++			else
++				data_len_value = *(u16 *)buf_dst;
++
+ 			temp_ei = temp_ei + 1;
+ 			buf_dst = out_c_struct + temp_ei->offset;
+ 			tlv_len -= data_len_sz;
+-- 
+GitLab
+

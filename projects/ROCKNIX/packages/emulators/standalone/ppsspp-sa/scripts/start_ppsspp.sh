@@ -69,6 +69,11 @@ fi
 		sed -i '/^InternalResolution/c\InternalResolution = 1' ${CONF_DIR}/${PPSSPP_INI}
         fi
 
+  #Scan out render size
+	SCANOUT_SCALE=$(scanout_internal_scale "$(awk '/^InternalResolution = / {print $3; exit}' ${CONF_DIR}/${PPSSPP_INI})" 272 1 10)
+	sed -i "/^InternalResolution/c\InternalResolution = ${SCANOUT_SCALE}" ${CONF_DIR}/${PPSSPP_INI}
+	scanout_render_size 272 "${SCANOUT_SCALE}" 480:272
+
   #Show FPS
 	if [ "${FPS}" = "1" ]; then
 		sed -i '/^iShowStatusFlags =/c\iShowStatusFlags = 2' ${CONF_DIR}/${PPSSPP_INI}

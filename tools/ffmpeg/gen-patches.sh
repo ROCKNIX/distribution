@@ -2,9 +2,9 @@
 
 # base ffmpeg version
 FFMPEG_REPO="git://source.ffmpeg.org/ffmpeg.git"
-FFMPEG_VERSION="n7.1.1"
+FFMPEG_VERSION="9.0"
 
-ALL_FEATURE_SETS="v4l2-drmprime v4l2-request libreelec rpi vf-deinterlace-v4l2m2m"
+ALL_FEATURE_SETS="v4l2-drmprime v4l2-request libreelec rpi vf-deinterlace-v4l2m2m postproc"
 
 if [ $# -eq 0 ]; then
   echo "usage: $0 all|featureset [githash]"
@@ -23,23 +23,31 @@ create_patch() {
   REFTYPE="branch"
 
   BASE_REPO="${FFMPEG_REPO}"
-  BASE_VERSION="${FFMPEG_VERSION}"
+  BASE_VERSION="n${FFMPEG_VERSION}"
 
   PATCH_CREATE_DIFF="no"
 
   case "${FEATURE_SET}" in
-    v4l2-drmprime | v4l2-request | vf-deinterlace-v4l2m2m)
+    v4l2-request)
+      REPO="https://code.ffmpeg.org/Kwiboo/FFmpeg.git"
+      REFSPEC="${FEATURE_SET}-n${FFMPEG_VERSION}"
+      ;;
+    v4l2-drmprime | vf-deinterlace-v4l2m2m)
       REPO="https://github.com/jernejsk/FFmpeg"
-      REFSPEC="${FEATURE_SET}-${FFMPEG_VERSION}"
+      REFSPEC="${FEATURE_SET}-n${FFMPEG_VERSION}"
       ;;
     libreelec)
       REPO="https://github.com/LibreELEC/FFmpeg"
-      REFSPEC="libreelec-misc-${FFMPEG_VERSION}"
+      REFSPEC="libreelec-misc-n${FFMPEG_VERSION}"
       ;;
     rpi)
       REPO="https://github.com/jc-kynesim/rpi-ffmpeg"
-      REFSPEC="dev/7.1.1/rpi_import_1"
+      REFSPEC="test/9.0/main"
       PATCH_CREATE_DIFF="yes"
+      ;;
+    postproc)
+      REPO="https://github.com/LibreELEC/FFmpeg"
+      REFSPEC="libpostproc-n${FFMPEG_VERSION}"
       ;;
     *)
       echo "illegal feature set ${FEATURE_SET}"
@@ -52,7 +60,7 @@ create_patch() {
   BASE_REV=$(git rev-parse FETCH_HEAD)
 
   PATCH_DIR="packages/multimedia/ffmpeg/patches/${FEATURE_SET}"
-  PATCH_FILE="${PATCH_DIR}/ffmpeg-001-${FEATURE_SET}.patch"
+  PATCH_FILE="${PATCH_DIR}/0001-${FEATURE_SET}.patch"
   mkdir -p "${LE_ROOT}/${PATCH_DIR}"
 
   git fetch "${REPO}" "${REFSPEC}"

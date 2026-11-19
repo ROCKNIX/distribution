@@ -3,13 +3,14 @@
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="SDL3"
-PKG_VERSION="3.4.2"
+PKG_VERSION="3.4.10"
+PKG_SHA256="12b34280415ec8418c864408b93d008a20a6530687ee613d60bfbd20411f2785"
 PKG_LICENSE="Zlib"
 PKG_SITE="https://www.libsdl.org/"
 PKG_URL="https://www.libsdl.org/release/SDL3-${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="toolchain alsa-lib systemd dbus pulseaudio pipewire libdrm libusb"
 PKG_LONGDESC="Simple DirectMedia Layer is a cross-platform development library designed to provide low level access to audio, keyboard, mouse, joystick, and graphics hardware."
-PKG_DEPENDS_HOST="toolchain:host distutilscross:host"
+PKG_DEPENDS_HOST="toolchain:host"
 
 PKG_TOOLCHAIN="cmake"
 
@@ -77,14 +78,6 @@ else
   PKG_CMAKE_OPTS_TARGET+=" -DSDL_WAYLAND=OFF \
                            -DSDL_WAYLAND_SHARED=OFF"
 fi
-
-case ${DEVICE} in
-  RK*)
-    PKG_DEPENDS_TARGET+=" librga"
-    PKG_PATCH_DIRS_TARGET+="${DEVICE}"
-    PKG_CMAKE_OPTS_TARGET+=" -DSDL_ROCKCHIP=ON"
-  ;;
-esac
 
 pre_configure_target() {
   if [ -n "${PKG_PATCH_DIRS_TARGET}" ]; then

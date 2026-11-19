@@ -3,13 +3,14 @@
 # Copyright (C) 2018-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="systemd"
-PKG_VERSION="257.7"
-PKG_SHA256="70ecf759260549486045d065555d2f8a0ac0b8523d8f58227559fbd6d7523b08"
-PKG_LICENSE="LGPL2.1+"
+PKG_VERSION="261.2"
+PKG_SHA256="ed1059ff964f5df35b6056434cc17cc83f86dc913f10489948a0b19b6081c5ec"
+PKG_LICENSE="LGPL-2.1-or-later"
 PKG_SITE="http://www.freedesktop.org/wiki/Software/systemd"
 PKG_URL="https://github.com/systemd/systemd/archive/v${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="meson:host ninja:host gcc:host libcap kmod util-linux entropy libidn2 wait-time-sync Jinja2:host"
 PKG_LONGDESC="A system and session manager for Linux, compatible with SysV and LSB init scripts."
+PKG_BUILD_FLAGS="+lto"
 
 PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Dsplit-bin=true \
@@ -29,9 +30,7 @@ PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Dmicrohttpd=disabled \
                        -Dlibcryptsetup=disabled \
                        -Dlibcurl=disabled \
-                       -Dlibidn=disabled \
                        -Dlibidn2=enabled \
-                       -Dlibiptc=disabled \
                        -Dqrencode=disabled \
                        -Dgcrypt=disabled \
                        -Dgnutls=disabled \
@@ -92,6 +91,7 @@ PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Dlink-udev-shared=true \
                        -Dlink-systemctl-shared=true \
                        -Dlink-networkd-shared=false \
+                       -Djournal-storage-default=auto \
                        -Dbashcompletiondir=no \
                        -Dzshcompletiondir=no \
                        -Dkmod-path=/usr/bin/kmod \
@@ -113,7 +113,6 @@ pre_configure_target() {
 
 post_makeinstall_target() {
   # remove unneeded stuff
-  safe_remove ${INSTALL}/etc/init.d
   safe_remove ${INSTALL}/etc/systemd/system
   safe_remove ${INSTALL}/etc/xdg
   safe_remove ${INSTALL}/etc/X11
@@ -133,7 +132,6 @@ post_makeinstall_target() {
 
   if [ "${LOCAL_LOGIN}" = "no" ]; then
     # remove getty units, we dont want a console
-    safe_remove ${INSTALL}/usr/lib/systemd/system/autovt@.service
     safe_remove ${INSTALL}/usr/lib/systemd/system/console-getty.service
     safe_remove ${INSTALL}/usr/lib/systemd/system/container-getty@.service
     safe_remove ${INSTALL}/usr/lib/systemd/system/getty.target
@@ -158,6 +156,7 @@ post_makeinstall_target() {
   # remove systemd-creds
   safe_remove ${INSTALL}/usr/bin/systemd-creds
   safe_remove ${INSTALL}/usr/lib/tmpfiles.d/credstore.conf
+  safe_remove ${INSTALL}/usr/lib/tmpfiles.d/provision.conf
 
   # remove nspawn
   safe_remove ${INSTALL}/usr/bin/systemd-nspawn
@@ -198,6 +197,9 @@ post_makeinstall_target() {
   # remove systemd-time-wait-sync (not detecting slew time updates, using package wait-time-sync)
   safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-time-wait-sync.service
   safe_remove ${INSTALL}/usr/lib/systemd/systemd-time-wait-sync
+
+  # remove the userdbctl load-credentials script - no service (addon) require the creation of static users
+  safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-userdb-load-credentials.service
 
   # tune journald.conf
   sed -e "s,^.*Compress=.*$,Compress=no,g" -i ${INSTALL}/etc/systemd/journald.conf
@@ -271,6 +273,8 @@ post_makeinstall_target() {
   safe_remove ${INSTALL}/etc/udev/rules.d
   ln -sf /storage/.config/udev.rules.d ${INSTALL}/etc/udev/rules.d
 
+  ln -sf /storage/.cache/userdb ${INSTALL}/etc/userdb
+
   # journald
   ln -sf /storage/.cache/journald.conf.d ${INSTALL}/usr/lib/systemd/journald.conf.d
 }
@@ -304,6 +308,7 @@ post_install() {
   add_group input 104
   add_group render 105
   add_group sgx 106
+  add_group clock 107
 
   enable_service machine-id.service
   enable_service debugconfig.service

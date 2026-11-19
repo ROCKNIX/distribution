@@ -1,0 +1,96 @@
+From 2f79b0096e32861ac32a574b195ae0676efe8563 Mon Sep 17 00:00:00 2001
+From: Petr Hodina <petr.hodina@protonmail.com>
+Date: Sat, 13 Dec 2025 00:08:17 +0100
+Subject: [PATCH] hack! clk: qcom: rcg2, msm/dsi: Fix hangs caused by register
+ writes while clocks are off
+
+CHANGES REQUESTED:
+
+https://lore.kernel.org/all/20251213-stability-discussion-v1-2-b25df8453526@ixit.cz/
+
+This patch fixes system hangs that occur when RCG2 and DSI code paths
+perform register accesses while the associated clocks or power domains
+are disabled.
+
+For the Qualcomm RCG2 clock driver, updating M/N/D registers while the
+clock is gated can cause the hardware to lock up. Avoid toggling the
+update bit when the clock is disabled and instead write the configuration
+directly.
+
+Signed-off-by: Petr Hodina <petr.hodina@protonmail.com>
+Signed-off-by: David Heidelberg <david@ixit.cz>
+---
+ drivers/clk/qcom/clk-rcg2.c        | 18 ++++++++++++++++++
+ drivers/gpu/drm/msm/dsi/dsi_host.c | 13 +++++++++++++
+ 2 files changed, 31 insertions(+)
+
+diff --git a/drivers/clk/qcom/clk-rcg2.c b/drivers/clk/qcom/clk-rcg2.c
+index 6064a0e17d51..3f75ba5fbd32 100644
+--- a/drivers/clk/qcom/clk-rcg2.c
++++ b/drivers/clk/qcom/clk-rcg2.c
+@@ -1182,6 +1182,24 @@ static int clk_pixel_set_rate(struct clk_hw *hw, unsigned long rate,
+ 		f.m = frac->num;
+ 		f.n = frac->den;
+ 
++		/*
++		 * If clock is disabled, update the M, N and D registers and
++		 * don't hit the update bit.
++		 */
++		if (!clk_hw_is_enabled(hw)) {
++			int ret;
++
++			ret = regmap_read(rcg->clkr.regmap, RCG_CFG_OFFSET(rcg), &cfg);
++			if (ret)
++				return ret;
++
++			ret = __clk_rcg2_configure(rcg, &f, &cfg);
++			if (ret)
++				return ret;
++
++			return regmap_write(rcg->clkr.regmap, RCG_CFG_OFFSET(rcg), cfg);
++		}
++
+ 		return clk_rcg2_configure(rcg, &f);
+ 	}
+ 	return -EINVAL;
+diff --git a/drivers/gpu/drm/msm/dsi/dsi_host.c b/drivers/gpu/drm/msm/dsi/dsi_host.c
+index 565d425f88b8..6bc886b0abcb 100644
+--- a/drivers/gpu/drm/msm/dsi/dsi_host.c
++++ b/drivers/gpu/drm/msm/dsi/dsi_host.c
+@@ -782,6 +782,12 @@ dsi_get_cmd_fmt(const enum mipi_dsi_pixel_format mipi_fmt)
+ 
+ static void dsi_ctrl_disable(struct msm_dsi_host *msm_host)
+ {
++	/* Check if we're already powered off before writing registers */
++	if (!msm_host->power_on) {
++		pr_info("DSI CTRL: Skipping register write - host already powered off\n");
++		return;
++	}
++
+ 	dsi_write(msm_host, REG_DSI_CTRL, 0);
+ }
+ 
+@@ -2544,6 +2550,8 @@ int msm_dsi_host_power_off(struct mipi_dsi_host *host)
+ {
+ 	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
+ 	const struct msm_dsi_cfg_handler *cfg_hnd = msm_host->cfg_hnd;
++	int ret;
++
+ 
+ 	mutex_lock(&msm_host->dev_mutex);
+ 	if (!msm_host->power_on) {
+@@ -2551,6 +2559,11 @@ int msm_dsi_host_power_off(struct mipi_dsi_host *host)
+ 		goto unlock_ret;
+ 	}
+ 
++	/* Ensure clocks are enabled before register access */
++	ret = pm_runtime_get_sync(&msm_host->pdev->dev);
++	if (ret < 0)
++		pm_runtime_put_noidle(&msm_host->pdev->dev);
++
+ 	dsi_ctrl_disable(msm_host);
+ 
+ 	pinctrl_pm_select_sleep_state(&msm_host->pdev->dev);
+-- 
+GitLab
+
