@@ -11,11 +11,15 @@ PKG_LONGDESC="Quirks is a simple package that provides device quirks."
 PKG_TOOLCHAIN="manual"
 
 makeinstall_target() {
-  mkdir -p ${INSTALL}/usr/lib/autostart/quirks/{platforms,devices}
+  mkdir -p ${INSTALL}/usr/lib/autostart/quirks/{platforms,devices,sources}
   cp -r ${PKG_DIR}/devices/* ${INSTALL}/usr/lib/autostart/quirks/devices
   if [ -d "${PKG_DIR}/platforms/${DEVICE}" ]
   then
     cp -r ${PKG_DIR}/platforms/* ${INSTALL}/usr/lib/autostart/quirks/platforms
+  fi
+  if [ -d "${PKG_DIR}/sources" ]
+  then
+    cp -r ${PKG_DIR}/sources/* ${INSTALL}/usr/lib/autostart/quirks/sources
   fi
   chmod -R 0755 ${INSTALL}/usr/lib/autostart/quirks
 }
@@ -25,6 +29,7 @@ post_install() {
   if [ "${DEVICE}" = "RK3566" ]
   then
     enable_service volume-fixup.service
+    enable_service x55-panelcalib.service
   fi
   if [ "${DEVICE}" = "SM6115" ]
   then
