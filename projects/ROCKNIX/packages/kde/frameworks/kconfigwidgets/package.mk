@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="kconfigwidgets"
-PKG_VERSION="6.30.0"
-PKG_SHA256="6efd9fc7786a7e979b32904aeadf1d2d8e69a5da110f8ebd45f95ec02de41f77"
+PKG_VERSION="6.32.0"
+PKG_SHA256="9d7f60aec2c8153e944d0916852942abb7a28459146b1383f3c540e49dd3da8d"
 PKG_LICENSE="LGPL-2.0-or-later"
 PKG_SITE="https://invent.kde.org/frameworks/kconfigwidgets"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"

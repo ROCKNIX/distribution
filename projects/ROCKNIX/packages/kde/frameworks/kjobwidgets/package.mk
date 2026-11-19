@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="kjobwidgets"
-PKG_VERSION="6.30.0"
-PKG_SHA256="bf36e3619df1c6ad3d900bd36433d97ab295be41c1cc401ff0e766380788bbae"
+PKG_VERSION="6.32.0"
+PKG_SHA256="98eaee2846181b82b357067db00ac65e3bcf02c11322bb636aa6021a6eb65dd2"
 PKG_LICENSE="LGPL-2.0-or-later"
 PKG_SITE="https://invent.kde.org/frameworks/kjobwidgets"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"

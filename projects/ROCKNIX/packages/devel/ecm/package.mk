@@ -2,8 +2,8 @@
 # Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
 
 PKG_NAME="ecm"
-PKG_VERSION="6.30.0"
-PKG_SHA256="22c9f7ff930dae7329faebf2942d2424f4a298c43bb3f11e217be6b12f227f6e"
+PKG_VERSION="6.32.0"
+PKG_SHA256="305f4e2b82eb073be6ac3e50ace85578b3c0c409be262ccc51d445449e3d9312"
 PKG_LICENSE="BSD-3-Clause"
 PKG_SITE="https://invent.kde.org/frameworks/extra-cmake-modules"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/extra-cmake-modules-${PKG_VERSION}.tar.xz"

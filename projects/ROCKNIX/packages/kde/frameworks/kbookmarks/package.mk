@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="kbookmarks"
-PKG_VERSION="6.30.0"
-PKG_SHA256="680120f09929d51da0a65e96a1f7d20ffbbdd2795a165719b0d07e00475e77c4"
+PKG_VERSION="6.32.0"
+PKG_SHA256="a796db0d6f91bd8795ef3319f85f75074d76be315119335c339cf37c1552a472"
 PKG_LICENSE="LGPL-2.0-or-later"
 PKG_SITE="https://invent.kde.org/frameworks/kbookmarks"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"

@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="kpackage"
-PKG_VERSION="6.30.0"
-PKG_SHA256="58939af0c553f24963652e10d248e2f8f2b2ca2b87dc26d3220675ed0cf33019"
+PKG_VERSION="6.32.0"
+PKG_SHA256="f3959f4a5956a29ce9bd083410d7df63d4f93a1a4e451cb87c2ccf834995e3ca"
 PKG_LICENSE="LGPL-2.0-or-later"
 PKG_SITE="https://invent.kde.org/frameworks/kpackage"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"

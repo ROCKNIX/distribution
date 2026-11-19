@@ -8,16 +8,16 @@ out.
 ---
 --- a/src/backends/drm/drm_egl_layer.cpp
 +++ b/src/backends/drm/drm_egl_layer.cpp
-@@ -55,7 +55,7 @@
+@@ -54,7 +54,7 @@
+ {
      m_scanoutBuffer.reset();
+     const bool tearing = frame && (frame->presentationMode() == PresentationMode::Async || frame->presentationMode() == PresentationMode::AdaptiveAsync);
+-    const auto formats = tearing && !supportedAsyncDrmFormats().isEmpty() ? supportedAsyncDrmFormats() : supportedDrmFormats();
++    const auto formats = tearing && !supportedAsyncDrmFormats().isEmpty() ? supportedAsyncDrmFormats() : renderFormats();
      return m_surface.startRendering(targetRect().size(),
                                      drmOutput()->transform().combine(OutputTransform::FlipY),
--                                    supportedDrmFormats(),
-+                                    renderFormats(),
-                                     drmOutput()->blendingColor(),
-                                     drmOutput()->layerBlendingColor(),
-                                     drmOutput()->needsShadowBuffer() ? pipeline()->iccProfile() : nullptr,
-@@ -78,7 +78,7 @@
+                                     formats,
+@@ -80,7 +80,7 @@
          return false;
      }
      m_scanoutBuffer.reset();
@@ -36,7 +36,7 @@ out.
  
  DrmGpu::DrmGpu(DrmBackend *backend, int fd, std::unique_ptr<DrmDevice> &&device)
      : m_fd(fd)
-@@ -848,6 +849,9 @@
+@@ -862,6 +863,9 @@
              ret.removeOne(pipeline->crtc());
              // for modesets, only the primary plane should be enabled
              ret.removeOne(pipeline->crtc()->primaryPlane());
@@ -46,7 +46,7 @@ out.
          }
      }
      return ret;
-@@ -893,6 +897,23 @@
+@@ -907,6 +911,23 @@
      }
  }
  
@@ -70,7 +70,7 @@ out.
  void DrmGpu::assignOutputLayers()
  {
      if (m_atomicModeSetting) {
-@@ -900,12 +921,27 @@
+@@ -914,12 +935,27 @@
              return plane.get();
          }) | std::ranges::to<QList>();
          const size_t enabledPipelinesCount = std::ranges::count_if(m_pipelines, &DrmPipeline::enabled);
@@ -118,7 +118,7 @@ out.
  DrmPipeline *DrmPipelineLayer::pipeline() const
  {
      return drmOutput()->pipeline();
-@@ -123,6 +133,14 @@
+@@ -118,6 +128,14 @@
  static const FormatModifierMap s_legacyCursorFormats = {{DRM_FORMAT_ARGB8888, {DRM_FORMAT_MOD_LINEAR}}};
  
  FormatModifierMap DrmPipelineLayer::supportedDrmFormats() const
@@ -135,7 +135,7 @@ out.
          if (m_plane->gpu()->forceLowBandwidthMode() && m_type == OutputLayerType::Primary) {
 --- a/src/backends/drm/drm_layer.h
 +++ b/src/backends/drm/drm_layer.h
-@@ -45,13 +45,17 @@
+@@ -44,13 +44,17 @@
      virtual std::shared_ptr<DrmFramebuffer> currentBuffer() const = 0;
  
      DrmPlane *plane() const;
@@ -155,9 +155,9 @@ out.
  }
 --- a/src/backends/drm/drm_pipeline.cpp
 +++ b/src/backends/drm/drm_pipeline.cpp
-@@ -229,6 +229,17 @@
+@@ -247,6 +247,17 @@
  
- DrmPipeline::Error DrmPipeline::prepareAtomicPlane(DrmAtomicCommit *commit, DrmPlane *plane, DrmPipelineLayer *layer, const std::shared_ptr<OutputFrame> &frame)
+ std::expected<void, OutputError> DrmPipeline::prepareAtomicPlane(DrmAtomicCommit *commit, DrmPlane *plane, DrmPipelineLayer *layer, const std::shared_ptr<OutputFrame> &frame)
  {
 +    if (DrmPlane *afbcPlane = layer->afbcPlane()) {
 +        const auto fb = layer->isEnabled() ? layer->currentBuffer() : nullptr;
@@ -172,8 +172,8 @@ out.
 +    }
      if (!layer->isEnabled()) {
          plane->disable(commit);
-         return Error::None;
-@@ -343,6 +354,9 @@
+         return {};
+@@ -365,6 +376,9 @@
              if (DrmPlane *plane = layer->plane()) {
                  plane->disable(commit);
              }

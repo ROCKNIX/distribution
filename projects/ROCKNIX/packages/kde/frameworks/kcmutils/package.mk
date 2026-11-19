@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="kcmutils"
-PKG_VERSION="6.30.0"
-PKG_SHA256="0159f80d030ac250b0b353113a55c013ed7e38cb0b678df44d2f0d0b2aca944c"
+PKG_VERSION="6.32.0"
+PKG_SHA256="473395787e6921d37298e191cc1718f8818f630b98bdf312583ad25606f6a09e"
 PKG_LICENSE="LGPL-2.0-or-later"
 PKG_SITE="https://invent.kde.org/frameworks/kcmutils"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"

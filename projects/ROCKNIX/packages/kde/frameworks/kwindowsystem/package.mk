@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="kwindowsystem"
-PKG_VERSION="6.30.0"
-PKG_SHA256="639a501b877446b19905399d27e2be2b6ebb0bb481abe3209dc4d535a12e12ca"
+PKG_VERSION="6.32.0"
+PKG_SHA256="43a32eb940c740f5acc917ce24c4939ba08b9e08c26091dbb5577ad0ef74f3a0"
 PKG_LICENSE="LGPL-2.1-or-later"
 PKG_SITE="https://invent.kde.org/frameworks/kwindowsystem"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"

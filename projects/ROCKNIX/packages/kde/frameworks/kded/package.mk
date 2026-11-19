@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="kded"
-PKG_VERSION="6.30.0"
-PKG_SHA256="0adf6e22300cee74d57e790b5db844f03a1366a4d6315edbaa49174b12bf1861"
+PKG_VERSION="6.32.0"
+PKG_SHA256="eade144d1e197b883529f7e262035134d7ff46b859d0beff34ab778cb5ef683b"
 PKG_LICENSE="LGPL-2.0-or-later"
 PKG_SITE="https://invent.kde.org/frameworks/kded"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"

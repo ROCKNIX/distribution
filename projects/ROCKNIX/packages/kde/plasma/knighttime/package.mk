@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="knighttime"
-PKG_VERSION="6.7.5"
-PKG_SHA256="5cb23e736e4be4952e63c855cfb45850e1085d650e67b7cae3cbf9721921cb9f"
+PKG_VERSION="6.8.3"
+PKG_SHA256="b364a57af1a629d5e09c36a3c859075f8eafa2463201959548fbc362987d7c5f"
 PKG_LICENSE="LGPL-2.1-only"
 PKG_SITE="https://invent.kde.org/plasma/knighttime"
 PKG_URL="https://download.kde.org/stable/plasma/${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tar.xz"

@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="breeze-icons"
-PKG_VERSION="6.30.0"
-PKG_SHA256="93866c19791838fc9757b305e010e23bb38cb5f201e4ecc96cc8ef5f1173ebe6"
+PKG_VERSION="6.32.0"
+PKG_SHA256="3e14087f180ece104dbf9cb23f2c7140759b9dd7c35d8d9defdfcfdee538628f"
 PKG_LICENSE="LGPL-3.0-or-later"
 PKG_SITE="https://invent.kde.org/frameworks/breeze-icons"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"

@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="attica"
-PKG_VERSION="6.30.0"
-PKG_SHA256="3eec8d2d9c77ad5f7cfd38e44e4b1492c5d0dec695b13f711c09f7d6187c276c"
+PKG_VERSION="6.32.0"
+PKG_SHA256="4f2b525649c6a23924bdf2647e9cd6c591285d33d8d4f01db45b37622e3b839b"
 PKG_LICENSE="LGPL-2.1-only OR LGPL-3.0-only"
 PKG_SITE="https://invent.kde.org/frameworks/attica"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"

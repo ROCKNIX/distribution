@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="kirigami"
-PKG_VERSION="6.30.0"
-PKG_SHA256="6de811e559c20dc1086c0cf2c34bb98712dbe4d45f960c62c3c3f887332c95f8"
+PKG_VERSION="6.32.0"
+PKG_SHA256="1cb13ef3ad1885726c383bcd1a35c494db3e9c2cf87b49398ea34d63129cf6d7"
 PKG_LICENSE="LGPL-2.0-or-later"
 PKG_SITE="https://invent.kde.org/frameworks/kirigami"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"

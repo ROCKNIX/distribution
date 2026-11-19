@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="solid"
-PKG_VERSION="6.30.0"
-PKG_SHA256="bdbfdc9f26b87e12b951097825af2956f2dee3f14c701d780277b69701f2c74e"
+PKG_VERSION="6.32.0"
+PKG_SHA256="9620a6065403c5097fce0518abb7d4f038f4f11327e7ce94094ae9561bce0008"
 PKG_LICENSE="LGPL-2.1-or-later"
 PKG_SITE="https://invent.kde.org/frameworks/solid"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"

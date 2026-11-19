@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="kauth"
-PKG_VERSION="6.30.0"
-PKG_SHA256="60b75e02abc2bfbb247c586e3ab94def7ecd7b4e1ddb8260358951d84d9ea8c9"
+PKG_VERSION="6.32.0"
+PKG_SHA256="5bcdb298a2ee84bca93a989247fd6d6e34a1e1029caae17705a85b8ac4dbe837"
 PKG_LICENSE="LGPL-2.1-or-later"
 PKG_SITE="https://invent.kde.org/frameworks/kauth"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"

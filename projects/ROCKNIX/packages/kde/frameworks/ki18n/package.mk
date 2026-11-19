@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="ki18n"
-PKG_VERSION="6.30.0"
-PKG_SHA256="dfbfc8af89b3bc68810b094bf87746db87c3eeb35b75caeb1882681ebed563bd"
+PKG_VERSION="6.32.0"
+PKG_SHA256="b574b381e7510cf3b14d6a16f6ed5670220f10df7f2494c21a579d20ca1d017f"
 PKG_LICENSE="LGPL-2.0-or-later"
 PKG_SITE="https://invent.kde.org/frameworks/ki18n"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"

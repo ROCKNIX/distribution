@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="kcoreaddons"
-PKG_VERSION="6.30.0"
-PKG_SHA256="cc68fe15beb0fca2036cff8742f468c1345406bf99793fffacbf8f2a3f89bc4b"
+PKG_VERSION="6.32.0"
+PKG_SHA256="f7373a77afae97099de4359fba13987b46618ccb952f94ddc11c9d31277fe651"
 PKG_LICENSE="LGPL-2.0-or-later"
 PKG_SITE="https://invent.kde.org/frameworks/kcoreaddons"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"

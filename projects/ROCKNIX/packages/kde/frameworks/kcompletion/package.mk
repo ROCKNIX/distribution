@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="kcompletion"
-PKG_VERSION="6.30.0"
-PKG_SHA256="96ad9c429ca53b830359c45614ca4c32ed6b759f3023f1b3db1650ba1c19bd58"
+PKG_VERSION="6.32.0"
+PKG_SHA256="1ec8c0f952af1b18b07c30265610c220acadf429ef1a16558d2c64679b93dcc7"
 PKG_LICENSE="LGPL-2.0-or-later"
 PKG_SITE="https://invent.kde.org/frameworks/kcompletion"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"

@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="plasma-keyboard"
-PKG_VERSION="6.7.5"
-PKG_SHA256="0dd91212308e6c6999db55b95b5b462cadc2766935272e9caf2f138b9a063788"
+PKG_VERSION="6.8.3"
+PKG_SHA256="ec54e6b2d163daf5288cab20ccc7043823dc0e2a3fa431eb2499d7945fa820bb"
 PKG_LICENSE="GPL-3.0-only"
 PKG_SITE="https://invent.kde.org/plasma/plasma-keyboard"
 PKG_URL="https://download.kde.org/stable/plasma/${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tar.xz"

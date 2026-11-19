@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="kdbusaddons"
-PKG_VERSION="6.30.0"
-PKG_SHA256="063ef80460f76d86dc4b033ef04b65b69ba82ee0de410440fe609465e7f5a997"
+PKG_VERSION="6.32.0"
+PKG_SHA256="84dd9e0775ccff18eb751f6a86ea909bf9eb4a95596baef097684b6646e33764"
 PKG_LICENSE="LGPL-2.0-or-later"
 PKG_SITE="https://invent.kde.org/frameworks/kdbusaddons"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"

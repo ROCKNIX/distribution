@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="kconfig"
-PKG_VERSION="6.30.0"
-PKG_SHA256="0e98bac324cd716849202d4b246a948e363d6792a8eb09c78417cdde9559f56e"
+PKG_VERSION="6.32.0"
+PKG_SHA256="5ec91eeb6b02db8a8c2e31e3ffdd85165bfa815729a45ca11922369098fd3fcf"
 PKG_LICENSE="LGPL-2.0-or-later"
 PKG_SITE="https://invent.kde.org/frameworks/kconfig"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"

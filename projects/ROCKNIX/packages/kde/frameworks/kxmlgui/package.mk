@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="kxmlgui"
-PKG_VERSION="6.30.0"
-PKG_SHA256="10fb8a0f7b874248ff60d9a8ee4e1f06a0efcf01b0d34d7635dfff86e848c352"
+PKG_VERSION="6.32.0"
+PKG_SHA256="3b9be65d4f30e372bc9b77321da5a31dec9fe997a946a6a8a03b64377856ab38"
 PKG_LICENSE="LGPL-2.0-or-later"
 PKG_SITE="https://invent.kde.org/frameworks/kxmlgui"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"

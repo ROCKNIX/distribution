@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="kholidays"
-PKG_VERSION="6.30.0"
-PKG_SHA256="02bfbc33296fe86b364491f6d5cad9d83360bb4fdd2923386a325b309eac0b9b"
+PKG_VERSION="6.32.0"
+PKG_SHA256="a6aeede0b1c5bba93f7e60d7c6fe84051cb32d90d3981202c4f90237b5fc17a7"
 PKG_LICENSE="LGPL-2.0-or-later"
 PKG_SITE="https://invent.kde.org/frameworks/kholidays"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"

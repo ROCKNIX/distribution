@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="knotifications"
-PKG_VERSION="6.30.0"
-PKG_SHA256="09ad50570b26aada0408bb9ccfaabf629c56ec89a9972c8b0e155ab780f577cf"
+PKG_VERSION="6.32.0"
+PKG_SHA256="5da86674bfbe532427f2ea52c86e6d5220cdfb8d0fadb8cbec2ba53d48ec5be9"
 PKG_LICENSE="LGPL-2.0-or-later"
 PKG_SITE="https://invent.kde.org/frameworks/knotifications"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"

@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="kguiaddons"
-PKG_VERSION="6.30.0"
-PKG_SHA256="e98864228d1c5e23f3428025eb9928697374fdc3eddebb3a9dec570de028a62d"
+PKG_VERSION="6.32.0"
+PKG_SHA256="ea1bf879d181e498d1786451234a0e58827f35cfb4c667661412cd551741e81a"
 PKG_LICENSE="LGPL-2.0-or-later"
 PKG_SITE="https://invent.kde.org/frameworks/kguiaddons"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"

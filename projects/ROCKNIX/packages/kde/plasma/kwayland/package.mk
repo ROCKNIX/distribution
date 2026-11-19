@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="kwayland"
-PKG_VERSION="6.7.5"
-PKG_SHA256="8d4c83524919dc87b5dec546d0fb14c591c03957888cb7b240a4a9d1bbdc8269"
+PKG_VERSION="6.8.3"
+PKG_SHA256="00090254b86f1774e296b4dc7d69d073ee08efb75419c9b5d0955eeae0378a56"
 PKG_LICENSE="LGPL-2.1-only"
 PKG_SITE="https://invent.kde.org/plasma/kwayland"
 PKG_URL="https://download.kde.org/stable/plasma/${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tar.xz"

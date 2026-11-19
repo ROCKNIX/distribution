@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="kiconthemes"
-PKG_VERSION="6.30.0"
-PKG_SHA256="c0c684823d0e087f35168cd79f1053fd358bb8fb47b27996a11c7d7ee3da6f4d"
+PKG_VERSION="6.32.0"
+PKG_SHA256="1bd4fe3246af5527c136afc650703e5231b8b2de32ca1eac48fa310adece8db8"
 PKG_LICENSE="LGPL-2.0-or-later"
 PKG_SITE="https://invent.kde.org/frameworks/kiconthemes"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"

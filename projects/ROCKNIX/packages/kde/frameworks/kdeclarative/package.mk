@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="kdeclarative"
-PKG_VERSION="6.30.0"
-PKG_SHA256="7ec3583a2cf2cd7143e39936ffb39e22d20563f4c87a8462e0e9d12c59ea89a6"
+PKG_VERSION="6.32.0"
+PKG_SHA256="9e187056b3e1d49ecde29b30e4a4f5f2633639b622dd596369eac86c45c7f167"
 PKG_LICENSE="LGPL-2.0-or-later"
 PKG_SITE="https://invent.kde.org/frameworks/kdeclarative"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"

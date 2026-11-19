@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="kwidgetsaddons"
-PKG_VERSION="6.30.0"
-PKG_SHA256="ab1333c258678caa7562120a1c03bb71779f7232f1a0e75b9525d921dee3e0a3"
+PKG_VERSION="6.32.0"
+PKG_SHA256="53b2f5a65df51be4c15ed14c936aad480ab3e3425a4ea6ed95897ee48e173de9"
 PKG_LICENSE="LGPL-2.0-or-later"
 PKG_SITE="https://invent.kde.org/frameworks/kwidgetsaddons"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"

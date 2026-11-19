@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="kwin"
-PKG_VERSION="6.7.5"
-PKG_SHA256="6baa910b732d93c48c90f9c1cc685cc93d0b8de0cdf138c24192c045bc3a48e2"
+PKG_VERSION="6.8.3"
+PKG_SHA256="fd5cb783f220ea4526a9afee2f72b582c3e87ef7f91b19bc5c7a6662ffe7fbdc"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://invent.kde.org/plasma/kwin"
 PKG_URL="https://download.kde.org/stable/plasma/${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tar.xz"
@@ -13,7 +13,7 @@ PKG_DEPENDS_TARGET="toolchain qt6 ecm kwin:host kauth kcolorscheme kconfig kcore
                     knewstuff kxmlgui knotifications knighttime kwayland kdecoration kglobalacceld plasma-activities \
                     kirigami libplasma breeze mesa libepoxy vulkan-headers vulkan-loader wayland wayland-protocols \
                     plasma-wayland-protocols libxkbcommon libcanberra libinput systemd libdrm libxcvt lcms2 \
-                    libdisplay-info pipewire libevdev libxcb libxcb-cursor xcb-util-wm xcb-util-keysyms libX11 libXi \
+                    libdisplay-info pipewire libevdev libcap libxcb libxcb-cursor xcb-util-wm xcb-util-keysyms libX11 libXi \
                     xwayland"
 PKG_LONGDESC="KDE Wayland compositor"
 PKG_TOOLCHAIN="cmake"
@@ -35,7 +35,9 @@ PKG_CMAKE_OPTS_TARGET="-DBUILD_TESTING=OFF \
                        -DKWIN_BUILD_SCREENLOCKER=OFF \
                        -DKWIN_BUILD_KCMS=ON \
                        -DKWIN_BUILD_EIS=OFF \
-                       -DKWIN_BUILD_GAMECONTROLLER=ON"
+                       -DKWIN_BUILD_GAMECONTROLLER=ON \
+                       -DKWIN_BUILD_OVERVIEW=OFF \
+                       -DSETCAP_EXECUTABLE=true"
 
 pre_configure_host() {
   PKG_CMAKE_SCRIPT="${PKG_BUILD}/src/wayland/tools/CMakeLists.txt"

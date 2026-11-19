@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="kcolorscheme"
-PKG_VERSION="6.30.0"
-PKG_SHA256="a4128e82e47cd474c777754c4dd8af28a00a57ecf388da1a62f8173d898890d0"
+PKG_VERSION="6.32.0"
+PKG_SHA256="235c73afa46669c41cbe2e3a14c5a6ae1f8ad8cbb386b3f65261f65449d2b915"
 PKG_LICENSE="LGPL-2.0-or-later"
 PKG_SITE="https://invent.kde.org/frameworks/kcolorscheme"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"

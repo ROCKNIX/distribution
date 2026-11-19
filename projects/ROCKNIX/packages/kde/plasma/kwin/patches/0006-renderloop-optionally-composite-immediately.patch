@@ -8,7 +8,7 @@ presentation.
 ---
 --- a/src/core/renderloop.cpp
 +++ b/src/core/renderloop.cpp
-@@ -26,6 +26,7 @@
+@@ -24,6 +24,7 @@
  }
  
  static const bool s_printDebugInfo = qEnvironmentVariableIntValue("KWIN_LOG_PERFORMANCE_DATA") != 0;
@@ -16,20 +16,20 @@ presentation.
  
  RenderLoopPrivate::RenderLoopPrivate(RenderLoop *q, BackendOutput *output)
      : q(q)
-@@ -109,6 +110,10 @@
-     }
+@@ -148,6 +149,10 @@
+     lastPresentNotBefore = presentNotBefore;
  
      const std::chrono::nanoseconds nextRenderTimestamp = nextPresentationTimestamp - expectedCompositingTime;
 +    if (s_compositeImmediately && presentationMode == PresentationMode::VSync && pendingFrameCount == 0) {
-+        compositeTimer.start(0ms, Qt::PreciseTimer, q);
++        compositeTimer.start(currentTime);
 +        return;
 +    }
-     compositeTimer.start(std::max(0ms, std::chrono::duration_cast<std::chrono::milliseconds>(nextRenderTimestamp - currentTime)), Qt::PreciseTimer, q);
+     compositeTimer.start(nextRenderTimestamp);
  }
  
 --- a/src/scene/surfaceitem_wayland.cpp
 +++ b/src/scene/surfaceitem_wayland.cpp
-@@ -21,6 +21,8 @@
+@@ -22,6 +22,8 @@
  namespace KWin
  {
  
@@ -38,24 +38,24 @@ presentation.
  SurfaceItemWayland::SurfaceItemWayland(SurfaceInterface *surface, Item *parent)
      : SurfaceItem(parent)
      , m_surface(surface)
-@@ -239,7 +241,13 @@
-     if (!m_surface) {
-         return;
-     }
+@@ -272,7 +274,13 @@
+     // TODO also only send frame callbacks on the primary view.
+     // Right now this is needed because offscreen windows of some
+     // applications don't react to configure events without this.
 -    m_surface->frameRendered(timestamp.count());
 +    if (s_frameCallbacksOnPresentation && frame) {
 +        if (auto callbacks = m_surface->takeFrameCallbacks()) {
-+            frame->addFeedback(std::move(callbacks));
++            frame->addFeedback(std::move(callbacks), PresentationFeedbackFlags{});
 +        }
 +    } else {
 +        m_surface->frameRendered(timestamp.count());
 +    }
-     if (frame) {
-         // FIXME make frame always valid
-         if (auto feedback = m_surface->presentationFeedback(output)) {
+     if (view != primaryView()) {
+         return;
+     }
 --- a/src/wayland/surface.cpp
 +++ b/src/wayland/surface.cpp
-@@ -562,6 +562,47 @@
+@@ -511,6 +511,47 @@
      }
  }
  
@@ -73,7 +73,7 @@ presentation.
 +        send(std::chrono::steady_clock::now().time_since_epoch());
 +    }
 +
-+    void presented(std::chrono::nanoseconds refreshCycleDuration, std::chrono::nanoseconds timestamp, PresentationMode mode) override
++    void presented(OutputFrame *frame, std::chrono::nanoseconds timestamp, PresentationMode mode, PresentationFeedbackFlags flags) override
 +    {
 +        send(timestamp);
 +    }
@@ -100,16 +100,16 @@ presentation.
 +    return std::make_shared<FrameCallbackFeedback>(&d->current->frameCallbacks);
 +}
 +
- std::shared_ptr<PresentationFeedback> SurfaceInterface::presentationFeedback(LogicalOutput *output)
+ std::shared_ptr<PresentationFeedback> SurfaceInterface::presentationFeedback()
  {
-     if (output && (!d->primaryOutput || d->primaryOutput->handle() != output)) {
+     return d->current->presentationFeedback;
 --- a/src/wayland/surface.h
 +++ b/src/wayland/surface.h
-@@ -129,6 +129,7 @@
+@@ -134,6 +134,7 @@
  
      void frameRendered(quint32 msec);
      bool hasFrameCallbacks() const;
 +    std::shared_ptr<PresentationFeedback> takeFrameCallbacks();
  
-     std::shared_ptr<PresentationFeedback> presentationFeedback(LogicalOutput *output);
+     std::shared_ptr<PresentationFeedback> presentationFeedback();
      bool hasPresentationFeedback() const;

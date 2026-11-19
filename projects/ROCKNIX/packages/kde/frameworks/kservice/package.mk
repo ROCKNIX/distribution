@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="kservice"
-PKG_VERSION="6.30.0"
-PKG_SHA256="e63062504ede4ebfda4c93e3484a63817731e1157cdcac6e33fb47fe6abc1657"
+PKG_VERSION="6.32.0"
+PKG_SHA256="495545ac7120305e3c13d5d1c7760c5607527db5816c6ceedf8c9a623b051e2e"
 PKG_LICENSE="LGPL-2.0-only"
 PKG_SITE="https://invent.kde.org/frameworks/kservice"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"

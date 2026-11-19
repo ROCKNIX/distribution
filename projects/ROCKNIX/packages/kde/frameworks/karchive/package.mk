@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="karchive"
-PKG_VERSION="6.30.0"
-PKG_SHA256="4cf89d91e429d2ece3110e78f7ef7011952b0412cb15011329516b46f21e98e2"
+PKG_VERSION="6.32.0"
+PKG_SHA256="30687d9be0aea05a4ef887212abd91d7c4337cb9f166610f98eac2b01407fb1f"
 PKG_LICENSE="LGPL-2.0-or-later"
 PKG_SITE="https://invent.kde.org/frameworks/karchive"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"

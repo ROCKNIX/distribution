@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="kdecoration"
-PKG_VERSION="6.7.5"
-PKG_SHA256="7ff1fe2854ca08a21a1ba47f1b0c97d12ea24f1db618631319cba4023ca53d86"
+PKG_VERSION="6.8.3"
+PKG_SHA256="77435cc9dda43ff14e6b99cfb08498ace7730f995fc4ab4c21d6be2d1a6c73a1"
 PKG_LICENSE="LGPL-2.1-only"
 PKG_SITE="https://invent.kde.org/plasma/kdecoration"
 PKG_URL="https://download.kde.org/stable/plasma/${PKG_VERSION}/${PKG_NAME}-${PKG_VERSION}.tar.xz"

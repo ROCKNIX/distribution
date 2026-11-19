@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="kcrash"
-PKG_VERSION="6.30.0"
-PKG_SHA256="b17f8242309e1502119c48b1ef5059a396a3068596a84fb79fdef6d9e2cd4f49"
+PKG_VERSION="6.32.0"
+PKG_SHA256="fe627df1797fa92a24e53a7f33de07111c7556070028d39f258035a0c3bdb5df"
 PKG_LICENSE="LGPL-2.0-or-later"
 PKG_SITE="https://invent.kde.org/frameworks/kcrash"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"

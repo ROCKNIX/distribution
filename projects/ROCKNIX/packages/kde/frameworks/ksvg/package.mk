@@ -2,8 +2,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="ksvg"
-PKG_VERSION="6.30.0"
-PKG_SHA256="7b7aba4e9baa88bfb303977e139e8a105b5cd243443029ee773954307b51eb91"
+PKG_VERSION="6.32.0"
+PKG_SHA256="8299498d46373a84811d29415f9e5a115f491bd7b5fa11c1648fc36ca9374ad6"
 PKG_LICENSE="LGPL-2.0-or-later"
 PKG_SITE="https://invent.kde.org/frameworks/ksvg"
 PKG_URL="https://download.kde.org/stable/frameworks/$(get_pkg_version_maj_min)/${PKG_NAME}-${PKG_VERSION}.tar.xz"
