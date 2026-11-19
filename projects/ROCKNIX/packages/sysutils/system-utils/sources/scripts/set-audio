@@ -1,0 +1,160 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 ROCKNIX (https://github.com/ROCKNIX)
+#
+# Backend for the AUDIO OUTPUT and AUDIO PROFILE entries of EmulationStation
+# (ApiSystem::AUDIODEVICE). EmulationStation only shows those entries when
+# this script exists.
+#
+#   set-audio list               one "<node.name>\t<label>" line per sink, "auto" first
+#   set-audio get                configured default sink, or "auto"
+#   set-audio set <id>           make <id> the default sink; "auto" lets WirePlumber pick
+#   set-audio list-profiles      "<profile>\t<label>" for the card of the current sink
+#   set-audio get-profile        active profile of that card
+#   set-audio set-profile <id>   switch that card to <id>
+#
+# Everything goes through PipeWire/WirePlumber. The choice is persisted by
+# WirePlumber's default-nodes state; this script never writes system.cfg,
+# where audio.device already means "headphone"/"speakers" to headphone_sense.
+
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/var/run/0-runtime-dir}"
+
+# Profiles that would silence or rename the selected output. Profiles
+# without any sink (input-only) are dropped as well.
+HIDDEN_PROFILES='["off", "pro-audio"]'
+
+dump() {
+  pw-dump 2>/dev/null
+}
+
+# "<node.name>\t<label>" for every real sink. Several cards can share a
+# generic description (e.g. "Built-in Audio Stereo"), so those get the ALSA
+# card name appended.
+list_sinks() {
+  dump | jq -r '
+    [ .[] | select(.type == "PipeWire:Interface:Node")
+          | .info.props
+          | select(.["media.class"] == "Audio/Sink" and .["node.name"] != "auto_null") ] as $sinks
+    | ($sinks | group_by(.["node.description"])
+              | map(select(length > 1) | .[0]["node.description"])) as $dup
+    | $sinks[]
+    | (.["node.description"] // .["node.name"]) as $desc
+    | [ .["node.name"],
+        $desc + (if ($dup | index($desc)) != null
+                 then " (" + (.["alsa.card_name"] // .["node.nick"] // .["node.name"]) + ")"
+                 else "" end) ]
+    | @tsv'
+}
+
+# Value of a key in the "default" metadata (a node.name), empty if unset.
+default_meta() {
+  dump | jq -r --arg key "$1" '
+    [ .[] | select(.type == "PipeWire:Interface:Metadata" and .props["metadata.name"] == "default")
+          | .metadata[]? | select(.key == $key) | .value.name ]
+    | first // empty'
+}
+
+# Object id of the sink called $1, empty if absent.
+sink_id() {
+  dump | jq -r --arg name "$1" '
+    [ .[] | select(.type == "PipeWire:Interface:Node"
+                   and .info.props["media.class"] == "Audio/Sink"
+                   and .info.props["node.name"] == $name) | .id ]
+    | first // empty'
+}
+
+# Device (card) id behind the sink currently in use, empty if none.
+current_device() {
+  local sink
+  sink=$(default_meta default.audio.sink)
+  [ -n "${sink}" ] || return
+  dump | jq -r --arg name "${sink}" '
+    [ .[] | select(.type == "PipeWire:Interface:Node" and .info.props["node.name"] == $name)
+          | .info.props["device.id"] // empty ]
+    | first // empty'
+}
+
+list_profiles() {
+  local dev
+  dev=$(current_device)
+  [ -n "${dev}" ] || return 0
+  dump | jq -r --argjson dev "${dev}" --argjson hidden "${HIDDEN_PROFILES}" '
+    .[] | select(.id == $dev) | .info.params.EnumProfile[]?
+        | select(.available != "no" and (.name as $n | $hidden | index($n)) == null)
+        | select([.classes[]? | arrays | .[0]] | index("Audio/Sink") != null)
+        | [.name, .description] | @tsv'
+}
+
+get_profile() {
+  local dev
+  dev=$(current_device)
+  [ -n "${dev}" ] || return 0
+  dump | jq -r --argjson dev "${dev}" '
+    .[] | select(.id == $dev) | .info.params.Profile[0].name // empty'
+}
+
+set_profile() {
+  local dev index configured devsinks i new
+  dev=$(current_device)
+  [ -n "${dev}" ] || { echo "set-audio: no active output" >&2; return 1; }
+  index=$(dump | jq -r --argjson dev "${dev}" --arg name "$1" '
+    [ .[] | select(.id == $dev) | .info.params.EnumProfile[]? | select(.name == $name) | .index ]
+    | first // empty')
+  [ -n "${index}" ] || { echo "set-audio: unknown profile '$1'" >&2; return 1; }
+
+  # A profile switch recreates the card's sink, sometimes under a new
+  # node.name. If the user had picked this card, follow it to the new sink.
+  configured=$(default_meta default.configured.audio.sink)
+  devsinks=$(dump | jq -r --argjson dev "${dev}" '
+    .[] | select(.type == "PipeWire:Interface:Node" and .info.props["device.id"] == $dev)
+        | .info.props["node.name"]')
+
+  wpctl set-profile "${dev}" "${index}" || return 1
+
+  [ -n "${configured}" ] && grep -qxF "${configured}" <<< "${devsinks}" || return 0
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    new=$(dump | jq -r --argjson dev "${dev}" '
+      [ .[] | select(.type == "PipeWire:Interface:Node"
+                     and .info.props["media.class"] == "Audio/Sink"
+                     and .info.props["device.id"] == $dev) | .id ]
+      | first // empty')
+    [ -n "${new}" ] && { wpctl set-default "${new}"; return; }
+    sleep 0.2
+  done
+  return 0
+}
+
+case "$1" in
+  list)
+    printf 'auto\tAuto\n'
+    list_sinks
+    ;;
+  get)
+    configured=$(default_meta default.configured.audio.sink)
+    echo "${configured:-auto}"
+    ;;
+  set)
+    [ -n "$2" ] || { echo "usage: set-audio set <id>" >&2; exit 1; }
+    if [ "$2" = "auto" ]; then
+      pw-metadata -n default -d 0 default.configured.audio.sink >/dev/null
+    else
+      id=$(sink_id "$2")
+      [ -n "${id}" ] || { echo "set-audio: unknown output '$2'" >&2; exit 1; }
+      wpctl set-default "${id}"
+    fi
+    ;;
+  list-profiles)
+    list_profiles
+    ;;
+  get-profile)
+    get_profile
+    ;;
+  set-profile)
+    [ -n "$2" ] || { echo "usage: set-audio set-profile <id>" >&2; exit 1; }
+    set_profile "$2"
+    ;;
+  *)
+    echo "usage: set-audio list|get|set <id>|list-profiles|get-profile|set-profile <id>" >&2
+    exit 1
+    ;;
+esac

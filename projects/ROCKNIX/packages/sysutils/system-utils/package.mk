@@ -24,6 +24,7 @@ makeinstall_target() {
   cp ${PKG_DIR}/sources/scripts/analog_sticks_ledcontrol ${INSTALL}/usr/bin
   cp ${PKG_DIR}/sources/scripts/battery_led_status ${INSTALL}/usr/bin
   cp ${PKG_DIR}/sources/scripts/turbomode ${INSTALL}/usr/bin
+  cp ${PKG_DIR}/sources/scripts/set-audio ${INSTALL}/usr/bin
   if [ -d "${PKG_DIR}/sources/devices/${DEVICE}" ]
   then
     cp ${PKG_DIR}/sources/devices/${DEVICE}/* ${INSTALL}/usr/bin
