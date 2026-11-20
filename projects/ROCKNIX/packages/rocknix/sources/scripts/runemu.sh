@@ -606,6 +606,8 @@ if [ "${EMULATOR}" = "retroarch" ] && [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ] &
   /usr/bin/vertical-check &
 fi
 
+es_freeze $$
+
 # If the rom is a shell script just execute it, useful for DOSBOX and ScummVM scan scripts
 if [[ "${ROMNAME}" == *".sh" ]] && [ ! "${PLATFORM}" = "ports" ] && [ ! "${PLATFORM}" = "windows" ]; then
         ${VERBOSE} && log $0 "Executing shell script ${ROMNAME}"
@@ -617,6 +619,8 @@ else
         ret_error=$?
         game_scope_stop ${ret_error}
 fi
+
+es_thaw $$
 
 ### Switch back to performance mode to clean up
 performance

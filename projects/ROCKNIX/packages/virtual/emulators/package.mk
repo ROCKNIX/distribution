@@ -1702,7 +1702,7 @@ makeinstall_target() {
   cp -f ${ESTMP}/es_systems.cfg ${INSTALL}/usr/config/emulationstation
 
   if [ "${WINDOWMANAGER}" = "kwin-env" ]; then
-    sed -i 's~%RUNCOMMAND%~/usr/bin/foot %ROM%~g' ${INSTALL}/usr/config/emulationstation/es_systems.cfg
+    sed -i 's~%RUNCOMMAND%~/usr/bin/es-run /usr/bin/foot %ROM%~g' ${INSTALL}/usr/config/emulationstation/es_systems.cfg
   else
     sed -i 's~%RUNCOMMAND%~/usr/bin/run %ROM%~g' ${INSTALL}/usr/config/emulationstation/es_systems.cfg
   fi
