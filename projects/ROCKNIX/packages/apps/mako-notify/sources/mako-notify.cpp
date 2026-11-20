@@ -50,10 +50,8 @@ void ensure_mako_config() {
 }
 
 // Check focused app function
-std::string get_focused_app(DBusConnection* conn) {
-    const char* command = dbus_bus_name_has_owner(conn, "org.kde.KWin", nullptr)
-        ? "kwin-active-window"
-        : "swaymsg -t get_tree | jq -r '.. | select(.focused?) | .app_id'";
+std::string get_focused_app() {
+    const char* command = "kwin-active-window";
     std::string result;
     std::array<char, 128> buffer;
     std::unique_ptr<FILE, void(*)(FILE*)> pipe(
@@ -103,7 +101,7 @@ int main(int argc, char* argv[]) {
     if (!conn) return 1;
 
     if (no_es_flag || no_ra_flag) {
-        std::string focused_app = get_focused_app(conn);
+        std::string focused_app = get_focused_app();
         if (no_es_flag && focused_app == "emulationstation") {
             return 0;
         }

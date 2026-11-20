@@ -7,6 +7,4 @@ source /etc/profile
 
 set_kill set "hatarisa"
 
-sway_fullscreen "hatari" &
-
 /usr/bin/hatarisa >/dev/null 2>&1

@@ -154,14 +154,7 @@ steam_scope_reexec_if_needed() {
 
 steam_dual_screen_begin() {
   if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
-    [ "$(compositor)" = "sway" ] && swaymsg 'seat seat1 fallback true'
     PREFER_OUTPUT="--prefer-output $SDL_VIDEO_DISPLAY_PRIORITY"
-  fi
-}
-
-steam_dual_screen_end() {
-  if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
-    [ "$(compositor)" = "sway" ] && swaymsg 'seat seat1 fallback false'
   fi
 }
 

@@ -1701,9 +1701,7 @@ makeinstall_target() {
   mkdir -p ${INSTALL}/usr/config/emulationstation
   cp -f ${ESTMP}/es_systems.cfg ${INSTALL}/usr/config/emulationstation
 
-  if [ "${WINDOWMANAGER}" = "weston" ]; then
-    sed -i 's~%RUNCOMMAND%~weston-terminal --command="%ROM%"~g' ${INSTALL}/usr/config/emulationstation/es_systems.cfg
-  elif [ "${WINDOWMANAGER}" = "swaywm-env" ] || [ "${WINDOWMANAGER}" = "kwin-env" ]; then
+  if [ "${WINDOWMANAGER}" = "kwin-env" ]; then
     sed -i 's~%RUNCOMMAND%~/usr/bin/foot %ROM%~g' ${INSTALL}/usr/config/emulationstation/es_systems.cfg
   else
     sed -i 's~%RUNCOMMAND%~/usr/bin/run %ROM%~g' ${INSTALL}/usr/config/emulationstation/es_systems.cfg

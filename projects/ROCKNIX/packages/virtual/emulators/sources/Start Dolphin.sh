@@ -45,8 +45,4 @@ done
 
 export QT_QPA_PLATFORM=wayland
 
-# 'class' is an XWayland-only criteria; sway reports app_id for native Wayland clients.
-# Match on the process instead so this works whichever platform plugin is in use.
-sway_fullscreen "dolphin-emu" "pidof" &
-
 /usr/bin/dolphin-emu >/dev/null 2>&1

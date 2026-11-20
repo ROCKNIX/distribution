@@ -149,65 +149,6 @@ function cpu_vendor() {
   awk '/vendor_id/ {print $3;exit}' /proc/cpuinfo
 }
 
-# sway window manager utility function to enable fullscreen on a window for an input app_id
-function sway_fullscreen {
-  # value for swaymsg criteria
-  # for 'virtual' attributes pidof / pgrep this is the process to look up pid for
-  local VALUE="${1}"
-  
-  # attribute for swaymsg criteria - default to app_id for backwards compatibility
-  # 'virtual' attributes pidof / pgrep result in the value being evaluted at runtime
-  local ATTRIBUTE="${2:-app_id}"
-
-  # retry control vars
-  local QUERY_LIMIT=5
-  local QUERY_COUNT=0
-
-  if pidof sway >/dev/null 2>&1; then
-    while [ $QUERY_COUNT -lt $QUERY_LIMIT ]; do
-      # loop, attempting to fullscreen window for app_id
-      ((QUERY_COUNT++))
-
-      # Derive swaymsg criteria attribute and value where they are dynamic
-      if [[ "${ATTRIBUTE}" = @(pidof|pgrep) ]]; then
-        local PID=""
-
-        case "${ATTRIBUTE}" in
-          "pidof")
-            PID=$(pidof "${VALUE}")
-            ;;
-          "pgrep")
-            PID=$(pgrep "${VALUE}")
-            ;;
-        esac
-
-        if [ -z "${PID}" ]; then
-          echo "No PID found for VALUE=${VALUE}"
-          sleep 1
-          continue
-        else
-          ATTRIBUTE="pid"
-          VALUE="${PID}"
-        fi
-      fi
-
-      echo "Attempting to fullscreen ${ATTRIBUTE}=${VALUE}"
-      swaymsg '['"${ATTRIBUTE}"'='"${VALUE}"'] fullscreen enable'
-      local RESULT=$?
-
-      if [ $RESULT -eq 0 ]; then
-        echo "Successful, exiting"
-        break
-      else
-        echo "Failed, waiting to try again"
-        sleep 1
-      fi
-    done
-  else
-    echo "sway is not running, exiting"
-  fi
-}
-
 function plane_rotation() {
   [ "${DEVICE_PLANE_ROTATION:-false}" != "false" ] && [ ! -e /storage/.config/rotator.disabled ]
 }
@@ -246,54 +187,28 @@ function prerotate_env() {
 }
 
 function output_list() {
-  if pidof kwin_wayland >/dev/null 2>&1; then
-    kscreen-doctor -j 2>/dev/null | jq -r '
-      .outputs[] | select(.enabled) | .currentModeId as $m | (.modes[] | select(.id == $m) | .size) as $s |
-      "\(.name) \($s.width) \($s.height) \({"1":"normal","2":"270","4":"180","8":"90"}[.rotation | tostring] // "normal") \(.priority == 1)"'
-  else
-    swaymsg -t get_outputs | jq -r '
-      .[] | select(.active and .current_mode != null) |
-      "\(.name) \(.current_mode.width) \(.current_mode.height) \(.transform) \(.focused)"'
-  fi
+  kscreen-doctor -j 2>/dev/null | jq -r '
+    .outputs[] | select(.enabled) | .currentModeId as $m | (.modes[] | select(.id == $m) | .size) as $s |
+    "\(.name) \($s.width) \($s.height) \({"1":"normal","2":"270","4":"180","8":"90"}[.rotation | tostring] // "normal") \(.priority == 1)"'
 }
 
 function output_logical_size() {
-  if pidof kwin_wayland >/dev/null 2>&1; then
-    kscreen-doctor -j 2>/dev/null | jq -r '[.outputs[] | select(.enabled)] | sort_by(.priority) | .[0] |
-      .scale as $f | .rotation as $r | .currentModeId as $m | (.modes[] | select(.id == $m) | .size) as $s |
-      [$s.width / $f | floor, $s.height / $f | floor] |
-      if ($r == 2 or $r == 8) then "\(.[1]) \(.[0])" else "\(.[0]) \(.[1])" end'
-  else
-    swaymsg -t get_outputs | jq -r '.[] | select(.focused == true) | "\(.rect.width) \(.rect.height)"'
-  fi
+  kscreen-doctor -j 2>/dev/null | jq -r '[.outputs[] | select(.enabled)] | sort_by(.priority) | .[0] |
+    .scale as $f | .rotation as $r | .currentModeId as $m | (.modes[] | select(.id == $m) | .size) as $s |
+    [$s.width / $f | floor, $s.height / $f | floor] |
+    if ($r == 2 or $r == 8) then "\(.[1]) \(.[0])" else "\(.[0]) \(.[1])" end'
 }
 
 function output_set_scale() {
-  if pidof kwin_wayland >/dev/null 2>&1; then
-    kscreen-doctor "output.${1}.scale.${2}" >/dev/null 2>&1
-  else
-    swaymsg output "${1}" scale "${2}" >/dev/null 2>&1
-  fi
+  kscreen-doctor "output.${1}.scale.${2}" >/dev/null 2>&1
 }
 
 function compositor() {
-  if pidof kwin_wayland >/dev/null 2>&1; then
-    echo kwin
-  else
-    echo sway
-  fi
+  echo kwin
 }
 
 function session_compositor() {
-  local setting=$(get_setting system.compositor)
-  if [ -z "${setting}" ] || [ ! -x "/usr/bin/${setting}" ]; then
-    if [ -x /usr/bin/kwin_wayland ]; then
-      setting=kwin
-    else
-      setting=sway
-    fi
-  fi
-  echo ${setting}
+  echo kwin
 }
 
 function fbcon_rotation() {
@@ -310,72 +225,48 @@ function compositor_service() {
 }
 
 function output_power() {
-  if [ "$(compositor)" = "kwin" ]; then
-    XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/var/run/0-runtime-dir} WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-1} \
-      kscreen-doctor --dpms "${1}" >/dev/null 2>&1
-  else
-    swaymsg "output * power ${1}" >/dev/null 2>&1
-  fi
+  XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/var/run/0-runtime-dir} WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-1} \
+    kscreen-doctor --dpms "${1}" >/dev/null 2>&1
 }
 
 function output_refresh() {
-  if [ "$(compositor)" = "kwin" ]; then
-    kscreen-doctor -j 2>/dev/null | jq -r '[.outputs[] | select(.enabled)] | sort_by(.priority) | .[0] |
-      .currentModeId as $m | .modes[] | select(.id == $m) | .refreshRate | round'
-  else
-    swaymsg -t get_outputs | jq -r '.[] | select(.focused) | ((.current_mode.refresh // 60000) + 500) / 1000 | floor'
-  fi
+  kscreen-doctor -j 2>/dev/null | jq -r '[.outputs[] | select(.enabled)] | sort_by(.priority) | .[0] |
+    .currentModeId as $m | .modes[] | select(.id == $m) | .refreshRate | round'
 }
 
 function output_connected() {
-  if [ "$(compositor)" = "kwin" ]; then
-    kscreen-doctor -j 2>/dev/null | jq -r '.outputs[] | select(.connected) | .name'
-  else
-    swaymsg -t get_outputs | jq -r '.[].name'
-  fi
+  kscreen-doctor -j 2>/dev/null | jq -r '.outputs[] | select(.connected) | .name'
 }
 
 function output_enable() {
-  if [ "$(compositor)" = "kwin" ]; then
-    if [ "${2}" = "on" ]; then
-      kscreen-doctor "output.${1}.enable" >/dev/null 2>&1
-    else
-      kscreen-doctor "output.${1}.disable" >/dev/null 2>&1
-    fi
-  elif [ "${2}" = "on" ]; then
-    wlr-randr --output "${1}" --preferred --on
+  if [ "${2}" = "on" ]; then
+    kscreen-doctor "output.${1}.enable" >/dev/null 2>&1
   else
-    wlr-randr --output "${1}" --off
+    kscreen-doctor "output.${1}.disable" >/dev/null 2>&1
   fi
 }
 
 function output_modes() {
-  if [ "$(compositor)" = "kwin" ]; then
-    kscreen-doctor -j 2>/dev/null | jq -r '[.outputs[] | select(.enabled)] | sort_by(.priority) | .[0] |
-      .currentModeId as $c | .preferredModes as $p | .modes[] |
-      "\(.size.width) \(.size.height) \(.refreshRate) \([if .id == ($p[0] // "") then "preferred" else empty end,
-        if .id == $c then "current" else empty end] | join(", "))"' |
-      awk '{ printf "%dx%d px, %.6f Hz%s\n", $1, $2, $3, (NF > 3 ? " (" substr($0, index($0, $4)) ")" : "") }'
-  else
-    wlr-randr | awk '/Modes/{flag=1;next}/Position/{flag=0}flag'
-  fi
+  kscreen-doctor -j 2>/dev/null | jq -r '[.outputs[] | select(.enabled)] | sort_by(.priority) | .[0] |
+    .currentModeId as $c | .preferredModes as $p | .modes[] |
+    "\(.size.width) \(.size.height) \(.refreshRate) \([if .id == ($p[0] // "") then "preferred" else empty end,
+      if .id == $c then "current" else empty end] | join(", "))"' |
+    awk '{ printf "%dx%d px, %.6f Hz%s\n", $1, $2, $3, (NF > 3 ? " (" substr($0, index($0, $4)) ")" : "") }'
 }
 
 function output_set_mode() {
   local out w h
   read -r out w h <<< "$(output_list | awk '$5 == "true" { print $1, $2, $3; exit }')"
   [ -n "${out}" ] || return 1
-  if [ "$(compositor)" = "kwin" ]; then
-    kscreen-doctor "output.${out}.mode.$(kscreen-doctor -j | jq -r --arg o "${out}" --arg r "${1}" \
-      --argjson w "${w}" --argjson h "${h}" '.outputs[] | select(.name == $o) |
-      if $r == "preferred" then .preferredModes[0] else
-        [.modes[] | select(.size.width == $w and .size.height == $h)] |
-        min_by(.refreshRate - ($r | tonumber) | if . < 0 then -. else . end) | .id end')" >/dev/null 2>&1
-  elif [ "${1}" = "preferred" ]; then
-    wlr-randr --output "${out}" --preferred
-  else
-    wlr-randr --output "${out}" --mode "${w}x${h}@${1}"
-  fi
+  kscreen-doctor "output.${out}.mode.$(kscreen-doctor -j | jq -r --arg o "${out}" --arg r "${1}" \
+    --argjson w "${w}" --argjson h "${h}" '.outputs[] | select(.name == $o) |
+    if $r == "preferred" then .preferredModes[0] else
+      [.modes[] | select(.size.width == $w and .size.height == $h)] |
+      min_by(.refreshRate - ($r | tonumber) | if . < 0 then -. else . end) | .id end')" >/dev/null 2>&1
+}
+
+function set_refresh_rate() {
+  output_set_mode "$(echo ${1} | tr -cd '[:digit:].')"
 }
 
 function kwin_osd() {

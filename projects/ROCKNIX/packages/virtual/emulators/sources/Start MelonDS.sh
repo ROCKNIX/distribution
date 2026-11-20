@@ -8,8 +8,6 @@
 
 set_kill set "-9 melonDS"
 
-sway_fullscreen "melonDS" "class" &
-
 # QT platform - default to xcb
 export QT_QPA_PLATFORM=xcb
 

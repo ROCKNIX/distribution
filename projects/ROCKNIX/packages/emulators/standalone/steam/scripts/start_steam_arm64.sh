@@ -26,5 +26,4 @@ steam_setup_environment
 steam_scope_reexec_if_needed "$@"
 steam_dual_screen_begin
 steam_launch_bigpicture "$@"
-steam_dual_screen_end
 systemctl restart systemd-binfmt

@@ -25,6 +25,4 @@ set_kill set "armsx2-qt"
 #Set QT enviornment to wayland
   export QT_QPA_PLATFORM=wayland
 
-sway_fullscreen "armsx2-qt" &
-
 /usr/share/armsx2-sa/armsx2-qt >/dev/null 2>&1

@@ -7,7 +7,5 @@ source /etc/profile
 
 set_kill set "daedalus"
 
-sway_fullscreen "daedalus" &
-
 cd /storage/.config/DaedalusX64/
 /storage/.config/DaedalusX64/daedalus >/dev/null 2>&1

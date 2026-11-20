@@ -23,15 +23,6 @@ if ! resolve_heroic_bin; then
   exit 1
 fi
 
-if [ "$(compositor)" = "sway" ]; then
-  if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
-    swaymsg 'seat seat1 fallback true'
-  fi
-  trap '[ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ] && swaymsg "seat seat1 fallback false" || true' EXIT
-  swaymsg for_window [app_id="heroic"] fullscreen enable
-  swaymsg for_window [class="heroic"] fullscreen enable
-fi
-
 read -r _ W H TRANSFORM _ <<< "$(output_list | awk '$5 == "true" { print; exit }')"
 if [[ "${TRANSFORM:-}" == "90" || "${TRANSFORM:-}" == "270" || "${TRANSFORM:-}" == "flipped-90" || "${TRANSFORM:-}" == "flipped-270" ]]; then
   WIDTH="${H}"

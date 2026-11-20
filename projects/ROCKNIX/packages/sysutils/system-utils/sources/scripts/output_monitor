@@ -2,14 +2,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2025 ROCKNIX (https://github.com/ROCKNIX)
 #
-# Monitors external display outputs (DP, HDMI) via sway IPC and powers
-# internal panels (DSI, eDP) off/on accordingly.
-#
-# The sway IPC subscription is used rather than udev because the actions
-# (wlr-randr, swaymsg) require sway to be running and to have already
-# processed the new output. Subscribing to sway output events is
-# inherently synchronized with sway's internal state, avoiding the need
-# for retry logic after a kernel hotplug uevent.
+# Powers internal panels (DSI, eDP) off/on when an external display
+# (DP, HDMI) is connected or removed.
 
 . /etc/profile
 
@@ -18,26 +12,12 @@ ls /sys/class/drm/card*-DP-* /sys/class/drm/card*-HDMI-A-* 2>/dev/null | grep -q
 
 _LAST_STATE="init"
 
-_COMPOSITOR=$(compositor)
-
 _get_active_externals() {
-    if [ "$_COMPOSITOR" = "kwin" ]; then
-        output_list | awk '$1 ~ /^(DP|HDMI|DisplayPort)-/ { print $1 }'
-        return
-    fi
-    wlr-randr 2>/dev/null | awk '
-        /^(DP|HDMI|DisplayPort)-/ { name=$1; in_ext=1; next }
-        /^[A-Za-z]/ { in_ext=0 }
-        in_ext && /Enabled: yes/ { print name }
-    '
+    output_list | awk '$1 ~ /^(DP|HDMI|DisplayPort)-/ { print $1 }'
 }
 
 _get_all_internals() {
-    if [ "$_COMPOSITOR" = "kwin" ]; then
-        output_connected | grep -E '^(DSI|eDP|LVDS)-'
-        return
-    fi
-    wlr-randr 2>/dev/null | awk '/^(DSI|eDP|LVDS)-/ { print $1 }'
+    output_connected | grep -E '^(DSI|eDP|LVDS)-'
 }
 
 _wp_audio_card() {
@@ -84,12 +64,8 @@ _apply() {
         while IFS= read -r out; do
             output_enable "$out" off
         done < <(_get_all_internals)
-        if [ -n "$ext_out" ] && [ "$_COMPOSITOR" = "kwin" ]; then
+        if [ -n "$ext_out" ]; then
             kscreen-doctor "output.${ext_out}.mode.1920x1080@60" >/dev/null 2>&1 || true
-        elif [ -n "$ext_out" ]; then
-            wlr-randr --output "$ext_out" --mode 1920x1080@60 2>/dev/null \
-                || wlr-randr --output "$ext_out" --mode 1920x1080 2>/dev/null || true
-            swaymsg "[app_id=\"emulationstation\"] move output ${ext_out}" 2>/dev/null || true
         fi
         # Stop USB gadget: its data lanes conflict with DP Alt Mode on RK3576
         systemctl is-active --quiet usbgadget && systemctl stop usbgadget
@@ -107,20 +83,11 @@ _apply() {
 
 }
 
-# Allow sway to finish initialising outputs before first check
+# Allow KWin to finish initialising outputs before first check
 sleep 3
 
 while true; do
     _apply
-    # Block until sway reports an output event (or 10s timeout).
-    # The timeout acts as a periodic retry to catch events missed when sway
-    # fires before finishing output configuration (e.g. boot-time hotplug).
-    # grep -q exits on first '"change"' match, terminating swaymsg cleanly.
-    if [ "$_COMPOSITOR" = "kwin" ]; then
-        timeout 10 udevadm monitor --udev --subsystem-match=drm 2>/dev/null | grep -q " change " || true
-        sleep 1
-    else
-        timeout 10 swaymsg -t subscribe '["output"]' 2>/dev/null | grep -q '"change"' || true
-        sleep 0.3
-    fi
+    timeout 10 udevadm monitor --udev --subsystem-match=drm 2>/dev/null | grep -q " change " || true
+    sleep 1
 done
