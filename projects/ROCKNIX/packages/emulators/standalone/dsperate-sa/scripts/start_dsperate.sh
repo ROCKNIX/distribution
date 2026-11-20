@@ -50,6 +50,7 @@ FSMODE=$(get_setting frameskip_mode "${PLATFORM}" "${GAME}")
 TIMING=$(get_setting cpu_timing "${PLATFORM}" "${GAME}")
 AA=$(get_setting anti_aliasing "${PLATFORM}" "${GAME}")
 GPU3D=$(get_setting 3d_renderer "${PLATFORM}" "${GAME}")
+GPU3DSCALE=$(get_setting 3d_render_scale "${PLATFORM}" "${GAME}")
 SGAP=$(get_setting screen_gap "${PLATFORM}" "${GAME}")
 SEAM=$(get_setting pixel_seams "${PLATFORM}" "${GAME}")
 ISCALE=$(get_setting integer_scale "${PLATFORM}" "${GAME}")
@@ -141,9 +142,15 @@ case "${GPU3D}" in
 	0) OPTS+=("--no-gpu3d") ;;
 esac
 
+#3D render scale
+case "${GPU3DSCALE}" in
+	1|2|4)
+		OPTS+=("--gpu3d-scale" "${GPU3DSCALE}")
+		;;
+esac
+
 #3D anti-aliasing
 case "${AA}" in
-	2) OPTS+=("--aa-enhanced") ;;
 	1) OPTS+=("--aa") ;;
 	0) OPTS+=("--no-aa") ;;
 esac
