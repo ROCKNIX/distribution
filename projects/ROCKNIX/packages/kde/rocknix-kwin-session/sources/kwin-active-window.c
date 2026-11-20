@@ -12,10 +12,36 @@ struct window {
     struct org_kde_plasma_window *handle;
     char *app_id;
     uint32_t state;
+    int32_t x, y, width, height;
     struct wl_list link;
 };
 
 static struct wl_list windows;
+static int32_t area[4];
+static int watching, covered = -1;
+
+static void report(void)
+{
+    struct window *window;
+    int now = 0;
+
+    if (!watching)
+        return;
+    wl_list_for_each(window, &windows, link) {
+        if (window->state & ORG_KDE_PLASMA_WINDOW_MANAGEMENT_STATE_MINIMIZED)
+            continue;
+        if (window->x < area[0] + area[2] && window->x + window->width > area[0] &&
+            window->y < area[1] + area[3] && window->y + window->height > area[1]) {
+            now = 1;
+            break;
+        }
+    }
+    if (now != covered) {
+        covered = now;
+        puts(now ? "on" : "off");
+        fflush(stdout);
+    }
+}
 
 static void app_id_changed(void *data, struct org_kde_plasma_window *handle, const char *app_id)
 {
@@ -27,6 +53,28 @@ static void app_id_changed(void *data, struct org_kde_plasma_window *handle, con
 static void state_changed(void *data, struct org_kde_plasma_window *handle, uint32_t flags)
 {
     ((struct window *)data)->state = flags;
+    report();
+}
+
+static void geometry(void *data, struct org_kde_plasma_window *handle,
+                     int32_t x, int32_t y, uint32_t width, uint32_t height)
+{
+    struct window *window = data;
+    window->x = x;
+    window->y = y;
+    window->width = width;
+    window->height = height;
+    report();
+}
+
+static void unmapped(void *data, struct org_kde_plasma_window *handle)
+{
+    struct window *window = data;
+    wl_list_remove(&window->link);
+    org_kde_plasma_window_destroy(handle);
+    free(window->app_id);
+    free(window);
+    report();
 }
 
 static void ignore(void *data, struct org_kde_plasma_window *handle) {}
@@ -34,8 +82,6 @@ static void ignore_string(void *data, struct org_kde_plasma_window *handle, cons
 static void ignore_int(void *data, struct org_kde_plasma_window *handle, int32_t number) {}
 static void ignore_uint(void *data, struct org_kde_plasma_window *handle, uint32_t number) {}
 static void ignore_parent(void *data, struct org_kde_plasma_window *handle, struct org_kde_plasma_window *parent) {}
-static void ignore_geometry(void *data, struct org_kde_plasma_window *handle,
-                            int32_t x, int32_t y, uint32_t width, uint32_t height) {}
 static void ignore_menu(void *data, struct org_kde_plasma_window *handle, const char *service, const char *path) {}
 
 static const struct org_kde_plasma_window_listener window_listener = {
@@ -44,10 +90,10 @@ static const struct org_kde_plasma_window_listener window_listener = {
     .state_changed = state_changed,
     .virtual_desktop_changed = ignore_int,
     .themed_icon_name_changed = ignore_string,
-    .unmapped = ignore,
+    .unmapped = unmapped,
     .initial_state = ignore,
     .parent_window = ignore_parent,
-    .geometry = ignore_geometry,
+    .geometry = geometry,
     .icon_changed = ignore,
     .pid_changed = ignore_uint,
     .virtual_desktop_entered = ignore_string,
@@ -93,7 +139,7 @@ static const struct wl_registry_listener registry_listener = {
     .global_remove = global_remove,
 };
 
-int main(void)
+int main(int argc, char **argv)
 {
     struct org_kde_plasma_window_management *management = NULL;
     struct wl_display *display = wl_display_connect(NULL);
@@ -103,16 +149,28 @@ int main(void)
         fprintf(stderr, "no Wayland display\n");
         return 1;
     }
+    if (argc == 6 && strcmp(argv[1], "--watch") == 0) {
+        for (int i = 0; i < 4; i++)
+            area[i] = atoi(argv[i + 2]);
+        watching = 1;
+    }
     wl_list_init(&windows);
     wl_registry_add_listener(wl_display_get_registry(display), &registry_listener, &management);
 
     wl_display_roundtrip(display);
     if (!management) {
-        fprintf(stderr, "window management not offered, check X-KDE-Wayland-Interfaces\n");
+        fprintf(stderr, "window management not offered\n");
         return 1;
     }
     wl_display_roundtrip(display);
     wl_display_roundtrip(display);
+
+    if (watching) {
+        report();
+        while (wl_display_dispatch(display) != -1)
+            ;
+        return 0;
+    }
 
     wl_list_for_each(window, &windows, link) {
         if ((window->state & ORG_KDE_PLASMA_WINDOW_MANAGEMENT_STATE_ACTIVE) && window->app_id) {

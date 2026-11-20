@@ -136,6 +136,7 @@ case $1 in
         log $0 "Restoring brightness for display 2 to ${BRIGHTNESS_2}."
         brightness set 2 ${BRIGHTNESS_2} >${EVENTLOG} 2>&1
     fi
+    second_screen_power
 
     quirks post
     rocknix-games-freeze thaw >${EVENTLOG} 2>&1

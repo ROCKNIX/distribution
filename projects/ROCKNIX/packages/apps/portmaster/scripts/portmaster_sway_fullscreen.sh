@@ -3,7 +3,7 @@
 
 . /etc/profile
 
-if echo "${UI_SERVICE}" | grep -q "sway"; then
+if [ "$(compositor)" = "sway" ]; then
     # Call the function to fullscreen the window for app_id asynchronously
     sway_fullscreen "${1}" &
 

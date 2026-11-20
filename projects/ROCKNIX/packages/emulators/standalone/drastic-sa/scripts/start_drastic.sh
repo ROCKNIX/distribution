@@ -80,6 +80,11 @@ else
     sed -i 's/^fix_main_2d_screen = .*/fix_main_2d_screen = 0/' /storage/.config/drastic/config/drastic.cfg
 fi
 
+if [ "$(compositor)" = "kwin" ] && [ -f /run/rocknix/kwin/kwinrulesrc ]; then
+    sed -i 's/^screen_orientation = .*/screen_orientation = 0/' /storage/.config/drastic/config/drastic.cfg
+    export DSHOOK_WINDOW_SIZE=$(kreadconfig6 --file /run/rocknix/kwin/kwinrulesrc --group rocknix-span --key size 2>/dev/null | tr ',' 'x')
+fi
+
 cd /storage/.config/drastic/
 @HOTKEY@
 

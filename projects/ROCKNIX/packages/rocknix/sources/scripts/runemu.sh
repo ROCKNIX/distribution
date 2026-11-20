@@ -614,6 +614,10 @@ else
   prerotate_env
 fi
 
+if [ "${EMULATOR}" = "retroarch" ] && [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ] && [ "$(compositor)" = "kwin" ]; then
+  /usr/bin/vertical-check &
+fi
+
 # If the rom is a shell script just execute it, useful for DOSBOX and ScummVM scan scripts
 if [[ "${ROMNAME}" == *".sh" ]] && [ ! "${PLATFORM}" = "ports" ] && [ ! "${PLATFORM}" = "windows" ]; then
         ${VERBOSE} && log $0 "Executing shell script ${ROMNAME}"
@@ -636,6 +640,8 @@ if [ -f "${SCANOUT_OWNER_FILE}" ]; then
   scanout_reset
   trap - EXIT
 fi
+
+kwin_vertical off
 
 ### Disable touch on the secondary screen for dual screen devices
 if [[ "${DEVICE_HAS_DUAL_SCREEN}" == "true" ]]; then
