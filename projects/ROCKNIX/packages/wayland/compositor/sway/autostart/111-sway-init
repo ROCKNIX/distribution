@@ -59,11 +59,6 @@ do
     fi
 done
 
-# The bottom screen on the Duo Lite is a built-in panel on DP-1, not actually external.
-if [[ "${QUIRK_DEVICE}" == "Retroid Pocket Duo Lite" && -n "${internal}" ]]; then
-    con="${internal}"
-fi
-
 # If dsi / eDP check rotation
 if [[ $con == DSI* || $con == eDP* ]]; then
     rot=$(cat /sys/class/graphics/fbcon/rotate)
@@ -80,10 +75,6 @@ else
         echo "output ${internal} disable" >> "$SWAY_HOME/config"
     fi
     angle="0"
-fi
-
-if [ "${QUIRK_DEVICE}" = "AYN Thor Lite" ]; then
-    con="DSI-1"
 fi
 
 # Main output string base
@@ -113,61 +104,22 @@ echo "swaybg_command -" >> $SWAY_HOME/config
 echo "${output} allow_tearing yes" >> $SWAY_HOME/config
 echo "${output} max_render_time off" >> $SWAY_HOME/config
 
-# Retroid Dual Screen Add-on
-# Check the display exists first before we do anything
-if hexdump -C /sys/class/drm/card0-DP-1/edid | grep -q "Lontium"; then
-  echo "output DP-1 transform 270" >> $SWAY_HOME/config
-  echo "output DP-1 bg #000000 solid_color" >> $SWAY_HOME/config
-  echo "output DP-1 allow_tearing yes"  >> $SWAY_HOME/config
-  echo "output DP-1 max_render_time off" >> $SWAY_HOME/config
-  echo "output DP-1 scale 1" >> $SWAY_HOME/config
-  echo "output DP-1 position 0 0" >> $SWAY_HOME/config
-  echo "input \"0:0:generic_ft5x06_(a0)\" map_to_output DSI-1" >> $SWAY_HOME/config
-  echo "input \"0:0:generic_ft5x06_(a0)\" events disabled" >> $SWAY_HOME/config
-  echo "input \"0:0:generic_ft5x06_(8d)\" map_to_output DSI-1" >> $SWAY_HOME/config
-  echo "input \"0:0:generic_ft5x06_(8d)\" events disabled" >> $SWAY_HOME/config
-  echo "input \"8746:1:RetroidPocket_RDS_Touchscreen\" map_to_output DP-1" >> $SWAY_HOME/config
-  echo "input \"8746:1:RetroidPocket_RDS_Touchscreen\" calibration_matrix 0 1 0 -1 0 1" >> $SWAY_HOME/config
-  echo 'for_window [app_id="emulationstation"] focus output DP-1' >> $SWAY_HOME/config
-  con="DP-1"
-elif [ "${QUIRK_DEVICE}" = "Retroid Pocket Duo Lite" ]; then
-  # The Duo Lite's DP-1 is its built-in bottom screen and cannot use USB DP anyway.
-  # We have to do this ugliness otherwise fbcon sees the bottom screen and goes wonky...
-  echo "exec echo detect > /sys/class/drm/card0-DP-1/status" >> $SWAY_HOME/config
-  echo "exec swaymsg output DP-1 disable" >> $SWAY_HOME/config
-else
-  # Any other DP-1 display (AR glasses, external monitor):
-  # Assign workspace 1 to prefer DP-1 with DSI-1 as fallback.
-  # Sway automatically moves workspace 1 to DP-1 when it appears
-  # and back to DSI-1 when it disconnects.
-  echo "workspace 1 output DP-1 ${con}" >> $SWAY_HOME/config
-  echo 'for_window [app_id="emulationstation"] move output DP-1' >> $SWAY_HOME/config
-fi
+# Any DP-1 display (AR glasses, external monitor):
+# Assign workspace 1 to prefer DP-1 with DSI-1 as fallback.
+# Sway automatically moves workspace 1 to DP-1 when it appears
+# and back to DSI-1 when it disconnects.
+echo "workspace 1 output DP-1 ${con}" >> $SWAY_HOME/config
+echo 'for_window [app_id="emulationstation"] move output DP-1' >> $SWAY_HOME/config
 
 # Start the external display monitor on any device that has DP or HDMI
 # hardware where the driver does not emit DRM hotplug uevents.
-if [ "${QUIRK_DEVICE}" != "Retroid Pocket Duo Lite" ] && # See Duo Lite note above.
-   ls /sys/class/drm/card*-DP-* /sys/class/drm/card*-HDMI-A-* 2>/dev/null | grep -q .; then
+if ls /sys/class/drm/card*-DP-* /sys/class/drm/card*-HDMI-A-* 2>/dev/null | grep -q .; then
   echo "exec /usr/bin/output_monitor" >> $SWAY_HOME/config
-fi
-
-if [ "${QUIRK_DEVICE}" = "AYANEO Pocket DS" ]; then
-  con="DSI-1"
-  echo 'for_window [app_id="emulationstation"] focus output DSI-1' >> $SWAY_HOME/config
-  echo 'for_window [app_id="emulationstation"] reload' >> $SWAY_HOME/config
-  echo 'input "1046:967:Goodix_Capacitive_TouchScreen" map_to_output DSI-2' >> $SWAY_HOME/config
-  echo 'input "0:0:generic_ft5x06_(44)" map_to_output DSI-1' >> $SWAY_HOME/config
-  echo 'output DSI-2 power off' >> $SWAY_HOME/config
-  echo "exec_always sh -c 'pgrep -x /usr/bin/wvkbd-mobintl >/dev/null && swaymsg output DSI-2 power on'"  >> $SWAY_HOME/config
-  echo "exec_always swaymsg 'seat seat1 attach 1046:967:Goodix_Capacitive_TouchScreen'" >> $SWAY_HOME/config
-  echo "exec_always swaymsg 'seat seat1 attach 0:0:generic_ft5x06_(44)'" >> $SWAY_HOME/config
-  echo 'for_window [title=".*(Secondary|\[w2\]|Sub|Bottom|Screen 2|GamePad).*"] output DSI-2 power on, output DSI-2 transform 270' >> $SWAY_HOME/config
 fi
 
 # Move the secondary window to the second output and apply vertical orientation for applicable cases
 if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
   second_con=$([[ "${connected_cons[0]}" == "$con" ]] && echo "${connected_cons[1]}" || echo "${connected_cons[0]}")
-  [ "${QUIRK_DEVICE}" = "Retroid Pocket Duo Lite" ] && second_con="DP-1"
   echo "SDL_VIDEO_DISPLAY_PRIORITY=${con},${second_con}" >> ${env_file}
   echo 'for_window [title=".*(Secondary|\[w2\]|Sub|Bottom|Screen 2|GamePad).*"] move window to output '"${second_con}" >> $SWAY_HOME/config
   echo 'for_window [title="RetroArch.*"] exec /usr/bin/vertical-check' >> $SWAY_HOME/config
@@ -177,81 +129,4 @@ if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
   # Required for the touch keyboard to both accept inputs on bottom screen and sent those events to the top screen
   echo "exec_always swaymsg '[app_id=\"emulationstation\"]' seat seat0 attach \"0:0:wlr_virtual_keyboard_v1\"" >> $SWAY_HOME/config
   echo "exec_always swaymsg '[app_id=\"emulationstation\"]' seat seat1 attach \"0:0:wlr_virtual_keyboard_v1\"" >> $SWAY_HOME/config
-fi
-
-# AYN Thor touchscreen setup
-if [ "${QUIRK_DEVICE}" = "AYN Thor" ]; then
-  echo "output ${second_con} power off" >> $SWAY_HOME/config
-  echo "exec sh -c 'swaymsg output ${second_con} power on; sleep 1; swaymsg output ${second_con} transform 90; sleep 1; swaymsg output ${second_con} power off'" >> $SWAY_HOME/config
-  echo 'for_window [title=".*(Secondary|\[w2\]|Sub|Bottom|Screen 2|GamePad).*"] output '"${second_con}"' power on' >> $SWAY_HOME/config
-  echo 'for_window [title=".*(Secondary|\[w2\]|Sub|Bottom|Screen 2|GamePad).*"] exec swaymsg input "0:0:bottom_touchscreen" events enabled' >> $SWAY_HOME/config
-  echo 'for_window [app_id="emulationstation"] reload' >> $SWAY_HOME/config
-  echo 'for_window [app_id="emulationstation"] exec "sleep 1 && swaymsg seat seat1 cursor press button1 && swaymsg seat seat1 cursor release button1"' >> $SWAY_HOME/config
-  echo "exec_always swaymsg '[app_id=\"emulationstation\"]' focus output ${con}, output ${second_con} power off" >> $SWAY_HOME/config
-  echo 'exec_always swaymsg input "0:0:top_touchscreen" map_to_output DSI-2' >> $SWAY_HOME/config
-  echo 'exec_always swaymsg input "0:0:bottom_touchscreen" map_to_output DSI-1' >> $SWAY_HOME/config
-  echo 'exec_always swaymsg input "0:0:bottom_touchscreen" events disabled' >> $SWAY_HOME/config
-  echo "exec_always swaymsg '[app_id=\"emulationstation\"]' seat seat1 attach \"0:0:top_touchscreen\"" >> $SWAY_HOME/config
-  echo "exec_always swaymsg '[app_id=\"emulationstation\"]' seat seat1 attach \"0:0:bottom_touchscreen\"" >> $SWAY_HOME/config
-  echo "exec_always swaymsg '[app_id=\"emulationstation\"]' seat seat1 attach \"4660:22136:InputPlumber_Keyboard\"" >> $SWAY_HOME/config
-fi
-
-if [ "${QUIRK_DEVICE}" = "AYN Thor Lite" ]; then
-    echo "output ${second_con} power off" >> $SWAY_HOME/config
-    echo 'input "0:0:top_touchscreen" calibration_matrix 0 -1 1 1 0 0' >> $SWAY_HOME/config
-    echo 'input "0:0:bottom_touchscreen" calibration_matrix 0 -1 1 1 0 0' >> $SWAY_HOME/config
-    echo 'for_window [title=".*(Secondary|\[w2\]|Sub|Bottom|Screen 2|GamePad).*"] output '"${second_con}"' power on' >> $SWAY_HOME/config
-    echo 'for_window [title=".*(Secondary|\[w2\]|Sub|Bottom|Screen 2|GamePad).*"] exec swaymsg input "0:0:bottom_touchscreen" events enabled' >> $SWAY_HOME/config
-    echo 'for_window [app_id="emulationstation"] reload' >> $SWAY_HOME/config
-    echo 'for_window [app_id="emulationstation"] exec "sleep 1 && swaymsg seat seat1 cursor press button1 && swaymsg seat seat1 cursor release button1"' >> $SWAY_HOME/config
-    echo "exec_always swaymsg '[app_id=\"emulationstation\"]' focus output ${con}, output ${second_con} power off" >> $SWAY_HOME/config
-    echo 'exec_always swaymsg input "0:0:top_touchscreen" map_to_output DSI-1' >> $SWAY_HOME/config
-    echo 'exec_always swaymsg input "0:0:bottom_touchscreen" map_to_output DSI-2' >> $SWAY_HOME/config
-    echo 'exec_always swaymsg input "0:0:bottom_touchscreen" events disabled' >> $SWAY_HOME/config
-    echo "exec_always swaymsg '[app_id=\"emulationstation\"]' seat seat1 attach \"0:0:top_touchscreen\"" >> $SWAY_HOME/config
-    echo "exec_always swaymsg '[app_id=\"emulationstation\"]' seat seat1 attach \"0:0:bottom_touchscreen\"" >> $SWAY_HOME/config
-    echo "exec_always swaymsg '[app_id=\"emulationstation\"]' seat seat1 attach \"4660:22136:InputPlumber_Keyboard\"" >> $SWAY_HOME/config
-fi
-
-# Mangmi Air X and AYN Odin: touch reports in the panel's native portrait
-# orientation, so map it to the panel and let the output transform rotate it.
-if [[ "${QUIRK_DEVICE}" == "MANGMI Air X"* || "${QUIRK_DEVICE}" == "AYN Odin M"* ]] && [ -n "${internal}" ]; then
-  echo "input type:touch map_to_output ${internal}" >> $SWAY_HOME/config
-fi
-
-# AYANEO Pocket S: force primary output to the internal DSI panel.
-# Some panel stacks expose extra connectors and sway can pick the wrong one.
-if [ "${QUIRK_DEVICE}" = "AYANEO Pocket S 2K" ]; then
-  if [ -n "${internal}" ]; then
-    con="${internal}"
-    echo "output ${con} transform ${angle}" >> $SWAY_HOME/config
-    echo "output ${con} bg #000000 solid_color" >> $SWAY_HOME/config
-    echo "output ${con} allow_tearing yes" >> $SWAY_HOME/config
-    echo "output ${con} max_render_time off" >> $SWAY_HOME/config
-    echo "WLR_CON=${con}" >> ${env_file}
-  fi
-fi
-
-# Anbernic RG DS touchscreen setup
-if [[ "${QUIRK_DEVICE}" == "Anbernic RG DS" || "${QUIRK_DEVICE}" == "Anbernic RG DS Plus" ]]; then
-  echo 'for_window [title=".*(Secondary|\[w2\]|Sub|Bottom|Screen 2|GamePad).*"] output '"${second_con}"' power on' >> $SWAY_HOME/config
-  echo 'for_window [app_id="drastic"] output '"${second_con}"' power on, input "1046:911:Goodix_Capacitive_TouchScreen" map_to_output '"${con}" >> $SWAY_HOME/config
-  echo 'for_window [app_id="emulationstation"] reload' >> $SWAY_HOME/config
-  echo "exec_always swaymsg '[app_id=\"emulationstation\"]' focus output ${con}, output ${second_con} power off" >> $SWAY_HOME/config
-  echo "exec_always swaymsg '[app_id=\"emulationstation\"]' seat seat1 attach \"1046:911:Goodix_Capacitive_TouchScreen\"" >> $SWAY_HOME/config
-  echo "exec_always swaymsg '[app_id=\"emulationstation\"]' seat seat1 fallback yes" >> $SWAY_HOME/config
-fi
-
-# Retroid Pocket Duo Lite: bottom panel on DP-1, only enabled for dual-screen apps.
-if [ "${QUIRK_DEVICE}" = "Retroid Pocket Duo Lite" ]; then
-  echo 'for_window [title=".*(Secondary|\[w2\]|Sub|Bottom|Screen 2|GamePad).*"] output '"${second_con}"' power on' >> $SWAY_HOME/config
-  # The window is centred on the seam between outputs, so the first move changes its workspace and remaps the position
-  echo 'for_window [app_id="drastic"] output '"${second_con}"' power on, floating enable, fullscreen disable, border none, resize set 1280 1920, move absolute position 320 120, move absolute position 320 120' >> $SWAY_HOME/config
-  echo 'for_window [app_id="emulationstation"] reload' >> $SWAY_HOME/config
-  echo 'exec_always swaymsg input "0:0:Himax_Touchscreen" map_to_output '"${con}" >> $SWAY_HOME/config
-  echo 'exec_always swaymsg input "0:0:generic_ft5x06_(a0)" map_to_output '"${second_con}" >> $SWAY_HOME/config
-  echo "exec_always swaymsg '[app_id=\"emulationstation\"]' focus output ${con}, output DSI-1 pos 0 0, output ${second_con} enable, output ${second_con} pos 320 1080 power off" >> $SWAY_HOME/config
-  echo "exec_always swaymsg '[app_id=\"emulationstation\"]' seat seat1 attach \"0:0:Himax_Touchscreen\"" >> $SWAY_HOME/config
-  echo "exec_always swaymsg '[app_id=\"emulationstation\"]' seat seat1 attach \"0:0:generic_ft5x06_(a0)\"" >> $SWAY_HOME/config
-  echo "exec_always swaymsg '[app_id=\"emulationstation\"]' seat seat1 attach \"4660:22136:InputPlumber_Keyboard\"" >> $SWAY_HOME/config
 fi
