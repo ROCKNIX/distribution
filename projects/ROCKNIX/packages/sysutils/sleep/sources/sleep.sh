@@ -107,10 +107,12 @@ case $1 in
     bluetooth stop
     powerstate stop
     modules stop
+    second_screen_hold
     quirks pre
     touch /run/.last_sleep_time
     ;;
   post)
+    second_screen_release
     ledcontrol
     modules start
     powerstate start
@@ -136,7 +138,6 @@ case $1 in
         log $0 "Restoring brightness for display 2 to ${BRIGHTNESS_2}."
         brightness set 2 ${BRIGHTNESS_2} >${EVENTLOG} 2>&1
     fi
-    second_screen_power
 
     quirks post
     rocknix-games-freeze thaw >${EVENTLOG} 2>&1
