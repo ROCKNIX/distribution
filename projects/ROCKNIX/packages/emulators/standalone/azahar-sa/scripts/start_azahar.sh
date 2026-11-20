@@ -17,7 +17,6 @@ CONF_DIR="/storage/.config/azahar"
 CONF_FILE="${CONF_DIR}/qt-config.ini"
 ROMS_DIR="/storage/roms/3ds"
 SAVESTATES_DIR="/storage/roms/savestates/3ds"
-SWAY_CONFIG="/storage/.config/sway/config"
 
 # Make sure azahar config directory exists
 [ ! -d ${CONF_DIR} ] && cp -r ${IMMUTABLE_CONF_DIR} /storage/.config

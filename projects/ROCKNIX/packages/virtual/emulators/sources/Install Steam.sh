@@ -249,14 +249,14 @@ run_steam_first_launch() {
   echo 0 > /proc/sys/fs/binfmt_misc/box32 || true
   echo 0 > /proc/sys/fs/binfmt_misc/box64 || true
 
-  if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
+  if [ "$(compositor)" = "sway" ] && [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
     swaymsg 'seat seat1 fallback true' || log_info "Swaymsg dual screen setup failed, ignoring."
   fi
 
   # Allow Steam launch commands to fail cleanly if needed, though they shouldn't
   LD_LIBRARY_PATH="${STEAM}/lib/aarch64-linux-gnu/" "${CLIENT_DIR}/steam" -deckard -exitsteam || log_info "Native Steam execution exited with an error."
 
-  if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
+  if [ "$(compositor)" = "sway" ] && [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
     swaymsg 'seat seat1 fallback false' || log_info "Swaymsg dual screen teardown failed, ignoring."
   fi
 

@@ -28,7 +28,7 @@ cleanup_keyboard() {
   if [ "${TOUCHKB_WAS_ACTIVE}" = "1" ]; then
     systemctl start touchkeyboard.service >/dev/null 2>&1 || true
   fi
-  if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
+  if [ "$(compositor)" = "sway" ] && [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
     swaymsg 'seat seat1 fallback false' >/dev/null 2>&1 || true
   fi
 }
