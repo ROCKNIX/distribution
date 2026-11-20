@@ -280,6 +280,7 @@ execute_action() {
 
 ### Search the system for useful devices to monitor for inputs.
 INPUT_DEVICES=()
+TOUCH_DEVICES=()
 
 get_devices() {
   local KJDEVS=false
@@ -290,6 +291,7 @@ get_devices() {
 
   ### Re-scan from an empty list, otherwise every retry and hotplug reload appends duplicates.
   INPUT_DEVICES=()
+  TOUCH_DEVICES=()
 
   while [ ${KJDEVS} = false ]; do
     for DEV in /dev/input/ev*
@@ -299,6 +301,7 @@ get_devices() {
       if [ -n "${SUPPORTS}" ]; then
         DEVICE=$(udevadm info ${DEV} | awk 'BEGIN {FS="="} /DEVNAME=/ {print $2}')
         INPUT_DEVICES+=("${DEVICE}")
+        [[ "${SUPPORTS}" =~ ID_INPUT_TOUCHSCREEN ]] && TOUCH_DEVICES+=("${DEVICE}")
         if [[ "${SUPPORTS}" =~ ID_INPUT_KEY ]]; then
           ${DEBUG} && log $0 "Found Keyboard: ${DEVICE}"
           FOUNDKEYS=true
@@ -330,6 +333,26 @@ get_devices() {
   done
 }
 
+### Grab the touchscreens while the function key is held, so the tap that toggles the keyboard never reaches the app.
+touch_grab() {
+  local dev
+  for dev in "${TOUCH_DEVICES[@]}"; do
+    evtest --grab "${dev}" 2>/dev/null | while read -r line; do
+      case ${line} in
+        (${FUNCTION_HOTKEY_TOUCH_EVENT})
+          ${DEBUG} && log $0 "${FUNCTION_HOTKEY_TOUCH_EVENT}: Toggle Touchscreen Keyboard"
+          if [ "$(compositor)" = "kwin" ]; then
+            systemctl is-active --quiet touchkeyboard && kwin_keyboard toggle
+          else
+            kill -34 $(pidof wvkbd-mobintl)
+          fi
+        ;;
+      esac
+    done &
+  done
+}
+
+pkill -f '^evtest --grab'
 get_devices
 
 # If the input devices change, it may be a new controller
@@ -373,9 +396,11 @@ set +e
         if [[ "${line}" =~ ${PRESS} ]]; then
           ${DEBUG} && log $0 "${FUNCTION_MODIFIER_A_EVENT}: Pressed"
           FN_A_PRESSED=true
+          [ "${TOUCHSCREEN_EVENTS}" = true ] && touch_grab
         elif [[ "${line}" =~ ${RELEASE} ]]; then
           ${DEBUG} && log $0 "${FUNCTION_MODIFIER_A_EVENT}: Released"
           FN_A_PRESSED=false
+          pkill -f '^evtest --grab'
         fi
       ;;
       (${FUNCTION_MODIFIER_B_EVENT})
@@ -509,16 +534,6 @@ set +e
           brightness down
           CUR_BRIGHTNESS=$(get_setting "display.brightness")
           /usr/bin/mako-notify "Brightness: ${CUR_BRIGHTNESS}%" -no-es
-        fi
-      ;;
-      (${FUNCTION_HOTKEY_TOUCH_EVENT})
-        if [ "${FN_A_PRESSED}" = true ] && [ "${TOUCHSCREEN_EVENTS}" = true ]; then
-          ${DEBUG} && log $0 "${FUNCTION_HOTKEY_TOUCH_EVENT}: Toggle Touchscreen Keyboard"
-          if [ "$(compositor)" = "kwin" ]; then
-            systemctl is-active --quiet touchkeyboard && kwin_keyboard toggle
-          else
-            kill -34 $(pidof wvkbd-mobintl)
-          fi
         fi
       ;;
       (${FUNCTION_HOTKEY_BTN_EAST_EVENT})
