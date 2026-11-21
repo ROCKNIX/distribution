@@ -1,0 +1,58 @@
+From: Tristan Madani <tristmd@gmail.com>
+Subject: Bluetooth: cancel devcoredump work during device teardown
+Link: https://lore.kernel.org/r/20260814231248.3096377-1-tristmd@gmail.com
+
+From: Tristan Madani <tristan@talencesecurity.com>
+
+hci_devcd_setup() initializes dump_timeout and dump_rx work items
+during device allocation, but hci_unregister_dev() does not cancel
+them before the device is freed. If a devcoredump is in progress
+when the device is unregistered, the dump_timeout delayed work timer
+remains active. When it fires after hci_release_dev() frees the
+hci_dev struct, it accesses freed memory.
+
+Add hci_devcd_destroy() to disable dump work items and purge the
+dump queue, called from hci_unregister_dev() alongside the existing
+disable_work_sync() calls.
+
+Fixes: 9695ef876fd1 ("Bluetooth: Add support for hci devcoredump")
+Cc: stable@vger.kernel.org
+Signed-off-by: Tristan Madani <tristan@talencesecurity.com>
+---
+ include/net/bluetooth/hci_core.h | 9 +++++++++
+ net/bluetooth/hci_core.c         | 2 ++
+ 2 files changed, 11 insertions(+)
+---
+diff --git a/include/net/bluetooth/hci_core.h b/include/net/bluetooth/hci_core.h
+index 3df59849dcbea..5a60c3f94a462 100644
+--- a/include/net/bluetooth/hci_core.h
++++ b/include/net/bluetooth/hci_core.h
+@@ -1800,6 +1800,15 @@ static inline void hci_devcd_setup(struct hci_dev *hdev)
+ #endif
+ }
+ 
++static inline void hci_devcd_destroy(struct hci_dev *hdev)
++{
++#ifdef CONFIG_DEV_COREDUMP
++	disable_delayed_work_sync(&hdev->dump.dump_timeout);
++	disable_work_sync(&hdev->dump.dump_rx);
++	skb_queue_purge(&hdev->dump.dump_q);
++#endif
++}
++
+ int hci_dev_open(__u16 dev);
+ int hci_dev_close(__u16 dev);
+ int hci_dev_do_close(struct hci_dev *hdev);
+diff --git a/net/bluetooth/hci_core.c b/net/bluetooth/hci_core.c
+index 5ba9fe8261ec8..d4d559dabf422 100644
+--- a/net/bluetooth/hci_core.c
++++ b/net/bluetooth/hci_core.c
+@@ -2671,6 +2671,8 @@ void hci_unregister_dev(struct hci_dev *hdev)
+ 	disable_delayed_work_sync(&hdev->cmd_timer);
+ 	disable_delayed_work_sync(&hdev->ncmd_timer);
+ 
++	hci_devcd_destroy(hdev);
++
+ 	hci_cmd_sync_clear(hdev);
+ 
+ 	hci_unregister_suspend_notifier(hdev);

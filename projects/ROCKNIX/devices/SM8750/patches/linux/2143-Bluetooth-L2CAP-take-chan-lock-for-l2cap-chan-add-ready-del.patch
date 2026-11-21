@@ -1,0 +1,122 @@
+From 385c0829e09e7a6380ae67998ac6ef6f4dfd5303 Mon Sep 17 00:00:00 2001
+From: Pauli Virtanen <pav@iki.fi>
+Date: Sat, 29 Aug 2026 17:19:56 +0300
+Subject: [PATCH] Bluetooth: L2CAP: take chan->lock for
+ l2cap_chan_add/ready/del
+
+chan->lock must be held for __l2cap_chan_add as eg. calls to
+l2cap_chan_close assume chan->conn writes are guarded by it.
+
+It must be held for l2cap_chan_del() due to
+l2cap_sock.c:l2cap_chan_conn, l2cap_monitor_timeout, etc.
+
+Similarly it should be held for l2cap_ops::ready (assumed in 6lowpan.c).
+Also teardown usually has chan->lock held, it should always have it held
+to have the same locking context.
+
+The lock is not correctly held by l2cap_core in several places.
+
+Add the missing locks for l2cap_chan_del/add/ready(), except in
+l2cap_ecred_rsp_defer() which needs separate fix as it needs lock
+nesting.
+
+Fixes: 6fef032af009 ("Bluetooth: L2CAP: Fix use-after-free in l2cap_sock_new_connection_cb()")
+Signed-off-by: Pauli Virtanen <pav@iki.fi>
+Reported-by: Eulgyu Kim <eulgyukim@snu.ac.kr>
+Reported-by: Jaeyoung Chung <jjy600901@snu.ac.kr>
+Signed-off-by: Luiz Augusto von Dentz <luiz.von.dentz@intel.com>
+---
+ include/net/bluetooth/l2cap.h |  3 ++-
+ net/bluetooth/l2cap_core.c    | 15 +++++++++++++++
+ 2 files changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/include/net/bluetooth/l2cap.h b/include/net/bluetooth/l2cap.h
+index 69d193fee3..43a67562b2 100644
+--- a/include/net/bluetooth/l2cap.h
++++ b/include/net/bluetooth/l2cap.h
+@@ -973,7 +973,8 @@ int l2cap_chan_check_security(struct l2cap_chan *chan, bool initiator);
+ void l2cap_chan_set_defaults(struct l2cap_chan *chan, struct l2cap_chan *pchan);
+ int l2cap_ertm_init(struct l2cap_chan *chan);
+ void l2cap_chan_add(struct l2cap_conn *conn, struct l2cap_chan *chan);
+-void __l2cap_chan_add(struct l2cap_conn *conn, struct l2cap_chan *chan);
++void __l2cap_chan_add(struct l2cap_conn *conn, struct l2cap_chan *chan)
++	__must_hold(&chan->lock);
+ typedef void (*l2cap_chan_func_t)(struct l2cap_chan *chan, void *data);
+ void l2cap_chan_list(struct l2cap_conn *conn, l2cap_chan_func_t func,
+ 		     void *data);
+diff --git a/net/bluetooth/l2cap_core.c b/net/bluetooth/l2cap_core.c
+index f09a353cbc..32213ab6ff 100644
+--- a/net/bluetooth/l2cap_core.c
++++ b/net/bluetooth/l2cap_core.c
+@@ -665,7 +665,9 @@ void __l2cap_chan_add(struct l2cap_conn *conn, struct l2cap_chan *chan)
+ void l2cap_chan_add(struct l2cap_conn *conn, struct l2cap_chan *chan)
+ {
+ 	mutex_lock(&conn->lock);
++	l2cap_chan_lock(chan);
+ 	__l2cap_chan_add(conn, chan);
++	l2cap_chan_unlock(chan);
+ 	mutex_unlock(&conn->lock);
+ }
+ 
+@@ -4079,6 +4081,8 @@ static struct l2cap_chan *l2cap_new_connection(struct l2cap_conn *conn,
+ 	if (!chan)
+ 		return NULL;
+ 
++	l2cap_chan_lock(chan);
++
+ 	l2cap_chan_set_defaults(chan, pchan);
+ 	chan->ops = pchan->ops;
+ 
+@@ -4087,10 +4091,13 @@ static struct l2cap_chan *l2cap_new_connection(struct l2cap_conn *conn,
+ 	if (pchan->ops->new_connection &&
+ 	    pchan->ops->new_connection(pchan, chan) < 0) {
+ 		l2cap_chan_del(chan, 0);
++		l2cap_chan_unlock(chan);
+ 		l2cap_chan_put(chan);
+ 		return NULL;
+ 	}
+ 
++	l2cap_chan_unlock(chan);
++
+ 	return chan;
+ }
+ 
+@@ -5061,6 +5068,8 @@ static int l2cap_le_connect_req(struct l2cap_conn *conn,
+ 		goto response_unlock;
+ 	}
+ 
++	l2cap_chan_lock(chan);
++
+ 	bacpy(&chan->src, &conn->hcon->src);
+ 	bacpy(&chan->dst, &conn->hcon->dst);
+ 	chan->src_type = bdaddr_src_type(conn->hcon);
+@@ -5094,6 +5103,8 @@ static int l2cap_le_connect_req(struct l2cap_conn *conn,
+ 		result = L2CAP_CR_LE_SUCCESS;
+ 	}
+ 
++	l2cap_chan_unlock(chan);
++
+ response_unlock:
+ 	l2cap_chan_unlock(pchan);
+ 	l2cap_chan_put(pchan);
+@@ -5286,6 +5297,8 @@ static inline int l2cap_ecred_conn_req(struct l2cap_conn *conn,
+ 			continue;
+ 		}
+ 
++		l2cap_chan_lock(chan);
++
+ 		bacpy(&chan->src, &conn->hcon->src);
+ 		bacpy(&chan->dst, &conn->hcon->dst);
+ 		chan->src_type = bdaddr_src_type(conn->hcon);
+@@ -5318,6 +5331,8 @@ static inline int l2cap_ecred_conn_req(struct l2cap_conn *conn,
+ 		} else {
+ 			l2cap_chan_ready(chan);
+ 		}
++
++		l2cap_chan_unlock(chan);
+ 	}
+ 
+ unlock:
+-- 
+2.56.0
+

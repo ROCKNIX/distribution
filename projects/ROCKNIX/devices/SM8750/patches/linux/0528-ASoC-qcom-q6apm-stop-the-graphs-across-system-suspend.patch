@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: André Braga <code@andrebraga.com>
+Subject: [PATCH] ASoC: qcom: q6apm: stop the graphs across system suspend
+
+The SUSPEND trigger left the frontend and backend graphs running, so
+an open stream kept the ADSP busy and its votes up through system
+suspend. Stop both graphs on SUSPEND and start the frontend graph
+again on RESUME; the backend port already restarts there.
+---
+diff --git a/sound/soc/qcom/qdsp6/q6apm-dai.c b/sound/soc/qcom/qdsp6/q6apm-dai.c
+--- a/sound/soc/qcom/qdsp6/q6apm-dai.c
++++ b/sound/soc/qcom/qdsp6/q6apm-dai.c
+@@ -344,9 +344,11 @@
+ 
+ 	switch (cmd) {
+ 	case SNDRV_PCM_TRIGGER_START:
+-	case SNDRV_PCM_TRIGGER_RESUME:
+ 	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
+ 		break;
++	case SNDRV_PCM_TRIGGER_RESUME:
++		ret = q6apm_graph_start(prtd->graph);
++		break;
+ 	case SNDRV_PCM_TRIGGER_STOP:
+ 		/* TODO support be handled via SoftPause Module */
+ 		prtd->state = Q6APM_STREAM_STOPPED;
+@@ -354,6 +356,8 @@
+ 		prtd->last_pos_index = 0;
+ 		break;
+ 	case SNDRV_PCM_TRIGGER_SUSPEND:
++		ret = q6apm_graph_stop(prtd->graph);
++		break;
+ 	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
+ 		break;
+ 	default:
+diff --git a/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c b/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c
+--- a/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c
++++ b/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c
+@@ -218,6 +218,12 @@
+ 				dai_data->is_port_started[dai->id] = true;
+ 		}
+ 		break;
++	case SNDRV_PCM_TRIGGER_SUSPEND:
++		if (dai_data->is_port_started[dai->id]) {
++			ret = q6apm_graph_stop(dai_data->graph[dai->id]);
++			dai_data->is_port_started[dai->id] = false;
++		}
++		break;
+ 	default:
+ 		break;
+ 	}

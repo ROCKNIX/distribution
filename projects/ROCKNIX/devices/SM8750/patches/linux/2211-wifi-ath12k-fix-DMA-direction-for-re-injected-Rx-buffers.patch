@@ -1,0 +1,301 @@
+From: Lorenzo Bianconi <lorenzo.bianconi@oss.qualcomm.com>
+Subject: [ath-current,v3] wifi: ath12k: fix DMA direction for re-injected Rx buffers
+Link: https://lore.kernel.org/r/20261023-ath12k-fix-dma-mapping-for-reinject-packets-v3-1-443f9e13bbc9@oss.qualcomm.com
+
+Defragmented MPDUs that are re-injected into the REO are mapped with
+DMA_TO_DEVICE, but all the Rx reap and teardown paths unmap them with
+DMA_FROM_DEVICE. The DMA API requires the unmap direction to match the
+map direction, so this violates the contract.
+
+The mapping actually spans both directions, since the host has written
+the buffer before the REO reads it and the buffer is read back by the
+host afterwards, so DMA_BIDIRECTIONAL is the correct choice.
+
+Add a common ath12k_dp_unmap_rx_buf() helper that selects
+DMA_BIDIRECTIONAL for re-injected buffers, identified by the existing
+ath12k_skb_rxcb::is_frag flag, and DMA_FROM_DEVICE otherwise, then use it
+in all the Rx reap and cleanup paths. Map and unmap the re-injected buffer
+with DMA_BIDIRECTIONAL consistently.
+
+Tested-on: WCN7850 hw2.0 PCI WLAN.HMT.1.1.c7-00108-QCAHMTSWPL_V1.0_V2.0_SILICONZ_UPSTREAM-3
+
+Fixes: 33322e3ef074 ("wifi: ath12k: change DMA direction while mapping reinjected packets")
+Signed-off-by: Lorenzo Bianconi <lorenzo.bianconi@oss.qualcomm.com>
+---
+Changes in v3:
+- Set ATH12K_SKB_RXCB()->paddr before err_unmap_dma condition in
+  ath12k_wifi7_dp_rx_h_defrag_reo_reinject().
+- Link to v2: https://lore.kernel.org/r/20261023-ath12k-fix-dma-mapping-for-reinject-packets-v2-1-9f436a26dd72@oss.qualcomm.com
+
+Changes in v2:
+- Rely on ath12k_skb_rxcb is_frag field and drop reinjected one.
+- Link to v1: https://lore.kernel.org/r/20261017-ath12k-fix-dma-mapping-for-reinject-packets-v1-1-b94860e18ba4@oss.qualcomm.com
+---
+ drivers/net/wireless/ath/ath12k/dp.c           |  6 ++---
+ drivers/net/wireless/ath/ath12k/dp_mon.c       |  5 ++--
+ drivers/net/wireless/ath/ath12k/dp_rx.c        |  3 +--
+ drivers/net/wireless/ath/ath12k/dp_rx.h        | 11 ++++++++
+ drivers/net/wireless/ath/ath12k/wifi7/dp_mon.c | 17 +++---------
+ drivers/net/wireless/ath/ath12k/wifi7/dp_rx.c  | 37 ++++++++------------------
+ 6 files changed, 31 insertions(+), 48 deletions(-)
+
+
+---
+base-commit: 045958acaa75205b31578cb22c4345e28dd2e4bf
+change-id: 20261014-ath12k-fix-dma-mapping-for-reinject-packets-2eab34ca5acc
+
+Best regards,
+---
+diff --git a/drivers/net/wireless/ath/ath12k/dp.c b/drivers/net/wireless/ath/ath12k/dp.c
+index f9b37d75956d..bca719b30281 100644
+--- a/drivers/net/wireless/ath/ath12k/dp.c
++++ b/drivers/net/wireless/ath/ath12k/dp.c
+@@ -5,6 +5,7 @@
+  */
+ 
+ #include "core.h"
++#include "dp_rx.h"
+ #include "dp_tx.h"
+ #include "hif.h"
+ #include "hal.h"
+@@ -998,10 +999,7 @@ static void ath12k_dp_cc_cleanup(struct ath12k_base *ab)
+ 				if (!skb)
+ 					continue;
+ 
+-				dma_unmap_single(ab->dev,
+-						 ATH12K_SKB_RXCB(skb)->paddr,
+-						 skb->len + skb_tailroom(skb),
+-						 DMA_FROM_DEVICE);
++				ath12k_dp_unmap_rx_buf(dp, skb);
+ 				dev_kfree_skb_any(skb);
+ 			}
+ 
+diff --git a/drivers/net/wireless/ath/ath12k/dp_mon.c b/drivers/net/wireless/ath/ath12k/dp_mon.c
+index 7d5be77b081f..8fca50b0f236 100644
+--- a/drivers/net/wireless/ath/ath12k/dp_mon.c
++++ b/drivers/net/wireless/ath/ath12k/dp_mon.c
+@@ -5,6 +5,7 @@
+  */
+ 
+ #include "dp_mon.h"
++#include "dp_rx.h"
+ #include "debug.h"
+ #include "dp_tx.h"
+ #include "peer.h"
+@@ -561,9 +562,7 @@ ath12k_dp_mon_parse_status_buf(struct ath12k_pdev_dp *dp_pdev,
+ 		return 0;
+ 	}
+ 
+-	dma_unmap_single(ab->dev, ATH12K_SKB_RXCB(msdu)->paddr,
+-			 msdu->len + skb_tailroom(msdu),
+-			 DMA_FROM_DEVICE);
++	ath12k_dp_unmap_rx_buf(dp, msdu);
+ 
+ 	offset = packet_info->dma_length + ATH12K_MON_RX_DOT11_OFFSET;
+ 	if (ath12k_dp_pkt_set_pktlen(msdu, offset)) {
+diff --git a/drivers/net/wireless/ath/ath12k/dp_rx.c b/drivers/net/wireless/ath/ath12k/dp_rx.c
+index 8fa0e90b4531..ac489d9bfb55 100644
+--- a/drivers/net/wireless/ath/ath12k/dp_rx.c
++++ b/drivers/net/wireless/ath/ath12k/dp_rx.c
+@@ -185,8 +185,7 @@ static int ath12k_dp_rxdma_mon_buf_ring_free(struct ath12k_base *ab,
+ 		/* TODO: Understand where internal driver does this dma_unmap
+ 		 * of rxdma_buffer.
+ 		 */
+-		dma_unmap_single(ab->dev, ATH12K_SKB_RXCB(skb)->paddr,
+-				 skb->len + skb_tailroom(skb), DMA_FROM_DEVICE);
++		ath12k_dp_unmap_rx_buf(ath12k_ab_to_dp(ab), skb);
+ 		dev_kfree_skb_any(skb);
+ 	}
+ 
+diff --git a/drivers/net/wireless/ath/ath12k/dp_rx.h b/drivers/net/wireless/ath/ath12k/dp_rx.h
+index 0660db070e92..f6eda3a0f45b 100644
+--- a/drivers/net/wireless/ath/ath12k/dp_rx.h
++++ b/drivers/net/wireless/ath/ath12k/dp_rx.h
+@@ -187,6 +187,17 @@ void ath12k_dp_extract_rx_desc_data(struct ath12k_hal *hal,
+ 	hal->ops->extract_rx_desc_data(rx_info, rx_desc, ldesc);
+ }
+ 
++static inline void ath12k_dp_unmap_rx_buf(struct ath12k_dp *dp,
++					  struct sk_buff *skb)
++{
++	struct ath12k_skb_rxcb *rxcb = ATH12K_SKB_RXCB(skb);
++	enum dma_data_direction dir;
++
++	dir = rxcb->is_frag ? DMA_BIDIRECTIONAL : DMA_FROM_DEVICE;
++	dma_unmap_single(dp->dev, rxcb->paddr, skb->len + skb_tailroom(skb),
++			 dir);
++}
++
+ void ath12k_dp_rx_h_undecap(struct ath12k_pdev_dp *dp_pdev, struct sk_buff *msdu,
+ 			    enum hal_encrypt_type enctype,
+ 			    bool decrypted,
+diff --git a/drivers/net/wireless/ath/ath12k/wifi7/dp_mon.c b/drivers/net/wireless/ath/ath12k/wifi7/dp_mon.c
+index 016b0c38e51e..1e0e089bc1b4 100644
+--- a/drivers/net/wireless/ath/ath12k/wifi7/dp_mon.c
++++ b/drivers/net/wireless/ath/ath12k/wifi7/dp_mon.c
+@@ -2721,10 +2721,7 @@ ath12k_wifi7_dp_rx_mon_mpdu_pop(struct ath12k *ar, int mac_id,
+ 				continue;
+ 			}
+ 			if (!rxcb->unmapped) {
+-				dma_unmap_single(ar->ab->dev, rxcb->paddr,
+-						 msdu->len +
+-						 skb_tailroom(msdu),
+-						 DMA_FROM_DEVICE);
++				ath12k_dp_unmap_rx_buf(dp, msdu);
+ 				rxcb->unmapped = 1;
+ 			}
+ 			if (drop_mpdu) {
+@@ -3137,9 +3134,7 @@ ath12k_wifi7_dp_rx_reap_mon_status_ring(struct ath12k_base *ab, int mac_id,
+ 				idr_remove(&rx_ring->bufs_idr, buf_id);
+ 				spin_unlock_bh(&rx_ring->idr_lock);
+ 
+-				dma_unmap_single(ab->dev, rxcb->paddr,
+-						 skb->len + skb_tailroom(skb),
+-						 DMA_FROM_DEVICE);
++				ath12k_dp_unmap_rx_buf(dp, skb);
+ 
+ 				dev_kfree_skb_any(skb);
+ 				pmon->buf_state = DP_MON_STATUS_REPLINISH;
+@@ -3150,9 +3145,7 @@ ath12k_wifi7_dp_rx_reap_mon_status_ring(struct ath12k_base *ab, int mac_id,
+ 			idr_remove(&rx_ring->bufs_idr, buf_id);
+ 			spin_unlock_bh(&rx_ring->idr_lock);
+ 
+-			dma_unmap_single(ab->dev, rxcb->paddr,
+-					 skb->len + skb_tailroom(skb),
+-					 DMA_FROM_DEVICE);
++			ath12k_dp_unmap_rx_buf(dp, skb);
+ 
+ 			if (ath12k_dp_pkt_set_pktlen(skb, RX_MON_STATUS_BUF_SIZE)) {
+ 				dev_kfree_skb_any(skb);
+@@ -3289,9 +3282,7 @@ ath12k_wifi7_dp_mon_srng_process(struct ath12k_pdev_dp *pdev_dp, int *budget,
+ 		}
+ 
+ 		rxcb = ATH12K_SKB_RXCB(skb);
+-		dma_unmap_single(ab->dev, rxcb->paddr,
+-				 skb->len + skb_tailroom(skb),
+-				 DMA_FROM_DEVICE);
++		ath12k_dp_unmap_rx_buf(dp, skb);
+ 
+ 		end_reason = u32_get_bits(info0, HAL_MON_DEST_INFO0_END_REASON);
+ 
+diff --git a/drivers/net/wireless/ath/ath12k/wifi7/dp_rx.c b/drivers/net/wireless/ath/ath12k/wifi7/dp_rx.c
+index 95d87dd67872..42ceb2c4c2e3 100644
+--- a/drivers/net/wireless/ath/ath12k/wifi7/dp_rx.c
++++ b/drivers/net/wireless/ath/ath12k/wifi7/dp_rx.c
+@@ -729,11 +729,7 @@ int ath12k_wifi7_dp_rx_process(struct ath12k_dp *dp, int ring_id,
+ 
+ 		list_add_tail(&desc_info->list, &rx_desc_used_list[device_id]);
+ 
+-		rxcb = ATH12K_SKB_RXCB(msdu);
+-		dma_unmap_single(partner_dp->dev, rxcb->paddr,
+-				 msdu->len + skb_tailroom(msdu),
+-				 DMA_FROM_DEVICE);
+-
++		ath12k_dp_unmap_rx_buf(partner_dp, msdu);
+ 		num_buffs_reaped[device_id]++;
+ 		dp->device_stats.reo_rx[ring_id][dp->device_id]++;
+ 
+@@ -749,6 +745,7 @@ int ath12k_wifi7_dp_rx_process(struct ath12k_dp *dp, int ring_id,
+ 		msdu_info = &desc->rx_msdu_info;
+ 		mpdu_info = &desc->rx_mpdu_info;
+ 
++		rxcb = ATH12K_SKB_RXCB(msdu);
+ 		rxcb->is_first_msdu = !!(le32_to_cpu(msdu_info->info0) &
+ 					 RX_MSDU_DESC_INFO0_FIRST_MSDU_IN_MPDU);
+ 		rxcb->is_last_msdu = !!(le32_to_cpu(msdu_info->info0) &
+@@ -894,10 +891,12 @@ static int ath12k_wifi7_dp_rx_h_defrag_reo_reinject(struct ath12k_dp *dp,
+ 
+ 	buf_paddr = dma_map_single(dp->dev, defrag_skb->data,
+ 				   defrag_skb->len + skb_tailroom(defrag_skb),
+-				   DMA_TO_DEVICE);
++				   DMA_BIDIRECTIONAL);
+ 	if (dma_mapping_error(dp->dev, buf_paddr))
+ 		return -ENOMEM;
+ 
++	ATH12K_SKB_RXCB(defrag_skb)->paddr = buf_paddr;
++
+ 	spin_lock_bh(&dp->rx_desc_lock);
+ 	desc_info = list_first_entry_or_null(&dp->rx_desc_free_list,
+ 					     struct ath12k_rx_desc_info,
+@@ -915,8 +914,6 @@ static int ath12k_wifi7_dp_rx_h_defrag_reo_reinject(struct ath12k_dp *dp,
+ 	list_del(&desc_info->list);
+ 	spin_unlock_bh(&dp->rx_desc_lock);
+ 
+-	ATH12K_SKB_RXCB(defrag_skb)->paddr = buf_paddr;
+-
+ 	ath12k_wifi7_hal_rx_buf_addr_info_set(&msdu0->buf_addr_info, buf_paddr,
+ 					      desc_info->cookie,
+ 					      HAL_RX_BUF_RBM_SW3_BM);
+@@ -983,8 +980,8 @@ static int ath12k_wifi7_dp_rx_h_defrag_reo_reinject(struct ath12k_dp *dp,
+ 	list_add_tail(&desc_info->list, &dp->rx_desc_free_list);
+ 	spin_unlock_bh(&dp->rx_desc_lock);
+ err_unmap_dma:
+-	dma_unmap_single(dp->dev, buf_paddr, defrag_skb->len + skb_tailroom(defrag_skb),
+-			 DMA_TO_DEVICE);
++	ath12k_dp_unmap_rx_buf(dp, defrag_skb);
++
+ 	return ret;
+ }
+ 
+@@ -1286,7 +1283,6 @@ ath12k_wifi7_dp_process_rx_err_buf(struct ath12k_pdev_dp *dp_pdev,
+ 	struct ath12k_dp *dp = dp_pdev->dp;
+ 	struct ath12k_hal *hal = dp->hal;
+ 	struct sk_buff *msdu;
+-	struct ath12k_skb_rxcb *rxcb;
+ 	struct hal_rx_desc_data rx_info;
+ 	struct hal_rx_desc *rx_desc;
+ 	u16 msdu_len;
+@@ -1316,11 +1312,7 @@ ath12k_wifi7_dp_process_rx_err_buf(struct ath12k_pdev_dp *dp_pdev,
+ 	desc_info->skb = NULL;
+ 
+ 	list_add_tail(&desc_info->list, used_list);
+-
+-	rxcb = ATH12K_SKB_RXCB(msdu);
+-	dma_unmap_single(dp->dev, rxcb->paddr,
+-			 msdu->len + skb_tailroom(msdu),
+-			 DMA_FROM_DEVICE);
++	ath12k_dp_unmap_rx_buf(dp, msdu);
+ 
+ 	if (drop) {
+ 		dev_kfree_skb_any(msdu);
+@@ -1367,7 +1359,6 @@ static int ath12k_dp_h_msdu_buffer_type(struct ath12k_dp *dp,
+ 					struct hal_reo_dest_ring *desc)
+ {
+ 	struct ath12k_rx_desc_info *desc_info;
+-	struct ath12k_skb_rxcb *rxcb;
+ 	struct sk_buff *msdu;
+ 	u64 desc_va;
+ 
+@@ -1398,9 +1389,7 @@ static int ath12k_dp_h_msdu_buffer_type(struct ath12k_dp *dp,
+ 	msdu = desc_info->skb;
+ 	desc_info->skb = NULL;
+ 	list_add_tail(&desc_info->list, list);
+-	rxcb = ATH12K_SKB_RXCB(msdu);
+-	dma_unmap_single(dp->dev, rxcb->paddr, msdu->len + skb_tailroom(msdu),
+-			 DMA_FROM_DEVICE);
++	ath12k_dp_unmap_rx_buf(dp, msdu);
+ 	dev_kfree_skb_any(msdu);
+ 
+ 	return 0;
+@@ -1971,12 +1960,7 @@ int ath12k_wifi7_dp_rx_process_wbm_err(struct ath12k_dp *dp,
+ 		}
+ 
+ 		list_add_tail(&desc_info->list, &rx_desc_used_list[device_id]);
+-
+-		rxcb = ATH12K_SKB_RXCB(msdu);
+-		dma_unmap_single(partner_dp->dev, rxcb->paddr,
+-				 msdu->len + skb_tailroom(msdu),
+-				 DMA_FROM_DEVICE);
+-
++		ath12k_dp_unmap_rx_buf(partner_dp, msdu);
+ 		num_buffs_reaped[device_id]++;
+ 		total_num_buffs_reaped++;
+ 
+@@ -1990,6 +1974,7 @@ int ath12k_wifi7_dp_rx_process_wbm_err(struct ath12k_dp *dp,
+ 		}
+ 
+ 		msdu_data = (struct hal_rx_desc *)msdu->data;
++		rxcb = ATH12K_SKB_RXCB(msdu);
+ 		rxcb->err_rel_src = err_info.err_rel_src;
+ 		rxcb->err_code = err_info.err_code;
+ 		rxcb->is_first_msdu = err_info.first_msdu;
