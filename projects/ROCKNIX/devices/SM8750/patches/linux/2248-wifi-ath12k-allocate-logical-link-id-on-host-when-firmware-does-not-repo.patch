@@ -1,0 +1,215 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Baochen Qiang <baochen.qiang@oss.qualcomm.com>
+Date: Mon, 02 Nov 2026 14:38:17 +0800
+Subject: [PATCH] wifi: ath12k: allocate logical link id on host when firmware does not report it
+
+For devices that do not support hw_link_id (WCN7850/QCC2072), the driver
+link id used to index ath12k_dp_peer::link_id_map is the logical link id.
+When the firmware advertises WMI_TLV_SERVICE_PER_LINK_STATS_SUPPORT it
+reports this id in the PEER_EXTENDED HTT event, and the host waits for
+that event to fill link_id_map.
+
+However some old firmwares don't advertise it, and no such event is sent.
+In that case allocate the logical link id on the host, mirroring the
+firmware scheme: pick the lowest free slot from a per peer bitmap
+(ath12k_dp_peer::free_slot_map) at peer assoc, after the peer assoc
+command has been sent. This matches the firmware, which allocates the id
+while handling the peer assoc command.
+
+Tested-on: WCN7850 hw2.0 PCI WLAN.HMT.1.1.c7-00108-QCAHMTSWPL_V1.0_V2.0_SILICONZ_UPSTREAM-3
+Tested-on: QCC2072 hw1.0 PCI WLAN.COL.1.0.c2-00068-QCACOLSWPL_V1_TO_SILICONZ-1
+
+Signed-off-by: Baochen Qiang <baochen.qiang@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261102-ath12k-logical-link-id-v4-8-f4c7807c299b@oss.qualcomm.com
+---
+ drivers/net/wireless/ath/ath12k/dp_cmn.h  |  3 ++
+ drivers/net/wireless/ath/ath12k/dp_peer.c | 49 ++++++++++++++++++++++++++++-
+ drivers/net/wireless/ath/ath12k/dp_peer.h |  8 +++++
+ drivers/net/wireless/ath/ath12k/mac.c     | 52 ++++++++++++++++++++++++++-----
+ 4 files changed, 104 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/dp_cmn.h b/drivers/net/wireless/ath/ath12k/dp_cmn.h
+index e17f044ff..88abe9076 100644
+--- a/drivers/net/wireless/ath/ath12k/dp_cmn.h
++++ b/drivers/net/wireless/ath/ath12k/dp_cmn.h
+@@ -9,6 +9,7 @@
+ #include "cmn_defs.h"
+ 
+ struct ath12k_hw_group;
++struct ath12k_dp_link_peer;
+ 
+ /*
+  * ML Peer IDs start from 8192, assuming max SLO clients count 1536,
+@@ -97,6 +98,8 @@ void ath12k_dp_cmn_hw_group_assign(struct ath12k_dp *dp,
+ int ath12k_dp_link_peer_assign(struct ath12k_dp *dp, struct ath12k_dp_hw *dp_hw,
+ 			       u8 vdev_id, struct ieee80211_sta *sta, u8 *addr,
+ 			       u8 link_id, u32 hw_link_id);
++int ath12k_dp_peer_alloc_logical_link_id(struct ath12k_dp *dp,
++					 struct ath12k_dp_link_peer *peer);
+ void ath12k_dp_link_peer_unassign(struct ath12k_dp *dp, struct ath12k_dp_hw *dp_hw,
+ 				  u8 vdev_id, u8 *addr, u32 hw_link_id);
+ void
+diff --git a/drivers/net/wireless/ath/ath12k/dp_peer.c b/drivers/net/wireless/ath/ath12k/dp_peer.c
+index 47d44704b..cf3352e91 100644
+--- a/drivers/net/wireless/ath/ath12k/dp_peer.c
++++ b/drivers/net/wireless/ath/ath12k/dp_peer.c
+@@ -542,6 +542,7 @@ int ath12k_dp_peer_create(struct ath12k_dp_hw *dp_hw, u8 *addr,
+ 	dp_peer->sec_type = HAL_ENCRYPT_TYPE_OPEN;
+ 	dp_peer->sec_type_grp = HAL_ENCRYPT_TYPE_OPEN;
+ 	dp_peer->ucast_ra_only = params->ucast_ra_only;
++	dp_peer->free_slot_map = U16_MAX;
+ 
+ 	spin_lock_bh(&dp_hw->peer_lock);
+ 
+@@ -591,6 +592,49 @@ void ath12k_dp_peer_delete(struct ath12k_dp_hw *dp_hw, u8 *addr,
+ 	kfree(dp_peer);
+ }
+ 
++int ath12k_dp_peer_alloc_logical_link_id(struct ath12k_dp *dp,
++					 struct ath12k_dp_link_peer *peer)
++{
++	struct ath12k_dp_peer *dp_peer = peer->dp_peer;
++	u8 slot;
++
++	lockdep_assert_held(&dp->dp_lock);
++
++	if (dp->hw_params->support_hw_link_id)
++		return 0;
++
++	if (test_bit(WMI_TLV_SERVICE_PER_LINK_STATS_SUPPORT,
++		     dp->ab->wmi_ab.svc_map))
++		return 0;
++
++	slot = __ffs(dp_peer->free_slot_map);
++	if (slot >= ARRAY_SIZE(dp_peer->link_id_map))
++		return -ENOSPC;
++
++	dp_peer->free_slot_map &= ~BIT(slot);
++	peer->drv_link_id = slot;
++	dp_peer->link_id_map[slot] = peer->link_id;
++
++	return 0;
++}
++
++static void ath12k_dp_peer_free_logical_link_id(struct ath12k_dp *dp,
++						struct ath12k_dp_link_peer *peer)
++{
++	struct ath12k_dp_peer *dp_peer = peer->dp_peer;
++
++	lockdep_assert_held(&dp->dp_lock);
++
++	if (dp->hw_params->support_hw_link_id)
++		return;
++
++	if (test_bit(WMI_TLV_SERVICE_PER_LINK_STATS_SUPPORT,
++		     dp->ab->wmi_ab.svc_map))
++		return;
++
++	dp_peer->free_slot_map |= BIT(peer->drv_link_id);
++}
++
+ int ath12k_dp_link_peer_assign(struct ath12k_dp *dp, struct ath12k_dp_hw *dp_hw,
+ 			       u8 vdev_id, struct ieee80211_sta *sta, u8 *addr,
+ 			       u8 link_id, u32 hw_link_id)
+@@ -632,7 +676,8 @@ int ath12k_dp_link_peer_assign(struct ath12k_dp *dp, struct ath12k_dp_hw *dp_hw,
+ 	/*
+ 	 * Only devices that use hw_link_id can map it to the IEEE80211
+ 	 * link id here. Devices that do not support hw_link_id fill
+-	 * link_id_map later from the PEER_EXTENDED HTT event.
++	 * link_id_map later, either from the PEER_EXTENDED HTT event or
++	 * from the logical link id allocated at peer assoc.
+ 	 */
+ 	if (dp->hw_params->support_hw_link_id) {
+ 		peer->drv_link_id = hw_link_id;
+@@ -707,6 +752,8 @@ void ath12k_dp_link_peer_unassign(struct ath12k_dp *dp, struct ath12k_dp_hw *dp_
+ 	dp_peer = peer->dp_peer;
+ 	dp_peer->link_id_map[peer->drv_link_id] = 0;
+ 
++	ath12k_dp_peer_free_logical_link_id(dp, peer);
++
+ 	peerid_index = ath12k_dp_peer_get_peerid_index(dp, peer->peer_id);
+ 
+ 	rcu_assign_pointer(dp_peer->link_peers[peer->link_id], NULL);
+diff --git a/drivers/net/wireless/ath/ath12k/dp_peer.h b/drivers/net/wireless/ath/ath12k/dp_peer.h
+index e7a996ca9..10bcf9b23 100644
+--- a/drivers/net/wireless/ath/ath12k/dp_peer.h
++++ b/drivers/net/wireless/ath/ath12k/dp_peer.h
+@@ -147,6 +147,14 @@ struct ath12k_dp_peer {
+ 	 * WCN7850/QCC2072.
+ 	 */
+ 	u8 link_id_map[ATH12K_GROUP_MAX_RADIO];
++	/*
++	 * Tracks which link_id_map slots are free for devices that do not
++	 * support hw_link_id and do not report per-link stats. A set bit
++	 * means the slot is free. Mirrors the firmware logical link id
++	 * allocation: the lowest free slot is assigned at peer assoc and
++	 * released when the link peer is removed.
++	 */
++	u16 free_slot_map;
+ 
+ 	u16 sec_type_grp;
+ 	u16 sec_type;
+diff --git a/drivers/net/wireless/ath/ath12k/mac.c b/drivers/net/wireless/ath/ath12k/mac.c
+index 27d030e4a..ccb3a9dca 100644
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -3983,14 +3983,52 @@ static int ath12k_mac_peer_assoc(struct ath12k *ar,
+ 	}
+ 
+ 	if (!ar->ab->hw_params->support_hw_link_id &&
+-	    test_bit(WMI_TLV_SERVICE_PER_LINK_STATS_SUPPORT,
+-		     ar->ab->wmi_ab.svc_map) &&
+ 	    peer_arg->ml.enabled &&
+-	    peer_arg->is_assoc &&
+-	    !wait_for_completion_timeout(&ar->peer_ext_event_done, 1 * HZ)) {
+-		ath12k_warn(ar->ab, "failed to get peer extended event for %pM vdev %u\n",
+-			    peer_arg->peer_mac, peer_arg->vdev_id);
+-		return -ETIMEDOUT;
++	    peer_arg->is_assoc) {
++		const u8 *addr = peer_arg->peer_mac;
++		u32 vdev_id = peer_arg->vdev_id;
++
++		if (test_bit(WMI_TLV_SERVICE_PER_LINK_STATS_SUPPORT,
++			     ar->ab->wmi_ab.svc_map)) {
++			/*
++			 * The firmware reports the logical link id of this peer
++			 * in the PEER_EXTENDED event, which fills link_id_map.
++			 * Wait for it before returning.
++			 */
++			if (!wait_for_completion_timeout(&ar->peer_ext_event_done,
++							 1 * HZ)) {
++				ath12k_warn(ar->ab,
++					    "failed to get peer extended event for %pM vdev %u\n",
++					    addr, vdev_id);
++				return -ETIMEDOUT;
++			}
++		} else {
++			/*
++			 * The firmware does not report the logical link id, so
++			 * allocate it on the host by mirroring the firmware
++			 * scheme: assign the lowest free slot.
++			 */
++			struct ath12k_dp *dp = ath12k_ab_to_dp(ar->ab);
++			struct ath12k_dp_link_peer *peer;
++
++			guard(spinlock_bh)(&dp->dp_lock);
++
++			peer = ath12k_dp_link_peer_find_by_vdev_and_addr(dp, vdev_id,
++									 addr);
++			if (!peer) {
++				ath12k_warn(ar->ab, "failed to find dp_link_peer with mac %pM vdev %u\n",
++					    addr, vdev_id);
++				return -ENOENT;
++			}
++
++			ret = ath12k_dp_peer_alloc_logical_link_id(dp, peer);
++			if (ret) {
++				ath12k_warn(ar->ab,
++					    "failed to allocate logical link id for %pM: %d\n",
++					    addr, ret);
++				return ret;
++			}
++		}
+ 	}
+ 
+ 	/*

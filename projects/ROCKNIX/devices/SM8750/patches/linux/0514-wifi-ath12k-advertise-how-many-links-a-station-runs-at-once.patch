@@ -1,0 +1,51 @@
+From 17288241a32473949caf3b1115d06a5972fab915 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Andr=C3=A9=20Braga?= <code@andrebraga.com>
+Date: Thu, 5 Nov 2026 00:25:14 +0000
+Subject: [PATCH] wifi: ath12k: advertise how many links a station runs at once
+
+ath12k fills the MLD capabilities of the AP interface type from the
+firmware and leaves the station's at zero, so a station tells AP MLDs it
+runs a single link at a time. It still sets up a link to every affiliated
+AP the supplicant asks for, then activates one per radio. With an AP MLD
+on more bands than the device has radios, the extra links are set up but
+never active. On a WCN7860 with a tri-band AP MLD, three-link
+associations never completed the 4-way handshake and timed out with
+reason 4, while the same association with two links completes.
+
+Set the station's maximum number of simultaneous links to the radios of
+the hardware group, so the AP and the supplicant can size the link set.
+
+Tested-on: WCN7860 hw2.0 PCI WLAN.GNG.1.0-04065-QCAGNGSWPL_V1.0_V2.0_SILICONZ-1
+---
+ drivers/net/wireless/ath/ath12k/mac.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/drivers/net/wireless/ath/ath12k/mac.c b/drivers/net/wireless/ath/ath12k/mac.c
+index bc92a66dd..0a1721134 100644
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -15146,8 +15146,21 @@ static int ath12k_mac_hw_register(struct ath12k_hw *ah)
+ 	 * WMI_SERVICE_READY_EXT2_EVENT if single_chip_mlo_supp is set.
+ 	 */
+ 	if (ab->ag->mlo_capable) {
++		u8 num_links = 0;
++
+ 		ath12k_iftypes_ext_capa[2].eml_capabilities = cap->eml_cap;
+ 		ath12k_iftypes_ext_capa[2].mld_capa_and_ops = cap->mld_cap;
++
++		/* A station runs one link per radio of the group at a time.
++		 * Tell the AP, so it does not count on links that are set up
++		 * but never active.
++		 */
++		for (i = 0; i < ab->ag->num_devices; i++)
++			num_links += ab->ag->ab[i]->qmi.num_radios;
++		ath12k_iftypes_ext_capa[1].mld_capa_and_ops =
++			u16_encode_bits(num_links - 1,
++					IEEE80211_MLD_CAP_OP_MAX_SIMUL_LINKS);
++
+ 		wiphy->flags |= WIPHY_FLAG_SUPPORTS_MLO;
+ 
+ 		ieee80211_hw_set(hw, MLO_MCAST_MULTI_LINK_TX);
+-- 
+2.56.0
+

@@ -1,0 +1,53 @@
+From: Jan Sebastian Götte <linux@jaseg.de>
+Subject: [v2] pmdomain: core: Wait for device link removals before dropping genpd->dev
+Link: https://lore.kernel.org/r/20260731131002.142671-1-linux@jaseg.de
+
+genpd->dev is embedded in struct generic_pm_domain and its release
+function is empty, so providers free the containing genpd with a plain
+kfree() once of_genpd_remove_last() returns, ignoring its refcount.
+
+Since genpd->dev is registered on the genpd provider bus, fw_devlink
+creates device links to it, and those are torn down asynchronously.
+Nothing made genpd_remove() wait for those teardowns, so the provider
+could free the memory backing genpd->dev while the queued workers still
+used it.
+
+This is reachable at boot on qrb2210, where the firmware rejects PC mode
+and psci_cpuidle_domain_probe() removes all the CPU PM domains before
+returning -EPROBE_DEFER. The bug is asymptomatic on defconfig, but shows
+up when enabling KASAN or INIT_ON_FREE_DEFAULT_ON. In some builds, it
+causes the kernel to crash a few hundred ms into the boot.
+
+Call device_link_wait_removal() before dropping the final reference. All
+link removal work is queued from device_del(), via
+device_links_driver_cleanup() and device_links_purge(), which precedes
+genpd_free_data(), and flush_workqueue() waits for it to complete.
+
+Assisted-by: Claude:claude-5-opus
+Fixes: 18a3a510ecfd ("pmdomain: core: Add the genpd->dev to the genpd provider bus")
+Cc: stable@vger.kernel.org
+Signed-off-by: Jan Sebastian Götte <linux@jaseg.de>
+---
+v2: remove this note from the commit text.
+
+Note: This patch was LLM-assisted. I reproduced the issue and tested
+this patch on hardware, and I did my best to verify it by hand. However,
+I'm far from an expert in pmdomain, so YMMV.
+
+ drivers/pmdomain/core.c | 3 +++
+ 1 file changed, 3 insertions(+)
+---
+diff --git a/drivers/pmdomain/core.c b/drivers/pmdomain/core.c
+index 842c4169e290..4eeb980e5a40 100644
+--- a/drivers/pmdomain/core.c
++++ b/drivers/pmdomain/core.c
+@@ -2348,6 +2348,9 @@ static int genpd_alloc_data(struct generic_pm_domain *genpd)
+ 
+ static void genpd_free_data(struct generic_pm_domain *genpd)
+ {
++	/* Pending device link removals still reference genpd->dev. */
++	device_link_wait_removal();
++
+ 	put_device(&genpd->dev);
+ 	if (genpd->device_id != -ENXIO)
+ 		ida_free(&genpd_ida, genpd->device_id);

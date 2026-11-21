@@ -1,0 +1,75 @@
+From: Vsevolod Nevorotov <sevanevorotov29@gmail.com>
+Subject: dmaengine: qcom: gpi: Set IEOB on linked I2C GO TRE to retire TX descriptor
+Link: https://lore.kernel.org/r/20260909175332.304767-1-sevanevorotov29@gmail.com
+
+In GPI mode, an I2C read transaction consists of a command phase on the
+TX channel (issuing CONFIG0 and GO TREs) linked to a data phase on the RX
+channel (issuing the DMA TRE to receive data).
+
+Commit 656147fb1d4c ("i2c: qcom-geni: Avoid extra TX DMA TRE for single
+read message in GPI mode") avoided programming a dummy TX DMA TRE for read
+messages, leaving only the GO TRE on the TX channel with the TRE_FLAGS_LINK
+flag set.
+
+However, gpi_create_i2c_tre() did not set TRE_FLAGS_IEOB (Interrupt on End
+of Block) on the linked GO TRE. Because no TRE on the TX channel has an
+interrupt flag set, GSI hardware never generates a completion event on
+the TX channel when the GO command finishes. As a result, the TX transfer
+ring read pointer is never advanced and TX descriptors are never retired.
+
+Under sustained or high-frequency traffic (such as touchscreen controllers
+operating at 120-240 Hz), the TX transfer ring quickly runs out of slots:
+  gpi 900000.dma-controller: not enough space in ring, avail:1 required:3
+  geni_i2c 990000.i2c: prep_slave_sg failed
+  geni_i2c 990000.i2c: GPI transfer failed: -5
+
+Fix this properly by setting TRE_FLAGS_IEOB on the GO TRE when multi_msg
+is true (matching Qualcomm's hardware specification and the existing SPI
+implementation in gpi_create_spi_tre). When the hardware finishes executing
+the GO command block, it generates an MSM_GPI_TCE_EOB event on the TX
+channel. In gpi_process_xfer_compl_event(), handle MSM_GPI_TCE_EOB for
+linked I2C command descriptors without a subsequent TX DMA TRE by
+retiring the descriptor and updating the cookie without invoking the
+client callback, allowing the linked RX channel's DMA completion
+(MSM_GPI_TCE_EOT) to signal final transfer completion to the client.
+Other EOB events fall through to the default transfer completion path.
+
+Fixes: 656147fb1d4c ("i2c: qcom-geni: Avoid extra TX DMA TRE for single read message in GPI mode")
+Signed-off-by: Vsevolod Nevorotov <sevanevorotov29@gmail.com>
+---
+ drivers/dma/qcom/gpi.c | 13 +++++++++++--
+ 1 file changed, 11 insertions(+), 2 deletions(-)
+---
+diff --git a/drivers/dma/qcom/gpi.c b/drivers/dma/qcom/gpi.c
+index a5055a6273a..a1ab63bf9f6 100644
+--- a/drivers/dma/qcom/gpi.c
++++ b/drivers/dma/qcom/gpi.c
+@@ -1050,6 +1050,13 @@ static void gpi_process_xfer_compl_event(struct gchan *gchan,
+ 			return;
+ 	}
+ 
++	if (compl_event->code == MSM_GPI_TCE_EOB &&
++	    gchan->protocol == QCOM_GPI_I2C &&
++	    (gpi_desc->tre[gpi_desc->num_tre - 1].dword[3] & TRE_FLAGS_LINK)) {
++		dma_cookie_complete(&vd->tx);
++		goto gpi_free_desc;
++	}
++
+ 	if (compl_event->code == MSM_GPI_TCE_UNEXP_ERR) {
+ 		dev_err(gpii->gpi_dev->dev, "Error in Transaction\n");
+ 		result.result = DMA_TRANS_ABORTED;
+@@ -1668,10 +1675,12 @@ static int gpi_create_i2c_tre(struct gchan *chan, struct gpi_desc *desc,
+ 
+ 		tre->dword[3] = u32_encode_bits(TRE_TYPE_GO, TRE_FLAGS_TYPE);
+ 
+-		if (i2c->multi_msg)
++		if (i2c->multi_msg) {
++			tre->dword[3] |= u32_encode_bits(1, TRE_FLAGS_IEOB);
+ 			tre->dword[3] |= u32_encode_bits(1, TRE_FLAGS_LINK);
+-		else
++		} else {
+ 			tre->dword[3] |= u32_encode_bits(1, TRE_FLAGS_CHAIN);
++		}
+ 	}
+ 
+ 	if (i2c->op == I2C_READ || i2c->multi_msg == false) {

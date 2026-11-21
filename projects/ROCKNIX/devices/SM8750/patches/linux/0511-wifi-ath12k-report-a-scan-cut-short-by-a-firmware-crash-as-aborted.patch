@@ -1,0 +1,46 @@
+From e09de762e448ebaf3c136694538821747f3eec6b Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Andr=C3=A9=20Braga?= <code@andrebraga.com>
+Date: Wed, 4 Nov 2026 17:05:00 +0000
+Subject: [PATCH] wifi: ath12k: report a scan cut short by a firmware crash as
+ aborted
+
+When the firmware crashes during a scan, recovery halts the radio and
+finishes the scan through ath12k_core_halt(). A scan in the RUNNING
+state is then reported to mac80211 as completed, not aborted, although
+the firmware never finished it and is gone.
+
+Userspace takes the partial results as final and acts on them at once:
+on a WCN7860 iwd tried to connect to two BSSes from a cut-off scan, and
+both attempts failed with -ESHUTDOWN before the hardware restart was
+requested, about a second later.
+
+Mark a running scan as aborting before finishing it from the halt path,
+so the completion carries aborted = true and userspace rescans after
+the restart.
+
+Tested-on: WCN7860 hw2.0 PCI WLAN.GNG.1.0-04065-QCAGNGSWPL_V1.0_V2.0_SILICONZ-1
+---
+ drivers/net/wireless/ath/ath12k/core.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/core.c b/drivers/net/wireless/ath/ath12k/core.c
+index 6e04d1e6b..aad5ec970 100644
+--- a/drivers/net/wireless/ath/ath12k/core.c
++++ b/drivers/net/wireless/ath/ath12k/core.c
+@@ -1461,7 +1461,12 @@ void ath12k_core_halt(struct ath12k *ar)
+ 	ar->num_created_vdevs = 0;
+ 	ar->allocated_vdev_map = 0;
+ 
+-	ath12k_mac_scan_finish(ar);
++	/* The firmware is gone, so a scan it was running never completed. */
++	spin_lock_bh(&ar->data_lock);
++	if (ar->scan.state == ATH12K_SCAN_RUNNING)
++		ar->scan.state = ATH12K_SCAN_ABORTING;
++	__ath12k_mac_scan_finish(ar);
++	spin_unlock_bh(&ar->data_lock);
+ 	ath12k_mac_peer_cleanup_all(ar);
+ 	cancel_delayed_work_sync(&ar->scan.timeout);
+ 	cancel_work_sync(&ar->regd_update_work);
+-- 
+2.56.0
+
