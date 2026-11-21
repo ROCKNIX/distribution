@@ -1,0 +1,112 @@
+From bb5c846a74ca119679fdc3241888a3de179d02c2 Mon Sep 17 00:00:00 2001
+From: Hongyan Xu <getshell@seu.edu.cn>
+Date: Thu, 6 Aug 2026 14:05:40 +0800
+Subject: [PATCH] soc: qcom: apr: clean up failed service registrations
+
+apr_add_device() publishes a service in svcs_idr before parsing the
+optional protection domain and registering the device. If device
+registration fails, put_device() frees the apr_device while its service
+remains in the IDR. A received packet can then dereference that stale
+entry. The property error path also leaves the service and allocation
+behind.
+
+Split device_register() into device_initialize() and device_add() so every
+pre-registration error can safely drop the device reference. Remove the
+service from the IDR on all failures after publication, then drain the RX
+workqueue before dropping the device reference. This prevents an in-flight
+lookup from outliving the device.
+
+Fixes: 6adba21eb434 ("soc: qcom: Add APR bus driver")
+Signed-off-by: Hongyan Xu <getshell@seu.edu.cn>
+Link: https://lore.kernel.org/r/20260806060541.820-1-getshell@seu.edu.cn
+Signed-off-by: Bjorn Andersson <andersson@kernel.org>
+---
+ drivers/soc/qcom/apr.c | 44 +++++++++++++++++++++++++++---------------
+ 1 file changed, 28 insertions(+), 16 deletions(-)
+
+diff --git a/drivers/soc/qcom/apr.c b/drivers/soc/qcom/apr.c
+index 2073edb416..2d5645ff99 100644
+--- a/drivers/soc/qcom/apr.c
++++ b/drivers/soc/qcom/apr.c
+@@ -411,31 +411,35 @@ static int apr_add_device(struct device *dev, struct device_node *np,
+ 	if (np)
+ 		snprintf(adev->name, APR_NAME_SIZE, "%pOFn", np);
+ 
++	adev->dev.bus = &aprbus;
++	adev->dev.parent = dev;
++	adev->dev.of_node = np;
++	adev->dev.release = apr_dev_release;
++	adev->dev.driver = NULL;
++	device_initialize(&adev->dev);
++
+ 	switch (apr->type) {
+ 	case PR_TYPE_APR:
+-		dev_set_name(&adev->dev, "aprsvc:%s:%x:%x", adev->name,
+-			     domain_id, svc_id);
++		ret = dev_set_name(&adev->dev, "aprsvc:%s:%x:%x", adev->name,
++				   domain_id, svc_id);
+ 		break;
+ 	case PR_TYPE_GPR:
+-		dev_set_name(&adev->dev, "gprsvc:%s:%x:%x", adev->name,
+-			     domain_id, svc_id);
++		ret = dev_set_name(&adev->dev, "gprsvc:%s:%x:%x", adev->name,
++				   domain_id, svc_id);
+ 		break;
+ 	default:
++		ret = -EINVAL;
+ 		break;
+ 	}
+-
+-	adev->dev.bus = &aprbus;
+-	adev->dev.parent = dev;
+-	adev->dev.of_node = np;
+-	adev->dev.release = apr_dev_release;
+-	adev->dev.driver = NULL;
++	if (ret)
++		goto out_put_device;
+ 
+ 	spin_lock(&apr->svcs_lock);
+ 	ret = idr_alloc(&apr->svcs_idr, svc, svc_id, svc_id + 1, GFP_ATOMIC);
+ 	spin_unlock(&apr->svcs_lock);
+ 	if (ret < 0) {
+ 		dev_err(dev, "idr_alloc failed: %d\n", ret);
+-		goto out;
++		goto out_put_device;
+ 	}
+ 
+ 	/* Protection domain is optional, it does not exist on older platforms */
+@@ -443,18 +447,26 @@ static int apr_add_device(struct device *dev, struct device_node *np,
+ 					    1, &adev->service_path);
+ 	if (ret < 0 && ret != -EINVAL) {
+ 		dev_err(dev, "Failed to read second value of qcom,protection-domain\n");
+-		goto out;
++		goto out_remove_idr;
+ 	}
+ 
+ 	dev_info(dev, "Adding APR/GPR dev: %s\n", dev_name(&adev->dev));
+ 
+-	ret = device_register(&adev->dev);
++	ret = device_add(&adev->dev);
+ 	if (ret) {
+-		dev_err(dev, "device_register failed: %d\n", ret);
+-		put_device(&adev->dev);
++		dev_err(dev, "device_add failed: %d\n", ret);
++		goto out_remove_idr;
+ 	}
+ 
+-out:
++	return 0;
++
++out_remove_idr:
++	spin_lock(&apr->svcs_lock);
++	idr_remove(&apr->svcs_idr, svc_id);
++	spin_unlock(&apr->svcs_lock);
++	flush_workqueue(apr->rxwq);
++out_put_device:
++	put_device(&adev->dev);
+ 	return ret;
+ }
+ 
+-- 
+2.56.0
+

@@ -1,0 +1,96 @@
+From 12ca935af2e68447e9218a615ebbb5ff7faf1554 Mon Sep 17 00:00:00 2001
+From: Aaradhana Sahu <aaradhana.sahu@oss.qualcomm.com>
+Date: Wed, 19 Aug 2026 16:32:14 +0530
+Subject: [PATCH] wifi: ath12k: Free allocated CE IRQs on request_irq() failure
+
+When CE IRQ configuration fails, the driver does not release all IRQs
+that were successfully requested before the failure. This can leak IRQ
+resources during probe failure.
+
+Free the previously requested CE IRQs before returning from the error
+path to ensure that partially initialized IRQ resources are properly
+cleaned up during probe failure.
+
+Factor out the CE IRQ cleanup into a helper to reuse the cleanup logic
+during both error handling and driver teardown.
+
+Also free CE IRQs when external IRQ configuration fails, before
+returning from the error path.
+
+Tested-on: QCN9274 hw2.0 PCI WLAN.WBE.1.6-01243-QCAHKSWPL_SILICONZ-1
+
+Fixes: d889913205cf ("wifi: ath12k: driver for Qualcomm Wi-Fi 7 devices")
+Signed-off-by: Aaradhana Sahu <aaradhana.sahu@oss.qualcomm.com>
+Reviewed-by: Rameshkumar Sundaram <rameshkumar.sundaram@oss.qualcomm.com>
+Reviewed-by: Baochen Qiang <baochen.qiang@oss.qualcomm.com>
+Link: https://patch.msgid.link/20260819110215.2485514-2-aaradhana.sahu@oss.qualcomm.com
+Signed-off-by: Jeff Johnson <jeff.johnson@oss.qualcomm.com>
+---
+ drivers/net/wireless/ath/ath12k/pci.c | 29 ++++++++++++++++++---------
+ 1 file changed, 19 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/pci.c b/drivers/net/wireless/ath/ath12k/pci.c
+index 6441927b53..1525e6866c 100644
+--- a/drivers/net/wireless/ath/ath12k/pci.c
++++ b/drivers/net/wireless/ath/ath12k/pci.c
+@@ -313,6 +313,19 @@ static void ath12k_pci_sw_reset(struct ath12k_base *ab, bool power_on)
+ 	ath12k_mhi_set_mhictrl_reset(ab);
+ }
+ 
++static void ath12k_pci_free_ce_irq(struct ath12k_base *ab, int num_ce)
++{
++	int i, irq_idx;
++
++	for (i = 0; i < num_ce; i++) {
++		if (ath12k_ce_get_attr_flags(ab, i) & CE_ATTR_DIS_INTR)
++			continue;
++
++		irq_idx = ATH12K_PCI_IRQ_CE0_OFFSET + i;
++		free_irq(ab->irq_num[irq_idx], &ab->ce.ce_pipe[i]);
++	}
++}
++
+ static void ath12k_pci_free_ext_irq(struct ath12k_base *ab)
+ {
+ 	int i, j;
+@@ -330,15 +343,7 @@ static void ath12k_pci_free_ext_irq(struct ath12k_base *ab)
+ 
+ static void ath12k_pci_free_irq(struct ath12k_base *ab)
+ {
+-	int i, irq_idx;
+-
+-	for (i = 0; i < ab->hw_params->ce_count; i++) {
+-		if (ath12k_ce_get_attr_flags(ab, i) & CE_ATTR_DIS_INTR)
+-			continue;
+-		irq_idx = ATH12K_PCI_IRQ_CE0_OFFSET + i;
+-		free_irq(ab->irq_num[irq_idx], &ab->ce.ce_pipe[i]);
+-	}
+-
++	ath12k_pci_free_ce_irq(ab, ab->hw_params->ce_count);
+ 	ath12k_pci_free_ext_irq(ab);
+ }
+ 
+@@ -671,6 +676,8 @@ static int ath12k_pci_config_irq(struct ath12k_base *ab)
+ 		if (ret) {
+ 			ath12k_err(ab, "failed to request irq %d: %d\n",
+ 				   irq_idx, ret);
++
++			ath12k_pci_free_ce_irq(ab, i);
+ 			return ret;
+ 		}
+ 
+@@ -681,8 +688,10 @@ static int ath12k_pci_config_irq(struct ath12k_base *ab)
+ 	}
+ 
+ 	ret = ath12k_pci_ext_irq_config(ab);
+-	if (ret)
++	if (ret) {
++		ath12k_pci_free_ce_irq(ab, ab->hw_params->ce_count);
+ 		return ret;
++	}
+ 
+ 	return 0;
+ }
+-- 
+2.56.0
+

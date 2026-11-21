@@ -1,0 +1,68 @@
+From: Prashanth K <prashanth.k@oss.qualcomm.com>
+Subject: [RESEND,v3] usb: dwc3: qcom: check for hcd in dwc3_qcom_read_usb2_speed
+Link: https://lore.kernel.org/r/20261106051605.1398445-1-prashanth.k@oss.qualcomm.com
+
+Currently dwc->xhci is not cleared if xhci_plat_probe() fails. During
+system suspend, dwc3_qcom_read_usb2_speed() checks dwc->xhci and assumes
+xhci is initialised. Since the probe failed, hcd will be null, and the
+subsequent access results in a NULL pointer dereference
+
+Unable to handle kernel NULL pointer dereference at
+virtual address 0000000000000058
+
+Call trace:
+  dwc3_qcom_pm_suspend
+  dpm_run_callback
+  device_suspend
+  dpm_suspend
+  dpm_suspend_start
+  suspend_devices_and_enter
+  pm_suspend
+
+Explicitly check the hcd pointer in dwc3_qcom_read_usb2_speed
+before accessing it.
+
+Fixes: 6895ea55c385 ("usb: dwc3: qcom: Configure wakeup interrupts during suspend")
+Cc: stable <stable@kernel.org>
+Acked-by: Thinh Nguyen <Thinh.Nguyen@synopsys.com>
+Reviewed-by: Peter Chen <peter.chen@oss.qualcomm.com>
+Signed-off-by: Prashanth K <prashanth.k@oss.qualcomm.com>
+---
+Resending with Cc stable tag and review tags.
+
+Changes in v3: 
+ - Initialised udev to null, as suggested by sashiko bot.
+ - Link to v2: https://lore.kernel.org/all/20261022044748.2303528-1-prashanth.k@oss.qualcomm.com/ 
+
+Changes in v2:
+ - Added null pointer check in dwc3-qcom.c instead of marking xhci as null in host.c
+ - Link to v1: https://lore.kernel.org/all/20261014105711.1708244-1-prashanth.k@oss.qualcomm.com
+
+ drivers/usb/dwc3/dwc3-qcom.c | 7 +++----
+ 1 file changed, 3 insertions(+), 4 deletions(-)
+---
+diff --git a/drivers/usb/dwc3/dwc3-qcom.c b/drivers/usb/dwc3/dwc3-qcom.c
+index ac68b4218b56..e4bf0d5fc9f1 100644
+--- a/drivers/usb/dwc3/dwc3-qcom.c
++++ b/drivers/usb/dwc3/dwc3-qcom.c
+@@ -231,7 +231,7 @@ static bool dwc3_qcom_is_host(struct dwc3_qcom *qcom)
+ 
+ static enum usb_device_speed dwc3_qcom_read_usb2_speed(struct dwc3_qcom *qcom, int port_index)
+ {
+-	struct usb_device *udev;
++	struct usb_device *udev = NULL;
+ 	struct usb_hcd __maybe_unused *hcd;
+ 	struct dwc3 *dwc = &qcom->dwc;
+ 
+@@ -241,9 +241,8 @@ static enum usb_device_speed dwc3_qcom_read_usb2_speed(struct dwc3_qcom *qcom, i
+ 	hcd = platform_get_drvdata(dwc->xhci);
+ 
+ #ifdef CONFIG_USB
+-	udev = usb_hub_find_child(hcd->self.root_hub, port_index + 1);
+-#else
+-	udev = NULL;
++	if (hcd)
++		udev = usb_hub_find_child(hcd->self.root_hub, port_index + 1);
+ #endif
+ 	if (!udev)
+ 		return USB_SPEED_UNKNOWN;

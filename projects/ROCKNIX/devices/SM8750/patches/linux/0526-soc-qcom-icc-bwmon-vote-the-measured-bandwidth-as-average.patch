@@ -1,0 +1,73 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Andr=C3=A9=20Braga?= <code@andrebraga.com>
+Date: Sat, 7 Nov 2026 07:34:21 +0000
+Subject: [PATCH] soc: qcom: icc-bwmon: vote the measured bandwidth as average
+
+The bwmon OPP tables carry peak bandwidth only, so the measured CPU
+traffic is voted as a peak. Peak votes aggregate as a maximum, so that
+traffic does not add to the concurrent traffic of other masters, such
+as the GPU, when the interconnect picks a DDR level; only average votes
+add up.
+
+Also vote the measured bandwidth as average bandwidth, on a request of
+its own next to the OPP's, as Qualcomm's downstream bwmon votes its
+measurement as AB. The vote_avg module parameter turns it off.
+---
+ drivers/soc/qcom/icc-bwmon.c | 23 +++++++++++++++++++++++
+ 1 file changed, 23 insertions(+)
+
+diff --git a/drivers/soc/qcom/icc-bwmon.c b/drivers/soc/qcom/icc-bwmon.c
+index 597f9025e..f1a4c4595 100644
+--- a/drivers/soc/qcom/icc-bwmon.c
++++ b/drivers/soc/qcom/icc-bwmon.c
+@@ -20,6 +20,10 @@
+ #define CREATE_TRACE_POINTS
+ #include "trace_icc-bwmon.h"
+ 
++static bool vote_avg = true;
++module_param(vote_avg, bool, 0644);
++MODULE_PARM_DESC(vote_avg, "Vote the measured bandwidth as average bandwidth (default: true)");
++
+ /*
+  * The BWMON samples data throughput within 'sample_ms' time. With three
+  * configurable thresholds (Low, Medium and High) gives four windows (called
+@@ -190,6 +194,10 @@ struct icc_bwmon {
+ 	unsigned int min_bw_kbps;
+ 	unsigned int target_kbps;
+ 	unsigned int current_kbps;
++
++	/* Votes the measured bandwidth as average, next to the OPP's peak */
++	struct icc_path *avg_path;
++	unsigned int avg_kbps;
+ };
+ 
+ /* BWMON v4 */
+@@ -686,6 +694,12 @@ static irqreturn_t bwmon_intr_thread(int irq, void *dev_id)
+ 	bwmon_enable(bwmon, irq_enable);
+ 
+ 	trace_qcom_bwmon_update(dev_name(bwmon->dev), meas_kbps, up_kbps, down_kbps);
++
++	if (!READ_ONCE(vote_avg))
++		meas_kbps = 0;
++	if (meas_kbps != bwmon->avg_kbps && !icc_set_bw(bwmon->avg_path, meas_kbps, 0))
++		bwmon->avg_kbps = meas_kbps;
++
+ 	if (bwmon->target_kbps == bwmon->current_kbps)
+ 		goto out;
+ 
+@@ -787,6 +801,15 @@ static int bwmon_probe(struct platform_device *pdev)
+ 		return dev_err_probe(dev, PTR_ERR(opp), "failed to find min peak bandwidth\n");
+ 	dev_pm_opp_put(opp);
+ 
++	/*
++	 * The OPPs only carry peak bandwidth, which does not add up across
++	 * voters; measured traffic does, so vote it on a request of its own.
++	 */
++	bwmon->avg_path = devm_of_icc_get(dev, NULL);
++	if (IS_ERR(bwmon->avg_path))
++		return dev_err_probe(dev, PTR_ERR(bwmon->avg_path),
++				     "failed to get interconnect path\n");
++
+ 	bwmon->dev = dev;
+ 
+ 	bwmon_disable(bwmon);

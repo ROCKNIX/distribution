@@ -1,0 +1,54 @@
+From: Yao Yiqi <yaoyiqi3@huawei.com>
+Subject: misc: fastrpc: Fix double free in fastrpc_req_mmap() error path
+Link: https://lore.kernel.org/r/20260930032022.2957082-1-yaoyiqi3@huawei.com
+
+fastrpc_req_mmap() adds the newly allocated buffer to fl->mmaps before
+copying the response back to userspace. If copy_to_user() fails, the
+err_assign path calls fastrpc_req_munmap_impl() to unmap the buffer from
+the DSP and, on success, to free it.
+
+Since commit 6102ceb4eab8 ("misc: fastrpc: Remove buffer from list prior
+to unmap operation"), fastrpc_req_munmap_impl() no longer removes the
+buffer from fl->mmaps, as that is now the responsibility of the caller.
+fastrpc_req_mmap() was not updated accordingly, so the buffer is freed
+while still linked in the list. The fl->mmaps cleanup in
+fastrpc_user_free() then calls list_del() and fastrpc_buf_free() on the
+already freed buffer, resulting in a use-after-free and a double free.
+
+Remove the buffer from fl->mmaps before unmapping it and re-add it if the
+unmap fails, matching the pattern now used in fastrpc_req_munmap().
+
+Fixes: 6102ceb4eab8 ("misc: fastrpc: Remove buffer from list prior to unmap operation")
+Cc: stable@vger.kernel.org
+Signed-off-by: Yao Yiqi <yaoyiqi3@huawei.com>
+---
+ drivers/misc/fastrpc.c | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+---
+diff --git a/drivers/misc/fastrpc.c b/drivers/misc/fastrpc.c
+index d4fac2caca86..bc78ec07ab9b 100644
+--- a/drivers/misc/fastrpc.c
++++ b/drivers/misc/fastrpc.c
+@@ -2159,6 +2159,9 @@ static int fastrpc_req_mmap(struct fastrpc_user *fl, char __user *argp)
+ 
+ 	if (copy_to_user((void __user *)argp, &req, sizeof(req))) {
+ 		err = -EFAULT;
++		spin_lock(&fl->lock);
++		list_del(&buf->node);
++		spin_unlock(&fl->lock);
+ 		goto err_assign;
+ 	}
+ 
+@@ -2168,7 +2171,11 @@ static int fastrpc_req_mmap(struct fastrpc_user *fl, char __user *argp)
+ 	return 0;
+ 
+ err_assign:
+-	fastrpc_req_munmap_impl(fl, buf);
++	if (fastrpc_req_munmap_impl(fl, buf)) {
++		spin_lock(&fl->lock);
++		list_add_tail(&buf->node, &fl->mmaps);
++		spin_unlock(&fl->lock);
++	}
+ 
+ 	return err;
+ }
