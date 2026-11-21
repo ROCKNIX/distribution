@@ -1,0 +1,69 @@
+From 4aa45334eb23d40bf31c43405daea9b73469f2a6 Mon Sep 17 00:00:00 2001
+From: Jiale Yao <yaojiale02@163.com>
+Date: Sat, 3 Oct 2026 17:21:02 +0800
+Subject: [PATCH] wifi: ath12k: avoid IDR mutation during vif mgmt TX cleanup
+
+ath12k_mac_vdev_delete() walks txmgmt_idr with idr_for_each(), and its
+callback removes each entry belonging to the interface. Removing the
+current entry can invalidate the radix-tree iterator retained by
+idr_for_each().
+
+Move the walk into a helper that uses idr_for_each_entry(). It performs a
+fresh lookup for every iteration, so each matching entry can be removed
+through the locked removal helper without retaining iterator state across
+the removal.
+
+Fixes: d889913205cf ("wifi: ath12k: driver for Qualcomm Wi-Fi 7 devices")
+Signed-off-by: Jiale Yao <yaojiale02@163.com>
+Reviewed-by: Baochen Qiang <baochen.qiang@oss.qualcomm.com>
+Reviewed-by: Rameshkumar Sundaram <rameshkumar.sundaram@oss.qualcomm.com>
+Link: https://patch.msgid.link/20261003092104.520135-6-yaojiale02@163.com
+Signed-off-by: Jeff Johnson <jeff.johnson@oss.qualcomm.com>
+---
+ drivers/net/wireless/ath/ath12k/mac.c | 21 +++++++++++----------
+ 1 file changed, 11 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/mac.c b/drivers/net/wireless/ath/ath12k/mac.c
+index 56c3cc8506..01f8c6572f 100644
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -9203,16 +9203,18 @@ void ath12k_mac_tx_mgmt_pending_free(struct ath12k *ar)
+ 		ath12k_mac_tx_mgmt_free(ar, buf_id);
+ }
+ 
+-static int ath12k_mac_vif_txmgmt_idr_remove(int buf_id, void *skb, void *ctx)
++static void ath12k_mac_vif_txmgmt_cleanup(struct ath12k *ar,
++					  struct ieee80211_vif *vif)
+ {
+-	struct ieee80211_vif *vif = ctx;
+-	struct ath12k_skb_cb *skb_cb = ATH12K_SKB_CB(skb);
+-	struct ath12k *ar = skb_cb->ar;
+-
+-	if (skb_cb->vif == vif)
+-		ath12k_mac_tx_mgmt_free(ar, buf_id);
++	struct ath12k_skb_cb *skb_cb;
++	struct sk_buff *skb;
++	int buf_id;
+ 
+-	return 0;
++	idr_for_each_entry(&ar->txmgmt_idr, skb, buf_id) {
++		skb_cb = ATH12K_SKB_CB(skb);
++		if (skb_cb->vif == vif)
++			ath12k_mac_tx_mgmt_free(ar, buf_id);
++	}
+ }
+ 
+ static int ath12k_mac_mgmt_tx_wmi(struct ath12k *ar, struct ath12k_link_vif *arvif,
+@@ -10977,8 +10979,7 @@ err_vdev_del:
+ 	ath12k_peer_cleanup(ar, arvif->vdev_id);
+ 	ath12k_ahvif_put_link_cache(ahvif, arvif->link_id);
+ 
+-	idr_for_each(&ar->txmgmt_idr,
+-		     ath12k_mac_vif_txmgmt_idr_remove, vif);
++	ath12k_mac_vif_txmgmt_cleanup(ar, vif);
+ 
+ 	ath12k_mac_vif_unref(ath12k_ab_to_dp(ab), vif);
+ 
+-- 
+2.56.0
+

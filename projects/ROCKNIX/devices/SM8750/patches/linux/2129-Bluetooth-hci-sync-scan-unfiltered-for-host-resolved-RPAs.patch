@@ -1,0 +1,72 @@
+From 397464709a204da9b8dc3b01d6ea42539d951cd2 Mon Sep 17 00:00:00 2001
+From: Kyle Pepper <cochcoder@proton.me>
+Date: Wed, 14 Oct 2026 05:16:20 +0000
+Subject: [PATCH] Bluetooth: hci_sync: scan unfiltered for host-resolved RPAs
+
+Restore unfiltered scanning for pending IRK peers when the controller
+cannot resolve private addresses. Keep accept-list filtering while
+suspended and when forced by periodic advertising synchronization.
+
+Fixes: e209e5ccc5ac ("Bluetooth: MGMT: Mark LL Privacy as stable")
+Assisted-by: OpenCode:gpt-6.1-sol
+Signed-off-by: Kyle Pepper <cochcoder@proton.me>
+Signed-off-by: Luiz Augusto von Dentz <luiz.von.dentz@intel.com>
+---
+ net/bluetooth/hci_sync.c | 13 +++++++++----
+ 1 file changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/net/bluetooth/hci_sync.c b/net/bluetooth/hci_sync.c
+index efbd2e5387..03f706c1f8 100644
+--- a/net/bluetooth/hci_sync.c
++++ b/net/bluetooth/hci_sync.c
+@@ -2618,7 +2618,7 @@ static int hci_le_set_privacy_mode_sync(struct hci_dev *hdev,
+  */
+ static int hci_le_add_accept_list_sync(struct hci_dev *hdev,
+ 				       struct conn_params *params,
+-				       u8 *num_entries)
++				       u8 *num_entries, bool force_filter)
+ {
+ 	struct hci_cp_le_add_to_accept_list cp;
+ 	int err;
+@@ -2631,6 +2631,11 @@ static int hci_le_add_accept_list_sync(struct hci_dev *hdev,
+ 		return 0;
+ 	}
+ 
++	/* Host-resolved peers need unfiltered scanning while awake. */
++	if (!force_filter && !hdev->suspended && !ll_privacy_capable(hdev) &&
++	    hci_find_irk_by_addr(hdev, &params->addr, params->addr_type))
++		return -EINVAL;
++
+ 	/* Select filter policy to accept all advertising */
+ 	if (*num_entries >= hdev->le_accept_list_size)
+ 		return -ENOSPC;
+@@ -2956,7 +2961,7 @@ static u8 hci_update_accept_list_sync(struct hci_dev *hdev)
+ 
+ 			num_entries = 1;
+ 			err = hci_le_add_accept_list_sync(hdev, &pa,
+-							  &num_entries);
++							  &num_entries, true);
+ 			goto done;
+ 		} else {
+ 			rcu_read_unlock();
+@@ -3020,7 +3025,7 @@ static u8 hci_update_accept_list_sync(struct hci_dev *hdev)
+ 
+ 	for (i = 0; i < n; ++i) {
+ 		err = hci_le_add_accept_list_sync(hdev, &params[i],
+-						  &num_entries);
++								&num_entries, false);
+ 		if (err) {
+ 			kvfree(params);
+ 			goto done;
+@@ -3042,7 +3047,7 @@ static u8 hci_update_accept_list_sync(struct hci_dev *hdev)
+ 
+ 	for (i = 0; i < n; ++i) {
+ 		err = hci_le_add_accept_list_sync(hdev, &params[i],
+-						  &num_entries);
++								&num_entries, false);
+ 		if (err) {
+ 			kvfree(params);
+ 			goto done;
+-- 
+2.56.0
+
