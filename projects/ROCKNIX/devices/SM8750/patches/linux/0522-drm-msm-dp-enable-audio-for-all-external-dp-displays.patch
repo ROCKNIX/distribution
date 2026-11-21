@@ -1,0 +1,41 @@
+Subject: [PATCH] drm/msm/dp: enable audio for all external DisplayPort displays
+
+Some DisplayPort sinks (notably AR glasses such as XREAL Air, portable
+displays, and certain monitors) provide only a basic 128-byte EDID
+without a CTA-861 Extension Block declaring audio capabilities.
+Consequently, connector->display_info.has_audio is false, causing
+the MSM DP driver to never notify the audio subsystem of display
+connection.
+
+External DisplayPort connections can carry audio regardless of whether
+the sink's base EDID has a CTA extension block. Always treat external
+(non-eDP) DisplayPort sinks as supporting audio, and log the audio
+connection notification for diagnostic clarity.
+
+--- a/drivers/gpu/drm/msm/dp/dp_display.c
++++ b/drivers/gpu/drm/msm/dp/dp_display.c
+@@ -290,7 +290,10 @@ static int msm_dp_display_process_hpd_high(struct msm_dp_display_private *dp)
+ 
+ 	dp->msm_dp_display.psr_supported = dp->panel->psr_cap.version && psr_enabled;
+ 
+-	dp->audio_supported = info->has_audio;
++	/* Allow audio on all external DP sinks even if EDID lacks CTA-861 block (e.g. AR glasses) */
++	dp->audio_supported = info->has_audio || !dp->msm_dp_display.is_edp;
++	DRM_INFO("msm-dp: sink has_audio=%d is_edp=%d -> audio_supported=%d\n",
++		 info->has_audio, dp->msm_dp_display.is_edp, dp->audio_supported);
+ 	msm_dp_panel_handle_sink_request(dp->panel);
+ 
+ 	/*
+@@ -430,9 +433,11 @@ static void msm_dp_display_handle_plugged_change(struct msm_dp *msm_dp_display,
+ 			struct msm_dp_display_private, msm_dp_display);
+ 
+ 	/* notify audio subsystem only if sink supports audio */
+-	if (dp->audio_supported)
++	if (dp->audio_supported) {
++		DRM_INFO("msm-dp: notifying hdmi audio plugged=%d\n", plugged);
+ 		drm_connector_hdmi_audio_plugged_notify(msm_dp_display->connector,
+ 							plugged);
++	}
+ }
+ 
+ static int msm_dp_hpd_unplug_handle(struct msm_dp_display_private *dp)

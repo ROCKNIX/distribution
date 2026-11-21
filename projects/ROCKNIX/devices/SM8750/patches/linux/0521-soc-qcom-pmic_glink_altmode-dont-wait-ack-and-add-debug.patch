@@ -1,0 +1,172 @@
+From: Chaz Bailey <charles.s.bailey@gmail.com>
+Subject: [PATCH] soc: qcom: pmic_glink_altmode: do not wait for ack on PAN_ACK and add debug logging and sysfs triggers
+
+ALTMODE_PAN_ACK (0x11) is an acknowledgement sent by the host to the
+firmware. Waiting for an acknowledgement of an acknowledgement is invalid
+and causes a 5-second timeout on firmware versions that do not generate
+a reply. Make ALTMODE_PAN_ACK fire-and-forget, and do not fail initialization
+if ALTMODE_PAN_EN times out. Also add diagnostic logging to trace altmode
+events and state transitions. Add sysfs trigger and force_dp control
+attributes on pmic_glink.altmode.0.
+
+Signed-off-by: Chaz Bailey <charles.s.bailey@gmail.com>
+---
+--- a/drivers/soc/qcom/pmic_glink_altmode.c
++++ b/drivers/soc/qcom/pmic_glink_altmode.c
+@@ -164,10 +164,13 @@
+ 		return ret;
+ 	}
+ 
+-	left = wait_for_completion_timeout(&altmode->pan_ack, 5 * HZ);
++	if (cmd == ALTMODE_PAN_ACK)
++		return 0;
++
++	left = wait_for_completion_timeout(&altmode->pan_ack, 2 * HZ);
+ 	if (!left) {
+-		dev_err(altmode->dev, "timeout waiting for altmode request ack for: %#x\n", cmd);
+-		return -ETIMEDOUT;
++		dev_warn(altmode->dev, "timeout waiting for altmode request ack for: %#x (continuing)\n", cmd);
++		return 0;
+ 	}
+ 
+ 	return 0;
+@@ -351,6 +354,10 @@
+ 	struct pmic_glink_altmode *altmode = alt_port->altmode;
+ 	enum drm_connector_status conn_status;
+ 
++	dev_info(altmode->dev, "worker: port %u svid %#x mux_ctrl %u hpd %u mode %u\n",
++		 alt_port->index, alt_port->svid, alt_port->mux_ctrl,
++		 alt_port->hpd_state, alt_port->mode);
++
+ 	typec_switch_set(alt_port->typec_switch, alt_port->orientation);
+ 
+ 	/*
+@@ -478,6 +485,9 @@
+ 	port = notify->port_idx;
+ 	orientation = notify->orientation;
+ 
++	dev_info(altmode->dev, "sc8280xp_notify: port %u orientation %u mux_ctrl %u svid %#x len %zu\n",
++		 port, orientation, notify->mux_ctrl, svid, len);
++
+ 	if (port >= ARRAY_SIZE(altmode->ports) || !altmode->ports[port].altmode) {
+ 		dev_dbg(altmode->dev, "notification on undefined port %d\n", port);
+ 		return;
+@@ -514,6 +524,9 @@
+ 	opcode = le32_to_cpu(hdr->opcode) & 0xff;
+ 	svid = le32_to_cpu(hdr->opcode) >> 16;
+ 
++	dev_info(altmode->dev, "callback: owner %u opcode %#x svid %#x len %zu\n",
++		 le32_to_cpu(hdr->owner), opcode, svid, len);
++
+ 	switch (opcode) {
+ 	case USBC_CMD_WRITE_REQ:
+ 		complete(&altmode->pan_ack);
+@@ -565,6 +578,89 @@
+ 	{}
+ };
+ 
++static ssize_t trigger_store(struct device *dev, struct device_attribute *attr,
++			     const char *buf, size_t count)
++{
++	struct pmic_glink_altmode *altmode = dev_get_drvdata(dev);
++	int ret;
++
++	if (!altmode)
++		return -ENODEV;
++
++	dev_info(altmode->dev, "manual trigger: requesting ALTMODE_PAN_EN\n");
++	ret = pmic_glink_altmode_request(altmode, ALTMODE_PAN_EN, 0);
++	if (ret)
++		dev_err(altmode->dev, "failed to send ALTMODE_PAN_EN: %d\n", ret);
++
++	return count;
++}
++static DEVICE_ATTR_WO(trigger);
++
++static ssize_t force_dp_show(struct device *dev, struct device_attribute *attr,
++			     char *buf)
++{
++	struct pmic_glink_altmode *altmode = dev_get_drvdata(dev);
++	struct pmic_glink_altmode_port *alt_port;
++
++	if (!altmode)
++		return -ENODEV;
++
++	alt_port = &altmode->ports[0];
++	return sysfs_emit(buf, "svid=%#x mux_ctrl=%u mode=%u hpd=%u orientation=%u\n",
++			  alt_port->svid, alt_port->mux_ctrl, alt_port->mode,
++			  alt_port->hpd_state, alt_port->orientation);
++}
++
++static ssize_t force_dp_store(struct device *dev, struct device_attribute *attr,
++			      const char *buf, size_t count)
++{
++	struct pmic_glink_altmode *altmode = dev_get_drvdata(dev);
++	struct pmic_glink_altmode_port *alt_port;
++
++	if (!altmode)
++		return -ENODEV;
++
++	alt_port = &altmode->ports[0];
++
++	if (sysfs_streq(buf, "0") || sysfs_streq(buf, "off") || sysfs_streq(buf, "false")) {
++		dev_info(altmode->dev, "force_dp: disabling DP\n");
++		alt_port->svid = USB_TYPEC_DP_SID;
++		alt_port->mux_ctrl = MUX_CTRL_STATE_NO_CONN;
++		alt_port->mode = 255;
++		alt_port->hpd_state = 0;
++		alt_port->hpd_irq = 0;
++	} else {
++		if (sysfs_streq(buf, "rev") || sysfs_streq(buf, "reverse"))
++			alt_port->orientation = TYPEC_ORIENTATION_REVERSE;
++		else if (alt_port->orientation == TYPEC_ORIENTATION_NONE)
++			alt_port->orientation = TYPEC_ORIENTATION_NORMAL;
++
++		alt_port->svid = USB_TYPEC_DP_SID;
++		if (sysfs_streq(buf, "c") || sysfs_streq(buf, "4lane")) {
++			dev_info(altmode->dev, "force_dp: enabling Pin Assignment C (4-lane DP)\n");
++			alt_port->mux_ctrl = MUX_CTRL_STATE_DP4LN;
++			alt_port->mode = 2;
++		} else {
++			dev_info(altmode->dev, "force_dp: enabling Pin Assignment D (2-lane DP + USB3)\n");
++			alt_port->mux_ctrl = MUX_CTRL_STATE_USB3_DP;
++			alt_port->mode = 3;
++		}
++		alt_port->hpd_state = 1;
++		alt_port->hpd_irq = 0;
++	}
++
++	schedule_work(&alt_port->work);
++	return count;
++}
++static DEVICE_ATTR_RW(force_dp);
++
++static struct attribute *pmic_glink_altmode_attrs[] = {
++	&dev_attr_trigger.attr,
++	&dev_attr_force_dp.attr,
++	NULL,
++};
++ATTRIBUTE_GROUPS(pmic_glink_altmode);
++
+ static int pmic_glink_altmode_probe(struct auxiliary_device *adev,
+ 				    const struct auxiliary_device_id *id)
+ {
+@@ -581,6 +677,7 @@
+ 		return -ENOMEM;
+ 
+ 	altmode->dev = dev;
++	dev_set_drvdata(dev, altmode);
+ 
+ 	match = of_match_device(pmic_glink_altmode_of_quirks, dev->parent);
+ 	if (match)
+@@ -696,6 +793,10 @@
+ 
+ 	pmic_glink_client_register(altmode->client);
+ 
++	ret = devm_device_add_group(dev, &pmic_glink_altmode_group);
++	if (ret)
++		dev_warn(dev, "failed to create sysfs attributes: %d\n", ret);
++
+ 	return 0;
+ }
+ 
