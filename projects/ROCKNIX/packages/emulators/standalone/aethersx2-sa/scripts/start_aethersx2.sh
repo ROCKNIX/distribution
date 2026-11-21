@@ -3,6 +3,10 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
 
+# Allow user storage version of this script to execute instead (if provided)
+[[ -x "/storage/share/aethersx2-sa/start_aethersx2.sh" ]] && exec "/storage/share/aethersx2-sa/start_aethersx2.sh" "$@"
+# Otherwise use the builtin script below
+
 . /etc/profile
 
 #Check if aethersx2 exists in .config
@@ -210,9 +214,9 @@ fi
   export QT_QPA_PLATFORM=wayland
 
 # Extra Libs needed to run
-  export LD_LIBRARY_PATH=/usr/share/aethersx2-sa/libs
+  export LD_LIBRARY_PATH=/storage/share/aethersx2-sa/libs
 
 #Run Aethersx2 emulator
   export SDL_AUDIODRIVER=pulseaudio
   set_kill set "-9 aethersx2"
-  ${EMUPERF} /usr/share/aethersx2-sa/aethersx2 -bigpicture -fullscreen "${1}"
+  ${EMUPERF} /storage/share/aethersx2-sa/aethersx2 -bigpicture -fullscreen "${1}"
