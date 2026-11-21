@@ -18,6 +18,9 @@ get_graphicdrivers
 
 pre_configure_target() {
 export TARGET_CFLAGS="${TARGET_CFLAGS} -Wno-error=incompatible-pointer-types"
+  if [ "${ARCH}" = "aarch64" ] && [[ "${ADDITIONAL_PACKAGES}" =~ libmali ]]; then
+    export TARGET_LDFLAGS="${TARGET_LDFLAGS} -Wl,-rpath,/usr/lib/xwayland"
+  fi
 }
 
 PKG_MESON_OPTS_TARGET+=" -Dxvfb=false \
@@ -69,4 +72,8 @@ fi
 post_makeinstall_target() {
   rm -rf ${INSTALL}/var/cache/xkb
 
+  if [ "${ARCH}" = "aarch64" ] && [[ "${ADDITIONAL_PACKAGES}" =~ libmali ]]; then
+    mkdir -p ${INSTALL}/usr/lib/xwayland
+    cp -L $(get_install_dir libglvnd)/usr/lib/libGL.so.1 ${INSTALL}/usr/lib/xwayland
+  fi
 }
