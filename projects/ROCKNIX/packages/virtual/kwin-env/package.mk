@@ -11,5 +11,5 @@ PKG_LONGDESC="kwin-env: KWin window manager environment"
 
 if [ ! "${BASE_ONLY}" = "true" ]
 then
-  PKG_DEPENDS_TARGET+=" foot xkbcomp rocknix-screenshot"
+  PKG_DEPENDS_TARGET+=" foot xkbcomp rocknix-screenshot libthai libXt"
 fi
