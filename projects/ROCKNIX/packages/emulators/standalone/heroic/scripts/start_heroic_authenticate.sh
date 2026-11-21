@@ -19,6 +19,7 @@ resolve_heroic_bin() {
 }
 
 cleanup_keyboard() {
+  kwin_keyboard 0
   kwin_keyboard off
 }
 
@@ -31,6 +32,7 @@ trap 'cleanup_keyboard' EXIT
 
 cd "$(dirname "${HEROIC_BIN}")" || exit 1
 kwin_keyboard on
+systemctl is-active --quiet touchkeyboard && kwin_keyboard 1
 
 export ELECTRON_OZONE_PLATFORM_HINT=wayland
 "${HEROIC_BIN}" --no-sandbox --ozone-platform=wayland "$@"
