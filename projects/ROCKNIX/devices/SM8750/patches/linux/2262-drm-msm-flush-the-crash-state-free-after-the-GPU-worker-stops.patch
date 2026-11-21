@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: André Braga <code@andrebraga.com>
+Subject: [PATCH] drm/msm: flush the crash state free after the GPU worker stops
+
+Draining the GPU worker can still capture a crash state, so flush the
+deferred free after kthread_destroy_worker() and release a registered
+devcoredump before it, as the author agreed in review:
+CAJZkD00oU9iCm4J6EM_yJ7NwjRwABudzTsa9wN23hmTTLWo7nw@mail.gmail.com.
+Drop once the author's v2 lands.
+---
+diff --git a/drivers/gpu/drm/msm/msm_gpu.c b/drivers/gpu/drm/msm/msm_gpu.c
+--- a/drivers/gpu/drm/msm/msm_gpu.c
++++ b/drivers/gpu/drm/msm/msm_gpu.c
+@@ -1062,10 +1062,6 @@
+ 
+ 	DBG("%s", gpu->name);
+ 
+-	/* May be unset if probe failed before msm_gpu_init() */
+-	if (gpu->crashstate_free_work.func)
+-		flush_work(&gpu->crashstate_free_work);
+-
+ 	for (i = 0; i < ARRAY_SIZE(gpu->rb); i++) {
+ 		msm_ringbuffer_destroy(gpu->rb[i]);
+ 		gpu->rb[i] = NULL;
+@@ -1083,6 +1079,17 @@
+ 		kthread_destroy_worker(gpu->worker);
+ 	}
+ 
++	/*
++	 * Nothing captures a crash state any more: release a devcoredump that
++	 * is still registered and wait for the free it, or a drained
++	 * recover_work, queued. May be unset if probe failed before
++	 * msm_gpu_init().
++	 */
++	if (gpu->crashstate_free_work.func) {
++		dev_coredump_put(&gpu->pdev->dev);
++		flush_work(&gpu->crashstate_free_work);
++	}
++
+ 	msm_devfreq_cleanup(gpu);
+ 	msm_perfcntr_cleanup(gpu);
+ 

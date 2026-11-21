@@ -1,0 +1,54 @@
+From: Nabige Aala <nabige.aala@oss.qualcomm.com>
+Subject: [v6,11/11] phy: qualcomm: qmp-combo: Fix error propagation in qmp_combo_dp_power_on()
+Link: https://lore.kernel.org/r/20261028-glymur-phy-v3-v6-11-1f1d2e565a66@oss.qualcomm.com
+
+The configure_dp_phy() callback can return an error (e.g. -ETIMEDOUT on
+PLL lock failure), but qmp_combo_dp_power_on() was ignoring the return
+value and always returning 0.
+
+Capture the return value, skip setting dp_powered_on on failure, and
+propagate the error to the caller.
+
+Fixes: dd1153651b038 ("phy: qcom-qmp-combo: merge driver data")
+Signed-off-by: Ritesh Kumar <ritesh.kumar@oss.qualcomm.com>
+Signed-off-by: Mahadevan P <mahadevan.p@oss.qualcomm.com>
+Tested-by: Jeff Roach <jeff.roach0@gmail.com> # HP OmniBook X 16 (Mahua)
+Tested-by: Luke Macken <luke@phorex.org>
+Signed-off-by: Nabige Aala <nabige.aala@oss.qualcomm.com>
+---
+ drivers/phy/qualcomm/phy-qcom-qmp-combo.c | 11 +++++++----
+ 1 file changed, 7 insertions(+), 4 deletions(-)
+---
+diff --git a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+index b34b892c2702..4def2bd991a8 100644
+--- a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
++++ b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+@@ -4416,8 +4416,9 @@ static int qmp_combo_dp_power_on(struct phy *phy)
+ 	const struct qmp_phy_cfg *cfg = qmp->cfg;
+ 	void __iomem *tx = qmp->dp_tx;
+ 	void __iomem *tx2 = qmp->dp_tx2;
++	int ret;
+ 
+-	mutex_lock(&qmp->phy_mutex);
++	guard(mutex)(&qmp->phy_mutex);
+ 
+ 	qmp_combo_dp_serdes_init(qmp);
+ 
+@@ -4428,12 +4429,14 @@ static int qmp_combo_dp_power_on(struct phy *phy)
+ 	cfg->configure_dp_tx(qmp);
+ 
+ 	/* Configure link rate, swing, etc. */
+-	cfg->configure_dp_phy(qmp);
++	ret = cfg->configure_dp_phy(qmp);
++	if (ret) {
++		dev_err(qmp->dev, "DP PHY configuration failed: %d\n", ret);
++		return ret;
++	}
+ 
+ 	qmp->dp_powered_on = true;
+ 
+-	mutex_unlock(&qmp->phy_mutex);
+-
+ 	return 0;
+ }
+ 

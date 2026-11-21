@@ -1,0 +1,79 @@
+From f2576dc0f894ef33045ba7ed057ec417988bba8a Mon Sep 17 00:00:00 2001
+From: Baochen Qiang <baochen.qiang@oss.qualcomm.com>
+Date: Wed, 29 Jul 2026 15:18:11 +0800
+Subject: [PATCH] wifi: ath12k: signal regd update completion when reg event is
+ dropped
+
+During driver bring-up, ath12k_mac_hw_register() reinitializes
+ar->regd_update_completed and sends a set current country command to
+firmware. It then relies on the regulatory event from firmware to signal
+that completion via ath12k_reg_chan_list_event().
+
+However, when the country being set is identical to the one already
+applied at boot time, ath12k_reg_validate_reg_info() returns
+ATH12K_REG_STATUS_DROP through the "Avoid multiple overwrites to default
+regd" path. In that case ath12k_reg_chan_list_event() jumps to mem_free
+before assigning pdev_idx, so pdev_idx stays at its initial value of 255,
+'ar' remains NULL and complete_all() is never called.
+
+As a result the reinitialized completion is left unsignalled and the next
+ath12k_regd_update() waits the full timeout, printing:
+
+  Timeout while waiting for regulatory update
+
+Fix this by assigning pdev_idx from the event's phy_id right after it is
+extracted, before validation, so that the drop and fallback paths still
+reach complete_all(). Change the guard at the end to check the index
+against ab->num_radios so that an out-of-range phy_id does not lead to an
+invalid pdevs[] access.
+
+Tested-on: WCN7850 hw2.0 PCI WLAN.HMT.1.1.c7-00108-QCAHMTSWPL_V1.0_V2.0_SILICONZ_UPSTREAM-3
+
+Fixes: 906619a00967 ("wifi: ath12k: handle regulatory hints during mac registration")
+Signed-off-by: Baochen Qiang <baochen.qiang@oss.qualcomm.com>
+Reviewed-by: Rameshkumar Sundaram <rameshkumar.sundaram@oss.qualcomm.com>
+Link: https://patch.msgid.link/20260729-ath12k-regd-wait-timeout-v1-1-504aa6e7e93c@oss.qualcomm.com
+Signed-off-by: Jeff Johnson <jeff.johnson@oss.qualcomm.com>
+---
+ drivers/net/wireless/ath/ath12k/wmi.c | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/wmi.c b/drivers/net/wireless/ath/ath12k/wmi.c
+index 7a8a0698b9..a63bbda021 100644
+--- a/drivers/net/wireless/ath/ath12k/wmi.c
++++ b/drivers/net/wireless/ath/ath12k/wmi.c
+@@ -6975,6 +6975,14 @@ static int ath12k_reg_chan_list_event(struct ath12k_base *ab, struct sk_buff *sk
+ 		goto mem_free;
+ 	}
+ 
++	/*
++	 * Set the valid pdev_idx before validating so that, even when the
++	 * event is dropped or falls back, the completion the caller in
++	 * ath12k_mac_hw_register() may be waiting on is still signalled at
++	 * the end and it does not time out.
++	 */
++	pdev_idx = reg_info->phy_id;
++
+ 	ret = ath12k_reg_validate_reg_info(ab, reg_info);
+ 	if (ret == ATH12K_REG_STATUS_FALLBACK) {
+ 		ath12k_warn(ab, "failed to validate reg info %d\n", ret);
+@@ -6991,7 +6999,6 @@ static int ath12k_reg_chan_list_event(struct ath12k_base *ab, struct sk_buff *sk
+ 	}
+ 
+ 	/* free old reg_info if it exist */
+-	pdev_idx = reg_info->phy_id;
+ 	if (ab->reg_info[pdev_idx]) {
+ 		ath12k_reg_reset_reg_info(ab->reg_info[pdev_idx]);
+ 		kfree(ab->reg_info[pdev_idx]);
+@@ -7030,7 +7037,7 @@ fallback:
+ 
+ out:
+ 	/* In some error cases, even a valid pdev_idx might not be available */
+-	if (pdev_idx != 255)
++	if (pdev_idx < ab->num_radios)
+ 		ar = ab->pdevs[pdev_idx].ar;
+ 
+ 	/* During the boot-time update, 'ar' might not be allocated,
+-- 
+2.56.0
+

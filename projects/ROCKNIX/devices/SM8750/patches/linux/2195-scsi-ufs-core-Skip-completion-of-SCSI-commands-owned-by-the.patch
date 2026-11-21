@@ -1,0 +1,73 @@
+From: Stanley Jhu <stanleyjhu@google.com>
+Subject: scsi: ufs: core: Skip completion of SCSI commands owned by the SCSI EH
+Link: https://lore.kernel.org/r/20261029040004.2100004-1-stanleyjhu@google.com
+
+1. A SCSI command times out. scsi_timeout() sets SCMD_STATE_COMPLETE
+   and hands the command to the SCSI error handler.
+2. The abort fails, so the error handler resets the LU and
+   ufshcd_clear_lu_cmds() completes the cleared command.
+3. ufshcd_compl_one_cqe() overwrites cmd->result with DID_REQUEUE.
+4. scsi_eh_flush_done_q() only sets DID_TIME_OUT when cmd->result is
+   zero. A command that may not be retried, such as an SG_IO
+   command, is finished with DID_REQUEUE instead of DID_TIME_OUT.
+5. If a retried command times out again, the DID_TIME_OUT set by
+   scsi_timeout() is overwritten as well. sd_eh_action() then does not
+   count the medium access timeout, so the disk is not taken
+   offline, and a REQ_FAILFAST_DEV command is retried instead of
+   failed fast.
+
+Only release the LLD resources of such a command, since the SCSI error
+handler owns it. Commands sent by scsi_send_eh_cmnd() reuse the
+timed-out scsi_cmnd with SCMD_STATE_COMPLETE set and still complete
+normally. Completions that arrive after the command was resubmitted
+are not handled here.
+
+Fixes: 7a3e97b0dc4b ("[SCSI] ufshcd: UFS Host controller driver")
+Fixes: ab248643d3d6 ("scsi: ufs: core: Add error handling for MCQ mode")
+Cc: stable@vger.kernel.org
+Signed-off-by: Stanley Jhu <stanleyjhu@google.com>
+---
+ drivers/ufs/core/ufshcd.c | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+
+base-commit: 503e6172fa74da6b4944ece458f5534681e51d21
+---
+diff --git a/drivers/ufs/core/ufshcd.c b/drivers/ufs/core/ufshcd.c
+index fd52deb72d21..710d57bb4dbc 100644
+--- a/drivers/ufs/core/ufshcd.c
++++ b/drivers/ufs/core/ufshcd.c
+@@ -5987,6 +5987,22 @@ void ufshcd_release_scsi_cmd(struct ufs_hba *hba, struct scsi_cmnd *cmd)
+ 	ufshcd_clk_scaling_update_busy(hba);
+ }
+ 
++/**
++ * ufshcd_cmd_owned_by_scsi_eh - Check if the SCSI EH owns @cmd
++ * @cmd: SCSI command pointer
++ *
++ * scsi_timeout() sets SCMD_STATE_COMPLETE before it hands a block-layer
++ * command to the SCSI EH. Commands from scsi_send_eh_cmnd() reuse such a
++ * scsi_cmnd with the bit still set and must still reach scsi_done().
++ *
++ * Return: true if the SCSI EH owns @cmd.
++ */
++static inline bool ufshcd_cmd_owned_by_scsi_eh(struct scsi_cmnd *cmd)
++{
++	return cmd->submitter == SUBMITTED_BY_BLOCK_LAYER &&
++	       test_bit(SCMD_STATE_COMPLETE, &cmd->state);
++}
++
+ /**
+  * ufshcd_compl_one_cqe - handle a completion queue entry
+  * @hba: per adapter instance
+@@ -6009,6 +6025,10 @@ void ufshcd_compl_one_cqe(struct ufs_hba *hba, int task_tag,
+ 		lrbp->compl_time_stamp_local_clock = local_clock();
+ 	}
+ 	if (ufshcd_is_scsi_cmd(cmd)) {
++		if (unlikely(ufshcd_cmd_owned_by_scsi_eh(cmd))) {
++			ufshcd_release_scsi_cmd(hba, cmd);
++			return;
++		}
+ 		if (unlikely(ufshcd_should_inform_monitor(hba, cmd)))
+ 			ufshcd_update_monitor(hba, cmd);
+ 		ufshcd_add_command_trace(hba, cmd, UFS_CMD_COMP);
