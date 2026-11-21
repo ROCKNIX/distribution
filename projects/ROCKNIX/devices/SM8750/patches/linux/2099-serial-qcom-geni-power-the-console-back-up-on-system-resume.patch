@@ -1,0 +1,53 @@
+From e95442c31ae65b57ddffdfa609531c549055f308 Mon Sep 17 00:00:00 2001
+From: David Heidelberg <david@ixit.cz>
+Date: Fri, 18 Sep 2026 00:14:11 +0200
+Subject: [PATCH] serial: qcom-geni: power the console back up on system resume
+
+The console holds a runtime PM reference on its port, which keeps the
+port powered while the tty is closed. On system suspend
+pm_runtime_force_suspend() powers the port down regardless, but a single
+reference makes pm_runtime_need_not_resume() report the port as not in
+use, so it is marked runtime suspended instead of being flagged for
+pm_runtime_force_resume(). On system resume the port therefore stays
+powered down while uart_resume_port() goes on to program the termios
+settings and re-enable the console.
+
+If the tty has been opened before, uart_resume_port() ends up in
+startup(), whose runtime PM reference powers the port up again, and only
+the register writes made before that are lost. If the tty has never been
+opened (no getty on the port, /dev/console backed by another console),
+nothing powers the port back up and the console stays dead after the
+first suspend.
+
+Resume the port explicitly before uart_resume_port() when the console
+was force suspended.
+
+Assisted-by: LLM
+Fixes: aee1f94dab13 ("serial: qcom-geni: remove .pm callback, use runtime PM in startup/shutdown")
+Signed-off-by: David Heidelberg <david@ixit.cz>
+Link: https://patch.msgid.link/20260918-qcom-geni-pm-v1-1-cb587e215607@ixit.cz
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+---
+ drivers/tty/serial/qcom_geni_serial.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/drivers/tty/serial/qcom_geni_serial.c b/drivers/tty/serial/qcom_geni_serial.c
+index 4a6f526340..bfdc155c12 100644
+--- a/drivers/tty/serial/qcom_geni_serial.c
++++ b/drivers/tty/serial/qcom_geni_serial.c
+@@ -2117,6 +2117,12 @@ static int qcom_geni_serial_resume(struct device *dev)
+ 			return ret;
+ 	}
+ 
++	if (console_suspend_enabled && uart_console(uport)) {
++		ret = pm_runtime_resume(dev);
++		if (ret < 0)
++			return ret;
++	}
++
+ 	ret = uart_resume_port(private_data->drv, uport);
+ 	if (uart_console(uport)) {
+ 		geni_icc_set_tag(&port->se, QCOM_ICC_TAG_ALWAYS);
+-- 
+2.56.0
+

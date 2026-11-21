@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Krishna Chaitanya Chundru <krishna.chundru@oss.qualcomm.com>
+Date: Thu, 29 Oct 2026 09:49:27 +0530
+Subject: [PATCH] PCI: host-common: Fix early bus-walk exit in d3cold_possible()
+
+__pci_host_common_d3cold_possible() returns -EOPNOTSUPP for the first
+downstream device it finds outside PCI_D3hot, and pci_walk_bus() aborts
+the walk as soon as its callback returns nonzero. Any device enumerated
+after the disqualifying one -- including a wakeup-enabled, PME-from-D3cold
+capable endpoint -- is then never visited, so pme_capable can come back
+false even though such a device exists on the bus.
+
+Since pci_host_common_d3cold_possible() already returns false whenever
+any device disqualifies D3cold, aborting the walk buys nothing for the
+plain suspend path: the overall bool result is unaffected. But it
+silently drops pme_capable detection for any device ordered after the
+disqualifying one.
+
+This matters for the upcoming shutdown path in particular: unlike plain
+suspend, shutdown forces the link into L2/D3cold regardless of whether
+pci_host_common_d3cold_possible() itself allows it (see the following
+"force_d3cold" changes), so at shutdown time it's common for an
+endpoint to still be in D0 and disqualify D3cold while a later,
+PME-capable device is never visited. dw_pcie_suspend_noirq() still
+uses "pme_capable" to set pci->pp.skip_pwrctrl_off, so an inaccurate
+result here can cause Vaux/wakeup support to be dropped for a device
+that actually supports PME from D3cold.
+
+Signed-off-by: Krishna Chaitanya Chundru <krishna.chundru@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261029-shutdown-v7-1-3fd7a76a6991@oss.qualcomm.com
+---
+ drivers/pci/controller/pci-host-common.c | 13 ++++---------
+ 1 file changed, 4 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/pci/controller/pci-host-common.c b/drivers/pci/controller/pci-host-common.c
+index a23907a875e5..c2c852c64aa8 100644
+--- a/drivers/pci/controller/pci-host-common.c
++++ b/drivers/pci/controller/pci-host-common.c
+@@ -275,21 +275,16 @@ static int __pci_host_common_d3cold_possible(struct pci_dev *pdev,
+ 		return 0;
+ 
+ 	if (pdev->current_state != PCI_D3hot)
+-		goto exit;
++		*flags &= ~PCI_HOST_D3COLD_ALLOWED;
+ 
+ 	if (device_may_wakeup(&pdev->dev)) {
+-		if (!pci_pme_capable(pdev, PCI_D3cold))
+-			goto exit;
+-		else
++		if (pci_pme_capable(pdev, PCI_D3cold))
+ 			*flags |= PCI_HOST_PME_D3COLD_CAPABLE;
++		else
++			*flags &= ~PCI_HOST_D3COLD_ALLOWED;
+ 	}
+ 
+ 	return 0;
+-
+-exit:
+-	*flags &= ~PCI_HOST_D3COLD_ALLOWED;
+-
+-	return -EOPNOTSUPP;
+ }
+ 
+ /**

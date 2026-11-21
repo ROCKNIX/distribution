@@ -1,0 +1,124 @@
+From: Fan Wu <fanwu01@zju.edu.cn>
+Subject: media: iris: prevent sys_error_handler from restarting core during remove
+Link: https://lore.kernel.org/r/20260705032529.2439425-1-fanwu01@zju.edu.cn
+
+iris_remove() does not cancel the sys_error_handler delayed work, which is
+armed from the HFI response path on system errors. The handler calls
+iris_core_deinit() followed by iris_core_init(), so a pending handler can
+restart the core after iris_remove() has started tearing it down.
+
+Set an unregistering flag under the core mutex and make
+iris_core_init() refuse to re-initialize the core once removal has begun.
+Check the same flag while holding the core mutex in the HFI response
+handlers before arming the delayed work, so a system-error interrupt
+cannot queue new work after removal starts.
+
+Cancel any delayed work that was queued before the flag was set before
+destroying the core mutex.
+
+Fixes: fb583a214337 ("media: iris: introduce host firmware interface with necessary hooks")
+Cc: stable@vger.kernel.org
+Signed-off-by: Fan Wu <fanwu01@zju.edu.cn>
+---
+ drivers/media/platform/qcom/iris/iris_core.c           |  5 +++++
+ drivers/media/platform/qcom/iris/iris_core.h           |  4 ++++
+ .../media/platform/qcom/iris/iris_hfi_gen1_response.c  |  5 +++--
+ .../media/platform/qcom/iris/iris_hfi_gen2_response.c  |  5 +++--
+ drivers/media/platform/qcom/iris/iris_probe.c          | 10 ++++++++++
+ 5 files changed, 25 insertions(+), 4 deletions(-)
+---
+diff --git a/drivers/media/platform/qcom/iris/iris_core.c b/drivers/media/platform/qcom/iris/iris_core.c
+index 52bf56e517f9..b843ab0d484c 100644
+--- a/drivers/media/platform/qcom/iris/iris_core.c
++++ b/drivers/media/platform/qcom/iris/iris_core.c
+@@ -48,6 +48,11 @@ int iris_core_init(struct iris_core *core)
+ 	int ret;
+ 
+ 	mutex_lock(&core->lock);
++	if (core->unregistering) {
++		ret = -EINVAL;
++		goto exit;
++	}
++
+ 	if (core->state == IRIS_CORE_INIT) {
+ 		ret = 0;
+ 		goto exit;
+diff --git a/drivers/media/platform/qcom/iris/iris_core.h b/drivers/media/platform/qcom/iris/iris_core.h
+index 24da60448cf2..a52d2a1f07c4 100644
+--- a/drivers/media/platform/qcom/iris/iris_core.h
++++ b/drivers/media/platform/qcom/iris/iris_core.h
+@@ -74,6 +74,9 @@ struct qcom_ubwc_cfg_data;
+  * @core_init_done: structure of signal completion for system response
+  * @intr_status: interrupt status
+  * @sys_error_handler: a delayed work for handling system fatal error
++ * @unregistering: set under @lock in iris_remove() to block core re-init
++ *	and sys_error re-arming; checked under @lock in iris_core_init() and
++ *	the HFI system-error handlers
+  * @instances: a list_head of all instances
+  * @inst_fw_caps_dec: an array of supported instance capabilities by decoder
+  * @inst_fw_caps_enc: an array of supported instance capabilities by encoder
+@@ -119,6 +122,7 @@ struct iris_core {
+ 	struct completion			core_init_done;
+ 	u32					intr_status;
+ 	struct delayed_work			sys_error_handler;
++	bool					unregistering;
+ 	struct list_head			instances;
+ 	/* encoder and decoder have overlapping caps, so two different arrays are required */
+ 	struct platform_inst_fw_cap		inst_fw_caps_dec[INST_FW_CAP_MAX];
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1_response.c b/drivers/media/platform/qcom/iris/iris_hfi_gen1_response.c
+index bfd7495bf44f..c9100112d07b 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen1_response.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1_response.c
+@@ -230,9 +230,10 @@ iris_hfi_gen1_sys_event_notify(struct iris_core *core, void *packet)
+ 	mutex_lock(&core->lock);
+ 	list_for_each_entry(instance, &core->instances, list)
+ 		iris_inst_change_state(instance, IRIS_INST_ERROR);
++	if (!core->unregistering)
++		schedule_delayed_work(&core->sys_error_handler,
++				      msecs_to_jiffies(10));
+ 	mutex_unlock(&core->lock);
+-
+-	schedule_delayed_work(&core->sys_error_handler, msecs_to_jiffies(10));
+ }
+ 
+ static void
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c b/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c
+index 25162ae71357..7f0c121866f2 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c
+@@ -285,10 +285,11 @@ static int iris_hfi_gen2_handle_system_error(struct iris_core *core,
+ 	mutex_lock(&core->lock);
+ 	list_for_each_entry(instance, &core->instances, list)
+ 		iris_inst_change_state(instance, IRIS_INST_ERROR);
++	if (!core->unregistering)
++		schedule_delayed_work(&core->sys_error_handler,
++				      msecs_to_jiffies(10));
+ 	mutex_unlock(&core->lock);
+ 
+-	schedule_delayed_work(&core->sys_error_handler, msecs_to_jiffies(10));
+-
+ 	return 0;
+ }
+ 
+diff --git a/drivers/media/platform/qcom/iris/iris_probe.c b/drivers/media/platform/qcom/iris/iris_probe.c
+index c2dcb50a2782..c8553bc7619f 100644
+--- a/drivers/media/platform/qcom/iris/iris_probe.c
++++ b/drivers/media/platform/qcom/iris/iris_probe.c
+@@ -200,7 +200,17 @@ static void iris_remove(struct platform_device *pdev)
+ 	if (!core)
+ 		return;
+ 
++	/*
++	 * Prevent the system-error work from re-initializing the core once
++	 * teardown begins.  Then drain any work that was queued before the
++	 * flag was set, before destroying the mutex used by the work function.
++	 */
++	mutex_lock(&core->lock);
++	core->unregistering = true;
++	mutex_unlock(&core->lock);
++
+ 	iris_core_deinit(core);
++	cancel_delayed_work_sync(&core->sys_error_handler);
+ 
+ 	video_unregister_device(core->vdev_dec);
+ 	video_unregister_device(core->vdev_enc);

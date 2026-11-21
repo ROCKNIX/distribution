@@ -1,0 +1,50 @@
+From: Hui Peng <benquike@gmail.com>
+Subject: net: qrtr: use u32 for port in qrtr_port_assign() and __qrtr_bind()
+Link: https://lore.kernel.org/r/20260919212847.3239934-1-benquike@gmail.com
+
+In __qrtr_bind() and qrtr_port_assign(), the port number copied from the
+unsigned `u32 addr->sq_port` field is stored in a signed `int port`
+variable.
+
+When a user supplies a port number with bit 31 set (`addr->sq_port >=
+0x80000000`), `*port` becomes negative:
+
+1. The privileged port check `*port < QRTR_MIN_EPH_SOCKET` (`0x4000`)
+   evaluates to true for any negative `int`, requiring `CAP_NET_ADMIN`,
+   or conversely in `idr_alloc_u32(&qrtr_ports, ipc, port, *port,
+   GFP_ATOMIC)`, passing a `int *` cast to `u32 *` risks signed/unsigned
+   mismatch.
+2. Changing `port` in `__qrtr_bind()` and `qrtr_port_assign()` from
+   `int` to `u32` matches `struct sockaddr_qrtr`'s `u32 sq_port` and
+   `idr_alloc_u32()`'s `u32 *` parameter.
+
+Fixes: bdabad3e363d ("net: Add Qualcomm IPC router")
+Assisted-by: LLM
+Signed-off-by: Hui Peng <benquike@gmail.com>
+
+---
+ net/qrtr/af_qrtr.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+---
+diff --git a/net/qrtr/af_qrtr.c b/net/qrtr/af_qrtr.c
+index 78347c937af7..cae7af5b9229 100644
+--- a/net/qrtr/af_qrtr.c
++++ b/net/qrtr/af_qrtr.c
+@@ -785,7 +785,7 @@ static void qrtr_port_remove(struct qrtr_sock *ipc)
+  *   <QRTR_MIN_EPH_SOCKET: Specified; requires CAP_NET_ADMIN
+  *   >QRTR_MIN_EPH_SOCKET: Specified; available to all
+  */
+-static int qrtr_port_assign(struct qrtr_sock *ipc, int *port)
++static int qrtr_port_assign(struct qrtr_sock *ipc, u32 *port)
+ {
+ 	int rc;
+ 
+@@ -835,7 +835,7 @@ static int __qrtr_bind(struct socket *sock,
+ {
+ 	struct qrtr_sock *ipc = qrtr_sk(sock->sk);
+ 	struct sock *sk = sock->sk;
+-	int port;
++	u32 port;
+ 	int rc;
+ 
+ 	/* rebinding ok */

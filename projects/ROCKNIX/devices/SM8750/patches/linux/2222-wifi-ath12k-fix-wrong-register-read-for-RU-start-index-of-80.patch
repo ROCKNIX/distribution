@@ -1,0 +1,51 @@
+From e49c1be5860334976e485777b97991aae9b4e8c7 Mon Sep 17 00:00:00 2001
+From: Jose Ignacio Tornos Martinez <jtornosm@redhat.com>
+Date: Fri, 30 Oct 2026 10:09:06 +0100
+Subject: wifi: ath12k: fix wrong register read for RU start index of 80_3
+ segment
+
+The RU start index for the fourth 80 MHz segment (80_3) is read from
+rx_usr_info->info2 instead of rx_usr_info->info3. The bitmask used
+(HAL_RX_USR_INFO3_RU_START_IDX_80_3) is correct for info3, so applying
+it to info2 extracts garbage bits, producing an out-of-range shift
+exponent that triggers a UBSAN splat:
+
+  UBSAN: shift-out-of-bounds in drivers/net/wireless/ath/ath12k/wifi7/dp_mon.c:302:22
+  shift exponent 284 is too large for 64-bit type 'long long unsigned int'
+  Call Trace:
+   ath12k_wifi7_dp_mon_hal_rx_parse_user_info.cold+0x3a/0xef7 [ath12k_wifi7]
+   ath12k_wifi7_dp_mon_rx_parse_status_tlv+0x621/0x990 [ath12k_wifi7]
+   ath12k_wifi7_dp_mon_parse_rx_dest+0xa9/0x2b0 [ath12k_wifi7]
+   ath12k_wifi7_dp_mon_srng_process+0x34f/0x560 [ath12k_wifi7]
+   ath12k_wifi7_dp_mon_process_ring+0x205/0x270 [ath12k_wifi7]
+   ath12k_wifi7_dp_service_srng+0x1b4/0x5e0 [ath12k_wifi7]
+   ath12k_pci_ext_grp_napi_poll+0x43/0x100 [ath12k]
+
+Read from the suitable info (in this case info3) like the other three
+segments do.
+
+Signed-off-by: Jose Ignacio Tornos Martinez <jtornosm@redhat.com>
+Reviewed-by: Tamizh Chelvam Raja <tamizh.raja@oss.qualcomm.com>
+Fixes: e6fa62bada87 ("wifi: ath12k: Add HAL_RX_PPDU_START_USER_INFO TLV parsing support")
+Link: https://patch.msgid.link/20261030090906.298234-1-jtornosm@redhat.com
+Signed-off-by: Jeff Johnson <jeff.johnson@oss.qualcomm.com>
+---
+ drivers/net/wireless/ath/ath12k/wifi7/dp_mon.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/wifi7/dp_mon.c b/drivers/net/wireless/ath/ath12k/wifi7/dp_mon.c
+index c90b60eee5351b..1c4fa29626a13f 100644
+--- a/drivers/net/wireless/ath/ath12k/wifi7/dp_mon.c
++++ b/drivers/net/wireless/ath/ath12k/wifi7/dp_mon.c
+@@ -293,7 +293,7 @@ ath12k_wifi7_dp_mon_hal_rx_parse_user_info(const struct hal_receive_user_info *r
+ 	}
+ 
+ 	ru_type_80_3 = le32_get_bits(rx_usr_info->info2, HAL_RX_USR_INFO2_RU_TYPE_80_3);
+-	ru_start_index_80_3 = le32_get_bits(rx_usr_info->info2,
++	ru_start_index_80_3 = le32_get_bits(rx_usr_info->info3,
+ 					    HAL_RX_USR_INFO3_RU_START_IDX_80_3);
+ 	if (ru_type_80_3 != HAL_EHT_RU_NONE) {
+ 		ru_size += ru_type_80_3;
+-- 
+cgit 1.3.1-korg
+
