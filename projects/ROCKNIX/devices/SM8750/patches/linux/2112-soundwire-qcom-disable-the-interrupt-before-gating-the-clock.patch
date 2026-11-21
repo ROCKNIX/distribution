@@ -1,0 +1,48 @@
+From 6c067677192f054bbfa815caf04f536bb8dcdee2 Mon Sep 17 00:00:00 2001
+From: Oleg Keri <okerixx@gmail.com>
+Date: Fri, 9 Oct 2026 10:26:39 +0200
+Subject: soundwire: qcom: disable the interrupt before gating the clock
+
+swrm_runtime_suspend() gates hclk straight after the ClockStopNow
+broadcast, while the interrupt thread that completed it is still
+clearing the status and CLK_STOP_FINISHED is about to fire. Both touch
+registers with the clock going away; on x1e80100 and glymur hclk is the
+SoundWire clock itself. The next clock-stop exit then fails at random
+(bus clash, parity errors, AUTO_ENUM_FAILED) and one side of the
+speakers stays detached until reboot.
+
+Disable the interrupt before gating the clock and enable it again once
+the clock is back.
+
+Fixes: 74e79da9fd46 ("soundwire: qcom: add runtime pm support")
+Signed-off-by: Oleg Keri <okerixx@gmail.com>
+Reviewed-by: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+Link: https://patch.msgid.link/20261009082639.22662-1-okerixx@gmail.com
+Signed-off-by: Vinod Koul <vkoul@kernel.org>
+---
+ drivers/soundwire/qcom.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/soundwire/qcom.c b/drivers/soundwire/qcom.c
+index 6e0c5fb10efad4..147e55b7a600b9 100644
+--- a/drivers/soundwire/qcom.c
++++ b/drivers/soundwire/qcom.c
+@@ -1801,6 +1801,7 @@ static int __maybe_unused swrm_runtime_resume(struct device *dev)
+ 	}
+ 
+ 	clk_prepare_enable(ctrl->hclk);
++	enable_irq(ctrl->irq);
+ 
+ 	if (ctrl->clock_stop_not_supported) {
+ 		reinit_completion(&ctrl->enumeration);
+@@ -1887,6 +1888,7 @@ static int __maybe_unused swrm_runtime_suspend(struct device *dev)
+ 		}
+ 	}
+ 
++	disable_irq(ctrl->irq);
+ 	clk_disable_unprepare(ctrl->hclk);
+ 
+ 	usleep_range(300, 305);
+-- 
+cgit 1.3.1-korg
+

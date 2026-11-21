@@ -1,0 +1,49 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ernest Van Hoecke <ernest.vanhoecke@toradex.com>
+Date: Tue, 20 Oct 2026 15:00:12 +0200
+Subject: [PATCH] of: base: Fix stack overflow in of_parse_phandle_with_args_map()
+
+of_parse_phandle_with_args_map() reads the #<stem>-cells property of the
+provider referenced by the consumer into list_size. It then copies that
+many cells of the consumer's specifier from out_args->args[] into the
+on-stack initial_match_array[]. Both arrays hold MAX_PHANDLE_ARGS cells,
+but list_size is never checked against that limit. A malformed
+Devicetree with a larger cell count therefore makes the copy read past
+out_args->args[] and write past initial_match_array[].
+
+The cell count of each provider selected by a <stem>-map entry is
+already rejected when it exceeds MAX_PHANDLE_ARGS. Apply the same limit
+to the provider referenced by the consumer.
+
+A plain reference to such a provider, without a map, now also fails.
+Previously it succeeded with the specifier truncated to MAX_PHANDLE_ARGS
+cells by __of_parse_phandle_with_args().
+
+Fixes: bd6f2fd5a1d5 ("of: Support parsing phandle argument lists through a nexus node")
+Suggested-by: Uwe Kleine-König <u.kleine-koenig@baylibre.com>
+Link: https://lore.kernel.org/all/aq1CSswlo57jZpMH@monoceros/
+Cc: stable@vger.kernel.org
+Signed-off-by: Ernest Van Hoecke <ernest.vanhoecke@toradex.com>
+Link: https://lore.kernel.org/r/20261020-fw-devlink-nexus-ready-v3-1-fd6f1c17e16d@toradex.com
+---
+v3: New patch (Uwe)
+---
+ drivers/of/base.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/drivers/of/base.c b/drivers/of/base.c
+index f63a9486b130..5abadab22392 100644
+--- a/drivers/of/base.c
++++ b/drivers/of/base.c
+@@ -1587,6 +1587,11 @@ int of_parse_phandle_with_args_map(const struct device_node *np,
+ 	if (ret < 0)
+ 		goto put;
+ 
++	if (list_size > MAX_PHANDLE_ARGS) {
++		ret = -EINVAL;
++		goto put;
++	}
++
+ 	/* Precalculate the match array - this simplifies match loop */
+ 	for (i = 0; i < list_size; i++)
+ 		initial_match_array[i] = cpu_to_be32(out_args->args[i]);

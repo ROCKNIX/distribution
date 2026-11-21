@@ -1,0 +1,46 @@
+From f559ef6316971fe39dc5f5edd6a483429ba03768 Mon Sep 17 00:00:00 2001
+From: Anup Vishwakarma <anup.vishwakarma@oss.qualcomm.com>
+Date: Mon, 31 Aug 2026 18:09:08 +0530
+Subject: [PATCH] remoteproc: qcom_q6v5_adsp: Fix double jiffies conversion in
+ adsp_start()
+
+adsp_start() computes 5 * HZ, an already-converted jiffies count, and
+passes it into msecs_to_jiffies(), which expects milliseconds --
+reinterpreting the value and shrinking the intended timeout. Every
+other caller (q6v5_start() in qcom_q6v5_mss.c, qcom_pas_start() in
+qcom_q6v5_pas.c) passes msecs_to_jiffies(5000) directly, matching
+qcom_q6v5_wait_for_start()'s kerneldoc, which documents @timeout as
+already being in jiffies.
+
+On CONFIG_HZ=250 this shrinks the intended 5 second timeout to
+~1.25 seconds, causing a DSP that legitimately takes 2-3 seconds to
+signal ready to be spuriously torn down as a boot failure.
+
+Fix by passing msecs_to_jiffies(5000) directly, matching every other
+caller.
+
+Signed-off-by: Anup Vishwakarma <anup.vishwakarma@oss.qualcomm.com>
+Fixes: dc160e449122 ("remoteproc: qcom: Introduce Non-PAS ADSP PIL driver")
+Reviewed-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20260831-b4-adsp_start_jiffies_fix_upstream-v1-1-9f8cf85ea220@oss.qualcomm.com
+Signed-off-by: Bjorn Andersson <andersson@kernel.org>
+---
+ drivers/remoteproc/qcom_q6v5_adsp.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/remoteproc/qcom_q6v5_adsp.c b/drivers/remoteproc/qcom_q6v5_adsp.c
+index 3965420678..e0acddaac9 100644
+--- a/drivers/remoteproc/qcom_q6v5_adsp.c
++++ b/drivers/remoteproc/qcom_q6v5_adsp.c
+@@ -430,7 +430,7 @@ static int adsp_start(struct rproc *rproc)
+ 		goto disable_adsp_clks;
+ 	}
+ 
+-	ret = qcom_q6v5_wait_for_start(&adsp->q6v5, msecs_to_jiffies(5 * HZ));
++	ret = qcom_q6v5_wait_for_start(&adsp->q6v5, msecs_to_jiffies(5000));
+ 	if (ret == -ETIMEDOUT) {
+ 		dev_err(adsp->dev, "start timed out\n");
+ 		goto disable_adsp_clks;
+-- 
+2.56.0
+
