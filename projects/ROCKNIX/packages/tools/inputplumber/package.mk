@@ -2,8 +2,8 @@
 # Copyright (C) 2025 ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="inputplumber"
-PKG_VERSION="0.82.0"
-PKG_SHA256="aaee9b65b47a21756169eb1c49eb258ecdd1896fb8dd4996c2b50d11af049d21"
+PKG_VERSION="0.85.0"
+PKG_SHA256="2c5074f3c60f34221b53e2108aaf0cec32b10cfccd37aa97b6cc771134cd7d29"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/ShadowBlip/InputPlumber"
 PKG_URL="${PKG_SITE}/archive/refs/tags/v${PKG_VERSION}.tar.gz"
@@ -18,6 +18,7 @@ PKG_TOOLCHAIN="manual"
 PKG_DROP_DEVICE_CONFIGS="
   50-ayaneo_pocket_s2.yaml
   50-ayaneo_pocket_ds.yaml
+  50-ayn_odin.yaml
   50-ayn_odin2.yaml
   50-ayn_odin2_mini.yaml
   50-ayn_odin3.yaml
