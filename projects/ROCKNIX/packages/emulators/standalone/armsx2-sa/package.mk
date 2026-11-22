@@ -2,8 +2,8 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="armsx2-sa"
-PKG_VERSION="ce3743fa039f9aea4c53e4f2fd7d200043dc86ab"
-PKG_SHA256="3745c342a45951bdc3101a5bf70338f63ae012f24119e55bcd3d0df50cbdbf10"
+PKG_VERSION="378e6bce00345886eb3f42851f8d8c8e7c29a99f" #v2.9.5
+PKG_SHA256="0c09d9e3d7927de4179019b57ba3729a8f86b9c979241c1cc7e87fd119bd6ebf"
 PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/ARMSX2/ARMSX2"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
@@ -12,7 +12,7 @@ PKG_DEPENDS_TARGET="toolchain llvm:host SDL3 libpng zlib libjpeg-turbo zstd lz4 
 PKG_TOOLCHAIN="manual"
 PKG_BUILD_FLAGS="speed"
 
-PATCHES_URL="https://github.com/PCSX2/pcsx2_patches/archive/refs/tags/latest.zip"
+PATCHES_URL="https://github.com/PCSX2/pcsx2_patches/releases/latest/download/patches.zip"
 
 get_graphicdrivers
 
@@ -33,7 +33,7 @@ esac
 pre_configure_target() {
   PCSX2_CMAKE_BASE=(
     # Reported version
-    -DARMSX2_VERSION=2.9.1
+    -DARMSX2_VERSION=2.9.5
     -DCMAKE_BUILD_TYPE=Release
     # Release builds don't need the unit tests or the recompiler test hooks
     -DENABLE_TESTS=OFF
