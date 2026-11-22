@@ -34,7 +34,7 @@ case ${DEVICE} in
   RK3588)
     PKG_CMAKE_OPTS_TARGET+=" -DRK3588=On"
     ;;
-  SM4450)
+  SM4450|SM6450)
     PKG_CMAKE_OPTS_TARGET+=" -DSD888=On"
     ;;
   SM8250)
