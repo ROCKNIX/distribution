@@ -5,7 +5,7 @@ PKG_NAME="libplacebo"
 PKG_VERSION="05ac2cca6571c04d06369a26825d207781b73f32"
 PKG_LICENSE="GPLv2+"
 PKG_SITE="https://code.videolan.org/videolan/libplacebo"
-PKG_URL="${PKG_SITE}.git"
+PKG_URL="https://github.com/haasn/libplacebo.git"
 PKG_DEPENDS_TARGET="toolchain ffmpeg SDL2 luajit libass"
 PKG_LONGDESC="The core rendering algorithms and ideas of mpv rewritten as an independent library."
 
