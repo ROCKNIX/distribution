@@ -99,6 +99,9 @@ fi
 # modules packages
 [ "${MODULES_PKG}" = "yes" ] && PKG_DEPENDS_TARGET+=" modules"
 
+# KWin session
+[ "${WINDOWMANAGER}" = "kwin-env" ] && [ "${KWIN_SESSION}" = "yes" ] && PKG_DEPENDS_TARGET+=" rocknix-kwin-session"
+
 # Batteryplus voltage-based battery percentage daemon
 [ "${BATTERYPLUS_SUPPORT}" = "yes" ] && PKG_DEPENDS_TARGET+=" batteryplus"
 
