@@ -27,6 +27,10 @@ if [ ! -d "/storage/.cache/dsperate" ]; then
 	mkdir -p "/storage/.cache/dsperate"
 fi
 
+if [ ! -d "/storage/roms/ndsiware/.dsi_photos" ]; then
+	mkdir -p "/storage/roms/ndsiware/.dsi_photos"
+fi
+
 #Ini key helper
 set_ini_key() {
 	if grep -q "^[[:space:]]*${1}[[:space:]]*=" "${DSPERATE_INI}"; then
@@ -48,6 +52,7 @@ VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
 FRAMESKIP=$(get_setting frameskip "${PLATFORM}" "${GAME}")
 FSMODE=$(get_setting frameskip_mode "${PLATFORM}" "${GAME}")
 TIMING=$(get_setting cpu_timing "${PLATFORM}" "${GAME}")
+DSIENH=$(get_setting dsi_enhanced "${PLATFORM}" "${GAME}")
 AA=$(get_setting anti_aliasing "${PLATFORM}" "${GAME}")
 GPU3D=$(get_setting 3d_renderer "${PLATFORM}" "${GAME}")
 GPU3DSCALE=$(get_setting 3d_render_scale "${PLATFORM}" "${GAME}")
@@ -121,9 +126,15 @@ esac
 
 #CPU timing model
 case "${TIMING}" in
-	fast|exact)
+	fast|exact|turbo)
 		OPTS+=("--timing" "${TIMING}")
 		;;
+esac
+
+#DSi-enhanced cards as DSi
+case "${DSIENH}" in
+	1) OPTS+=("--dsi-enhanced") ;;
+	0) OPTS+=("--no-dsi-enhanced") ;;
 esac
 
 #Forced integer scale
