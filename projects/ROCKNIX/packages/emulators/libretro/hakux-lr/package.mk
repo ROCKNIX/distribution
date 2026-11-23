@@ -8,13 +8,12 @@ PKG_SITE="https://github.com/portare-ch/hakuX-lr"
 PKG_DEPENDS_TARGET="toolchain zlib"
 PKG_LONGDESC="hakuX libretro core"
 PKG_TOOLCHAIN="manual"
-PKG_VERSION="0.33.3"
-PKG_SHA256="6d454f5913de62432cd3c835421a54e1b4c0c9d4fbd9334f5a3ed69b0656f934"
-PKG_URL="${PKG_SITE}/releases/download/linux-v${PKG_VERSION}/hakux-${PKG_VERSION}-aarch64.tar.gz"
-PKG_SOURCE_DIR="hakux-${PKG_VERSION}"
+PKG_VERSION="0.37.3"
+PKG_SHA256="0a71d99ddfc6f4ad2edf26202ffc13def272ef56debbc131cd071a90917ee396"
+PKG_URL="${PKG_SITE}/releases/download/linux-v${PKG_VERSION}/hakux-lr-${PKG_VERSION}-aarch64.tar.gz"
+PKG_SOURCE_DIR="hakux-lr-${PKG_VERSION}"
 
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/lib/libretro
-  cp -p ${PKG_BUILD}/lib/libretro/hakux_libretro.so ${PKG_BUILD}/lib/libretro/hakux_libretro.info \
-    ${INSTALL}/usr/lib/libretro
+  cp -p ${PKG_BUILD}/lib/libretro/hakux-lr_libretro.* ${INSTALL}/usr/lib/libretro
 }
