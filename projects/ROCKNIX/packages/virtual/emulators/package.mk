@@ -15,7 +15,7 @@ EMUS_32BIT=""
 
 PKG_RETROARCH="core-info libretro-database retroarch retroarch-assets retroarch-joypads retroarch-overlays retropie-shaders slang-shaders"
 
-LIBRETRO_CORES="81-lr a5200-lr arduous-lr armgba-lr atari800-lr b2-lr beetle-gba-lr beetle-lynx-lr beetle-ngp-lr beetle-pce-lr beetle-pce-fast-lr \
+LIBRETRO_CORES="81-lr a5200-lr arduous-lr armgba-lr armn64-lr atari800-lr b2-lr beetle-gba-lr beetle-lynx-lr beetle-ngp-lr beetle-pce-lr beetle-pce-fast-lr \
                 beetle-pcfx-lr bk-lr bsnes2014-balanced-lr bsnes-mercury-balanced-lr beetle-supafaust-lr beetle-supergrafx-lr           \
                 beetle-vb-lr beetle-wswan-lr bluemsx-lr cap32-lr crocods-lr daphne-lr doublecherrygb-lr dosbox-core-lr dosbox-pure-lr   \
                 easyrpg-lr emuscv-lr fake08-lr fbalpha2012-lr fbalpha2019-lr fbneo-lr fceumm-lr flycast-lr fmsx-lr                      \
@@ -918,6 +918,7 @@ makeinstall_target() {
 
   ### Nintendo 64
   add_emu_core n64 retroarch mupen64plus_next true
+  add_emu_core n64 retroarch armn64 false
   add_emu_core n64 retroarch parallel_n64 false
   add_emu_core n64 mupen64plus mupen64plus-sa false
   case ${DEVICE} in
@@ -940,6 +941,7 @@ makeinstall_target() {
 
   ### Nintendo 64 Disk Drive
   add_emu_core n64dd retroarch mupen64plus_next true
+  add_emu_core n64dd retroarch armn64 false
   add_emu_core n64dd retroarch parallel_n64 false
   add_emu_core n64dd mupen64plus mupen64plus-sa false
   case ${DEVICE} in
