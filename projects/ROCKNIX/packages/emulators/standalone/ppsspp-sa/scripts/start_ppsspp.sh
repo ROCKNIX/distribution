@@ -13,6 +13,10 @@ PPSSPP_INI="PSP/SYSTEM/ppsspp.ini"
 if [ ! -d "${CONF_DIR}" ]
 then
   cp -rf ${SOURCE_DIR} ${CONF_DIR}
+else
+  # Assets and cheat DB change between versions, refresh them for existing configs
+  cp -rf ${SOURCE_DIR}/assets/. ${CONF_DIR}/assets/
+  cp -u ${SOURCE_DIR}/PSP/Cheats/cheat.db ${CONF_DIR}/PSP/Cheats/cheat.db
 fi
 
 # Check if savestate dir exists
