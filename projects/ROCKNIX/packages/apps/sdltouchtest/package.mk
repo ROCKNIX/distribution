@@ -20,7 +20,7 @@ makeinstall_target() {
     cp -a ${PKG_BUILD}/test ${INSTALL}/usr/bin/sdltouchtest
 
 case ${DEVICE} in
-  RK3399|RK35*|SM8250|SM8550)
+  RK3399|RK35*|SM8250|SM8550|SDM845)
     mkdir -p ${INSTALL}/usr/config/modules
     cp -rf ${PKG_DIR}/scripts/* ${INSTALL}/usr/config/modules
     chmod 0755 ${INSTALL}/usr/config/modules/*

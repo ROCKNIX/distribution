@@ -1,48 +1,4 @@
 #!/bin/sh
-#
-# Battery / Charging LED indicator
-#
-# LED layout:
-#   battery4 = Green (top)
-#   battery3 = Green
-#   battery2 = Green
-#   battery1 = Green (bottom)
-#   battery0 = Red (bottom)
-#
-# LEDs are active-low:
-#   0 = ON
-#   1 = OFF
-#
-# On battery, not charging, VBUS not present:
-#   (voltage at/below cutoff for 3s: shut the device down)
-#   0-10%  : one solid red
-#  11-25%  : one solid green
-#  26-50%  : two solid green
-#  51-75%  : three solid green
-#  76-100% : four solid green
-#
-# Charging:
-#   1-10%  : one solid red,   one flashing green
-#  11-25%  : one solid green, one flashing red
-#  26-50%  : one solid green, one flashing green
-#  51-75%  : two solid green, one flashing green
-#  76-99%  : three solid green, one flashing green
-#    100%  : four solid green (fully charged)
-#
-# Reading the role-switch state directly (host/device/none) isn't reliable
-# here - e.g. the port is in host role by default at boot, so that alone
-# false-positives on every normal boot. Instead combine two signals we do
-# trust: not charging (from the PMIC driver) plus VBUS actually present
-# (rk817_charger hwmon's input-voltage-average channel). Not charging while
-# VBUS is high can really only mean the port itself is sourcing VBUS (host
-# role) rather than sensing an external supply - so flash all five LEDs,
-# making it visibly obvious the system can't accept external power until
-# it's reset out of host mode.
-#
-# Debug:
-#   ./battery_led_status 50
-#   Sets 50% display (not-charging branch) and exits
-#
 
 . /etc/profile.d/001-functions
 
@@ -84,7 +40,6 @@ all_off()
     led_off "$G4"
 }
 
-# $1..$5 = red g1 g2 g3 g4, each "1" (on) or "0" (off)
 set_leds()
 {
     [ "$1" = "1" ] && led_on "$RED" || led_off "$RED"
@@ -94,10 +49,6 @@ set_leds()
     [ "$5" = "1" ] && led_on "$G4"  || led_off "$G4"
 }
 
-# Same source and same "is charging" definition EmulationStation's battery
-# icon (Utils::Platform::queryBatteryInformation()) and powerstate.sh's GPU
-# profile switching already use, so the LED bar can't disagree with either
-# of them about whether we're charging.
 is_charging()
 {
     case "$(cat "$BATTERY_STATUS" 2>/dev/null)" in
@@ -106,11 +57,7 @@ is_charging()
     esac
 }
 
-# True if VBUS is actually present, read via the rk817_charger hwmon
-# input-voltage-average channel (charger_input_volt_avg_uv in
-# rk817_charger.c). Goes true for our own self-driven VBUS (host role)
-# just as much as a real external charger - only meaningful combined with
-# is_charging() below.
+# Not the role-switch state (host at boot). Includes our own host-mode VBUS: use with is_charging()
 is_vbus_present()
 {
     [ -n "$CHARGER_HWMON" ] || return 1
@@ -120,13 +67,7 @@ is_vbus_present()
     [ -n "$VOLTAGE" ] && [ "$VOLTAGE" -ge 1000 ]
 }
 
-# Power off on measured battery voltage, not the fuel gauge - the
-# gauge can read false-0% (recoverable via 'factoryreset
-# rk817-fuelgauge') or stick high while genuinely empty, and the
-# driver never clamps it against real voltage. Compares voltage_avg
-# against the dts cutoff (voltage-min-design, 3.4V), both read at
-# runtime. Unreadable voltage counts as empty so a sysfs failure
-# can't disable over-discharge protection.
+# Measured voltage, not the fuel gauge (false-0% or stuck high); unreadable voltage counts as empty
 is_battery_empty()
 {
     VNOW=$(cat /sys/class/power_supply/battery/voltage_avg 2>/dev/null)
@@ -136,13 +77,10 @@ is_battery_empty()
     [ "$VNOW" -le "$VMIN" ]
 }
 
-# Consecutive samples at/below cutoff before powering off: 3 seconds
-# at the 0.5s loop cadence, so momentary load sag at moderate charge
-# doesn't false-trigger.
+# 3 seconds at the 0.5s loop cadence, so momentary load sag doesn't false-trigger.
 EMPTY_COUNT=0
 EMPTY_LIMIT=6
 
-# $1 = battery percent, $2 = blink phase ("1" or "0"), alternates every call
 show_level()
 {
     PCT="$1"
@@ -167,7 +105,6 @@ show_level()
         if   [ "$EMPTY_COUNT" -ge "$EMPTY_LIMIT" ]; then
             all_off
             systemctl poweroff
-            # Avoid re-triggering in a tight loop while poweroff completes.
             sleep 60
         elif [ "$PCT" -le 10 ]; then set_leds 1 0 0 0 0
         elif [ "$PCT" -le 25 ]; then set_leds 0 1 0 0 0
@@ -179,16 +116,12 @@ show_level()
 }
 
 
-# Debug mode
 if [ -n "$1" ]; then
     show_level "$1" 1
     exit 0
 fi
 
 
-# Normal daemon mode - runs at half-second granularity so the flashing
-# states (charging, and the VBUS-present-but-not-charging case) animate
-# smoothly instead of needing a separate nested flash loop.
 BLINK=0
 while :; do
     PCT=$(battery_percent | tr -d '\r\n')

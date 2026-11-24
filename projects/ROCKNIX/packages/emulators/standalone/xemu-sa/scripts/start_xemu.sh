@@ -147,6 +147,12 @@ fi
                 sed -i "/surface_scale =/c\surface_scale = 1" "${CONF_DIR}/${XEMU_INI}"
         fi
 
+  #Scan out render size
+        SCANOUT_SCALE=$(scanout_internal_scale "$(awk '/^surface_scale = / {print $3; exit}' "${CONF_DIR}/${XEMU_INI}")" 480 1 10)
+        sed -i "/surface_scale =/c\surface_scale = ${SCANOUT_SCALE}" "${CONF_DIR}/${XEMU_INI}"
+        [ "$ASPECT" = "1" ] && SCANOUT_ASPECT=16:9 || SCANOUT_ASPECT=4:3
+        scanout_render_size 480 "${SCANOUT_SCALE}" "${SCANOUT_ASPECT}"
+
   #Show FPS
 	if [ "$SHOWFPS" = "1" ]
 	then
@@ -194,5 +200,9 @@ fi
   echo "BIOS DIR set to: ${BIOS_DIR}"
   echo "Launching /usr/bin/xemu -fullscreen -config_path {CONF_DIR}/${XEMU_INI} -dvd_path ${1}"
 
+# Check for Bios
+if ! find /storage/roms/bios/xemu/bios -maxdepth 1 -iname '*.bin' | grep -q .; then
+  /usr/bin/sdl2notify --center "Starting Xemu... \n No Bios Files Found!||Visit Rocknix.org For Instructions." 255 255 255 any
+fi
 # Run Xemu emulator
   ${EMUPERF} /usr/bin/xemu -full-screen -config_path "${CONF_DIR}/${XEMU_INI}" -dvd_path "${1}"

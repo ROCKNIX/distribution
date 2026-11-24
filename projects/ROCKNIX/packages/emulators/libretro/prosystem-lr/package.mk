@@ -7,7 +7,7 @@ PKG_SHA256="23401c8b104ef24db111bbc4b13e37f224ffe16febfb89c704c70cdb269603bc"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/prosystem-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="Port of ProSystem to libretro."
 
 makeinstall_target() {

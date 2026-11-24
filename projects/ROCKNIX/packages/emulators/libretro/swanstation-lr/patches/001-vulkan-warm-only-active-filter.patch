@@ -1,0 +1,109 @@
+--- a/src/core/gpu_hw_vulkan.cpp
++++ b/src/core/gpu_hw_vulkan.cpp
+@@ -2053,87 +2053,37 @@
+ 
+ void GPU_HW_Vulkan::ShaderCompileThreadEntryPoint()
+ {
+-  // Lower this worker's scheduling priority to "below normal" so
+-  // it doesn't compete with the runloop / CPU emulation / audio
+-  // threads on CPU-contended systems. Best-effort: if the platform
+-  // refuses we just keep going at default priority. See
+-  // common/thread_priority.h for the per-platform mechanics.
+   ThreadPriority::LowerCurrentThreadPriority();
+ 
+-  // Filter is the outermost loop. Order: current m_texture_filtering
+-  // first (so a Lazy-mode launch from a cold cache starts populating
+-  // the slots the runloop will actually hit ASAP), then the remaining
+-  // six filter values in numeric order. In Enabled mode the current
+-  // filter's sub-cube was already filled synchronously by the
+-  // precompile_sync block in CompilePipelines, so the worker's
+-  // first pass over it hits the lock-free fast-return path on every
+-  // cell - effectively a free walk that just verifies the cache and
+-  // then moves on to populate the other six.
+-  //
+-  // GPUTextureFilter::Count is 7 (Nearest, Bilinear, BilinearBinAlpha,
+-  // JINC2, JINC2BinAlpha, xBR, xBRBinAlpha). On hardware that lacks
+-  // dual-source blend the *BinAlpha and non-Nearest filters cannot
+-  // actually be used at runtime (UpdateHWSettings forces
+-  // m_texture_filtering back to Nearest), so skip warming those
+-  // sub-cubes - they would never be looked up at draw time and the
+-  // PSOs would just sit unused.
+-  //
+-  // The (m_true_color, m_scaled_dithering) snapshot is taken once at
+-  // worker entry. The worker is responsible only for the current
+-  // (true_color, scaled_dithering) combo's seven filter sub-cubes -
+-  // walking all four combos in the background would balloon warm-up
+-  // time to several minutes on a cold pipeline cache, well past
+-  // "useful". Toggling true_color or scaled_dithering at runtime is
+-  // serviced the same way a filter swap is: the previous combo's
+-  // sub-cubes stay populated and are instantly addressable on a
+-  // cycle-back, while the new combo gets a sync compile of its
+-  // current filter sub-cube (Enabled) or lazy fault-in (Lazy /
+-  // Disabled), plus a new background worker rooted at the new
+-  // (true_color, scaled_dithering) tuple covering the other six
+-  // filters.
+-  //
+-  // The quit flag is checked between cells so DestroyPipelines can
+-  // stop the worker within at most one PSO compile of latency
+-  // (Vulkan PSO compiles can be ~50-200 ms with the heavier texture
+-  // filters).
+-  //
+-  // Structurally unreachable cells are skipped via
+-  // IsBatchShaderReachable.
++  // Warm only the active (filter, true_color, scaled_dithering) sub-cube.
++  // Every live VkPipeline stays resident until DestroyPipelines, so warming
++  // all seven filters costs ~100 MB on low-RAM devices. A filter change goes
++  // through CompilePipelines, which restarts this worker for the new filter.
+   const bool dual_source = m_supports_dual_source_blend;
+-  const uint8_t current_filter = static_cast<uint8_t>(m_texture_filtering);
++  const GPUTextureFilter filter = m_texture_filtering;
+   const bool true_color = m_true_color;
+   const bool scaled_dithering = m_scaled_dithering;
+-  for (uint8_t f_offset = 0; f_offset < static_cast<uint8_t>(GPUTextureFilter::Count); f_offset++)
+-  {
+-    const uint8_t filter_idx =
+-      (current_filter + f_offset) % static_cast<uint8_t>(GPUTextureFilter::Count);
+-    const GPUTextureFilter filter = static_cast<GPUTextureFilter>(filter_idx);
+-
+-    if (!dual_source && TextureFilterRequiresDualSourceBlend(filter))
+-      continue;
+ 
+-    for (uint8_t depth_test = 0; depth_test < 3; depth_test++)
++  for (uint8_t depth_test = 0; depth_test < 3; depth_test++)
++  {
++    for (uint8_t render_mode = 0; render_mode < 4; render_mode++)
+     {
+-      for (uint8_t render_mode = 0; render_mode < 4; render_mode++)
++      for (uint8_t transparency_mode = 0; transparency_mode < 5; transparency_mode++)
+       {
+-        for (uint8_t transparency_mode = 0; transparency_mode < 5; transparency_mode++)
++        for (uint8_t texture_mode = 0; texture_mode < 9; texture_mode++)
+         {
+-          for (uint8_t texture_mode = 0; texture_mode < 9; texture_mode++)
+-          {
+-            if (!IsBatchShaderReachable(static_cast<BatchRenderMode>(render_mode), texture_mode, dual_source))
+-              continue;
++          if (!IsBatchShaderReachable(static_cast<BatchRenderMode>(render_mode), texture_mode, dual_source))
++            continue;
+ 
+-            for (uint8_t dithering = 0; dithering < 2; dithering++)
++          for (uint8_t dithering = 0; dithering < 2; dithering++)
++          {
++            for (uint8_t interlacing = 0; interlacing < 2; interlacing++)
+             {
+-              for (uint8_t interlacing = 0; interlacing < 2; interlacing++)
+-              {
+-                if (retro_atomic_load_acquire_int(&m_shader_compile_thread_quit))
+-                  return;
++              if (retro_atomic_load_acquire_int(&m_shader_compile_thread_quit))
++                return;
+ 
+-                GetBatchPipeline(filter, true_color, scaled_dithering, depth_test, render_mode,
+-                                 texture_mode, transparency_mode,
+-                                 static_cast<bool>(dithering), static_cast<bool>(interlacing), true);
+-              }
++              GetBatchPipeline(filter, true_color, scaled_dithering, depth_test, render_mode, texture_mode,
++                               transparency_mode, static_cast<bool>(dithering), static_cast<bool>(interlacing), true);
+             }
+           }
+         }

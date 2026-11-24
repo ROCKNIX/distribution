@@ -44,6 +44,7 @@ GRENDERER=$(get_setting graphics_backend "${PLATFORM}" "${GAME}")
 IRES=$(get_setting internal_resolution "${PLATFORM}" "${GAME}")
 VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
 ENABLE_WIDESCREEN_PATCHES=$(get_setting enable_widescreen_patches "${PLATFORM}" "${GAME}")
+VKDRIVER=$(get_setting vulkan_driver "${PLATFORM}" "${GAME}")
 
 #Set the cores to use
 CORES=$(get_setting "cores" "${PLATFORM}" "${GAME}")
@@ -109,12 +110,19 @@ fi
         fi
 
   #Internal Resolution
-        if [ "$IRES" > "0" ]
+        if [ -n "$IRES" ] && [ "$IRES" != "0" ]
         then
                 sed -i "/^upscale_multiplier =/c\upscale_multiplier = $IRES" /storage/.config/ARMSX2/inis/PCSX2.ini
         else
                 sed -i '/^upscale_multiplier =/c\upscale_multiplier = 1' /storage/.config/ARMSX2/inis/PCSX2.ini
         fi
+
+  #Scan out render size, the software renderer draws at 1x
+        SCANOUT_SCALE=$(scanout_internal_scale "$(awk '/^upscale_multiplier = / {print $3; exit}' /storage/.config/ARMSX2/inis/PCSX2.ini)" 448 0.25 8 0.25)
+        sed -i "/^upscale_multiplier =/c\upscale_multiplier = ${SCANOUT_SCALE}" /storage/.config/ARMSX2/inis/PCSX2.ini
+        [ "$GRENDERER" = "3" ] && SCANOUT_SCALE=1
+        case "$ASPECT" in 1) SCANOUT_ASPECT=16:9 ;; 2) SCANOUT_ASPECT=0 ;; *) SCANOUT_ASPECT=4:3 ;; esac
+        scanout_render_size 448 "${SCANOUT_SCALE}" "${SCANOUT_ASPECT}"
 
   #Show FPS
 	if [ "$FPS" = "false" ]
@@ -208,6 +216,13 @@ fi
 
 #Graphic driver fixes
 @GRAPHICS@
+
+#Vulkan driver: Adreno 6xx/7xx builds ship ARMSX2's own Turnip. Point the
+#loader at it for this process only, unless the system driver was chosen.
+ARMSX2_ICD="/usr/share/armsx2-sa/turnip/freedreno_icd.aarch64.json"
+if [ -f "${ARMSX2_ICD}" ] && [ "${VKDRIVER}" != "system" ]; then
+  export VK_DRIVER_FILES="${ARMSX2_ICD}"
+fi
 
 #Set QT enviornment to wayland
   export QT_QPA_PLATFORM=wayland

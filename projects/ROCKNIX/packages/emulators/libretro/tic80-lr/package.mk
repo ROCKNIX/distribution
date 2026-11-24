@@ -2,11 +2,11 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="tic80-lr"
-PKG_VERSION="7020500a6e88f6ee91301933bb77f082a10e10f5"
+PKG_VERSION="6b07ce21ce2cd270e8c93a064e67fba913b677ae"
 PKG_LICENSE="MIT"
 PKG_SITE="https://github.com/nesbox/TIC-80"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="TIC-80 is a fantasy computer for making, playing and sharing tiny games."
 
 PKG_CMAKE_OPTS_TARGET="-DBUILD_DEMO_CARTS=OFF \

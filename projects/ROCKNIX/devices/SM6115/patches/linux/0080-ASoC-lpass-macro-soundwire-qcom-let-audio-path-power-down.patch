@@ -1,0 +1,153 @@
+ASoC: lpass-macro + soundwire: qcom: let the LPASS audio path power down
+
+The LPASS rx/tx/va/wsa macros and the Qualcomm SoundWire controller only
+implement runtime PM and never request an idle after probe, and the macro
+clock-gate callbacks (used by the SoundWire controllers and by the other
+macros' fsgen) write macro registers without a runtime PM reference. A
+macro that nothing pulls on therefore stays active forever, and one that is
+allowed to idle breaks the clocks it provides. Both keep MCLK/NPL requests
+to the ADSP alive.
+
+Take a runtime PM reference in the clock-gate enable paths and drop it on
+disable, let idle macros autosuspend after probe, and add system sleep
+handlers to the macros and the SoundWire controller that run the runtime
+suspend/resume paths for devices still runtime-active at suspend time, so
+a controller kept awake for codec jack alerts still clock-stops across
+system suspend.
+
+--- a/drivers/soundwire/qcom.c
++++ b/drivers/soundwire/qcom.c
+@@ -1807,7 +1807,24 @@
+ 	return 0;
+ }
+ 
++static int __maybe_unused swrm_suspend(struct device *dev)
++{
++	if (pm_runtime_status_suspended(dev))
++		return 0;
++
++	return swrm_runtime_suspend(dev);
++}
++
++static int __maybe_unused swrm_resume(struct device *dev)
++{
++	if (pm_runtime_status_suspended(dev))
++		return 0;
++
++	return swrm_runtime_resume(dev);
++}
++
+ static const struct dev_pm_ops swrm_dev_pm_ops = {
++	SET_SYSTEM_SLEEP_PM_OPS(swrm_suspend, swrm_resume)
+ 	SET_RUNTIME_PM_OPS(swrm_runtime_suspend, swrm_runtime_resume, NULL)
+ };
+ 
+--- a/sound/soc/codecs/lpass-va-macro.c
++++ b/sound/soc/codecs/lpass-va-macro.c
+@@ -1764,7 +1764,24 @@ static int va_macro_runtime_resume(struct device *dev)
+ 	return 0;
+ }
+ 
+ 
++static int va_macro_suspend(struct device *dev)
++{
++	if (pm_runtime_status_suspended(dev))
++		return 0;
++
++	return va_macro_runtime_suspend(dev);
++}
++
++static int va_macro_resume(struct device *dev)
++{
++	if (pm_runtime_status_suspended(dev))
++		return 0;
++
++	return va_macro_runtime_resume(dev);
++}
++
+ static const struct dev_pm_ops va_macro_pm_ops = {
++	SYSTEM_SLEEP_PM_OPS(va_macro_suspend, va_macro_resume)
+ 	RUNTIME_PM_OPS(va_macro_runtime_suspend, va_macro_runtime_resume, NULL)
+ };
+ 
+--- a/sound/soc/codecs/lpass-tx-macro.c
++++ b/sound/soc/codecs/lpass-tx-macro.c
+@@ -2435,7 +2435,24 @@ static int tx_macro_runtime_resume(struct device *dev)
+ 	return 0;
+ }
+ 
++static int tx_macro_suspend(struct device *dev)
++{
++	if (pm_runtime_status_suspended(dev))
++		return 0;
++
++	return tx_macro_runtime_suspend(dev);
++}
++
++static int tx_macro_resume(struct device *dev)
++{
++	if (pm_runtime_status_suspended(dev))
++		return 0;
++
++	return tx_macro_runtime_resume(dev);
++}
++
+ static const struct dev_pm_ops tx_macro_pm_ops = {
++	SYSTEM_SLEEP_PM_OPS(tx_macro_suspend, tx_macro_resume)
+ 	RUNTIME_PM_OPS(tx_macro_runtime_suspend, tx_macro_runtime_resume, NULL)
+ };
+ 
+--- a/sound/soc/codecs/lpass-rx-macro.c
++++ b/sound/soc/codecs/lpass-rx-macro.c
+@@ -3997,7 +3997,24 @@ static int rx_macro_runtime_resume(struct device *dev)
+ 	return 0;
+ }
+ 
++static int rx_macro_suspend(struct device *dev)
++{
++	if (pm_runtime_status_suspended(dev))
++		return 0;
++
++	return rx_macro_runtime_suspend(dev);
++}
++
++static int rx_macro_resume(struct device *dev)
++{
++	if (pm_runtime_status_suspended(dev))
++		return 0;
++
++	return rx_macro_runtime_resume(dev);
++}
++
+ static const struct dev_pm_ops rx_macro_pm_ops = {
++	SYSTEM_SLEEP_PM_OPS(rx_macro_suspend, rx_macro_resume)
+ 	RUNTIME_PM_OPS(rx_macro_runtime_suspend, rx_macro_runtime_resume, NULL)
+ };
+ 
+--- a/sound/soc/codecs/lpass-wsa-macro.c
++++ b/sound/soc/codecs/lpass-wsa-macro.c
+@@ -2889,7 +2889,24 @@ static int wsa_macro_runtime_resume(struct device *dev)
+ 	return 0;
+ }
+ 
++static int wsa_macro_suspend(struct device *dev)
++{
++	if (pm_runtime_status_suspended(dev))
++		return 0;
++
++	return wsa_macro_runtime_suspend(dev);
++}
++
++static int wsa_macro_resume(struct device *dev)
++{
++	if (pm_runtime_status_suspended(dev))
++		return 0;
++
++	return wsa_macro_runtime_resume(dev);
++}
++
+ static const struct dev_pm_ops wsa_macro_pm_ops = {
++	SYSTEM_SLEEP_PM_OPS(wsa_macro_suspend, wsa_macro_resume)
+ 	RUNTIME_PM_OPS(wsa_macro_runtime_suspend, wsa_macro_runtime_resume, NULL)
+ };
+ 

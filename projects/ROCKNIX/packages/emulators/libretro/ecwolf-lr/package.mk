@@ -7,7 +7,7 @@ PKG_SHA256="eda0719e0d93abea3667e658764cbab21c9f370c5f6e1166c31f39fe00c3e246"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/ecwolf"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain SDL2 SDL2_mixer SDL2_net libjpeg-turbo bzip2"
+PKG_DEPENDS_TARGET="toolchain retroarch SDL2 SDL2_mixer SDL2_net libjpeg-turbo bzip2"
 PKG_LONGDESC="ECWolf is a port of the Wolfenstein 3D engine based of Wolf4SDL."
 PKG_TOOLCHAIN="make"
 

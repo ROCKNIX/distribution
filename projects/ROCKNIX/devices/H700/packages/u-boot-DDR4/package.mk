@@ -12,7 +12,6 @@ PKG_LONGDESC="Das U-Boot is a cross-platform bootloader for embedded systems."
 PKG_TOOLCHAIN="manual"
 
 PKG_NEED_UNPACK="${PROJECT_DIR}/${PROJECT}/bootloader ${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/bootloader"
-# the SPL embeds atf's BL31; rebuild when it changes
 PKG_NEED_UNPACK+=" ${SYSROOT_PREFIX}/usr/share/atf/bl31.bin"
 
 if [ -n "${UBOOT_FIRMWARE}" ]; then
@@ -35,9 +34,6 @@ make_target() {
 }
 
 makeinstall_target() {
-  # The u-boot wrapper package picks these up. It read them from this build
-  # directory, which neither survives AUTOREMOVE nor crosses a CI job boundary;
-  # the sysroot lives inside toolchain and is carried between jobs.
   mkdir -p ${SYSROOT_PREFIX}/usr/share/${PKG_NAME}
   cp -a u-boot-sunxi-with-spl.bin ${SYSROOT_PREFIX}/usr/share/${PKG_NAME}
 }

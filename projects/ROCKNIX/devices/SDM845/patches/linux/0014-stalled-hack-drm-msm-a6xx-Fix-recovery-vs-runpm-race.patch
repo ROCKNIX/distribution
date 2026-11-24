@@ -1,0 +1,56 @@
+From 80c3b82ba1d7506a67a38b1812b02a664ab50c06 Mon Sep 17 00:00:00 2001
+From: Rob Clark <robdclark@chromium.org>
+Date: Mon, 18 Dec 2023 07:59:24 -0800
+Subject: [PATCH] stalled! hack? drm/msm/a6xx: Fix recovery vs runpm race
+
+a6xx_recover() is relying on the gpu lock to serialize against incoming
+submits doing a runpm get, as it tries to temporarily balance out the
+runpm gets with puts in order to power off the GPU.  Unfortunately this
+gets worse when we (in a later patch) will move the runpm get out of the
+scheduler thread/work to move it out of the fence signaling path.
+
+Instead we can just simplify the whole thing by using force_suspend() /
+force_resume() instead of trying to be clever.
+
+Reported-by: David Heidelberg <david.heidelberg@collabora.com>
+Closes: https://gitlab.freedesktop.org/mesa/mesa/-/issues/10272
+Fixes: abe2023b4cea ("drm/msm/gpu: Push gpu lock down past runpm")
+Signed-off-by: Rob Clark <robdclark@chromium.org>
+Link: https://lore.kernel.org/r/20231218155927.368881-1-robdclark@gmail.com
+---
+ drivers/gpu/drm/msm/adreno/a6xx_gpu.c | 12 ++----------
+ 1 file changed, 2 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
+index d5aba072f44c..907ca293a85a 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
+@@ -1686,12 +1686,7 @@ static void a6xx_recover(struct msm_gpu *gpu)
+ 	dev_pm_genpd_add_notifier(gmu->cxpd, &gmu->pd_nb);
+ 	dev_pm_genpd_synced_poweroff(gmu->cxpd);
+ 
+-	/* Drop the rpm refcount from active submits */
+-	if (active_submits)
+-		pm_runtime_put(&gpu->pdev->dev);
+-
+-	/* And the final one from recover worker */
+-	pm_runtime_put_sync(&gpu->pdev->dev);
++	pm_runtime_force_suspend(&gpu->pdev->dev);
+ 
+ 	if (!wait_for_completion_timeout(&gmu->pd_gate, msecs_to_jiffies(1000)))
+ 		DRM_DEV_ERROR(&gpu->pdev->dev, "cx gdsc didn't collapse\n");
+@@ -1700,10 +1695,7 @@ static void a6xx_recover(struct msm_gpu *gpu)
+ 
+ 	pm_runtime_use_autosuspend(&gpu->pdev->dev);
+ 
+-	if (active_submits)
+-		pm_runtime_get(&gpu->pdev->dev);
+-
+-	pm_runtime_get_sync(&gpu->pdev->dev);
++	pm_runtime_force_resume(&gpu->pdev->dev);
+ 
+ 	gpu->active_submits = active_submits;
+ 	mutex_unlock(&gpu->active_lock);
+-- 
+GitLab
+

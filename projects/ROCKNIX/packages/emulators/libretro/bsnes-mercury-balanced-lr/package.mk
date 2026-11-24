@@ -7,7 +7,7 @@ PKG_SHA256="5114fbfae7cc0e1c6479589ae43cd546acff9449cdd6849c7fab0b14c1c53214"
 PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/libretro/bsnes-mercury"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="BSNES Super Nintendo Libretro Core"
 
 PKG_MAKE_OPTS_TARGET="platform=unix PROFILE=balanced"

@@ -1,0 +1,124 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Fri, 16 Oct 2026 12:51:00 -0700
+Subject: [PATCH] sdl: render NV12 and NV21 frames
+
+Stateful V4L2 decoders output NV12, which the YV12 texture cannot take.
+Pick the texture format from each frame, recreate the texture when the
+format or size changes, and skip frames in formats SDL cannot show.
+
+Texture format handling follows Cameron Gutman's SdlRenderer in
+moonlight-qt (app/streaming/video/ffmpeg-renderers/sdlvid.cpp).
+---
+diff --git a/src/sdl.c b/src/sdl.c
+--- a/src/sdl.c
++++ b/src/sdl.c
+@@ -24,12 +24,18 @@
+ 
+ #include <Limelight.h>
+ 
++#include <libavutil/frame.h>
++#include <libavutil/pixdesc.h>
++
+ static bool done;
+ static int fullscreen_flags;
+ 
+ static SDL_Window *window;
+ static SDL_Renderer *renderer;
+ static SDL_Texture *bmp;
++static Uint32 bmp_format = SDL_PIXELFORMAT_YV12;
++static int bmp_width, bmp_height;
++static int unsupported_format = AV_PIX_FMT_NONE;
+ 
+ SDL_mutex *mutex;
+ 
+@@ -61,6 +67,8 @@
+     fprintf(stderr, "SDL: could not create texture - exiting\n");
+     exit(1);
+   }
++  bmp_width = width;
++  bmp_height = height;
+ 
+   mutex = SDL_CreateMutex();
+   if (!mutex) {
+@@ -69,6 +77,48 @@
+   }
+ }
+ 
++static bool sdl_update_texture(AVFrame* frame) {
++  Uint32 format;
++
++  switch (frame->format) {
++  case AV_PIX_FMT_YUV420P:
++  case AV_PIX_FMT_YUVJ420P:
++    format = SDL_PIXELFORMAT_YV12;
++    break;
++  case AV_PIX_FMT_NV12:
++    format = SDL_PIXELFORMAT_NV12;
++    break;
++  case AV_PIX_FMT_NV21:
++    format = SDL_PIXELFORMAT_NV21;
++    break;
++  default:
++    if (frame->format != unsupported_format) {
++      fprintf(stderr, "SDL: unsupported frame format %s\n", av_get_pix_fmt_name(frame->format));
++      unsupported_format = frame->format;
++    }
++    return false;
++  }
++
++  if (format != bmp_format || frame->width != bmp_width || frame->height != bmp_height) {
++    if (bmp)
++      SDL_DestroyTexture(bmp);
++    bmp = SDL_CreateTexture(renderer, format, SDL_TEXTUREACCESS_STREAMING, frame->width, frame->height);
++    if (!bmp) {
++      fprintf(stderr, "SDL: could not create texture - %s\n", SDL_GetError());
++      bmp_format = SDL_PIXELFORMAT_UNKNOWN;
++      return false;
++    }
++    bmp_format = format;
++    bmp_width = frame->width;
++    bmp_height = frame->height;
++  }
++
++  if (format == SDL_PIXELFORMAT_YV12)
++    return SDL_UpdateYUVTexture(bmp, NULL, frame->data[0], frame->linesize[0], frame->data[1], frame->linesize[1], frame->data[2], frame->linesize[2]) == 0;
++
++  return SDL_UpdateNVTexture(bmp, NULL, frame->data[0], frame->linesize[0], frame->data[1], frame->linesize[1]) == 0;
++}
++
+ void sdl_loop() {
+   SDL_Event event;
+ 
+@@ -99,13 +149,13 @@
+           if (++sdlCurrentFrame <= sdlNextFrame - SDL_BUFFER_FRAMES) {
+             //Skip frame
+           } else if (SDL_LockMutex(mutex) == 0) {
+-            Uint8** data = ((Uint8**) event.user.data1);
+-            int* linesize = ((int*) event.user.data2);
+-            SDL_UpdateYUVTexture(bmp, NULL, data[0], linesize[0], data[1], linesize[1], data[2], linesize[2]);
++            bool updated = sdl_update_texture(event.user.data1);
+             SDL_UnlockMutex(mutex);
+-            SDL_RenderClear(renderer);
+-            SDL_RenderCopy(renderer, bmp, NULL, NULL);
+-            SDL_RenderPresent(renderer);
++            if (updated) {
++              SDL_RenderClear(renderer);
++              SDL_RenderCopy(renderer, bmp, NULL, NULL);
++              SDL_RenderPresent(renderer);
++            }
+           } else
+             fprintf(stderr, "Couldn't lock mutex\n");
+         }
+diff --git a/src/video/sdl.c b/src/video/sdl.c
+--- a/src/video/sdl.c
++++ b/src/video/sdl.c
+@@ -70,8 +70,7 @@
+     SDL_Event event;
+     event.type = SDL_USEREVENT;
+     event.user.code = SDL_CODE_FRAME;
+-    event.user.data1 = &frame->data;
+-    event.user.data2 = &frame->linesize;
++    event.user.data1 = frame;
+     SDL_PushEvent(&event);
+   }
+   SDL_UnlockMutex(mutex);

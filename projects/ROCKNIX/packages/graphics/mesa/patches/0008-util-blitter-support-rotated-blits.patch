@@ -1,0 +1,119 @@
+From eca7fe68870d205ae802cb17f4f56fbf62bd7c16 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Wed, 23 Sep 2026 11:15:46 -0700
+Subject: [PATCH] util/blitter: support rotated blits
+
+Rotates the texture coordinates of the blit rectangle, and treats a
+transposed box as unscaled.
+---
+ src/gallium/auxiliary/util/u_blitter.c | 49 ++++++++++++++++++++++----
+ 1 file changed, 43 insertions(+), 6 deletions(-)
+
+diff --git a/src/gallium/auxiliary/util/u_blitter.c b/src/gallium/auxiliary/util/u_blitter.c
+index 0e2c0a75648..b6e21f26624 100644
+--- a/src/gallium/auxiliary/util/u_blitter.c
++++ b/src/gallium/auxiliary/util/u_blitter.c
+@@ -72,6 +72,9 @@ struct blitter_context_priv
+ 
+    bool single_triangle_active;
+ 
++   /* rotation of the blit in progress */
++   unsigned blit_rotation;
++
+    /* Templates for various state objects. */
+ 
+    /* Constant state objects. */
+@@ -909,6 +912,36 @@ static void set_texcoords_in_vertices(const struct blitter_attrib *attrib,
+    out[1] = attrib->texcoord.y2;
+ }
+ 
++static void rotate_texcoords_in_vertices(unsigned rotation, float *out,
++                                         unsigned stride)
++{
++   /* the corners are in clockwise order */
++   unsigned shift = (4 - rotation / 90) % 4;
++   float corner_texcoords[4][2];
++   unsigned i;
++
++   for (i = 0; i < 4; i++) {
++      corner_texcoords[i][0] = out[i * stride];
++      corner_texcoords[i][1] = out[i * stride + 1];
++   }
++   for (i = 0; i < 4; i++) {
++      out[i * stride] = corner_texcoords[(i + shift) % 4][0];
++      out[i * stride + 1] = corner_texcoords[(i + shift) % 4][1];
++   }
++}
++
++static bool blit_is_scaled(unsigned rotation, const struct pipe_box *dstbox,
++                           const struct pipe_box *srcbox)
++{
++   bool transposed = rotation == 90 || rotation == 270;
++   int dst_width_unrotated = transposed ? dstbox->height : dstbox->width;
++   int dst_height_unrotated = transposed ? dstbox->width : dstbox->height;
++
++   return dst_width_unrotated != abs(srcbox->width) ||
++          dst_height_unrotated != abs(srcbox->height) ||
++          dstbox->depth != abs(srcbox->depth);
++}
++
+ /** Convert PIPE_TEXTURE_x to TGSI_TEXTURE_x */
+ static inline enum tgsi_texture_type
+ util_pipe_tex_to_tgsi_tex(enum pipe_texture_target pipe_tex_target,
+@@ -1485,6 +1518,10 @@ void util_blitter_draw_rectangle(struct blitter_context *blitter,
+       default:;
+    }
+ 
++   if (ctx->blit_rotation && type != UTIL_BLITTER_ATTRIB_NONE)
++      rotate_texcoords_in_vertices(ctx->blit_rotation,
++                                   &ctx->vertices[0][1][0], 8);
++
+    blitter_draw(ctx, vertex_elements_cso, get_vs, x1, y1, x2, y2, depth,
+                 num_instances);
+ }
+@@ -1830,6 +1867,8 @@ blitter_draw_tex(struct blitter_context_priv *ctx,
+       float face_coord[4][2];
+ 
+       set_texcoords_in_vertices(&coord, &face_coord[0][0], 2);
++      if (ctx->blit_rotation)
++         rotate_texcoords_in_vertices(ctx->blit_rotation, &face_coord[0][0], 2);
+       util_map_texcoords2d_onto_cubemap((unsigned)layer % 6,
+                                         /* pointer, stride in floats */
+                                         &face_coord[0][0], 2,
+@@ -2007,9 +2046,7 @@ bool util_blitter_blit_with_txf(struct blitter_context *blitter,
+          util_format_description(src->format);
+    bool src_has_stencil = util_format_has_stencil(src_desc);
+ 
+-   bool is_scaled = dstbox->width != abs(srcbox->width) ||
+-                    dstbox->height != abs(srcbox->height) ||
+-                    dstbox->depth != abs(srcbox->depth);
++   bool is_scaled = blit_is_scaled(ctx->blit_rotation, dstbox, srcbox);
+ 
+    if (src_has_stencil || !is_scaled)
+       filter = PIPE_TEX_FILTER_NEAREST;
+@@ -2095,9 +2132,7 @@ void util_blitter_blit_generic(struct blitter_context *blitter,
+       goto out;
+    }
+ 
+-   bool is_scaled = dstbox->width != abs(srcbox->width) ||
+-                    dstbox->height != abs(srcbox->height) ||
+-                    dstbox->depth != abs(srcbox->depth);
++   bool is_scaled = blit_is_scaled(ctx->blit_rotation, dstbox, srcbox);
+ 
+    if (src_has_stencil || !is_scaled)
+       filter = PIPE_TEX_FILTER_NEAREST;
+@@ -2305,12 +2340,14 @@ util_blitter_blit(struct blitter_context *blitter,
+    src_view = pipe->create_sampler_view(pipe, src, &src_templ);
+ 
+    /* Copy. */
++   ctx->blit_rotation = info->rotation;
+    util_blitter_blit_generic(blitter, &dst_templ, &info->dst.box,
+                              src_view, &info->src.box, src->width0, src->height0,
+                              info->mask, info->filter,
+                              info->scissor_enable ? &info->scissor : NULL,
+                              info->alpha_blend, info->sample0_only,
+                              info->dst_sample, fs_override);
++   ctx->blit_rotation = 0;
+ 
+    pipe_sampler_view_reference(&src_view, NULL);
+ }

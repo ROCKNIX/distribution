@@ -7,7 +7,7 @@ PKG_SHA256="257b3e3d5c6a1db16b9fe8d3b6fff956732df7d8c8b0a4865ca6d6534fc9145c"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/supafaust"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="Super Nintendo (Super Famicom) emulator"
 
 makeinstall_target() {

@@ -1,0 +1,215 @@
+From: Noxwell <beebono@yahoo.com>
+Subject: [PATCH] iio: imu: inv_icm42607: add triggered buffer support
+
+Add a triggered buffer with a soft timestamp to the accel and gyro
+devices, so they can be driven by an external trigger such as hrtimer.
+Each trigger reads the data registers in one bulk transfer. Direct
+reads stay available while the buffer is enabled.
+
+---
+--- a/drivers/iio/imu/inv_icm42607/inv_icm42607_accel.c
++++ b/drivers/iio/imu/inv_icm42607/inv_icm42607_accel.c
+@@ -9,6 +9,8 @@
+ #include <linux/device/devres.h>
+ #include <linux/err.h>
+ #include <linux/iio/iio.h>
++#include <linux/iio/trigger_consumer.h>
++#include <linux/iio/triggered_buffer.h>
+ #include <linux/mutex.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/regmap.h>
+@@ -42,6 +44,7 @@
+ 	INV_ICM42607_ACCEL_SCAN_Y,
+ 	INV_ICM42607_ACCEL_SCAN_Z,
+ 	INV_ICM42607_ACCEL_SCAN_TEMP,
++	INV_ICM42607_ACCEL_SCAN_TIMESTAMP,
+ };
+ 
+ static const struct iio_chan_spec_ext_info inv_icm42607_accel_ext_infos[] = {
+@@ -57,6 +60,7 @@
+ 	INV_ICM42607_ACCEL_CHAN(IIO_MOD_Z, INV_ICM42607_ACCEL_SCAN_Z,
+ 				inv_icm42607_accel_ext_infos),
+ 	INV_ICM42607_TEMP_CHAN(INV_ICM42607_ACCEL_SCAN_TEMP),
++	IIO_CHAN_SOFT_TIMESTAMP(INV_ICM42607_ACCEL_SCAN_TIMESTAMP),
+ };
+ 
+ static const int inv_icm42607_accel_scale_nano[][2] = {
+@@ -308,6 +312,13 @@
+ 	indio_dev->num_channels = ARRAY_SIZE(inv_icm42607_accel_channels);
+ 	iio_device_set_drvdata(indio_dev, st);
+ 
++	ret = devm_iio_triggered_buffer_setup(dev, indio_dev,
++					      iio_pollfunc_store_time,
++					      inv_icm42607_trigger_handler,
++					      &inv_icm42607_buffer_ops);
++	if (ret)
++		return ERR_PTR(ret);
++
+ 	ret = devm_iio_device_register(dev, indio_dev);
+ 	if (ret)
+ 		return ERR_PTR(ret);
+--- a/drivers/iio/imu/inv_icm42607/inv_icm42607_core.c
++++ b/drivers/iio/imu/inv_icm42607/inv_icm42607_core.c
+@@ -8,7 +8,9 @@
+ #include <linux/delay.h>
+ #include <linux/device.h>
+ #include <linux/err.h>
++#include <linux/iio/buffer.h>
+ #include <linux/iio/iio.h>
++#include <linux/iio/trigger_consumer.h>
+ #include <linux/ktime.h>
+ #include <linux/module.h>
+ #include <linux/mutex.h>
+@@ -411,6 +413,74 @@
+ 	return 0;
+ }
+ 
++static int inv_icm42607_buffer_preenable(struct iio_dev *indio_dev)
++{
++	struct inv_icm42607_state *st = iio_device_get_drvdata(indio_dev);
++
++	return pm_runtime_resume_and_get(regmap_get_device(st->map));
++}
++
++static int inv_icm42607_buffer_postdisable(struct iio_dev *indio_dev)
++{
++	struct inv_icm42607_state *st = iio_device_get_drvdata(indio_dev);
++
++	pm_runtime_put_autosuspend(regmap_get_device(st->map));
++
++	return 0;
++}
++
++const struct iio_buffer_setup_ops inv_icm42607_buffer_ops = {
++	.preenable = inv_icm42607_buffer_preenable,
++	.postdisable = inv_icm42607_buffer_postdisable,
++};
++
++irqreturn_t inv_icm42607_trigger_handler(int irq, void *p)
++{
++	struct iio_poll_func *pf = p;
++	struct iio_dev *indio_dev = pf->indio_dev;
++	struct inv_icm42607_state *st = iio_device_get_drvdata(indio_dev);
++	struct inv_icm42607_sensor_state *sensor_st = iio_priv(indio_dev);
++	struct inv_icm42607_sensor_conf conf = INV_ICM42607_SENSOR_CONF_INIT;
++	enum iio_chan_type type = indio_dev->channels[0].type;
++	const struct iio_chan_spec *chan;
++	unsigned int bit, base, i = 0;
++	__be16 raw[7];
++	struct {
++		__be16 data[4];
++		aligned_s64 ts;
++	} scan = { };
++	int ret;
++
++	/* raw[]: TEMP_DATA1 onwards, i.e. temp, accel x/y/z, gyro x/y/z */
++	base = type == IIO_ACCEL ? 1 : 4;
++
++	scoped_guard(mutex, &st->lock) {
++		conf.mode = sensor_st->power_mode;
++		conf.filter = sensor_st->filter;
++		ret = inv_icm42607_set_sensor_conf(st, &conf, type);
++		if (!ret)
++			ret = regmap_bulk_read(st->map, INV_ICM42607_REG_TEMP_DATA1,
++					       raw, sizeof(raw));
++	}
++	if (ret)
++		goto out;
++
++	iio_for_each_active_channel(indio_dev, bit) {
++		chan = &indio_dev->channels[bit];
++		if (chan->type == IIO_TEMP)
++			scan.data[i++] = raw[0];
++		else if (chan->type != IIO_TIMESTAMP)
++			scan.data[i++] = raw[base + chan->channel2 - IIO_MOD_X];
++	}
++
++	iio_push_to_buffers_with_ts(indio_dev, &scan, sizeof(scan), pf->timestamp);
++
++out:
++	iio_trigger_notify_done(indio_dev->trig);
++
++	return IRQ_HANDLED;
++}
++
+ static int inv_icm42607_set_init_conf(struct inv_icm42607_state *st,
+ 				      const struct inv_icm42607_conf *conf)
+ {
+--- a/drivers/iio/imu/inv_icm42607/inv_icm42607_gyro.c
++++ b/drivers/iio/imu/inv_icm42607/inv_icm42607_gyro.c
+@@ -9,6 +9,8 @@
+ #include <linux/device/devres.h>
+ #include <linux/err.h>
+ #include <linux/iio/iio.h>
++#include <linux/iio/trigger_consumer.h>
++#include <linux/iio/triggered_buffer.h>
+ #include <linux/mutex.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/regmap.h>
+@@ -42,6 +44,7 @@
+ 	INV_ICM42607_GYRO_SCAN_Y,
+ 	INV_ICM42607_GYRO_SCAN_Z,
+ 	INV_ICM42607_GYRO_SCAN_TEMP,
++	INV_ICM42607_GYRO_SCAN_TIMESTAMP,
+ };
+ 
+ static const struct iio_chan_spec_ext_info inv_icm42607_gyro_ext_infos[] = {
+@@ -57,6 +60,7 @@
+ 	INV_ICM42607_GYRO_CHAN(IIO_MOD_Z, INV_ICM42607_GYRO_SCAN_Z,
+ 			       inv_icm42607_gyro_ext_infos),
+ 	INV_ICM42607_TEMP_CHAN(INV_ICM42607_GYRO_SCAN_TEMP),
++	IIO_CHAN_SOFT_TIMESTAMP(INV_ICM42607_GYRO_SCAN_TIMESTAMP),
+ };
+ 
+ static const int inv_icm42607_gyro_scale_nano[][2] = {
+@@ -305,6 +309,13 @@
+ 	indio_dev->num_channels = ARRAY_SIZE(inv_icm42607_gyro_channels);
+ 	iio_device_set_drvdata(indio_dev, st);
+ 
++	ret = devm_iio_triggered_buffer_setup(dev, indio_dev,
++					      iio_pollfunc_store_time,
++					      inv_icm42607_trigger_handler,
++					      &inv_icm42607_buffer_ops);
++	if (ret)
++		return ERR_PTR(ret);
++
+ 	ret = devm_iio_device_register(dev, indio_dev);
+ 	if (ret)
+ 		return ERR_PTR(ret);
+--- a/drivers/iio/imu/inv_icm42607/inv_icm42607.h
++++ b/drivers/iio/imu/inv_icm42607/inv_icm42607.h
+@@ -7,6 +7,7 @@
+ #define INV_ICM42607_H_
+ 
+ #include <linux/bits.h>
++#include <linux/interrupt.h>
+ #include <linux/iio/iio.h>
+ #include <linux/mutex.h>
+ #include <linux/pm.h>
+@@ -393,6 +394,7 @@
+ extern const struct inv_icm42607_hw inv_icm42607_hw_data;
+ extern const struct inv_icm42607_hw inv_icm42607p_hw_data;
+ extern const struct dev_pm_ops inv_icm42607_pm_ops;
++extern const struct iio_buffer_setup_ops inv_icm42607_buffer_ops;
+ 
+ const struct iio_mount_matrix *
+ inv_icm42607_get_mount_matrix(struct iio_dev *indio_dev,
+@@ -410,6 +412,8 @@
+ 			     struct iio_chan_spec const *chan,
+ 			     s16 *val);
+ 
++irqreturn_t inv_icm42607_trigger_handler(int irq, void *p);
++
+ int inv_icm42607_core_probe(struct regmap *regmap,
+ 			    const struct inv_icm42607_hw *hw,
+ 			    inv_icm42607_bus_setup bus_setup);
+--- a/drivers/iio/imu/inv_icm42607/Kconfig
++++ b/drivers/iio/imu/inv_icm42607/Kconfig
+@@ -3,6 +3,7 @@
+ config INV_ICM42607
+ 	tristate
+ 	select IIO_BUFFER
++	select IIO_TRIGGERED_BUFFER
+ 	select IIO_INV_SENSORS_TIMESTAMP
+ 
+ config INV_ICM42607_I2C

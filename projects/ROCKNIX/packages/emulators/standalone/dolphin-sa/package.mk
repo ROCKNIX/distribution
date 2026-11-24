@@ -48,11 +48,13 @@ PKG_CMAKE_OPTS_TARGET+=" -DENABLE_QT=ON \
                          -DUSE_RETRO_ACHIEVEMENTS=ON \
                          -DENABLE_HEADLESS=OFF \
                          -DCMAKE_EXE_LINKER_FLAGS=-flto=$(nproc) \
+                         -DMBEDTLS_FATAL_WARNINGS=OFF \
                          -DCMAKE_BUILD_TYPE=Release \
                          -DDISTRIBUTOR="ROCKNIX" \
                          -DENABLE_NOGUI=ON \
                          -DENABLE_EVDEV=ON \
                          -DENABLE_SDL=ON \
+                         -DSDL_PIPEWIRE=OFF \
                          -DUSE_DISCORD_PRESENCE=OFF \
                          -DBUILD_SHARED_LIBS=OFF \
                          -DLINUX_LOCAL_DEV=OFF \

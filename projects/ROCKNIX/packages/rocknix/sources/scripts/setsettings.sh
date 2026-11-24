@@ -641,6 +641,7 @@ function set_translation() {
         ;;
         *)
             add_setting "none" "ai_service_enable" "true"
+            add_setting "ai_service_pause" "ai_service_pause"
             local AI_LANG="$(game_setting ai_target_lang)"
             local AI_URL="$(game_setting ai_service_url)"
             case ${AI_URL} in
@@ -686,10 +687,6 @@ function set_filtering() {
 function set_integerscale() {
     add_setting "integerscale" "video_scale_integer"
     add_setting "integerscaleoverscale" "video_scale_integer_overscale"
-}
-
-function set_rgascale() {
-    add_setting "rgascale" "video_ctx_scaling"
 }
 
 function set_shader() {
@@ -843,6 +840,11 @@ function set_runahead() {
             fi
         ;;
     esac
+}
+
+function set_latency() {
+    add_setting "video_frame_delay_auto" "video_frame_delay_auto"
+    add_setting "vrr_runloop_enable" "vrr_runloop_enable"
 }
 
 function set_audiolatency() {
@@ -1323,7 +1325,6 @@ set_translation &
 set_aspectratio &
 set_filtering &
 set_integerscale &
-set_rgascale &
 set_shader &
 set_filter &
 set_overlay &
@@ -1332,6 +1333,7 @@ set_savestates &
 set_autosave &
 set_netplay &
 set_runahead &
+set_latency &
 set_audiolatency &
 set_analogsupport &
 set_tatemode &

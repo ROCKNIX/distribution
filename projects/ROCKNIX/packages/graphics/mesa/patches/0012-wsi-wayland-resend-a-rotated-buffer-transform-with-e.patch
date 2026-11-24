@@ -1,0 +1,34 @@
+From 7a4de0f93531cd702fae33aa38671f39ec652b5d Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Thu, 24 Sep 2026 23:03:06 -0700
+Subject: [PATCH] wsi/wayland: resend a rotated buffer transform with every
+ present
+
+The app owns the wl_surface and can set its buffer transform as well.
+Qt resets it to normal a few milliseconds after the swapchain first
+presents, and since the transform was only sent when it changed, every
+later frame was shown unrotated and the compositor rotated it again.
+
+Send a rotated transform with every attach, as the EGL platform does.
+The switch back to normal is still sent once.
+---
+ src/vulkan/wsi/wsi_common_wayland.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/src/vulkan/wsi/wsi_common_wayland.c b/src/vulkan/wsi/wsi_common_wayland.c
+index b89def03cb8..557a1ba7c84 100644
+--- a/src/vulkan/wsi/wsi_common_wayland.c
++++ b/src/vulkan/wsi/wsi_common_wayland.c
+@@ -3438,7 +3438,11 @@ wsi_wl_swapchain_queue_present(struct wsi_swapchain *wsi_chain,
+    }
+ 
+    assert(image_index < chain->base.image_count);
+-   if (wsi_wl_surface->buffer_transform != chain->buffer_transform) {
++   /* The app owns the wl_surface and can set its transform too (Qt does), so a
++    * rotated transform goes with every attach.
++    */
++   if (chain->buffer_transform != WL_OUTPUT_TRANSFORM_NORMAL ||
++       wsi_wl_surface->buffer_transform != chain->buffer_transform) {
+       wl_surface_set_buffer_transform(wsi_wl_surface->wayland_surface.wrapper,
+                                       chain->buffer_transform);
+       wsi_wl_surface->buffer_transform = chain->buffer_transform;

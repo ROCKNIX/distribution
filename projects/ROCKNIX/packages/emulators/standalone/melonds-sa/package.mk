@@ -73,7 +73,7 @@ post_install() {
   LIBMALI=""
   case "${DEVICE}" in
     RK3588|S922X|RK3566)
-      LIBMALI='if [[ -x "/usr/bin/gpudriver" ]] && [[ "$(/usr/bin/gpudriver)" = "libmali" ]]; then sed -i '\''/ScreenUseGL=/c\\ScreenUseGL=0'\'' /storage/.config/melonDS/melonDS.ini; fi'
+      LIBMALI='if [[ -x "/usr/bin/gpudriver" ]] \&\& [[ "$(/usr/bin/gpudriver)" = "libmali" ]]; then sed -i '\''/ScreenUseGL=/c\\ScreenUseGL=0'\'' /storage/.config/melonDS/melonDS.ini; fi'
       ;;
   esac
 

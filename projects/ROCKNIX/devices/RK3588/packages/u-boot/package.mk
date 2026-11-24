@@ -20,6 +20,9 @@ if [ -n "${UBOOT_FIRMWARE}" ]; then
 fi
 
 pre_make_target() {
+  # gcc 16 turns dead locals in this vendor tree into -Werror failures
+  export KCFLAGS="-Wno-error=unused-but-set-variable"
+
   PKG_UBOOT_CONFIG="orangepi_5_defconfig"
   PKG_RKBIN="$(get_build_dir rkbin)"
   PKG_MINILOADER="spl/u-boot-spl.bin"

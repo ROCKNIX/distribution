@@ -3,6 +3,10 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2022-present JELOS (https://github.com/JustEnoughLinuxOS)
 
+# Allow user storage version of this script to execute instead (if provided)
+[[ -x "/storage/share/aethersx2-sa/start_aethersx2.sh" ]] && exec "/storage/share/aethersx2-sa/start_aethersx2.sh" "$@"
+# Otherwise use the builtin script below
+
 . /etc/profile
 
 #Check if aethersx2 exists in .config
@@ -99,12 +103,19 @@ fi
         fi
 
   #Internal Resolution
-        if [ "$IRES" > "0" ]
+        if [ -n "$IRES" ] && [ "$IRES" != "0" ]
         then
                 sed -i "/^upscale_multiplier =/c\upscale_multiplier = $IRES" /storage/.config/aethersx2/inis/PCSX2.ini
         else
                 sed -i '/^upscale_multiplier =/c\upscale_multiplier = 1' /storage/.config/aethersx2/inis/PCSX2.ini
         fi
+
+  #Scan out render size, the software renderer draws at 1x
+        SCANOUT_SCALE=$(scanout_internal_scale "$(awk '/^upscale_multiplier = / {print $3; exit}' /storage/.config/aethersx2/inis/PCSX2.ini)" 448 1 8 0.25)
+        sed -i "/^upscale_multiplier =/c\upscale_multiplier = ${SCANOUT_SCALE}" /storage/.config/aethersx2/inis/PCSX2.ini
+        [ "$GRENDERER" = "3" ] && SCANOUT_SCALE=1
+        case "$ASPECT" in 1) SCANOUT_ASPECT=16:9 ;; 2) SCANOUT_ASPECT=0 ;; *) SCANOUT_ASPECT=4:3 ;; esac
+        scanout_render_size 448 "${SCANOUT_SCALE}" "${SCANOUT_ASPECT}"
 
   #Show FPS
 	if [ "$FPS" = "false" ]
@@ -203,9 +214,9 @@ fi
   export QT_QPA_PLATFORM=wayland
 
 # Extra Libs needed to run
-  export LD_LIBRARY_PATH=/usr/share/aethersx2-sa/libs
+  export LD_LIBRARY_PATH=/storage/share/aethersx2-sa/libs
 
 #Run Aethersx2 emulator
   export SDL_AUDIODRIVER=pulseaudio
   set_kill set "-9 aethersx2"
-  ${EMUPERF} /usr/share/aethersx2-sa/aethersx2 -bigpicture -fullscreen "${1}"
+  ${EMUPERF} /storage/share/aethersx2-sa/aethersx2 -bigpicture -fullscreen "${1}"

@@ -7,7 +7,7 @@ PKG_SHA256="8ce34084e6eaaa380b4c726d0632c0482393f3d23df2cac11eb6bad6952a8f21"
 PKG_LICENSE="Unlicense"
 PKG_SITE="https://github.com/libretro/potator"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="A Watara Supervision Emulator based on Normmatt version."
 PKG_TOOLCHAIN="make"
 

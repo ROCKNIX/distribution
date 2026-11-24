@@ -7,7 +7,7 @@ PKG_SHA256="92479e6e248e94d202b6478f407cbf8ef5b317ddb1247961555cc0d2f0c40a27"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/vbam-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="A fork of VBA-M with libretro integration"
 PKG_TOOLCHAIN="make"
 

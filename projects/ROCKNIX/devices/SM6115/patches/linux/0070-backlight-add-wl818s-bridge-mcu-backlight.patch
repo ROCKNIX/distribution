@@ -1,0 +1,232 @@
+From: Noxwell <beebono@gmail.com>
+Date: Thu, 1 Oct 2026 12:00:00 -0500
+Subject: [PATCH] backlight: add WL818S bridge MCU backlight
+
+The Retroid Pocket Duo Lite sets its bottom panel backlight by sending
+a single raw brightness byte to the WL818S bridge MCU over UART. Only
+hold the UART open while lit and while the MCU core rail is up, and ramp
+up from off to limit inrush.
+---
+--- a/drivers/video/backlight/Kconfig
++++ b/drivers/video/backlight/Kconfig
+@@ -350,6 +350,13 @@
+ 	  If you have a Tabletkiosk Sahara Touch-iT, say y to enable the
+ 	  backlight driver.
+ 
++config BACKLIGHT_WL818S
++	tristate "WL818S bridge MCU backlight"
++	depends on SERIAL_DEV_BUS
++	help
++	  Say Y to enable the backlight of the Retroid Pocket Duo Lite bottom
++	  panel, set over UART through the WL818S bridge MCU.
++
+ config BACKLIGHT_WM831X
+ 	tristate "WM831x PMIC Backlight Driver"
+ 	depends on MFD_WM831X
+--- a/drivers/video/backlight/Makefile
++++ b/drivers/video/backlight/Makefile
+@@ -59,6 +59,7 @@
+ obj-$(CONFIG_BACKLIGHT_SAHARA)		+= kb3886_bl.o
+ obj-$(CONFIG_BACKLIGHT_SKY81452)	+= sky81452-backlight.o
+ obj-$(CONFIG_BACKLIGHT_TPS65217)	+= tps65217_bl.o
++obj-$(CONFIG_BACKLIGHT_WL818S)		+= wl818s_bl.o
+ obj-$(CONFIG_BACKLIGHT_WM831X)		+= wm831x_bl.o
+ obj-$(CONFIG_BACKLIGHT_ARCXCNN) 	+= arcxcnn_bl.o
+ obj-$(CONFIG_BACKLIGHT_RAVE_SP)		+= rave-sp-backlight.o
+--- /dev/null
++++ b/drivers/video/backlight/wl818s_bl.c
+@@ -0,0 +1,194 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Backlight control through the MCU of the WL818S DP-to-MIPI bridge, which
++ * takes the brightness as a single raw byte over UART.
++ */
++
++#include <linux/backlight.h>
++#include <linux/delay.h>
++#include <linux/mod_devicetable.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/regulator/consumer.h>
++#include <linux/serdev.h>
++
++#define WL818S_BL_BAUDRATE	115200
++#define WL818S_BL_MAX		255
++#define WL818S_BL_DEFAULT	200
++#define WL818S_BL_RAMP_STEPS	8
++#define WL818S_BL_RAMP_US	10000
++#define WL818S_BL_TX_TIMEOUT	msecs_to_jiffies(50)
++
++struct wl818s_bl {
++	struct serdev_device *serdev;
++	struct regulator *vdd;
++	struct mutex lock; /* serialises UART open state and TX */
++	bool open;
++	u8 level;
++};
++
++static int wl818s_bl_send(struct wl818s_bl *bl, u8 level)
++{
++	ssize_t ret;
++
++	ret = serdev_device_write(bl->serdev, &level, 1, WL818S_BL_TX_TIMEOUT);
++	if (ret < 0)
++		return ret;
++
++	serdev_device_wait_until_sent(bl->serdev, WL818S_BL_TX_TIMEOUT);
++	bl->level = level;
++
++	return 0;
++}
++
++/*
++ * The UART is only held open while the backlight is on and the MCU is
++ * powered, so TX never back-powers the MCU.
++ */
++static int wl818s_bl_open(struct wl818s_bl *bl)
++{
++	int ret;
++
++	ret = serdev_device_open(bl->serdev);
++	if (ret)
++		return ret;
++
++	serdev_device_set_baudrate(bl->serdev, WL818S_BL_BAUDRATE);
++	serdev_device_set_flow_control(bl->serdev, false);
++	bl->open = true;
++	bl->level = 0;
++
++	return 0;
++}
++
++static void wl818s_bl_close(struct wl818s_bl *bl)
++{
++	serdev_device_close(bl->serdev);
++	bl->open = false;
++}
++
++static int wl818s_bl_update_status(struct backlight_device *bd)
++{
++	struct wl818s_bl *bl = bl_get_data(bd);
++	int brightness = backlight_get_brightness(bd);
++	int ret, step;
++
++	guard(mutex)(&bl->lock);
++
++	if (regulator_is_enabled(bl->vdd) <= 0) {
++		if (bl->open)
++			wl818s_bl_close(bl);
++		return 0;
++	}
++
++	if (backlight_is_blank(bd)) {
++		if (bl->open) {
++			wl818s_bl_send(bl, 0);
++			wl818s_bl_close(bl);
++		}
++		return 0;
++	}
++
++	if (!bl->open) {
++		ret = wl818s_bl_open(bl);
++		if (ret)
++			return ret;
++	}
++
++	/* Ramp up from off to spread the LED driver's inrush */
++	if (!bl->level) {
++		for (step = 1; step < WL818S_BL_RAMP_STEPS && brightness; step++) {
++			ret = wl818s_bl_send(bl, brightness * step / WL818S_BL_RAMP_STEPS);
++			if (ret)
++				return ret;
++			usleep_range(WL818S_BL_RAMP_US, WL818S_BL_RAMP_US + 1000);
++		}
++	}
++
++	return wl818s_bl_send(bl, brightness);
++}
++
++static const struct backlight_ops wl818s_bl_ops = {
++	.update_status = wl818s_bl_update_status,
++};
++
++/* The MCU prints a boot log that nothing here needs */
++static size_t wl818s_bl_receive_buf(struct serdev_device *serdev,
++				    const u8 *data, size_t count)
++{
++	return count;
++}
++
++static const struct serdev_device_ops wl818s_bl_serdev_ops = {
++	.receive_buf = wl818s_bl_receive_buf,
++	.write_wakeup = serdev_device_write_wakeup,
++};
++
++static int wl818s_bl_probe(struct serdev_device *serdev)
++{
++	struct device *dev = &serdev->dev;
++	struct backlight_properties props = {
++		.type = BACKLIGHT_RAW,
++		.max_brightness = WL818S_BL_MAX,
++		.brightness = WL818S_BL_DEFAULT,
++		.power = BACKLIGHT_POWER_OFF,
++	};
++	struct backlight_device *bd;
++	struct wl818s_bl *bl;
++	int ret;
++
++	bl = devm_kzalloc(dev, sizeof(*bl), GFP_KERNEL);
++	if (!bl)
++		return -ENOMEM;
++
++	bl->serdev = serdev;
++
++	/* Only sampled, the bridge driver owns this rail */
++	bl->vdd = devm_regulator_get(dev, "vdd");
++	if (IS_ERR(bl->vdd))
++		return dev_err_probe(dev, PTR_ERR(bl->vdd),
++				     "Failed to get vdd regulator\n");
++
++	ret = devm_mutex_init(dev, &bl->lock);
++	if (ret)
++		return ret;
++
++	serdev_device_set_drvdata(serdev, bl);
++	serdev_device_set_client_ops(serdev, &wl818s_bl_serdev_ops);
++
++	bd = devm_backlight_device_register(dev, dev_name(dev), dev, bl,
++					    &wl818s_bl_ops, &props);
++	if (IS_ERR(bd))
++		return dev_err_probe(dev, PTR_ERR(bd),
++				     "Failed to register backlight\n");
++
++	return 0;
++}
++
++static void wl818s_bl_remove(struct serdev_device *serdev)
++{
++	struct wl818s_bl *bl = serdev_device_get_drvdata(serdev);
++
++	guard(mutex)(&bl->lock);
++	if (bl->open)
++		wl818s_bl_close(bl);
++}
++
++static const struct of_device_id wl818s_bl_of_match[] = {
++	{ .compatible = "retroidpocket,wl818s-backlight" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, wl818s_bl_of_match);
++
++static struct serdev_device_driver wl818s_bl_driver = {
++	.probe = wl818s_bl_probe,
++	.remove = wl818s_bl_remove,
++	.driver = {
++		.name = "wl818s-backlight",
++		.of_match_table = wl818s_bl_of_match,
++	},
++};
++module_serdev_device_driver(wl818s_bl_driver);
++
++MODULE_DESCRIPTION("WL818S bridge MCU UART backlight driver");
++MODULE_LICENSE("GPL");

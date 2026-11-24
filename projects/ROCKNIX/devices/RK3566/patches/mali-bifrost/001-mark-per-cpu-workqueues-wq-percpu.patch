@@ -1,0 +1,114 @@
+From 43283606f1284661228f66c501b80298d4c94661 Mon Sep 17 00:00:00 2001
+From: Noxwell <beebono@yahoo.com>
+Date: Fri, 23 Oct 2026 22:58:48 -0500
+Subject: [PATCH] mark per-CPU workqueues WQ_PERCPU
+
+Since 6.17 a workqueue declares itself WQ_PERCPU or WQ_UNBOUND, and
+7.x warns (with a stack trace) when it does neither, then falls back to
+WQ_PERCPU. Pass WQ_PERCPU explicitly to the six queues that relied on
+the old per-CPU default, so behaviour is unchanged and the warning goes
+away. version_compat_defs.h defines it as 0 before 6.17.
+---
+ .../drivers/gpu/arm/midgard/backend/gpu/mali_kbase_jm_hw.c | 2 +-
+ .../drivers/gpu/arm/midgard/csf/mali_kbase_csf_kcpu.c      | 2 +-
+ .../drivers/gpu/arm/midgard/csf/mali_kbase_csf_reset_gpu.c | 2 +-
+ .../drivers/gpu/arm/midgard/mali_kbase_debug_job_fault.c   | 2 +-
+ product/kernel/drivers/gpu/arm/midgard/mali_kbase_event.c  | 2 +-
+ .../gpu/arm/midgard/mmu/backend/mali_kbase_mmu_jm.c        | 2 +-
+ product/kernel/include/linux/version_compat_defs.h         | 7 +++++++
+ 7 files changed, 13 insertions(+), 6 deletions(-)
+
+diff --git a/product/kernel/drivers/gpu/arm/midgard/backend/gpu/mali_kbase_jm_hw.c b/product/kernel/drivers/gpu/arm/midgard/backend/gpu/mali_kbase_jm_hw.c
+index a4f1aed..fdc97e2 100644
+--- a/product/kernel/drivers/gpu/arm/midgard/backend/gpu/mali_kbase_jm_hw.c
++++ b/product/kernel/drivers/gpu/arm/midgard/backend/gpu/mali_kbase_jm_hw.c
+@@ -1255,7 +1255,7 @@ KBASE_EXPORT_TEST_API(kbase_reset_gpu_wait);
+ 
+ int kbase_reset_gpu_init(struct kbase_device *kbdev)
+ {
+-	kbdev->hwaccess.backend.reset_workq = alloc_workqueue("Mali reset workqueue", 0, 1);
++	kbdev->hwaccess.backend.reset_workq = alloc_workqueue("Mali reset workqueue", WQ_PERCPU, 1);
+ 	if (kbdev->hwaccess.backend.reset_workq == NULL)
+ 		return -ENOMEM;
+ 
+diff --git a/product/kernel/drivers/gpu/arm/midgard/csf/mali_kbase_csf_kcpu.c b/product/kernel/drivers/gpu/arm/midgard/csf/mali_kbase_csf_kcpu.c
+index 86e6452..f92efdc 100644
+--- a/product/kernel/drivers/gpu/arm/midgard/csf/mali_kbase_csf_kcpu.c
++++ b/product/kernel/drivers/gpu/arm/midgard/csf/mali_kbase_csf_kcpu.c
+@@ -2753,7 +2753,7 @@ int kbase_csf_kcpu_queue_enqueue(struct kbase_context *kctx,
+ int kbase_csf_kcpu_queue_context_init(struct kbase_context *kctx)
+ {
+ 	kctx->csf.kcpu_queues.kcpu_wq =
+-		alloc_workqueue("mali_kcpu_wq_%i_%i", 0, 0, kctx->tgid, kctx->id);
++		alloc_workqueue("mali_kcpu_wq_%i_%i", WQ_PERCPU, 0, kctx->tgid, kctx->id);
+ 	if (kctx->csf.kcpu_queues.kcpu_wq == NULL) {
+ 		dev_err(kctx->kbdev->dev,
+ 			"Failed to initialize KCPU queue high-priority workqueue");
+diff --git a/product/kernel/drivers/gpu/arm/midgard/csf/mali_kbase_csf_reset_gpu.c b/product/kernel/drivers/gpu/arm/midgard/csf/mali_kbase_csf_reset_gpu.c
+index ae90a2b..e13b62d 100644
+--- a/product/kernel/drivers/gpu/arm/midgard/csf/mali_kbase_csf_reset_gpu.c
++++ b/product/kernel/drivers/gpu/arm/midgard/csf/mali_kbase_csf_reset_gpu.c
+@@ -627,7 +627,7 @@ KBASE_EXPORT_TEST_API(kbase_reset_gpu_wait);
+ 
+ int kbase_reset_gpu_init(struct kbase_device *kbdev)
+ {
+-	kbdev->csf.reset.workq = alloc_workqueue("Mali reset workqueue", 0, 1);
++	kbdev->csf.reset.workq = alloc_workqueue("Mali reset workqueue", WQ_PERCPU, 1);
+ 	if (kbdev->csf.reset.workq == NULL)
+ 		return -ENOMEM;
+ 
+diff --git a/product/kernel/drivers/gpu/arm/midgard/mali_kbase_debug_job_fault.c b/product/kernel/drivers/gpu/arm/midgard/mali_kbase_debug_job_fault.c
+index 679dd75..3006d6d 100644
+--- a/product/kernel/drivers/gpu/arm/midgard/mali_kbase_debug_job_fault.c
++++ b/product/kernel/drivers/gpu/arm/midgard/mali_kbase_debug_job_fault.c
+@@ -472,7 +472,7 @@ int kbase_debug_job_fault_dev_init(struct kbase_device *kbdev)
+ 	spin_lock_init(&kbdev->job_fault_event_lock);
+ 
+ 	kbdev->job_fault_resume_workq =
+-		alloc_workqueue("kbase_job_fault_resume_work_queue", WQ_MEM_RECLAIM, 1);
++		alloc_workqueue("kbase_job_fault_resume_work_queue", WQ_MEM_RECLAIM | WQ_PERCPU, 1);
+ 	if (!kbdev->job_fault_resume_workq)
+ 		return -ENOMEM;
+ 
+diff --git a/product/kernel/drivers/gpu/arm/midgard/mali_kbase_event.c b/product/kernel/drivers/gpu/arm/midgard/mali_kbase_event.c
+index 3c59b20..cf7862b 100644
+--- a/product/kernel/drivers/gpu/arm/midgard/mali_kbase_event.c
++++ b/product/kernel/drivers/gpu/arm/midgard/mali_kbase_event.c
+@@ -226,7 +226,7 @@ int kbase_event_init(struct kbase_context *kctx)
+ 	INIT_LIST_HEAD(&kctx->event_list);
+ 	INIT_LIST_HEAD(&kctx->event_coalesce_list);
+ 	mutex_init(&kctx->event_mutex);
+-	kctx->event_workq = alloc_workqueue("kbase_event", WQ_MEM_RECLAIM, 1);
++	kctx->event_workq = alloc_workqueue("kbase_event", WQ_MEM_RECLAIM | WQ_PERCPU, 1);
+ 
+ 	if (kctx->event_workq == NULL)
+ 		return -EINVAL;
+diff --git a/product/kernel/drivers/gpu/arm/midgard/mmu/backend/mali_kbase_mmu_jm.c b/product/kernel/drivers/gpu/arm/midgard/mmu/backend/mali_kbase_mmu_jm.c
+index caa6183..d394166 100644
+--- a/product/kernel/drivers/gpu/arm/midgard/mmu/backend/mali_kbase_mmu_jm.c
++++ b/product/kernel/drivers/gpu/arm/midgard/mmu/backend/mali_kbase_mmu_jm.c
+@@ -407,7 +407,7 @@ int kbase_mmu_as_init(struct kbase_device *kbdev, unsigned int i)
+ 	kbdev->as[i].bf_data.addr = 0ULL;
+ 	kbdev->as[i].pf_data.addr = 0ULL;
+ 
+-	kbdev->as[i].pf_wq = alloc_workqueue("mali_mmu%u", 0, 0, i);
++	kbdev->as[i].pf_wq = alloc_workqueue("mali_mmu%u", WQ_PERCPU, 0, i);
+ 	if (!kbdev->as[i].pf_wq)
+ 		return -ENOMEM;
+ 
+diff --git a/product/kernel/include/linux/version_compat_defs.h b/product/kernel/include/linux/version_compat_defs.h
+index 765f86d..04df486 100644
+--- a/product/kernel/include/linux/version_compat_defs.h
++++ b/product/kernel/include/linux/version_compat_defs.h
+@@ -427,4 +427,11 @@ kbase_mm_get_unmapped_area_helper(struct mm_struct *mm, struct file *filp, unsig
+ #endif
+ }
+ 
++/* Since 6.17 a workqueue says whether it is per-CPU or unbound, and 7.x warns
++ * when it says neither. Before WQ_PERCPU existed, per-CPU was the default.
++ */
++#if (KERNEL_VERSION(6, 17, 0) > LINUX_VERSION_CODE)
++#define WQ_PERCPU 0
++#endif
++
+ #endif /* _VERSION_COMPAT_DEFS_H_ */

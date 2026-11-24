@@ -7,7 +7,7 @@ PKG_SHA256="ee14b173cd509093edd845de092a36becfe22dde93f50583531be87b282e2258"
 PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/libretro/bsnes2014"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="Libretro fork of bsnes. Built for balance between accuracy and porformance."
 
 PKG_MAKE_OPTS_TARGET="PROFILE=balanced"

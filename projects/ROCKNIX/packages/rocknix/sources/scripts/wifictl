@@ -1,174 +1,223 @@
 #!/bin/bash
-# SPDX-License-Identifier: Apache-2.0
-# Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
-# Copyright (C) 2022 kkoshelev (https://github.com/kkoshelev)
-# Wi-Fi via NetworkManager (iwd backend). AP/netplay still uses iwctl on the interface.
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 . /etc/profile
 
-NMCLI="$(command -v nmcli 2>/dev/null)"
+# -----------------------------------------------------------------------------
+# Global Environment & Dependencies
+# -----------------------------------------------------------------------------
+NMCLI=$(command -v nmcli 2>/dev/null || true)
+IWCTL=$(command -v iwctl 2>/dev/null || true)
 
-###
-### Basic WIFI properties used across the tool.
-###
-### Usage:
-###     wifictl command [ssid] [psk]
-###
-
-WIFI_TYPE=$(get_setting wifi.adhoc.enabled)
-NETWORK_ADDRESS="192.168.80"
-ADHOC_CLIENT_ID=$(get_setting wifi.adhoc.id)
-[ -z "${ADHOC_CLIENT_ID}" ] && ADHOC_CLIENT_ID="1"
+NETWORK_BASE="192.168.80"
 NETPLAY_SSID="NETPLAY_AP"
-WIFI_DEV="$(ls /sys/class/net | grep -m1 ^wlan)"
+NETPLAY_PSK="deadbeef"
 
-# Exit the script if the WiFi device isn't available
-[ -z "${WIFI_DEV}" ] && exit 0
-[ ! -d "/sys/class/net/${WIFI_DEV}" ] && exit 0
-[ -z "${NMCLI}" ] && exit 0
-
-SSID="${2:-$(get_setting wifi.ssid 2>/dev/null)}"
-PSK="${3:-$(get_setting wifi.key 2>/dev/null)}"
-COUNTRY="${4:-$(get_setting wifi.country | tr -d '[:space:]' 2>/dev/null)}"
-
-if [ "${WIFI_TYPE}" = "1" ]; then
-  SSID="${NETPLAY_SSID}"
-  PSK="deadbeef"
+# Validate core dependencies before proceeding
+if [[ -z "${NMCLI}" ]]; then
+  echo "Error: nmcli dependency not found." >&2
+  exit 1
 fi
 
-###
-### Functions...
-###
+WIFI_DEV=$(ls /sys/class/net 2>/dev/null | grep -m1 '^wlan' || true)
+if [[ -z "${WIFI_DEV}" || ! -d "/sys/class/net/${WIFI_DEV}" ]]; then
+  echo "Error: No wireless interface detected on the system." >&2
+  exit 1
+fi
 
-# Wait for iwd to start and have a device available
+# -----------------------------------------------------------------------------
+# Configuration Parsing
+# -----------------------------------------------------------------------------
+# Read system state via ROCKNIX get_setting utility, falling back to defaults.
+WIFI_TYPE=$(get_setting wifi.adhoc.enabled 2>/dev/null || echo "0")
+ADHOC_CLIENT_ID=$(get_setting wifi.adhoc.id 2>/dev/null || echo "1")
+
+# Arguments mapping: wifictl <command> [ssid] [psk] [country]
+CMD="${1:-}"
+TARGET_SSID="${2:-$(get_setting wifi.ssid 2>/dev/null || true)}"
+TARGET_PSK="${3:-$(get_setting wifi.key 2>/dev/null || true)}"
+TARGET_COUNTRY="${4:-$(get_setting wifi.country 2>/dev/null | tr -d '[:space:]' || true)}"
+
+# Netplay Ad-Hoc networks override standard credentials
+if [[ "${WIFI_TYPE}" == "1" ]]; then
+  TARGET_SSID="${NETPLAY_SSID}"
+  TARGET_PSK="${NETPLAY_PSK}"
+fi
+
+# -----------------------------------------------------------------------------
+# Core Functions
+# -----------------------------------------------------------------------------
+
+# Ensures the wireless hardware is actively recognized by the iwd backend.
+# Applies regional regulatory domains if specified.
 wait_for_wifi() {
-  for i in $(seq 1 5); do
-    iwctl device list | grep -q "${WIFI_DEV}" && break
+  local attempt=0
+  while [[ ${attempt} -lt 5 ]]; do
+    if ${IWCTL} device list 2>/dev/null | grep -q "${WIFI_DEV}"; then
+      break
+    fi
     sleep 1
+    ((attempt++))
   done
-  [ -n "${COUNTRY}" ] && iw reg set "${COUNTRY}"
-}
 
-# lists all wifi networks
-list_wifi() {
-  wait_for_wifi
-  "${NMCLI}" -w 15 dev wifi rescan ifname "${WIFI_DEV}" 2>/dev/null
-  sleep 1
-  "${NMCLI}" -t -f SSID dev wifi list ifname "${WIFI_DEV}" 2>/dev/null | sed '/^$/d' | sort -u
-}
-
-connect_wifi() {
-  wait_for_wifi
-  # Ensure NM has the device ready and has scanned
-  for i in $(seq 1 10); do
-    "${NMCLI}" -t -f DEVICE,STATE dev status 2>/dev/null | grep -q "^${WIFI_DEV}:disconnected" && break
-    "${NMCLI}" -t -f DEVICE,STATE dev status 2>/dev/null | grep -q "^${WIFI_DEV}:connected" && break
-    sleep 1
-  done
-  "${NMCLI}" dev wifi rescan ifname "${WIFI_DEV}" 2>/dev/null
-  sleep 2
-  # If a keyfile profile for this SSID already exists but is incomplete (e.g. missing
-  # 802-11-wireless-security.key-mgmt), NM fails connection-update with "key-mgmt: property is missing".
-  # Drop the stale profile so "device wifi connect" creates a clean one.
-  "${NMCLI}" connection delete id "${SSID}" >/dev/null 2>&1 || true
-  if [ -n "${PSK}" ]; then
-    "${NMCLI}" -w 90 device wifi connect "${SSID}" password "${PSK}" ifname "${WIFI_DEV}" >/dev/null 2>&1
-  else
-    "${NMCLI}" -w 90 device wifi connect "${SSID}" ifname "${WIFI_DEV}" >/dev/null 2>&1
+  if [[ -n "${TARGET_COUNTRY}" ]]; then
+    iw reg set "${TARGET_COUNTRY}" 2>/dev/null || true
   fi
 }
 
+# Flushes scan cache and returns a deduplicated list of available SSIDs.
+list_wifi() {
+  wait_for_wifi
+  ${NMCLI} -w 15 dev wifi rescan ifname "${WIFI_DEV}" >/dev/null 2>&1 || true
+  sleep 1
+  ${NMCLI} -t -f SSID dev wifi list ifname "${WIFI_DEV}" 2>/dev/null | sed '/^$/d' | sort -u
+}
+
+# Handles dynamic connection to access points.
+# Purges stale manual profiles to prevent authentication state mismatch.
+connect_wifi() {
+  local attempt=0
+  wait_for_wifi
+
+  while [[ ${attempt} -lt 10 ]]; do
+    local state
+    state=$(${NMCLI} -t -f DEVICE,STATE dev status 2>/dev/null | grep "^${WIFI_DEV}:" || true)
+    if echo "${state}" | grep -qE "disconnected|connected"; then
+      break
+    fi
+    sleep 1
+    ((attempt++))
+  done
+
+  ${NMCLI} dev wifi rescan ifname "${WIFI_DEV}" >/dev/null 2>&1 || true
+  sleep 2
+
+  if [[ -n "${TARGET_PSK}" ]]; then
+    ${NMCLI} connection delete id "${TARGET_SSID}" >/dev/null 2>&1 || true
+    ${NMCLI} -w 90 device wifi connect "${TARGET_SSID}" password "${TARGET_PSK}" ifname "${WIFI_DEV}" >/dev/null 2>&1
+    ${NMCLI} connection modify "${TARGET_SSID}" wifi-sec.psk-flags 0 >/dev/null 2>&1 || true
+  else
+    if ${NMCLI} -w 30 connection up id "${TARGET_SSID}" ifname "${WIFI_DEV}" >/dev/null 2>&1; then
+      return 0
+    fi
+
+    ${NMCLI} connection delete id "${TARGET_SSID}" >/dev/null 2>&1 || true
+    ${NMCLI} -w 90 device wifi connect "${TARGET_SSID}" ifname "${WIFI_DEV}" >/dev/null 2>&1
+  fi
+}
+
+# Provisions a local NetworkManager connection in AP mode for Netplay hosting.
+# IP addresses are statically derived from the ADHOC_CLIENT_ID to bypass DHCP overhead.
 create_adhoc() {
   wait_for_wifi
-  # NetworkManager drives iwd into AP mode itself (Device.Mode + AP.Start).
-  # Switching the mode behind its back only makes NM force the device back to
-  # station mode, so the netplay AP has to be a NetworkManager connection.
-  # No DHCP: the clients derive their address from the local play ID.
-  "${NMCLI}" connection delete id "${SSID}" >/dev/null 2>&1
-  "${NMCLI}" connection add type wifi ifname "${WIFI_DEV}" con-name "${SSID}" ssid "${SSID}" \
+
+  ${NMCLI} connection delete id "${TARGET_SSID}" >/dev/null 2>&1 || true
+  ${NMCLI} connection add type wifi ifname "${WIFI_DEV}" con-name "${TARGET_SSID}" ssid "${TARGET_SSID}" \
     802-11-wireless.mode ap \
     802-11-wireless.band bg \
     802-11-wireless-security.key-mgmt wpa-psk \
-    802-11-wireless-security.psk "${PSK}" \
-    ipv4.method manual ipv4.addresses "${NETWORK_ADDRESS}.${ADHOC_CLIENT_ID}/24" \
-    ipv6.method disabled || return 1
-  "${NMCLI}" -w 30 connection up id "${SSID}" || return 1
+    802-11-wireless-security.psk "${TARGET_PSK}" \
+    ipv4.method manual ipv4.addresses "${NETWORK_BASE}.${ADHOC_CLIENT_ID}/24" \
+    ipv6.method disabled >/dev/null 2>&1 || return 1
+
+  ${NMCLI} -w 30 connection up id "${TARGET_SSID}" >/dev/null 2>&1 || return 1
 }
 
+# Binds as a client to an active Netplay Ad-Hoc host.
+# Autoconnect is explicitly disabled to prevent device marooning if the host disconnects.
 connect_adhoc_client() {
   destroy_adhoc
-  # Static lease: the netplay host runs no DHCP server, so the client
-  # address is derived from the local play ID. Autoconnect stays off so a
-  # vanished host doesn't keep the device from returning to ordinary
-  # networks; rejoining is an explicit wifictl connect (ES toggle).
-  "${NMCLI}" connection add type wifi ifname "${WIFI_DEV}" con-name "${SSID}" ssid "${SSID}" \
+
+  ${NMCLI} connection add type wifi ifname "${WIFI_DEV}" con-name "${TARGET_SSID}" ssid "${TARGET_SSID}" \
     802-11-wireless-security.key-mgmt wpa-psk \
-    802-11-wireless-security.psk "${PSK}" \
-    ipv4.method manual ipv4.addresses "${NETWORK_ADDRESS}.${ADHOC_CLIENT_ID}/24" \
-    ipv6.method disabled connection.autoconnect no || return 1
-  # The iwd backend fails "connection up" instantly when the SSID is not in
-  # the scan cache yet, so make sure the host AP shows up first
-  for i in $(seq 1 15); do
-    "${NMCLI}" device wifi rescan ifname "${WIFI_DEV}" >/dev/null 2>&1
+    802-11-wireless-security.psk "${TARGET_PSK}" \
+    ipv4.method manual ipv4.addresses "${NETWORK_BASE}.${ADHOC_CLIENT_ID}/24" \
+    ipv6.method disabled connection.autoconnect no >/dev/null 2>&1 || return 1
+
+  local found=0
+  for ((i=0; i<15; i++)); do
+    ${NMCLI} device wifi rescan ifname "${WIFI_DEV}" >/dev/null 2>&1 || true
     sleep 2
-    "${NMCLI}" -t -f SSID device wifi list ifname "${WIFI_DEV}" 2>/dev/null | grep -q "^${SSID}$" && break
+    if ${NMCLI} -t -f SSID device wifi list ifname "${WIFI_DEV}" 2>/dev/null | grep -q "^${TARGET_SSID}$"; then
+      found=1
+      break
+    fi
   done
-  "${NMCLI}" -t -f SSID device wifi list ifname "${WIFI_DEV}" 2>/dev/null | grep -q "^${SSID}$" || return 1
-  # The host may still be coming up
-  for i in $(seq 1 3); do
-    "${NMCLI}" -w 20 connection up id "${SSID}" && return 0
+
+  [[ ${found} -eq 0 ]] && return 1
+
+  for ((i=0; i<3; i++)); do
+    if ${NMCLI} -w 20 connection up id "${TARGET_SSID}" >/dev/null 2>&1; then
+      return 0
+    fi
     sleep 3
   done
   return 1
 }
 
+# Cleans up Ad-Hoc networks so standard infrastructure networks can resume autoconnection.
 destroy_adhoc() {
-  # Remove the netplay connection (host or client) so NM autoconnect
-  # can't resurrect it and the device returns to the ordinary networks
-  "${NMCLI}" connection delete id "${NETPLAY_SSID}" >/dev/null 2>&1
+  ${NMCLI} connection delete id "${NETPLAY_SSID}" >/dev/null 2>&1 || true
 }
 
-# Prefer the network currently in use for the next automatic connection. On
-# resume the radio is only rfkill-unblocked, so NetworkManager autoconnect
-# chooses among every saved profile and can join a different access point than
-# the one in use -- often on another subnet, silently moving the device and
-# dropping whatever was connected. The same applies at boot. Raising the
-# priority of the active profile makes NM try that one first.
-#
-# Priority only, deliberately: every profile keeps autoconnect enabled, so a
-# preferred network that is out of range just loses to whatever is in range.
-# Turning autoconnect off on the others would pin harder but strand the device
-# on a network it can no longer see. With no active connection there is nothing
-# to prefer, and the priorities from the previous call still stand.
+# Dynamically manipulates NetworkManager autoconnect priorities.
+# Elevates the currently active connection to priority 100 and demotes all others to 0,
+# ensuring predictable reconnect behavior across suspend/resume cycles.
 pin_wifi() {
-  local active name
+  local active_conn
+  active_conn=$(${NMCLI} -t -f GENERAL.CONNECTION device show "${WIFI_DEV}" 2>/dev/null | cut -d: -f2- || true)
 
-  active=$("${NMCLI}" -t -f GENERAL.CONNECTION device show "${WIFI_DEV}" 2>/dev/null | cut -d: -f2-)
-  [ -z "${active}" ] && return 0
+  [[ -z "${active_conn}" ]] && return 0
 
-  "${NMCLI}" -t -f NAME,TYPE connection show 2>/dev/null |
-    awk -F: '$2 ~ /wireless/ {print $1}' |
-    while IFS= read -r name; do
-      if [ "${name}" = "${active}" ]; then
-        "${NMCLI}" connection modify "${name}" connection.autoconnect-priority 100 >/dev/null 2>&1
-      else
-        "${NMCLI}" connection modify "${name}" connection.autoconnect-priority 0 >/dev/null 2>&1
-      fi
-    done
+  ${NMCLI} -t -f NAME,TYPE connection show 2>/dev/null | awk -F: '$2 ~ /wireless/ {print $1}' | while IFS= read -r conn_name; do
+    if [[ "${conn_name}" == "${active_conn}" ]]; then
+      ${NMCLI} connection modify "${conn_name}" connection.autoconnect-priority 100 >/dev/null 2>&1 || true
+    else
+      ${NMCLI} connection modify "${conn_name}" connection.autoconnect-priority 0 >/dev/null 2>&1 || true
+    fi
+  done
 }
 
+# Probes the physical network layer to determine Access Point capability.
 has_ap_mode() {
   wait_for_wifi
+  local phy_path="/sys/class/net/${WIFI_DEV}/phy80211"
 
-  PHY=$(basename "$(readlink /sys/class/net/${WIFI_DEV}/phy80211)")
-  if iwctl adapter "$PHY" show | grep -q 'SupportedModes.*ap'; then
-    exit 0
-  else
-    exit 1
+  if [[ -e "${phy_path}" ]]; then
+    local phy
+    phy=$(basename "$(readlink "${phy_path}")")
+    if ${IWCTL} adapter "${phy}" show 2>/dev/null | grep -q 'SupportedModes.*ap'; then
+      exit 0
+    fi
+  fi
+  exit 1
+}
+
+list_saved_networks() {
+  ${NMCLI} -t -f NAME,TYPE connection show 2>/dev/null | \
+    awk -F: '$2 ~ /802-11-wireless/ {print $1}' | \
+    grep -v "^${NETPLAY_SSID}$" | sort -u
+}
+
+forget_saved_network() {
+  local target_id="${1:-}"
+  if [[ -n "${target_id}" ]]; then
+    ${NMCLI} connection delete id "${target_id}" >/dev/null 2>&1 || true
   fi
 }
 
-case "${1}" in
+connect_saved_network() {
+  local target_id="${1:-}"
+  wait_for_wifi
+  ${NMCLI} connection reload >/dev/null 2>&1 || true
+  ${NMCLI} -w 30 connection up id "${target_id}" ifname "${WIFI_DEV}" >/dev/null 2>&1
+}
+
+# -----------------------------------------------------------------------------
+# Command Router
+# -----------------------------------------------------------------------------
+case "${CMD}" in
   enable)
     rfkill unblock wifi
     ;;
@@ -179,42 +228,56 @@ case "${1}" in
     pin_wifi
     ;;
   connect)
-    if [ "${WIFI_TYPE}" = "1" ] && \
-       [ "${ADHOC_CLIENT_ID}" = "1" ]; then
-      create_adhoc
-    elif [ "${WIFI_TYPE}" = "1" ]; then
-      connect_adhoc_client
+    if [[ "${WIFI_TYPE}" == "1" ]]; then
+      if [[ "${ADHOC_CLIENT_ID}" == "1" ]]; then
+        create_adhoc
+      else
+        connect_adhoc_client
+      fi
     else
       destroy_adhoc
       connect_wifi
     fi
-  ;;
+    ;;
   disconnect)
-    if [ "${WIFI_TYPE}" = "1" ]; then
+    if [[ "${WIFI_TYPE}" == "1" ]]; then
       destroy_adhoc
     else
-      "${NMCLI}" device disconnect "${WIFI_DEV}" >/dev/null 2>&1
+      ${NMCLI} device disconnect "${WIFI_DEV}" >/dev/null 2>&1 || true
     fi
     ;;
   reconnect)
-    /usr/bin/wifictl disconnect
-    /usr/bin/wifictl connect
+    "$0" disconnect
+    "$0" connect
     ;;
   list)
     list_wifi
     ;;
+  list_saved)
+    list_saved_networks
+    ;;
+  forget_saved)
+    forget_saved_network "${TARGET_SSID}"
+    ;;
+  connect_saved)
+    connect_saved_network "${TARGET_SSID}"
+    ;;
   channels)
-    iw list | awk '/[0-9] MHz \[/ && ! /disabled|radar|no IR/ { gsub(/^.*\[/,""); gsub(/\].*$/,""); print}'
+    iw list 2>/dev/null | awk '/[0-9] MHz \[/ && ! /disabled|radar|no IR/ { gsub(/^.*\[/,""); gsub(/\].*$/,""); print}'
     ;;
   has_ap_mode)
     has_ap_mode
     ;;
   scan)
-    "${NMCLI}" dev wifi rescan ifname "${WIFI_DEV}" 2>/dev/null
+    ${NMCLI} dev wifi rescan ifname "${WIFI_DEV}" >/dev/null 2>&1 || true
     ;;
   scanlist)
-    "${NMCLI}" dev wifi rescan ifname "${WIFI_DEV}" 2>/dev/null
+    ${NMCLI} dev wifi rescan ifname "${WIFI_DEV}" >/dev/null 2>&1 || true
     sleep 2
     list_wifi
+    ;;
+  *)
+    echo "Usage: $0 {enable|disable|pin|connect|disconnect|reconnect|list|list_saved|forget_saved|connect_saved|channels|has_ap_mode|scan|scanlist} [ssid] [psk] [country]"
+    exit 1
     ;;
 esac

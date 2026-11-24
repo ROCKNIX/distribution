@@ -6,7 +6,7 @@ PKG_VERSION="babdf7b53d361a7225858b68a8a64efe8b06f5e5"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/libretro-minivmac"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="Virtual Macintosh"
 
 makeinstall_target() {

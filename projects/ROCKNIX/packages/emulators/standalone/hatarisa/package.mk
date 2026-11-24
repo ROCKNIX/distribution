@@ -35,7 +35,7 @@ pre_configure_target() {
 makeinstall_target() {
   mkdir -p ${INSTALL}/usr/bin
     cp -a src/hatari ${INSTALL}/usr/bin/hatarisa
-    cp -a ${PKG_DIR}/scripts/start_hatari.sh ${INSTALL}/usr/bin
+    cp -a ${PKG_DIR}/scripts/start_hatarisa.sh ${INSTALL}/usr/bin
 
   mkdir -p ${INSTALL}/usr/config/hatari
     touch ${INSTALL}/usr/config/hatari/hatari.nvram

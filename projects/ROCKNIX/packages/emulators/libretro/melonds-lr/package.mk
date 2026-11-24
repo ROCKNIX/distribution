@@ -7,7 +7,7 @@ PKG_SHA256="8fa494f12a8fe7f20a4ab32ac89a1391f079d41a203d02822b8541e71637a22c"
 PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/libretro/melonDS"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="MelonDS - Nintendo DS emulator for libretro"
 PKG_TOOLCHAIN="make"
 

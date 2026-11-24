@@ -2,8 +2,8 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="tqftpserv"
-PKG_VERSION="1.1.1"
-PKG_SHA256="7232cfdc76de42e20d4efa45a0206ab95513fb31c63148452d44c745a462789d"
+PKG_VERSION="1.2"
+PKG_SHA256="a3850c34e48f23b7bc360d70f1e91700de2f8c60af003eda93e14182f8cf6af1"
 PKG_LICENSE="BSD-3-Clause"
 PKG_SITE="https://github.com/linux-msm/tqftpserv"
 PKG_URL="https://github.com/linux-msm/tqftpserv/archive/refs/tags/v${PKG_VERSION}.tar.gz"

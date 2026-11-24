@@ -78,6 +78,11 @@ SM4450:
 	PROJECT=ROCKNIX DEVICE=SM4450 ARCH=arm ./scripts/build_distro
 	PROJECT=ROCKNIX DEVICE=SM4450 ARCH=aarch64 ./scripts/build_distro
 
+SM6450:
+	unset DEVICE_ROOT
+	PROJECT=ROCKNIX DEVICE=SM6450 ARCH=arm ./scripts/build_distro
+	PROJECT=ROCKNIX DEVICE=SM6450 ARCH=aarch64 ./scripts/build_distro
+
 SM6115:
 	unset DEVICE_ROOT
 	PROJECT=ROCKNIX DEVICE=SM6115 ARCH=arm ./scripts/build_distro
@@ -100,6 +105,11 @@ SM8650:
 SM8750:
 	unset DEVICE_ROOT
 	PROJECT=ROCKNIX DEVICE=SM8750 ARCH=aarch64 ./scripts/build_distro
+
+SDM845:
+	unset DEVICE_ROOT
+	PROJECT=ROCKNIX DEVICE=SDM845 ARCH=arm ./scripts/build_distro
+	PROJECT=ROCKNIX DEVICE=SDM845 ARCH=aarch64 ./scripts/build_distro
 
 update:
 	PROJECT=ROCKNIX DEVICE=RK3588 ARCH=aarch64 ./scripts/update_packages

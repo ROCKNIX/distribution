@@ -7,20 +7,27 @@
 
 set -euo pipefail
 
+CAN_FLASH=0
 case "$HW_DEVICE" in
   SM6115|SM8250|SM8550|SM8650|SM8750)
+    CAN_FLASH=1
     ;;
-  *)
-    echo "This script is not compatible with this device!"
-    exit 1
+  SM4450)
+    [[ "$QUIRK_DEVICE" == "Anbernic RG 55G1" ]] && CAN_FLASH=1
+    [[ "$QUIRK_DEVICE" == "Retroid Pocket Classic"* ]] && CAN_FLASH=1
     ;;
 esac
+
+if [[ $CAN_FLASH -eq 0 ]]; then
+  echo "This script is not compatible with this device!"
+  exit 1
+fi
 
 # Derive internal storage block device
 DEVICE=/dev/sda
 
-if [[ "$HW_DEVICE" == "SM6115" ]]; then
-  # SM6115 is eMMC - slightly different
+if [[ "$HW_DEVICE" == "SM6115" || "$QUIRK_DEVICE" == "Retroid Pocket Classic"* ]]; then
+  # SM6115 and the Retroid Pocket Classic are eMMC - slightly different
   DEVICE=/dev/mmcblk1
 fi
 
@@ -79,8 +86,8 @@ UD_PART_DEV="${DEVICE}${UD_NUM}"
 RK_PART_DEV="${DEVICE}${RK_NUM}"
 ST_PART_DEV="${DEVICE}${ST_NUM}"
 
-if [[ "$HW_DEVICE" == "SM6115" ]]; then
-  # SM6115 is eMMC - slightly different
+if [[ "$DEVICE" == /dev/mmcblk* ]]; then
+  # eMMC is slightly different
   UD_PART_DEV="${DEVICE}p${UD_NUM}"
   RK_PART_DEV="${DEVICE}p${RK_NUM}"
   ST_PART_DEV="${DEVICE}p${ST_NUM}"
@@ -117,9 +124,16 @@ else
   fi
 fi
 
+# Stock GPTs may have no spare entries for the ROCKNIX and STORAGE partitions
+GPT_ENTRIES=$(sgdisk -p "$DEVICE" | awk '/holds up to/ {print $6}')
+if (( GPT_ENTRIES < ST_NUM )); then
+  echo "Growing GPT to 128 entries..."
+  sgdisk --resize-table=128 "$DEVICE" >/dev/null
+fi
+
 # Compute MiB-aligned boundaries for Android userdata
 UD_START_MB=$(( (UD_START + 1048575) / 1048576 ))     # round up to MiB
-UD_END_MB=$(( UD_END / 1048576 ))                     # round down to MiB
+UD_END_MB=$(( (UD_END + 1) / 1048576 ))               # round down to MiB, parted's end is inclusive
 ORIG_SIZE=$(( (UD_END_MB - UD_START_MB) * 1024**2 ))  # bytes
 
 if (( PRESERVE_USERDATA == 1 )); then

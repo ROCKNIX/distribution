@@ -6,7 +6,7 @@ PKG_VERSION="39535a6abcad5abf9f71c8b2a7975f005ee12ed6"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/yabause"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="Port of YabaSanshiro to libretro."
 PKG_TOOLCHAIN="make"
 

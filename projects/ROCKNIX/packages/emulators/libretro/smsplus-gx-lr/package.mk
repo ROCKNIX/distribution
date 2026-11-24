@@ -7,7 +7,7 @@ PKG_SHA256="0d78af08f70f69af103502690e6908189c9a70a67993d3a9d4bd3114f8259e46"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/smsplus-gx"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="SMS Plus GX is an enhanced version"
 
 PKG_MAKE_OPTS_TARGET="-f Makefile.libretro"

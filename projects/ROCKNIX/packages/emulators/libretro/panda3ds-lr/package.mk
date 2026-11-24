@@ -6,7 +6,7 @@ PKG_VERSION="5aaa1d26565c834a6f1999026260e559f54aacf1"
 PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/wheremyfoodat/Panda3DS"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="Panda3DS is an HLE, red-panda-themed Nintendo 3DS emulator"
 
 if [ "${OPENGL_SUPPORT}" = "yes" ] && [ ! "${PREFER_GLES}" = "yes" ]; then

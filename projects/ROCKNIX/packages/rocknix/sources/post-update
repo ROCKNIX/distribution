@@ -163,4 +163,46 @@ sed -i "/system.suspend.dpms/d" /storage/.config/system/configs/system.cfg
 
 # MelonDS has added some new hotkey variables to the ini. Eventually swithing to toml and dropping ini.
 rm -rf /storage/.config/melonDS
-cp -r /usr/config/melondDS /storage/.config/
+cp -r /usr/config/melonDS /storage/.config/
+
+# The distro sysctls moved from /storage/.config/sysctl.d into /usr/lib/sysctl.d/60-rocknix.conf, drop untouched copies.
+for conf in rocknix.conf:0c0d12bea1678cb7a60de7f33f874641 99-rocknix-networking.conf:6f1576b68b29e85517a34b87bb222282
+do
+  file="/storage/.config/sysctl.d/${conf%%:*}"
+  [ "$(md5sum "${file}" 2>/dev/null | cut -d' ' -f1)" = "${conf##*:}" ] && rm -f "${file}"
+done
+
+if [[ "$HW_DEVICE" = "RK3566" ]] && [[ ! -f /storage/.config/.inputplumber_migrated  ]]; then
+  /usr/bin/factoryreset standalone
+  /usr/bin/factoryreset mednafen
+  # refresh es_input for really old installs
+  cp /usr/config/emulationstation/es_input.cfg /storage/.config/emulationstation/
+  touch /storage/.config/.inputplumber_migrated
+fi
+
+# Set the flag to enable sway hide_cursor if it doesn't already exist
+grep -q "^rocknix\.sway\.hide_cursor=" /storage/.config/system/configs/system.cfg ||
+    sed -i '$ a\rocknix.sway.hide_cursor=1' /storage/.config/system/configs/system.cfg
+
+# S922X suspend
+if [[ "$HW_DEVICE" = "S922X" ]] && [[ ! -f /storage/.config/.suspend_migrated ]]; then 
+  rm -f /storage/.config/logind.conf.d/login.conf
+  rm -f /storage/.config/sleep.conf.d/sleep.conf
+  sed -i '/system.suspendmode=/d' /storage/.config/system/configs/system.cfg
+  touch /storage/.config/.suspend_migrated
+fi
+
+# if inputplumber and not yet fixed, meaning lacking the ppsspp NKCODE_GUIDE=10-172
+if [ -e /usr/bin/inputplumber ] && ! grep -q "10-172" /storage/.config/ppsspp/PSP/SYSTEM/controls.ini;
+then
+  rsync -a /usr/config/ppsspp/PSP/SYSTEM/controls.ini /storage/.config/ppsspp/PSP/SYSTEM/controls.ini
+fi
+
+# S922X: clean mali_debug.config
+[[ "${HW_DEVICE}" == "S922X" ]] && rm -f /storage/mali_debug.config
+
+
+if [ "$HW_DEVICE" = "RK3566" -o "$HW_DEVICE" = "RK3576" ] &&\
+       grep -q 'video_driver = "gl"' /storage/.config/retroarch/retroarch.cfg; then
+  sed -i 's/video_driver = "gl"/video_driver = "glcore"/' /storage/.config/retroarch/retroarch.cfg
+fi

@@ -27,6 +27,10 @@ if [ ! -d "/storage/.cache/dsperate" ]; then
 	mkdir -p "/storage/.cache/dsperate"
 fi
 
+if [ ! -d "/storage/roms/ndsiware/.dsi_photos" ]; then
+	mkdir -p "/storage/roms/ndsiware/.dsi_photos"
+fi
+
 #Ini key helper
 set_ini_key() {
 	if grep -q "^[[:space:]]*${1}[[:space:]]*=" "${DSPERATE_INI}"; then
@@ -46,8 +50,14 @@ CHUNKY=$(get_setting chunky_pixels "${PLATFORM}" "${GAME}")
 LCDGRID=$(get_setting lcd_grid "${PLATFORM}" "${GAME}")
 VSYNC=$(get_setting vsync "${PLATFORM}" "${GAME}")
 FRAMESKIP=$(get_setting frameskip "${PLATFORM}" "${GAME}")
-SPEEDHACK=$(get_setting speed_hack "${PLATFORM}" "${GAME}")
+FSMODE=$(get_setting frameskip_mode "${PLATFORM}" "${GAME}")
+TIMING=$(get_setting cpu_timing "${PLATFORM}" "${GAME}")
+DSIENH=$(get_setting dsi_enhanced "${PLATFORM}" "${GAME}")
 AA=$(get_setting anti_aliasing "${PLATFORM}" "${GAME}")
+GPU3D=$(get_setting 3d_renderer "${PLATFORM}" "${GAME}")
+GPU3DSCALE=$(get_setting 3d_render_scale "${PLATFORM}" "${GAME}")
+SGAP=$(get_setting screen_gap "${PLATFORM}" "${GAME}")
+SEAM=$(get_setting pixel_seams "${PLATFORM}" "${GAME}")
 ISCALE=$(get_setting integer_scale "${PLATFORM}" "${GAME}")
 AUTOSAVE=$(get_setting autosave "${PLATFORM}" "${GAME}")
 
@@ -67,6 +77,13 @@ case "${SCREEN}" in
 		;;
 esac
 
+#Gap between screens
+case "${SGAP}" in
+	auto|[0-9]*)
+		OPTS+=("--screen-gap" "${SGAP}")
+		;;
+esac
+
 #Scaler options
 if [ "${SMOOTH}" = "1" ]; then
 	OPTS+=("--linear")
@@ -82,6 +99,13 @@ else
 			OPTS+=("--lcd-grid" "${LCDGRID}")
 			;;
 	esac
+
+	#Pixel seams
+	case "${SEAM}" in
+		dark|blend|blend_linear)
+			OPTS+=("--seam" "${SEAM}")
+			;;
+	esac
 fi
 
 #Vsync
@@ -94,20 +118,23 @@ case "${FRAMESKIP}" in
 		;;
 esac
 
-#Speed hacks
-case "${SPEEDHACK}" in
-	cpu_uc)
-		OPTS+=("--cpu-uc")
+case "${FSMODE}" in
+	adaptive|fixed)
+		OPTS+=("--frameskip-mode" "${FSMODE}")
 		;;
-	fast_load)
-		OPTS+=("--fast-load")
+esac
+
+#CPU timing model
+case "${TIMING}" in
+	fast|exact|turbo)
+		OPTS+=("--timing" "${TIMING}")
 		;;
-	cpu_oc)
-		OPTS+=("--fast-load" "--cpu-oc")
-		;;
-	timing_oc)
-		OPTS+=("--fast-load" "--cpu-oc" "--timing-oc")
-		;;
+esac
+
+#DSi-enhanced cards as DSi
+case "${DSIENH}" in
+	1) OPTS+=("--dsi-enhanced") ;;
+	0) OPTS+=("--no-dsi-enhanced") ;;
 esac
 
 #Forced integer scale
@@ -120,8 +147,24 @@ esac
 #Dual screen handling
 [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ] && OPTS+=("--dual-window")
 
+#3D renderer
+case "${GPU3D}" in
+	1) OPTS+=("--gpu3d") ;;
+	0) OPTS+=("--no-gpu3d") ;;
+esac
+
+#3D render scale
+case "${GPU3DSCALE}" in
+	1|2|4)
+		OPTS+=("--gpu3d-scale" "${GPU3DSCALE}")
+		;;
+esac
+
 #3D anti-aliasing
-[ "${AA}" = "1" ] && OPTS+=("--aa")
+case "${AA}" in
+	1) OPTS+=("--aa") ;;
+	0) OPTS+=("--no-aa") ;;
+esac
 
 #RetroAchievements
 #Casual mode only: DSperate does not support hardcore (yet?).

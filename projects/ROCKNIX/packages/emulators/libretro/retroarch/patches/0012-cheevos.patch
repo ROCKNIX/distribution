@@ -1,0 +1,139 @@
+From 684d7813f021d332b528483f811645d0e073519c Mon Sep 17 00:00:00 2001
+From: sydarn <sydarn@proton.me>
+Date: Sat, 7 Nov 2026 00:20:34 +0100
+Subject: [PATCH] more cheevos
+
+---
+ audio/audio_driver.c | 26 +++++++++-----------------
+ cheevos/cheevos.c    |  7 +++++++
+ configuration.c      |  6 ++++++
+ configuration.h      |  2 ++
+ 4 files changed, 24 insertions(+), 17 deletions(-)
+
+diff --git a/audio/audio_driver.c b/audio/audio_driver.c
+index fb63b59699..e0609c71e5 100644
+--- a/audio/audio_driver.c
++++ b/audio/audio_driver.c
+@@ -10103,8 +10103,8 @@ static void audio_driver_load_system_sound(const char *path,
+ void audio_driver_load_system_sounds(void)
+ {
+    char basename_noext[NAME_MAX_LENGTH];
+-   char sounds_path[PATH_MAX_LENGTH];
+-   char sounds_fallback_path[PATH_MAX_LENGTH];
++   char* sounds_path = "/usr/share/libretro/sounds";
++   char* sounds_fallback_path = "/storage/roms/music/retroachievements";
+    settings_t *settings                  = config_get_ptr();
+    const char *dir_assets                = settings->paths.directory_assets;
+    const bool audio_enable_menu          = settings->bools.audio_enable_menu;
+@@ -10131,19 +10131,6 @@ void audio_driver_load_system_sounds(void)
+    if (!audio_enable_menu && !audio_enable_cheevo_unlock)
+       goto end;
+ 
+-   sounds_path[0] = basename_noext[0] ='\0';
+-
+-   fill_pathname_join_special(
+-         sounds_fallback_path,
+-         dir_assets,
+-         "sounds",
+-         sizeof(sounds_fallback_path));
+-
+-   fill_pathname_application_special(
+-         sounds_path,
+-         sizeof(sounds_path),
+-         APPLICATION_SPECIAL_DIRECTORY_ASSETS_SOUNDS);
+-
+    list          = dir_list_new(sounds_path, MENU_SOUND_FORMATS, false, false, false, false);
+    list_fallback = dir_list_new(sounds_fallback_path, MENU_SOUND_FORMATS, false, false, false, false);
+ 
+@@ -10194,8 +10181,13 @@ void audio_driver_load_system_sounds(void)
+          else if (string_is_equal_noncase(basename_noext, "bgm"))
+             path_bgm = path;
+ #endif
+-         else if (string_is_equal_noncase(basename_noext, "unlock"))
+-            path_cheevo_unlock = path;
++         else if(string_is_empty(settings->arrays.cheevos_unlock_sound) == false) {
++            if (string_is_equal_noncase(basename_noext, "unlock"))
++               path_cheevo_unlock = path;
++            else
++               if (string_is_equal_noncase(basename_noext, settings->arrays.cheevos_unlock_sound))
++                  path_cheevo_unlock = path;
++            }
+          else if (string_is_equal_noncase(basename_noext, "up"))
+             path_up = path;
+          else if (string_is_equal_noncase(basename_noext, "down"))
+diff --git a/cheevos/cheevos.c b/cheevos/cheevos.c
+index 2a4577c01b..bdc0c6e4f9 100644
+--- a/cheevos/cheevos.c
++++ b/cheevos/cheevos.c
+@@ -506,6 +506,13 @@ static void rcheevos_award_achievement(const rc_client_achievement_t* cheevo)
+       }
+    }
+ 
++   const char* cheevos_cmd = settings->arrays.cheevos_cmd;
++   if (cheevos_cmd[0]) {
++     char cmdargs[256];
++     snprintf(cmdargs, sizeof(cmdargs), "%s %u \"%s\" \"%s\" > /dev/null 2>/dev/null", cheevos_cmd, cheevo->id, cheevo->title, cheevo->description);
++     system(cmdargs);
++   }
++
+ #ifdef HAVE_AUDIOMIXER
+    /* Play the unlock sound */
+    if (settings->bools.cheevos_unlock_sound_enable)
+diff --git a/configuration.c b/configuration.c
+index 1b5926fb87..6f1dc7b991 100644
+--- a/configuration.c
++++ b/configuration.c
+@@ -1161,9 +1161,11 @@ static bool config_save_credentials(
+  * that feature's secrets out of retroarch.cfg instead of
+  * carrying them over as unknown entries. */
+ static const char *config_sensitive_keys[] = {
++   "cheevos_cmd",
+    "cheevos_username",
+    "cheevos_password",
+    "cheevos_token",
++   "cheevos_unlock_sound",
+    "webdav_username",
+    "webdav_password",
+    "google_drive_refresh_token",
+@@ -2099,9 +2101,11 @@ static struct config_array_setting *populate_settings_array(
+ 
+ #ifdef HAVE_CHEEVOS
+    SETTING_ARRAY("cheevos_custom_host",                   settings->arrays.cheevos_custom_host, false, NULL, true);
++   SETTING_ARRAY("cheevos_cmd",                  settings->arrays.cheevos_cmd, false, NULL, true);
+    SETTING_ARRAY_SENSITIVE("cheevos_username",            settings->arrays.cheevos_username, false, NULL, true);
+    SETTING_ARRAY_SENSITIVE("cheevos_password",            settings->arrays.cheevos_password, false, NULL, true);
+    SETTING_ARRAY_SENSITIVE("cheevos_token",               settings->arrays.cheevos_token, false, NULL, true);
++   SETTING_ARRAY("cheevos_unlock_sound",         settings->arrays.cheevos_unlock_sound, false, NULL, true);
+    SETTING_ARRAY("cheevos_leaderboards_enable",           settings->arrays.cheevos_leaderboards_enable, true, "", true); /* deprecated */
+ #endif
+ 
+@@ -6323,9 +6327,11 @@ void config_set_defaults(settings_t *target)
+ #endif
+ 
+ #ifdef HAVE_CHEEVOS
++   *settings->arrays.cheevos_cmd                      = '\0';
+    *settings->arrays.cheevos_username                 = '\0';
+    *settings->arrays.cheevos_password                 = '\0';
+    *settings->arrays.cheevos_token                    = '\0';
++   *settings->arrays.cheevos_unlock_sound             = '\0';
+ #endif
+ 
+    /* The input's own state - the binds, the active remap, what a
+diff --git a/configuration.h b/configuration.h
+index 3c556263a3..792095009f 100644
+--- a/configuration.h
++++ b/configuration.h
+@@ -1324,8 +1324,10 @@ typedef struct settings
+       char cloud_sync_driver[32];
+       char menu_driver[32];
+       char menu_ozone_color_theme[32];
++      char cheevos_cmd[256];
+       char cheevos_username[32];
+       char cheevos_token[32];
++      char cheevos_unlock_sound[32];
+       char cheevos_leaderboards_enable[32];
+       char video_context_driver[32];
+       char audio_driver[32];
+-- 
+2.54.0
+

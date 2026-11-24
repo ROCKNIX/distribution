@@ -7,7 +7,7 @@ PKG_SHA256="8e6291e9c25b3c677644b101d8919ee3b64532be035a456cc4be2f2e7919484e"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/desmume"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain libpcap"
+PKG_DEPENDS_TARGET="toolchain retroarch libpcap"
 PKG_LONGDESC="DeSmuME - Nintendo DS libretro"
 PKG_TOOLCHAIN="make"
 

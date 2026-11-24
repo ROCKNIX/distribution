@@ -85,6 +85,7 @@ static int ds_screen_height = 192;
 static int last_x = -1;
 static int last_y = -1;
 static int xy_idx = 0;
+static int touch_scaled = 1;
 static int phys_width = -1;
 static int phys_height = -1;
 static int logical_width = -1;
@@ -563,6 +564,16 @@ SDL_Window* SDL_CreateWindow(const char *title, int x, int y, int w, int h, Uint
         }
     }
 
+    // Layouts where the displays differ in width need an explicit size
+    const char *size_override = getenv("DSHOOK_WINDOW_SIZE");
+    int override_w, override_h, override_set = 0;
+    if (size_override && sscanf(size_override, "%dx%d", &override_w, &override_h) == 2 &&
+        override_w > 0 && override_h > 0) {
+        total_width = override_w;
+        total_height = override_h;
+        override_set = 1;
+    }
+
     // Record screen size for rect tracking/conversion
     phys_width = total_width;
     phys_height = total_height;
@@ -574,6 +585,12 @@ SDL_Window* SDL_CreateWindow(const char *title, int x, int y, int w, int h, Uint
     // Check which screen side is longer for dual screens
     if (num_displays > 1)
         xy_idx = (last_width > last_height) ? 1 : 2;
+
+    // Explicit size is a stacked layout whose touch coordinates are already window-relative
+    if (override_set && num_displays > 1) {
+        xy_idx = 2;
+        touch_scaled = 0;
+    }
 
     // Set window size to single screen to fix offsets when resizing
     return real_SDL_CreateWindow(title, 0, 0, last_width, last_height, flags);
@@ -595,8 +612,17 @@ void SDL_SetWindowSize(SDL_Window* window, int w, int h) {
     } else if (init_resize == -1) {
         if (xy_idx == 1)
             w = phys_width / 2;
-        if (xy_idx == 2)
-            h = phys_height / 2;
+        // Stacked: fit the menu to the top screen's half, keeping its aspect
+        if (xy_idx == 2 && w > 0 && h > 0) {
+            int slot_h = phys_height / 2;
+            if (w * slot_h > h * phys_width) {
+                h = h * phys_width / w;
+                w = phys_width;
+            } else {
+                w = w * slot_h / h;
+                h = slot_h;
+            }
+        }
 
         real_SDL_SetWindowSize(window, w, h);
         init_resize = 0;
@@ -760,9 +786,9 @@ int SDL_PollEvent(SDL_Event* event) {
 
                 int x = (int)(event->tfinger.x * phys_width);
                 int y = (int)(event->tfinger.y * phys_height);
-                if (xy_idx == 1)
+                if (touch_scaled && xy_idx == 1)
                     x *= 2;
-                if (xy_idx == 2)
+                if (touch_scaled && xy_idx == 2)
                     y *= 2;
 
                 if (x < touch_rect->x || x > touch_rect->x + touch_rect->w ||
@@ -798,9 +824,9 @@ int SDL_PollEvent(SDL_Event* event) {
 
                 int x = (int)(event->tfinger.x * phys_width);
                 int y = (int)(event->tfinger.y * phys_height);
-                if (xy_idx == 1)
+                if (touch_scaled && xy_idx == 1)
                     x *= 2;
-                if (xy_idx == 2)
+                if (touch_scaled && xy_idx == 2)
                     y *= 2;
 
                 if (x < touch_rect->x || x > touch_rect->x + touch_rect->w ||

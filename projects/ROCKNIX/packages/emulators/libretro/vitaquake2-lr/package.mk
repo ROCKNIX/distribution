@@ -7,7 +7,7 @@ PKG_SHA256="7d70a312da16e93ec5a764c95fa1ffe42f484432b9b0ca8f83550874ed1c8725"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/vitaquake2"
 PKG_URL="$PKG_SITE/archive/$PKG_VERSION.tar.gz"
-PKG_DEPENDS_TARGET="toolchain vitaquake2-rogue-lr vitaquake2-xatrix-lr vitaquake2-zaero-lr"
+PKG_DEPENDS_TARGET="toolchain retroarch vitaquake2-rogue-lr vitaquake2-xatrix-lr vitaquake2-zaero-lr"
 PKG_LONGDESC="Libretro port of VitaQuakeII (Quake 2 engine)"
 
 if [ "${OPENGL_SUPPORT}" = "yes" ]; then

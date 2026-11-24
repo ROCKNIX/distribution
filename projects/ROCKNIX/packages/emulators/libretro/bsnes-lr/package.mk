@@ -7,7 +7,7 @@ PKG_SHA256="14b2dfe099d0456f1f9ecb1f5e0b925d55f898df0000f329339be2b84bf84bf1"
 PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/libretro/bsnes-libretro"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain"
+PKG_DEPENDS_TARGET="toolchain retroarch"
 PKG_LONGDESC="BSNES Super Nintendo Libretro Core"
 
 if [ ! "${OPENGL}" = "no" ]; then

@@ -256,6 +256,12 @@ fi
     sed -i '/InternalResolution/c\InternalResolution = 2' ${CONF_DIR}/${GFX_INI}
   fi
 
+  # Scan out render size. With patch 004 InternalResolution is twice the multiplier (1 = 0.5x)
+  SCANOUT_SCALE=$(scanout_internal_scale "$(awk '/^InternalResolution = / {print $3 / 2; exit}' ${CONF_DIR}/${GFX_INI})" 480 0.5 6 0.5)
+  sed -i "/InternalResolution/c\InternalResolution = $(awk -v s="${SCANOUT_SCALE}" 'BEGIN { printf "%d", s * 2 }')" ${CONF_DIR}/${GFX_INI}
+  case "$ASPECT" in 1) SCANOUT_ASPECT=16:9 ;; 2) SCANOUT_ASPECT=4:3 ;; 3) SCANOUT_ASPECT=0 ;; *) SCANOUT_ASPECT=16:9 ;; esac
+  scanout_render_size 480 "${SCANOUT_SCALE}" "${SCANOUT_ASPECT}"
+
   # Shader Mode
   if [ "$SHADERM" = "0" ]; then
     sed -i '/ShaderCompilationMode =/c\ShaderCompilationMode = 0' ${CONF_DIR}/${GFX_INI}

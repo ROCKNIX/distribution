@@ -8,4 +8,9 @@ set_kill set "commander"
 
 sway_fullscreen "commander" &
 
-/usr/bin/commander
+PRELUDE="/usr/share/commander/commander.cfg"
+if [ -f "${PRELUDE}" ]; then
+  /usr/bin/commander --config-prelude "${PRELUDE}"
+else
+  /usr/bin/commander
+fi

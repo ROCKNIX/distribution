@@ -1,0 +1,62 @@
+From: Bruno Gregório <accounts@bruno.pw>
+Date: Tue, 10 Jun 2026 00:00:00 +0000
+Subject: [PATCH] power: supply: rk817_charger: OCV fallback for uncalibrated
+ coulomb counters (RK3326 clones)
+
+ROCKNIX's mainline rk817-charger derives State-of-Charge from the RK817
+coulomb counter (Q_PRES). On a normal reboot (OFF_CNT < 30 min) it trusts
+that counter. Some RK3326 "R36S" clones (R35S-V12 board) ship with an
+uncalibrated / non-counting coulomb counter that reads ~0, so SOC is
+reported as 0% and never recovers until a full-charge (CHARGE_FINISH)
+calibration that may never happen. The vendor rk817_battery driver always
+falls back to an OCV (voltage->%) lookup, which is why the gauge works
+under vendor firmware.
+
+Add an OCV fallback to the non-first-boot branch of
+rk817_read_or_set_full_charge_on_boot(): if the coulomb-counter SOC comes
+out implausibly low (< 1%) while the battery still holds charge, re-seed
+SOC from an OCV lookup of the power-on voltage, mirroring the vendor
+driver. First-boot and the >30 min OFF_CNT path already use OCV, so they
+are unaffected.
+
+Signed-off-by: Bruno Gregório <accounts@bruno.pw>
+---
+ drivers/power/supply/rk817_charger.c | 24 ++++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/drivers/power/supply/rk817_charger.c b/drivers/power/supply/rk817_charger.c
+--- a/drivers/power/supply/rk817_charger.c
++++ b/drivers/power/supply/rk817_charger.c
+@@ -828,6 +828,30 @@ rk817_read_or_set_full_charge_on_boot(struct rk817_charger *charger,
+ 			charger->soc = (boot_charge_mah * 1000 * 100 /
+ 					charger->fcc_mah);
+ 		}
++
++		/*
++		 * Clone-hardware fallback: some RK3326 R3xS clones ship with an
++		 * uncalibrated coulomb counter whose Q_PRES reads ~0 on every
++		 * boot, so the branch above computes ~0% and the gauge sticks
++		 * at 0 until a full-charge calibration that may never happen. If
++		 * SOC comes out implausibly low, re-seed it from an OCV lookup
++		 * of the power-on voltage, mirroring what the vendor
++		 * rk817_battery driver effectively does.
++		 */
++		if (charger->soc < 1000) {
++			int ocv_soc;
++
++			regmap_bulk_read(rk808->regmap,
++					 RK817_GAS_GAUGE_PWRON_VOL_H,
++					 bulk_reg, 2);
++			tmp = get_unaligned_be16(bulk_reg);
++			boot_voltage = (charger->voltage_k * tmp) +
++					1000 * charger->voltage_b;
++			ocv_soc = power_supply_batinfo_ocv2cap(bat_info,
++							       boot_voltage, 20);
++			if (ocv_soc > 0)
++				charger->soc = ocv_soc * 1000;
++		}
+ 	}
+
+ 	/*
+--
+2.43.0

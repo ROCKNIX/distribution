@@ -3,9 +3,13 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
+# Allow user storage version of this script to execute instead (if provided)
+[[ -x "/storage/share/aethersx2-sa/Start AetherSX2.sh" ]] && exec "/storage/share/aethersx2-sa/Start AetherSX2.sh" "$@"
+# Otherwise use the builtin script below
+
 source /etc/profile
 
-set_kill set "aethersx2-sa"
+set_kill set "aethersx2"
 
 #Set OpenGL 3.3 on panfrost
   export MESA_GL_VERSION_OVERRIDE=3.3
@@ -15,6 +19,6 @@ set_kill set "aethersx2-sa"
   export QT_QPA_PLATFORM=wayland
 
 # Extra Libs needed to run
-  export LD_LIBRARY_PATH=/usr/share/aethersx2-sa/libs
+  export LD_LIBRARY_PATH=/storage/share/aethersx2-sa/libs
 
-/usr/share/aethersx2-sa/aethersx2 -bigpicture -fullscreen >/dev/null 2>&1
+/storage/share/aethersx2-sa/aethersx2 -bigpicture -fullscreen >/dev/null 2>&1

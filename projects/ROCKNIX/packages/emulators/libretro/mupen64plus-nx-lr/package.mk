@@ -7,7 +7,7 @@ PKG_SHA256="1810b7bbdc4abfdeee8a9f7f99c4a91dab601a228935802317c25a43d7cf9dbb"
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/libretro/mupen64plus-libretro-nx"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain nasm:host"
+PKG_DEPENDS_TARGET="toolchain retroarch nasm:host"
 PKG_LONGDESC="mupen64plus NX"
 PKG_BUILD_FLAGS="-lto"
 
