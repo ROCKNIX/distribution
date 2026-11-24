@@ -1,0 +1,30 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+#
+# irqaffinity=0-2 keeps the Wi-Fi receive softirq on the little cores. msm's
+# gpu-worker kthread is SCHED_FIFO and has no fixed CPU; when it shares one
+# with the receive softirq it waits behind it, and a game stream over Wi-Fi
+# misses frames. Keep it on the middle cores, away from the IRQ cores and
+# off the prime core.
+
+GPU_WORKER_CORES="3-6"
+
+pin_gpu_worker() {
+  for COMM in /proc/[0-9]*/comm; do
+    [ "$(cat "${COMM}" 2>/dev/null)" = "gpu-worker" ] || continue
+    PID="${COMM#/proc/}"
+    taskset -pc "${GPU_WORKER_CORES}" "${PID%/comm}" >/dev/null 2>&1 && return 0
+  done
+  return 1
+}
+
+# The GPU may bind after this runs; wait for the thread in the background.
+pin_gpu_worker || (
+  for i in $(seq 1 60); do
+    sleep 1
+    pin_gpu_worker && break
+  done
+) &
+
+exit 0
