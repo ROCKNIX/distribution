@@ -1,0 +1,314 @@
+From: Noxwell <beebono@gmail.com>
+Date: Mon, 23 Nov 2026 12:00:00 -0600
+Subject: [PATCH] clk: qcom: add SM6125 video clock controller
+
+Based on the downstream videocc-trinket driver and the mainline SC7180
+video clock controller, which shares the register layout.
+---
+--- a/drivers/clk/qcom/Kconfig
++++ b/drivers/clk/qcom/Kconfig
+@@ -1651,6 +1651,17 @@
+ 	  Say Y if you want to support video devices and functionality such as
+ 	  video encode/decode.
+ 
++config SM_VIDEOCC_6125
++	tristate "SM6125 Video Clock Controller"
++	depends on ARM64 || COMPILE_TEST
++	select SM_GCC_6125
++	select QCOM_GDSC
++	default m if ARCH_QCOM
++	help
++	  Support for the video clock controller on SM6125 devices.
++	  Say Y if you want to support video devices and functionality such as
++	  video encode and decode.
++
+ config SM_VIDEOCC_6350
+ 	tristate "SM6350 Video Clock Controller"
+ 	depends on ARM64 || COMPILE_TEST
+--- a/drivers/clk/qcom/Makefile
++++ b/drivers/clk/qcom/Makefile
+@@ -199,6 +199,7 @@
+ obj-$(CONFIG_SM_TCSRCC_8550) += tcsrcc-sm8550.o
+ obj-$(CONFIG_SM_TCSRCC_8650) += tcsrcc-sm8650.o
+ obj-$(CONFIG_SM_TCSRCC_8750) += tcsrcc-sm8750.o
++obj-$(CONFIG_SM_VIDEOCC_6125) += videocc-sm6125.o
+ obj-$(CONFIG_SM_VIDEOCC_6350) += videocc-sm6350.o
+ obj-$(CONFIG_SM_VIDEOCC_7150) += videocc-sm7150.o
+ obj-$(CONFIG_SM_VIDEOCC_8150) += videocc-sm8150.o
+--- /dev/null
++++ b/drivers/clk/qcom/videocc-sm6125.c
+@@ -0,0 +1,251 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Copyright (c) 2019, The Linux Foundation. All rights reserved.
++ */
++
++#include <linux/clk-provider.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/regmap.h>
++
++#include <dt-bindings/clock/qcom,sm6125-videocc.h>
++
++#include "clk-alpha-pll.h"
++#include "clk-branch.h"
++#include "clk-rcg.h"
++#include "clk-regmap.h"
++#include "common.h"
++#include "gdsc.h"
++
++enum {
++	P_BI_TCXO,
++	P_VIDEO_PLL0_OUT_MAIN,
++};
++
++static const struct pll_vco video_cc_pll_vco[] = {
++	{ 500000000, 1000000000, 2 },
++};
++
++/* 600MHz configuration */
++static const struct alpha_pll_config video_pll0_config = {
++	.l = 0x1f,
++	.alpha_hi = 0x40,
++	.alpha = 0x00,
++	.alpha_en_mask = BIT(24),
++	.vco_val = 0x2 << 20,
++	.vco_mask = 0x3 << 20,
++	.main_output_mask = BIT(0),
++	.config_ctl_val = 0x4001055b,
++	.test_ctl_hi_mask = 0x1,
++};
++
++static struct clk_alpha_pll video_pll0 = {
++	.offset = 0x42c,
++	.vco_table = video_cc_pll_vco,
++	.num_vco = ARRAY_SIZE(video_cc_pll_vco),
++	.regs = clk_alpha_pll_regs[CLK_ALPHA_PLL_TYPE_DEFAULT],
++	.flags = SUPPORTS_DYNAMIC_UPDATE,
++	.clkr = {
++		.hw.init = &(struct clk_init_data){
++			.name = "video_pll0",
++			.parent_data = &(const struct clk_parent_data){
++				.fw_name = "bi_tcxo",
++			},
++			.num_parents = 1,
++			.ops = &clk_alpha_pll_ops,
++		},
++	},
++};
++
++static const struct parent_map video_cc_parent_map_1[] = {
++	{ P_BI_TCXO, 0 },
++	{ P_VIDEO_PLL0_OUT_MAIN, 1 },
++};
++
++static const struct clk_parent_data video_cc_parent_data_1[] = {
++	{ .fw_name = "bi_tcxo" },
++	{ .hw = &video_pll0.clkr.hw },
++};
++
++static const struct freq_tbl ftbl_video_cc_venus_clk_src[] = {
++	F(19200000, P_BI_TCXO, 1, 0, 0),
++	F(133333333, P_VIDEO_PLL0_OUT_MAIN, 4.5, 0, 0),
++	F(240000000, P_VIDEO_PLL0_OUT_MAIN, 2.5, 0, 0),
++	F(300000000, P_VIDEO_PLL0_OUT_MAIN, 2, 0, 0),
++	F(380000000, P_VIDEO_PLL0_OUT_MAIN, 2, 0, 0),
++	F(410000000, P_VIDEO_PLL0_OUT_MAIN, 2, 0, 0),
++	F(460000000, P_VIDEO_PLL0_OUT_MAIN, 2, 0, 0),
++	{ }
++};
++
++static struct clk_rcg2 video_cc_venus_clk_src = {
++	.cmd_rcgr = 0x7f0,
++	.mnd_width = 0,
++	.hid_width = 5,
++	.parent_map = video_cc_parent_map_1,
++	.freq_tbl = ftbl_video_cc_venus_clk_src,
++	.clkr.hw.init = &(struct clk_init_data){
++		.name = "video_cc_venus_clk_src",
++		.parent_data = video_cc_parent_data_1,
++		.num_parents = ARRAY_SIZE(video_cc_parent_data_1),
++		.flags = CLK_SET_RATE_PARENT,
++		.ops = &clk_rcg2_shared_ops,
++	},
++};
++
++static struct clk_branch video_cc_vcodec0_axi_clk = {
++	.halt_reg = 0x8f0,
++	.halt_check = BRANCH_HALT,
++	.clkr = {
++		.enable_reg = 0x8f0,
++		.enable_mask = BIT(0),
++		.hw.init = &(struct clk_init_data){
++			.name = "video_cc_vcodec0_axi_clk",
++			.ops = &clk_branch2_ops,
++		},
++	},
++};
++
++static struct clk_branch video_cc_vcodec0_core_clk = {
++	.halt_reg = 0x890,
++	.halt_check = BRANCH_HALT_VOTED,
++	.clkr = {
++		.enable_reg = 0x890,
++		.enable_mask = BIT(0),
++		.hw.init = &(struct clk_init_data){
++			.name = "video_cc_vcodec0_core_clk",
++			.parent_hws = (const struct clk_hw*[]){
++				&video_cc_venus_clk_src.clkr.hw,
++			},
++			.num_parents = 1,
++			.flags = CLK_SET_RATE_PARENT,
++			.ops = &clk_branch2_ops,
++		},
++	},
++};
++
++static struct clk_branch video_cc_venus_ahb_clk = {
++	.halt_reg = 0x9b0,
++	.halt_check = BRANCH_HALT,
++	.clkr = {
++		.enable_reg = 0x9b0,
++		.enable_mask = BIT(0),
++		.hw.init = &(struct clk_init_data){
++			.name = "video_cc_venus_ahb_clk",
++			.ops = &clk_branch2_ops,
++		},
++	},
++};
++
++static struct clk_branch video_cc_venus_ctl_axi_clk = {
++	.halt_reg = 0x8d0,
++	.halt_check = BRANCH_HALT,
++	.clkr = {
++		.enable_reg = 0x8d0,
++		.enable_mask = BIT(0),
++		.hw.init = &(struct clk_init_data){
++			.name = "video_cc_venus_ctl_axi_clk",
++			.ops = &clk_branch2_ops,
++		},
++	},
++};
++
++static struct clk_branch video_cc_venus_ctl_core_clk = {
++	.halt_reg = 0x850,
++	.halt_check = BRANCH_HALT,
++	.clkr = {
++		.enable_reg = 0x850,
++		.enable_mask = BIT(0),
++		.hw.init = &(struct clk_init_data){
++			.name = "video_cc_venus_ctl_core_clk",
++			.parent_hws = (const struct clk_hw*[]){
++				&video_cc_venus_clk_src.clkr.hw,
++			},
++			.num_parents = 1,
++			.flags = CLK_SET_RATE_PARENT,
++			.ops = &clk_branch2_ops,
++		},
++	},
++};
++
++static struct gdsc venus_gdsc = {
++	.gdscr = 0x814,
++	.pd = {
++		.name = "venus_gdsc",
++	},
++	.pwrsts = PWRSTS_OFF_ON,
++};
++
++static struct gdsc vcodec0_gdsc = {
++	.gdscr = 0x874,
++	.pd = {
++		.name = "vcodec0_gdsc",
++	},
++	.flags = HW_CTRL_TRIGGER,
++	.pwrsts = PWRSTS_OFF_ON,
++};
++
++static struct clk_regmap *video_cc_sm6125_clocks[] = {
++	[VIDEO_CC_VCODEC0_AXI_CLK] = &video_cc_vcodec0_axi_clk.clkr,
++	[VIDEO_CC_VCODEC0_CORE_CLK] = &video_cc_vcodec0_core_clk.clkr,
++	[VIDEO_CC_VENUS_AHB_CLK] = &video_cc_venus_ahb_clk.clkr,
++	[VIDEO_CC_VENUS_CLK_SRC] = &video_cc_venus_clk_src.clkr,
++	[VIDEO_CC_VENUS_CTL_AXI_CLK] = &video_cc_venus_ctl_axi_clk.clkr,
++	[VIDEO_CC_VENUS_CTL_CORE_CLK] = &video_cc_venus_ctl_core_clk.clkr,
++	[VIDEO_PLL0] = &video_pll0.clkr,
++};
++
++static struct gdsc *video_cc_sm6125_gdscs[] = {
++	[VENUS_GDSC] = &venus_gdsc,
++	[VCODEC0_GDSC] = &vcodec0_gdsc,
++};
++
++static const struct regmap_config video_cc_sm6125_regmap_config = {
++	.reg_bits = 32,
++	.reg_stride = 4,
++	.val_bits = 32,
++	.max_register = 0xb94,
++	.fast_io = true,
++};
++
++static const struct qcom_cc_desc video_cc_sm6125_desc = {
++	.config = &video_cc_sm6125_regmap_config,
++	.clks = video_cc_sm6125_clocks,
++	.num_clks = ARRAY_SIZE(video_cc_sm6125_clocks),
++	.gdscs = video_cc_sm6125_gdscs,
++	.num_gdscs = ARRAY_SIZE(video_cc_sm6125_gdscs),
++};
++
++static const struct of_device_id video_cc_sm6125_match_table[] = {
++	{ .compatible = "qcom,sm6125-videocc" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, video_cc_sm6125_match_table);
++
++static int video_cc_sm6125_probe(struct platform_device *pdev)
++{
++	struct regmap *regmap;
++
++	regmap = qcom_cc_map(pdev, &video_cc_sm6125_desc);
++	if (IS_ERR(regmap))
++		return PTR_ERR(regmap);
++
++	clk_alpha_pll_configure(&video_pll0, regmap, &video_pll0_config);
++
++	/* Keep VIDEO_CC_XO_CLK always on */
++	qcom_branch_set_clk_en(regmap, 0xab8);
++
++	return qcom_cc_really_probe(&pdev->dev, &video_cc_sm6125_desc, regmap);
++}
++
++static struct platform_driver video_cc_sm6125_driver = {
++	.probe = video_cc_sm6125_probe,
++	.driver = {
++		.name = "videocc-sm6125",
++		.of_match_table = video_cc_sm6125_match_table,
++	},
++};
++module_platform_driver(video_cc_sm6125_driver);
++
++MODULE_DESCRIPTION("QTI VIDEOCC SM6125 Driver");
++MODULE_LICENSE("GPL");
+--- /dev/null
++++ b/include/dt-bindings/clock/qcom,sm6125-videocc.h
+@@ -0,0 +1,20 @@
++/* SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause) */
++/*
++ * Copyright (c) 2019, The Linux Foundation. All rights reserved.
++ */
++
++#ifndef _DT_BINDINGS_CLK_QCOM_VIDEO_CC_SM6125_H
++#define _DT_BINDINGS_CLK_QCOM_VIDEO_CC_SM6125_H
++
++#define VIDEO_PLL0				0
++#define VIDEO_CC_VCODEC0_AXI_CLK		1
++#define VIDEO_CC_VCODEC0_CORE_CLK		2
++#define VIDEO_CC_VENUS_AHB_CLK			3
++#define VIDEO_CC_VENUS_CLK_SRC			4
++#define VIDEO_CC_VENUS_CTL_AXI_CLK		5
++#define VIDEO_CC_VENUS_CTL_CORE_CLK		6
++
++#define VENUS_GDSC				0
++#define VCODEC0_GDSC				1
++
++#endif
