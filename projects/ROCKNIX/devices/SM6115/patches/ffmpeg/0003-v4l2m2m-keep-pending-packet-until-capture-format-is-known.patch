@@ -1,0 +1,42 @@
+From: Noxwell <beebono@gmail.com>
+Date: Mon, 23 Nov 2026 12:00:00 -0600
+Subject: [PATCH] libavcodec: v4l2m2m: keep the pending packet until the
+ capture format is known
+
+A decoder may fail VIDIOC_G_FMT on the capture queue until it has raised
+its source change event. Once the output queue is full, every failed
+attempt dropped the packet that could not be queued.
+---
+--- a/libavcodec/v4l2_m2m_dec.c
++++ b/libavcodec/v4l2_m2m_dec.c
+@@ -21,6 +21,7 @@
+  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+  */
+ 
++#include <poll.h>
+ #include <linux/videodev2.h>
+ #include <sys/ioctl.h>
+ #include "libavutil/pixfmt.h"
+@@ -165,8 +166,20 @@
+         ret = v4l2_try_start(avctx);
+         if (ret) {
+             /* can't recover */
+-            if (ret != AVERROR(ENOMEM))
+-                ret = 0;
++            if (ret == AVERROR(ENOMEM))
++                goto fail;
++
++            /* the capture format is not known yet: keep the pending packet
++             * and wait for the source change event instead of dropping it
++             */
++            if (s->buf_pkt.size) {
++                struct pollfd pfd = { .fd = s->fd, .events = POLLPRI };
++
++                poll(&pfd, 1, 10);
++                return AVERROR(EAGAIN);
++            }
++
++            ret = 0;
+             goto fail;
+         }
+     }
