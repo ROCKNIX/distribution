@@ -14,14 +14,18 @@ PKG_TOOLCHAIN="cmake"
 PKG_BUILD_FLAGS=" +lto"
 
 pre_configure_target() {
-if [ "${DEVICE}" = "RK3588" ]; then
-  #BSP name?, probably can be removed when moving to mainline
-  HEAP_NAME=cma
-elif [ "${DEVICE}" = "RK3566" ] || [ "${DEVICE}" = "RK3576" ]; then
-  HEAP_NAME=system
-else
-  HEAP_NAME=linux,cma
-fi
+case "${DEVICE}" in
+  RK3588)
+    # BSP name?, probably can be removed when moving to mainline
+    HEAP_NAME=cma
+    ;;
+  S922X)
+    HEAP_NAME=linux,cma
+    ;;
+  *) # rk3326,rk3566,rk3576
+    HEAP_NAME=system
+    ;;
+esac
 
 if [ "${ARCH}" = "aarch64" ]; then
   INCLUDE_ARCH=arm64
