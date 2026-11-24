@@ -144,6 +144,7 @@ steam_scope_reexec_if_needed() {
       --expand-environment=no \
       -p TasksMax=infinity \
       -p OOMPolicy=continue \
+      -p Wants=rocknix-game-mode.service \
       -E _STEAM_SCOPE=1 \
       -E HOME="$HOME" \
       -E USER="$USER" \

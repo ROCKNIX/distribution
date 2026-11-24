@@ -115,7 +115,7 @@ function game_scope() {
                 echo 500 >/proc/self/oom_score_adj
                 exec systemd-run --scope --quiet --expand-environment=no --slice=games.slice --unit="${GAME_UNIT}" \
                         --description="${PLATFORM}: ${ROMNAME##*/}" -p StopPropagatedFrom=essway.service \
-                        -p TimeoutStopSec=5s -p TasksMax=infinity -p OOMPolicy=continue -- "$@"
+                        -p Wants=rocknix-game-mode.service -p TimeoutStopSec=5s -p TasksMax=infinity -p OOMPolicy=continue -- "$@"
         )
 }
 
