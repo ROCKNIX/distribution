@@ -1,0 +1,140 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Zhao Li <enderaoelyther@gmail.com>
+Date: Sat, 21 Nov 2026 23:56:48 +0800
+Subject: [PATCH] Bluetooth: hci_serdev: stop write_work before closing the port
+
+With HCI_QUIRK_NON_PERSISTENT_SETUP, hci_uart_close() closes the serdev
+port without keeping write_work off. The hci_uart_flush() call right
+before closing re-enables write_work and may replay a recorded wakeup,
+and hci_uart_tx_wakeup() queues it from any caller that passed the
+HCI_UART_PROTO_READY test, such as the serdev write_wakeup callback.
+write_work can then call ttyport_write_buf() while ttyport_close()
+releases the tty, so it writes through a released tty.
+
+Move the flush into __hci_uart_flush() with a resume_tx argument.
+hci_uart_close() passes false when it is about to close the port, so
+write_work stays disabled and HCI_UART_SENDING stays set after the
+flush. It then clears HCI_UART_PROTO_READY under percpu_down_write(),
+which waits for any hci_uart_tx_wakeup() already past its
+HCI_UART_PROTO_READY test, and closes the port. Only then does it clear
+HCI_UART_TX_WAKEUP, re-enable write_work and clear HCI_UART_SENDING: the
+next open reuses hu and does not reset tx_state, and a stale SENDING
+would stop every later wakeup from queuing write_work.
+
+Found by code review. Compile-tested with W=1.
+
+Fixes: de8892df72be ("Bluetooth: hci_serdev: Close UART port if NON_PERSISTENT_SETUP is set")
+Suggested-by: Loic Poulain <loic.poulain@oss.qualcomm.com>
+Cc: stable@vger.kernel.org
+Signed-off-by: Zhao Li <enderaoelyther@gmail.com>
+Link: https://lore.kernel.org/r/20261121155648.1151-1-enderaoelyther@gmail.com
+---
+v3:
+- Add __hci_uart_flush() with a resume_tx argument and call it from
+  hci_uart_close() instead of repeating the flush. write_work is
+  re-enabled only after serdev_device_close() (Loic Poulain's review of
+  v2).
+v2:
+- Clear HCI_UART_SENDING and HCI_UART_TX_WAKEUP after cancelling
+  write_work. A pending write_work cancelled there left SENDING set, so
+  the next power-on never queued write_work (Sashiko's review of v1).
+
+v2: https://lore.kernel.org/linux-bluetooth/20261120062048.40310-1-enderaoelyther@gmail.com/
+v1: https://lore.kernel.org/linux-bluetooth/20261118124821.3990-1-enderaoelyther@gmail.com/
+
+Merging with Michael McAllister's hci_serdev v3 series (Patchwork
+14989810-14989814):
+https://lore.kernel.org/linux-bluetooth/179484638195.54009.16928291772826938293.wcn3950-poweroff-v3-1@michaelmcallister.org/
+- 1/5 adds "if (hci_dev_test_flag(hdev, HCI_UNREGISTER)) return 0;" at the
+  top of hci_uart_flush() and hci_uart_close(). The flush check has to
+  stay in hci_uart_flush(), not move into __hci_uart_flush().
+- Once hci_uart_close() is past its own check, __hci_uart_flush() must
+  always run disable_work_sync(), which the enable_work() after
+  serdev_device_close() balances. Otherwise write_work is not disabled
+  during the close and the enable underflows the disable count.
+- 2/5: use hci_uart_serdev_close(hu) in place of
+  serdev_device_close(hu->serdev) in the close_port branch.
+
+This needs ee43bade37c4, which no stable branch has yet, and
+disable_work_sync() from v6.10. With the flush body of ee43bade37c4
+backported it applies as is to 7.3.y and 6.18.y and, with the older
+test_bit(HCI_QUIRK_NON_PERSISTENT_SETUP, &hdev->quirks) context line, to
+6.12.y; 6.6.y has no disable_work_sync().
+
+No new W=1, sparse or smatch warnings.
+
+AI assistance was used.
+
+ drivers/bluetooth/hci_serdev.c | 26 +++++++++++++++++++++++---
+ 1 file changed, 23 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/bluetooth/hci_serdev.c b/drivers/bluetooth/hci_serdev.c
+index 194f11251cc5..9f038ab65a73 100644
+--- a/drivers/bluetooth/hci_serdev.c
++++ b/drivers/bluetooth/hci_serdev.c
+@@ -91,7 +91,7 @@ static void hci_uart_write_work(struct work_struct *work)
+ /* ------- Interface to HCI layer ------ */
+ 
+ /* Reset device */
+-static int hci_uart_flush(struct hci_dev *hdev)
++static void __hci_uart_flush(struct hci_dev *hdev, bool resume_tx)
+ {
+ 	struct hci_uart *hu  = hci_get_drvdata(hdev);
+ 
+@@ -112,11 +112,19 @@ static int hci_uart_flush(struct hci_dev *hdev)
+ 		hu->proto->flush(hu);
+ 	}
+ 
++	if (!resume_tx)
++		return;
++
+ 	/* Resume TX and replay a wakeup recorded while it was stopped. */
+ 	enable_work(&hu->write_work);
+ 	clear_bit(HCI_UART_SENDING, &hu->tx_state);
+ 	if (test_bit(HCI_UART_TX_WAKEUP, &hu->tx_state))
+ 		hci_uart_tx_wakeup(hu);
++}
++
++static int hci_uart_flush(struct hci_dev *hdev)
++{
++	__hci_uart_flush(hdev, true);
+ 
+ 	return 0;
+ }
+@@ -150,22 +158,34 @@ static int hci_uart_open(struct hci_dev *hdev)
+ static int hci_uart_close(struct hci_dev *hdev)
+ {
+ 	struct hci_uart *hu = hci_get_drvdata(hdev);
++	bool close_port;
+ 
+ 	BT_DBG("hdev %p", hdev);
+ 
+ 	if (!test_bit(HCI_UART_PROTO_READY, &hu->flags))
+ 		return 0;
+ 
+-	hci_uart_flush(hdev);
++	close_port = hci_test_quirk(hdev, HCI_QUIRK_NON_PERSISTENT_SETUP);
++
++	/* Keep write_work disabled until the port is closed. */
++	__hci_uart_flush(hdev, !close_port);
+ 	hdev->flush = NULL;
+ 
+ 	/* When QUIRK HCI_QUIRK_NON_PERSISTENT_SETUP is set by driver,
+ 	 * BT SOC is completely powered OFF during BT OFF, holding port
+ 	 * open may drain the battery.
+ 	 */
+-	if (hci_test_quirk(hdev, HCI_QUIRK_NON_PERSISTENT_SETUP)) {
++	if (close_port) {
++		/* Drain wakeups that passed the PROTO_READY test. */
++		percpu_down_write(&hu->proto_lock);
+ 		clear_bit(HCI_UART_PROTO_READY, &hu->flags);
++		percpu_up_write(&hu->proto_lock);
++
+ 		serdev_device_close(hu->serdev);
++
++		clear_bit(HCI_UART_TX_WAKEUP, &hu->tx_state);
++		enable_work(&hu->write_work);
++		clear_bit(HCI_UART_SENDING, &hu->tx_state);
+ 	}
+ 
+ 	return 0;

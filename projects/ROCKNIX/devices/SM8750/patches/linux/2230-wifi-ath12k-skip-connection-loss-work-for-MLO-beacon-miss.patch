@@ -1,0 +1,54 @@
+From: Jose Ignacio Tornos Martinez <jtornosm@redhat.com>
+Subject: [v2,3/3] wifi: ath12k: skip connection_loss_work for MLO beacon miss
+Link: https://lore.kernel.org/r/20260804175004.1761075-4-jtornosm@redhat.com
+
+When firmware reports a beacon miss, ath12k queues connection_loss_work
+as a 3-second backup timer that forces a full VIF disconnect via
+ieee80211_connection_loss(). This work can only be cancelled when a
+beacon frame arrives through WMI in ath12k_mac_handle_beacon_iter().
+
+In MLO, this mechanism causes periodic spurious disconnections because
+the firmware does not reliably forward beacon frames to the host via
+WMI, making the cancellation path ineffective. The result is a full
+VIF disconnect every ~16 seconds during normal MLO operation, easily
+reproducible under heavy traffic.
+
+Skip queueing connection_loss_work for MLO VIFs. The mac80211 AP probe
+triggered by ieee80211_beacon_loss() is sufficient to detect real AP
+unreachability. Other MLO-capable drivers such as mt76 and rtw89
+similarly rely on ieee80211_beacon_loss() without adding a backup
+disconnect timer.
+
+Tested on WCN7850 with MLO (Wi-Fi 7).
+
+Signed-off-by: Jose Ignacio Tornos Martinez <jtornosm@redhat.com>
+---
+v2: No modification
+v1: https://lore.kernel.org/all/20260727162748.963275-6-jtornosm@redhat.com/
+
+ drivers/net/wireless/ath/ath12k/mac.c | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+---
+diff --git a/drivers/net/wireless/ath/ath12k/mac.c b/drivers/net/wireless/ath/ath12k/mac.c
+index af09153ad9d9..dfd69822c5ce 100644
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -2008,9 +2008,16 @@ void ath12k_mac_handle_beacon_miss(struct ath12k *ar,
+ 	 * (done by mac80211) succeeds but beacons do not resume then it
+ 	 * doesn't make sense to continue operation. Queue connection loss work
+ 	 * which can be cancelled when beacon is received.
++	 *
++	 * Skip for MLO because connection_loss_work disconnects the entire
++	 * VIF based on a single link's beacon miss, and its cancellation
++	 * mechanism (beacon reception via WMI) is unreliable. The mac80211
++	 * probe triggered by ieee80211_beacon_loss() above is sufficient
++	 * to detect real AP unreachability.
+ 	 */
+-	ieee80211_queue_delayed_work(hw, &arvif->connection_loss_work,
+-				     ATH12K_CONNECTION_LOSS_HZ);
++	if (!ieee80211_vif_is_mld(vif))
++		ieee80211_queue_delayed_work(hw, &arvif->connection_loss_work,
++					     ATH12K_CONNECTION_LOSS_HZ);
+ }
+ 
+ static void ath12k_mac_vif_sta_connection_loss_work(struct work_struct *work)

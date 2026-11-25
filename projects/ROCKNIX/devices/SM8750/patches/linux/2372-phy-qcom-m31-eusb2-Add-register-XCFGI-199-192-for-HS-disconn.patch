@@ -1,0 +1,66 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tapas Rana <tapas.rana@oss.qualcomm.com>
+Date: Wed, 18 Nov 2026 20:04:05 +0530
+Subject: [PATCH] phy: qcom: m31-eusb2: Add register XCFGI_199_192 for HS disconnect mask
+
+In USB 2.0 High-Speed, a device disconnect is detected by the host PHY's
+analog HS disconnect envelope detector: it watches the differential line
+amplitude and flags a disconnect when the amplitude exceeds a threshold
+during the bus idle/EOP window (a disconnected cable reflects the host's
+own drive back, roughly doubling the observed amplitude).
+
+While the host itself is transmitting, the line is already driven hard,
+and trace reflections / signal-integrity overshoot can momentarily push
+the measured amplitude above that threshold even though the device is
+still attached. With the detector honoured during TX, the M31 PHY latches
+a spurious HS disconnect mid-transfer, showing up as false
+disconnect/reconnect events, re-enumeration and transfer stalls under
+host-TX-heavy load (e.g. bulk OUT to mass storage). The failure is
+signal-integrity dependent, so it is intermittent and board/cable
+specific.
+
+Program the XCFGI_199_192 register to set XCFG_HS_DISCONNECT_EN_TX
+(bit 196), which makes the PHY ignore the host disconnect status while in
+TX mode; disconnect detection continues to work normally when the host is
+not transmitting, which is when a real disconnect must be observed. This
+register was not programmed previously, leaving the envelope detector
+active during TX. Add this bit to the reset sequence to suppress the
+spurious TX-time disconnects.
+
+Fixes: 9c8504861cc4 ("phy: qcom: Add M31 based eUSB2 PHY driver")
+Signed-off-by: Tapas Rana <tapas.rana@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261118143406.2351999-1-tapas.rana@oss.qualcomm.com
+---
+ drivers/phy/qualcomm/phy-qcom-m31-eusb2.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/drivers/phy/qualcomm/phy-qcom-m31-eusb2.c b/drivers/phy/qualcomm/phy-qcom-m31-eusb2.c
+index 8d954e772..0f57ca70b 100644
+--- a/drivers/phy/qualcomm/phy-qcom-m31-eusb2.c
++++ b/drivers/phy/qualcomm/phy-qcom-m31-eusb2.c
+@@ -59,6 +59,9 @@
+ #define USB_PHY_XCFGI_159_152		(0x1a8)
+ #define SE0_TIMEOUT_EN			BIT(7)
+ 
++#define USB_PHY_XCFGI_199_192		(0x1bc)
++#define HS_DISCONNECT_EN_TX		BIT(4)
++
+ #define M31_EUSB_PHY_INIT_CFG(o, b, v)	\
+ {				\
+ 	.off = o,		\
+@@ -110,6 +113,15 @@ static const struct m31_phy_tbl_entry m31_eusb_phy_reset_tbl[] = {
+ 	M31_EUSB_PHY_INIT_CFG(USB_PHY_UTMI_CTRL0, SLEEPM, 1),
+ 	M31_EUSB_PHY_INIT_CFG(USB_PHY_HS_PHY_CTRL_COMMON0, SIDDQ_SEL, 1),
+ 	M31_EUSB_PHY_INIT_CFG(USB_PHY_HS_PHY_CTRL_COMMON0, SIDDQ, 0),
++	/*
++	 * Set XCFGI[196] to make M31 ignore the HS disconnect status
++	 * while the host is transmitting. This prevents trace reflections
++	 * and signal-integrity overshoot during TX from being latched as a
++	 * spurious HS disconnect. Disconnect detection stays active while
++	 * the host is not transmitting, which is when a real disconnect
++	 * must be observed.
++	 */
++	M31_EUSB_PHY_INIT_CFG(USB_PHY_XCFGI_199_192, HS_DISCONNECT_EN_TX, 1),
+ 	M31_EUSB_PHY_INIT_CFG(USB_PHY_UTMI_CTRL5, POR, 0),
+ 	M31_EUSB_PHY_INIT_CFG(USB_PHY_HS_PHY_CTRL2, USB2_SUSPEND_N_SEL, 0),
+ 	M31_EUSB_PHY_INIT_CFG(USB_PHY_CFG0, UTMI_PHY_CMN_CTRL_OVERRIDE_EN, 0),

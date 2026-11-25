@@ -1,0 +1,136 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Andr=C3=A9=20Braga?= <code@andrebraga.com>
+Date: Sat, 7 Nov 2026 07:34:21 +0000
+Subject: [PATCH] drm/msm/a6xx: show the GMU's bandwidth vote in debugfs
+
+When the GMU votes DDR for the GPU, the request never reaches the
+interconnect framework, so interconnect_summary shows none of it.
+Keep the last perf and bandwidth vote sent to the GMU, and show it in a
+gmu_vote debugfs file with the IB and AB it stands for.
+---
+ drivers/gpu/drm/msm/adreno/a6xx_gmu.h |  4 +++
+ drivers/gpu/drm/msm/adreno/a6xx_gpu.c | 39 +++++++++++++++++++++++++++
+ drivers/gpu/drm/msm/adreno/a6xx_hfi.c | 12 +++++++--
+ 3 files changed, 53 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.h b/drivers/gpu/drm/msm/adreno/a6xx_gmu.h
+index e57c1f61a..011fdb7e6 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.h
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.h
+@@ -128,6 +128,10 @@ struct a6xx_gmu {
+ 	u8 gpu_bw_max[GMU_MAX_GX_FREQS];
+ 	struct a6xx_gmu_busmon busmon;
+ 
++	/* The last GX perf and bandwidth vote sent to the GMU */
++	u32 perf_vote;
++	u32 bw_vote;
++
+ 	int nr_gmu_freqs;
+ 	unsigned long gmu_freqs[GMU_MAX_CX_FREQS];
+ 	u32 cx_arc_votes[GMU_MAX_CX_FREQS];
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
+index e5dc1964d..fbc84eb81 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
+@@ -9,7 +9,10 @@
+ #include "a6xx_gpu.h"
+ #include "a6xx_gmu.xml.h"
+ 
++#include <drm/drm_file.h>
++
+ #include <linux/bitfield.h>
++#include <linux/debugfs.h>
+ #include <linux/devfreq.h>
+ #include <linux/pm_domain.h>
+ #include <linux/soc/qcom/llcc-qcom.h>
+@@ -2803,6 +2806,39 @@ static struct msm_gpu *a6xx_gpu_init(struct drm_device *dev)
+ 	return gpu;
+ }
+ 
++/* The GPU's own DDR vote goes through the GMU, out of the interconnect framework's sight */
++static int a6xx_gmu_vote_show(struct seq_file *m, void *arg)
++{
++	struct a6xx_gpu *a6xx_gpu = to_a6xx_gpu(to_adreno_gpu(m->private));
++	struct a6xx_gmu *gmu = &a6xx_gpu->gmu;
++	u32 perf = READ_ONCE(gmu->perf_vote), bw = READ_ONCE(gmu->bw_vote);
++	u32 level = bw & 0xff;
++
++	if (perf < gmu->nr_gpu_freqs)
++		seq_printf(m, "gpu: %lu kHz (level %u)\n", gmu->gpu_freqs[perf] / 1000, perf);
++
++	if (!level || level >= gmu->nr_gpu_bws) {
++		seq_puts(m, "ib: not voted by the GMU\n");
++		return 0;
++	}
++
++	seq_printf(m, "ib: %lu kBps (level %u)\n", gmu->gpu_bw_table[level], level);
++	if (bw & AB_VOTE_ENABLE)
++		seq_printf(m, "ab: %llu kBps\n",
++			   div_u64((u64)FIELD_GET(AB_VOTE_MASK, bw) *
++				   gmu->gpu_bw_table[gmu->nr_gpu_bws - 1], MAX_AB_VOTE));
++	else
++		seq_puts(m, "ab: none\n");
++
++	return 0;
++}
++DEFINE_SHOW_ATTRIBUTE(a6xx_gmu_vote);
++
++static void a6xx_debugfs_init(struct msm_gpu *gpu, struct drm_minor *minor)
++{
++	debugfs_create_file("gmu_vote", 0444, minor->debugfs_root, gpu, &a6xx_gmu_vote_fops);
++}
++
+ const struct adreno_gpu_funcs a6xx_gpu_funcs = {
+ 	.base = {
+ 		.get_param = adreno_get_param,
+@@ -2822,6 +2858,7 @@ const struct adreno_gpu_funcs a6xx_gpu_funcs = {
+ 		.gpu_busy = a6xx_gpu_busy,
+ 		.gpu_get_freq = a6xx_gmu_get_freq,
+ 		.gpu_set_freq = a6xx_gpu_set_freq,
++		.debugfs_init = a6xx_debugfs_init,
+ #if defined(CONFIG_DRM_MSM_GPU_STATE)
+ 		.gpu_state_get = a6xx_gpu_state_get,
+ 		.gpu_state_put = a6xx_gpu_state_put,
+@@ -2893,6 +2930,7 @@ const struct adreno_gpu_funcs a7xx_gpu_funcs = {
+ 		.gpu_busy = a6xx_gpu_busy,
+ 		.gpu_get_freq = a6xx_gmu_get_freq,
+ 		.gpu_set_freq = a6xx_gpu_set_freq,
++		.debugfs_init = a6xx_debugfs_init,
+ #if defined(CONFIG_DRM_MSM_GPU_STATE)
+ 		.gpu_state_get = a6xx_gpu_state_get,
+ 		.gpu_state_put = a6xx_gpu_state_put,
+@@ -2929,6 +2967,7 @@ const struct adreno_gpu_funcs a8xx_gpu_funcs = {
+ 		.gpu_bus_update = a8xx_gpu_bus_update,
+ 		.gpu_get_freq = a6xx_gmu_get_freq,
+ 		.gpu_set_freq = a6xx_gpu_set_freq,
++		.debugfs_init = a6xx_debugfs_init,
+ 		.create_vm = a6xx_create_vm,
+ 		.create_private_vm = a6xx_create_private_vm,
+ 		.get_rptr = a6xx_get_rptr,
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_hfi.c b/drivers/gpu/drm/msm/adreno/a6xx_hfi.c
+index 9723d3c29..3a5609cbd 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_hfi.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_hfi.c
+@@ -919,12 +919,20 @@ int a6xx_hfi_set_freq(struct a6xx_gmu *gmu, u32 freq_index, u32 bw_index)
+ {
+ 	struct a6xx_hfi_gx_bw_perf_vote_cmd msg = { 0 };
+ 
++	int ret;
++
+ 	msg.ack_type = 1; /* blocking */
+ 	msg.freq = freq_index;
+ 	msg.bw = bw_index;
+ 
+-	return a6xx_hfi_send_msg(gmu, HFI_H2F_MSG_GX_BW_PERF_VOTE, &msg,
+-		sizeof(msg), NULL, 0);
++	ret = a6xx_hfi_send_msg(gmu, HFI_H2F_MSG_GX_BW_PERF_VOTE, &msg,
++				sizeof(msg), NULL, 0);
++	if (!ret) {
++		WRITE_ONCE(gmu->perf_vote, freq_index);
++		WRITE_ONCE(gmu->bw_vote, bw_index);
++	}
++
++	return ret;
+ }
+ 
+ int a6xx_hfi_send_prep_slumber(struct a6xx_gmu *gmu)

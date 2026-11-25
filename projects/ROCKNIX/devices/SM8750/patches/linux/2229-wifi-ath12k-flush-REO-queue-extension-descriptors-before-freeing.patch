@@ -1,0 +1,105 @@
+From: Sebastian Salmhofer <sebastian.salmhofer@salmtek.com>
+Subject: wifi: ath12k: flush REO queue extension descriptors before freeing the qdesc
+Link: https://lore.kernel.org/r/20260831151011.2336305-1-sebastian.salmhofer@salmtek.com
+
+Since commit b706fb4e580b ("wifi: ath12k: Use 1KB Cache Flush Command
+for QoS TID Descriptors") a QoS TID RX queue descriptor is retired with
+a single FLUSH_CACHE command carrying FLUSH_QUEUE_1K_DESC. On QCN9274
+that command does not cover the extension descriptors that follow the
+queue descriptor in the same 1536-byte allocation. Those hold the MPDU
+link pointers and are written by REO on every enqueue and dequeue, so
+they are frequently dirty in the REO cache when the TID is deleted.
+
+After the qdesc is unmapped and freed, the REO cache controller later
+evicts the stale extension lines and writes them back to the old DMA
+address. On a host with the IOMMU enabled this shows up as a burst of
+AMD-Vi IO_PAGE_FAULT write events at 128-byte spacing, e.g.
+
+  AMD-Vi: Event logged [IO_PAGE_FAULT domain=0x0038 address=0xf6e7a100 flags=0x0020]
+  AMD-Vi: Event logged [IO_PAGE_FAULT domain=0x0038 address=0xf6e7a180 flags=0x0020]
+  ...
+  AMD-Vi: Event logged [IO_PAGE_FAULT domain=0x0038 address=0xf6e7a580 flags=0x0020]
+
+The faulting addresses always fall at offsets 0x100..0x580 of a
+retired qdesc and never at 0x000 or 0x080, i.e. exactly the ten
+extension descriptors and never the queue descriptor or the 1K bitmap
+descriptor. The writes are triggered by later REO activity, typically
+a new station association, so they can occur minutes or hours after the
+memory was freed, and the blocked transactions stall the data path for
+several seconds. Without an IOMMU the same writes silently corrupt
+whatever now occupies that memory.
+
+Restore the per-segment flush of every 128-byte line above the queue
+descriptor, as ath11k still does, before issuing the base flush with
+FLUSH_QUEUE_1K_DESC and NEED_STATUS. REO commands execute in order, so
+the status of the final base flush also confirms the preceding segment
+flushes have completed, and the qdesc is still only freed from that
+completion. A send failure in the sequence leaves the descriptor on the
+retirement list for retry, as before.
+
+Tested-on: QCN9274 hw2.0 PCI WLAN.WBE.1.6-01243-QCAHKSWPL_SILICONZ-1
+
+Fixes: b706fb4e580b ("wifi: ath12k: Use 1KB Cache Flush Command for QoS TID Descriptors")
+Signed-off-by: Sebastian Salmhofer <sebastian.salmhofer@salmtek.com>
+---
+ drivers/net/wireless/ath/ath12k/wifi7/dp_rx.c | 39 ++++++++++++++++++++-------
+ 1 file changed, 30 insertions(+), 9 deletions(-)
+
+--
+2.47.0
+---
+--- a/drivers/net/wireless/ath/ath12k/wifi7/dp_rx.c
++++ b/drivers/net/wireless/ath/ath12k/wifi7/dp_rx.c
+@@ -225,22 +225,43 @@
+ 				    struct ath12k_dp_rx_tid_rxq *rx_tid)
+ {
+ 	struct ath12k_hal_reo_cmd cmd = {};
++	dma_addr_t paddr = rx_tid->qbuf.paddr_aligned;
++	u32 off = rx_tid->qbuf.size;
+ 	int ret;
+ 
+-	cmd.addr_lo = lower_32_bits(rx_tid->qbuf.paddr_aligned);
+-	cmd.addr_hi = upper_32_bits(rx_tid->qbuf.paddr_aligned);
++	/* The REO cache controller caches the queue descriptor and each
++	 * 128-byte extension descriptor as separate objects, and a
++	 * FLUSH_CACHE command only addresses one of them. FLUSH_QUEUE_1K_DESC
++	 * extends the base flush to the 1K-window descriptor but does not
++	 * cover the extension descriptors, so flush those explicitly first.
++	 * The command ring executes in order, hence the final base flush
++	 * status also confirms the extension flushes have completed.
++	 */
++	while (off > HAL_LINK_DESC_ALIGN) {
++		off -= HAL_LINK_DESC_ALIGN;
++		memset(&cmd, 0, sizeof(cmd));
++		cmd.addr_lo = lower_32_bits(paddr + off);
++		cmd.addr_hi = upper_32_bits(paddr + off);
++		ret = ath12k_wifi7_dp_reo_cmd_send(ab, rx_tid,
++						   HAL_REO_CMD_FLUSH_CACHE,
++						   &cmd, NULL);
++		if (ret) {
++			ath12k_warn(ab,
++				    "failed to send FLUSH_CACHE for tid %d offset 0x%x: %d\n",
++				    rx_tid->tid, off, ret);
++			return ret;
++		}
++	}
++
++	memset(&cmd, 0, sizeof(cmd));
++	cmd.addr_lo = lower_32_bits(paddr);
++	cmd.addr_hi = upper_32_bits(paddr);
+ 	/* HAL_REO_CMD_FLG_FLUSH_FWD_ALL_MPDUS - all pending MPDUs
+-	 *in the bitmap will be forwarded/flushed to REO output rings
++	 * in the bitmap will be forwarded/flushed to REO output rings
+ 	 */
+ 	cmd.flag = HAL_REO_CMD_FLG_NEED_STATUS |
+ 		   HAL_REO_CMD_FLG_FLUSH_FWD_ALL_MPDUS;
+ 
+-	/* For all QoS TIDs (except NON_QOS), the driver allocates a maximum
+-	 * window size of 1024. In such cases, the driver can issue a single
+-	 * 1KB descriptor flush command instead of sending multiple 128-byte
+-	 * flush commands for each QoS TID, improving efficiency.
+-	 */
+-
+ 	if (rx_tid->tid != HAL_DESC_REO_NON_QOS_TID)
+ 		cmd.flag |= HAL_REO_CMD_FLG_FLUSH_QUEUE_1K_DESC;
+ 
