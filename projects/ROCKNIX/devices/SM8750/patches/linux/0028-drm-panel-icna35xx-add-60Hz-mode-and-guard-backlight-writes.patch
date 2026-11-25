@@ -1,0 +1,270 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Andr=C3=A9=20Braga?= <code@andrebraga.com>
+Date: Tue, 27 Oct 2026 03:24:16 +0000
+Subject: [PATCH] drm/panel: icna35xx: add 60Hz mode and guard backlight writes
+
+The upstream driver exposes a single fixed mode. Keep the ROCKNIX
+behaviour on top of it for ICNA3520 panels:
+
+- advertise a 60Hz mode next to 120Hz and pick the matching init
+  sequence from the active CRTC mode
+- restore the cached brightness from the init sequence
+- only write brightness over DSI while the panel is enabled, since a
+  write racing bring-up wedges the DSI command engine, and send the
+  level from enable() so a change made meanwhile is not lost
+- cap the backlight range at 3413
+---
+ .../gpu/drm/panel/panel-chipone-icna35xx.c    | 138 +++++++++++++++---
+ 1 file changed, 116 insertions(+), 22 deletions(-)
+
+diff --git a/drivers/gpu/drm/panel/panel-chipone-icna35xx.c b/drivers/gpu/drm/panel/panel-chipone-icna35xx.c
+index 2cc1649..9c606b3 100644
+--- a/drivers/gpu/drm/panel/panel-chipone-icna35xx.c
++++ b/drivers/gpu/drm/panel/panel-chipone-icna35xx.c
+@@ -34,6 +34,8 @@ struct panel_info {
+ 
+ 	struct gpio_desc *reset_gpio;
+ 	struct regulator_bulk_data *supplies;
++	struct backlight_device *backlight;
++	bool enabled;
+ };
+ 
+ struct panel_desc {
+@@ -65,10 +67,34 @@ static inline struct panel_info *to_panel_info(struct drm_panel *panel)
+ 	return container_of(panel, struct panel_info, panel);
+ }
+ 
++static int icna35xx_get_current_mode(struct panel_info *pinfo)
++{
++	struct drm_connector *connector = pinfo->connector;
++	struct drm_crtc_state *crtc_state;
++	int i;
++
++	/* Return the default (first) mode if no info available yet */
++	if (!connector || !connector->state || !connector->state->crtc)
++		return 0;
++
++	crtc_state = connector->state->crtc->state;
++
++	for (i = 0; i < pinfo->desc->num_modes; i++) {
++		if (drm_mode_match(&crtc_state->mode,
++				   &pinfo->desc->modes[i],
++				   DRM_MODE_MATCH_TIMINGS | DRM_MODE_MATCH_CLOCK))
++			return i;
++	}
++
++	return 0;
++}
++
+ static int icna3512_init_sequence(struct panel_info *pinfo)
+ {
+ 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = pinfo->dsi };
+ 	struct drm_dsc_picture_parameter_set pps;
++	u16 brightness = pinfo->backlight ? pinfo->backlight->props.brightness : 0;
++	u8 bl_payload[] = { 0x51, brightness >> 8, brightness & 0xff };
+ 
+ 	pinfo->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+ 
+@@ -95,6 +121,8 @@ static int icna3512_init_sequence(struct panel_info *pinfo)
+ 
+ 	mipi_dsi_msleep(&dsi_ctx, 20);
+ 
++	mipi_dsi_dcs_write_buffer_multi(&dsi_ctx, bl_payload, sizeof(bl_payload));
++
+ 	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
+ 
+ 	return dsi_ctx.accum_err;
+@@ -104,6 +132,10 @@ static int icna3520_init_sequence(struct panel_info *pinfo)
+ {
+ 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = pinfo->dsi };
+ 	struct drm_dsc_picture_parameter_set pps;
++	u16 brightness = pinfo->backlight ? pinfo->backlight->props.brightness : 0;
++	u8 bl_payload[] = { 0x51, brightness >> 8, brightness & 0xff };
++	int cur_mode = icna35xx_get_current_mode(pinfo);
++	int cur_vrefresh = drm_mode_vrefresh(&pinfo->desc->modes[cur_mode]);
+ 
+ 	pinfo->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+ 
+@@ -117,11 +149,18 @@ static int icna3520_init_sequence(struct panel_info *pinfo)
+ 
+ 	mipi_dsi_msleep(&dsi_ctx, 120);
+ 
+-	/* 120 hz */
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x48, 0x00);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9F, 0x00);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB3,
+-		0x00, 0xD8, 0x00, 0x1C, 0x00, 0x4C);
++	if (cur_vrefresh == 120) {
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x48, 0x00);
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9F, 0x00);
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB3,
++			0x00, 0xD8, 0x00, 0x1C, 0x00, 0x4C);
++	} else {
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x48, 0x10);
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9F, 0x00);
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB3,
++			0x00, 0xDB, 0x00, 0x1C, 0x00, 0x1C, 0x00, 0x00,
++			0xDB, 0x00, 0x1C, 0x07, 0xD6, 0x00);
++	}
+ 
+ 	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9F, 0x01);
+ 	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB2, 0x00);
+@@ -137,6 +176,8 @@ static int icna3520_init_sequence(struct panel_info *pinfo)
+ 
+ 	mipi_dsi_msleep(&dsi_ctx, 20);
+ 
++	mipi_dsi_dcs_write_buffer_multi(&dsi_ctx, bl_payload, sizeof(bl_payload));
++
+ 	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
+ 
+ 	return dsi_ctx.accum_err;
+@@ -169,6 +210,18 @@ static const struct drm_display_mode thor_top_modes[] = {
+ 		.vsync_start = 1920 + 28,
+ 		.vsync_end = 1920 + 28 + 1,
+ 		.vtotal = 1920 + 28 + 1 + 28,
++	},
++	{
++		/* 60Hz */
++		.clock = (1080 + 24 + 1 + 24) * (1920 + 2006 + 1 + 28) * 60 / 1000,
++		.hdisplay = 1080,
++		.hsync_start = 1080 + 24,
++		.hsync_end = 1080 + 24 + 1,
++		.htotal = 1080 + 24 + 1 + 24,
++		.vdisplay = 1920,
++		.vsync_start = 1920 + 2006,
++		.vsync_end = 1920 + 2006 + 1,
++		.vtotal = 1920 + 2006 + 1 + 28,
+ 	}
+ };
+ 
+@@ -256,6 +309,8 @@ static int icna35xx_disable(struct drm_panel *panel)
+ 	struct panel_info *pinfo = to_panel_info(panel);
+ 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = pinfo->dsi };
+ 
++	pinfo->enabled = false;
++
+ 	pinfo->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+ 
+ 	mipi_dsi_dcs_set_display_off_multi(&dsi_ctx);
+@@ -280,8 +335,33 @@ static int icna35xx_get_modes(struct drm_panel *panel,
+ 			       struct drm_connector *connector)
+ {
+ 	struct panel_info *pinfo = to_panel_info(panel);
++	int i;
++
++	for (i = 0; i < pinfo->desc->num_modes; i++) {
++		const struct drm_display_mode *m = &pinfo->desc->modes[i];
++		struct drm_display_mode *mode;
++
++		mode = drm_mode_duplicate(connector->dev, m);
++		if (!mode) {
++			dev_err(panel->dev, "failed to add mode %ux%u@%u\n",
++				m->hdisplay, m->vdisplay, drm_mode_vrefresh(m));
++			return -ENOMEM;
++		}
+ 
+-	return drm_connector_helper_get_modes_fixed(connector, pinfo->desc->modes);
++		mode->type = DRM_MODE_TYPE_DRIVER;
++		if (i == 0)
++			mode->type |= DRM_MODE_TYPE_PREFERRED;
++
++		drm_mode_set_name(mode);
++		drm_mode_probed_add(connector, mode);
++	}
++
++	connector->display_info.width_mm = pinfo->desc->width_mm;
++	connector->display_info.height_mm = pinfo->desc->height_mm;
++	connector->display_info.bpc = pinfo->desc->bpc;
++	pinfo->connector = connector;
++
++	return pinfo->desc->num_modes;
+ }
+ 
+ static enum drm_panel_orientation icna35xx_get_orientation(struct drm_panel *panel)
+@@ -291,9 +371,22 @@ static enum drm_panel_orientation icna35xx_get_orientation(struct drm_panel *pan
+ 	return pinfo->orientation;
+ }
+ 
++static int icna35xx_enable(struct drm_panel *panel)
++{
++	struct panel_info *pinfo = to_panel_info(panel);
++
++	pinfo->enabled = true;
++
++	/* A level set while the panel was disabled was skipped */
++	backlight_update_status(pinfo->backlight);
++
++	return 0;
++}
++
+ static const struct drm_panel_funcs icna35xx_panel_funcs = {
+ 	.disable = icna35xx_disable,
+ 	.prepare = icna35xx_prepare,
++	.enable = icna35xx_enable,
+ 	.unprepare = icna35xx_unprepare,
+ 	.get_modes = icna35xx_get_modes,
+ 	.get_orientation = icna35xx_get_orientation,
+@@ -302,9 +395,20 @@ static const struct drm_panel_funcs icna35xx_panel_funcs = {
+ static int icna35xx_bl_update_status(struct backlight_device *bl)
+ {
+ 	struct mipi_dsi_device *dsi = bl_get_data(bl);
++	struct panel_info *pinfo = mipi_dsi_get_drvdata(dsi);
+ 	u16 brightness = backlight_get_brightness(bl);
+ 	int ret;
+ 
++	/*
++	 * Only drive the DSI link while the panel is enabled and streaming.
++	 * A brightness write that races panel bring-up or the first frame
++	 * kickoff after a modeset wedges the DSI command engine. The level
++	 * is cached by the backlight core and sent again from enable(), so
++	 * skipping the write while disabled is safe.
++	 */
++	if (!pinfo->enabled)
++		return 0;
++
+ 	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+ 
+ 	ret = mipi_dsi_dcs_set_display_brightness_large(dsi, brightness);
+@@ -316,17 +420,7 @@ static int icna35xx_bl_update_status(struct backlight_device *bl)
+ 
+ static int icna35xx_bl_get_brightness(struct backlight_device *bl)
+ {
+-	struct mipi_dsi_device *dsi = bl_get_data(bl);
+-	u16 brightness;
+-	int ret;
+-
+-	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+-
+-	ret = mipi_dsi_dcs_get_display_brightness_large(dsi, &brightness);
+-
+-	dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+-
+-	return ret < 0 ? ret : brightness;
++	return backlight_get_brightness(bl);
+ }
+ 
+ static const struct backlight_ops icna35xx_bl_ops = {
+@@ -339,8 +433,8 @@ static struct backlight_device *icna35xx_create_backlight(struct mipi_dsi_device
+ 	struct device *dev = &dsi->dev;
+ 	const struct backlight_properties props = {
+ 		.type = BACKLIGHT_RAW,
+-		.brightness = 4096,
+-		.max_brightness = 4096,
++		.brightness = 3413,
++		.max_brightness = 3413,
+ 	};
+ 
+ 	return devm_backlight_device_register(dev, dev_name(dev), dev, dsi,
+@@ -383,9 +477,9 @@ static int icna35xx_probe(struct mipi_dsi_device *dsi)
+ 
+ 	pinfo->panel.prepare_prev_first = true;
+ 
+-	pinfo->panel.backlight = icna35xx_create_backlight(dsi);
+-	if (IS_ERR(pinfo->panel.backlight))
+-		return dev_err_probe(dev, PTR_ERR(pinfo->panel.backlight),
++	pinfo->backlight = icna35xx_create_backlight(dsi);
++	if (IS_ERR(pinfo->backlight))
++		return dev_err_probe(dev, PTR_ERR(pinfo->backlight),
+ 				     "Failed to create backlight\n");
+ 
+ 	ret = devm_drm_panel_add(dev, &pinfo->panel);

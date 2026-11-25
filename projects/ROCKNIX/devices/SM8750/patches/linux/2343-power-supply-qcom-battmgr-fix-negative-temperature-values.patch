@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alexandru Andrieș <alex.andries.aa@gmail.com>
+Date: Thu, 19 Nov 2026 00:16:52 +0100
+Subject: [PATCH] power: supply: qcom_battmgr: fix negative temperature values
+
+Firmware reports battery temperature in signed hundredths of a degree
+Celsius, scaled to tenths of a degree for POWER_SUPPLY_PROP_TEMP.
+Passing it as unsigned int to DIV_ROUND_CLOSEST(..., 10) in both
+qcom_battmgr_sc8280xp_convert_temp() and qcom_battmgr_sm8350_callback()
+turns sub-zero values (e.g. -5.00 C, 0xfffffe0c) into 429496680 instead
+of -50.
+
+Change status.temperature and qcom_battmgr_sc8280xp_convert_temp() to
+int, and cast the SM8350 BATT_TEMP payload to s32 before dividing.
+
+Tested at 35.0 C on a Xiaomi MIX 4 (SM8350); the SC8280XP path and
+sub-zero temperatures were not hardware-tested.
+
+Fixes: 29e8142b5623 ("power: supply: Introduce Qualcomm PMIC GLINK power supply")
+Cc: stable@vger.kernel.org
+Signed-off-by: Alexandru Andrieș <alex.andries.aa@gmail.com>
+Link: https://lore.kernel.org/r/20261119-upstream-qcom-battmgr-fixes-v1-v1-3-ca83700c08c1@gmail.com
+---
+ drivers/power/supply/qcom_battmgr.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/power/supply/qcom_battmgr.c b/drivers/power/supply/qcom_battmgr.c
+index 83e67d22c432..98b658ff6beb 100644
+--- a/drivers/power/supply/qcom_battmgr.c
++++ b/drivers/power/supply/qcom_battmgr.c
+@@ -278,7 +278,7 @@ struct qcom_battmgr_status {
+ 	int power_now;
+ 	unsigned int voltage_now;
+ 	unsigned int voltage_ocv;
+-	unsigned int temperature;
++	int temperature;
+ 	unsigned int resistance;
+ 	unsigned int soh_percent;
+ 
+@@ -1250,7 +1250,7 @@ static unsigned int qcom_battmgr_sc8280xp_parse_technology(const char *chemistry
+ 	return POWER_SUPPLY_TECHNOLOGY_UNKNOWN;
+ }
+ 
+-static unsigned int qcom_battmgr_sc8280xp_convert_temp(unsigned int temperature)
++static int qcom_battmgr_sc8280xp_convert_temp(int temperature)
+ {
+ 	return DIV_ROUND_CLOSEST(temperature, 10);
+ }
+@@ -1467,7 +1467,7 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
+ 			break;
+ 		case BATT_TEMP:
+ 			val = le32_to_cpu(resp->intval.value);
+-			battmgr->status.temperature = DIV_ROUND_CLOSEST(val, 10);
++			battmgr->status.temperature = DIV_ROUND_CLOSEST((s32)val, 10);
+ 			break;
+ 		case BATT_TECHNOLOGY:
+ 			battmgr->info.technology = le32_to_cpu(resp->intval.value);

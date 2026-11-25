@@ -1,0 +1,76 @@
+From: Sailesh Nandanavanam <saileshnandanavanam@gmail.com>
+Subject: remoteproc: qcom_q6v5_mss: Fix off-by-one error in regulator error cleanup
+Link: https://lore.kernel.org/r/20260710194638.1502-1-saileshnandanavanam@gmail.com
+
+In q6v5_regulator_enable(), when any operation fails for regulator at
+index 'i', the error cleanup path unconditionally calls
+regulator_disable() starting from index 'i'. However, regulator 'i'
+was never successfully enabled at this point, resulting in an
+unbalanced disable.
+
+There are three distinct failure points:
+- regulator_set_voltage() failure: voltage was never set, load was
+never set, regulator was never enabled.
+- regulator_set_load() failure: voltage was set, but regulator was
+never enabled.
+- regulator_enable() failure: voltage and load were set, but
+regulator was never enabled.
+
+Fix this by introducing three separate error labels to handle each
+failure point correctly. For the failing regulator at index 'i',
+only reset the resources that were actually configured, without
+calling regulator_disable(). Then roll back all previously enabled
+regulators using 'i--' in the for loop initializer to skip the
+never-enabled regulator.
+
+Fixes: 19f902b53b47 ("remoteproc: qcom: Initialize and enable proxy and active regulators.")
+Cc: stable@vger.kernel.org
+Signed-off-by: Sailesh Nandanavanam <saileshnandanavanam@gmail.com>
+---
+ drivers/remoteproc/qcom_q6v5_mss.c | 16 +++++++++++-----
+ 1 file changed, 11 insertions(+), 5 deletions(-)
+---
+diff --git a/drivers/remoteproc/qcom_q6v5_mss.c b/drivers/remoteproc/qcom_q6v5_mss.c
+index ae78f5c7c1b6..9a17aa065f50 100644
+--- a/drivers/remoteproc/qcom_q6v5_mss.c
++++ b/drivers/remoteproc/qcom_q6v5_mss.c
+@@ -311,7 +311,7 @@ static int q6v5_regulator_enable(struct q6v5 *qproc,
+ 				dev_err(qproc->dev,
+ 					"Failed to request voltage for %d.\n",
+ 						i);
+-				goto err;
++				goto err_set_voltage;
+ 			}
+ 		}
+ 
+@@ -321,20 +321,26 @@ static int q6v5_regulator_enable(struct q6v5 *qproc,
+ 			if (ret < 0) {
+ 				dev_err(qproc->dev,
+ 					"Failed to set regulator mode\n");
+-				goto err;
++				goto err_set_load;
+ 			}
+ 		}
+ 
+ 		ret = regulator_enable(regs[i].reg);
+ 		if (ret) {
+ 			dev_err(qproc->dev, "Regulator enable failed\n");
+-			goto err;
++			goto err_enable;
+ 		}
+ 	}
+ 
+ 	return 0;
+-err:
+-	for (; i >= 0; i--) {
++err_enable:
++	if (regs[i].uA > 0)
++		regulator_set_load(regs[i].reg, 0);
++err_set_load:
++	if (regs[i].uV > 0)
++		regulator_set_voltage(regs[i].reg, 0, INT_MAX);
++err_set_voltage:
++	for (i--; i >= 0; i--) {
+ 		if (regs[i].uV > 0)
+ 			regulator_set_voltage(regs[i].reg, 0, INT_MAX);
+ 

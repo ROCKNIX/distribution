@@ -1,0 +1,106 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Praveen Talari <praveen.talari@oss.qualcomm.com>
+Date: Fri, 06 Nov 2026 19:59:16 +0530
+Subject: [PATCH] i2c: qcom-geni: Add shutdown callback to quiesce hardware on reboot
+
+During system reboot, an active I2C transfer can leave the GENI Serial
+Engine in an indeterminate state. On VM-based platforms, if a DMA
+transfer is in progress when the VM is shut down, the SMMU can raise
+context faults as the DMA engine continues to access IOVAs that have
+already been invalidated during VM teardown.
+
+Add a geni_i2c_quiesce() helper that cancels/aborts any in-progress
+GENI or GPI DMA transfer and resets the TX/RX FSMs, and call it from a
+new shutdown callback before the system resets. This prevents both
+hardware state corruption on reboot and SMMU faults during VM
+shutdown. dmaengine_terminate_async() is used unconditionally so the
+helper is also safe to call from atomic contexts such as a panic
+notifier.
+
+Signed-off-by: Praveen Talari <praveen.talari@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261106-add-shutdown-and-panic-notifier-for-i2c-v2-1-d3011344fee8@oss.qualcomm.com
+---
+ drivers/i2c/busses/i2c-qcom-geni.c | 56 ++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 54 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/i2c/busses/i2c-qcom-geni.c b/drivers/i2c/busses/i2c-qcom-geni.c
+index 658636c1ee0e..79707095bbbd 100644
+--- a/drivers/i2c/busses/i2c-qcom-geni.c
++++ b/drivers/i2c/busses/i2c-qcom-geni.c
+@@ -13,6 +13,7 @@
+ #include <linux/i2c.h>
+ #include <linux/interrupt.h>
+ #include <linux/io.h>
++#include <linux/iopoll.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/platform_device.h>
+@@ -1034,6 +1035,58 @@ static int setup_gpi_dma(struct geni_i2c_dev *gi2c)
+ 	return ret;
+ }
+ 
++static void geni_i2c_quiesce(struct geni_i2c_dev *gi2c)
++{
++	void __iomem *base = gi2c->se.base;
++	u32 val;
++	int ret;
++
++	/* Make client i2c transfers start failing */
++	i2c_mark_adapter_suspended(&gi2c->adap);
++
++	if (!pm_runtime_active(gi2c->se.dev))
++		return;
++
++	if (gi2c->gpi_mode) {
++		dmaengine_terminate_async(gi2c->tx_c);
++		dmaengine_terminate_async(gi2c->rx_c);
++		return;
++	}
++
++	if (!(readl_relaxed(base + SE_GENI_STATUS) & M_GENI_CMD_ACTIVE))
++		return;
++
++	geni_se_cancel_m_cmd(&gi2c->se);
++
++	if (!readl_poll_timeout_atomic(base + SE_GENI_M_IRQ_STATUS, val,
++				       val & M_CMD_CANCEL_EN, 10, 200000)) {
++		writel_relaxed(M_CMD_CANCEL_EN, base + SE_GENI_M_IRQ_CLEAR);
++		return;
++	}
++
++	geni_se_abort_m_cmd(&gi2c->se);
++
++	if (!readl_poll_timeout_atomic(base + SE_GENI_M_IRQ_STATUS, val,
++				       val & M_CMD_ABORT_EN, 10, 200000))
++		writel_relaxed(M_CMD_ABORT_EN, base + SE_GENI_M_IRQ_CLEAR);
++
++	if (readl_relaxed(base + SE_GENI_DMA_MODE_EN)) {
++		writel_relaxed(1, base + SE_DMA_TX_FSM_RST);
++		ret = readl_poll_timeout_atomic(base + SE_DMA_TX_IRQ_STAT, val,
++						val & TX_RESET_DONE, 10, 50000);
++		if (ret)
++			dev_err(gi2c->se.dev, "Timeout resetting TX DMA FSM\n");
++		writel_relaxed(val, base + SE_DMA_TX_IRQ_CLR);
++
++		writel_relaxed(1, base + SE_DMA_RX_FSM_RST);
++		ret = readl_poll_timeout_atomic(base + SE_DMA_RX_IRQ_STAT, val,
++						val & RX_RESET_DONE, 10, 50000);
++		if (ret)
++			dev_err(gi2c->se.dev, "Timeout resetting RX DMA FSM\n");
++		writel_relaxed(val, base + SE_DMA_RX_IRQ_CLR);
++	}
++}
++
+ static int geni_i2c_init(struct geni_i2c_dev *gi2c)
+ {
+ 	u32 proto, tx_depth;
+@@ -1209,8 +1262,7 @@ static void geni_i2c_shutdown(struct platform_device *pdev)
+ {
+ 	struct geni_i2c_dev *gi2c = platform_get_drvdata(pdev);
+ 
+-	/* Make client i2c transfers start failing */
+-	i2c_mark_adapter_suspended(&gi2c->adap);
++	geni_i2c_quiesce(gi2c);
+ }
+ 
+ static int __maybe_unused geni_i2c_runtime_suspend(struct device *dev)

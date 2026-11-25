@@ -1,0 +1,106 @@
+From 21139b3ac62ab1599d22e5b33cf571f9ea4193cf Mon Sep 17 00:00:00 2001
+From: ZhaoJinming <zhaojinming@uniontech.com>
+Date: Mon, 10 Aug 2026 15:08:45 +0800
+Subject: [PATCH] Bluetooth: hci_serdev: Fix use-after-free in
+ hci_uart_unregister_device()
+
+hci_uart_unregister_device() frees the HCI device (hci_free_dev)
+before cancelling write_work via cancel_work_sync(). If write_work
+is executing concurrently on another CPU, it can access hu->hdev
+and write to hdev->stat after the memory has been freed.
+
+Additionally, HCI_UART_PROTO_READY is not cleared until after
+cancel_work_sync, so the write_wakeup serdev callback can still
+schedule write_work via hci_uart_tx_wakeup() even after
+hci_free_dev has freed the device.
+
+Fix this by mirroring the same ordering used in the tty/ldisc path
+(hci_uart_tty_close, hci_ldisc.c:565-593):
+1. Save the PROTO_READY state and clear it under the write lock so
+   a concurrent hci_uart_tx_wakeup() cannot re-schedule write_work
+2. Cancel write_work (no new work can be scheduled and no work is
+   in flight)
+3. Unregister the HCI device
+4. Close the protocol (may access hu->hdev and the serdev device)
+5. Close the serdev port (safe now that write_work is quiesced and
+   protocol is done)
+6. Free the HCI device
+
+Also free any partially transmitted frame (hu->tx_skb) left over by
+write_work once the transmit path is quiesced, since hci_uart_close()
+would skip hci_uart_flush() because HCI_UART_PROTO_READY is cleared.
+
+Signed-off-by: ZhaoJinming <zhaojinming@uniontech.com>
+Signed-off-by: Luiz Augusto von Dentz <luiz.von.dentz@intel.com>
+---
+ drivers/bluetooth/hci_serdev.c | 46 +++++++++++++++++++++++++++++-----
+ 1 file changed, 40 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/bluetooth/hci_serdev.c b/drivers/bluetooth/hci_serdev.c
+index d2eaf2f12a..48ba017e21 100644
+--- a/drivers/bluetooth/hci_serdev.c
++++ b/drivers/bluetooth/hci_serdev.c
+@@ -395,20 +395,54 @@ EXPORT_SYMBOL_GPL(hci_uart_register_device_priv);
+ void hci_uart_unregister_device(struct hci_uart *hu)
+ {
+ 	struct hci_dev *hdev = hu->hdev;
++	bool proto_ready;
+ 
++	/* Wait for init_ready to finish to prevent registration races */
+ 	cancel_work_sync(&hu->init_ready);
+-	if (test_bit(HCI_UART_REGISTERED, &hu->flags))
+-		hci_unregister_dev(hdev);
+-	hci_free_dev(hdev);
+ 
++	proto_ready = test_bit(HCI_UART_PROTO_READY, &hu->flags);
++	if (proto_ready) {
++		/* Clear HCI_UART_PROTO_READY under the write lock so a
++		 * concurrent hci_uart_tx_wakeup() cannot re-schedule
++		 * write_work via the write_wakeup callback once the device
++		 * is torn down.
++		 */
++		percpu_down_write(&hu->proto_lock);
++		clear_bit(HCI_UART_PROTO_READY, &hu->flags);
++		percpu_up_write(&hu->proto_lock);
++	}
++
++	/* Unconditionally cancel write_work AFTER clearing PROTO_READY.
++	 * This ensures that concurrent protocol timers cannot requeue
++	 * write_work, permanently preventing double-free races and UAFs,
++	 * and guarantees no write_work is in flight before the serdev
++	 * device is closed.
++	 */
+ 	cancel_work_sync(&hu->write_work);
+ 
++	/* Free any partially transmitted frame left over by write_work now
++	 * that the transmit path is fully quiesced. hci_uart_close() would
++	 * skip hci_uart_flush() because HCI_UART_PROTO_READY is cleared.
++	 */
++	if (hu->tx_skb) {
++		kfree_skb(hu->tx_skb);
++		hu->tx_skb = NULL;
++	}
++
++	if (test_bit(HCI_UART_REGISTERED, &hu->flags))
++		hci_unregister_dev(hdev);
++
++	/* Close the protocol before freeing hdev (intrinsically purges queues).
++	 * Some protocol close handlers (e.g. qca_close) may still access the
++	 * serdev device, so keep the serdev port open until this completes.
++	 */
+ 	hu->proto->close(hu);
+ 
+-	if (test_bit(HCI_UART_PROTO_READY, &hu->flags)) {
+-		clear_bit(HCI_UART_PROTO_READY, &hu->flags);
++	if (proto_ready)
+ 		serdev_device_close(hu->serdev);
+-	}
++
++	hci_free_dev(hdev);
++
+ 	percpu_free_rwsem(&hu->proto_lock);
+ }
+ EXPORT_SYMBOL_GPL(hci_uart_unregister_device);
+-- 
+2.56.0
+

@@ -1,0 +1,59 @@
+From: Fan Wu <fanwu01@zju.edu.cn>
+Subject: power: supply: qcom_battmgr: fix use-after-free of battmgr on remove
+Link: https://lore.kernel.org/r/20260731022006.317192-1-fanwu01@zju.edu.cn
+
+qcom_battmgr_pdr_notify() queues enable_work when the PMIC GLINK service
+comes up. The worker recovers battmgr through container_of() and issues a
+firmware request.
+
+The driver has no remove callback, so a pending or running enable_work can
+access battmgr after devres frees it. The PMIC GLINK client stays on the
+client list until its devres release action, so a PDR notification can
+also queue the work while remove is running.
+
+Add a remove callback that disables and drains enable_work before devres
+release. Unlike cancel_work_sync(), disable_work_sync() also blocks a later
+PDR notification from queueing the work. Store battmgr with
+auxiliary_set_drvdata() in probe so remove can retrieve it.
+
+This issue was found by an in-house static analysis tool.
+
+Fixes: 29e8142b5623 ("power: supply: Introduce Qualcomm PMIC GLINK power supply")
+Cc: stable@vger.kernel.org # v6.10+
+Assisted-by: Codex:gpt-5.6
+Signed-off-by: Fan Wu <fanwu01@zju.edu.cn>
+---
+ drivers/power/supply/qcom_battmgr.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+---
+diff --git a/drivers/power/supply/qcom_battmgr.c b/drivers/power/supply/qcom_battmgr.c
+index 490137a23d..f8c3efd2c9 100644
+--- a/drivers/power/supply/qcom_battmgr.c
++++ b/drivers/power/supply/qcom_battmgr.c
+@@ -1638,6 +1638,8 @@ static int qcom_battmgr_probe(struct auxiliary_device *adev,
+ 	if (!battmgr)
+ 		return -ENOMEM;
+ 
++	auxiliary_set_drvdata(adev, battmgr);
++
+ 	battmgr->dev = dev;
+ 
+ 	psy_cfg.drv_data = battmgr;
+@@ -1729,9 +1731,17 @@ static const struct auxiliary_device_id qcom_battmgr_id_table[] = {
+ };
+ MODULE_DEVICE_TABLE(auxiliary, qcom_battmgr_id_table);
+ 
++static void qcom_battmgr_remove(struct auxiliary_device *adev)
++{
++	struct qcom_battmgr *battmgr = auxiliary_get_drvdata(adev);
++
++	disable_work_sync(&battmgr->enable_work);
++}
++
+ static struct auxiliary_driver qcom_battmgr_driver = {
+ 	.name = "pmic_glink_power_supply",
+ 	.probe = qcom_battmgr_probe,
++	.remove = qcom_battmgr_remove,
+ 	.id_table = qcom_battmgr_id_table,
+ };
+ 

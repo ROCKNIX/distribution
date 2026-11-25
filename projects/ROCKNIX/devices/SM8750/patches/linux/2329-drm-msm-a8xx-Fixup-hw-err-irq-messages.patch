@@ -1,0 +1,113 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Rob Clark <robin.clark@oss.qualcomm.com>
+Date: Thu, 12 Nov 2026 08:07:06 -0800
+Subject: [PATCH] drm/msm/a8xx: Fixup hw_err_irq messages
+
+Handle all the pipes, and don't clobber 'status'.
+
+Signed-off-by: Rob Clark <robin.clark@oss.qualcomm.com>
+Reviewed-by: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261112160706.387641-1-robin.clark@oss.qualcomm.com
+---
+ drivers/gpu/drm/msm/adreno/a8xx_gpu.c | 58 ++++++++++++++++++---------
+ 1 file changed, 38 insertions(+), 20 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a8xx_gpu.c b/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
+index bbf5ca4fb6fc..a1747990e10e 100644
+--- a/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
+@@ -1048,24 +1048,37 @@ int a8xx_fault_handler(void *arg, unsigned long iova, int flags, void *data)
+ 
+ static void a8xx_cp_hw_err_irq(struct msm_gpu *gpu)
+ {
+-	u32 status = gpu_read(gpu, REG_A8XX_CP_INTERRUPT_STATUS_GLOBAL);
+-	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
+-	struct a6xx_gpu *a6xx_gpu = to_a6xx_gpu(adreno_gpu);
+-	u32 slice = a8xx_get_first_slice(a6xx_gpu);
+-	u32 hw_fault_mask = GENMASK(6, 0);
+-	u32 sw_fault_mask = GENMASK(22, 16);
++	const u32 status = gpu_read(gpu, REG_A8XX_CP_INTERRUPT_STATUS_GLOBAL);
++	const u32 slice = a8xx_get_first_slice(to_a6xx_gpu(to_adreno_gpu(gpu)));
++	const u32 hw_fault_mask = GENMASK(6, 0);
++	const u32 sw_fault_mask = GENMASK(22, 16);
+ 	u32 pipe = 0;
+ 
+ 	dev_err_ratelimited(&gpu->pdev->dev, "CP Fault Global INT status: 0x%x\n", status);
+ 
+-	if (status & (A8XX_CP_GLOBAL_INT_MASK_HWFAULTBR |
+-		      A8XX_CP_GLOBAL_INT_MASK_SWFAULTBR))
++#define FAULT_MASK(_pipe) (A8XX_CP_GLOBAL_INT_MASK_HWFAULT ## _pipe | A8XX_CP_GLOBAL_INT_MASK_SWFAULT ## _pipe)
++	if (status & FAULT_MASK(BR))
+ 		pipe |= BIT(PIPE_BR);
+ 
+-	if (status & (A8XX_CP_GLOBAL_INT_MASK_HWFAULTBV |
+-		      A8XX_CP_GLOBAL_INT_MASK_SWFAULTBV))
++	if (status & FAULT_MASK(BV))
+ 		pipe |= BIT(PIPE_BV);
+ 
++	if (status & FAULT_MASK(LPAC))
++		pipe |= BIT(PIPE_LPAC);
++
++	if (status & FAULT_MASK(AQE0))
++		pipe |= BIT(PIPE_AQE0);
++
++	if (status & FAULT_MASK(AQE1))
++		pipe |= BIT(PIPE_AQE1);
++
++	if (status & FAULT_MASK(DDEBR))
++		pipe |= BIT(PIPE_DDE_BR);
++
++	if (status & FAULT_MASK(DDEBV))
++		pipe |= BIT(PIPE_DDE_BV);
++#undef FAULT_MASK
++
+ 	if (!pipe) {
+ 		dev_err_ratelimited(&gpu->pdev->dev, "CP Fault Unknown pipe\n");
+ 		goto out;
+@@ -1076,31 +1089,36 @@ static void a8xx_cp_hw_err_irq(struct msm_gpu *gpu)
+ 			continue;
+ 
+ 		if (hw_fault_mask & status) {
+-			status = a8xx_read_pipe_slice(gpu, pipe_id, slice,
++			u32 hw_status = a8xx_read_pipe_slice(gpu, pipe_id, slice,
+ 					REG_A8XX_CP_HW_FAULT_STATUS_PIPE);
+ 			dev_err_ratelimited(&gpu->pdev->dev,
+-					"CP HW FAULT pipe: %u status: 0x%x\n", pipe_id, status);
++					"CP HW FAULT pipe: %u status: 0x%x\n", pipe_id, hw_status);
+ 		}
+ 
+ 		if (sw_fault_mask & status) {
+-			status = a8xx_read_pipe_slice(gpu, pipe_id, slice,
++			u32 sw_status = a8xx_read_pipe_slice(gpu, pipe_id, slice,
+ 					REG_A8XX_CP_INTERRUPT_STATUS_PIPE);
+ 			dev_err_ratelimited(&gpu->pdev->dev,
+-					"CP SW FAULT pipe: %u status: 0x%x\n", pipe_id, status);
++					"CP SW FAULT pipe: %u status: 0x%x\n", pipe_id, sw_status);
+ 
+-			if (status & BIT(8)) {
++			if (sw_status & A8XX_CP_INTERRUPT_STATUS_MASK_PIPE_OPCODEERROR) {
+ 				a8xx_write_pipe(gpu, pipe_id, REG_A8XX_CP_SQE_STAT_ADDR_PIPE, 1);
+-				status = a8xx_read_pipe_slice(gpu, pipe_id, slice,
++				u32 opcode = a8xx_read_pipe_slice(gpu, pipe_id, slice,
+ 						REG_A8XX_CP_SQE_STAT_DATA_PIPE);
+ 				dev_err_ratelimited(&gpu->pdev->dev,
+-						"CP Opcode error, opcode=0x%x\n", status);
++						"CP Opcode error, opcode=0x%x\n", opcode);
+ 			}
+ 
+-			if (status & BIT(10)) {
+-				status = a8xx_read_pipe_slice(gpu, pipe_id, slice,
++			if (sw_status & A8XX_CP_INTERRUPT_STATUS_MASK_PIPE_REGISTERPROTECTIONERROR) {
++				u32 prot = a8xx_read_pipe_slice(gpu, pipe_id, slice,
+ 						REG_A8XX_CP_PROTECT_STATUS_PIPE);
++				u32 addr = FIELD(prot, A8XX_CP_PROTECT_STATUS_PIPE_ADDR);
++				const char *mode = (prot & A8XX_CP_PROTECT_STATUS_PIPE_READ) ?
++					"read" : "write";
++
+ 				dev_err_ratelimited(&gpu->pdev->dev,
+-						"CP REG PROTECT error, status=0x%x\n", status);
++						"CP REG PROTECT error, %s addr=0x%05x, status=0x%x\n",
++						mode, addr, prot);
+ 			}
+ 		}
+ 	}
