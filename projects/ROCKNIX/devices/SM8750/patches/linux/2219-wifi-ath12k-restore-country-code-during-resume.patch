@@ -1,0 +1,80 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Stian Knudsen <stian@pokerfj.es>
+Date: Mon, 20 Jul 2026 14:09:13 +0200
+Subject: [PATCH] wifi: ath12k: restore country code during resume
+
+The country code configured before suspend is lost after resume:
+the device is powered down in suspend_late and powered back up in
+resume_early, so firmware reboots with its default regulatory
+settings and the previously set country code is no longer applied.
+
+On WCN7850 the firmware comes back in the world regulatory domain
+(country 00) and takes ~7 seconds to rediscover the country code
+from AP beacons, part of a ~16 second total delay before wifi
+reconnects after resume.
+
+Restore it by resending WMI_SET_CURRENT_COUNTRY_CMDID during resume
+if a country code was set before suspend, i.e. when ar->alpha2 is
+valid. This follows the same approach as ath11k commit 7f0343b7b871
+("wifi: ath11k: restore country code during resume").
+
+Note that only single_pdev_only devices support suspend/resume (see
+ath12k_core_continue_suspend_resume()), so handling the first and
+only pdev is sufficient.
+
+Tested-on: WCN7850 hw2.0 PCI WLAN.HMT.1.1.c7-00108-QCAHMTSWPL_V1.0_V2.0_SILICONZ_UPSTREAM-3
+
+Fixes: 8d5f4da8d70b ("wifi: ath12k: support suspend/resume")
+Suggested-by: Baochen Qiang <baochen.qiang@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/-_iDJ_M5RrqACWB0qmtleg@pokerfj.es
+Signed-off-by: Stian Knudsen <stian@pokerfj.es>
+Reviewed-by: Baochen Qiang <baochen.qiang@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20260720120913.100604-1-stian@pokerfj.es
+---
+v2:
+- Add Fixes tag, per Baochen's review comment.
+- Link to v1: https://lore.kernel.org/r/20260717130254.36732-1-stian@pokerfj.es
+---
+ drivers/net/wireless/ath/ath12k/core.c | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/drivers/net/wireless/ath/ath12k/core.c b/drivers/net/wireless/ath/ath12k/core.c
+--- a/drivers/net/wireless/ath/ath12k/core.c
++++ b/drivers/net/wireless/ath/ath12k/core.c
+@@ -197,6 +197,7 @@ EXPORT_SYMBOL(ath12k_core_resume_early);
+
+ int ath12k_core_resume(struct ath12k_base *ab)
+ {
++	struct ath12k *ar;
+ 	long time_left;
+ 	int ret;
+
+@@ -211,6 +212,26 @@ int ath12k_core_resume(struct ath12k_base *ab)
+ 		return -ETIMEDOUT;
+ 	}
+
++	/* So far only single_pdev_only devices can reach here,
++	 * so it is valid to handle the first, and the only, pdev.
++	 */
++	ar = ab->pdevs[0].ar;
++	if (ab->hw_params->current_cc_support &&
++	    ar->alpha2[0] != 0 && ar->alpha2[1] != 0) {
++		struct wmi_set_current_country_arg arg = {};
++
++		memcpy(&arg.alpha2, ar->alpha2, 2);
++
++		reinit_completion(&ar->regd_update_completed);
++
++		ret = ath12k_wmi_send_set_current_country_cmd(ar, &arg);
++		if (ret) {
++			ath12k_warn(ab, "failed to set country code during resume: %d\n",
++				    ret);
++			return ret;
++		}
++	}
++
+ 	return 0;
+ }
+ EXPORT_SYMBOL(ath12k_core_resume);
+--
+2.50.0

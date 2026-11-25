@@ -1,0 +1,118 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Shawn Guo <shengchao.guo@oss.qualcomm.com>
+Date: Sun, 15 Nov 2026 11:20:25 +0800
+Subject: [PATCH] ASoC: qcom: q6apm: Wait for SPF to be ready before registering
+
+apm_probe() sends APM_CMD_GET_SPF_STATE once and ignores the result.
+At cold boot this is harmless: module loading and PDR lookup delay the
+probe by tens of milliseconds after the DSP is up, so SPF is listening
+by the time the command is sent.
+
+After an ADSP restart, everything is already loaded and PDR reports the
+audio PD up at once. The GPR service is added about 0.5 ms after the
+remoteproc reports the DSP up, and SPF drops a command sent that early
+without replying:
+
+  remoteproc remoteproc0: remote processor adsp is now up
+  qcom,apr ...: Adding APR/GPR dev: gprsvc:service:2:1
+  qcom-apm gprsvc:service:2:1: CMD timeout for [1001021] opcode
+
+Once the q6apm component is registered, a sound card whose other
+components are still bound can bind right away, inside apm_probe(), and
+issue APM_CMD_SHARED_MEM_MAP_REGIONS before SPF can handle it. The map
+times out and the card fails to come up:
+
+  qcom-apm gprsvc:service:2:1: CMD timeout for [100100c] opcode
+
+Poll GET_SPF_STATE before registering the component. Simply retrying
+q6apm_get_apm_state() is not enough: it goes through
+audioreach_send_cmd_sync(), whose 5 second timeout makes every dropped
+command stall the probe, and the card with it, for 5 seconds. Instead,
+send the command directly and wait only 100 ms for the reply, for up to
+5 seconds in total, which is the worst case of the single command sent
+before. A timed out try is retried at once, while a "not ready" reply
+or a send failure backs off for 100 ms first. On Nord, SPF answers
+within 100-200 ms of the restart. If it still does not answer, warn and
+carry on as before rather than failing the probe.
+
+Signed-off-by: Shawn Guo <shengchao.guo@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261115032027.414953-2-shengchao.guo@oss.qualcomm.com
+---
+ sound/soc/qcom/qdsp6/q6apm.c | 50 +++++++++++++++++++++++++++++++++++-
+ 1 file changed, 49 insertions(+), 1 deletion(-)
+
+diff --git a/sound/soc/qcom/qdsp6/q6apm.c b/sound/soc/qcom/qdsp6/q6apm.c
+index 4cb597d737b1..e7ba6bc93142 100644
+--- a/sound/soc/qcom/qdsp6/q6apm.c
++++ b/sound/soc/qcom/qdsp6/q6apm.c
+@@ -26,6 +26,8 @@ struct apm_graph_mgmt_cmd {
+ } __packed;
+ 
+ #define APM_GRAPH_MGMT_PSIZE(p, n) ALIGN(struct_size(p, sub_graph_id_list, n), 8)
++#define Q6APM_SPF_POLL_MS	100
++#define Q6APM_SPF_READY_MS	5000
+ 
+ static struct q6apm *g_apm;
+ 
+@@ -154,6 +156,47 @@ static int q6apm_get_apm_state(struct q6apm *apm)
+ 	return apm->state;
+ }
+ 
++/*
++ * Right after the DSP boots, the SPF drops commands without replying. Poll
++ * GET_SPF_STATE with a short timeout per try instead of the 5 s one of
++ * q6apm_send_cmd_sync(), so a dropped command does not stall the probe.
++ */
++static bool q6apm_wait_spf_ready(struct q6apm *apm)
++{
++	unsigned long timeout = jiffies + msecs_to_jiffies(Q6APM_SPF_READY_MS);
++	gpr_device_t *gdev = apm->gdev;
++
++	do {
++		struct gpr_pkt *pkt __free(kfree) =
++			audioreach_alloc_apm_cmd_pkt(0, APM_CMD_GET_SPF_STATE, 0);
++		long rc;
++
++		if (IS_ERR(pkt))
++			return false;
++
++		pkt->hdr.dest_domain = audioreach_gpr_dest_domain(gdev);
++
++		mutex_lock(&apm->lock);
++		apm->result.opcode = 0;
++		apm->state = 0;
++		rc = gpr_send_pkt(gdev, pkt);
++		if (rc >= 0)
++			rc = wait_event_timeout(apm->wait,
++					apm->result.opcode == APM_CMD_RSP_GET_SPF_STATE,
++					msecs_to_jiffies(Q6APM_SPF_POLL_MS));
++		mutex_unlock(&apm->lock);
++
++		if (apm->state)
++			return true;
++
++		/* A timeout has already waited, anything else backs off */
++		if (rc)
++			msleep(Q6APM_SPF_POLL_MS);
++	} while (time_before(jiffies, timeout));
++
++	return false;
++}
++
+ bool q6apm_is_adsp_ready(void)
+ {
+ 	if (g_apm)
+@@ -906,7 +949,12 @@ static int apm_probe(gpr_device_t *gdev)
+ 	dev_set_drvdata(dev, apm);
+ 	g_apm = apm;
+ 
+-	q6apm_get_apm_state(apm);
++	/*
++	 * Once the component is registered a card can bind and send commands
++	 * at once, so wait for the SPF first.
++	 */
++	if (!q6apm_wait_spf_ready(apm))
++		dev_warn(dev, "SPF not ready\n");
+ 
+ 	ret = snd_soc_register_component(dev, &q6apm_audio_component, NULL, 0);
+ 	if (ret < 0) {

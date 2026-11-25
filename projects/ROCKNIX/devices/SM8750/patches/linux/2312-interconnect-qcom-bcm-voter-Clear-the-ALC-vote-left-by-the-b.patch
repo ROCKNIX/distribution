@@ -1,0 +1,100 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Michael Auer <mick@yoxcu.de>
+Date: Fri, 20 Nov 2026 13:21:52 +0100
+Subject: [PATCH] interconnect: qcom: bcm-voter: Clear the ALC vote left by the bootloader
+
+The bootloader can leave a vote on the ALC BCM. No icc node maps to
+ALC, so Linux never touches it and the vote stays. On SDM845 this
+keeps DDR out of its sleep state, and the SoC never reaches CX
+collapse or AOSS sleep in suspend.
+
+Clear the vote when the voter probes: (12, 0) in the active-only set,
+as the downstream kernel does, and (0, 0) in the wake and sleep sets.
+
+Tested on a OnePlus 6 (SDM845). Before, cxsd and aosd in qcom_stats
+stayed at 0. With this change, CX collapse was reached in 139
+suspends over one night, for about 7.6 of 8.9 hours, and the average
+current over the night was about 27 mA. The active-only vote stays
+(12, 0) after suspend and resume, and the awake idle current with the
+display off did not change.
+
+Suggested-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Assisted-by: LLM
+Signed-off-by: Michael Auer <mick@yoxcu.de>
+Link: https://lore.kernel.org/r/20261120122152.198114-1-mick@yoxcu.de
+---
+Changes in v2:
+- Drop the dt-bindings change and the dummy ALC node. Clear the vote in
+  bcm-voter at probe instead, with the code Konrad suggested.
+- Link to v1: https://lore.kernel.org/r/20261013202611.3070778-1-mick@yoxcu.de
+
+This runs for every voter on every SoC that has an ALC entry in
+cmd-db. SDM845 only has the apps voter. Should it be limited to the
+apps voter?
+
+Ard, the code is different from v1, so I did not keep your Tested-by.
+A retest on the C630 would be great.
+
+ drivers/interconnect/qcom/bcm-voter.c | 42 +++++++++++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+
+diff --git a/drivers/interconnect/qcom/bcm-voter.c b/drivers/interconnect/qcom/bcm-voter.c
+index 0880a287b0c0..f9d51f3d586d 100644
+--- a/drivers/interconnect/qcom/bcm-voter.c
++++ b/drivers/interconnect/qcom/bcm-voter.c
+@@ -390,6 +390,46 @@ int qcom_icc_bcm_voter_commit(struct bcm_voter *voter)
+ }
+ EXPORT_SYMBOL_GPL(qcom_icc_bcm_voter_commit);
+ 
++/*
++ * ALC is not modeled by any icc node, but the bootloader may leave it voted,
++ * which prevents the SoC from reaching CX collapse and AOSS shutdown.
++ */
++static void bcm_voter_clear_alc(struct bcm_voter *voter)
++{
++	struct tcs_cmd cmd;
++	u32 addr;
++	int ret;
++
++	addr = cmd_db_read_addr("ALC");
++	if (!addr)
++		return;
++
++	tcs_cmd_gen(&cmd, 12, 0, addr, true,
++		    voter->tcs_wait & BIT(QCOM_ICC_BUCKET_AMC));
++
++	ret = rpmh_write(voter->dev, RPMH_ACTIVE_ONLY_STATE, &cmd, 1);
++	if (ret) {
++		dev_err(voter->dev, "Error sending ALC AMC RPMH request (%d)\n", ret);
++		return;
++	}
++
++	tcs_cmd_gen(&cmd, 0, 0, addr, true,
++		    voter->tcs_wait & BIT(QCOM_ICC_BUCKET_WAKE));
++
++	ret = rpmh_write(voter->dev, RPMH_WAKE_ONLY_STATE, &cmd, 1);
++	if (ret) {
++		dev_err(voter->dev, "Error sending ALC WAKE RPMH request (%d)\n", ret);
++		return;
++	}
++
++	tcs_cmd_gen(&cmd, 0, 0, addr, true,
++		    voter->tcs_wait & BIT(QCOM_ICC_BUCKET_SLEEP));
++
++	ret = rpmh_write(voter->dev, RPMH_SLEEP_STATE, &cmd, 1);
++	if (ret)
++		dev_err(voter->dev, "Error sending ALC SLEEP RPMH request (%d)\n", ret);
++}
++
+ static int qcom_icc_bcm_voter_probe(struct platform_device *pdev)
+ {
+ 	struct device_node *np = pdev->dev.of_node;
+@@ -409,6 +449,8 @@ static int qcom_icc_bcm_voter_probe(struct platform_device *pdev)
+ 	INIT_LIST_HEAD(&voter->commit_list);
+ 	INIT_LIST_HEAD(&voter->ws_list);
+ 
++	bcm_voter_clear_alc(voter);
++
+ 	mutex_lock(&bcm_voter_lock);
+ 	list_add_tail(&voter->voter_node, &bcm_voters);
+ 	mutex_unlock(&bcm_voter_lock);

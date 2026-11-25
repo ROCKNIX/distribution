@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vladyslav Tymoshchuk <tvlad744@gmail.com>
+Date: Thu, 12 Nov 2026 13:00:08 +0200
+Subject: [PATCH] wifi: ath12k: skip the links without a radio when a scan fails
+
+ath12k_mac_vdev_create() clears arvif->ar when the vdev creation fails,
+and the link stays in ahvif->links_map. When a scan fails after that,
+ath12k_mac_op_hw_scan() walks all the links of the vif to clean up and
+dereferences the NULL radio:
+
+  ath12k_wifi7_pci 0000:01:00.0: failed to create WMI vdev 1: -108
+  ath12k_wifi7_pci 0000:01:00.0: failed to create vdev 00:03:7f:12:34:56 ret -108
+  Unable to handle kernel paging request at virtual address 0000000000001508
+  pc : ath12k_mac_op_hw_scan+0x9cc/0xb28 [ath12k]
+  Call trace:
+   ath12k_mac_op_hw_scan+0x9cc/0xb28 [ath12k] (P)
+   __ieee80211_start_scan+0x4e8/0x6e0 [mac80211]
+   ieee80211_request_scan+0x10/0x1c [mac80211]
+   ieee80211_scan+0x98/0x14c [mac80211]
+   cfg80211_scan+0x50/0x1f4 [cfg80211]
+   nl80211_trigger_scan+0x694/0x6cc [cfg80211]
+
+This happens when the firmware crashes a second time while mac80211 is
+reconfiguring the device after a first crash: the WMI commands fail
+with -ESHUTDOWN, and so do the vdev creation of the station link and
+the scan that wpa_supplicant requests next. The oops leaves the wiphy
+mutex locked, and everything that needs it hangs.
+
+Such a link has neither a scan to stop nor a vdev to remove.
+
+Fixes: feed05f1526e ("wifi: ath12k: Split scan request for split band device")
+Signed-off-by: Vladyslav Tymoshchuk <tvlad744@gmail.com>
+Link: https://lore.kernel.org/r/20261112110008.1229-5-tvlad744@gmail.com
+---
+ drivers/net/wireless/ath/ath12k/mac.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/net/wireless/ath/ath12k/mac.c b/drivers/net/wireless/ath/ath12k/mac.c
+index 4cb41b8b1d3b..49cb9bd8dda1 100644
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -5889,6 +5889,9 @@ int ath12k_mac_op_hw_scan(struct ieee80211_hw *hw,
+ 				continue;
+ 
+ 			ar = arvif->ar;
++			if (!ar)
++				continue;
++
+ 			if (ar->scan.arvif == arvif) {
+ 				wiphy_work_cancel(hw->wiphy, &ar->scan.vdev_clean_wk);
+ 				spin_lock_bh(&ar->data_lock);

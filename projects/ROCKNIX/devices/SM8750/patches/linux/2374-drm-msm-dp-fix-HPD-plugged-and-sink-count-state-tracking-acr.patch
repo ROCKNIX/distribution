@@ -1,0 +1,153 @@
+From 1c9f96f0aa4f51e3b14161497292f2a6e3df4a2a Mon Sep 17 00:00:00 2001
+From: Gianfranco Mariotti <gianfranco.mariotti94@gmail.com>
+Date: Sun, 22 Nov 2026 15:02:17 +0100
+Subject: [PATCH] drm/msm/dp: fix HPD plugged and sink_count state tracking
+ across hotplug
+
+Keep dp->plugged, dp->link->sink_count, AUX transfer enablement, and
+runtime PM references consistent across DisplayPort hotplug cycles:
+
+- In msm_dp_hpd_plug_handle(), return early if dp->plugged is already
+  set so duplicate plug notifications do not leak runtime PM references,
+  and unwind AUX/PHY/runtime-PM state instead of setting dp->plugged =
+  true when msm_dp_display_process_hpd_high() fails.
+- In msm_dp_display_process_hpd_high(), ensure dp->link->sink_count = 1
+  when a valid EDID is read from a sink that reports sink_count == 0,
+  preventing msm_dp_display_prepare_link() from failing with -ENOTCONN.
+- In msm_dp_bridge_detect(), stop mutating priv->plugged (which is
+  paired with the HPD plug/unplug runtime PM reference), and always
+  disable AUX transfers on exit when !priv->plugged even if the PHY was
+  already initialized.
+- In msm_dp_hpd_unplug_handle(), reset dp->link->sink_count = 0 on
+  disconnect, and in msm_dp_display_unprepare(), only enter dongle D3
+  and re-initialize the PHY when dp->link->sink_count == 0 &&
+  dp->plugged so a full cable unplug powers down the PHY instead of
+  issuing AUX writes and leaving the PHY active.
+
+[jg: 7.3 lacks 1bda647ce61b, so the link teardown still lives in
+ msm_dp_display_disable(). Apply the dp->plugged gating there and drop
+ the duplicated teardown from msm_dp_display_unprepare(), which would
+ otherwise run msm_dp_ctrl_off_link() twice and unbalance the PHY
+ power_count.]
+
+Fixes: 3ea2d1c3d154 ("drm/msm/dp: turn link_ready into plugged")
+Signed-off-by: Gianfranco Mariotti <gianfranco.mariotti94@gmail.com>
+Link: https://lore.kernel.org/r/20261121214105.32596-8-gianfranco.mariotti94@gmail.com
+Assisted-by: Grok Bot
+Signed-off-by: Jens Glathe <jens.glathe@oldschoolsolutions.biz>
+---
+ drivers/gpu/drm/msm/dp/dp_display.c | 31 +++++++++++++++++++----------
+ 1 file changed, 20 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
+index 758cf869e..7050fb5b5 100644
+--- a/drivers/gpu/drm/msm/dp/dp_display.c
++++ b/drivers/gpu/drm/msm/dp/dp_display.c
+@@ -301,6 +301,9 @@ static int msm_dp_display_process_hpd_high(struct msm_dp_display_private *dp)
+ 	dp->msm_dp_display.psr_supported = dp->panel->psr_cap.version && psr_enabled;
+ 
+ 	dp->audio_supported = info->has_audio;
++	if (drm_edid && dp->link->sink_count == 0)
++		dp->link->sink_count = 1;
++
+ 	msm_dp_panel_handle_sink_request(dp->panel, drm_edid);
+ 
+ 	/*
+@@ -411,6 +414,9 @@ static int msm_dp_hpd_plug_handle(struct msm_dp_display_private *dp)
+ 
+ 	guard(mutex)(&dp->plugged_lock);
+ 
++	if (dp->plugged)
++		return 0;
++
+ 	ret = pm_runtime_resume_and_get(&pdev->dev);
+ 	if (ret) {
+ 		DRM_ERROR("failed to pm_runtime_resume\n");
+@@ -422,6 +428,12 @@ static int msm_dp_hpd_plug_handle(struct msm_dp_display_private *dp)
+ 	msm_dp_display_host_phy_init(dp);
+ 
+ 	ret = msm_dp_display_process_hpd_high(dp);
++	if (ret) {
++		msm_dp_aux_enable_xfers(dp->aux, false);
++		msm_dp_display_host_phy_exit(dp);
++		pm_runtime_put(&pdev->dev);
++		return ret;
++	}
+ 
+ 	drm_dbg_dp(dp->drm_dev, "After, type=%d sink_count=%d\n",
+ 			dp->msm_dp_display.connector_type,
+@@ -429,8 +441,8 @@ static int msm_dp_hpd_plug_handle(struct msm_dp_display_private *dp)
+ 
+ 	dp->plugged = true;
+ 
+-	return ret;
+-};
++	return 0;
++}
+ 
+ static void msm_dp_display_handle_plugged_change(struct msm_dp *msm_dp_display,
+ 		bool plugged)
+@@ -470,6 +482,8 @@ static int msm_dp_hpd_unplug_handle(struct msm_dp_display_private *dp)
+ 	if (dp->link->sink_count == 0)
+ 		msm_dp_display_host_phy_exit(dp);
+ 
++	dp->link->sink_count = 0;
++
+ 	/*
+ 	 * We don't need separate work for disconnect as
+ 	 * connect/attention interrupts are disabled
+@@ -721,12 +735,12 @@ static int msm_dp_display_disable(struct msm_dp_display_private *dp,
+ 	msm_dp_ctrl_off_pixel_clk(dp->ctrl);
+ 
+ 	/* dongle is still connected but sinks are disconnected */
+-	if (dp->link->sink_count == 0)
++	if (dp->link->sink_count == 0 && dp->plugged)
+ 		msm_dp_link_psm_config(dp->link, &msm_dp_panel->link_info, true);
+ 
+ 	msm_dp_ctrl_off_link(dp->ctrl, msm_dp_panel);
+ 
+-	if (dp->link->sink_count == 0)
++	if (dp->link->sink_count == 0 && dp->plugged)
+ 		/* re-init the PHY so that we can listen to Dongle disconnect */
+ 		msm_dp_ctrl_reinit_phy(dp->ctrl);
+ 	else
+@@ -915,26 +929,22 @@ enum drm_connector_status msm_dp_bridge_detect(struct drm_bridge *bridge,
+ 	DRM_DEBUG_DP("aux link status: %x\n", ret);
+ 	if (!priv->plugged && !ret) {
+ 		DRM_DEBUG_DP("aux not connected\n");
+-		priv->plugged = false;
+ 		goto end;
+ 	}
+ 
+ 	ret = drm_dp_read_dpcd_caps(priv->aux, dpcd);
+ 	if (ret) {
+ 		DRM_DEBUG_DP("failed to read caps\n");
+-		priv->plugged = false;
+ 		goto end;
+ 	}
+ 
+ 	ret = drm_dp_read_desc(priv->aux, &desc, drm_dp_is_branch(dpcd));
+ 	if (ret) {
+ 		DRM_DEBUG_DP("failed to read desc\n");
+-		priv->plugged = false;
+ 		goto end;
+ 	}
+ 
+ 	status = connector_status_connected;
+-	priv->plugged = true;
+ 
+ 	if (drm_dp_read_sink_count_cap(connector, dpcd, &desc)) {
+ 		int sink_count = drm_dp_read_sink_count(priv->aux);
+@@ -951,10 +961,9 @@ enum drm_connector_status msm_dp_bridge_detect(struct drm_bridge *bridge,
+ 	 * lose the state.
+ 	 */
+ 	if (!priv->plugged) {
+-		if (phy_deinit) {
+-			msm_dp_aux_enable_xfers(priv->aux, false);
++		msm_dp_aux_enable_xfers(priv->aux, false);
++		if (phy_deinit)
+ 			msm_dp_display_host_phy_exit(priv);
+-		}
+ 
+ 		pm_runtime_put_sync(&dp->pdev->dev);
+ 	}
