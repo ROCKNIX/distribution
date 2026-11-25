@@ -1,0 +1,636 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Andr=C3=A9=20Braga?= <code@andrebraga.com>
+Date: Thu, 5 Nov 2026 19:27:50 +0000
+Subject: [PATCH] soc: qcom: add a CPU memory latency bandwidth voter
+
+On SM8750, Qualcomm's memlat runs in the kernel rather than in CPUCP:
+it samples each CPU's instructions, cycles and cache misses, and while
+a CPU misses often per instruction it votes the LLCC and DDR frequency
+its table maps the CPU frequency to. Mainline has nothing that does
+this, so CPU work that waits on memory runs with the buses wherever
+other voters leave them.
+
+Add a driver that does it from a DT description in the shape of the
+vendor's memlat nodes, so a SoC brings its own monitors, tables and
+paths. Misses are perf events: a CPU PMU event, or one from another PMU
+the DT points at, such as the LLCC's per-CPU read-miss counter. Each
+CPU samples its own counters from a deferrable timer, which rides a
+busy CPU's tick and never wakes an idle one; CPUs that did not sample
+drop out of the vote, and at a bus's floor the vote is removed. An
+enable file in sysfs stops and resumes it.
+---
+ .../ABI/testing/sysfs-driver-qcom-memlat      |   7 +
+ MAINTAINERS                                   |   7 +
+ drivers/soc/qcom/Kconfig                      |  12 +
+ drivers/soc/qcom/Makefile                     |   1 +
+ drivers/soc/qcom/memlat.c                     | 531 ++++++++++++++++++
+ 5 files changed, 558 insertions(+)
+ create mode 100644 Documentation/ABI/testing/sysfs-driver-qcom-memlat
+ create mode 100644 drivers/soc/qcom/memlat.c
+
+diff --git a/Documentation/ABI/testing/sysfs-driver-qcom-memlat b/Documentation/ABI/testing/sysfs-driver-qcom-memlat
+new file mode 100644
+index 000000000..be6c7fc26
+--- /dev/null
++++ b/Documentation/ABI/testing/sysfs-driver-qcom-memlat
+@@ -0,0 +1,7 @@
++What:		/sys/bus/platform/drivers/qcom-memlat/*/enable
++Date:		November 2026
++Contact:	André Braga <code@andrebraga.com>
++Description:
++		(RW) 1 while the CPU memory latency voter samples CPUs and
++		votes for memory bus bandwidth; writing 0 stops its sampling
++		and removes its votes, writing 1 resumes them.
+diff --git a/MAINTAINERS b/MAINTAINERS
+index af90f00d7..b28b10ab1 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -22561,6 +22561,13 @@ F:	Documentation/devicetree/bindings/perf/qcom,sm8750-llcc-pmu.yaml
+ F:	drivers/perf/qcom_llcc_pmu.c
+ F:	include/linux/soc/qcom/llcc-pmu.h
+ 
++QUALCOMM MEMLAT DRIVER
++M:	André Braga <code@andrebraga.com>
++L:	linux-arm-msm@vger.kernel.org
++S:	Maintained
++F:	Documentation/devicetree/bindings/soc/qcom/qcom,memlat.yaml
++F:	drivers/soc/qcom/memlat.c
++
+ QUALCOMM NAND CONTROLLER DRIVER
+ M:	Manivannan Sadhasivam <mani@kernel.org>
+ L:	linux-mtd@lists.infradead.org
+diff --git a/drivers/soc/qcom/Kconfig b/drivers/soc/qcom/Kconfig
+index 2b524154d..a5ac5a9f6 100644
+--- a/drivers/soc/qcom/Kconfig
++++ b/drivers/soc/qcom/Kconfig
+@@ -263,6 +263,18 @@ config QCOM_APR
+ 	  used by audio driver to configure QDSP6
+ 	  ASM, ADM and AFE modules.
+ 
++config QCOM_MEMLAT
++	tristate "Qualcomm CPU memory latency bandwidth voter"
++	depends on ARM64 || COMPILE_TEST
++	depends on INTERCONNECT && HW_PERF_EVENTS
++	depends on QCOM_LLCC_PMU || !QCOM_LLCC_PMU
++	help
++	  Votes for LLCC and DDR bandwidth while CPUs stall on memory, on
++	  SoCs whose CPUCP firmware does not run memlat itself. Each CPU
++	  counts its instructions, cycles and misses, and while it misses
++	  often enough per instruction votes the bus frequency its DT table
++	  maps its effective frequency to. Idle CPUs are never woken.
++
+ config QCOM_ICC_BWMON
+ 	tristate "Qualcomm Interconnect Bandwidth Monitor driver"
+ 	depends on ARM64 || COMPILE_TEST
+diff --git a/drivers/soc/qcom/Makefile b/drivers/soc/qcom/Makefile
+index 798643be3..bed96fdc2 100644
+--- a/drivers/soc/qcom/Makefile
++++ b/drivers/soc/qcom/Makefile
+@@ -36,6 +36,7 @@ obj-$(CONFIG_QCOM_WCNSS_CTRL) += wcnss_ctrl.o
+ obj-$(CONFIG_QCOM_APR) += apr.o
+ obj-$(CONFIG_QCOM_LLCC) += llcc-qcom.o
+ obj-$(CONFIG_QCOM_KRYO_L2_ACCESSORS) +=	kryo-l2-accessors.o
++obj-$(CONFIG_QCOM_MEMLAT)	+= memlat.o
+ obj-$(CONFIG_QCOM_ICC_BWMON)	+= icc-bwmon.o
+ qcom_ice-objs			+= ice.o
+ obj-$(CONFIG_QCOM_INLINE_CRYPTO_ENGINE)	+= qcom_ice.o
+diff --git a/drivers/soc/qcom/memlat.c b/drivers/soc/qcom/memlat.c
+new file mode 100644
+index 000000000..d9303e2df
+--- /dev/null
++++ b/drivers/soc/qcom/memlat.c
+@@ -0,0 +1,531 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Vote for memory bus bandwidth while CPUs stall on memory, for SoCs whose
++ * CPUCP firmware does not run memlat. The DT describes it in the shape of
++ * Qualcomm's vendor memlat nodes: one child per bus, named as the
++ * interconnect path it votes on, and one grandchild per group of CPUs
++ * sharing a table.
++ *
++ * Each CPU samples its own PMU counters from a deferrable timer, which
++ * rides the tick of a busy CPU and never wakes an idle one; a CPU that
++ * has not sampled since the last update drops out of the vote. A CPU
++ * votes for the memory frequency its monitor maps its effective frequency
++ * to, if it misses often enough per instruction; compute monitors vote by
++ * frequency alone.
++ */
++
++#include <linux/cpu.h>
++#include <linux/cpuhotplug.h>
++#include <linux/interconnect.h>
++#include <linux/ktime.h>
++#include <linux/mod_devicetable.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/percpu.h>
++#include <linux/perf_event.h>
++#include <linux/perf/arm_pmuv3.h>
++#include <linux/platform_device.h>
++#include <linux/slab.h>
++#include <linux/soc/qcom/llcc-pmu.h>
++#include <linux/spinlock.h>
++#include <linux/timer.h>
++#include <linux/workqueue.h>
++
++#define MEMLAT_SAMPLE_MS	8
++#define MEMLAT_IPM_CEIL		400
++
++struct memlat_map {
++	u32 cpu_mhz;
++	u32 mem_khz;
++};
++
++struct memlat_mon {
++	struct memlat_map *map;
++	cpumask_t cpus;
++	u32 map_len;
++	u32 ipm_ceil;
++	u32 scale_pct;
++	u32 scale_floor_mhz;
++	u32 scale_ceil_mhz;
++	bool compute;
++};
++
++struct memlat_bus {
++	struct memlat_mon *mons;
++	struct icc_path *path;
++	u32 num_mons;
++	u32 width;
++	u32 floor_khz;
++	u32 cur_khz;
++	int miss;
++};
++
++struct memlat;
++
++struct memlat_ev {
++	u32 type;
++	u64 config;
++};
++
++struct memlat_cpu {
++	struct memlat *ml;
++	struct perf_event **ev;
++	u64 *cnt;
++	u64 *prev;
++	u32 *ipm;
++	struct timer_list timer;
++	/* Guards the counters between the CPU's sampler and the update */
++	spinlock_t lock;
++	ktime_t ts;
++	ktime_t prev_ts;
++	u32 mhz;
++};
++
++struct memlat {
++	struct device *dev;
++	struct memlat_bus *buses;
++	struct memlat_cpu __percpu *cpus;
++	struct memlat_ev *events;
++	struct work_struct work;
++	struct hlist_node node;
++	/* Serialises the sysfs switch */
++	struct mutex lock;
++	bool enabled;
++	ktime_t last_update;
++	u32 num_buses;
++	u32 num_evs;
++};
++
++static enum cpuhp_state memlat_hp_state;
++
++static void memlat_sample(struct timer_list *t)
++{
++	struct memlat_cpu *c = timer_container_of(c, t, timer);
++	struct memlat *ml = c->ml;
++	ktime_t now = ktime_get();
++	u32 i;
++
++	spin_lock(&c->lock);
++	for (i = 0; i < ml->num_evs; i++)
++		perf_event_read_local(c->ev[i], &c->cnt[i], NULL, NULL);
++	c->ts = now;
++	spin_unlock(&c->lock);
++
++	if (ktime_ms_delta(now, READ_ONCE(ml->last_update)) >= MEMLAT_SAMPLE_MS)
++		queue_work(system_freezable_power_efficient_wq, &ml->work);
++
++	mod_timer(t, jiffies + msecs_to_jiffies(MEMLAT_SAMPLE_MS));
++}
++
++/* The first row at or above the CPU frequency applies */
++static u32 memlat_mem_khz(const struct memlat_mon *mon, u32 cpu_mhz)
++{
++	u32 i;
++
++	for (i = 0; i < mon->map_len - 1; i++)
++		if (mon->map[i].cpu_mhz >= cpu_mhz)
++			break;
++
++	return mon->map[i].mem_khz;
++}
++
++static u32 memlat_mon_mhz(const struct memlat *ml, const struct memlat_mon *mon, u32 b)
++{
++	u32 cpu, f, ipm, max_mhz = 0;
++
++	for_each_cpu(cpu, &mon->cpus) {
++		const struct memlat_cpu *c = per_cpu_ptr(ml->cpus, cpu);
++
++		f = c->mhz;
++		ipm = c->ipm[b];
++		if (!f || (!mon->compute && ipm > mon->ipm_ceil))
++			continue;
++
++		if (!mon->compute && mon->scale_pct &&
++		    f > mon->scale_floor_mhz && f < mon->scale_ceil_mhz) {
++			f += div_u64((u64)f * (mon->ipm_ceil - ipm) * mon->scale_pct,
++				     mon->ipm_ceil * 100);
++			f = min(f, mon->scale_ceil_mhz);
++		}
++		max_mhz = max(max_mhz, f);
++	}
++
++	return max_mhz;
++}
++
++static void memlat_update(struct work_struct *work)
++{
++	struct memlat *ml = container_of(work, struct memlat, work);
++	u32 cpu, b, m, i, khz, mhz;
++	u64 miss;
++	s64 us;
++
++	WRITE_ONCE(ml->last_update, ktime_get());
++
++	for_each_possible_cpu(cpu) {
++		struct memlat_cpu *c = per_cpu_ptr(ml->cpus, cpu);
++		u64 d[2];
++
++		spin_lock_irq(&c->lock);
++		us = ktime_us_delta(c->ts, c->prev_ts);
++		c->prev_ts = c->ts;
++		d[0] = c->cnt[0] - c->prev[0];
++		d[1] = c->cnt[1] - c->prev[1];
++		for (b = 0; b < ml->num_buses; b++) {
++			i = ml->buses[b].miss;
++			miss = c->cnt[i] - c->prev[i];
++			c->ipm[b] = miss ? div64_u64(d[0], miss) : d[0];
++		}
++		memcpy(c->prev, c->cnt, ml->num_evs * sizeof(*c->cnt));
++		spin_unlock_irq(&c->lock);
++
++		/* Cycles stop in WFI: this is the CPU's busy-weighted frequency */
++		c->mhz = us > 0 ? div64_u64(d[1], us) : 0;
++	}
++
++	for (b = 0; b < ml->num_buses; b++) {
++		struct memlat_bus *bus = &ml->buses[b];
++
++		khz = 0;
++		for (m = 0; m < bus->num_mons; m++) {
++			mhz = memlat_mon_mhz(ml, &bus->mons[m], b);
++			if (mhz)
++				khz = max(khz, memlat_mem_khz(&bus->mons[m], mhz));
++		}
++
++		/* At the bus floor, leave the decision to the other voters */
++		if (khz <= bus->floor_khz)
++			khz = 0;
++		if (khz == bus->cur_khz)
++			continue;
++
++		bus->cur_khz = khz;
++		icc_set_bw(bus->path, 0, kBps_to_icc(khz * bus->width));
++	}
++}
++
++static int memlat_cpu_online(unsigned int cpu, struct hlist_node *node)
++{
++	struct memlat *ml = hlist_entry_safe(node, struct memlat, node);
++	struct memlat_cpu *c = per_cpu_ptr(ml->cpus, cpu);
++
++	timer_setup(&c->timer, memlat_sample, TIMER_DEFERRABLE | TIMER_PINNED);
++	c->timer.expires = jiffies + msecs_to_jiffies(MEMLAT_SAMPLE_MS);
++	add_timer_on(&c->timer, cpu);
++
++	return 0;
++}
++
++static int memlat_cpu_offline(unsigned int cpu, struct hlist_node *node)
++{
++	struct memlat *ml = hlist_entry_safe(node, struct memlat, node);
++
++	timer_shutdown_sync(&per_cpu_ptr(ml->cpus, cpu)->timer);
++
++	return 0;
++}
++
++static int memlat_parse_mon(struct memlat *ml, struct device_node *np,
++			    struct memlat_mon *mon)
++{
++	struct device_node *cpu_np;
++	u32 scale[3] = {};
++	int i, n, cpu;
++
++	for (i = 0; (cpu_np = of_parse_phandle(np, "cpus", i)); i++) {
++		cpu = of_cpu_node_to_id(cpu_np);
++		of_node_put(cpu_np);
++		if (cpu < 0)
++			return dev_err_probe(ml->dev, -EINVAL, "%pOF: bad cpu\n", np);
++		cpumask_set_cpu(cpu, &mon->cpus);
++	}
++
++	n = of_property_count_u32_elems(np, "qcom,freq-map");
++	if (cpumask_empty(&mon->cpus) || n < 2 || n % 2)
++		return dev_err_probe(ml->dev, -EINVAL, "%pOF: bad monitor\n", np);
++
++	mon->map_len = n / 2;
++	mon->map = devm_kcalloc(ml->dev, mon->map_len, sizeof(*mon->map), GFP_KERNEL);
++	if (!mon->map)
++		return -ENOMEM;
++	of_property_read_u32_array(np, "qcom,freq-map", (u32 *)mon->map, n);
++	for (i = 0; i < mon->map_len; i++)
++		mon->map[i].cpu_mhz /= 1000;
++
++	mon->compute = of_property_read_bool(np, "qcom,compute");
++	mon->ipm_ceil = MEMLAT_IPM_CEIL;
++	of_property_read_u32(np, "qcom,ipm-ceil", &mon->ipm_ceil);
++	if (!of_property_read_u32_array(np, "qcom,freq-scale", scale, 3)) {
++		mon->scale_pct = scale[0];
++		mon->scale_floor_mhz = scale[1];
++		mon->scale_ceil_mhz = scale[2];
++	}
++
++	return 0;
++}
++
++static int memlat_event(struct memlat *ml, u32 type, u64 config)
++{
++	u32 i;
++
++	for (i = 0; i < ml->num_evs; i++)
++		if (ml->events[i].type == type && ml->events[i].config == config)
++			return i;
++
++	ml->events[ml->num_evs].type = type;
++	ml->events[ml->num_evs].config = config;
++
++	return ml->num_evs++;
++}
++
++static int memlat_parse(struct memlat *ml)
++{
++	struct device_node *np = ml->dev->of_node;
++	u32 b = 0, m, i, ev, type;
++	int ret;
++
++	ml->num_buses = of_get_available_child_count(np);
++	ml->buses = devm_kcalloc(ml->dev, ml->num_buses, sizeof(*ml->buses), GFP_KERNEL);
++	ml->events = devm_kcalloc(ml->dev, 2 + ml->num_buses, sizeof(*ml->events), GFP_KERNEL);
++	if (!ml->num_buses || !ml->buses || !ml->events)
++		return -EINVAL;
++
++	memlat_event(ml, PERF_TYPE_RAW, ARMV8_PMUV3_PERFCTR_INST_RETIRED);
++	memlat_event(ml, PERF_TYPE_RAW, ARMV8_PMUV3_PERFCTR_CPU_CYCLES);
++
++	for_each_available_child_of_node_scoped(np, bus_np) {
++		struct memlat_bus *bus = &ml->buses[b++];
++
++		if (of_property_read_u32(bus_np, "qcom,bus-width", &bus->width))
++			return dev_err_probe(ml->dev, -EINVAL, "%pOF: bad bus\n", bus_np);
++
++		if (of_property_read_u32(bus_np, "qcom,miss-event", &ev))
++			return dev_err_probe(ml->dev, -EINVAL, "%pOF: no miss event\n", bus_np);
++
++		/* A CPU PMU event, unless the misses are counted elsewhere */
++		type = PERF_TYPE_RAW;
++		struct device_node *pmu_np __free(device_node) =
++			of_parse_phandle(bus_np, "qcom,miss-pmu", 0);
++		if (pmu_np) {
++			ret = qcom_llcc_pmu_type(pmu_np);
++			if (ret < 0)
++				return dev_err_probe(ml->dev, ret, "%pOF: no miss pmu\n", bus_np);
++			type = ret;
++		}
++		bus->miss = memlat_event(ml, type, ev);
++
++		bus->path = of_icc_get(ml->dev, bus_np->name);
++		if (IS_ERR(bus->path))
++			return dev_err_probe(ml->dev, PTR_ERR(bus->path), "%pOF: no path\n",
++					     bus_np);
++
++		bus->num_mons = of_get_available_child_count(bus_np);
++		bus->mons = devm_kcalloc(ml->dev, bus->num_mons, sizeof(*bus->mons), GFP_KERNEL);
++		if (!bus->mons)
++			return -ENOMEM;
++
++		m = 0;
++		bus->floor_khz = U32_MAX;
++		for_each_available_child_of_node_scoped(bus_np, mon_np) {
++			struct memlat_mon *mon = &bus->mons[m++];
++
++			ret = memlat_parse_mon(ml, mon_np, mon);
++			if (ret)
++				return ret;
++			for (i = 0; i < mon->map_len; i++)
++				bus->floor_khz = min(bus->floor_khz, mon->map[i].mem_khz);
++		}
++	}
++
++	return 0;
++}
++
++static void memlat_drop_votes(struct memlat *ml)
++{
++	u32 b;
++
++	for (b = 0; b < ml->num_buses; b++) {
++		ml->buses[b].cur_khz = 0;
++		icc_set_bw(ml->buses[b].path, 0, 0);
++	}
++}
++
++static ssize_t enable_show(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	struct memlat *ml = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf, "%d\n", ml->enabled);
++}
++
++static ssize_t enable_store(struct device *dev, struct device_attribute *attr,
++			    const char *buf, size_t count)
++{
++	struct memlat *ml = dev_get_drvdata(dev);
++	bool enable;
++	int ret = 0;
++
++	if (kstrtobool(buf, &enable))
++		return -EINVAL;
++
++	guard(mutex)(&ml->lock);
++	if (enable == ml->enabled)
++		return count;
++
++	if (enable) {
++		ret = cpuhp_state_add_instance(memlat_hp_state, &ml->node);
++	} else {
++		cpuhp_state_remove_instance(memlat_hp_state, &ml->node);
++		cancel_work_sync(&ml->work);
++		memlat_drop_votes(ml);
++	}
++	if (!ret)
++		ml->enabled = enable;
++
++	return ret ?: count;
++}
++static DEVICE_ATTR_RW(enable);
++
++static struct attribute *memlat_attrs[] = {
++	&dev_attr_enable.attr,
++	NULL
++};
++ATTRIBUTE_GROUPS(memlat);
++
++static void memlat_release(struct memlat *ml)
++{
++	u32 cpu, i, b;
++
++	for_each_possible_cpu(cpu) {
++		struct memlat_cpu *c = per_cpu_ptr(ml->cpus, cpu);
++
++		for (i = 0; c->ev && i < ml->num_evs; i++)
++			if (!IS_ERR_OR_NULL(c->ev[i]))
++				perf_event_release_kernel(c->ev[i]);
++	}
++	cancel_work_sync(&ml->work);
++	for (b = 0; b < ml->num_buses; b++) {
++		if (!IS_ERR_OR_NULL(ml->buses[b].path))
++			icc_put(ml->buses[b].path);
++	}
++}
++
++static int memlat_probe(struct platform_device *pdev)
++{
++	struct perf_event_attr attr = {
++		.type = PERF_TYPE_RAW,
++		.size = sizeof(attr),
++		.pinned = 1,
++	};
++	struct device *dev = &pdev->dev;
++	struct memlat *ml;
++	int cpu, i, ret;
++
++	ml = devm_kzalloc(dev, sizeof(*ml), GFP_KERNEL);
++	if (!ml)
++		return -ENOMEM;
++
++	ml->dev = dev;
++	mutex_init(&ml->lock);
++	INIT_WORK(&ml->work, memlat_update);
++	ml->cpus = devm_alloc_percpu(dev, struct memlat_cpu);
++	if (!ml->cpus)
++		return -ENOMEM;
++
++	ret = memlat_parse(ml);
++	if (ret)
++		goto err;
++
++	for_each_possible_cpu(cpu) {
++		struct memlat_cpu *c = per_cpu_ptr(ml->cpus, cpu);
++
++		c->ml = ml;
++		spin_lock_init(&c->lock);
++		c->ev = devm_kcalloc(dev, ml->num_evs, sizeof(*c->ev), GFP_KERNEL);
++		c->cnt = devm_kcalloc(dev, ml->num_evs, sizeof(*c->cnt), GFP_KERNEL);
++		c->prev = devm_kcalloc(dev, ml->num_evs, sizeof(*c->prev), GFP_KERNEL);
++		c->ipm = devm_kcalloc(dev, ml->num_buses, sizeof(*c->ipm), GFP_KERNEL);
++		if (!c->ev || !c->cnt || !c->prev || !c->ipm) {
++			ret = -ENOMEM;
++			goto err;
++		}
++
++		for (i = 0; i < ml->num_evs; i++) {
++			attr.type = ml->events[i].type;
++			attr.config = ml->events[i].config;
++			c->ev[i] = perf_event_create_kernel_counter(&attr, cpu, NULL, NULL, NULL);
++			if (IS_ERR(c->ev[i])) {
++				ret = dev_err_probe(dev, PTR_ERR(c->ev[i]),
++						    "can't count event %u:%#llx on cpu%d\n",
++						    ml->events[i].type, ml->events[i].config, cpu);
++				goto err;
++			}
++		}
++	}
++
++	ret = cpuhp_state_add_instance(memlat_hp_state, &ml->node);
++	if (ret)
++		goto err;
++
++	ml->enabled = true;
++	platform_set_drvdata(pdev, ml);
++
++	return 0;
++
++err:
++	memlat_release(ml);
++	return ret;
++}
++
++static void memlat_remove(struct platform_device *pdev)
++{
++	struct memlat *ml = platform_get_drvdata(pdev);
++
++	if (ml->enabled)
++		cpuhp_state_remove_instance(memlat_hp_state, &ml->node);
++	memlat_release(ml);
++}
++
++static const struct of_device_id memlat_of_match[] = {
++	{ .compatible = "qcom,memlat" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, memlat_of_match);
++
++static struct platform_driver memlat_driver = {
++	.probe = memlat_probe,
++	.remove = memlat_remove,
++	.driver = {
++		.name = "qcom-memlat",
++		.of_match_table = memlat_of_match,
++		.dev_groups = memlat_groups,
++	},
++};
++
++static int __init memlat_init(void)
++{
++	int ret;
++
++	ret = cpuhp_setup_state_multi(CPUHP_AP_ONLINE_DYN, "soc/qcom/memlat:online",
++				      memlat_cpu_online, memlat_cpu_offline);
++	if (ret < 0)
++		return ret;
++	memlat_hp_state = ret;
++
++	ret = platform_driver_register(&memlat_driver);
++	if (ret)
++		cpuhp_remove_multi_state(memlat_hp_state);
++
++	return ret;
++}
++module_init(memlat_init);
++
++static void __exit memlat_exit(void)
++{
++	platform_driver_unregister(&memlat_driver);
++	cpuhp_remove_multi_state(memlat_hp_state);
++}
++module_exit(memlat_exit);
++
++MODULE_DESCRIPTION("Qualcomm CPU memory latency bandwidth voter");
++MODULE_LICENSE("GPL");
+-- 
+2.56.0
+

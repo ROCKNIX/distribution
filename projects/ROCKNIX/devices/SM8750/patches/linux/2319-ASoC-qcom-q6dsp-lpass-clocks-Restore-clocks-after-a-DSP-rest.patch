@@ -1,0 +1,260 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Shawn Guo <shengchao.guo@oss.qualcomm.com>
+Date: Sun, 15 Nov 2026 11:20:26 +0800
+Subject: [PATCH] ASoC: qcom: q6dsp-lpass-clocks: Restore clocks after a DSP restart
+
+The DSP forgets all clock requests and votes when it stops. A consumer
+that still holds a clock prepared across a DSP restart then holds a
+clock that the DSP no longer provides, and its later unprepare releases
+a request the DSP never saw.
+
+Track which clocks are prepared, and add q6dsp_clock_dsp_down() and
+q6dsp_clock_dsp_up() for the DSP service driver to call when the DSP
+goes away and comes back. dsp_down() marks the prepared clocks as lost.
+dsp_up() requests them again at their current rate, or votes for them
+again. Unpreparing a lost clock skips the release, since the DSP holds
+nothing for it.
+
+Fold the prepare/unprepare ops of rate and vote clocks into one pair,
+so both kinds share the request/release helpers used by the restore
+path. A mutex serializes prepare/unprepare against dsp_down/up.
+
+This patch does not change behaviour on its own: no driver calls the
+new functions yet.
+
+Signed-off-by: Shawn Guo <shengchao.guo@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261115032027.414953-3-shengchao.guo@oss.qualcomm.com
+---
+ sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.c | 147 ++++++++++++++++++----
+ sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.h |   2 +
+ 2 files changed, 123 insertions(+), 26 deletions(-)
+
+diff --git a/sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.c b/sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.c
+index 94d96130245e..22d3f3c6d46f 100644
+--- a/sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.c
++++ b/sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.c
+@@ -7,6 +7,7 @@
+ #include <linux/module.h>
+ #include <linux/device.h>
+ #include <linux/platform_device.h>
++#include <linux/mutex.h>
+ #include <linux/of.h>
+ #include <linux/slab.h>
+ #include <dt-bindings/sound/qcom,q6dsp-lpass-ports.h>
+@@ -22,6 +23,10 @@ struct q6dsp_clk {
+ 	int attributes;
+ 	int rate;
+ 	uint32_t handle;
++	bool vote;
++	bool prepared;
++	/* Still prepared, but dropped by the DSP when it stopped */
++	bool lost;
+ 	struct clk_hw hw;
+ };
+ 
+@@ -29,17 +34,45 @@ struct q6dsp_clk {
+ 
+ struct q6dsp_cc {
+ 	struct device *dev;
++	/* Serializes clock requests against DSP down/up */
++	struct mutex lock;
+ 	struct q6dsp_clk *clks[Q6DSP_MAX_CLK_ID];
+ 	const struct q6dsp_clk_desc *desc;
+ };
+ 
++static int q6dsp_clk_request(struct q6dsp_cc *cc, struct q6dsp_clk *clk)
++{
++	if (clk->vote)
++		return cc->desc->lpass_vote_clk(clk->dev, clk->q6dsp_clk_id,
++						clk_hw_get_name(&clk->hw),
++						&clk->handle);
++
++	return cc->desc->lpass_set_clk(clk->dev, clk->q6dsp_clk_id, clk->attributes,
++				       Q6DSP_LPASS_CLK_ROOT_DEFAULT, clk->rate);
++}
++
++static void q6dsp_clk_release(struct q6dsp_cc *cc, struct q6dsp_clk *clk)
++{
++	if (clk->vote)
++		cc->desc->lpass_unvote_clk(clk->dev, clk->q6dsp_clk_id, clk->handle);
++	else
++		cc->desc->lpass_set_clk(clk->dev, clk->q6dsp_clk_id, clk->attributes,
++					Q6DSP_LPASS_CLK_ROOT_DEFAULT, 0);
++}
++
+ static int clk_q6dsp_prepare(struct clk_hw *hw)
+ {
+ 	struct q6dsp_clk *clk = to_q6dsp_clk(hw);
+ 	struct q6dsp_cc *cc = dev_get_drvdata(clk->dev);
++	int ret;
+ 
+-	return cc->desc->lpass_set_clk(clk->dev, clk->q6dsp_clk_id, clk->attributes,
+-				     Q6DSP_LPASS_CLK_ROOT_DEFAULT, clk->rate);
++	guard(mutex)(&cc->lock);
++
++	ret = q6dsp_clk_request(cc, clk);
++	if (!ret)
++		clk->prepared = true;
++
++	return ret;
+ }
+ 
+ static void clk_q6dsp_unprepare(struct clk_hw *hw)
+@@ -47,8 +80,14 @@ static void clk_q6dsp_unprepare(struct clk_hw *hw)
+ 	struct q6dsp_clk *clk = to_q6dsp_clk(hw);
+ 	struct q6dsp_cc *cc = dev_get_drvdata(clk->dev);
+ 
+-	cc->desc->lpass_set_clk(clk->dev, clk->q6dsp_clk_id, clk->attributes,
+-			      Q6DSP_LPASS_CLK_ROOT_DEFAULT, 0);
++	guard(mutex)(&cc->lock);
++
++	/* A lost clock is not held by the DSP, so there is nothing to release */
++	if (!clk->lost)
++		q6dsp_clk_release(cc, clk);
++
++	clk->prepared = false;
++	clk->lost = false;
+ }
+ 
+ static int clk_q6dsp_set_rate(struct clk_hw *hw, unsigned long rate,
+@@ -83,26 +122,9 @@ static const struct clk_ops clk_q6dsp_ops = {
+ 	.recalc_rate	= clk_q6dsp_recalc_rate,
+ };
+ 
+-static int clk_vote_q6dsp_block(struct clk_hw *hw)
+-{
+-	struct q6dsp_clk *clk = to_q6dsp_clk(hw);
+-	struct q6dsp_cc *cc = dev_get_drvdata(clk->dev);
+-
+-	return cc->desc->lpass_vote_clk(clk->dev, clk->q6dsp_clk_id,
+-				  clk_hw_get_name(&clk->hw), &clk->handle);
+-}
+-
+-static void clk_unvote_q6dsp_block(struct clk_hw *hw)
+-{
+-	struct q6dsp_clk *clk = to_q6dsp_clk(hw);
+-	struct q6dsp_cc *cc = dev_get_drvdata(clk->dev);
+-
+-	cc->desc->lpass_unvote_clk(clk->dev, clk->q6dsp_clk_id, clk->handle);
+-}
+-
+ static const struct clk_ops clk_vote_q6dsp_ops = {
+-	.prepare	= clk_vote_q6dsp_block,
+-	.unprepare	= clk_unvote_q6dsp_block,
++	.prepare	= clk_q6dsp_prepare,
++	.unprepare	= clk_q6dsp_unprepare,
+ };
+ 
+ 
+@@ -146,6 +168,10 @@ int q6dsp_clock_dev_probe(struct platform_device *pdev)
+ 	cc->dev = dev;
+ 	q6dsp_clks = desc->clks;
+ 
++	ret = devm_mutex_init(dev, &cc->lock);
++	if (ret)
++		return ret;
++
+ 	for (i = 0; i < desc->num_clks; i++) {
+ 		unsigned int id = q6dsp_clks[i].clk_id;
+ 		struct clk_init_data init = {
+@@ -160,12 +186,13 @@ int q6dsp_clock_dev_probe(struct platform_device *pdev)
+ 		clk->dev = dev;
+ 		clk->q6dsp_clk_id = q6dsp_clks[i].q6dsp_clk_id;
+ 		clk->rate = q6dsp_clks[i].rate;
++		clk->vote = !clk->rate;
+ 		clk->hw.init = &init;
+ 
+-		if (clk->rate)
+-			init.ops = &clk_q6dsp_ops;
+-		else
++		if (clk->vote)
+ 			init.ops = &clk_vote_q6dsp_ops;
++		else
++			init.ops = &clk_q6dsp_ops;
+ 
+ 		cc->clks[id] = clk;
+ 
+@@ -183,3 +210,71 @@ int q6dsp_clock_dev_probe(struct platform_device *pdev)
+ 	return 0;
+ }
+ EXPORT_SYMBOL_GPL(q6dsp_clock_dev_probe);
++
++/**
++ * q6dsp_clock_dsp_down() - Mark the clocks dropped by a stopped DSP
++ * @dev: clock controller device
++ *
++ * The DSP forgets all clock requests when it stops. Remember the clocks that
++ * consumers still hold prepared, so q6dsp_clock_dsp_up() can request them
++ * again once the DSP is back.
++ */
++void q6dsp_clock_dsp_down(struct device *dev)
++{
++	struct q6dsp_cc *cc;
++	int i;
++
++	guard(device)(dev);
++
++	cc = dev_get_drvdata(dev);
++	if (!cc)
++		return;
++
++	guard(mutex)(&cc->lock);
++
++	for (i = 0; i < Q6DSP_MAX_CLK_ID; i++) {
++		struct q6dsp_clk *clk = cc->clks[i];
++
++		if (clk && clk->prepared)
++			clk->lost = true;
++	}
++}
++EXPORT_SYMBOL_GPL(q6dsp_clock_dsp_down);
++
++/**
++ * q6dsp_clock_dsp_up() - Restore the clocks dropped by a stopped DSP
++ * @dev: clock controller device
++ *
++ * Request again, at their current rate, the clocks that were still prepared
++ * when the DSP stopped.
++ */
++void q6dsp_clock_dsp_up(struct device *dev)
++{
++	struct q6dsp_cc *cc;
++	int i, ret;
++
++	guard(device)(dev);
++
++	cc = dev_get_drvdata(dev);
++	if (!cc)
++		return;
++
++	guard(mutex)(&cc->lock);
++
++	for (i = 0; i < Q6DSP_MAX_CLK_ID; i++) {
++		struct q6dsp_clk *clk = cc->clks[i];
++
++		if (!clk || !clk->lost)
++			continue;
++
++		ret = q6dsp_clk_request(cc, clk);
++		if (ret) {
++			dev_err(dev, "Failed to restore %s: %d\n",
++				clk_hw_get_name(&clk->hw), ret);
++			continue;
++		}
++
++		clk->lost = false;
++	}
++}
++EXPORT_SYMBOL_GPL(q6dsp_clock_dsp_up);
+diff --git a/sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.h b/sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.h
+index 3770d81f2bd6..e4655a0b77c6 100644
+--- a/sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.h
++++ b/sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.h
+@@ -26,5 +26,7 @@ struct q6dsp_clk_desc {
+ };
+ 
+ int q6dsp_clock_dev_probe(struct platform_device *pdev);
++void q6dsp_clock_dsp_down(struct device *dev);
++void q6dsp_clock_dsp_up(struct device *dev);
+ 
+ #endif  /* __Q6DSP_AUDIO_CLOCKS_H__ */

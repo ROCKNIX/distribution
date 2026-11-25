@@ -1,0 +1,70 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Changyul Lee <lcy8047@gmail.com>
+Date: Sun, 15 Nov 2026 21:10:37 -0500
+Subject: [PATCH] wifi: ath12k: hold txmgmt_idr_lock while freeing pending mgmt frames
+
+ath12k_mac_vif_txmgmt_cleanup() and ath12k_mac_tx_mgmt_pending_free()
+walk ar->txmgmt_idr without txmgmt_idr_lock. A WMI management TX
+completion can meanwhile remove an entry and pass its skb to mac80211,
+which frees it. ath12k_mac_vif_txmgmt_cleanup() then reads skb_cb->vif
+from the freed skb, and both walks can read an IDR node that was freed
+after an RCU grace period.
+
+Hold txmgmt_idr_lock over both walks and make ath12k_mac_tx_mgmt_free()
+expect it to be held.
+
+Fixes: d889913205cf ("wifi: ath12k: driver for Qualcomm Wi-Fi 7 devices")
+Suggested-by: Rameshkumar Sundaram <rameshkumar.sundaram@oss.qualcomm.com>
+Signed-off-by: Changyul Lee <lcy8047@gmail.com>
+Reviewed-by: Rameshkumar Sundaram <rameshkumar.sundaram@oss.qualcomm.com>
+Reviewed-by: Baochen Qiang <baochen.qiang@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261116021037.538128-1-lcy8047@gmail.com
+---
+Found with a static analysis tool we are developing.
+Compile-tested only, with x86_64_defconfig plus ATH12K and W=1.
+
+ drivers/net/wireless/ath/ath12k/mac.c | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/mac.c b/drivers/net/wireless/ath/ath12k/mac.c
+index eee3f38375ae..bffb2edd0531 100644
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -9220,10 +9220,9 @@ static void ath12k_mac_tx_mgmt_free(struct ath12k *ar, int buf_id)
+ 	struct sk_buff *msdu;
+ 	struct ieee80211_tx_info *info;
+ 
+-	spin_lock_bh(&ar->txmgmt_idr_lock);
+-	msdu = idr_remove(&ar->txmgmt_idr, buf_id);
+-	spin_unlock_bh(&ar->txmgmt_idr_lock);
++	lockdep_assert_held(&ar->txmgmt_idr_lock);
+ 
++	msdu = idr_remove(&ar->txmgmt_idr, buf_id);
+ 	if (!msdu)
+ 		return;
+ 
+@@ -9241,8 +9240,10 @@ void ath12k_mac_tx_mgmt_pending_free(struct ath12k *ar)
+ 	struct sk_buff *msdu;
+ 	int buf_id;
+ 
++	spin_lock_bh(&ar->txmgmt_idr_lock);
+ 	idr_for_each_entry(&ar->txmgmt_idr, msdu, buf_id)
+ 		ath12k_mac_tx_mgmt_free(ar, buf_id);
++	spin_unlock_bh(&ar->txmgmt_idr_lock);
+ }
+ 
+ static void ath12k_mac_vif_txmgmt_cleanup(struct ath12k *ar,
+@@ -9252,11 +9253,13 @@ static void ath12k_mac_vif_txmgmt_cleanup(struct ath12k *ar,
+ 	struct sk_buff *skb;
+ 	int buf_id;
+ 
++	spin_lock_bh(&ar->txmgmt_idr_lock);
+ 	idr_for_each_entry(&ar->txmgmt_idr, skb, buf_id) {
+ 		skb_cb = ATH12K_SKB_CB(skb);
+ 		if (skb_cb->vif == vif)
+ 			ath12k_mac_tx_mgmt_free(ar, buf_id);
+ 	}
++	spin_unlock_bh(&ar->txmgmt_idr_lock);
+ }
+ 
+ static int ath12k_mac_mgmt_tx_wmi(struct ath12k *ar, struct ath12k_link_vif *arvif,

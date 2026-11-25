@@ -1,0 +1,164 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Perry Dale <techluddite@outlook.com>
+Date: Fri, 20 Nov 2026 11:47:24 -0800
+Subject: [PATCH] ASoC: qcom: q6apm-dai: queue playback buffers only while the graph runs
+
+Commit cab45ab95ce7 ("ASoC: qcom: q6apm-dai: reset queue ptr on trigger
+stop") resets queue_ptr to 0 on SNDRV_PCM_TRIGGER_STOP, but ALSA leaves
+appl_ptr unchanged until the next prepare. ALSA calls .ack when a
+write, a forward or SNDRV_PCM_IOCTL_SYNC_PTR moves appl_ptr, and
+SYNC_PTR can do so in the SETUP and XRUN states after a stop.
+q6apm_dai_ack() then computes avail_periods from the full appl_ptr and
+issues one q6apm_write_async() per period. After 530 seconds of playback
+at 48 kHz with 480-frame periods that is about 53000 writes in one call.
+The glink channel runs out of remote intents, the write fails with
+-EBUSY, and the DSP stops answering GPR commands. Every later prepare
+times out with -ETIMEDOUT until a reboot:
+
+  q6apm-dai ...: Error queuing playback buffer -16
+  qcom-apm gprsvc:service:2:1: CMD timeout for [1001003] opcode
+  q6apm-lpass-dais ...: Failed to set media format -110
+
+On the AYN Odin 2 Portal (SM8550) PipeWire triggers this when a game
+pauses its stream. A test program reproduces it by playing one second
+on the PCM, calling snd_pcm_drop() and moving appl_ptr forward one
+period with SNDRV_PCM_IOCTL_SYNC_PTR.
+
+Queue only while the graph is running, which prepare sets once the
+graph is started and trigger stop clears, and only in the PREPARED,
+RUNNING, PAUSED and DRAINING states. A drop before start does not reach
+the trigger callback, so the driver state alone does not cover it.
+Reset queue_ptr in prepare, where ALSA resets appl_ptr. Prepare runs
+without the stream lock and a second prepare finds the stream running,
+so mark it stopped under the stream lock before the graph and its
+buffers are replaced.
+
+The same unsigned difference is wrong in two more cases.
+SNDRV_PCM_IOCTL_RESET moves appl_ptr back to hw_ptr without a call to
+.ack and leaves queue_ptr ahead of it, and appl_ptr wraps at the
+boundary while queue_ptr did not. Both can queue a burst of writes.
+Wrap queue_ptr at the boundary, take the difference modulo the
+boundary, and queue nothing when it is more than ALSA holds for
+playback. That also covers an appl_ptr moved more than a ring past
+hw_ptr.
+
+After a reset on a running stream whose hw_ptr has reached the end of
+the first ring, or on a paused or suspended stream that far along, the
+stream no longer advances until its next prepare, and the DSP keeps
+answering. The next patch carries the stream across a reset. It is not
+needed for stable.
+
+An .ack between the end of the driver's prepare and the point where
+ALSA resets appl_ptr can still queue stale data, as before, now at most
+one ring in total.
+
+Tool use: drafted with Claude Opus 5.5 and revised with Claude Fable
+5.2 (Anthropic), run in Claude Code, from a prompt asking for the cause
+of the audio DSP failures during games on the Portal. The tools
+analysed the kernel logs and wrote the test program, the change and
+this changelog. Built as a module for 7.4-rc1 and run on the Portal
+with the test program: plain playback, drop followed by appl_ptr
+updates before and after start, resets while running and before start,
+underrun recovery, 30 drained streams, and 40 resets and prepares while
+a second thread moves appl_ptr with SYNC_PTR. The DSP kept answering
+through every run. The resets on a running stream stopped it as
+described above. The unpatched driver fails the first drop round of
+the same program with the messages above. The boundary wrap was not
+exercised.
+
+Fixes: cab45ab95ce7 ("ASoC: qcom: q6apm-dai: reset queue ptr on trigger stop")
+Fixes: 3d4a4411aa8b ("ASoC: q6apm-dai: schedule all available frames to avoid dsp under-runs")
+Cc: stable@vger.kernel.org
+Cc: Srinivas Kandagatla <srinivas.kandagatla@oss.qualcomm.com>
+Signed-off-by: Perry Dale <techluddite@outlook.com>
+Link: https://lore.kernel.org/r/LV5PR84MB40260AD8BB8842BA97269B9DA7782@LV5PR84MB4026.NAMPRD84.PROD.OUTLOOK.COM
+---
+ sound/soc/qcom/qdsp6/q6apm-dai.c | 52 +++++++++++++++++++++++++++++++-
+ 1 file changed, 51 insertions(+), 1 deletion(-)
+
+diff --git a/sound/soc/qcom/qdsp6/q6apm-dai.c b/sound/soc/qcom/qdsp6/q6apm-dai.c
+index 58beaf906..d0d19fc38 100644
+--- a/sound/soc/qcom/qdsp6/q6apm-dai.c
++++ b/sound/soc/qcom/qdsp6/q6apm-dai.c
+@@ -345,6 +345,17 @@ static int q6apm_dai_prepare(struct snd_soc_component *component,
+ 	cfg.bit_width = prtd->bits_per_sample;
+ 	cfg.fmt = SND_AUDIOCODEC_PCM;
+ 	audioreach_set_default_channel_mapping(cfg.channel_map, runtime->channels);
++	/*
++	 * A second prepare finds the stream running. Stop .ack from queueing
++	 * while the graph and its buffers are replaced.
++	 */
++	snd_pcm_stream_lock_irq(substream);
++	if (prtd->state == Q6APM_STREAM_RUNNING)
++		prtd->state = Q6APM_STREAM_STOPPED;
++	/* ALSA sets appl_ptr to 0 after a successful prepare */
++	prtd->queue_ptr = 0;
++	snd_pcm_stream_unlock_irq(substream);
++
+ 	if (prtd->state) {
+ 		/* clear the previous setup if any  */
+ 		q6apm_graph_stop(prtd->graph);
+@@ -415,7 +426,9 @@ static int q6apm_dai_prepare(struct snd_soc_component *component,
+ 	}
+ 
+ 	/* Now that graph as been prepared and started update the internal state accordingly */
++	snd_pcm_stream_lock_irq(substream);
+ 	prtd->state = Q6APM_STREAM_RUNNING;
++	snd_pcm_stream_unlock_irq(substream);
+ 
+ 	return 0;
+ }
+@@ -429,8 +442,43 @@ static int q6apm_dai_ack(struct snd_soc_component *component, struct snd_pcm_sub
+ 	if (q6apm_is_graph_in_push_pull_mode(prtd->graph))
+ 		return 0;
+ 
++	/*
++	 * ALSA calls .ack whenever appl_ptr moves, also after a stop and
++	 * before the next prepare. The graph has no queue to fill then, and
++	 * queue_ptr is out of step with appl_ptr until prepare resets both.
++	 */
++	if (prtd->state != Q6APM_STREAM_RUNNING)
++		return 0;
++
++	/* A drop before start does not reach the trigger callback. */
++	switch (runtime->state) {
++	case SNDRV_PCM_STATE_PREPARED:
++	case SNDRV_PCM_STATE_RUNNING:
++	case SNDRV_PCM_STATE_PAUSED:
++	case SNDRV_PCM_STATE_DRAINING:
++		break;
++	default:
++		return 0;
++	}
++
+ 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+-		avail_periods = (runtime->control->appl_ptr - prtd->queue_ptr)/runtime->period_size;
++		snd_pcm_sframes_t pending = runtime->control->appl_ptr - prtd->queue_ptr;
++
++		/* appl_ptr wraps at the boundary before queue_ptr does. */
++		if (pending < 0)
++			pending += runtime->boundary;
++
++		/*
++		 * What is left to queue is part of what ALSA holds for
++		 * playback. It is more when queue_ptr is ahead of appl_ptr,
++		 * as after SNDRV_PCM_IOCTL_RESET, or when appl_ptr was moved
++		 * more than a ring past hw_ptr.
++		 */
++		if (pending > snd_pcm_playback_hw_avail(runtime))
++			return 0;
++
++		avail_periods = min_t(snd_pcm_sframes_t, pending / runtime->period_size,
++				      runtime->periods);
+ 		for (i = 0; i < avail_periods; i++) {
+ 			ret = q6apm_write_async(prtd->graph, prtd->pcm_count, 0, 0, NO_TIMESTAMP);
+ 			if (ret < 0) {
+@@ -438,6 +486,8 @@ static int q6apm_dai_ack(struct snd_soc_component *component, struct snd_pcm_sub
+ 				return ret;
+ 			}
+ 			prtd->queue_ptr += runtime->period_size;
++			if (prtd->queue_ptr >= runtime->boundary)
++				prtd->queue_ptr -= runtime->boundary;
+ 		}
+ 	}
+ 

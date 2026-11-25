@@ -1,0 +1,53 @@
+From: Vishnu Reddy <busanna.reddy@oss.qualcomm.com>
+Subject: media: iris: Fix out-of-bounds read in timestamp metadata fallback
+Link: https://lore.kernel.org/r/20261017-fix-oob-tss-v1-1-fb86f4cabf65@oss.qualcomm.com
+
+inst->tss[] has VIDEO_MAX_FRAME (32) entries, so valid indexes are 0
+through 31. iris_set_ts_metadata() writes at metadata_idx and then
+increments it. After the 32nd input buffer, metadata_idx is 32 until
+the next input buffer is queued.
+
+If iris_get_ts_metadata() finds no matching timestamp in that window,
+its fallback reads inst->tss[32], one entry past the end of the array.
+UBSAN (Undefined Behavior Sanity Checker) reports this as an
+array-index-out-of-bounds error.
+
+Use the last written entry, metadata_idx - 1, in the fallback instead.
+Fall back to slot 0 if nothing has been written yet. Even if stream off
+and stream on happen multiple times on the same session, the fallback
+always uses the latest metadata received.
+
+Fixes: 17f2a485ca67 ("media: iris: implement vb2 ops for buf_queue and firmware response")
+Cc: stable@vger.kernel.org
+Signed-off-by: Vishnu Reddy <busanna.reddy@oss.qualcomm.com>
+---
+ drivers/media/platform/qcom/iris/iris_buffer.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+
+---
+base-commit: 2efb7a11f1aa4d2dc285fe2680cca22cb9f72f64
+change-id: 20261013-fix-oob-tss-7d317d612cf0
+
+Best regards,
+--  
+Vishnu Reddy <busanna.reddy@oss.qualcomm.com>
+---
+diff --git a/drivers/media/platform/qcom/iris/iris_buffer.c b/drivers/media/platform/qcom/iris/iris_buffer.c
+index eb8de60c1177f..31cba99a665c1 100644
+--- a/drivers/media/platform/qcom/iris/iris_buffer.c
++++ b/drivers/media/platform/qcom/iris/iris_buffer.c
+@@ -865,9 +865,11 @@ static void iris_get_ts_metadata(struct iris_inst *inst, u64 timestamp_ns,
+ 		return;
+ 	}
+ 
++	i = inst->metadata_idx ? inst->metadata_idx - 1 : 0;
++
+ 	vbuf->flags &= ~mask;
+-	vbuf->flags |= inst->tss[inst->metadata_idx].flags;
+-	vbuf->timecode = inst->tss[inst->metadata_idx].tc;
++	vbuf->flags |= inst->tss[i].flags;
++	vbuf->timecode = inst->tss[i].tc;
+ }
+ 
+ int iris_vb2_buffer_done(struct iris_inst *inst, struct iris_buffer *buf)

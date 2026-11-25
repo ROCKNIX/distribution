@@ -1,0 +1,89 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Abel Vesa <abel.vesa@oss.qualcomm.com>
+Date: Mon, 02 Nov 2026 13:07:19 +0200
+Subject: [PATCH] soc: qcom: pmic_glink_altmode: Fix use-after-free of work items on unbind
+
+The altmode context, including the enable_work and the per-port work
+items, is devm-allocated, but nothing cancels the work items on unbind.
+A PDR or GLINK notification can queue them on the system workqueues, so
+if the device gets unbound while one is pending or running, devres frees
+the context, the typec handles and the pmic_glink client under it, and
+the worker then dereferences freed memory.
+
+Cancelling the work items is not enough on its own, since the client
+callbacks keep queueing them until the client devres is released. So
+register a devm action, right after the client is allocated, which
+disables the works using disable_work_sync(). Devres runs actions in
+reverse order, so on unbind this happens first, waiting for any running
+worker while the client, typec handles and bridges are still around,
+and making any later queueing from the client callbacks a no-op.
+
+Fixes: 080b4e24852b ("soc: qcom: pmic_glink: Introduce altmode support")
+Cc: stable@vger.kernel.org # 6.10
+Reported-by: Sashiko <sashiko-bot@kernel.org>
+Closes: https://sashiko.dev/#/bug/linux-762f89d1-07b0-45e1-9557-bf643a826aa1
+Signed-off-by: Abel Vesa <abel.vesa@oss.qualcomm.com>
+Reviewed-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261102-pmic-glink-altmode-teardown-uaf-v1-1-377d92e3b5e2@oss.qualcomm.com
+---
+Prepared with help from an LLM-based assistant.
+---
+ drivers/soc/qcom/pmic_glink_altmode.c | 29 +++++++++++++++++++++++++++++
+ 1 file changed, 29 insertions(+)
+
+diff --git a/drivers/soc/qcom/pmic_glink_altmode.c b/drivers/soc/qcom/pmic_glink_altmode.c
+index 465e5d2316a0..3f6d3290d29b 100644
+--- a/drivers/soc/qcom/pmic_glink_altmode.c
++++ b/drivers/soc/qcom/pmic_glink_altmode.c
+@@ -543,6 +543,23 @@ static void pmic_glink_altmode_put_switch(void *data)
+ 	typec_switch_put(data);
+ }
+ 
++static void pmic_glink_altmode_disable_work(void *data)
++{
++	struct pmic_glink_altmode *altmode = data;
++	struct pmic_glink_altmode_port *alt_port;
++	unsigned int port;
++
++	disable_work_sync(&altmode->enable_work);
++
++	for (port = 0; port < ARRAY_SIZE(altmode->ports); port++) {
++		alt_port = &altmode->ports[port];
++		if (!alt_port->altmode)
++			continue;
++
++		disable_work_sync(&alt_port->work);
++	}
++}
++
+ static void pmic_glink_altmode_enable_worker(struct work_struct *work)
+ {
+ 	struct pmic_glink_altmode *altmode = work_to_altmode(work);
+@@ -695,6 +712,18 @@ static int pmic_glink_altmode_probe(struct auxiliary_device *adev,
+ 	if (IS_ERR(altmode->client))
+ 		return PTR_ERR(altmode->client);
+ 
++	/*
++	 * Registered after the client, so that on unbind the workers are
++	 * disabled, and any in-flight instance is waited for, before the
++	 * client, the typec handles and the altmode context go away. The
++	 * client callbacks may still fire until the client is released, so
++	 * disable rather than cancel the works to keep them from being
++	 * requeued.
++	 */
++	ret = devm_add_action_or_reset(dev, pmic_glink_altmode_disable_work, altmode);
++	if (ret)
++		return ret;
++
+ 	pmic_glink_client_register(altmode->client);
+ 
+ 	return 0;
+
+---
+base-commit: 6628e7d4c6b25c8d18f1345e3a20d21829aae7e4
+change-id: 20261102-pmic-glink-altmode-teardown-uaf-8ccf631de17f
+
+Best regards,
+--  
+
+Abel

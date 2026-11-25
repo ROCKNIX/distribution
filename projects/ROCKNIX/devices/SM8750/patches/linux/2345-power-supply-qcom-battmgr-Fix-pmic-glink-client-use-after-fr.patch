@@ -1,0 +1,141 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Abel Vesa <abel.vesa@oss.qualcomm.com>
+Date: Mon, 02 Nov 2026 13:41:17 +0200
+Subject: [PATCH] power: supply: qcom_battmgr: Fix pmic_glink client use-after-free on unbind
+
+Since commit 4e40befedfc8 ("power: supply: qcom_battmgr: fix
+use-after-free"), enable_work is cancelled by a devres action registered
+before the pmic_glink client, so that on unbind the client is released
+first and can no longer requeue it. But a worker that is pending or
+running at that point still goes on to use the released client in
+pmic_glink_send().
+
+The power supplies have the same problem: they are registered before
+the client too, so they are unregistered only after it is released,
+and a property access in between sends a request through the freed
+client.
+
+Fix both with a devres action registered right after the client is
+allocated, which runs first on unbind. It disables enable_work using
+disable_work_sync(), which waits for a running worker and turns any
+later queueing from the client callbacks into a no-op, and then marks
+the client as gone under the lock that serializes the requests, so the
+power supplies fail any later request with -ENODEV instead of using it.
+
+Fixes: 4e40befedfc8 ("power: supply: qcom_battmgr: fix use-after-free")
+Fixes: 29e8142b5623 ("power: supply: Introduce Qualcomm PMIC GLINK power supply")
+Cc: stable@vger.kernel.org # 6.10
+Signed-off-by: Abel Vesa <abel.vesa@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261102-battmgr-client-teardown-uaf-v1-1-972fc5a5e0c9@oss.qualcomm.com
+---
+Found while fixing the same class of issue in pmic_glink_altmode. This
+completes commit 4e40befedfc8 ("power: supply: qcom_battmgr: fix
+use-after-free"), which closed the requeueing of enable_work but left
+the client in use after it is released.
+
+Prepared with help from an LLM-based assistant.
+---
+ drivers/power/supply/qcom_battmgr.c | 39 +++++++++++++++++++++++++++++++------
+ 1 file changed, 33 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/power/supply/qcom_battmgr.c b/drivers/power/supply/qcom_battmgr.c
+index 636d6f6acecc..b37b2f665f7f 100644
+--- a/drivers/power/supply/qcom_battmgr.c
++++ b/drivers/power/supply/qcom_battmgr.c
+@@ -5,7 +5,6 @@
+  * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+  */
+ #include <linux/auxiliary_bus.h>
+-#include <linux/devm-helpers.h>
+ #include <linux/module.h>
+ #include <linux/mutex.h>
+ #include <linux/nvmem-consumer.h>
+@@ -339,6 +338,9 @@ struct qcom_battmgr {
+ 	 * firmware, as it then stops responding.
+ 	 */
+ 	struct mutex lock;
++
++	/* Set under @lock once @client is about to be released */
++	bool client_gone;
+ };
+ 
+ static int qcom_battmgr_request(struct qcom_battmgr *battmgr, void *data, size_t len)
+@@ -346,6 +348,13 @@ static int qcom_battmgr_request(struct qcom_battmgr *battmgr, void *data, size_t
+ 	unsigned long left;
+ 	int ret;
+ 
++	/*
++	 * Callers hold @lock, except enable_work, which is disabled before
++	 * client_gone is set.
++	 */
++	if (battmgr->client_gone)
++		return -ENODEV;
++
+ 	reinit_completion(&battmgr->ack);
+ 
+ 	battmgr->error = 0;
+@@ -1626,6 +1635,17 @@ static void qcom_battmgr_enable_worker(struct work_struct *work)
+ 		dev_err(battmgr->dev, "failed to request power notifications\n");
+ }
+ 
++static void qcom_battmgr_release_client(void *data)
++{
++	struct qcom_battmgr *battmgr = data;
++
++	disable_work_sync(&battmgr->enable_work);
++
++	mutex_lock(&battmgr->lock);
++	battmgr->client_gone = true;
++	mutex_unlock(&battmgr->lock);
++}
++
+ static void qcom_battmgr_pdr_notify(void *priv, int state)
+ {
+ 	struct qcom_battmgr *battmgr = priv;
+@@ -1676,6 +1696,7 @@ static int qcom_battmgr_probe(struct auxiliary_device *adev,
+ 	psy_cfg_supply.supplied_to = qcom_battmgr_battery;
+ 	psy_cfg_supply.num_supplicants = 1;
+ 
++	INIT_WORK(&battmgr->enable_work, qcom_battmgr_enable_worker);
+ 	mutex_init(&battmgr->lock);
+ 	init_completion(&battmgr->ack);
+ 
+@@ -1738,11 +1759,6 @@ static int qcom_battmgr_probe(struct auxiliary_device *adev,
+ 					     "failed to register wireless charing power supply\n");
+ 	}
+ 
+-	ret = devm_work_autocancel(dev, &battmgr->enable_work,
+-				   qcom_battmgr_enable_worker);
+-	if (ret)
+-		return ret;
+-
+ 	battmgr->client = devm_pmic_glink_client_alloc(dev, PMIC_GLINK_OWNER_BATTMGR,
+ 						       qcom_battmgr_callback,
+ 						       qcom_battmgr_pdr_notify,
+@@ -1750,6 +1766,17 @@ static int qcom_battmgr_probe(struct auxiliary_device *adev,
+ 	if (IS_ERR(battmgr->client))
+ 		return PTR_ERR(battmgr->client);
+ 
++	/*
++	 * Registered after the client, so that on unbind it runs before the
++	 * client is released. The client callbacks may fire until then, so
++	 * disable rather than cancel enable_work to keep it from being
++	 * requeued, and stop the power supplies, which are unregistered only
++	 * after the client is gone, from using it.
++	 */
++	ret = devm_add_action_or_reset(dev, qcom_battmgr_release_client, battmgr);
++	if (ret)
++		return ret;
++
+ 	pmic_glink_client_register(battmgr->client);
+ 
+ 	return 0;
+
+---
+base-commit: 6628e7d4c6b25c8d18f1345e3a20d21829aae7e4
+change-id: 20261102-battmgr-client-teardown-uaf-f532fdc44cc4
+
+Best regards,
+--  
+
+Abel
