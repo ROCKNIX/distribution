@@ -1,0 +1,49 @@
+From: Anup Vishwakarma <anup.vishwakarma@oss.qualcomm.com>
+Subject: remoteproc: qcom_q6v5: Fix qmp reference leak in qcom_q6v5_init()
+Link: https://lore.kernel.org/r/20260901-b4-q6v5_qmp_leak_fix_upstream-v1-1-5a2e99187c38@oss.qualcomm.com
+
+qmp_get() acquires a device reference on the AOSS QMP mailbox
+provider. If it succeeds and q6v5->load_state is already set, the
+code falls through to devm_of_icc_get() without releasing that
+reference -- if devm_of_icc_get() then fails, the function returns
+without ever calling qmp_put(), leaking it.
+
+The sibling error path just above (load_state being NULL) already
+calls qmp_put() correctly before returning; mirror that here.
+devm_of_icc_get() commonly fails with -EPROBE_DEFER during normal
+boot, so this leak isn't limited to a hard failure -- it can
+accumulate across deferred-probe retries.
+
+Fixes: 8d9be5c6bdcd ("remoteproc: qcom: q6v5: Add interconnect path proxy vote")
+Signed-off-by: Anup Vishwakarma <anup.vishwakarma@oss.qualcomm.com>
+Reviewed-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+---
+ drivers/remoteproc/qcom_q6v5.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+
+---
+base-commit: 89c07d98716a13454ec3fd9f97689e812cc71bd4
+change-id: 20260901-b4-q6v5_qmp_leak_fix_upstream-64f1db4d4e89
+
+Best regards,
+--  
+Anup Vishwakarma <anup.vishwakarma@oss.qualcomm.com>
+---
+diff --git a/drivers/remoteproc/qcom_q6v5.c b/drivers/remoteproc/qcom_q6v5.c
+index fe148b4b3775..71b79ab827e6 100644
+--- a/drivers/remoteproc/qcom_q6v5.c
++++ b/drivers/remoteproc/qcom_q6v5.c
+@@ -372,9 +372,11 @@ int qcom_q6v5_init(struct qcom_q6v5 *q6v5, struct platform_device *pdev,
+ 	}
+ 
+ 	q6v5->path = devm_of_icc_get(&pdev->dev, NULL);
+-	if (IS_ERR(q6v5->path))
++	if (IS_ERR(q6v5->path)) {
++		qmp_put(q6v5->qmp);
+ 		return dev_err_probe(&pdev->dev, PTR_ERR(q6v5->path),
+ 				     "failed to acquire interconnect path\n");
++	}
+ 
+ 	return 0;
+ }

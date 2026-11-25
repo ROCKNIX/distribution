@@ -1,0 +1,96 @@
+From: Joshua Yeong <Joshua.Yeong@starfivetech.com>
+Subject: pmdomain: core: Honour pd_ignore_unused in the sync_state power-off
+Link: https://lore.kernel.org/r/20260829195105.4173953-1-joshua.yeong@starfivetech.com
+
+The pd_ignore_unused command line option is documented to "keep all
+power-domains already enabled by bootloader on, even if no driver has
+claimed them". On an OF platform it no longer does.
+
+Powering off unclaimed PM domains used to be the job of
+genpd_power_off_unused(), which bails out on the option.
+Commit 002ebddd695a ("pmdomain: core: Restore behaviour for disabling
+unused PM domains") stopped that late_initcall_sync from clearing
+stay_on, so it can no longer power off a PM domain that was found
+powered-on at initialization. The only remaining path that clears
+stay_on is ->sync_state(), and it never looked at the option, so an
+unclaimed PM domain that the bootloader left on is powered off there
+regardless.
+
+Honour the option in the sync_state paths, for the PM domains that have
+no consumer attached. Those are the ones the option describes, and once
+genpd_power_off_unused() has bailed out they have no other power-off
+trigger, so they stay on as documented.
+
+The stay_on constraint is dropped either way, leaving the lifetime of
+the constraint unchanged. The PM domains that do have a consumer
+attached therefore stay under the control of runtime PM, which the
+option has never covered, and a PM domain that gains a consumer after
+->sync_state() is not left pinned.
+
+Fixes: 0e789b491ba0 ("pmdomain: core: Leave powered-on genpds on until sync_state")
+Signed-off-by: Joshua Yeong <joshua.yeong@starfivetech.com>
+---
+ drivers/pmdomain/core.c | 36 ++++++++++++++++++++++++++----------
+ 1 file changed, 26 insertions(+), 10 deletions(-)
+---
+diff --git a/drivers/pmdomain/core.c b/drivers/pmdomain/core.c
+index 842c4169e290..c49d13b3068d 100644
+--- a/drivers/pmdomain/core.c
++++ b/drivers/pmdomain/core.c
+@@ -3673,6 +3673,29 @@ int of_genpd_parse_idle_states(struct device_node *dn,
+ }
+ EXPORT_SYMBOL_GPL(of_genpd_parse_idle_states);
+ 
++/*
++ * Drop the stay-on constraint that kept a genpd, found powered-on at
++ * initialization, from being powered-off during boot, then try a power-off.
++ *
++ * The pd_ignore_unused command line option asks for PM domains that no driver
++ * has claimed to be left on, so skip the power-off for those. Such a PM domain
++ * has no other power-off trigger either, as genpd_power_off_unused() bails out
++ * on the same option.
++ *
++ * The constraint itself is always dropped, so that the PM domains that do have
++ * a consumer attached stay under the control of runtime PM - the option has
++ * never covered those - and so that a PM domain gaining a consumer after this
++ * point is not left pinned.
++ */
++static void genpd_sync_state_power_off(struct generic_pm_domain *genpd)
++{
++	genpd_lock(genpd);
++	genpd->stay_on = false;
++	if (!pd_ignore_unused || genpd->device_count)
++		genpd_power_off(genpd, false, 0);
++	genpd_unlock(genpd);
++}
++
+ /**
+  * of_genpd_sync_state() - A common sync_state function for genpd providers
+  * @np: The device node the genpd provider is associated with.
+@@ -3690,12 +3713,8 @@ void of_genpd_sync_state(struct device_node *np)
+ 
+ 	mutex_lock(&gpd_list_lock);
+ 	list_for_each_entry(genpd, &gpd_list, gpd_list_node) {
+-		if (genpd->provider == of_fwnode_handle(np)) {
+-			genpd_lock(genpd);
+-			genpd->stay_on = false;
+-			genpd_power_off(genpd, false, 0);
+-			genpd_unlock(genpd);
+-		}
++		if (genpd->provider == of_fwnode_handle(np))
++			genpd_sync_state_power_off(genpd);
+ 	}
+ 	mutex_unlock(&gpd_list_lock);
+ }
+@@ -3719,10 +3738,7 @@ static void genpd_provider_sync_state(struct device *dev)
+ 		break;
+ 
+ 	case GENPD_SYNC_STATE_SIMPLE:
+-		genpd_lock(genpd);
+-		genpd->stay_on = false;
+-		genpd_power_off(genpd, false, 0);
+-		genpd_unlock(genpd);
++		genpd_sync_state_power_off(genpd);
+ 		break;
+ 
+ 	default:

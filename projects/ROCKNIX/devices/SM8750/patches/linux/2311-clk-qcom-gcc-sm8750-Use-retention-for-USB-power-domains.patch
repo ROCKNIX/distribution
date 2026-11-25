@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vladyslav Tymoshchuk <tvlad744@gmail.com>
+Date: Tue, 10 Nov 2026 23:33:46 +0200
+Subject: [PATCH] clk: qcom: gcc-sm8750: Use retention for USB power domains
+
+The USB controller does not expect to lose its state in system suspend.
+The controller node is a wakeup source, so in host mode dwc3 keeps the
+core initialized across suspend, while genpd still powers the USB GDSCs
+off. With a USB stick on the port, the xHCI comes back from s2idle with
+an SMMU fault and is given up:
+
+  arm-smmu 15000000.iommu: Unhandled context fault: fsr=0x402, iova=0x669fd3200, fsynr=0x370011, cbfrsynra=0x40, cb=5
+  xhci-hcd xhci-hcd.3.auto: WARNING: Host System Error
+  xhci-hcd xhci-hcd.3.auto: xHCI host not responding to stop endpoint command
+  xhci-hcd xhci-hcd.3.auto: xHCI host controller not responding, assume dead
+  xhci-hcd xhci-hcd.3.auto: HC died; cleaning up
+
+After that the port is dead in device mode as well, until a reboot.
+
+Keep the controller and PHY GDSCs in retention, as SM8650 and X1E80100
+do.
+
+Fixes: 3267c774f3ff ("clk: qcom: Add support for GCC on SM8750")
+Signed-off-by: Vladyslav Tymoshchuk <tvlad744@gmail.com>
+Reviewed-by: Abel Vesa <abel.vesa@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261110213346.1359-1-tvlad744@gmail.com
+---
+Tested on OnePlus Pad 3 (SM8750; the board DT is not upstream yet),
+v7.3-rc5 plus board patches, 150 s of s2idle ended by an RTC alarm,
+with a USB stick on the Type-C port in host mode:
+
+                                    without    with this patch
+  stick left in during suspend      1/1 died   2/2 fine
+  stick unplugged during suspend    2/2 died   3/3 fine
+
+Two more 25 s cycles with the stick left in were fine with the patch.
+
+Without the patch and with power/wakeup of the controller set to
+"disabled" (one boot, two 25 s cycles) the first resume still hit the
+SMMU fault and "Host System Error" and lost the stick; the second one
+ended in "xHC error in resume, USBSTS 0x101d, Reinit" and the stick
+came back.
+
+Device mode (NCM gadget) suspends and resumes with the patch as it
+did without it. I did not measure the suspend current.
+
+I used an AI assistant (Claude) for the analysis and to draft this
+patch and its description; I reviewed the result and ran the tests on
+my device.
+
+ drivers/clk/qcom/gcc-sm8750.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/clk/qcom/gcc-sm8750.c b/drivers/clk/qcom/gcc-sm8750.c
+index 80b8ec119c55..080f2fde53a1 100644
+--- a/drivers/clk/qcom/gcc-sm8750.c
++++ b/drivers/clk/qcom/gcc-sm8750.c
+@@ -2940,7 +2940,7 @@ static struct gdsc gcc_usb30_prim_gdsc = {
+ 	.pd = {
+ 		.name = "gcc_usb30_prim_gdsc",
+ 	},
+-	.pwrsts = PWRSTS_OFF_ON,
++	.pwrsts = PWRSTS_RET_ON,
+ 	.flags = POLL_CFG_GDSCR | RETAIN_FF_ENABLE,
+ };
+ 
+@@ -2952,7 +2952,7 @@ static struct gdsc gcc_usb3_phy_gdsc = {
+ 	.pd = {
+ 		.name = "gcc_usb3_phy_gdsc",
+ 	},
+-	.pwrsts = PWRSTS_OFF_ON,
++	.pwrsts = PWRSTS_RET_ON,
+ 	.flags = POLL_CFG_GDSCR | RETAIN_FF_ENABLE,
+ };
+ 

@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Haoxiang Li <haoxiang_li2024@163.com>
+Date: Thu, 19 Nov 2026 11:47:18 +0800
+Subject: [PATCH] drm/msm/gpu: Unwind power and clocks on resume failure
+
+msm_gpu_pm_resume() returns without disabling the power rails when
+enabling the GPU clocks fails. If enabling the AXI clock fails, both
+the GPU clocks and power rails remain enabled. In addition,
+enable_pwrrail() leaves gpu_reg enabled if enabling gpu_cx fails.
+
+Disable gpu_reg when enabling gpu_cx fails, and unwind the completed
+power and clock stages in reverse order when resume fails.
+
+Fixes: 7198e6b03155 ("drm/msm: add a3xx gpu support")
+Signed-off-by: Haoxiang Li <haoxiang_li2024@163.com>
+Link: https://lore.kernel.org/r/20261119034718.2818183-1-haoxiang_li2024@163.com
+[Backported to 7.3: "drm/msm: Resume devfreq from each GPU's resume
+callback" already moved msm_devfreq_resume() out of msm_gpu_pm_resume()]
+---
+
+ drivers/gpu/drm/msm/msm_gpu.c |   13 +++++++++++--
+ 1 file changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/msm_gpu.c b/drivers/gpu/drm/msm/msm_gpu.c
+index 30bf0cc42..10f99eb5a 100644
+--- a/drivers/gpu/drm/msm/msm_gpu.c
++++ b/drivers/gpu/drm/msm/msm_gpu.c
+@@ -40,6 +40,8 @@ static int enable_pwrrail(struct msm_gpu *gpu)
+ 		ret = regulator_enable(gpu->gpu_cx);
+ 		if (ret) {
+ 			DRM_DEV_ERROR(dev->dev, "failed to enable 'gpu_cx': %d\n", ret);
++			if (gpu->gpu_reg)
++				regulator_disable(gpu->gpu_reg);
+ 			return ret;
+ 		}
+ 	}
+@@ -110,15 +112,22 @@ int msm_gpu_pm_resume(struct msm_gpu *gpu)
+ 
+ 	ret = enable_clk(gpu);
+ 	if (ret)
+-		return ret;
++		goto err_disable_pwrrail;
+ 
+ 	ret = enable_axi(gpu);
+ 	if (ret)
+-		return ret;
++		goto err_disable_clk;
+ 
+ 	gpu->needs_hw_init = true;
+ 
+ 	return 0;
++
++err_disable_clk:
++	disable_clk(gpu);
++
++err_disable_pwrrail:
++	disable_pwrrail(gpu);
++	return ret;
+ }
+ 
+ int msm_gpu_pm_suspend(struct msm_gpu *gpu)

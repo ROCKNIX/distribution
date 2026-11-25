@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marco Giunta <marco_giunta@outlook.it>
+Date: Thu, 19 Nov 2026 17:30:14 +0100
+Subject: [PATCH] ASoC: aw88166: fix clearing of SYSCTRL bits
+
+When applying the SYSCTRL value from the firmware,
+aw_dev_update_reg_container() means to overwrite the HMUTE, PWDN and DSPBY
+bits with fixed values, by clearing them and then taking the OR with the
+intended values.
+This is the same behavior as the Android driver aw88166 was ported from
+(aw883xx), which does so field by field, and as the upstream aw88081
+and aw88261 drivers, which manually compute a collective mask and
+perform a single VAL &= MASK.
+
+Currently, the aw88166 driver takes the latter approach, by computing MASK
+as AW88166_HMUTE_MASK | AW88166_PWDN_MASK | AW88166_DSPBY_MASK.
+As per the usual Awinic inverted-mask convention, these macros equal
+~BIT(8), ~BIT(0) and ~BIT(2) respectively, so using OR on them yields all
+ones and clears nothing.
+Use AND instead, as commit b82fa9b0c26e ("ASoC: codecs: aw88261: Fix
+erroneous bitmask logic in Awinic init") did for aw88261.
+
+In practice this makes no difference, since the values ORed in right
+afterwards equal BIT(8), BIT(0) and BIT(2): these bits end up set
+regardless of whether or not they were previously cleared.
+The fix here simply keeps the code correct regardless of the values used.
+
+Fixes: 94e412c28e61 ("ASoC: codecs: Add aw88166 amplifier driver")
+Signed-off-by: Marco Giunta <marco_giunta@outlook.it>
+Link: https://lore.kernel.org/r/SN6PR19MB2303CBDAF11DF2405D138159FC792@SN6PR19MB2303.namprd19.prod.outlook.com
+---
+Alternatively, since the clear is redundant w.r.t. the OR with the *_VALUE
+macros, I can add a comment explaining why no clearing is needed and
+remove it, if that is preferred.
+
+ sound/soc/codecs/aw88166.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/sound/soc/codecs/aw88166.c b/sound/soc/codecs/aw88166.c
+index a520c9089425..226a36f041d9 100644
+--- a/sound/soc/codecs/aw88166.c
++++ b/sound/soc/codecs/aw88166.c
+@@ -961,7 +961,7 @@ static int aw_dev_update_reg_container(struct aw88166 *aw88166,
+ 			else
+ 				aw_dev->dsp_cfg = AW88166_DEV_DSP_WORK;
+ 
+-			reg_val &= (AW88166_HMUTE_MASK | AW88166_PWDN_MASK |
++			reg_val &= (AW88166_HMUTE_MASK & AW88166_PWDN_MASK &
+ 						AW88166_DSPBY_MASK);
+ 			reg_val |= (AW88166_HMUTE_ENABLE_VALUE | AW88166_PWDN_POWER_DOWN_VALUE |
+ 						AW88166_DSPBY_BYPASS_VALUE);

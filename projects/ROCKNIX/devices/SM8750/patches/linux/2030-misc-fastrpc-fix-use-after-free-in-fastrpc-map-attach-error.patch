@@ -1,0 +1,43 @@
+From: Yifei Gao <gyf161023@gmail.com>
+Subject: misc: fastrpc: fix use-after-free in fastrpc_map_attach() error path
+Link: https://lore.kernel.org/r/20260806235056.456341-1-gyf161023@gmail.com
+
+map->table is set right after the attachment is mapped, before the
+len > map->size check. When that check fails and jumps to map_err, the
+error path manually calls dma_buf_detach() and dma_buf_put(), then falls
+through to fastrpc_map_put() -> fastrpc_free_map().
+
+Since map->table is still non-NULL, fastrpc_free_map() repeats the
+cleanup: dma_buf_unmap_attachment_unlocked() dereferences the map->attach
+already freed by dma_buf_detach() (use-after-free read), and a second
+dma_buf_put() drops an extra reference on map->buf. As the exporting fd is
+typically still held by userspace, this imbalance can later lead to
+premature destruction of the dma_buf and a use-after-free.
+
+The branch is reachable by an unprivileged process via
+FASTRPC_IOCTL_MEM_MAP with an fd whose dma-buf is smaller than the
+requested length, before any DSP invocation.
+
+Clear map->table in the map_err path so the fastrpc_map_put() fallthrough
+does not operate on the already released attachment and buffer.
+
+Fixes: 334f1a1cbe03 ("misc: fastrpc: Use fastrpc_map_put in fastrpc_map_create on fail")
+Cc: stable@vger.kernel.org
+Assisted-by: Claude:claude-opus-4-8
+Signed-off-by: Yifei Gao <gyf161023@gmail.com>
+---
+ drivers/misc/fastrpc.c | 1 +
+ 1 file changed, 1 insertion(+)
+---
+diff --git a/drivers/misc/fastrpc.c b/drivers/misc/fastrpc.c
+index f3a49384586d..d6be951d5538 100644
+--- a/drivers/misc/fastrpc.c
++++ b/drivers/misc/fastrpc.c
+@@ -915,6 +915,7 @@ static int fastrpc_map_attach(struct fastrpc_user *fl, int fd,
+ 
+ map_err:
+ 	dma_buf_detach(map->buf, map->attach);
++	map->table = NULL;
+ attach_err:
+ 	dma_buf_put(map->buf);
+ get_err:

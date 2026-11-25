@@ -1,0 +1,482 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Abel Vesa <abel.vesa@oss.qualcomm.com>
+Date: Mon, 02 Nov 2026 12:46:40 +0200
+Subject: [PATCH] soc: qcom: rpmh: Fix use-after-free on timed out blocking requests
+
+rpmh_write(), rpmh_read() and the ACTIVE_ONLY path of rpmh_write_batch()
+hand a request to the RSC controller and wait for it to complete with
+wait_for_completion_timeout(). If the wait times out, they return to the
+caller, while the request is still owned by the TCS it was written to.
+For rpmh_write() and rpmh_read(), both the request and the completion
+live on the stack, while rpmh_write_batch() frees them on its way out.
+
+If the hardware completes the request after the timeout, tcs_tx_done()
+fetches the stale request from the TCS, passes it to the tracepoint and
+to rpmh_tx_done(), which then signals a completion that no longer
+exists. For reads, the response data is also written into the stale
+request first. This corrupts the stack of whatever the timed out caller
+went on to do, or freed memory. rpmh_write_batch() even documents this
+with a "Better hope they never finish" comment.
+
+Fix this by giving every request handed to the controller a reference
+count and by embedding the completion into the request. All such
+requests are now allocated dynamically. The controller owns one
+reference, dropped by rpmh_tx_done() once the hardware is done or by
+the sender if the request never made it to the controller. Blocking
+callers take a second reference for themselves and drop it once they
+are done waiting, regardless of the outcome. A timed out request thus
+stays alive for as long as the controller can still access it and is
+freed by rpmh_tx_done() if the hardware ever completes it.
+
+The blocking requests are allocated with GFP_ATOMIC, like the ones of
+rpmh_write_async() and rpmh_write_batch() already are, so rpmh_write()
+and rpmh_read() can now fail with -ENOMEM.
+
+As a side effect, rpmh_write_async() no longer leaks the request when
+caching or sending it fails, and an ACTIVE_ONLY rpmh_write_batch() with
+an oversized command set now fails with -EINVAL instead of sending an
+empty message. As before, rpmh_read() does not warn on timeouts, since
+reads are known to time out on some platforms.
+
+Fixes: c1038456b02b ("drivers: qcom: rpmh: add RPMH helper functions")
+Fixes: c8790cb6da58 ("drivers: qcom: rpmh: add support for batch RPMH request")
+Fixes: edbafe65eef2 ("soc: qcom: rpmh: Add support to read back resource settings")
+Reported-by: Sashiko <sashiko-bot@kernel.org>
+Closes: https://sashiko.dev/#/bug/linux-c022766a-a45e-484d-9293-4587d4a4438f
+Signed-off-by: Abel Vesa <abel.vesa@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261102-rpmh-timeout-uaf-v1-1-f1fe9d38f1b8@oss.qualcomm.com
+[Backported to 7.3: the kernel-doc comments on rpmh_tx_done() and
+__rpmh_write() are not in 7.3; only the code is carried]
+---
+
+ drivers/soc/qcom/rpmh-internal.h |   10 +
+ drivers/soc/qcom/rpmh.c          |  281 ++++++++++++++++++++++++--------------
+ 2 files changed, 181 insertions(+), 110 deletions(-)
+
+diff --git a/drivers/soc/qcom/rpmh-internal.h b/drivers/soc/qcom/rpmh-internal.h
+index e3cf1beff..b6497a357 100644
+--- a/drivers/soc/qcom/rpmh-internal.h
++++ b/drivers/soc/qcom/rpmh-internal.h
+@@ -8,6 +8,8 @@
+ #define __RPM_INTERNAL_H__
+ 
+ #include <linux/bitmap.h>
++#include <linux/completion.h>
++#include <linux/refcount.h>
+ #include <linux/wait.h>
+ #include <soc/qcom/tcs.h>
+ 
+@@ -59,14 +61,16 @@ struct tcs_group {
+  * @cmd: the payload that will be part of the @msg
+  * @completion: triggered when request is done
+  * @dev: the device making the request
+- * @needs_free: check to free dynamically allocated request object
++ * @refcnt: references to a request handed to rpmh_rsc_send_data(); one is
++ *          owned by the controller and dropped by rpmh_tx_done(), another
++ *          one is owned by a blocking caller waiting on @completion
+  */
+ struct rpmh_request {
+ 	struct tcs_request msg;
+ 	struct tcs_cmd cmd[MAX_RPMH_PAYLOAD];
+-	struct completion *completion;
++	struct completion completion;
+ 	const struct device *dev;
+-	bool needs_free;
++	refcount_t refcnt;
+ };
+ 
+ /**
+diff --git a/drivers/soc/qcom/rpmh.c b/drivers/soc/qcom/rpmh.c
+index f881c4c75..ce58fab54 100644
+--- a/drivers/soc/qcom/rpmh.c
++++ b/drivers/soc/qcom/rpmh.c
+@@ -24,7 +24,7 @@
+ 
+ #define RPMH_TIMEOUT_MS			msecs_to_jiffies(10000)
+ 
+-#define DEFINE_RPMH_MSG_ONSTACK(device, s, q, name)	\
++#define DEFINE_RPMH_MSG_ONSTACK(device, s, name)	\
+ 	struct rpmh_request name = {			\
+ 		.msg = {				\
+ 			.state = s,			\
+@@ -33,9 +33,7 @@
+ 			.wait_for_compl = true,		\
+ 		},					\
+ 		.cmd = { { 0 } },			\
+-		.completion = q,			\
+ 		.dev = device,				\
+-		.needs_free = false,				\
+ 	}
+ 
+ #define ctrlr_to_drv(ctrlr) container_of(ctrlr, struct rsc_drv, client)
+@@ -76,22 +74,20 @@ static struct rpmh_ctrlr *get_rpmh_ctrlr(const struct device *dev)
+ 	return &drv->client;
+ }
+ 
++static void rpmh_put_req(struct rpmh_request *rpm_msg)
++{
++	if (refcount_dec_and_test(&rpm_msg->refcnt))
++		kfree(rpm_msg);
++}
++
+ void rpmh_tx_done(const struct tcs_request *msg)
+ {
+ 	struct rpmh_request *rpm_msg = container_of(msg, struct rpmh_request,
+ 						    msg);
+-	struct completion *compl = rpm_msg->completion;
+-	bool free = rpm_msg->needs_free;
+ 
+-	if (!compl)
+-		goto exit;
+-
+-	/* Signal the blocking thread we are done */
+-	complete(compl);
+-
+-exit:
+-	if (free)
+-		kfree(rpm_msg);
++	/* Signal the blocking thread we are done, if there is one */
++	complete(&rpm_msg->completion);
++	rpmh_put_req(rpm_msg);
+ }
+ 
+ static struct cache_req *__find_req(struct rpmh_ctrlr *ctrlr, u32 addr)
+@@ -181,13 +177,17 @@ static int __rpmh_write(const struct device *dev, enum rpmh_state state,
+ 	/* Cache the request in our store and link the payload */
+ 	for (i = 0; i < rpm_msg->msg.num_cmds; i++) {
+ 		req = cache_rpm_request(ctrlr, state, &rpm_msg->msg.cmds[i]);
+-		if (IS_ERR(req))
++		if (IS_ERR(req)) {
++			rpmh_put_req(rpm_msg);
+ 			return PTR_ERR(req);
++		}
+ 	}
+ 
+ send_data:
+ 	if (state == RPMH_ACTIVE_ONLY_STATE) {
+ 		ret = rpmh_rsc_send_data(ctrlr_to_drv(ctrlr), &rpm_msg->msg);
++		if (ret)
++			rpmh_put_req(rpm_msg);
+ 	} else {
+ 		/* Clean up our call by spoofing tx_done */
+ 		ret = 0;
+@@ -213,6 +213,83 @@ static int __fill_rpmh_msg(struct rpmh_request *req, enum rpmh_state state,
+ 	return 0;
+ }
+ 
++/*
++ * Allocate a request that can be handed to the controller. The request starts
++ * with a single reference, owned by the controller and dropped in
++ * rpmh_tx_done(). Blocking callers must take an additional reference for
++ * themselves, so that the request outlives a timed out wait in case the
++ * hardware completes it later.
++ */
++static struct rpmh_request *rpmh_alloc_req(const struct device *dev,
++					   enum rpmh_state state,
++					   const struct tcs_cmd *cmd, u32 n,
++					   bool is_read, bool wait_for_compl)
++{
++	struct rpmh_request *rpm_msg;
++	int ret;
++
++	rpm_msg = kzalloc_obj(*rpm_msg, GFP_ATOMIC);
++	if (!rpm_msg)
++		return ERR_PTR(-ENOMEM);
++
++	ret = __fill_rpmh_msg(rpm_msg, state, cmd, n, is_read);
++	if (ret) {
++		kfree(rpm_msg);
++		return ERR_PTR(ret);
++	}
++
++	rpm_msg->msg.wait_for_compl = wait_for_compl;
++	rpm_msg->dev = dev;
++	init_completion(&rpm_msg->completion);
++	refcount_set(&rpm_msg->refcnt, 1);
++
++	return rpm_msg;
++}
++
++/*
++ * Send a request and wait for it to complete. If @data is not NULL, the
++ * request is a read of the single command in @cmd and the response is
++ * returned in @data.
++ */
++static int __rpmh_write_wait(const struct device *dev, enum rpmh_state state,
++			     const struct tcs_cmd *cmd, u32 n, u32 *data)
++{
++	struct rpmh_request *rpm_msg;
++	int ret;
++
++	rpm_msg = rpmh_alloc_req(dev, state, cmd, n, !!data, true);
++	if (IS_ERR(rpm_msg))
++		return PTR_ERR(rpm_msg);
++
++	/* Our own reference, the controller owns the initial one */
++	refcount_inc(&rpm_msg->refcnt);
++
++	ret = __rpmh_write(dev, state, rpm_msg);
++	if (ret)
++		goto out;
++
++	if (!wait_for_completion_timeout(&rpm_msg->completion,
++					 RPMH_TIMEOUT_MS)) {
++		/*
++		 * The request is still owned by the controller and is freed
++		 * by rpmh_tx_done() if the hardware ever completes it. Reads
++		 * are known to time out on some platforms, so only warn about
++		 * writes.
++		 */
++		WARN_ON(!data);
++		ret = -ETIMEDOUT;
++		goto out;
++	}
++
++	if (data)
++		*data = rpm_msg->cmd[0].data;
++
++out:
++	rpmh_put_req(rpm_msg);
++
++	return ret;
++}
++
+ /**
+  * rpmh_read: Read a resource value
+  *
+@@ -228,22 +305,11 @@ static int __fill_rpmh_msg(struct rpmh_request *req, enum rpmh_state state,
+  */
+ int rpmh_read(const struct device *dev, struct tcs_cmd *cmd)
+ {
+-	DECLARE_COMPLETION_ONSTACK(compl);
+-	DEFINE_RPMH_MSG_ONSTACK(dev, RPMH_ACTIVE_ONLY_STATE, &compl, rpm_msg);
+-	int ret;
+-
+-	ret = __fill_rpmh_msg(&rpm_msg, RPMH_ACTIVE_ONLY_STATE, cmd, 1, true);
+-	if (ret)
+-		return ret;
+-
+-	ret = __rpmh_write(dev, RPMH_ACTIVE_ONLY_STATE, &rpm_msg);
+-	if (ret)
+-		return ret;
+-
+-	ret = wait_for_completion_timeout(&compl, RPMH_TIMEOUT_MS);
+-	cmd[0].data = rpm_msg.cmd[0].data;
++	if (!cmd)
++		return -EINVAL;
+ 
+-	return (ret > 0) ? 0 : -ETIMEDOUT;
++	return __rpmh_write_wait(dev, RPMH_ACTIVE_ONLY_STATE, cmd, 1,
++				 &cmd->data);
+ }
+ EXPORT_SYMBOL_GPL(rpmh_read);
+ 
+@@ -262,18 +328,10 @@ int rpmh_write_async(const struct device *dev, enum rpmh_state state,
+ 		     const struct tcs_cmd *cmd, u32 n)
+ {
+ 	struct rpmh_request *rpm_msg;
+-	int ret;
+ 
+-	rpm_msg = kzalloc_obj(*rpm_msg, GFP_ATOMIC);
+-	if (!rpm_msg)
+-		return -ENOMEM;
+-	rpm_msg->needs_free = true;
+-
+-	ret = __fill_rpmh_msg(rpm_msg, state, cmd, n, false);
+-	if (ret) {
+-		kfree(rpm_msg);
+-		return ret;
+-	}
++	rpm_msg = rpmh_alloc_req(dev, state, cmd, n, false, false);
++	if (IS_ERR(rpm_msg))
++		return PTR_ERR(rpm_msg);
+ 
+ 	return __rpmh_write(dev, state, rpm_msg);
+ }
+@@ -292,21 +350,7 @@ EXPORT_SYMBOL_GPL(rpmh_write_async);
+ int rpmh_write(const struct device *dev, enum rpmh_state state,
+ 	       const struct tcs_cmd *cmd, u32 n)
+ {
+-	DECLARE_COMPLETION_ONSTACK(compl);
+-	DEFINE_RPMH_MSG_ONSTACK(dev, state, &compl, rpm_msg);
+-	int ret;
+-
+-	ret = __fill_rpmh_msg(&rpm_msg, state, cmd, n, false);
+-	if (ret)
+-		return ret;
+-
+-	ret = __rpmh_write(dev, state, &rpm_msg);
+-	if (ret)
+-		return ret;
+-
+-	ret = wait_for_completion_timeout(&compl, RPMH_TIMEOUT_MS);
+-	WARN_ON(!ret);
+-	return (ret > 0) ? 0 : -ETIMEDOUT;
++	return __rpmh_write_wait(dev, state, cmd, n, NULL);
+ }
+ EXPORT_SYMBOL_GPL(rpmh_write);
+ 
+@@ -341,6 +385,70 @@ static int flush_batch(struct rpmh_ctrlr *ctrlr)
+ 	return ret;
+ }
+ 
++static int rpmh_write_batch_active(const struct device *dev,
++				   const struct tcs_cmd *cmd, u32 *n,
++				   int count)
++{
++	struct rsc_drv *drv = ctrlr_to_drv(get_rpmh_ctrlr(dev));
++	struct rpmh_request **rpm_msgs;
++	unsigned long time_left;
++	int ret = 0, nr_alloc, i, j;
++
++	rpm_msgs = kzalloc_objs(*rpm_msgs, count, GFP_ATOMIC);
++	if (!rpm_msgs)
++		return -ENOMEM;
++
++	for (nr_alloc = 0; nr_alloc < count; nr_alloc++) {
++		struct rpmh_request *rpm_msg;
++
++		rpm_msg = rpmh_alloc_req(dev, RPMH_ACTIVE_ONLY_STATE, cmd,
++					 n[nr_alloc], false, false);
++		if (IS_ERR(rpm_msg)) {
++			ret = PTR_ERR(rpm_msg);
++			break;
++		}
++
++		/* Our own reference, the controller owns the initial one */
++		refcount_inc(&rpm_msg->refcnt);
++		rpm_msgs[nr_alloc] = rpm_msg;
++		cmd += n[nr_alloc];
++	}
++
++	for (i = 0; !ret && i < count; i++) {
++		ret = rpmh_rsc_send_data(drv, &rpm_msgs[i]->msg);
++		if (ret) {
++			pr_err("Error(%d) sending RPMH message addr=%#x\n",
++			       ret, rpm_msgs[i]->msg.cmds[0].addr);
++			break;
++		}
++	}
++
++	/* The controller never got the requests that were not sent */
++	for (j = i; j < nr_alloc; j++)
++		rpmh_put_req(rpm_msgs[j]);
++
++	time_left = RPMH_TIMEOUT_MS;
++	while (i--) {
++		time_left = wait_for_completion_timeout(&rpm_msgs[i]->completion,
++							time_left);
++		if (WARN_ON(!time_left)) {
++			/*
++			 * The requests still in flight are owned by the
++			 * controller and are freed by rpmh_tx_done() if the
++			 * hardware ever completes them.
++			 */
++			ret = -ETIMEDOUT;
++			break;
++		}
++	}
++
++	while (nr_alloc--)
++		rpmh_put_req(rpm_msgs[nr_alloc]);
++	kfree(rpm_msgs);
++
++	return ret;
++}
++
+ /**
+  * rpmh_write_batch: Write multiple sets of RPMH commands and wait for the
+  * batch to finish.
+@@ -362,13 +470,9 @@ int rpmh_write_batch(const struct device *dev, enum rpmh_state state,
+ 		     const struct tcs_cmd *cmd, u32 *n)
+ {
+ 	struct batch_cache_req *req;
+-	struct rpmh_request *rpm_msgs;
+-	struct completion *compls;
+ 	struct rpmh_ctrlr *ctrlr = get_rpmh_ctrlr(dev);
+-	unsigned long time_left;
+ 	int count = 0;
+-	int ret, i;
+-	void *ptr;
++	int i;
+ 
+ 	if (!cmd || !n)
+ 		return -EINVAL;
+@@ -378,60 +482,23 @@ int rpmh_write_batch(const struct device *dev, enum rpmh_state state,
+ 	if (!count)
+ 		return -EINVAL;
+ 
+-	ptr = kzalloc(sizeof(*req) +
+-		      count * (sizeof(req->rpm_msgs[0]) + sizeof(*compls)),
+-		      GFP_ATOMIC);
+-	if (!ptr)
+-		return -ENOMEM;
++	if (state == RPMH_ACTIVE_ONLY_STATE)
++		return rpmh_write_batch_active(dev, cmd, n, count);
+ 
+-	req = ptr;
+-	compls = ptr + sizeof(*req) + count * sizeof(*rpm_msgs);
++	req = kzalloc_flex(*req, rpm_msgs, count, GFP_ATOMIC);
++	if (!req)
++		return -ENOMEM;
+ 
+ 	req->count = count;
+-	rpm_msgs = req->rpm_msgs;
+ 
+ 	for (i = 0; i < count; i++) {
+-		__fill_rpmh_msg(rpm_msgs + i, state, cmd, n[i], false);
++		__fill_rpmh_msg(req->rpm_msgs + i, state, cmd, n[i], false);
+ 		cmd += n[i];
+ 	}
+ 
+-	if (state != RPMH_ACTIVE_ONLY_STATE) {
+-		cache_batch(ctrlr, req);
+-		return 0;
+-	}
+-
+-	for (i = 0; i < count; i++) {
+-		struct completion *compl = &compls[i];
+-
+-		init_completion(compl);
+-		rpm_msgs[i].completion = compl;
+-		ret = rpmh_rsc_send_data(ctrlr_to_drv(ctrlr), &rpm_msgs[i].msg);
+-		if (ret) {
+-			pr_err("Error(%d) sending RPMH message addr=%#x\n",
+-			       ret, rpm_msgs[i].msg.cmds[0].addr);
+-			break;
+-		}
+-	}
+-
+-	time_left = RPMH_TIMEOUT_MS;
+-	while (i--) {
+-		time_left = wait_for_completion_timeout(&compls[i], time_left);
+-		if (!time_left) {
+-			/*
+-			 * Better hope they never finish because they'll signal
+-			 * the completion that we're going to free once
+-			 * we've returned from this function.
+-			 */
+-			WARN_ON(1);
+-			ret = -ETIMEDOUT;
+-			goto exit;
+-		}
+-	}
++	cache_batch(ctrlr, req);
+ 
+-exit:
+-	kfree(ptr);
+-
+-	return ret;
++	return 0;
+ }
+ EXPORT_SYMBOL_GPL(rpmh_write_batch);
+ 
+@@ -445,7 +512,7 @@ static int is_req_valid(struct cache_req *req)
+ static int send_single(struct rpmh_ctrlr *ctrlr, enum rpmh_state state,
+ 		       u32 addr, u32 data)
+ {
+-	DEFINE_RPMH_MSG_ONSTACK(NULL, state, NULL, rpm_msg);
++	DEFINE_RPMH_MSG_ONSTACK(NULL, state, rpm_msg);
+ 
+ 	/* Wake sets are always complete and sleep sets are not */
+ 	rpm_msg.msg.wait_for_compl = (state == RPMH_WAKE_ONLY_STATE);
