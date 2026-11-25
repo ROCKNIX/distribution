@@ -1,0 +1,346 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Andr=C3=A9=20Braga?= <code@andrebraga.com>
+Date: Wed, 28 Oct 2026 21:28:57 +0000
+Subject: [PATCH] drm/panel: icna35xx: trim the ICNA3520 refresh rate to the
+ mode
+
+The refresh rate of a unit can differ from its mode. After every enable,
+measure the rate from the vblank counter and, if it is more than 500 ppm
+off, walk the frame length towards the mode, halving the step at each
+crossing, and keep the closest value.
+
+The walk runs in a delayed work item and gives up within a frame of
+disable(), so a mode change or blanking interrupts it and the next enable
+at that rate carries on from where it stopped. It leaves the frame length
+alone if the sysfs files change it meanwhile, and skips VRR.
+
+Some frame lengths wash the picture out, blacks turning grey: at 60 Hz
+those ending in 0x2, at 120 Hz those equal to 2 modulo 4. The walk skips
+them and the sysfs files refuse them.
+---
+ .../gpu/drm/panel/panel-chipone-icna35xx.c    | 226 ++++++++++++++++--
+ 1 file changed, 211 insertions(+), 15 deletions(-)
+
+diff --git a/drivers/gpu/drm/panel/panel-chipone-icna35xx.c b/drivers/gpu/drm/panel/panel-chipone-icna35xx.c
+index 6fc4a7c..af0099e 100644
+--- a/drivers/gpu/drm/panel/panel-chipone-icna35xx.c
++++ b/drivers/gpu/drm/panel/panel-chipone-icna35xx.c
+@@ -7,12 +7,14 @@
+ 
+ #include <linux/backlight.h>
+ #include <linux/delay.h>
++#include <linux/devm-helpers.h>
+ #include <linux/gpio/consumer.h>
+ #include <linux/module.h>
+ #include <linux/mutex.h>
+ #include <linux/of.h>
+ #include <linux/of_graph.h>
+ #include <linux/regulator/consumer.h>
++#include <linux/workqueue.h>
+ 
+ #include <video/mipi_display.h>
+ 
+@@ -25,6 +27,7 @@
+ #include <drm/drm_of.h>
+ #include <drm/drm_panel.h>
+ #include <drm/drm_probe_helper.h>
++#include <drm/drm_vblank.h>
+ 
+ struct panel_info {
+ 	struct drm_panel panel;
+@@ -43,6 +46,9 @@ struct panel_info {
+ 	int vrefresh;
+ 	u16 frame_len_120;
+ 	u16 frame_len_60;
++
++	struct drm_crtc *crtc;
++	struct delayed_work trim_work;
+ };
+ 
+ struct panel_desc {
+@@ -166,6 +172,184 @@ static void icna3520_set_frame_len(struct mipi_dsi_multi_context *dsi_ctx,
+ 	}
+ }
+ 
++/* Frame length limits at 60 and 120 Hz */
++static const struct {
++	u16 min;
++	u16 max;
++} icna3520_trim_range[] = {
++	{ 0x770, 0x838 },
++	{ 0x10, 0x80 },
++};
++
++/* These frame lengths wash the picture out: blacks turn grey */
++static bool icna3520_bad_frame_len(bool fast, int frame_len)
++{
++	return (frame_len & (fast ? 0x3 : 0xf)) == 0x2;
++}
++
++/* Sends the frame length of the current rate; the caller holds the lock */
++static int icna3520_send_frame_len(struct panel_info *pinfo)
++{
++	struct mipi_dsi_multi_context dsi_ctx = { .dsi = pinfo->dsi };
++
++	pinfo->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
++	icna3520_set_frame_len(&dsi_ctx, pinfo);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9F, 0x0D);
++	pinfo->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
++
++	return dsi_ctx.accum_err;
++}
++
++/*
++ * A unit's refresh rate can differ from its mode, and drifts. After every
++ * enable, measure the rate and if it is off, walk the frame length towards
++ * the mode's rate and keep the closest value. The walk stops within a frame
++ * of disable(), and the next enable at that rate carries on from there.
++ */
++#define ICNA3520_TRIM_OK_PPM	500	/* the old tool accepted up to 833 */
++#define ICNA3520_TRIM_LINE_PPM	250	/* rate change per line, at least */
++#define ICNA3520_TRIM_STEP	8	/* largest first step, halved at each crossing */
++#define ICNA3520_TRIM_TRIES	16
++#define ICNA3520_TRIM_WINDOW_MS	2000
++#define ICNA3520_TRIM_SETTLE_MS	500
++
++/* The vblank queue wakes every frame, so this also notices disable() */
++static bool icna3520_trim_sleep(struct panel_info *pinfo, unsigned int ms)
++{
++	wait_event_timeout(*drm_crtc_vblank_waitqueue(pinfo->crtc),
++			   !READ_ONCE(pinfo->enabled), msecs_to_jiffies(ms));
++
++	return READ_ONCE(pinfo->enabled);
++}
++
++/*
++ * DPU corrects vblank timestamps with a line counter whose command mode
++ * behaviour is unverified, so time the wakeup on the next vblank instead.
++ */
++static int icna3520_trim_edge(struct panel_info *pinfo, u64 *count, u64 *ns)
++{
++	u64 c = drm_crtc_vblank_count(pinfo->crtc);
++
++	if (!wait_event_timeout(*drm_crtc_vblank_waitqueue(pinfo->crtc),
++				!READ_ONCE(pinfo->enabled) ||
++				drm_crtc_vblank_count(pinfo->crtc) != c, HZ / 4))
++		return -ETIMEDOUT;
++	if (!READ_ONCE(pinfo->enabled))
++		return -EINTR;
++
++	*ns = ktime_get_raw_ns();
++	*count = drm_crtc_vblank_count(pinfo->crtc);
++
++	return 0;
++}
++
++/* Rate error against the mode in ppm, positive when the panel runs fast */
++static int icna3520_trim_measure(struct panel_info *pinfo, int *err)
++{
++	u64 c0, c1, t0, t1, ppm;
++	int ret;
++
++	ret = icna3520_trim_edge(pinfo, &c0, &t0);
++	if (ret)
++		return ret;
++	if (!icna3520_trim_sleep(pinfo, ICNA3520_TRIM_WINDOW_MS))
++		return -EINTR;
++	ret = icna3520_trim_edge(pinfo, &c1, &t1);
++	if (ret)
++		return ret;
++
++	ppm = div64_u64((c1 - c0) * NSEC_PER_SEC * 1000000,
++			(t1 - t0) * pinfo->vrefresh);
++	/* More than 5% off means lost interrupts or a mode we don't know */
++	if (ppm < 950000 || ppm > 1050000)
++		return -ERANGE;
++
++	*err = (int)ppm - 1000000;
++
++	return 0;
++}
++
++/* Moves the frame length from @from to @to, unless someone else moved it */
++static int icna3520_trim_set(struct panel_info *pinfo, u16 *frame_len,
++			     int from, int to)
++{
++	guard(mutex)(&pinfo->lock);
++
++	if (*frame_len != from)
++		return -EBUSY;
++	*frame_len = to;
++
++	return pinfo->enabled ? icna3520_send_frame_len(pinfo) : 0;
++}
++
++static void icna3520_trim_work(struct work_struct *work)
++{
++	struct panel_info *pinfo = container_of(to_delayed_work(work),
++						struct panel_info, trim_work);
++	bool fast = pinfo->vrefresh == 120;
++	u16 *frame_len = fast ? &pinfo->frame_len_120 : &pinfo->frame_len_60;
++	int start = READ_ONCE(*frame_len), cur = start, best = start;
++	int err0 = 0, best_err = 0, err, prev, step, i, ret;
++
++	if (drm_crtc_vblank_get(pinfo->crtc))
++		return;
++
++	ret = icna3520_trim_measure(pinfo, &err0);
++	if (ret || abs(err0) < ICNA3520_TRIM_OK_PPM) {
++		dev_dbg(&pinfo->dsi->dev, "%d Hz: %#x: %d ppm, %d\n",
++			pinfo->vrefresh, start, err0, ret);
++		goto put;
++	}
++
++	err = best_err = err0;
++	step = clamp(abs(err) / ICNA3520_TRIM_LINE_PPM, 1, ICNA3520_TRIM_STEP);
++	if (err < 0)
++		step = -step;
++
++	for (i = 0; step && i < ICNA3520_TRIM_TRIES; i++) {
++		int next = cur + step;
++
++		if (icna3520_bad_frame_len(fast, next))
++			next += step > 0 ? 1 : -1;
++		if (next < icna3520_trim_range[fast].min ||
++		    next > icna3520_trim_range[fast].max)
++			break;
++
++		ret = icna3520_trim_set(pinfo, frame_len, cur, next);
++		if (ret)
++			break;
++		cur = next;
++
++		prev = err;
++		ret = icna3520_trim_sleep(pinfo, ICNA3520_TRIM_SETTLE_MS) ?
++		      icna3520_trim_measure(pinfo, &err) : -EINTR;
++		if (ret)
++			break;
++		dev_dbg(&pinfo->dsi->dev, "%d Hz: %#x: %d ppm\n",
++			pinfo->vrefresh, cur, err);
++
++		if (abs(err) < abs(best_err)) {
++			best = cur;
++			best_err = err;
++		}
++
++		if ((err > 0) != (prev > 0))
++			step = -step / 2;	/* crossed the mode's rate: back, finer */
++		else if (abs(err) >= abs(prev))
++			break;			/* no effect: below the grain, or ignored */
++	}
++
++	/* Fails harmlessly if someone else wrote the frame length meanwhile */
++	if (cur != best)
++		icna3520_trim_set(pinfo, frame_len, cur, best);
++
++	/* -EINTR: disabled, by a mode change or blanking */
++	dev_info(&pinfo->dsi->dev, "%d Hz: frame length %#x -> %#x, %d -> %d ppm, %d\n",
++		 pinfo->vrefresh, start, best, err0, best_err, ret);
++put:
++	drm_crtc_vblank_put(pinfo->crtc);
++}
++
+ static int icna3520_init_sequence(struct panel_info *pinfo)
+ {
+ 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = pinfo->dsi };
+@@ -339,8 +523,11 @@ static int icna35xx_disable(struct drm_panel *panel)
+ 	struct panel_info *pinfo = to_panel_info(panel);
+ 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = pinfo->dsi };
+ 
++	scoped_guard(mutex, &pinfo->lock)
++		pinfo->enabled = false;
++	cancel_delayed_work_sync(&pinfo->trim_work);
++
+ 	guard(mutex)(&pinfo->lock);
+-	pinfo->enabled = false;
+ 
+ 	pinfo->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+ 
+@@ -405,9 +592,19 @@ static enum drm_panel_orientation icna35xx_get_orientation(struct drm_panel *pan
+ static int icna35xx_enable(struct drm_panel *panel)
+ {
+ 	struct panel_info *pinfo = to_panel_info(panel);
++	struct drm_connector *connector = pinfo->connector;
+ 
+-	guard(mutex)(&pinfo->lock);
+-	pinfo->enabled = true;
++	scoped_guard(mutex, &pinfo->lock) {
++		pinfo->enabled = true;
++
++		/* Under VRR the rate follows the content, nothing to trim */
++		if (pinfo->desc->frame_len_120 && connector && connector->state->crtc &&
++		    !connector->state->crtc->state->vrr_enabled) {
++			pinfo->crtc = connector->state->crtc;
++			/* Let the first frames out before touching the timing */
++			queue_delayed_work(system_long_wq, &pinfo->trim_work, 2 * HZ);
++		}
++	}
+ 
+ 	/* A level set while the panel was disabled was skipped */
+ 	backlight_update_status(pinfo->backlight);
+@@ -479,7 +676,6 @@ static ssize_t icna3520_frame_len_store(struct device *dev, u16 *frame_len,
+ 					const char *buf, size_t count)
+ {
+ 	struct panel_info *pinfo = dev_get_drvdata(dev);
+-	struct mipi_dsi_multi_context dsi_ctx = { .dsi = pinfo->dsi };
+ 	u16 val;
+ 	int ret;
+ 
+@@ -487,7 +683,7 @@ static ssize_t icna3520_frame_len_store(struct device *dev, u16 *frame_len,
+ 	if (ret)
+ 		return ret;
+ 
+-	if (val < min || val > max)
++	if (val < min || val > max || icna3520_bad_frame_len(vrefresh == 120, val))
+ 		return -EINVAL;
+ 
+ 	guard(mutex)(&pinfo->lock);
+@@ -496,15 +692,9 @@ static ssize_t icna3520_frame_len_store(struct device *dev, u16 *frame_len,
+ 	if (!pinfo->enabled || pinfo->vrefresh != vrefresh)
+ 		return count;
+ 
+-	pinfo->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+-	icna3520_set_frame_len(&dsi_ctx, pinfo);
+-	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9F, 0x0D);
+-	pinfo->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+-
+-	if (dsi_ctx.accum_err)
+-		return dsi_ctx.accum_err;
++	ret = icna3520_send_frame_len(pinfo);
+ 
+-	return count;
++	return ret ?: count;
+ }
+ 
+ static ssize_t frame_len_120_show(struct device *dev,
+@@ -522,7 +712,8 @@ static ssize_t frame_len_120_store(struct device *dev,
+ 	struct panel_info *pinfo = dev_get_drvdata(dev);
+ 
+ 	return icna3520_frame_len_store(dev, &pinfo->frame_len_120, 120,
+-					0x10, 0x80, buf, count);
++					icna3520_trim_range[1].min,
++					icna3520_trim_range[1].max, buf, count);
+ }
+ static DEVICE_ATTR_RW(frame_len_120);
+ 
+@@ -541,7 +732,8 @@ static ssize_t frame_len_60_store(struct device *dev,
+ 	struct panel_info *pinfo = dev_get_drvdata(dev);
+ 
+ 	return icna3520_frame_len_store(dev, &pinfo->frame_len_60, 60,
+-					0x770, 0x838, buf, count);
++					icna3520_trim_range[0].min,
++					icna3520_trim_range[0].max, buf, count);
+ }
+ static DEVICE_ATTR_RW(frame_len_60);
+ 
+@@ -571,6 +763,10 @@ static int icna35xx_probe(struct mipi_dsi_device *dsi)
+ 	if (ret)
+ 		return ret;
+ 
++	ret = devm_delayed_work_autocancel(dev, &pinfo->trim_work, icna3520_trim_work);
++	if (ret)
++		return ret;
++
+ 	ret = devm_regulator_bulk_get_const(dev, ARRAY_SIZE(panel_supplies),
+ 					    panel_supplies, &pinfo->supplies);
+ 	if (ret < 0)
