@@ -1,0 +1,49 @@
+From: Kiwoong Kim <kwmad.kim@samsung.com>
+Subject: [v6,1/2] ufs: core: skip ABORT TASK for device management commands
+Link: https://lore.kernel.org/r/20261105004333.1097899-2-kwmad.kim@samsung.com
+
+In MCQ mode, ufshcd_mcq_abort() falls through to ufshcd_try_to_abort_task()
+for all timed-out commands. However, device management commands (query, NOP)
+use reserved requests and are not SCSI I/O commands. The ABORT TASK task
+management function is designed for SCSI I/O UPIUs and is not applicable to
+device management UPIUs.
+
+This is only reachable since device management commands were converted to
+scsi_get_internal_cmd(); before that, a timed-out query was handled by
+ufshcd_wait_for_dev_cmd() -> ufshcd_clear_cmd() and never reached
+ufshcd_try_to_abort_task().
+
+Fix this by checking ufshcd_is_scsi_cmd() in ufshcd_try_to_abort_task(). When
+the request is a reserved (device management) command, skip the TM path and
+call ufshcd_clear_cmd() directly instead.
+
+Fixes: 08b12cda6c44 ("scsi: ufs: core: Switch to scsi_get_internal_cmd()")
+Signed-off-by: Kiwoong Kim <kwmad.kim@samsung.com>
+Reviewed-by: Bean Huo <beanhuo@micron.com>
+Reported-by: Bart Van Assche <bvanassche@acm.org>
+---
+ drivers/ufs/core/ufshcd.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+---
+diff --git a/drivers/ufs/core/ufshcd.c b/drivers/ufs/core/ufshcd.c
+index bcc2512bf34b..7fc80926eeec 100644
+--- a/drivers/ufs/core/ufshcd.c
++++ b/drivers/ufs/core/ufshcd.c
+@@ -8046,6 +8046,9 @@ int ufshcd_try_to_abort_task(struct ufs_hba *hba, int tag)
+ 
+ 	lrbp = scsi_cmd_priv(cmd);
+ 
++	if (!ufshcd_is_scsi_cmd(cmd))
++		goto clear_cmd;
++
+ 	for (poll_cnt = 100; poll_cnt; poll_cnt--) {
+ 		err = ufshcd_issue_tm_cmd(hba, lrbp->lun, tag, UFS_QUERY_TASK,
+ 					  &resp);
+@@ -8091,6 +8094,7 @@ int ufshcd_try_to_abort_task(struct ufs_hba *hba, int tag)
+ 		return err;
+ 	}
+ 
++clear_cmd:
+ 	err = ufshcd_clear_cmd(hba, tag);
+ 	if (err)
+ 		dev_err(hba->dev, "%s: Failed clearing cmd at tag %d, err %d\n",

@@ -1,0 +1,98 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Gianfranco Mariotti <gianfranco.mariotti94@gmail.com>
+Date: Sat, 21 Nov 2026 22:41:01 +0100
+Subject: [PATCH] drm/msm/dp: keep training pattern active until stream video is ready
+
+Commit ca16db3d18cf ("drm/msm/dp: break up dp_display_enable into two
+parts") introduced two regressions on DisplayPort re-plug:
+
+1. msm_dp_display_prepare_link() called msm_dp_ctrl_on_link() on every
+   prepare (even when power_on was already true) and unconditionally set
+   force_link_train = true when !power_on, causing
+   msm_dp_ctrl_prepare_stream_on() to immediately re-run link training a
+   second time right after msm_dp_ctrl_on_link() succeeded. Only call
+   msm_dp_ctrl_on_link() when !power_on, and pass force_link_train =
+   false to msm_dp_ctrl_prepare_stream_on() so it only retrains if
+   channel equalization was lost.
+
+2. Splitting msm_dp_ctrl_on_stream() left
+   msm_dp_ctrl_clear_training_pattern() in
+   msm_dp_ctrl_prepare_stream_on(), clearing DP_TRAINING_PATTERN_SET
+   (DPCD 0x102 = 0x00, which re-enables the sink descrambler) ~45 ms
+   before msm_dp_ctrl_on_stream() enables the pixel clock, programs the
+   TU, and switches REG_DP_STATE_CTRL to DP_STATE_CTRL_SEND_VIDEO.
+   During that window the DPTX remains in MR_LINK_TRAINING2 transmitting
+   unscrambled TPS symbols, causing SST monitors to lose symbol lock.
+
+Move msm_dp_ctrl_clear_training_pattern() back into
+msm_dp_ctrl_on_stream() immediately before DP_STATE_CTRL_SEND_VIDEO.
+
+Fixes: ca16db3d18cf ("drm/msm/dp: break up dp_display_enable into two parts")
+Signed-off-by: Gianfranco Mariotti <gianfranco.mariotti94@gmail.com>
+Link: https://lore.kernel.org/r/20261121214105.32596-4-gianfranco.mariotti94@gmail.com
+---
+ drivers/gpu/drm/msm/dp/dp_ctrl.c    |  6 +++---
+ drivers/gpu/drm/msm/dp/dp_display.c | 16 +++++++---------
+ 2 files changed, 10 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/dp/dp_ctrl.c b/drivers/gpu/drm/msm/dp/dp_ctrl.c
+index b896196cf244..779f743f9418 100644
+--- a/drivers/gpu/drm/msm/dp/dp_ctrl.c
++++ b/drivers/gpu/drm/msm/dp/dp_ctrl.c
+@@ -2616,9 +2616,6 @@ int msm_dp_ctrl_prepare_stream_on(struct msm_dp_ctrl *msm_dp_ctrl,
+ 	if (force_link_train || !msm_dp_ctrl_channel_eq_ok(ctrl))
+ 		msm_dp_ctrl_link_retrain(ctrl, panel);
+ 
+-	/* stop txing train pattern to end link training */
+-	msm_dp_ctrl_clear_training_pattern(ctrl, panel, DP_PHY_DPRX);
+-
+ 	return ret;
+ }
+ 
+@@ -2663,6 +2660,9 @@ int msm_dp_ctrl_on_stream(struct msm_dp_ctrl *msm_dp_ctrl, struct msm_dp_panel *
+ 
+ 	msm_dp_ctrl_setup_tr_unit(ctrl, panel);
+ 
++	/* stop txing train pattern to end link training */
++	msm_dp_ctrl_clear_training_pattern(ctrl, panel, DP_PHY_DPRX);
++
+ 	msm_dp_write_link(ctrl, REG_DP_STATE_CTRL, DP_STATE_CTRL_SEND_VIDEO);
+ 
+ 	ret = msm_dp_ctrl_wait4video_ready(ctrl);
+diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
+index bce641d7d893..b8373740275b 100644
+--- a/drivers/gpu/drm/msm/dp/dp_display.c
++++ b/drivers/gpu/drm/msm/dp/dp_display.c
+@@ -632,7 +632,6 @@ static int msm_dp_display_prepare_link(struct msm_dp_display_private *dp)
+ {
+ 	struct msm_dp *msm_dp_display = &dp->msm_dp_display;
+ 	int rc = 0;
+-	bool force_link_train = false;
+ 
+ 	drm_dbg_dp(dp->drm_dev, "sink_count=%d\n", dp->link->sink_count);
+ 
+@@ -650,17 +649,16 @@ static int msm_dp_display_prepare_link(struct msm_dp_display_private *dp)
+ 
+ 	if (!msm_dp_display->power_on) {
+ 		msm_dp_display_host_phy_init(dp);
+-		force_link_train = true;
+-	}
+ 
+-	rc = msm_dp_ctrl_on_link(dp->ctrl, dp->panel);
+-	if (rc) {
+-		DRM_ERROR("Failed link training (rc=%d)\n", rc);
+-		// TODO: schedule drm_connector_set_link_status_property()
+-		return rc;
++		rc = msm_dp_ctrl_on_link(dp->ctrl, dp->panel);
++		if (rc) {
++			DRM_ERROR("Failed link training (rc=%d)\n", rc);
++			/* TODO: schedule drm_connector_set_link_status_property() */
++			return rc;
++		}
+ 	}
+ 
+-	return msm_dp_ctrl_prepare_stream_on(dp->ctrl, dp->panel, force_link_train);
++	return msm_dp_ctrl_prepare_stream_on(dp->ctrl, dp->panel, false);
+ }
+ 
+ static int msm_dp_display_enable(struct msm_dp_display_private *dp,
