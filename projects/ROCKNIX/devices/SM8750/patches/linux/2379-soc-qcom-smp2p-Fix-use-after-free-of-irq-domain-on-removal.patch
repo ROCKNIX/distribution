@@ -1,0 +1,171 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Krzysztof Kozlowski <krzysztof.kozlowski@oss.qualcomm.com>
+Date: Mon, 02 Nov 2026 14:35:32 +0100
+Subject: [PATCH] soc: qcom: smp2p: Fix use-after-free of irq domain on removal
+
+The SMP2P interrupt is requested with devm_request_threaded_irq(), so it
+is freed only after qcom_smp2p_remove() returns or, in the probe error
+path, after probe returns.   Both paths, however, explicitly remove the
+inbound irq domains, unregister outbound SMEM states and free the
+mailbox channel before that.
+
+If the interrupt is triggered in this window, the interrupt handler
+would use previously freed data.  Mixing manual probe() cleanup
+and resource-managed devm leads to such races, thus just convert
+as much as possible to devm to fix the issue and make code simpler.
+
+Note that for_each_available_child_of_node_scoped() loop, before
+registering qcom_smp2p_unwind_interfaces_action() cleanup action, still
+uses manual unwind, because it allocates the "entry" memory which is
+used by the action itself.
+
+Reported-by: Sashiko <sashiko-bot@kernel.org>
+Closes: https://sashiko.dev/#/bug/linux-02cea59a-8c4a-460c-aeed-69002ab3e72d
+Fixes: 50e99641413e ("soc: qcom: smp2p: Qualcomm Shared Memory Point to Point")
+Cc: stable@vger.kernel.org
+Signed-off-by: Krzysztof Kozlowski <krzysztof.kozlowski@oss.qualcomm.com>
+Reviewed-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261102133531.173434-4-krzysztof.kozlowski@oss.qualcomm.com
+[Backported to 7.3: 7.3 logs the interrupt request failure, so keep the
+message and return]
+---
+
+ drivers/soc/qcom/smp2p.c |   79 +++++++++++++++++++++++-----------------------
+ 1 file changed, 39 insertions(+), 40 deletions(-)
+
+diff --git a/drivers/soc/qcom/smp2p.c b/drivers/soc/qcom/smp2p.c
+index b00b3e179..58f1b8b56 100644
+--- a/drivers/soc/qcom/smp2p.c
++++ b/drivers/soc/qcom/smp2p.c
+@@ -649,6 +649,31 @@ static int smp2p_parse_ipc(struct qcom_smp2p *smp2p)
+ 	return 0;
+ }
+ 
++static void qcom_smp2p_release_mbox(void *data)
++{
++	struct qcom_smp2p *smp2p = data;
++
++	mbox_free_channel(smp2p->mbox_chan);
++}
++
++static void qcom_smp2p_unwind_interfaces(struct qcom_smp2p *smp2p)
++{
++	struct smp2p_entry *entry;
++
++	list_for_each_entry(entry, &smp2p->inbound, node)
++		irq_domain_remove(entry->domain);
++
++	list_for_each_entry(entry, &smp2p->outbound, node)
++		qcom_smem_state_unregister(entry->state);
++
++	smp2p->out->valid_entries = 0;
++}
++
++static void qcom_smp2p_unwind_interfaces_action(void *data)
++{
++	qcom_smp2p_unwind_interfaces(data);
++}
++
+ static int qcom_smp2p_probe(struct platform_device *pdev)
+ {
+ 	struct smp2p_entry *entry;
+@@ -701,9 +726,13 @@ static int qcom_smp2p_probe(struct platform_device *pdev)
+ 			return ret;
+ 	}
+ 
++	ret = devm_add_action_or_reset(&pdev->dev, qcom_smp2p_release_mbox, smp2p);
++	if (ret)
++		return ret;
++
+ 	ret = qcom_smp2p_alloc_outbound_item(smp2p);
+ 	if (ret < 0)
+-		goto release_mbox;
++		return ret;
+ 
+ 	for_each_available_child_of_node_scoped(pdev->dev.of_node, node) {
+ 		entry = devm_kzalloc(&pdev->dev, sizeof(*entry), GFP_KERNEL);
+@@ -734,6 +763,12 @@ static int qcom_smp2p_probe(struct platform_device *pdev)
+ 		}
+ 	}
+ 
++	ret = devm_add_action_or_reset(&pdev->dev,
++				       qcom_smp2p_unwind_interfaces_action,
++				       smp2p);
++	if (ret)
++		return ret;
++
+ 	/* Check inbound entries in the case of early boot processor */
+ 	qcom_smp2p_start_in(smp2p);
+ 
+@@ -746,7 +781,7 @@ static int qcom_smp2p_probe(struct platform_device *pdev)
+ 					NULL, (void *)smp2p);
+ 	if (ret) {
+ 		dev_err(&pdev->dev, "failed to request interrupt\n");
+-		goto unwind_interfaces;
++		return ret;
+ 	}
+ 
+ 	/*
+@@ -760,27 +795,10 @@ static int qcom_smp2p_probe(struct platform_device *pdev)
+ 	 */
+ 	device_set_wakeup_capable(&pdev->dev, true);
+ 
+-	ret = dev_pm_set_wake_irq(&pdev->dev, irq);
+-	if (ret)
+-		goto set_wake_irq_fail;
+-
+-	return 0;
+-
+-set_wake_irq_fail:
+-	dev_pm_clear_wake_irq(&pdev->dev);
++	return devm_pm_set_wake_irq(&pdev->dev, irq);
+ 
+ unwind_interfaces:
+-	list_for_each_entry(entry, &smp2p->inbound, node)
+-		irq_domain_remove(entry->domain);
+-
+-	list_for_each_entry(entry, &smp2p->outbound, node)
+-		qcom_smem_state_unregister(entry->state);
+-
+-	smp2p->out->valid_entries = 0;
+-
+-release_mbox:
+-	mbox_free_channel(smp2p->mbox_chan);
+-
++	qcom_smp2p_unwind_interfaces(smp2p);
+ 	return ret;
+ 
+ report_read_failure:
+@@ -788,24 +806,6 @@ static int qcom_smp2p_probe(struct platform_device *pdev)
+ 	return -EINVAL;
+ }
+ 
+-static void qcom_smp2p_remove(struct platform_device *pdev)
+-{
+-	struct qcom_smp2p *smp2p = platform_get_drvdata(pdev);
+-	struct smp2p_entry *entry;
+-
+-	dev_pm_clear_wake_irq(&pdev->dev);
+-
+-	list_for_each_entry(entry, &smp2p->inbound, node)
+-		irq_domain_remove(entry->domain);
+-
+-	list_for_each_entry(entry, &smp2p->outbound, node)
+-		qcom_smem_state_unregister(entry->state);
+-
+-	mbox_free_channel(smp2p->mbox_chan);
+-
+-	smp2p->out->valid_entries = 0;
+-}
+-
+ static const struct of_device_id qcom_smp2p_of_match[] = {
+ 	{ .compatible = "qcom,smp2p" },
+ 	{}
+@@ -814,7 +814,6 @@ MODULE_DEVICE_TABLE(of, qcom_smp2p_of_match);
+ 
+ static struct platform_driver qcom_smp2p_driver = {
+ 	.probe = qcom_smp2p_probe,
+-	.remove = qcom_smp2p_remove,
+ 	.driver  = {
+ 		.name  = "qcom_smp2p",
+ 		.of_match_table = qcom_smp2p_of_match,

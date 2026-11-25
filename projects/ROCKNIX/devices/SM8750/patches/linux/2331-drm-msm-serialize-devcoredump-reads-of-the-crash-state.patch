@@ -1,0 +1,107 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nico Angelo Dela Cruz <nicoangelodelacruz@gmail.com>
+Date: Mon, 02 Nov 2026 02:05:08 +0800
+Subject: [PATCH] drm/msm: serialize devcoredump reads of the crash state
+
+adreno_show_object() converts each captured buffer to ascii85 the
+first time the crash state is shown, in place: it checks *encoded,
+replaces *ptr with the encoded copy and kvfree()s the raw buffer.
+msm_gpu_devcoredump_read() only takes gpu->lock around the reference
+get, and every read() of the devcoredump renders the whole state
+again, so two processes reading the same devcoredump at once can both
+see *encoded == false and both free the same buffer, or print a
+buffer the other one just freed:
+
+  WARNING: mm/slub.c:6733 at free_large_kmalloc+0xb0/0xf8
+   kvfree+0x44/0x60
+   adreno_show_object+0x190/0x240
+   adreno_show+0x1d0/0x438
+   a6xx_show+0x68/0xbd0
+   msm_gpu_devcoredump_read+0x144/0x1f8
+   devcd_data_read+0x34/0x48
+  page dumped because: Not a kmalloc allocation
+
+The dump also changes length between reads, so a reader can get a
+short copy that ends at a page boundary.
+
+Seen on an Adreno 830 with IGT's msm_recovery reading the devcoredump
+while a udev helper copied it out: 16 such warnings in one boot, none
+with this patch.
+
+Add a mutex to struct msm_gpu and hold it while the state is
+rendered. Only one crash state exists at a time, so a per-GPU lock is
+enough. gpu->lock isn't used because a devcoredump reader would then
+hold up recovery and fault capture for as long as it takes to render
+the dump. The new lock is taken after msm_gpu_crashstate_get() and
+dropped before msm_gpu_crashstate_put(), so it never nests with
+gpu->lock, and it is taken interruptibly so a reader waiting behind
+a slow render can be killed.
+
+Fixes: 1df4289d5b23 ("drm/msm: Optimize adreno_show_object()")
+Cc: stable@vger.kernel.org
+Signed-off-by: Nico Angelo Dela Cruz <nicoangelodelacruz@gmail.com>
+Link: https://lore.kernel.org/r/20261101180508.66598-2-nicoangelodelacruz@gmail.com
+---
+ drivers/gpu/drm/msm/msm_gpu.c | 10 ++++++++++
+ drivers/gpu/drm/msm/msm_gpu.h |  8 ++++++++
+ 2 files changed, 18 insertions(+)
+
+diff --git a/drivers/gpu/drm/msm/msm_gpu.c b/drivers/gpu/drm/msm/msm_gpu.c
+index fded78fdb..428dc9666 100644
+--- a/drivers/gpu/drm/msm/msm_gpu.c
++++ b/drivers/gpu/drm/msm/msm_gpu.c
+@@ -191,11 +191,18 @@ static ssize_t msm_gpu_devcoredump_read(char *buffer, loff_t offset,
+ 	struct drm_print_iterator iter;
+ 	struct drm_printer p;
+ 	struct msm_gpu_state *state;
++	int ret;
+ 
+ 	state = msm_gpu_crashstate_get(gpu);
+ 	if (!state)
+ 		return 0;
+ 
++	ret = mutex_lock_interruptible(&gpu->crashstate_show_lock);
++	if (ret) {
++		msm_gpu_crashstate_put(gpu);
++		return ret;
++	}
++
+ 	iter.data = buffer;
+ 	iter.offset = 0;
+ 	iter.start = offset;
+@@ -214,6 +221,8 @@ static ssize_t msm_gpu_devcoredump_read(char *buffer, loff_t offset,
+ 
+ 	gpu->funcs->show(gpu, state, &p);
+ 
++	mutex_unlock(&gpu->crashstate_show_lock);
++
+ 	msm_gpu_crashstate_put(gpu);
+ 
+ 	return count - iter.remain;
+@@ -914,6 +923,7 @@ int msm_gpu_init(struct drm_device *drm, struct platform_device *pdev,
+ 	gpu->funcs = funcs;
+ 	gpu->name = name;
+ 	INIT_WORK(&gpu->crashstate_free_work, msm_gpu_crashstate_free_worker);
++	mutex_init(&gpu->crashstate_show_lock);
+ 
+ 	gpu->worker = kthread_run_worker(0, "gpu-worker");
+ 	if (IS_ERR(gpu->worker)) {
+diff --git a/drivers/gpu/drm/msm/msm_gpu.h b/drivers/gpu/drm/msm/msm_gpu.h
+index db9e11e7f..9b683973b 100644
+--- a/drivers/gpu/drm/msm/msm_gpu.h
++++ b/drivers/gpu/drm/msm/msm_gpu.h
+@@ -264,6 +264,14 @@ struct msm_gpu {
+ 	 */
+ 	struct work_struct crashstate_free_work;
+ 
++	/**
++	 * @crashstate_show_lock: serializes rendering of @crashstate for the
++	 * devcoredump.  The show functions convert captured buffers to ascii85
++	 * in place on first use (see adreno_show_object()), so concurrent
++	 * readers of the same dump must not render it at the same time.
++	 */
++	struct mutex crashstate_show_lock;
++
+ 	/**
+ 	 * @recovery_in_progress: true while recover_worker() holds @lock, so
+ 	 * that fault capture and GMU waits don't wait on a fault devcoredump

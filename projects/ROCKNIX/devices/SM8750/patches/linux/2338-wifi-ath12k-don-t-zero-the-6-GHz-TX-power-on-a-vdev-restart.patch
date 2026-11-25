@@ -1,0 +1,114 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Christopher Griffin <christophergriffin05@gmail.com>
+Date: Sat, 14 Nov 2026 08:44:27 -0600
+Subject: [PATCH] wifi: ath12k: don't zero the 6 GHz TX power on a vdev restart
+
+ath12k_mac_fill_reg_tpc_info() takes a non-zero
+reg_tpc_info.num_pwr_levels to mean that a TPE element was parsed, and
+then limits every power level by reg_tpc_info.tpe[]. But it also stores
+the number of levels it filled in that same field.
+
+An AP vdev never parses a TPE element. Its first vdev start finds the
+field zero and fills the levels from the regulatory rules; every later
+start or restart of the vdev, such as a channel switch, finds the count
+of the last fill there, takes the "TPE received" branch with the level
+count of the old width, and limits every level by tpe[], which is all
+zeroes. WMI_VDEV_SET_TPC_POWER_CMDID then carries a limit of 0 dBm, and
+the AP transmits at that until the interface is removed and added
+again. A station whose AP sent no TPE element for its power type goes
+the same way on its next vdev start.
+
+On a 6 GHz AP, after a channel switch from channel 149 to 165 at
+80 MHz, or one that only changes the width (80 to 320 MHz, or back),
+iw reports "txpower 0.00 dBm", tpc_stats shows "power limit-0" where it
+showed 48 before the switch, and a station next to the AP hears it
+15 dB lower.
+
+Keep whether a TPE element was parsed in a flag of its own, set by
+ath12k_mac_parse_tx_pwr_env(), and test that instead. With the change
+the power is the same before and after seven channel switches, three of
+them width changes.
+
+The change and this message were written with Claude, an AI coding
+assistant.
+
+Tested-on: QCN9274 hw2.0 PCI WLAN.WBE.1.4.1-00199-QCAHKSWPL_SILICONZ-1
+
+Fixes: aeda163bb0c7 ("wifi: ath12k: fill parameters for vdev set TPC power WMI command")
+Fixes: a44958c83e52 ("wifi: ath12k: Send WMI_VDEV_SET_TPC_POWER_CMD for AP vdev")
+Signed-off-by: Christopher Griffin <christophergriffin05@gmail.com>
+Link: https://lore.kernel.org/r/20261114-ath12k-6ghz-tpc-vdev-restart-v1-1-5680ada87c37@gmail.com
+---
+Found on an Arista C-460 (IPQ9574 with three QCN9274 hw2.0) running
+OpenWrt: its 6 GHz AP went to 0 dBm after every channel switch, and
+stayed there until the interface was taken down and brought up again.
+The cause was found by reading the code.
+
+Tested on that board with Linux 6.18 and ath12k from backports 7.2,
+carrying the same change: without it four of four channel switches
+left "txpower 0.00 dBm"; with it seven of seven kept the power. The
+code in ath-next is the same there. On ath-next the patch is
+compile-tested only.
+---
+ drivers/net/wireless/ath/ath12k/mac.c | 5 ++++-
+ drivers/net/wireless/ath/ath12k/mac.h | 2 ++
+ 2 files changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/mac.c b/drivers/net/wireless/ath/ath12k/mac.c
+index eee3f38375ae8..ff835a1a1e32e 100644
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -12125,7 +12125,7 @@ void ath12k_mac_fill_reg_tpc_info(struct ath12k *ar,
+ 	start_freq = ath12k_mac_get_6ghz_start_frequency(&ctx->def);
+ 	pwr_reduction = bss_conf->pwr_reduction;
+ 
+-	if (arvif->reg_tpc_info.num_pwr_levels) {
++	if (reg_tpc_info->tpe_present) {
+ 		is_tpe_present = true;
+ 		num_pwr_levels = arvif->reg_tpc_info.num_pwr_levels;
+ 	} else {
+@@ -12314,6 +12314,7 @@ static void ath12k_mac_parse_tx_pwr_env(struct ath12k *ar,
+ 		ath12k_warn(ab,
+ 			    "no transmit power envelope match client power type %d\n",
+ 			    client_type);
++		tpc_info->tpe_present = false;
+ 		return;
+ 	}
+ 
+@@ -12353,6 +12354,8 @@ static void ath12k_mac_parse_tx_pwr_env(struct ath12k *ar,
+ 				   i, tpc_info->tpe[i]);
+ 		}
+ 	}
++
++	tpc_info->tpe_present = tpc_info->num_pwr_levels > 0;
+ }
+ 
+ int
+diff --git a/drivers/net/wireless/ath/ath12k/mac.h b/drivers/net/wireless/ath/ath12k/mac.h
+index 61c2ec8865a39..1da758837c7b1 100644
+--- a/drivers/net/wireless/ath/ath12k/mac.h
++++ b/drivers/net/wireless/ath/ath12k/mac.h
+@@ -119,6 +119,7 @@ struct ath12k_chan_power_info {
+ /**
+  * struct ath12k_reg_tpc_power_info - regulatory TPC power info
+  * @is_psd_power: is PSD power or not
++ * @tpe_present: @num_pwr_levels and @tpe are from a parsed TPE element
+  * @eirp_power: Maximum EIRP power (dBm), valid only if power is PSD
+  * @ap_power_type: type of power (SP/LPI/VLP)
+  * @num_pwr_levels: number of power levels
+@@ -129,6 +130,7 @@ struct ath12k_chan_power_info {
+  */
+ struct ath12k_reg_tpc_power_info {
+ 	bool is_psd_power;
++	bool tpe_present;
+ 	u8 eirp_power;
+ 	enum wmi_reg_6g_ap_type ap_power_type;
+ 	u8 num_pwr_levels;
+
+---
+base-commit: 1be6c8d3027d4a421dc46b93a89a196c61945614
+change-id: 20261114-ath12k-6ghz-tpc-vdev-restart-f5b164f313b6
+
+Best regards,
+--  
+Christopher Griffin <christophergriffin05@gmail.com>

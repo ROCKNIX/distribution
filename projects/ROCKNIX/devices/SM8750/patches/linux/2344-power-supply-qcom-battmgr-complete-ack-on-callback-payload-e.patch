@@ -1,0 +1,115 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alexandru Andrieș <alex.andries.aa@gmail.com>
+Date: Thu, 19 Nov 2026 00:16:51 +0100
+Subject: [PATCH] power: supply: qcom_battmgr: complete ack on callback payload errors
+
+On unexpected payload lengths, qcom_battmgr_sc8280xp_callback() and
+qcom_battmgr_sm8350_callback() return early without completing
+&battmgr->ack, stalling qcom_battmgr_request() for 1s until
+wait_for_completion_timeout() expires with -ETIMEDOUT instead of
+returning -ENODATA. Aside from the 1s delay, -ETIMEDOUT causes
+power_supply_uevent() to abort the entire uevent on firmware with
+mismatched property payloads (such as shifted BATT_MODEL_NAME IDs on
+Xiaomi SM8350), whereas -ENODATA lets add_prop_uevent() skip only the
+affected property.
+
+Set battmgr->error = -ENODATA on short payloads as well and jump to
+out_complete on all payload length errors.
+
+Tested the SM8350 path on a Xiaomi MIX 4; the SC8280XP path was
+build-tested only.
+
+Fixes: 29e8142b5623 ("power: supply: Introduce Qualcomm PMIC GLINK power supply")
+Cc: stable@vger.kernel.org
+Signed-off-by: Alexandru Andrieș <alex.andries.aa@gmail.com>
+Link: https://lore.kernel.org/r/20261119-upstream-qcom-battmgr-fixes-v1-v1-2-ca83700c08c1@gmail.com
+---
+ drivers/power/supply/qcom_battmgr.c | 19 +++++++++++--------
+ 1 file changed, 11 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/power/supply/qcom_battmgr.c b/drivers/power/supply/qcom_battmgr.c
+index c07e2db8f242..83e67d22c432 100644
+--- a/drivers/power/supply/qcom_battmgr.c
++++ b/drivers/power/supply/qcom_battmgr.c
+@@ -1285,7 +1285,8 @@ static void qcom_battmgr_sc8280xp_callback(struct qcom_battmgr *battmgr,
+ 	if (payload_len < sizeof(__le32)) {
+ 		dev_warn(battmgr->dev, "invalid payload length for %#x: %zd\n",
+ 			 opcode, len);
+-		return;
++		battmgr->error = -ENODATA;
++		goto out_complete;
+ 	}
+ 
+ 	switch (opcode) {
+@@ -1300,7 +1301,7 @@ static void qcom_battmgr_sc8280xp_callback(struct qcom_battmgr *battmgr,
+ 				 "invalid payload length for battery information request: %zd\n",
+ 				 payload_len);
+ 			battmgr->error = -ENODATA;
+-			return;
++			goto out_complete;
+ 		}
+ 
+ 		battmgr->unit = le32_to_cpu(resp->info.power_unit);
+@@ -1325,7 +1326,7 @@ static void qcom_battmgr_sc8280xp_callback(struct qcom_battmgr *battmgr,
+ 				 "invalid payload length for battery status request: %zd\n",
+ 				 payload_len);
+ 			battmgr->error = -ENODATA;
+-			return;
++			goto out_complete;
+ 		}
+ 
+ 		battmgr->status.capacity = le32_to_cpu(resp->status.capacity) * 1000;
+@@ -1388,6 +1389,7 @@ static void qcom_battmgr_sc8280xp_callback(struct qcom_battmgr *battmgr,
+ 		break;
+ 	}
+ 
++out_complete:
+ 	complete(&battmgr->ack);
+ }
+ 
+@@ -1403,7 +1405,8 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
+ 	if (payload_len < sizeof(__le32)) {
+ 		dev_warn(battmgr->dev, "invalid payload length for %#x: %zd\n",
+ 			 opcode, len);
+-		return;
++		battmgr->error = -ENODATA;
++		goto out_complete;
+ 	}
+ 
+ 	switch (opcode) {
+@@ -1415,7 +1418,7 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
+ 					 "invalid payload length for BATT_MODEL_NAME request: %zd\n",
+ 					 payload_len);
+ 				battmgr->error = -ENODATA;
+-				return;
++				goto out_complete;
+ 			}
+ 		} else {
+ 			if (payload_len != sizeof(resp->intval)) {
+@@ -1423,7 +1426,7 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
+ 					 "invalid payload length for %#x request: %zd\n",
+ 					 property, payload_len);
+ 				battmgr->error = -ENODATA;
+-				return;
++				goto out_complete;
+ 			}
+ 
+ 			battmgr->error = le32_to_cpu(resp->intval.result);
+@@ -1514,7 +1517,7 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
+ 				 "invalid payload length for %#x request: %zd\n",
+ 				 property, payload_len);
+ 			battmgr->error = -ENODATA;
+-			return;
++			goto out_complete;
+ 		}
+ 
+ 		battmgr->error = le32_to_cpu(resp->intval.result);
+@@ -1555,7 +1558,7 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
+ 				 "invalid payload length for %#x request: %zd\n",
+ 				 property, payload_len);
+ 			battmgr->error = -ENODATA;
+-			return;
++			goto out_complete;
+ 		}
+ 
+ 		battmgr->error = le32_to_cpu(resp->intval.result);

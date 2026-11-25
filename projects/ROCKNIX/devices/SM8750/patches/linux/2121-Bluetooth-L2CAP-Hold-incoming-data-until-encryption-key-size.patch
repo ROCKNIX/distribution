@@ -1,0 +1,132 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Luiz Augusto von Dentz <luiz.von.dentz@intel.com>
+Date: Thu, 22 Oct 2026 11:46:21 -0400
+Subject: [PATCH] Bluetooth: L2CAP: Hold incoming data until encryption key size is known
+
+Once encryption is enabled on an ACL link, the encryption key size is
+read from the controller, using hdev->min_enc_key_size in the meantime.
+Data received before the reply is processed with that key size, so a
+peer starting SMP over BR/EDR right after encryption, which it may do,
+gets its Pairing Request rejected with "Encryption Key Size" whenever
+the pending security level is FIPS, as that requires a 16 octet key:
+
+  > HCI Event: Encryption Change (0x08) plen 4
+  > ACL Data RX: Handle 1 flags 0x02 dlen 11
+        BR/EDR SMP: Pairing Request (0x01) len 6
+  @ MGMT Event: Authentication Failed (0x0011) plen 8
+        Status: Authentication Failed (0x05)
+  < HCI Command: Read Encryption Key Size (0x05|0x0008) plen 2
+  > HCI Event: Command Complete (0x0e) plen 7
+        Key size: 16
+  < ACL Data TX: Handle 1 flags 0x00 dlen 6
+        BR/EDR SMP: Pairing Failed (0x05) len 1
+        Reason: Encryption key size (0x06)
+
+Mark the connection with HCI_CONN_ENC_KEY_SIZE_PEND while the key size
+is read and hold incoming L2CAP data back in pending_rx meanwhile,
+processing it once the reply is handled.
+
+Found with mgmt-tester "Pairing Acceptor - SMP over BR/EDR 2" under User
+Mode Linux time travel, where the emulated peer always replies before
+the key size is read.
+
+Fixes: e3f6a257a73d ("Bluetooth: Use actual encryption key size for SMP over BR/EDR")
+Assisted-by: OpenCode:claude-opus-5.5
+Signed-off-by: Luiz Augusto von Dentz <luiz.von.dentz@intel.com>
+Link: https://lore.kernel.org/r/20261022154621.3958803-2-luiz.dentz@gmail.com
+---
+ include/net/bluetooth/hci_core.h |  1 +
+ net/bluetooth/hci_event.c        | 12 +++++++++++-
+ net/bluetooth/l2cap_core.c       | 16 ++++++++++++++--
+ 3 files changed, 26 insertions(+), 3 deletions(-)
+
+diff --git a/include/net/bluetooth/hci_core.h b/include/net/bluetooth/hci_core.h
+index 8f32c860d492..f6fa6a327e11 100644
+--- a/include/net/bluetooth/hci_core.h
++++ b/include/net/bluetooth/hci_core.h
+@@ -1017,6 +1017,7 @@ enum {
+ 	HCI_CONN_CREATE_PA_SYNC,
+ 	HCI_CONN_PA_SYNC,
+ 	HCI_CONN_PA_SYNC_FAILED,
++	HCI_CONN_ENC_KEY_SIZE_PEND,
+ };
+ 
+ static inline bool hci_conn_ssp_enabled(struct hci_conn *conn)
+diff --git a/net/bluetooth/hci_event.c b/net/bluetooth/hci_event.c
+index 56ad10ab96e3..565668d8d7cc 100644
+--- a/net/bluetooth/hci_event.c
++++ b/net/bluetooth/hci_event.c
+@@ -724,6 +724,8 @@ static u8 hci_cc_read_enc_key_size(struct hci_dev *hdev, void *data,
+ 		goto done;
+ 	}
+ 
++	clear_bit(HCI_CONN_ENC_KEY_SIZE_PEND, &conn->flags);
++
+ 	/* While unexpected, the read_enc_key_size command may fail. The most
+ 	 * secure approach is to then assume the key size is 0 to force a
+ 	 * disconnection.
+@@ -3190,6 +3192,7 @@ static int hci_read_enc_key_size(struct hci_dev *hdev, struct hci_conn *conn)
+ {
+ 	struct hci_cp_read_enc_key_size cp;
+ 	u8 *key_enc_size = hci_conn_key_enc_size(conn);
++	int err;
+ 
+ 	if (!read_key_size_capable(hdev)) {
+ 		conn->enc_key_size = HCI_LINK_KEY_SIZE;
+@@ -3211,7 +3214,14 @@ static int hci_read_enc_key_size(struct hci_dev *hdev, struct hci_conn *conn)
+ 	else
+ 		conn->enc_key_size = hdev->min_enc_key_size;
+ 
+-	return hci_send_cmd(hdev, HCI_OP_READ_ENC_KEY_SIZE, sizeof(cp), &cp);
++	/* L2CAP holds incoming data back until the key size is known */
++	set_bit(HCI_CONN_ENC_KEY_SIZE_PEND, &conn->flags);
++
++	err = hci_send_cmd(hdev, HCI_OP_READ_ENC_KEY_SIZE, sizeof(cp), &cp);
++	if (err)
++		clear_bit(HCI_CONN_ENC_KEY_SIZE_PEND, &conn->flags);
++
++	return err;
+ }
+ 
+ static void hci_conn_complete_evt(struct hci_dev *hdev, void *data,
+diff --git a/net/bluetooth/l2cap_core.c b/net/bluetooth/l2cap_core.c
+index 4dd56e0074fd..361ed3ebe19e 100644
+--- a/net/bluetooth/l2cap_core.c
++++ b/net/bluetooth/l2cap_core.c
+@@ -7389,7 +7389,11 @@ static void l2cap_recv_frame(struct l2cap_conn *conn, struct sk_buff *skb)
+ 	u16 cid, len;
+ 	__le16 psm;
+ 
+-	if (hcon->state != BT_CONNECTED) {
++	/* Also hold data back while the encryption key size is read, as
++	 * the security of the link, e.g. for SMP over BR/EDR, depends on it.
++	 */
++	if (hcon->state != BT_CONNECTED ||
++	    test_bit(HCI_CONN_ENC_KEY_SIZE_PEND, &hcon->flags)) {
+ 		BT_DBG("queueing pending rx skb");
+ 		skb_queue_tail(&conn->pending_rx, skb);
+ 		return;
+@@ -7452,7 +7456,11 @@ static void process_pending_rx(struct work_struct *work)
+ 
+ 	mutex_lock(&conn->lock);
+ 
+-	while ((skb = skb_dequeue(&conn->pending_rx)))
++	/* l2cap_recv_frame() would queue it all again while the encryption
++	 * key size is read, l2cap_security_cfm() schedules this once known.
++	 */
++	while (!test_bit(HCI_CONN_ENC_KEY_SIZE_PEND, &conn->hcon->flags) &&
++	       (skb = skb_dequeue(&conn->pending_rx)))
+ 		l2cap_recv_frame(conn, skb);
+ 
+ 	mutex_unlock(&conn->lock);
+@@ -8041,6 +8049,10 @@ static void l2cap_security_cfm(struct hci_conn *hcon, u8 status, u8 encrypt)
+ 	}
+ 
+ 	mutex_unlock(&conn->lock);
++
++	/* Process data held back while the encryption key size was read */
++	if (!skb_queue_empty(&conn->pending_rx))
++		queue_work(hcon->hdev->workqueue, &conn->pending_rx_work);
+ }
+ 
+ /* Append fragment into frame respecting the maximum len of rx_skb */

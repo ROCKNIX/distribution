@@ -1,0 +1,127 @@
+From 45e28b01e4d06282d03f08888f09722709d4b552 Mon Sep 17 00:00:00 2001
+From: Shuai Zhang <shuai.zhang@oss.qualcomm.com>
+Date: Tue, 10 Nov 2026 17:29:29 +0800
+Subject: [PATCH] Bluetooth: hci_qca: Don't use the serdev port after a failed
+ reopen
+
+If serdev_device_open() fails in qca_port_reopen(), qca_regulator_init()
+or the qca_setup() retry path, the port is left closed but
+HCI_UART_PROTO_READY stays set. The error reaches qca_setup(), whose
+retry loop calls serdev_device_close() again, and hci_uart_close() or
+hci_uart_unregister_device() close it once more later. The HCI core
+also calls hci_uart_flush() from hci_dev_close_sync() before
+hdev->close(), which writes to the closed port.
+
+serdev_device_close() and serdev_device_write_flush() have no "not open"
+check. ttyport_open() clears serport->tty when it fails, so both end up
+passing NULL to the tty layer, and the runtime PM usage count is dropped
+once too often.
+
+Keep HCI_UART_PROTO_READY in sync with the port state in hci_qca: clear
+it when the port is closed, set it only after a successful open, and
+only call serdev_device_close() when it was set. hci_uart_open() already
+treats the flag as "port is open" and reopens the port when it is
+clear, so the next power on recovers. Make hci_uart_flush() skip the
+port flush when the flag is clear, as it already does for the proto
+flush.
+
+Signed-off-by: Shuai Zhang <shuai.zhang@oss.qualcomm.com>
+Reviewed-by: Bartosz Golaszewski <bartosz.golaszewski@oss.qualcomm.com>
+Signed-off-by: Luiz Augusto von Dentz <luiz.von.dentz@intel.com>
+---
+ drivers/bluetooth/hci_qca.c    | 33 +++++++++++++++++++++++++++------
+ drivers/bluetooth/hci_serdev.c |  6 ++++--
+ 2 files changed, 31 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/bluetooth/hci_qca.c b/drivers/bluetooth/hci_qca.c
+index f10edada95..d693e28427 100644
+--- a/drivers/bluetooth/hci_qca.c
++++ b/drivers/bluetooth/hci_qca.c
+@@ -1755,6 +1755,27 @@ static bool qca_wakeup(struct hci_dev *hdev)
+ 	return wakeup;
+ }
+ 
++static void qca_port_close(struct hci_uart *hu)
++{
++	/* HCI_UART_PROTO_READY tracks whether the port is open, so a port
++	 * left closed by a failed qca_port_open() is not closed again by
++	 * hci_uart_close() or hci_uart_unregister_device().
++	 */
++	if (test_and_clear_bit(HCI_UART_PROTO_READY, &hu->flags))
++		serdev_device_close(hu->serdev);
++}
++
++static int qca_port_open(struct hci_uart *hu)
++{
++	int ret;
++
++	ret = serdev_device_open(hu->serdev);
++	if (!ret)
++		set_bit(HCI_UART_PROTO_READY, &hu->flags);
++
++	return ret;
++}
++
+ static int qca_port_reopen(struct hci_uart *hu)
+ {
+ 	int ret;
+@@ -1764,8 +1785,8 @@ static int qca_port_reopen(struct hci_uart *hu)
+ 	 * Without this, we will have RTS and CTS synchronization
+ 	 * issues.
+ 	 */
+-	serdev_device_close(hu->serdev);
+-	ret = serdev_device_open(hu->serdev);
++	qca_port_close(hu);
++	ret = qca_port_open(hu);
+ 	if (ret) {
+ 		bt_dev_err(hu->hdev, "failed to open port");
+ 		return ret;
+@@ -1789,12 +1810,12 @@ static int qca_regulator_init(struct hci_uart *hu)
+ 	qcadev = serdev_device_get_drvdata(hu->serdev);
+ 
+ 	if (!qcadev->bt_power->vregs_on) {
+-		serdev_device_close(hu->serdev);
++		qca_port_close(hu);
+ 		ret = qca_regulator_enable(qcadev);
+ 		if (ret)
+ 			return ret;
+ 
+-		ret = serdev_device_open(hu->serdev);
++		ret = qca_port_open(hu);
+ 		if (ret) {
+ 			bt_dev_err(hu->hdev, "failed to open port");
+ 			return ret;
+@@ -2073,8 +2094,8 @@ out:
+ 		if (retries < MAX_INIT_RETRIES) {
+ 			bt_dev_warn(hdev, "Retry BT power ON:%d", retries);
+ 			if (hu->serdev) {
+-				serdev_device_close(hu->serdev);
+-				ret = serdev_device_open(hu->serdev);
++				qca_port_close(hu);
++				ret = qca_port_open(hu);
+ 				if (ret) {
+ 					bt_dev_err(hdev, "failed to open port");
+ 					return ret;
+diff --git a/drivers/bluetooth/hci_serdev.c b/drivers/bluetooth/hci_serdev.c
+index 48ba017e21..d2c48df341 100644
+--- a/drivers/bluetooth/hci_serdev.c
++++ b/drivers/bluetooth/hci_serdev.c
+@@ -101,11 +101,13 @@ static int hci_uart_flush(struct hci_dev *hdev)
+ 		kfree_skb(hu->tx_skb); hu->tx_skb = NULL;
+ 	}
+ 
++	if (!test_bit(HCI_UART_PROTO_READY, &hu->flags))
++		return 0;
++
+ 	/* Flush any pending characters in the driver and discipline. */
+ 	serdev_device_write_flush(hu->serdev);
+ 
+-	if (test_bit(HCI_UART_PROTO_READY, &hu->flags))
+-		hu->proto->flush(hu);
++	hu->proto->flush(hu);
+ 
+ 	return 0;
+ }
+-- 
+2.56.1
+

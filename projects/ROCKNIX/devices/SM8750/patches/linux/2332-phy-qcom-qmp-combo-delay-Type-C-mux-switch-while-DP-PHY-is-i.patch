@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Saurabh Anand <saurabh.anand@oss.qualcomm.com>
+Date: Wed, 11 Nov 2026 16:13:53 +0530
+Subject: [PATCH] phy: qcom: qmp-combo: delay Type-C mux switch while DP PHY is initializing
+
+The Type-C mux switch guard only checked dp_powered_on, which is set in
+qmp_combo_dp_power_on(). However there is a race window between
+qmp_combo_dp_init() and qmp_combo_dp_power_on() during which dp_init_count
+is non-zero but dp_powered_on is still false. A Type-C orientation change
+arriving in this window would proceed with the mux switch while the DP PHY
+is mid-initialization, corrupting the PHY state.
+
+Extend the guard to also block the mux switch when dp_init_count is
+non-zero, covering the full period from dp_init through dp_power_on.
+
+Signed-off-by: Saurabh Anand <saurabh.anand@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261111104434.2222182-2-naidu.nama@oss.qualcomm.com
+---
+ drivers/phy/qualcomm/phy-qcom-qmp-combo.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+index 61d8b7a5ce8f..3f93043f94e5 100644
+--- a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
++++ b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+@@ -5163,7 +5163,8 @@ static int qmp_combo_typec_mux_set(struct typec_mux_dev *mux, struct typec_mux_s
+ 		return 0;
+ 	}
+ 
+-	if (qmp->qmpphy_mode != QMPPHY_MODE_USB3_ONLY && qmp->dp_powered_on) {
++	if (qmp->qmpphy_mode != QMPPHY_MODE_USB3_ONLY &&
++	    (qmp->dp_powered_on || qmp->dp_init_count)) {
+ 		dev_dbg(qmp->dev, "typec_mux_set: DP PHY is still in use, delaying switch\n");
+ 		return 0;
+ 	}

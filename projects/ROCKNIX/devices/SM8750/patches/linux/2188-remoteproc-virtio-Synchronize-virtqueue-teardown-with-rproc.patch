@@ -1,0 +1,138 @@
+From: Yuho Choi <oss.patchbox@gmail.com>
+Subject: [v2] remoteproc: virtio: Synchronize virtqueue teardown with rproc_vq_interrupt()
+Link: https://lore.kernel.org/r/20260926041943.1124650-1-oss.patchbox@gmail.com
+
+rproc_vq_interrupt() looks up rvring->vq and passes it to
+vring_interrupt() without synchronizing against __rproc_virtio_del_vqs(),
+which clears rvring->vq and frees the virtqueue. rproc_stop() and
+__rproc_detach() stop the subdevices, and so delete the virtqueues,
+before the remote processor is stopped or detached, so the remote can
+still signal a vring meanwhile. The interrupt path can then pass a NULL
+or already freed virtqueue to vring_interrupt().
+
+Protect rvring->vq with SRCU: rproc_vq_interrupt() uses the virtqueue
+inside a read-side section, and __rproc_virtio_del_vqs() clears the
+pointers and waits for readers before freeing the virtqueues. Plain RCU
+is not usable because rproc_vq_interrupt() is also called from process
+context, where vring callbacks may sleep.
+
+Fixes: 7a186941626d ("remoteproc: remove the single rpmsg vdev limitation")
+Cc: stable@vger.kernel.org
+Signed-off-by: Yuho Choi <oss.patchbox@gmail.com>
+---
+Changes in v2:
+- Rework the fix: v1 only loaded rvring->vq once, which closes the NULL
+  window but not the use-after-free once the virtqueue is freed after
+  the load (Mathieu Poirier). Use SRCU so __rproc_virtio_del_vqs()
+  waits for rproc_vq_interrupt() before freeing the virtqueues.
+- Update the subject accordingly.
+
+v1: https://lore.kernel.org/all/20260922190159.509836-1-oss.patchbox@gmail.com/
+
+Compile-tested only (arm64 and x86_64 defconfig + REMOTEPROC/RPMSG_VIRTIO, 
+W=1, sparse).
+
+ drivers/remoteproc/remoteproc_virtio.c | 35 +++++++++++++++++++++-----
+ include/linux/remoteproc.h             |  2 +-
+ 2 files changed, 30 insertions(+), 7 deletions(-)
+
+
+base-commit: aa98230e410f0ed212b6788c46b1e4d49e0ff7ca
+---
+diff --git a/drivers/remoteproc/remoteproc_virtio.c b/drivers/remoteproc/remoteproc_virtio.c
+index d5e9ff045a28a..cd8f3a8b4870a 100644
+--- a/drivers/remoteproc/remoteproc_virtio.c
++++ b/drivers/remoteproc/remoteproc_virtio.c
+@@ -16,6 +16,7 @@
+ #include <linux/of_reserved_mem.h>
+ #include <linux/platform_device.h>
+ #include <linux/remoteproc.h>
++#include <linux/srcu.h>
+ #include <linux/virtio.h>
+ #include <linux/virtio_config.h>
+ #include <linux/virtio_ids.h>
+@@ -26,6 +27,14 @@
+ 
+ #include "remoteproc_internal.h"
+ 
++/*
++ * Protects rproc_vring->vq: rproc_vq_interrupt() uses the virtqueue inside a
++ * read-side section, and __rproc_virtio_del_vqs() waits for those sections to
++ * finish before freeing it. Sleepable RCU is used because vring callbacks may
++ * sleep when rproc_vq_interrupt() is called from process context.
++ */
++DEFINE_STATIC_SRCU(rproc_vq_srcu);
++
+ static int copy_dma_range_map(struct device *to, struct device *from)
+ {
+ 	const struct bus_dma_region *map = from->dma_range_map, *new_map, *r;
+@@ -88,15 +97,24 @@ static bool rproc_virtio_notify(struct virtqueue *vq)
+  */
+ irqreturn_t rproc_vq_interrupt(struct rproc *rproc, int notifyid)
+ {
++	irqreturn_t ret = IRQ_NONE;
+ 	struct rproc_vring *rvring;
++	struct virtqueue *vq;
++	int idx;
+ 
+ 	dev_dbg(&rproc->dev, "vq index %d is interrupted\n", notifyid);
+ 
+ 	rvring = idr_find(&rproc->notifyids, notifyid);
+-	if (!rvring || !rvring->vq)
++	if (!rvring)
+ 		return IRQ_NONE;
+ 
+-	return vring_interrupt(0, rvring->vq);
++	idx = srcu_read_lock(&rproc_vq_srcu);
++	vq = srcu_dereference(rvring->vq, &rproc_vq_srcu);
++	if (vq)
++		ret = vring_interrupt(0, vq);
++	srcu_read_unlock(&rproc_vq_srcu, idx);
++
++	return ret;
+ }
+ EXPORT_SYMBOL(rproc_vq_interrupt);
+ 
+@@ -153,8 +171,8 @@ static struct virtqueue *rp_find_vq(struct virtio_device *vdev,
+ 
+ 	vq->num_max = num;
+ 
+-	rvring->vq = vq;
+ 	vq->priv = rvring;
++	rcu_assign_pointer(rvring->vq, vq);
+ 
+ 	/* Update vring in resource table */
+ 	rsc = (void *)rproc->table_ptr + rvdev->rsc_offset;
+@@ -168,11 +186,16 @@ static void __rproc_virtio_del_vqs(struct virtio_device *vdev)
+ 	struct virtqueue *vq, *n;
+ 	struct rproc_vring *rvring;
+ 
+-	list_for_each_entry_safe(vq, n, &vdev->vqs, list) {
++	list_for_each_entry(vq, &vdev->vqs, list) {
+ 		rvring = vq->priv;
+-		rvring->vq = NULL;
+-		vring_del_virtqueue(vq);
++		RCU_INIT_POINTER(rvring->vq, NULL);
+ 	}
++
++	/* Wait for rproc_vq_interrupt() callers still using the virtqueues */
++	synchronize_srcu(&rproc_vq_srcu);
++
++	list_for_each_entry_safe(vq, n, &vdev->vqs, list)
++		vring_del_virtqueue(vq);
+ }
+ 
+ static void rproc_virtio_del_vqs(struct virtio_device *vdev)
+diff --git a/include/linux/remoteproc.h b/include/linux/remoteproc.h
+index a44368737b39a..919d19fe99198 100644
+--- a/include/linux/remoteproc.h
++++ b/include/linux/remoteproc.h
+@@ -340,7 +340,7 @@ struct rproc_vring {
+ 	u32 align;
+ 	int notifyid;
+ 	struct rproc_vdev *rvdev;
+-	struct virtqueue *vq;
++	struct virtqueue __rcu *vq;
+ };
+ 
+ /**
