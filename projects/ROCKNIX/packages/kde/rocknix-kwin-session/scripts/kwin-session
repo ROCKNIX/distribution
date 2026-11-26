@@ -80,19 +80,37 @@ second_panel() {
 }
 
 panel_size() {
-  local size=$(head -n 1 /sys/class/drm/card*-"${1}"/modes 2>/dev/null)
+  local size=$(kscreen-doctor -j 2>/dev/null | jq -r --arg o "${1}" '.outputs[] | select(.name == $o and .connected) |
+    .preferredModes[0] as $p | .modes[] | select(.id == $p) | "\(.size.width)x\(.size.height)"')
   case "${2}" in
     90|270) echo "${size#*x}x${size%x*}" ;;
     *)      echo "${size}" ;;
   esac
 }
 
-dual_screen_layout() {
+dual_screen_touch() {
   SECOND=$(second_panel)
+  [ -n "${SECOND}" ] && rds_connected || return 0
+  mkdir -p /run/udev/rules.d
+  cat >/run/udev/rules.d/99-rds-touchscreen.rules <<EOF
+SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_TOUCHSCREEN}=="1", ENV{WL_OUTPUT}="${SECOND}"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="RetroidPocket*RDS*", ENV{WL_OUTPUT}="DP-1"
+EOF
+  udevadm control --reload
+  udevadm trigger -s input
+}
+
+dual_screen_layout() {
   [ -n "${SECOND}" ] || return 0
-  local status=$(ls /sys/class/drm/card*-"${SECOND}"/status)
+  local status=$(ls /sys/class/drm/card*-"${SECOND}"/status) main second i=0
   [ "$(cat "${status}")" = "connected" ] || echo detect > "${status}"
-  local main=$(panel_size "${WLR_CON}" "$(main_rotation)") second=$(panel_size "${SECOND}" "$(second_rotation)")
+  while [ ${i} -lt 25 ]; do
+    main=$(panel_size "${WLR_CON}" "$(main_rotation)")
+    second=$(panel_size "${SECOND}" "$(second_rotation)")
+    [ -n "${main%x*}" ] && [ -n "${second%x*}" ] && break
+    sleep 0.2
+    i=$((i + 1))
+  done
   if [ -z "${main%x*}" ] || [ -z "${second%x*}" ]; then
     SECOND=""
     return 0
@@ -107,15 +125,6 @@ dual_screen_layout() {
     MAIN_X=$(((SECOND_W - MAIN_W) / 2))
   else
     SECOND_X=$(((MAIN_W - SECOND_W) / 2))
-  fi
-  if rds_connected; then
-    mkdir -p /run/udev/rules.d
-    cat >/run/udev/rules.d/99-rds-touchscreen.rules <<EOF
-SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_TOUCHSCREEN}=="1", ENV{WL_OUTPUT}="${SECOND}"
-SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="RetroidPocket*RDS*", ENV{WL_OUTPUT}="DP-1"
-EOF
-    udevadm control --reload
-    udevadm trigger -s input
   fi
 }
 
@@ -167,7 +176,7 @@ positionrule=2
 size=${width},$((MAIN_H + SECOND_H))
 sizerule=2
 EOF
-  export XDG_CONFIG_DIRS=/run/rocknix/kwin:${XDG_CONFIG_DIRS}
+  dbus-send --session --type=method_call --print-reply --dest=org.kde.KWin /KWin org.kde.KWin.reconfigure >/dev/null 2>&1
 }
 
 dual_screen_defaults() {
@@ -201,6 +210,8 @@ session_defaults() {
     sleep 0.2
     i=$((i + 1))
   done
+  dual_screen_layout
+  dual_screen_rules
   output_defaults
   touch ${KWIN_READY}
   [ -n "${SECOND}" ] || /usr/bin/output_monitor &
@@ -213,7 +224,8 @@ session_defaults() {
     kwin_keyboard 0
   fi
 }
-dual_screen_layout
+dual_screen_touch
+export XDG_CONFIG_DIRS=/run/rocknix/kwin:${XDG_CONFIG_DIRS}
 session_defaults &
 
 little_cpus() {
@@ -228,6 +240,5 @@ little_cpus() {
   echo ${cpus} | tr ' ' ','
 }
 
-dual_screen_rules
 CPUS=$(little_cpus)
 exec ${CPUS:+taskset -c ${CPUS}} kwin_wayland --drm --xwayland --socket "${WAYLAND_DISPLAY:-wayland-1}"
