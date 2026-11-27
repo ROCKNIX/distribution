@@ -1,0 +1,72 @@
+From a47d923c8019459b7a5cc0e24bf6a1060d88fb6b Mon Sep 17 00:00:00 2001
+From: LibretroAdmin <LibretroAdmin@users.noreply.github.com>
+Date: Thu, 20 Aug 2026 09:49:55 +0000
+Subject: [PATCH 13/15] video/threaded: bound the staged frame by what the
+ buffer holds
+
+The staging buffer is sized once at thread_init from the maximum
+geometry the core declared, and a core that later hands over a larger
+frame than that was copied straight past the end of it.
+
+video_thread_frame() now derives how many rows the allocation can hold
+from the stride it is about to write and publishes at most that many.
+The clamp is applied before the copy rather than inside it, because the
+worker renders thr->frame.height out of the same buffer whether or not a
+duped frame brought pixels with it.
+
+(cherry picked from commit 8228e15bf6ef3f2b47b52a0aad6074a4a1d2af52)
+---
+ gfx/video_thread_wrapper.c | 14 ++++++++++++++
+ gfx/video_thread_wrapper.h |  4 ++++
+ 2 files changed, 18 insertions(+)
+
+diff --git a/gfx/video_thread_wrapper.c b/gfx/video_thread_wrapper.c
+index d1138dffef..bad7c8339f 100644
+--- a/gfx/video_thread_wrapper.c
++++ b/gfx/video_thread_wrapper.c
+@@ -637,6 +637,18 @@ static bool video_thread_frame(void *data, const void *frame_,
+       uint8_t       *dst   = thr->frame.buffer;
+       unsigned copy_stride = width *
+          (thr->info.rgb32 ? sizeof(uint32_t) : sizeof(uint16_t));
++      /* The buffer holds the maximum geometry the core declared at init.
++       * A core is free to hand over a bigger frame than that, so publish
++       * only the rows that fit: the worker renders thr->frame.height out
++       * of this same buffer, so an unclamped height would be read past
++       * the end of the allocation whether or not anything was copied
++       * into it. A stride too wide for a single row yields zero. */
++      unsigned rows        = copy_stride
++         ? (unsigned)(thr->frame.buffer_size / copy_stride)
++         : 0;
++
++      if (height > rows)
++         height            = rows;
+ 
+       if (src)
+       {
+@@ -720,6 +732,8 @@ static bool video_thread_init(thread_video_t *thr,
+       if (!thr->frame.buffer)
+          return false;
+ 
++      thr->frame.buffer_size = max_size;
++
+       memset(thr->frame.buffer, 0x80, max_size);
+    }
+ 
+diff --git a/gfx/video_thread_wrapper.h b/gfx/video_thread_wrapper.h
+index d9d9ab0521..e3c48086da 100644
+--- a/gfx/video_thread_wrapper.h
++++ b/gfx/video_thread_wrapper.h
+@@ -225,6 +225,10 @@ typedef struct thread_video
+       uint64_t count;
+       slock_t *lock;
+       uint8_t *buffer;
++      /* Bytes allocated for 'buffer' at thread_init, from the core's
++       * declared maximum geometry. A core that then hands over a larger
++       * frame than it declared would otherwise be copied past the end. */
++      size_t   buffer_size;
+       unsigned width;
+       unsigned height;
+       unsigned pitch;
+-- 
+2.55.0
+
