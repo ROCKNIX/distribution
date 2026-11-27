@@ -1,0 +1,92 @@
+From f5cd268af1c6f87fb3847e98274e22b8c6324aa4 Mon Sep 17 00:00:00 2001
+From: Kevin Dewald <kevin@simpleble.org>
+Date: Fri, 23 Oct 2026 12:14:37 -0700
+Subject: [PATCH] Bluetooth: hci_event: Clear explicit connect state on LE
+ connection
+
+Since commit 6cd29ec6ae5e ("Bluetooth: hci_sync: Wait for proper events
+when connecting LE"), create_le_conn_complete() only runs once the LE
+Connection Complete event has been handled, and le_conn_complete_evt()
+has already removed the connection parameters from pend_le_conns by
+then. hci_connect_le_scan_cleanup() looks the parameters up in
+pend_le_conns, so after a successful connection it no longer clears
+explicit_connect, nor deletes the parameters that were only created for
+the explicit connect.
+
+The parameters of every device connected through an explicit connect,
+such as an L2CAP or ATT connect or MGMT Pair Device, are thus left with
+explicit_connect set. MGMT Remove Device for all devices then keeps
+them as HCI_AUTO_CONN_EXPLICIT instead of freeing them, and if the
+device was set to auto-connect and is disconnected, they also stay on
+pend_le_conns: the kernel keeps scanning for the device and connects to
+it as soon as it advertises, although no one asked for it any more.
+
+Do the cleanup in le_conn_complete_evt() instead, where the explicit
+connect request is fulfilled: clear explicit_connect, delete the
+parameters if they only existed for it, and put report parameters back
+on pend_le_reports. Auto-connect parameters are added back to
+pend_le_conns on disconnection, as before. Update the comment in
+hci_explicit_conn_params_set() that names hci_connect_le_scan_cleanup()
+as the only place deleting them.
+
+Fixes: 6cd29ec6ae5e ("Bluetooth: hci_sync: Wait for proper events when connecting LE")
+Assisted-by: Claude:claude-opus-5.5
+Signed-off-by: Kevin Dewald <kevin@simpleble.org>
+Signed-off-by: Luiz Augusto von Dentz <luiz.von.dentz@intel.com>
+---
+ net/bluetooth/hci_conn.c  |  5 +++--
+ net/bluetooth/hci_event.c | 22 ++++++++++++++++++++++
+ 2 files changed, 25 insertions(+), 2 deletions(-)
+
+diff --git a/net/bluetooth/hci_conn.c b/net/bluetooth/hci_conn.c
+index 29da3fe2b9..5de95408e6 100644
+--- a/net/bluetooth/hci_conn.c
++++ b/net/bluetooth/hci_conn.c
+@@ -1614,8 +1614,9 @@ static int hci_explicit_conn_params_set(struct hci_dev *hdev,
+ 		if (!params)
+ 			return -ENOMEM;
+ 
+-		/* If we created new params, mark them to be deleted in
+-		 * hci_connect_le_scan_cleanup. It's different case than
++		/* If we created new params, mark them to be deleted once the
++		 * explicit connect is done, see le_conn_complete_evt() and
++		 * hci_connect_le_scan_cleanup(). It's different case than
+ 		 * existing disabled params, those will stay after cleanup.
+ 		 */
+ 		params->auto_connect = HCI_AUTO_CONN_EXPLICIT;
+diff --git a/net/bluetooth/hci_event.c b/net/bluetooth/hci_event.c
+index 1f80f2cf6b..dede0b686c 100644
+--- a/net/bluetooth/hci_event.c
++++ b/net/bluetooth/hci_event.c
+@@ -6041,6 +6041,28 @@ static void le_conn_complete_evt(struct hci_dev *hdev, u8 status,
+ 			hci_conn_put(params->conn);
+ 			params->conn = NULL;
+ 		}
++
++		/* An explicit connect request is complete once connected, so
++		 * clean it up here: hci_connect_le_scan_cleanup() no longer
++		 * finds the params since they have just been removed from
++		 * pend_le_conns.
++		 */
++		if (params->explicit_connect) {
++			params->explicit_connect = false;
++
++			switch (params->auto_connect) {
++			case HCI_AUTO_CONN_EXPLICIT:
++				hci_conn_params_del(hdev, &conn->dst,
++						    conn->dst_type);
++				break;
++			case HCI_AUTO_CONN_REPORT:
++				hci_pend_le_list_add(params,
++						     &hdev->pend_le_reports);
++				break;
++			default:
++				break;
++			}
++		}
+ 	}
+ 
+ 	/* If we are central and have subrate parameters stored, queue a
+-- 
+2.56.0
+

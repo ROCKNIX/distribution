@@ -1,0 +1,66 @@
+From ee43bade37c4578b52a76cf0cdb199d3c0019506 Mon Sep 17 00:00:00 2001
+From: Zhao Li <enderaoelyther@gmail.com>
+Date: Mon, 16 Nov 2026 16:05:38 +0800
+Subject: [PATCH] Bluetooth: hci_serdev: serialize flush with transmit work
+
+hci_uart_flush() runs on HCI close and reset and frees hu->tx_skb while
+write_work may still be sending the same partial frame. The worker can
+then resume with a freed skb, or both paths can free the frame.
+
+The tty flush has stopped write_work before freeing the partial frame
+since commit 1b0d946d6f08 ("Bluetooth: hci_uart: clear HCI_UART_SENDING
+when write_work is canceled"). Do the same in the serdev flush: disable
+and drain write_work before releasing the frame, and hold
+HCI_UART_SENDING meanwhile so that hci_uart_tx_wakeup() only records
+HCI_UART_TX_WAKEUP. Then re-enable the work, release SENDING and replay
+a wakeup that arrived in between.
+
+AI assistance was used.
+
+Fixes: 82f5169bf3d3 ("Bluetooth: hci_uart: add serdev driver support library")
+Cc: stable@vger.kernel.org # needs adjustments for <= 7.4
+Signed-off-by: Zhao Li <enderaoelyther@gmail.com>
+Signed-off-by: Luiz Augusto von Dentz <luiz.von.dentz@intel.com>
+---
+ drivers/bluetooth/hci_serdev.c | 19 ++++++++++++++-----
+ 1 file changed, 14 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/bluetooth/hci_serdev.c b/drivers/bluetooth/hci_serdev.c
+index d2c48df341..194f11251c 100644
+--- a/drivers/bluetooth/hci_serdev.c
++++ b/drivers/bluetooth/hci_serdev.c
+@@ -97,17 +97,26 @@ static int hci_uart_flush(struct hci_dev *hdev)
+ 
+ 	BT_DBG("hdev %p serdev %p", hdev, hu->serdev);
+ 
++	/* Stop write_work and hold SENDING so wakeups only set TX_WAKEUP. */
++	disable_work_sync(&hu->write_work);
++	set_bit(HCI_UART_SENDING, &hu->tx_state);
++
+ 	if (hu->tx_skb) {
+ 		kfree_skb(hu->tx_skb); hu->tx_skb = NULL;
+ 	}
+ 
+-	if (!test_bit(HCI_UART_PROTO_READY, &hu->flags))
+-		return 0;
++	if (test_bit(HCI_UART_PROTO_READY, &hu->flags)) {
++		/* Flush any pending characters in the driver and discipline. */
++		serdev_device_write_flush(hu->serdev);
+ 
+-	/* Flush any pending characters in the driver and discipline. */
+-	serdev_device_write_flush(hu->serdev);
++		hu->proto->flush(hu);
++	}
+ 
+-	hu->proto->flush(hu);
++	/* Resume TX and replay a wakeup recorded while it was stopped. */
++	enable_work(&hu->write_work);
++	clear_bit(HCI_UART_SENDING, &hu->tx_state);
++	if (test_bit(HCI_UART_TX_WAKEUP, &hu->tx_state))
++		hci_uart_tx_wakeup(hu);
+ 
+ 	return 0;
+ }
+-- 
+2.56.1
+
