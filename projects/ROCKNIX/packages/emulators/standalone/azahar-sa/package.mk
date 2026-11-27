@@ -2,11 +2,11 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="azahar-sa"
-PKG_VERSION="219d743a1e698101fe1ab8bef43e6563126c3c27" # tag 2126.2
+PKG_VERSION="fd4c9abd98345dbefff9cef07aadaf61ee1f683d" # tag 2127.0.1
 PKG_LICENSE="GPL-2.0-or-later"
 PKG_SITE="https://github.com/azahar-emu/azahar"
 PKG_URL="${PKG_SITE}.git"
-PKG_DEPENDS_TARGET="toolchain ffmpeg mesa SDL2 boost zlib libusb zstd control-gen spirv-tools qt6"
+PKG_DEPENDS_TARGET="toolchain mesa SDL2 boost zlib libusb zstd control-gen spirv-tools qt6"
 PKG_LONGDESC="Azahar - Nintendo 3DS emulator"
 
 if [ ! "${OPENGL}" = "no" ]; then
@@ -25,7 +25,8 @@ if [ "${VULKAN_SUPPORT}" = "yes" ]; then
   PKG_DEPENDS_TARGET+=" ${VULKAN}"
 fi
 
-PKG_CMAKE_OPTS_TARGET+=" -DENABLE_OPENGL=ON \
+PKG_CMAKE_OPTS_TARGET+=" -DENABLE_FFMPEG=OFF \
+                         -DENABLE_OPENGL=ON \
                          -DENABLE_QT=ON \
                          -DENABLE_QT_TRANSLATION=OFF \
                          -DENABLE_ROOM=OFF \
