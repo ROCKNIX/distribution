@@ -1,0 +1,218 @@
+From: TheWeaklessOne <41053514+TheWeaklessOne@users.noreply.github.com>
+Subject: [PATCH] drm/panel: vtdr6130-cog: add the AYN Odin 2 Portal VTDR6130
+
+Odin 2 Portal units with a Visionox VTDR6130 AMOLED instead of the ICNA3512:
+the on-command sequence of AYN's Android panel node (120 and 60 Hz), DSC,
+and a 1..max backlight range. Compatible vtdr6130,odin2portal.
+
+The frame_len_120 and frame_len_60 files of the RP6 calibration write the
+RP6's 0xb1 table, whose layout is not this panel's. They are now shown on
+the RP6 only, so nothing sends that table to the Portal (the calibration
+script takes whichever panel has the files).
+---
+diff --git a/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c b/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c
+--- a/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c
++++ b/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c
+@@ -50,6 +50,7 @@
+ 	const struct drm_display_mode *modes;
+ 	unsigned int num_modes;
+ 	int (*init_sequence)(struct panel_info *pinfo);
++	unsigned int bl_max;
+ 
+ 	struct drm_dsc_config dsc;
+ };
+@@ -266,6 +267,132 @@
+ 	},
+ };
+ 
++/*
++ * AYN Odin 2 Portal units with a Visionox VTDR6130 panel (AYN's Android
++ * selects qcom,mdss_dsi_vtdr6130_dsc_cmd on them instead of the ICNA3512):
++ * the on-command of that Android panel node, 120 and 60 Hz differing only
++ * in 0x6c and the frame length (0xb1 at offset 0x04 / 0x0b on page 0x10).
++ */
++static int vtdr6130_portal_init_sequence(struct panel_info *pinfo)
++{
++	struct mipi_dsi_multi_context dsi_ctx = { .dsi = pinfo->dsi };
++	struct drm_dsc_picture_parameter_set pps;
++	int cur_mode = vtdr6130_get_current_mode(pinfo);
++	bool is_120 = drm_mode_vrefresh(&pinfo->desc->modes[cur_mode]) == 120;
++
++	pinfo->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
++
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x03, 0x01);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x35, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x53, 0x20);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x51, 0x0d, 0x75);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x59, 0x09);
++	if (is_120)
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x6c, 0x00);
++	else
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x6c, 0x01);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x6f, 0x02);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x70,
++				     0x11, 0x00, 0x00, 0x89, 0x30, 0x80, 0x07, 0x80,
++				     0x04, 0x38, 0x00, 0x08, 0x02, 0x1c, 0x02, 0x1c,
++				     0x02, 0x00, 0x02, 0x0e, 0x00, 0x20, 0x00, 0xbb,
++				     0x00, 0x07, 0x00, 0x0c, 0x0d, 0xb7, 0x0c, 0xb7,
++				     0x18, 0x00, 0x10, 0xf0, 0x03, 0x0c, 0x20, 0x00,
++				     0x06, 0x0b, 0x0b, 0x33, 0x0e, 0x1c, 0x2a, 0x38,
++				     0x46, 0x54, 0x62, 0x69, 0x70, 0x77, 0x79, 0x7b,
++				     0x7d, 0x7e, 0x01, 0x02, 0x01, 0x00, 0x09, 0x40,
++				     0x09, 0xbe, 0x19, 0xfc, 0x19, 0xfa, 0x19, 0xf8,
++				     0x1a, 0x38, 0x1a, 0x78, 0x1a, 0xb6, 0x2a, 0xb6,
++				     0x2a, 0xf4, 0x2a, 0xf4, 0x4b, 0x34, 0x63, 0x74,
++				     0x00, 0x00, 0x00, 0x00, 0x00, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x72, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xaa, 0x10);
++	if (is_120) {
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x65, 0x04);
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb1, 0x00, 0x12);
++	} else {
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x65, 0x0b);
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb1, 0x07, 0xb6);
++	}
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xff, 0x5a, 0x80);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x65, 0x0a);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf9, 0xa8);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xff, 0x5a, 0x81);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x65, 0x06);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf3, 0x87);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x65, 0x09);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf3, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x65, 0x0a);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf3, 0x10);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x65, 0x10);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf3, 0x10);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xaa, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xff, 0x5a, 0x00);
++
++	mipi_dsi_dcs_exit_sleep_mode_multi(&dsi_ctx);
++	mipi_dsi_msleep(&dsi_ctx, 120);
++
++	drm_dsc_pps_payload_pack(&pps, &pinfo->desc->dsc);
++	mipi_dsi_picture_parameter_set_multi(&dsi_ctx, &pps);
++
++	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
++	mipi_dsi_msleep(&dsi_ctx, 20);
++
++	return dsi_ctx.accum_err;
++}
++
++/* Android's timings for that node: h 44/10/100, v 18 (120 Hz) or 1974 (60 Hz)/4/14. */
++static const struct drm_display_mode vtdr6130_portal_modes[] = {
++	{
++		/* 120Hz */
++		.clock = (1080 + 44 + 10 + 100) * (1920 + 18 + 4 + 14) * 120 / 1000,
++		.hdisplay = 1080,
++		.hsync_start = 1080 + 44,
++		.hsync_end = 1080 + 44 + 10,
++		.htotal = 1080 + 44 + 10 + 100,
++		.vdisplay = 1920,
++		.vsync_start = 1920 + 18,
++		.vsync_end = 1920 + 18 + 4,
++		.vtotal = 1920 + 18 + 4 + 14,
++	},
++	{
++		/* 60Hz */
++		.clock = (1080 + 44 + 10 + 100) * (1920 + 1974 + 4 + 14) * 60 / 1000,
++		.hdisplay = 1080,
++		.hsync_start = 1080 + 44,
++		.hsync_end = 1080 + 44 + 10,
++		.htotal = 1080 + 44 + 10 + 100,
++		.vdisplay = 1920,
++		.vsync_start = 1920 + 1974,
++		.vsync_end = 1920 + 1974 + 4,
++		.vtotal = 1920 + 1974 + 4 + 14,
++	}
++};
++
++static struct panel_desc vtdr6130_portal_desc = {
++	.modes = vtdr6130_portal_modes,
++	.num_modes = ARRAY_SIZE(vtdr6130_portal_modes),
++	.width_mm = 155,
++	.height_mm = 87,
++	.bpc = 8,
++	.lanes = 4,
++	.format = MIPI_DSI_FMT_RGB888,
++	.mode_flags =  MIPI_DSI_MODE_NO_EOT_PACKET | MIPI_DSI_CLOCK_NON_CONTINUOUS | MIPI_DSI_MODE_LPM,
++	.init_sequence = vtdr6130_portal_init_sequence,
++	/* Android: qcom,mdss-dsi-bl-max-level = <0xd55> */
++	.bl_max = 3413,
++	.dsc = {
++		.dsc_version_major = 0x1,
++		.dsc_version_minor = 0x1,
++		.slice_height = 12,
++		.slice_width = 540,
++		.slice_count = 2,
++		.bits_per_component = 8,
++		.bits_per_pixel = 8 << 4,
++		.block_pred_enable = true,
++	},
++};
++
+ static void vtdr6130_reset(struct panel_info *pinfo)
+ {
+ 	gpiod_set_value_cansleep(pinfo->reset_gpio, 0);
+@@ -435,13 +562,14 @@
+ 	.get_brightness = vtdr6130_bl_get_brightness,
+ };
+ 
+-static struct backlight_device *vtdr6130_create_backlight(struct mipi_dsi_device *dsi)
++static struct backlight_device *vtdr6130_create_backlight(struct mipi_dsi_device *dsi,
++							   unsigned int max)
+ {
+ 	struct device *dev = &dsi->dev;
+ 	const struct backlight_properties props = {
+ 		.type = BACKLIGHT_RAW,
+-		.brightness = 4095,
+-		.max_brightness = 4095,
++		.brightness = max,
++		.max_brightness = max,
+ 	};
+ 
+ 	return devm_backlight_device_register(dev, dev_name(dev), dev, dsi,
+@@ -523,7 +651,24 @@
+ 	&dev_attr_frame_len_60.attr,
+ 	NULL
+ };
+-ATTRIBUTE_GROUPS(vtdr6130_rp6);
++/* The frame-length table above is the RP6's; other panels of this driver have other layouts. */
++static umode_t vtdr6130_rp6_attr_visible(struct kobject *kobj,
++					 struct attribute *attr, int n)
++{
++	struct panel_info *pinfo = dev_get_drvdata(kobj_to_dev(kobj));
++
++	return pinfo && pinfo->desc == &vtdr6130_rp6_desc ? attr->mode : 0;
++}
++
++static const struct attribute_group vtdr6130_rp6_group = {
++	.attrs = vtdr6130_rp6_attrs,
++	.is_visible = vtdr6130_rp6_attr_visible,
++};
++
++static const struct attribute_group *vtdr6130_rp6_groups[] = {
++	&vtdr6130_rp6_group,
++	NULL
++};
+ 
+ static int vtdr6130_probe(struct mipi_dsi_device *dsi)
+ {
+@@ -564,7 +709,8 @@
+ 
+ 	pinfo->panel.prepare_prev_first = true;
+ 
+-    pinfo->panel.backlight = vtdr6130_create_backlight(dsi);
++    pinfo->panel.backlight = vtdr6130_create_backlight(dsi,
++					pinfo->desc->bl_max ?: 4095);
+ 	if (IS_ERR(pinfo->panel.backlight))
+ 		return dev_err_probe(dev, PTR_ERR(pinfo->panel.backlight),
+ 				     "Failed to create backlight\n");
+@@ -588,6 +734,7 @@
+ 
+ static const struct of_device_id vtdr6130_of_match[] = {
+ 	{ .compatible = "vtdr6130,rp6", .data = &vtdr6130_rp6_desc },
++	{ .compatible = "vtdr6130,odin2portal", .data = &vtdr6130_portal_desc },
+ 	{ /* sentinel */ }
+ };
+ MODULE_DEVICE_TABLE(of, vtdr6130_of_match);
