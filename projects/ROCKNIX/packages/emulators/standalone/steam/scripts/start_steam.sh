@@ -77,14 +77,9 @@ steam_debug_print() {
   echo "VSYNC set to: ${VSYNC}"
 }
 
-steam_read_sway_geometry() {
-  eval "$(swaymsg -t get_outputs | jq -r '
-    .[] | select(.focused == true) |
-    "W=\(.current_mode.width) H=\(.current_mode.height) TRANSFORM=\(.transform) REFRESH=\(.current_mode.refresh // 60000)"
-  ')"
-  # Round to nearest (119990 mHz -> 120) to match the mode's integer vrefresh,
-  # which gamescope's -r must hit exactly or it falls back to the preferred mode.
-  REFRESH_HZ=$(((REFRESH + 500) / 1000))
+steam_read_output_geometry() {
+  read -r _ W H TRANSFORM _ <<< "$(output_list | awk '$5 == "true" { print; exit }')"
+  REFRESH_HZ=$(output_refresh)
 }
 
 steam_setup_environment() {
@@ -149,6 +144,7 @@ steam_scope_reexec_if_needed() {
       --expand-environment=no \
       -p TasksMax=infinity \
       -p OOMPolicy=continue \
+      -p Wants=rocknix-game-mode.service \
       -E _STEAM_SCOPE=1 \
       -E HOME="$HOME" \
       -E USER="$USER" \
@@ -159,14 +155,7 @@ steam_scope_reexec_if_needed() {
 
 steam_dual_screen_begin() {
   if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
-    swaymsg 'seat seat1 fallback true'
     PREFER_OUTPUT="--prefer-output $SDL_VIDEO_DISPLAY_PRIORITY"
-  fi
-}
-
-steam_dual_screen_end() {
-  if [ "${DEVICE_HAS_DUAL_SCREEN}" = "true" ]; then
-    swaymsg 'seat seat1 fallback false'
   fi
 }
 
@@ -220,7 +209,7 @@ steam_launch_bigpicture() {
 
   # drm gamescope backend needs wayland socket unset and compositor stopped
   unset WAYLAND_DISPLAY
-  systemctl stop sway
+  systemctl stop "$(compositor_service)"
 
   if [ "${STEAM_FLAVOR}" = "arm64" ]; then
     export STEAM_COMPAT_GRAPHICS_PROVIDER=/storage/.local/share/fex-emu/RootFS/ArchLinux/graphics_provider.json

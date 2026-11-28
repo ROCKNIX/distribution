@@ -2,8 +2,8 @@
 # Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
 
 PKG_NAME="qt6"
-PKG_VERSION="6.10.3"
-PKG_SHA256="cbc81e726b0ff3c0cdb0219bf74545e91cec013c4a8503c20f93f83d73dff5d2"
+PKG_VERSION="6.11.3"
+PKG_SHA256="ad0112f2aef1b94b42a7ab653cebda2f7fc9ba88ef509ec456b17be80b0bfdab"
 PKG_LICENSE="GPL"
 PKG_SITE="https://download.qt.io"
 PKG_URL="${PKG_SITE}/archive/qt/${PKG_VERSION%.*}/${PKG_VERSION}/single/qt-everywhere-src-${PKG_VERSION}.tar.xz"
@@ -50,11 +50,11 @@ fi
 pre_configure_host() {
   unset HOST_CMAKE_OPTS
   # Disable unneeded modules
-  MODULES_TO_DISABLE=("qt3d" "qt5compat" "qtactiveqt" "qtcharts" "qtcoap" "qtconnectivity" "qtdatavis3d"
+  MODULES_TO_DISABLE=("qt3d" "qt5compat" "qtactiveqt" "qtcanvaspainter" "qtcharts" "qtcoap" "qtconnectivity" "qtdatavis3d"
                       "qtdoc" "qtgraphs" "qtgrpc" "qthttpserver" "qtlocation" "qtlottie" "qtmqtt"
-                      "qtmultimedia" "qtnetworkauth" "qtopcua" "qtpositioning" "qtquick3d" "qtquick3dphysics"
+                      "qtmultimedia" "qtnetworkauth" "qtopcua" "qtopenapi" "qtpositioning" "qtquick3d" "qtquick3dphysics"
                       "qtquickeffectmaker" "qtquicktimeline" "qtremoteobjects" "qtscxml" "qtsensors" "qtserialbus"
-                      "qtserialport" "qtspeech" "qttranslations" "qtvirtualkeyboard" "qtwayland" "qtwebchannel"
+                      "qtserialport" "qtspeech" "qttasktree" "qttranslations" "qtvirtualkeyboard" "qtwayland" "qtwebchannel"
                       "qtwebengine" "qtwebsockets" "qtwebview")
   for module in "${MODULES_TO_DISABLE[@]}"; do
     PKG_CMAKE_OPTS_HOST+=" -DBUILD_${module}=OFF"
@@ -82,11 +82,11 @@ pre_configure_host() {
 pre_configure_target(){
   unset TARGET_CMAKE_OPTS
   # Disable unneeded modules
-  MODULES_TO_DISABLE=("qt3d" "qt5compat" "qtactiveqt" "qtcharts" "qtcoap" "qtconnectivity" "qtdatavis3d"
+  MODULES_TO_DISABLE=("qt3d" "qtactiveqt" "qtcanvaspainter" "qtcharts" "qtcoap" "qtconnectivity" "qtdatavis3d"
                       "qtdoc" "qtgraphs" "qtgrpc" "qthttpserver" "qtimageformats"
-                      "qtlocation" "qtlottie" "qtmqtt" "qtnetworkauth" "qtopcua" "qtpositioning"
+                      "qtlottie" "qtmqtt" "qtnetworkauth" "qtopcua" "qtopenapi"
                       "qtquick3d" "qtquick3dphysics" "qtquickeffectmaker" "qtquicktimeline" "qtremoteobjects"
-                      "qtscxml" "qtsensors" "qtspeech" "qttranslations" "qtvirtualkeyboard"
+                      "qtscxml" "qttasktree" "qttranslations"
                       "qtwebchannel" "qtwebengine" "qtwebview")
   for module in "${MODULES_TO_DISABLE[@]}"; do
     PKG_CMAKE_OPTS_TARGET+=" -DBUILD_${module}=OFF"
@@ -95,7 +95,8 @@ pre_configure_target(){
   # Enable required modules: qtbase qtmultimedia qtshadertools qtdeclarative qtserialbus qtserialport qtsvg qttools qtwebsockets qtlanguageserver
   # Conditionals: qtwayland
   MODULES_TO_ENABLE=("qtbase" "qtmultimedia" "qtshadertools" "qtdeclarative" "qtserialbus"
-                     "qtserialport" "qtsvg" "qttools" "qtwebsockets" "qtlanguageserver")
+                     "qtserialport" "qtsvg" "qttools" "qtwebsockets" "qtlanguageserver"
+                     "qt5compat" "qtlocation" "qtpositioning" "qtsensors" "qtspeech" "qtvirtualkeyboard")
   for module in "${MODULES_TO_ENABLE[@]}"; do
     PKG_CMAKE_OPTS_TARGET+=" -DBUILD_${module}=ON"
   done
@@ -109,7 +110,6 @@ pre_configure_target(){
                            -DBUILD_SHARED_LIBS=ON \
                            -DQT_BUILD_EXAMPLES=OFF \
                            -DQT_BUILD_TESTS=OFF \
-                           -DQT_FEATURE_printer=OFF \
                            -DQT_USE_CCACHE=ON \
                            -DQT_FEATURE_xcb=ON \
                            -DQT_GENERATE_SBOM=OFF \

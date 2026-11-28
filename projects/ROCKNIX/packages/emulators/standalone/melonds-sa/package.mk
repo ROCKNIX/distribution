@@ -7,7 +7,7 @@ PKG_SHA256="5edcd49fe593df24e47f29eb27636c8c4d3698dc21ac224697708a8fcd9ea262"
 PKG_LICENSE="GPL-3.0-or-later"
 PKG_SITE="https://github.com/melonDS-emu/melonDS"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="SDL2 qt6 libslirp libepoxy libarchive ecm libpcap control-gen faad2"
+PKG_DEPENDS_TARGET="SDL2 qt6 libslirp libepoxy libarchive ecm libpcap control-gen faad2 enet"
 PKG_LONGDESC="DS emulator, sorta. The goal is to do things right and fast"
 
 if [ "${OPENGL_SUPPORT}" = "yes" ]; then

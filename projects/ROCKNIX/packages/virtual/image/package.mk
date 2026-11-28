@@ -17,7 +17,7 @@ PKG_DEPENDS_TARGET="toolchain squashfs-tools:host dosfstools:host fakeroot:host 
 
 PKG_UI="emulationstation es-themes textviewer lowerdeck"
 
-PKG_UI_TOOLS="fbgrab grim"
+PKG_UI_TOOLS="fbgrab"
 
 PKG_GRAPHICS="imagemagick"
 
@@ -49,9 +49,6 @@ else
 
   # Vulkan demos and tools
   [ "${VULKAN_SUPPORT}" = "yes" ] && PKG_DEPENDS_TARGET+=" vkmark"
-
-  # Weston kiosk shell dpms support.
-  [ "${WINDOWMANAGER}" = "weston" ] && PKG_DEPENDS_TARGET+=" weston-kiosk-shell-dpms"
 
   # Sound support
   [ "${PIPEWIRE_SUPPORT}" = "yes" ] && PKG_DEPENDS_TARGET+=" alsa pulseaudio pipewire wireplumber"
@@ -101,6 +98,9 @@ fi
 
 # modules packages
 [ "${MODULES_PKG}" = "yes" ] && PKG_DEPENDS_TARGET+=" modules"
+
+# KWin session
+[ "${WINDOWMANAGER}" = "kwin-env" ] && [ "${KWIN_SESSION}" = "yes" ] && PKG_DEPENDS_TARGET+=" rocknix-kwin-session"
 
 # Batteryplus voltage-based battery percentage daemon
 [ "${BATTERYPLUS_SUPPORT}" = "yes" ] && PKG_DEPENDS_TARGET+=" batteryplus"

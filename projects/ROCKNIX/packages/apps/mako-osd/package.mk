@@ -7,7 +7,7 @@ PKG_SHA256="f1d6f8d7fec785a49698543cf812589bc014caa410c82c21773595e8785ab842"
 PKG_LICENSE="GPLv3"
 PKG_SITE="https://github.com/emersion/mako"
 PKG_URL="${PKG_SITE}/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain cairo wayland sway pango glib mako-notify"
+PKG_DEPENDS_TARGET="toolchain cairo wayland pango glib mako-notify"
 PKG_LONGDESC="Meso - A lightweight notification daemon for Wayland. Works on Sway."
 PKG_TOOLCHAIN="meson"
 

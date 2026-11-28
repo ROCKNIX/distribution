@@ -80,6 +80,11 @@ else
     sed -i 's/^fix_main_2d_screen = .*/fix_main_2d_screen = 0/' /storage/.config/drastic/config/drastic.cfg
 fi
 
+if [ "$(compositor)" = "kwin" ] && [ -f /run/rocknix/kwin/kwinrulesrc ]; then
+    sed -i 's/^screen_orientation = .*/screen_orientation = 0/' /storage/.config/drastic/config/drastic.cfg
+    export DSHOOK_WINDOW_SIZE=$(kreadconfig6 --file /run/rocknix/kwin/kwinrulesrc --group rocknix-span --key size 2>/dev/null | tr ',' 'x')
+fi
+
 cd /storage/.config/drastic/
 @HOTKEY@
 
@@ -89,6 +94,5 @@ export LD_PRELOAD="/usr/lib/libdrastouch.so"
 export SDL_TOUCH_MOUSE_EVENTS="0"
 export DSHOOK_MIC_THRESH="${MICTHRESH}"
 export DSHOOK_SHADER="${SHADER:-none}"
-[ "${QUIRK_DEVICE}" = "Retroid Pocket Duo Lite" ] && export DSHOOK_WINDOW_SIZE="1280x1920"
 ./drastic "$1"
 kill -9 $(pidof gptokeyb)

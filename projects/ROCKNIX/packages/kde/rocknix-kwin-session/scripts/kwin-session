@@ -1,0 +1,244 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+. /etc/profile
+
+rm -f "${XDG_RUNTIME_DIR}/bus"
+dbus-daemon --session --address="unix:path=${XDG_RUNTIME_DIR}/bus" --fork
+export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR}/bus"
+
+KWIN_READY=/run/rocknix/kwin-ready
+mkdir -p ${KWIN_READY%/*}
+
+export XDG_CONFIG_DIRS=/usr/share/rocknix-kwin/gaming:/etc/xdg
+export KWIN_DRM_PREFER_COLOR_DEPTH=24
+export KWIN_FULLSCREEN_SCALE_HINT_FILE=${SCANOUT_HINT_FILE}
+export KWIN_DISABLE_VULKAN=1
+[ -d /sys/module/msm ] && export KWIN_USE_OVERLAYS=1
+[ -e /dev/mali0 ] && export KWIN_COMPOSE=O2ES
+export KWIN_DRM_AFBC_PLANES=1
+export KWIN_DRM_MAIN_THREAD_COMMIT=1
+export KWIN_NO_IMPLICIT_FENCE_WAIT=1
+export KWIN_COMPOSITE_IMMEDIATELY=1
+plane_rotation || export KWIN_ENABLE_HW_ROTATION=0
+
+kwin_keyboard off
+
+rotation_name() {
+  case "${1}" in
+    90)  echo right ;;
+    180) echo inverted ;;
+    270) echo left ;;
+    *)   echo none ;;
+  esac
+}
+
+rds_connected() {
+  [ "${WLR_CON}" = "DP-1" ] && grep -qs Lontium /sys/class/drm/card*-DP-1/edid
+}
+
+main_rotation() {
+  if rds_connected; then
+    echo 270
+  else
+    echo "${WLR_CON_TRANSFORM:-0}"
+  fi
+}
+
+second_rotation() {
+  if rds_connected; then
+    fbcon_rotation
+  else
+    echo "${DEVICE_SECOND_SCREEN_ROTATION:-0}"
+  fi
+}
+
+output_defaults() {
+  [ -n "${WLR_CON}" ] || return 0
+  kscreen-doctor "output.${WLR_CON}.rotation.$(rotation_name "$(main_rotation)")" "output.${WLR_CON}.scale.1" \
+    "output.${WLR_CON}.brightness.100" >/dev/null 2>&1
+  local mode=$(get_setting system.display_mode)
+  [ -n "${mode}" ] && output_set_mode "$(echo "${mode}" | tr -cd '[:digit:].')"
+  dual_screen_defaults
+}
+
+second_panel() {
+  local connector name
+  if rds_connected; then
+    for connector in /sys/class/drm/card*-DSI-*; do
+      name=${connector##*/}
+      name=${name#*-}
+      if [ "$(cat "${connector}/status" 2>/dev/null)" = "connected" ]; then
+        echo "${name}"
+        return
+      fi
+    done
+  elif [ -n "${DEVICE_SECOND_SCREEN}" ] && [ "${DEVICE_SECOND_SCREEN}" != "${WLR_CON}" ]; then
+    echo "${DEVICE_SECOND_SCREEN}"
+  fi
+}
+
+panel_size() {
+  local size=$(kscreen-doctor -j 2>/dev/null | jq -r --arg o "${1}" '.outputs[] | select(.name == $o and .connected) |
+    .preferredModes[0] as $p | .modes[] | select(.id == $p) | "\(.size.width)x\(.size.height)"')
+  case "${2}" in
+    90|270) echo "${size#*x}x${size%x*}" ;;
+    *)      echo "${size}" ;;
+  esac
+}
+
+dual_screen_touch() {
+  SECOND=$(second_panel)
+  [ -n "${SECOND}" ] && rds_connected || return 0
+  mkdir -p /run/udev/rules.d
+  cat >/run/udev/rules.d/99-rds-touchscreen.rules <<EOF
+SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_TOUCHSCREEN}=="1", ENV{WL_OUTPUT}="${SECOND}"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="RetroidPocket*RDS*", ENV{WL_OUTPUT}="DP-1"
+EOF
+  udevadm control --reload
+  udevadm trigger -s input
+}
+
+dual_screen_layout() {
+  [ -n "${SECOND}" ] || return 0
+  local status=$(ls /sys/class/drm/card*-"${SECOND}"/status) main second i=0
+  [ "$(cat "${status}")" = "connected" ] || echo detect > "${status}"
+  while [ ${i} -lt 25 ]; do
+    main=$(panel_size "${WLR_CON}" "$(main_rotation)")
+    second=$(panel_size "${SECOND}" "$(second_rotation)")
+    [ -n "${main%x*}" ] && [ -n "${second%x*}" ] && break
+    sleep 0.2
+    i=$((i + 1))
+  done
+  if [ -z "${main%x*}" ] || [ -z "${second%x*}" ]; then
+    SECOND=""
+    return 0
+  fi
+  MAIN_W=${main%x*}
+  MAIN_H=${main#*x}
+  SECOND_W=${second%x*}
+  SECOND_H=${second#*x}
+  MAIN_X=0
+  SECOND_X=0
+  if [ "${SECOND_W}" -gt "${MAIN_W}" ]; then
+    MAIN_X=$(((SECOND_W - MAIN_W) / 2))
+  else
+    SECOND_X=$(((MAIN_W - SECOND_W) / 2))
+  fi
+}
+
+dual_screen_rules() {
+  [ -n "${SECOND}" ] || return 0
+  local width=${MAIN_W} x=${SECOND_X} half=${MAIN_H}
+  [ "${SECOND_W}" -lt "${width}" ] && width=${SECOND_W}
+  [ "${MAIN_X}" -gt "${x}" ] && x=${MAIN_X}
+  [ "${SECOND_H}" -lt "${half}" ] && half=${SECOND_H}
+  mkdir -p /run/rocknix/kwin
+  cat >/run/rocknix/kwin/kwinrulesrc <<EOF
+[General]
+Order=rocknix-span,rocknix-vertical,rocknix-lowerdeck,rocknix-gaming
+
+[rocknix-span]
+Description=One window across both panels
+wmclass=drastic
+wmclassmatch=1
+types=1
+fullscreen=false
+fullscreenrule=2
+decorationpolicy=none
+decorationpolicyrule=2
+position=${x},$((MAIN_H - half))
+positionrule=2
+size=${width},$((half * 2))
+sizerule=2
+
+[rocknix-lowerdeck]
+Description=Bottom screen menu without focus
+wmclass=lowerdeck
+wmclassmatch=1
+types=1
+acceptfocus=false
+acceptfocusrule=2
+
+[rocknix-vertical]
+Description=Vertical RetroArch game across both panels
+Enabled=false
+wmclass=com.libretro.RetroArch
+wmclassmatch=1
+types=1
+fullscreen=false
+fullscreenrule=2
+decorationpolicy=none
+decorationpolicyrule=2
+position=${x},0
+positionrule=2
+size=${width},$((MAIN_H + SECOND_H))
+sizerule=2
+EOF
+  dbus-send --session --type=method_call --print-reply --dest=org.kde.KWin /KWin org.kde.KWin.reconfigure >/dev/null 2>&1
+}
+
+dual_screen_defaults() {
+  [ -n "${SECOND}" ] || return 0
+  kscreen-doctor "output.${WLR_CON}.priority.1" "output.${WLR_CON}.position.${MAIN_X},0" "output.${SECOND}.enable" \
+    "output.${SECOND}.priority.2" "output.${SECOND}.rotation.$(rotation_name "$(second_rotation)")" \
+    "output.${SECOND}.scale.1" "output.${SECOND}.position.${SECOND_X},${MAIN_H}" >/dev/null 2>&1
+  kwin-active-window --watch ${SECOND_X} ${MAIN_H} ${SECOND_W} ${SECOND_H} | while read -r state; do
+    second_screen_power ${state}
+  done &
+  mkdir -p /run/rocknix
+  sed -e "s/@MAIN@/${WLR_CON}/" -e "s/@SECOND@/${SECOND}/" /usr/share/rocknix-kwin/dualscreen.js > /run/rocknix/dualscreen.js
+  dbus-send --session --print-reply --dest=org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript \
+    string:/run/rocknix/dualscreen.js string:rocknix-dualscreen >/dev/null 2>&1
+  dbus-send --session --print-reply --dest=org.kde.KWin /Scripting org.kde.kwin.Scripting.start >/dev/null 2>&1
+}
+
+keyboard_prestart() {
+  local i=0
+  while [ ${i} -lt 60 ] && ! pidof emulationstation >/dev/null; do
+    sleep 1
+    i=$((i + 1))
+  done
+  sleep 10
+  kwin_keyboard on
+}
+
+session_defaults() {
+  local i=0
+  while [ ${i} -lt 50 ] && { [ ! -S "${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY:-wayland-1}" ] || ! kscreen-doctor -j >/dev/null 2>&1; }; do
+    sleep 0.2
+    i=$((i + 1))
+  done
+  dual_screen_layout
+  dual_screen_rules
+  output_defaults
+  touch ${KWIN_READY}
+  [ -n "${SECOND}" ] || /usr/bin/output_monitor &
+  kwin_osd on
+  if [ "${DEVICE_HAS_TOUCHSCREEN}" = "true" ] && [ "$(get_setting rocknix.touchscreen-keyboard.enabled)" != "0" ]; then
+    systemctl restart touchkeyboard
+    [ "$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)" -gt 2097152 ] && keyboard_prestart
+  else
+    systemctl stop touchkeyboard
+    kwin_keyboard 0
+  fi
+}
+dual_screen_touch
+export XDG_CONFIG_DIRS=/run/rocknix/kwin:${XDG_CONFIG_DIRS}
+session_defaults &
+
+little_cpus() {
+  local policy freq min cpus
+  for policy in /sys/devices/system/cpu/cpufreq/policy*; do
+    freq=$(cat "${policy}/cpuinfo_max_freq" 2>/dev/null) || continue
+    if [ -z "${min}" ] || [ "${freq}" -lt "${min}" ]; then
+      min=${freq}
+      cpus=$(cat "${policy}/related_cpus")
+    fi
+  done
+  echo ${cpus} | tr ' ' ','
+}
+
+CPUS=$(little_cpus)
+exec ${CPUS:+taskset -c ${CPUS}} kwin_wayland --drm --xwayland --socket "${WAYLAND_DISPLAY:-wayland-1}"

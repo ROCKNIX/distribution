@@ -1,0 +1,51 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Fri, 20 Nov 2026 21:00:00 -0800
+Subject: [PATCH] wayland: optionally hide BGRA surface formats
+
+With WSI_HIDE_BGRA=1, BGRA surface formats are not offered and RGBA
+formats are listed first.
+---
+--- a/wsi/wayland/surface_properties.cpp
++++ b/wsi/wayland/surface_properties.cpp
+@@ -32,6 +32,7 @@
+ #include <algorithm>
+ #include <array>
+ #include <cstring>
++#include <vector>
+ #include "present_timing_handler.hpp"
+ #include "surface_properties.hpp"
+ #include "surface.hpp"
+@@ -265,8 +266,31 @@ VkResult surface_properties::get_surface_formats(VkPhysicalDevice physical_devic
+       }
+    }
+ 
+-   return surface_properties_formats_helper(supported_formats.begin(), supported_formats.end(), surfaceFormatCount,
+-                                            surfaceFormats, extended_surface_formats);
++   if (getenv("WSI_HIDE_BGRA") == nullptr)
++   {
++      return surface_properties_formats_helper(supported_formats.begin(), supported_formats.end(), surfaceFormatCount,
++                                               surfaceFormats, extended_surface_formats);
++   }
++
++   /* libmali only compresses (AFBC) RGBA-ordered images: hide BGRA and offer RGBA first. */
++   const auto rank = [](VkFormat format) {
++      return format == VK_FORMAT_R8G8B8A8_UNORM ? 0 : format == VK_FORMAT_R8G8B8A8_SRGB ? 1 : 2;
++   };
++   std::vector<surface_format_properties> formats;
++   for (auto &entry : supported_formats)
++   {
++      const VkFormat format = entry.second.m_surface_format.format;
++      if (format != VK_FORMAT_B8G8R8A8_UNORM && format != VK_FORMAT_B8G8R8A8_SRGB)
++      {
++         formats.push_back(entry.second);
++      }
++   }
++   std::stable_sort(formats.begin(), formats.end(),
++                    [&rank](const surface_format_properties &a, const surface_format_properties &b) {
++                       return rank(a.m_surface_format.format) < rank(b.m_surface_format.format);
++                    });
++   return surface_properties_formats_helper(formats.begin(), formats.end(), surfaceFormatCount, surfaceFormats,
++                                            extended_surface_formats);
+ }
+ 
+ VkResult surface_properties::get_surface_present_modes(VkPhysicalDevice physical_device, VkSurfaceKHR surface,

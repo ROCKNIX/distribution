@@ -6,8 +6,6 @@
 . /etc/profile
 set_kill set "commander"
 
-sway_fullscreen "commander" &
-
 PRELUDE="/usr/share/commander/commander.cfg"
 if [ -f "${PRELUDE}" ]; then
   /usr/bin/commander --config-prelude "${PRELUDE}"

@@ -25,7 +25,6 @@ CONF_DIR="/storage/.config/azahar"
 [ ! -f "${CONF_DIR}/azahar_mouse_addon.gptk" ] && cp ${IMMUTABLE_CONF_DIR}/azahar_mouse_addon.gptk ${CONF_DIR}
 
 # Run Azahar Emulator fullscreen with gptokeyb mouse control enabled
-sway_fullscreen "org.azahar_emu.Azahar" &
 cat ${CONF_DIR}/azahar.gptk <(echo) ${CONF_DIR}/azahar_mouse_addon.gptk > /tmp/azahar.gptk
 ${GPTOKEYB} azahar -c /tmp/azahar.gptk & /usr/bin/azahar
 

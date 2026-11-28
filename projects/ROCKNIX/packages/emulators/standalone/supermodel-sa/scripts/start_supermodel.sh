@@ -70,7 +70,7 @@ fi
 
 #RESOLUTION
 # Supermodel centers the image in -res, so full has to be the window size
-read -r SCREEN_W SCREEN_H <<< "$(swaymsg -t get_outputs | jq -r '.[] | select(.focused == true) | "\(.rect.width) \(.rect.height)"')"
+read -r SCREEN_W SCREEN_H <<< "$(output_logical_size)"
 if [ "$RESOLUTION" != "1" ] && [ "$RESOLUTION" != "2" ] && [ -n "${SCREEN_H}" ]
 then
   OPTIONS+=(-res=${SCREEN_W},${SCREEN_H})
@@ -81,8 +81,6 @@ elif [ "$RESOLUTION" = "2" ]
 then
   OPTIONS+=(-res=992,768)
 fi
-
-sway_fullscreen supermodel &
 
 cd ${CONFIG_DIR}
 echo "Command: supermodel ${1} ${OPTIONS[*]}" >/var/log/exec.log 2>&1

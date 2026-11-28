@@ -104,6 +104,4 @@ cleanup() {
 # Set up trap to cleanup on script exit
 trap cleanup EXIT
 
-sway_fullscreen "m8c" &
-
 /usr/bin/m8c

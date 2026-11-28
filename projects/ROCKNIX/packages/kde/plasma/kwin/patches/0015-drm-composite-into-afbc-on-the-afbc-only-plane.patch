@@ -1,0 +1,60 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Fri, 20 Nov 2026 20:00:00 -0800
+Subject: [PATCH] drm: composite into AFBC on the AFBC-only plane
+
+---
+--- a/src/backends/drm/drm_egl_layer.cpp
++++ b/src/backends/drm/drm_egl_layer.cpp
+@@ -54,19 +54,26 @@ std::optional<OutputLayerBeginFrameInfo> EglGbmLayer::beginFrame(OutputFrame *fr
+ {
+     m_scanoutBuffer.reset();
+     const bool tearing = frame && (frame->presentationMode() == PresentationMode::Async || frame->presentationMode() == PresentationMode::AdaptiveAsync);
+-    const auto formats = tearing && !supportedAsyncDrmFormats().isEmpty() ? supportedAsyncDrmFormats() : renderFormats();
+-    return m_surface.startRendering(targetRect().size(),
+-                                    drmOutput()->transform().combine(OutputTransform::FlipY),
+-                                    formats,
+-                                    drmOutput()->blendingColor(),
+-                                    drmOutput()->layerBlendingColor(),
+-                                    drmOutput()->needsShadowBuffer() ? pipeline()->iccProfile() : nullptr,
+-                                    drmOutput()->wireColor(drmOutput()->nextState()),
+-                                    drmOutput()->wireTransfer(drmOutput()->nextState()),
+-                                    drmOutput()->scale(),
+-                                    drmOutput()->colorPowerTradeoff(),
+-                                    drmOutput()->needsShadowBuffer(),
+-                                    m_requiredAlphaBits);
++    const auto startRendering = [this](const FormatModifierMap &formats) {
++        return m_surface.startRendering(targetRect().size(),
++                                        drmOutput()->transform().combine(OutputTransform::FlipY),
++                                        formats,
++                                        drmOutput()->blendingColor(),
++                                        drmOutput()->layerBlendingColor(),
++                                        drmOutput()->needsShadowBuffer() ? pipeline()->iccProfile() : nullptr,
++                                        drmOutput()->wireColor(drmOutput()->nextState()),
++                                        drmOutput()->wireTransfer(drmOutput()->nextState()),
++                                        drmOutput()->scale(),
++                                        drmOutput()->colorPowerTradeoff(),
++                                        drmOutput()->needsShadowBuffer(),
++                                        m_requiredAlphaBits);
++    };
++    if (m_afbcPlane && !tearing) {
++        if (auto ret = startRendering(m_afbcPlane->formats())) {
++            return ret;
++        }
++    }
++    return startRendering(tearing && !supportedAsyncDrmFormats().isEmpty() ? supportedAsyncDrmFormats() : renderFormats());
+ }
+ 
+ bool EglGbmLayer::endFrame(const Region &renderedDeviceRegion, const Region &damagedDeviceRegion, OutputFrame *frame)
+@@ -80,7 +87,11 @@ bool EglGbmLayer::preparePresentationTest()
+         return false;
+     }
+     m_scanoutBuffer.reset();
+-    return m_surface.renderTestBuffer(targetRect().size(), renderFormats(), drmOutput()->nextState().colorPowerTradeoff, m_requiredAlphaBits) != nullptr;
++    const auto tradeoff = drmOutput()->nextState().colorPowerTradeoff;
++    if (m_afbcPlane && m_surface.renderTestBuffer(targetRect().size(), m_afbcPlane->formats(), tradeoff, m_requiredAlphaBits)) {
++        return true;
++    }
++    return m_surface.renderTestBuffer(targetRect().size(), renderFormats(), tradeoff, m_requiredAlphaBits) != nullptr;
+ }
+ 
+ static const auto s_allowHardwareRotation = environmentVariableBoolValue("KWIN_ENABLE_HW_ROTATION");

@@ -7,6 +7,4 @@ source /etc/profile
 
 set_kill set "flycast"
 
-sway_fullscreen "flycast" &
-
 /usr/bin/flycast >/dev/null 2>&1

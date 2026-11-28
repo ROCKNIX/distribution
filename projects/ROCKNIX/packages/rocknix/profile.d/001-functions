@@ -149,65 +149,6 @@ function cpu_vendor() {
   awk '/vendor_id/ {print $3;exit}' /proc/cpuinfo
 }
 
-# sway window manager utility function to enable fullscreen on a window for an input app_id
-function sway_fullscreen {
-  # value for swaymsg criteria
-  # for 'virtual' attributes pidof / pgrep this is the process to look up pid for
-  local VALUE="${1}"
-  
-  # attribute for swaymsg criteria - default to app_id for backwards compatibility
-  # 'virtual' attributes pidof / pgrep result in the value being evaluted at runtime
-  local ATTRIBUTE="${2:-app_id}"
-
-  # retry control vars
-  local QUERY_LIMIT=5
-  local QUERY_COUNT=0
-
-  if echo "${UI_SERVICE}" | grep "sway"; then
-    while [ $QUERY_COUNT -lt $QUERY_LIMIT ]; do
-      # loop, attempting to fullscreen window for app_id
-      ((QUERY_COUNT++))
-
-      # Derive swaymsg criteria attribute and value where they are dynamic
-      if [[ "${ATTRIBUTE}" = @(pidof|pgrep) ]]; then
-        local PID=""
-
-        case "${ATTRIBUTE}" in
-          "pidof")
-            PID=$(pidof "${VALUE}")
-            ;;
-          "pgrep")
-            PID=$(pgrep "${VALUE}")
-            ;;
-        esac
-
-        if [ -z "${PID}" ]; then
-          echo "No PID found for VALUE=${VALUE}"
-          sleep 1
-          continue
-        else
-          ATTRIBUTE="pid"
-          VALUE="${PID}"
-        fi
-      fi
-
-      echo "Attempting to fullscreen ${ATTRIBUTE}=${VALUE}"
-      swaymsg '['"${ATTRIBUTE}"'='"${VALUE}"'] fullscreen enable'
-      local RESULT=$?
-
-      if [ $RESULT -eq 0 ]; then
-        echo "Successful, exiting"
-        break
-      else
-        echo "Failed, waiting to try again"
-        sleep 1
-      fi
-    done
-  else
-    echo "sway is not running, exiting"
-  fi
-}
-
 function plane_rotation() {
   [ "${DEVICE_PLANE_ROTATION:-false}" != "false" ] && [ ! -e /storage/.config/rotator.disabled ]
 }
@@ -245,16 +186,224 @@ function prerotate_env() {
   return 0
 }
 
+function output_list() {
+  kscreen-doctor -j 2>/dev/null | jq -r '
+    .outputs[] | select(.enabled) | .currentModeId as $m | (.modes[] | select(.id == $m) | .size) as $s |
+    "\(.name) \($s.width) \($s.height) \({"1":"normal","2":"270","4":"180","8":"90"}[.rotation | tostring] // "normal") \(.priority == 1)"'
+}
+
+function output_logical_size() {
+  kscreen-doctor -j 2>/dev/null | jq -r '[.outputs[] | select(.enabled)] | sort_by(.priority) | .[0] |
+    .scale as $f | .rotation as $r | .currentModeId as $m | (.modes[] | select(.id == $m) | .size) as $s |
+    [$s.width / $f | floor, $s.height / $f | floor] |
+    if ($r == 2 or $r == 8) then "\(.[1]) \(.[0])" else "\(.[0]) \(.[1])" end'
+}
+
+function output_set_scale() {
+  kscreen-doctor "output.${1}.scale.${2}" >/dev/null 2>&1
+}
+
+function compositor() {
+  echo kwin
+}
+
+function session_compositor() {
+  echo kwin
+}
+
+function fbcon_rotation() {
+  case "$(cat /sys/class/graphics/fbcon/rotate 2>/dev/null)" in
+    1) echo 90 ;;
+    2) echo 180 ;;
+    3) echo 270 ;;
+    *) echo 0 ;;
+  esac
+}
+
+function compositor_service() {
+  echo "$(compositor).service"
+}
+
+function output_power() {
+  XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/var/run/0-runtime-dir} WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-1} \
+    kscreen-doctor --dpms "${1}" >/dev/null 2>&1
+}
+
+function output_refresh() {
+  kscreen-doctor -j 2>/dev/null | jq -r '[.outputs[] | select(.enabled)] | sort_by(.priority) | .[0] |
+    .currentModeId as $m | .modes[] | select(.id == $m) | .refreshRate | round'
+}
+
+function output_connected() {
+  kscreen-doctor -j 2>/dev/null | jq -r '.outputs[] | select(.connected) | .name'
+}
+
+function output_enable() {
+  if [ "${2}" = "on" ]; then
+    kscreen-doctor "output.${1}.enable" >/dev/null 2>&1
+  else
+    kscreen-doctor "output.${1}.disable" >/dev/null 2>&1
+  fi
+}
+
+function output_modes() {
+  kscreen-doctor -j 2>/dev/null | jq -r '[.outputs[] | select(.enabled)] | sort_by(.priority) | .[0] |
+    .currentModeId as $c | .preferredModes as $p | .modes[] |
+    "\(.size.width) \(.size.height) \(.refreshRate) \([if .id == ($p[0] // "") then "preferred" else empty end,
+      if .id == $c then "current" else empty end] | join(", "))"' |
+    awk '{ printf "%dx%d px, %.6f Hz%s\n", $1, $2, $3, (NF > 3 ? " (" substr($0, index($0, $4)) ")" : "") }'
+}
+
+function output_set_mode() {
+  local out w h
+  read -r out w h <<< "$(output_list | awk '$5 == "true" { print $1, $2, $3; exit }')"
+  [ -n "${out}" ] || return 1
+  kscreen-doctor "output.${out}.mode.$(kscreen-doctor -j | jq -r --arg o "${out}" --arg r "${1}" \
+    --argjson w "${w}" --argjson h "${h}" '.outputs[] | select(.name == $o) |
+    if $r == "preferred" then .preferredModes[0] else
+      [.modes[] | select(.size.width == $w and .size.height == $h)] |
+      min_by(.refreshRate - ($r | tonumber) | if . < 0 then -. else . end) | .id end')" >/dev/null 2>&1
+}
+
+function set_refresh_rate() {
+  output_set_mode "$(echo ${1} | tr -cd '[:digit:].')"
+}
+
+function kwin_osd() {
+  if [ "${1}" = "on" ]; then
+    systemctl is-active --quiet rocknix-mako && return 0
+    systemd-run --quiet --collect --unit=rocknix-mako \
+      --setenv=XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/var/run/0-runtime-dir} --setenv=WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-1} \
+      --setenv=DBUS_SESSION_BUS_ADDRESS=unix:path=${XDG_RUNTIME_DIR:-/var/run/0-runtime-dir}/bus --setenv=HOME=/storage mako
+  else
+    systemctl stop rocknix-mako 2>/dev/null
+  fi
+}
+
+function kwin_switch_output() {
+  local bus="unix:path=${XDG_RUNTIME_DIR:-/var/run/0-runtime-dir}/bus"
+  local index=$(kscreen-doctor -j 2>/dev/null | jq -r --arg o "${1}" '.outputs[] | select(.name == $o and .enabled) | .priority - 1')
+  [ -n "${index}" ] || return 0
+  dbus-send --bus=${bus} --print-reply --dest=org.kde.kglobalaccel /component/kwin \
+    org.kde.kglobalaccel.Component.invokeShortcut string:"Switch to Screen ${index}" >/dev/null 2>&1
+}
+
+function kwin_keyboard() {
+  local bus="unix:path=${XDG_RUNTIME_DIR:-/var/run/0-runtime-dir}/bus" im="" i=0
+  local vkb="--bus=${bus} --print-reply --dest=org.kde.KWin /VirtualKeyboard"
+  local prop="org.freedesktop.DBus.Properties"
+  case "${1}" in
+    on|off)
+      [ "${1}" = "on" ] && im=/usr/share/applications/org.kde.plasma.keyboard.desktop
+      DBUS_SESSION_BUS_ADDRESS=${bus} XDG_CONFIG_HOME=/storage/.config \
+        kwriteconfig6 --file kwinrc --group Wayland --key InputMethod "${im}" --notify >/dev/null 2>&1
+      ;;
+    toggle)
+      if dbus-send ${vkb} ${prop}.Get string:org.kde.kwin.VirtualKeyboard string:visible 2>/dev/null | grep -q "boolean true"; then
+        dbus-send ${vkb} ${prop}.Set string:org.kde.kwin.VirtualKeyboard string:active variant:boolean:false >/dev/null 2>&1
+        return
+      fi
+      if ! dbus-send ${vkb} ${prop}.Get string:org.kde.kwin.VirtualKeyboard string:available 2>/dev/null | grep -q "boolean true"; then
+        kwin_keyboard on
+        while [ ${i} -lt 30 ] && ! dbus-send ${vkb} ${prop}.Get string:org.kde.kwin.VirtualKeyboard string:available 2>/dev/null | grep -q "boolean true"; do
+          sleep 0.1
+          i=$((i + 1))
+        done
+      fi
+      kwin_keyboard 2
+      i=0
+      while [ ${i} -lt 30 ]; do
+        dbus-send ${vkb} org.kde.kwin.VirtualKeyboard.forceActivate >/dev/null 2>&1
+        sleep 0.2
+        dbus-send ${vkb} ${prop}.Get string:org.kde.kwin.VirtualKeyboard string:visible 2>/dev/null | grep -q "boolean true" && break
+        i=$((i + 1))
+      done
+      (
+        while dbus-send ${vkb} ${prop}.Get string:org.kde.kwin.VirtualKeyboard string:visible 2>/dev/null | grep -q "boolean true"; do
+          sleep 1
+        done
+        kwin_keyboard 0
+      ) >/dev/null 2>&1 &
+      ;;
+    *)
+      dbus-send ${vkb} ${prop}.Set string:org.kde.kwin.VirtualKeyboard string:mode variant:int32:${1} >/dev/null 2>&1
+      ;;
+  esac
+}
+
+function kwin_vertical() {
+  local rules=/run/rocknix/kwin/kwinrulesrc state=false
+  [ -f ${rules} ] || return 0
+  [ "${1}" = "on" ] && state=true
+  [ "$(kreadconfig6 --file ${rules} --group rocknix-vertical --key Enabled 2>/dev/null)" = "${state}" ] && return 0
+  kwriteconfig6 --file ${rules} --group rocknix-vertical --key Enabled --type bool ${state} >/dev/null 2>&1
+  dbus-send --type=method_call --bus=unix:path=${XDG_RUNTIME_DIR:-/var/run/0-runtime-dir}/bus --dest=org.kde.KWin \
+    /KWin org.kde.KWin.reconfigure >/dev/null 2>&1
+}
+
+function second_screen_power() {
+  local state=${1:-$(cat /run/rocknix/second-screen 2>/dev/null)}
+  [ -e "/sys/class/backlight/${DEVICE_SECOND_SCREEN_BACKLIGHT}" ] && [ -n "${DEVICE_SECOND_SCREEN_BACKLIGHT}" ] && [ -n "${state}" ] && [ "$(compositor)" = "kwin" ] || return 0
+  echo ${state} > /run/rocknix/second-screen
+  if [ "${state}" = "on" ]; then
+    echo 0 > /sys/class/backlight/${DEVICE_SECOND_SCREEN_BACKLIGHT}/bl_power
+  else
+    echo 4 > /sys/class/backlight/${DEVICE_SECOND_SCREEN_BACKLIGHT}/bl_power
+  fi
+}
+
+function second_screen_hold() {
+  local bl=/sys/class/backlight/${DEVICE_SECOND_SCREEN_BACKLIGHT}
+  [ "$(cat /run/rocknix/second-screen 2>/dev/null)" = "off" ] && [ ! -f /run/rocknix/second-screen-brightness ] || return 0
+  cat ${bl}/brightness > /run/rocknix/second-screen-brightness
+  echo 0 > ${bl}/brightness
+}
+
+function second_screen_release() {
+  local bl=/sys/class/backlight/${DEVICE_SECOND_SCREEN_BACKLIGHT} i=0
+  [ -f /run/rocknix/second-screen-brightness ] || return 0
+  while [ ${i} -lt 20 ] && [ "$(cat ${bl}/bl_power)" != "0" ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  second_screen_power
+  cat /run/rocknix/second-screen-brightness > ${bl}/brightness
+  rm -f /run/rocknix/second-screen-brightness
+}
+
+ES_FROZEN_FILE=/run/rocknix/es-frozen
+
+function es_freeze() {
+  local es
+  es=$(pidof emulationstation) || return 0
+  echo "${es} ${1}" > ${ES_FROZEN_FILE}
+  kill -STOP ${es}
+  ( while kill -0 ${1} 2>/dev/null; do sleep 1; done; es_thaw ${1} ) >/dev/null 2>&1 3>&- &
+}
+
+function es_thaw() {
+  local es owner
+  [ -f ${ES_FROZEN_FILE} ] && read -r es owner < ${ES_FROZEN_FILE} && [ "${owner}" = "${1}" ] || return 0
+  rm -f ${ES_FROZEN_FILE}
+  kill -CONT ${es}
+}
+
+function es_frozen() {
+  local es owner
+  [ -f ${ES_FROZEN_FILE} ] && read -r es owner < ${ES_FROZEN_FILE} && kill -0 ${owner} 2>/dev/null || return 1
+  [ "$(pidof emulationstation)" = "${es}" ] && echo ${es}
+}
+
 SCANOUT_HINT_FILE=/run/rocknix/fullscreen-scale-hint
 SCANOUT_SCALED_FILE=/run/rocknix/scanout-scaled-outputs
 SCANOUT_OWNER_FILE=/run/rocknix/scanout-owner
 
 function scanout_output_size() {
-  swaymsg -t get_outputs | jq -r --arg o "$1" --arg l "$2" '
-    .[] | select(.name == $o and .current_mode != null) |
-    (if (.transform | test("90|270")) then [.current_mode.height, .current_mode.width]
-     else [.current_mode.width, .current_mode.height] end) |
-    if $l == "landscape" and .[1] > .[0] then "\(.[1]) \(.[0])" else "\(.[0]) \(.[1])" end'
+  output_list | awk -v o="$1" -v l="$2" '$1 == o {
+    w = $2; h = $3
+    if ($4 ~ /90|270/) { t = w; w = h; h = t }
+    if (l == "landscape" && h > w) { t = w; w = h; h = t }
+    print w, h; exit }'
 }
 
 function scanout_set_render() {
@@ -268,7 +417,7 @@ function scanout_set_render() {
   fi
   [ "${render_h}" -ne "${screen_h}" ] && echo "${hint} ${SCANOUT_OWNER:-$$} ${out}" >> "${SCANOUT_HINT_FILE}"
   if [ "${scale}" != 1 ] || grep -qx "${out}" "${SCANOUT_SCALED_FILE}" 2>/dev/null; then
-    swaymsg output "${out}" scale "${scale}" >/dev/null 2>&1
+    output_set_scale "${out}" "${scale}"
     grep -qx "${out}" "${SCANOUT_SCALED_FILE}" 2>/dev/null || echo "${out}" >> "${SCANOUT_SCALED_FILE}"
   fi
 }
@@ -283,7 +432,7 @@ function scanout_reset() {
   local out P=${DEVICE_SCANOUT_SHARPNESS}
   if [ -f "${SCANOUT_SCALED_FILE}" ]; then
     while read -r out; do
-      swaymsg output "${out}" scale 1 >/dev/null 2>&1
+      output_set_scale "${out}" 1
     done < "${SCANOUT_SCALED_FILE}"
   fi
   if [ -d "${P}" ]; then

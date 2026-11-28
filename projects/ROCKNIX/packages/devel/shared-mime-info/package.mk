@@ -7,7 +7,5 @@ post_makeinstall_target() {
   mkdir -p ${SYSROOT_PREFIX}/usr/lib/pkgconfig
     cp shared-mime-info.pc ${SYSROOT_PREFIX}/usr/lib/pkgconfig
 
-  if [ "${WINDOWMANAGER}" = "sway" ]; then
-    ${TOOLCHAIN}/bin/update-mime-database ${INSTALL}/usr/share/mime
-  fi
+  ${TOOLCHAIN}/bin/update-mime-database ${INSTALL}/usr/share/mime
 }

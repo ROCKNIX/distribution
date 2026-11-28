@@ -14,6 +14,5 @@ if [ ! -d "/storage/.config/fex-emu" ]; then
     cp -r "/usr/config/fex-emu" "/storage/.config/"
 fi
 ${GPTOKEYB} fexconfig -c /storage/.config/fex-emu/gptk/fexconfig.gptk &
-swaymsg for_window [app_id="FEXConfig"] fullscreen enable
 /usr/bin/FEXConfig
 kill -9 $(pidof gptokeyb)

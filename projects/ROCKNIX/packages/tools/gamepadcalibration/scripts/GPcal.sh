@@ -11,8 +11,6 @@ source /etc/profile
 
 set_kill set "python3"
 
-sway_fullscreen "python3" &
-
 # Enable the python3 venv that has the pyxel library installed
 # Note: the activate script relies on the CWD, thus the cd
 # before

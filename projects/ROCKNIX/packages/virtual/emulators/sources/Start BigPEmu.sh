@@ -12,6 +12,4 @@ if [ -x "/usr/bin/gpudriver" ] && [ $(/usr/bin/gpudriver) = "libmali" ]; then
   export LD_PRELOAD=/usr/lib/gl4es/libGL.so.1
 fi
 
-sway_fullscreen "bigpemu" &
-
 /usr/share/bigpemu/bigpemu >/dev/null 2>&1

@@ -48,6 +48,8 @@ check_charging() {
 }
 
 check_es_running_game() {
+  es_frozen >/dev/null && return 0
+
   # Check whether ES API endpoint is up
   local endpoint_up=1 # default to endpoint down
   test "$(nc -vz -w5 localhost 1234 2>&1 | grep 'open')" && endpoint_up=0
@@ -86,11 +88,8 @@ display_off() {
     # DPMS enabled, use it to turn off the display
     ${DEBUG} && log $0 "DPMS - display off"
 
-    if [[ -n $(echo "${UI_SERVICE}" | grep "sway") && -n $(pgrep "sway") ]]; then
-      ${DEBUG} && log $0 "Display power off"
-      swaymsg "output * power off"
-    elif [[ -n $(echo "${UI_SERVICE}" | grep "weston") && -n $(pgrep "weston") ]]; then
-      weston-dpms -m off
+    if [[ -n $(pgrep -x kwin_wayland) ]]; then
+      output_power off
     else
       # Fallback - just turn off the backlight
       backlight_off
@@ -106,11 +105,10 @@ display_on() {
     # DPMS enabled, use it to turn on the display
     ${DEBUG} && log $0 "DPMS - display on"
 
-    if [[  -n $(echo "${UI_SERVICE}" | grep "sway") && -n $(pgrep "sway") ]]; then
-      ${DEBUG} && log $0 "Display power on"
-      swaymsg "output * power on"
-    elif [[ -n $(echo "${UI_SERVICE}" | grep "weston") && -n $(pgrep "weston") ]]; then
-      weston-dpms -m on
+    if [[ -n $(pgrep -x kwin_wayland) ]]; then
+      second_screen_hold
+      output_power on
+      second_screen_release
     else
       backlight_on
     fi
@@ -240,9 +238,11 @@ freeze_processes() {
 }
 
 unfreeze_processes() {
+  local es
   ${DEBUG} && log $0 "Unfreezing processes"
   rocknix-games-freeze thaw
   kill -CONT -1
+  es=$(es_frozen) && kill -STOP ${es}
 }
 
 do_suspend_actions() {

@@ -14,7 +14,6 @@ get_controls
 
 CONF_DIR="/storage/.config/melonDS"
 MELONDS_INI="melonDS.ini"
-SWAY_CONFIG="/storage/.config/sway/config"
 
 if [ ! -d "${CONF_DIR}" ]; then
 	cp -r "/usr/config/melonDS" "/storage/.config/"

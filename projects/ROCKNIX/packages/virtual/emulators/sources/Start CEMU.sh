@@ -7,6 +7,4 @@ source /etc/profile
 
 set_kill set "cemu"
 
-sway_fullscreen "cemu" &
-
 /usr/bin/cemu >/dev/null 2>&1

@@ -51,10 +51,11 @@ void ensure_mako_config() {
 
 // Check focused app function
 std::string get_focused_app() {
+    const char* command = "kwin-active-window";
     std::string result;
     std::array<char, 128> buffer;
     std::unique_ptr<FILE, void(*)(FILE*)> pipe(
-        popen("swaymsg -t get_tree | jq -r '.. | select(.focused?) | .app_id'", "r"),
+        popen(command, "r"),
         [](FILE* f){ if(f) pclose(f); }
     );
     if (!pipe) return "";
@@ -87,18 +88,6 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    if (no_es_flag || no_ra_flag) {
-        std::string focused_app = get_focused_app();
-        // skip notification if -no-es and EmulationStation focused
-        if (no_es_flag && focused_app == "emulationstation") {
-            return 0;
-        }
-        // skip notification if -no-ra and Retorarch focused
-        if (no_ra_flag && focused_app == "com.libretro.RetroArch") {
-            return 0;
-        }
-    }
-
     DBusError err;
     dbus_error_init(&err);
 
@@ -110,6 +99,16 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     if (!conn) return 1;
+
+    if (no_es_flag || no_ra_flag) {
+        std::string focused_app = get_focused_app();
+        if (no_es_flag && focused_app == "emulationstation") {
+            return 0;
+        }
+        if (no_ra_flag && focused_app == "com.libretro.RetroArch") {
+            return 0;
+        }
+    }
 
     // Create a method call
     DBusMessage* msg = dbus_message_new_method_call(

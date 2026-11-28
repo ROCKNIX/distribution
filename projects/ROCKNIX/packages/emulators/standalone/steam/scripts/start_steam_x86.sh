@@ -20,11 +20,10 @@ steam_apply_fps_limit
 steam_set_cpu_affinity
 steam_debug_print
 
-steam_read_sway_geometry
+steam_read_output_geometry
 steam_setup_environment
 steam_scope_reexec_if_needed "$@"
 systemctl stop systemd-binfmt
 steam_dual_screen_begin
 steam_launch_bigpicture "$@"
-steam_dual_screen_end
 systemctl start systemd-binfmt
