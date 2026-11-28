@@ -1,0 +1,38 @@
+From: xenocideend (with Claude Opus 5.5) <xenocideend@gmail.com>
+Subject: [PATCH] power: supply: qcom_pm8150b_charger: prefer the battery's
+ charge voltage and always cap the charge current
+
+0018 clamps the float voltage to 3.6-4.45 V. Two gaps are left: a battery
+node that sets constant-charge-voltage-max-microvolt below the design max
+still charges to the design max, and a constant-charge-current-max-microamp
+above 3 A goes straight to the register. Use the lower of the two voltages
+and cap the charge current at 3 A in every case. No SM8250 board changes
+value today.
+
+---
+--- a/drivers/power/supply/qcom_pm8150b_charger.c
++++ b/drivers/power/supply/qcom_pm8150b_charger.c
+@@ -1140,7 +1140,12 @@
+ 		return dev_err_probe(chip->dev, rc,
+ 				     "Failed to init status change work\n");
+ 
+-	rc = clamp(chip->batt_info->voltage_max_design_uv, 3600000, 4450000);
++	/* the battery's own charge voltage when its lower than the design max */
++	rc = chip->batt_info->voltage_max_design_uv;
++	if (chip->batt_info->constant_charge_voltage_max_uv > 0 &&
++	    (rc <= 0 || chip->batt_info->constant_charge_voltage_max_uv < rc))
++		rc = chip->batt_info->constant_charge_voltage_max_uv;
++	rc = clamp(rc, 3600000, 4450000);
+ 	rc = (rc - 3600000) / 10000;
+ 	rc = regmap_update_bits(chip->regmap, chip->base + FLOAT_VOLTAGE_CFG,
+ 				FLOAT_VOLTAGE_SETTING_MASK, rc);
+@@ -1149,7 +1154,8 @@
+ 
+ 	rc = chip->batt_info->constant_charge_current_max_ua;
+ 	if (rc <= 0)
+-		rc = min(chip->batt_info->charge_full_design_uah / 2, 3000000);
++		rc = chip->batt_info->charge_full_design_uah / 2;
++	rc = min(rc, 3000000);		/* never above 3 A, whatever the battery node says */
+ 	rc = regmap_update_bits(chip->regmap,
+ 				chip->base + FAST_CHARGE_CURRENT_CFG,
+ 				FAST_CHARGE_CURRENT_SETTING_MASK, rc / 50000);
