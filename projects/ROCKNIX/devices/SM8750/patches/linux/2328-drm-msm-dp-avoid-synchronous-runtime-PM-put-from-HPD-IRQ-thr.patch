@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Gianfranco Mariotti <gianfranco.mariotti94@gmail.com>
+Date: Sat, 21 Nov 2026 22:41:04 +0100
+Subject: [PATCH] drm/msm/dp: avoid synchronous runtime PM put from HPD IRQ thread
+
+msm_dp_pm_runtime_suspend() calls disable_irq(dp->irq). When
+msm_dp_hpd_unplug_handle() or msm_dp_bridge_hpd_notify() executes from
+msm_dp_display_irq_thread() (i.e. inside dp->irq's own threaded IRQ
+handler) and drops the last runtime PM reference via
+pm_runtime_put_sync(), runtime suspend runs synchronously on the IRQ
+thread and deadlocks in disable_irq(dp->irq) waiting for the currently
+executing IRQ thread to finish.
+
+Use asynchronous pm_runtime_put() in msm_dp_hpd_unplug_handle() and
+msm_dp_bridge_hpd_notify().
+
+Fixes: 3ea2d1c3d154 ("drm/msm/dp: turn link_ready into plugged")
+Fixes: 5043357e75ba ("drm/msm/dp: rework HPD handling")
+Signed-off-by: Gianfranco Mariotti <gianfranco.mariotti94@gmail.com>
+Link: https://lore.kernel.org/r/20261121214105.32596-7-gianfranco.mariotti94@gmail.com
+---
+ drivers/gpu/drm/msm/dp/dp_display.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
+index 3a3123dbe417..eddeb972d6d6 100644
+--- a/drivers/gpu/drm/msm/dp/dp_display.c
++++ b/drivers/gpu/drm/msm/dp/dp_display.c
+@@ -495,7 +495,7 @@ static int msm_dp_hpd_unplug_handle(struct msm_dp_display_private *dp)
+ 			dp->link->sink_count);
+ 
+ 	if (dp->plugged) {
+-		pm_runtime_put_sync(&pdev->dev);
++		pm_runtime_put(&pdev->dev);
+ 		dp->plugged = false;
+ 	}
+ 
+@@ -1625,5 +1625,5 @@ void msm_dp_bridge_hpd_notify(struct drm_bridge *bridge,
+ 		msm_dp_hpd_unplug_handle(dp);
+ 	}
+ 
+-	pm_runtime_put_sync(&msm_dp_display->pdev->dev);
++	pm_runtime_put(&msm_dp_display->pdev->dev);
+ }
